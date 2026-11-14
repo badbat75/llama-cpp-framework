@@ -236,7 +236,13 @@ pub fn instance_command(
         crate::slot_state::ensure_dir(&cfg)
             .map_err(|e| LaunchError::StateDir(crate::slot_state::state_dir(&cfg), e.kind()))?;
     }
-    Ok(launch_command(exe, &cfg, &presets_path))
+    let mut cmd = launch_command(exe, &cfg, &presets_path);
+    cmd.current_dir(instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    ));
+    Ok(cmd)
 }
 
 /// The defaults of an instance the manager launches, filled into `cfg`
@@ -263,6 +269,19 @@ pub fn with_instance_defaults(
         cfg.state_dir = Some(state.to_string_lossy().into_owned());
     }
     cfg
+}
+
+/// The working directory of an instance the manager launches: on Windows
+/// (`windows`) the engine's `state` directory (`paths::instance_state_dir`,
+/// which llama.cpp's MSI creates writable by the instances' accounts), not
+/// `paths::data_root()` of the instance's virtual account, a system profile;
+/// elsewhere `data_root`, unchanged.
+pub fn instance_current_dir(
+    windows: bool,
+    data_root: &std::path::Path,
+    state: &std::path::Path,
+) -> std::path::PathBuf {
+    if windows { state } else { data_root }.to_path_buf()
 }
 
 /// E2E phase for `instance_command`, for this crate's e2e test to call: it sets
@@ -994,6 +1013,46 @@ mod tests {
             assert_eq!(
                 with_instance_defaults(cfg.clone(), false, &models, &state),
                 cfg
+            );
+        }
+    }
+
+    /// On Windows an instance runs as its virtual account, whose
+    /// `paths::data_root()` is a system profile it has no business in: its
+    /// working directory is the engine's `state` folder, which llama.cpp's
+    /// MSI creates writable by the instances' services.
+    #[test]
+    fn windows_instances_work_in_the_engine_s_state_folder() {
+        let (_, state) = engine_dirs();
+        // Any system profile: where it is does not matter, only that it is
+        // not used.
+        let data_root = Path::new(r"C:\Windows\system-profile\AppData\Local\private-ai");
+        assert_eq!(instance_current_dir(true, data_root, &state), state);
+    }
+
+    /// Linux and macOS are unchanged: the data root of whoever runs it.
+    #[test]
+    fn other_oses_work_in_the_data_root() {
+        let (_, state) = engine_dirs();
+        let data_root = Path::new("/var/lib/private-ai/.local/share/private-ai");
+        assert_eq!(instance_current_dir(false, data_root, &state), data_root);
+    }
+
+    /// The manager's launch takes its working directory from the pure
+    /// function with the real OS and the engine's state folder. The Windows
+    /// branch only type-checks on Linux, hence a check on the text.
+    #[test]
+    fn the_service_launch_sets_the_instance_working_directory() {
+        let body = instance_command_body();
+        for want in [
+            "instance_current_dir(",
+            "cfg!(windows)",
+            "paths::data_root()",
+            "paths::instance_state_dir()",
+        ] {
+            assert!(
+                body.contains(want),
+                "instance_command has no {want}:\n{body}"
             );
         }
     }

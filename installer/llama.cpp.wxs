@@ -377,10 +377,10 @@
         <Control Id="Text" Type="Text" X="25" Y="60" Width="320" Height="40" NoPrefix="yes"
                  Text="Click Remove to remove llama.cpp v$(var.Version) from this computer, with the services of its instances." />
         <Control Id="ConfigText" Type="Text" X="25" Y="105" Width="320" Height="60" NoPrefix="yes"
-                 Text="The instances' configuration, logs and models are in&#13;&#10;[ENGINEDATAFOLDER]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
+                 Text="The instances' configuration, logs, models and state are in&#13;&#10;[ENGINEDATAFOLDER]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
         <Control Id="DeleteConfig" Type="CheckBox" X="25" Y="170" Width="320" Height="17"
                  Property="LLAMA_CPP_DELETECONFIG" CheckBoxValue="1"
-                 Text="&amp;Also delete the configuration, logs and models (this cannot be undone)" />
+                 Text="&amp;Also delete the configuration, logs, models and state (this cannot be undone)" />
       </Dialog>
 
       <InstallUISequence>

@@ -6,7 +6,7 @@
 use std::fs;
 use std::io;
 
-use crate::server_control::{self, ConfigFile};
+use crate::server_control::{self, ConfigFile, Os};
 pub use pai_core::server_cfg::*;
 
 /// The instance's server config, read through the seam: defaults when the
@@ -30,11 +30,17 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
         .count();
     crate::presets::check_startup_count(startup, cfg.models_max)?;
     let models_dir = cfg.models_dir_or_default();
-    server_control::backend()
-        .write_config(ConfigFile::Server, &render(cfg))
+    let backend = server_control::backend();
+    let leave_dirs_unset = server_control::dirs_left_unset(backend.kind(), Os::current());
+    backend
+        .write_config(ConfigFile::Server, &render_for(cfg, leave_dirs_unset))
         .map_err(io::Error::other)?;
     // models_dir_or_default() never returns blank (it falls back to the
-    // home-derived default), so this is unconditionally safe to create.
-    let _ = fs::create_dir_all(&models_dir);
+    // home-derived default), so this is unconditionally safe to create;
+    // not where the dirs are left unset: the instances use the engine's
+    // folders, and the user's default would be created for nothing.
+    if !leave_dirs_unset {
+        let _ = fs::create_dir_all(&models_dir);
+    }
     Ok(())
 }

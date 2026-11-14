@@ -1,6 +1,6 @@
 ﻿#requires -Version 7
-# Build llama.cpp (CMake + Ninja, CUDA + Vulkan + HIP) and pai-config
-# (cargo). Two separate modules: xtask\src\windows\build_llama.rs and
+# Build llama.cpp (CMake + Ninja, CUDA + Vulkan + HIP) and the framework
+# (the web UI, then pai-config, pai, pai-manager and pai-bff with cargo). Two separate modules: xtask\src\windows\build_llama.rs and
 # xtask\src\common\configurator.rs; this script only runs them.
 # docs\build-compiling.md explains the decisions behind the build.
 #

@@ -391,10 +391,6 @@ Decided with the user on 2026-11-14:
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
   `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
-- **Small xtask leftovers** (found 2026-11-14 by the docs agent, with slice 3): the headers of
-  `scripts/02-build.{sh,ps1}` and `03-package.{sh,ps1}` still say `[llama | config]` and "pai-config";
-  `common/configurator.rs` says the
-  framework build needs the clone "for the icon" (it is for `pai-app`'s architecture tables).
 - **Windows: two installers** (user, 2026-11-14, replacing "one MSI with two features"): the
   framework's MSI, named by the framework's version only (`private-ai-framework-v<version>-x64.msi`),
   and **llama.cpp's own MSI** with its runtimes, named and versioned by the engine's release alone, no
@@ -417,10 +413,12 @@ Decided with the user on 2026-11-14:
   Windows instances without ModelsDir/StateDir use `%ProgramData%\llama.cpp\{models,state}`; `xtask
   install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
   2.4-chosen install folder. Left: the real WiX build and the installer test plan on
-  Windows (the user); the GUI and `pai` write the user's `~\.llama.cpp` as ModelsDir into the manager's
-  file on Windows instead of leaving it unset; an instance's working directory is still `paths::data_root()`
-  of the instance's virtual account (a system profile); the engine's removal dialog says
-  "configuration, logs and models" but also deletes `state\`; `msi-stop-processes.ps1` matches llama-server only under the framework's `bin\`.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  Windows (the user); the GUI's Save still writes the user's `~\.llama.cpp` as ModelsDir (and the state folder) into the
+  manager's file on Windows: `server_form` fills both fields with the defaults; decided (user, 2026-11-14):
+  on Windows under the manager the field stays blank with the hint of the instance default
+  (`%ProgramData%\llama.cpp\models`), and only a folder the user types is written (`pai` already
+  leaves both unset there, `server_cfg::render_for`); `version::llama_build` still names a non-release
+  clone `b<N>`, which every OS's `package` now refuses.) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
   `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
   `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);

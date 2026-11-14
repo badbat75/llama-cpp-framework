@@ -1,13 +1,13 @@
 # Custom action of the MSI (private-ai-framework.wxs, StopProcesses): stop the
-# configurator and llama-server before Windows Installer replaces or removes
-# their files. xtask package embeds this file as a -EncodedCommand, so it runs
+# configurator and pai before Windows Installer replaces or removes their
+# files. xtask package embeds this file as a -EncodedCommand, so it runs
 # under the target machine's Windows PowerShell 5.1: keep it 5.1-safe and
 # ASCII-only. It takes no arguments and reads what it needs from the registry.
 #
 # Immediate, scheduled before InstallValidate: Windows Installer's own
 # files-in-use check (the Restart Manager dialog) runs there, so a process
 # stopped here never reaches it. Impersonated, which is what it needs: the
-# configurator and llama-server run as the desktop user, who can stop them.
+# configurator and pai run as the desktop user, who can stop them.
 #
 # The order matters. `pai control stop-and-close` is the GRACEFUL leg (an
 # older install, without pai.exe, has the command in its configurator): it
@@ -15,11 +15,12 @@
 # snapshots), then stops llama-server, then signals the GUI to close. A plain
 # kill would lose that snapshot. Whatever is still alive afterwards is killed.
 #
-# What is stopped: processes named llama-server / pai / pai-config whose image
-# lies under the installed bin\, plus those whose image path cannot be read
-# (another user's, from a non-elevated context). Not by name alone: a process
-# of the same name started from a build tree
-# (build\windows\llama.cpp-cmake\bin) is not ours to stop.
+# What is stopped: processes named pai / pai-config whose image lies under the
+# installed bin\, plus those whose image path cannot be read (another user's,
+# from a non-elevated context). Not by name alone: a process of the same name
+# started from a build tree is not ours to stop. llama-server is not here: it
+# is llama.cpp's, run by the instance services, which the SCM and llama.cpp's
+# own MSI stop.
 #
 # Never fails the install: every error is swallowed, and the exit code is 0.
 # What could not be stopped is left to Windows Installer's files-in-use
@@ -37,7 +38,7 @@ try {
     if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }
 
     function Get-Ours {
-        Get-Process -Name 'llama-server', 'pai', 'pai-config', 'llama-cpp-config' -ErrorAction SilentlyContinue |
+        Get-Process -Name 'pai', 'pai-config' -ErrorAction SilentlyContinue |
             Where-Object { -not $_.Path -or $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) }
     }
 

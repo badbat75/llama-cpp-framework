@@ -302,6 +302,16 @@ pub fn start_at_launch(kind: Kind, setting: bool) -> bool {
     kind == Kind::Direct && setting
 }
 
+/// Whether a save leaves an unset ModelsDir and StateDir unset in the file
+/// (`server_cfg::render_for`) under `kind` on `os`: only the Windows
+/// manager, whose instances then use the engine's folders under
+/// `%ProgramData%\llama.cpp` (`launch::with_instance_defaults`), not the
+/// saving user's home, which their accounts cannot read. Elsewhere both are
+/// written resolved, as before.
+pub fn dirs_left_unset(kind: Kind, os: Os) -> bool {
+    kind == Kind::Manager && os == Os::Windows
+}
+
 /// Where the instance's log is read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogSource {
@@ -1742,6 +1752,51 @@ mod tests {
             assert!(!start_at_launch(backend_kind(os), true), "{os:?}");
         }
         assert!(start_at_launch(backend_kind(Os::MacOs), true));
+    }
+
+    /// Only the Windows manager leaves the two directories unset: its
+    /// instances' accounts cannot read a folder under the saving user's
+    /// profile. The Linux manager and macOS keep writing them resolved.
+    #[test]
+    fn only_the_windows_manager_leaves_the_dirs_unset() {
+        assert!(dirs_left_unset(Kind::Manager, Os::Windows));
+        assert!(!dirs_left_unset(Kind::Manager, Os::Linux));
+        assert!(!dirs_left_unset(Kind::Manager, Os::MacOs));
+        for os in [Os::Linux, Os::Windows, Os::MacOs] {
+            assert!(!dirs_left_unset(Kind::Direct, os), "{os:?}");
+        }
+        assert!(dirs_left_unset(backend_kind(Os::Windows), Os::Windows));
+        assert!(!dirs_left_unset(backend_kind(Os::Linux), Os::Linux));
+        assert!(!dirs_left_unset(backend_kind(Os::MacOs), Os::MacOs));
+    }
+
+    /// The code of `server_cfg::save` (pai-app), before any tests.
+    fn app_save_body() -> String {
+        let code = include_str!("server_cfg.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let start = code.find("pub fn save(").expect("fn save");
+        let rest = &code[start..];
+        rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+    }
+
+    /// The save of the GUI and `pai` renders through `render_for` with the
+    /// choice above for the real OS. The Windows branch only type-checks on
+    /// Linux, hence a check on the text.
+    #[test]
+    fn the_save_leaves_the_dirs_unset_where_the_os_says() {
+        let body = app_save_body();
+        for want in ["render_for(", "dirs_left_unset(", "Os::current()"] {
+            assert!(
+                body.contains(want),
+                "server_cfg::save has no {want}:\n{body}"
+            );
+        }
+        assert!(
+            !body.contains("&render(cfg)"),
+            "server_cfg::save still renders with render():\n{body}"
+        );
     }
 
     #[test]

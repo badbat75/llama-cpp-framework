@@ -432,3 +432,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - xtask's `common::macos_pkg` (and other per-OS modules) are `#[cfg(unix)]`: a test outside them that
   imports one needs `#[cfg(unix)]` too, or `cargo check -p xtask --all-targets --target
   x86_64-pc-windows-gnu` fails with E0432. Run that check on new xtask tests before handing over.
+- An unset ModelsDir/StateDir is materialized in two places, not one: `server_cfg::render` (resolved
+  through `paths::`) and pai-config's `server_form::config_to_form` (the field is seeded with
+  `models_dir_or_default()`, so `form_to_config` gives it back as `Some`). Pinning "unset stays unset"
+  at the render covers `pai`, not the GUI's Save.
+- `Path::new(..)` is already a `&Path`: passing `&data_root` for one fails `cargo clippy --all-targets
+  -D warnings` (needless_borrow) in the coder's lint run. Pass it bare.

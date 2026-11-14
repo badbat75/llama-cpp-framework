@@ -249,3 +249,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask::common::macos_pkg` is `#[cfg(unix)]`: a test outside it that `use`s it breaks the Windows
   `--all-targets` check (E0432) though the Linux tests pass. Run the Windows check before reporting,
   and send such a test back to the tester (it needs `#[cfg(unix)]`) rather than ungating the module.
+- `server_cfg::render(cfg)` is `render_for(cfg, false)`; pai-app's `save` passes
+  `dirs_left_unset(backend.kind(), Os::current())`, true only for the Windows manager, where an unset
+  ModelsDir/StateDir is written as a hint and `save` creates no models dir (the instances use the
+  engine's folders). An instance's cwd comes from `launch::instance_current_dir`, set after
+  `launch_command` (which still sets `paths::data_root()` for `start()`).

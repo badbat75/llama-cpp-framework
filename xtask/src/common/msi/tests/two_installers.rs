@@ -690,6 +690,87 @@ fn the_engine_removal_asks_about_the_configuration_cleared_by_default() {
     assert!(label.contains("configuration"), "{label:?}");
 }
 
+/// Already true, kept so: llama.cpp's MSI kills no process by name. Its
+/// llama-server runs as the instance services, which its own scripts stop
+/// and start again (`msi-stop-instances.ps1`); a llama-server started by
+/// hand from its `bin\` is the user's, left to Windows Installer's
+/// files-in-use dialog, as the Linux `xtask install` refuses (rather than
+/// kills) a llama-server outside the services. The framework's process
+/// stopper is the framework's alone.
+#[test]
+fn the_engine_msi_kills_no_process_by_name() {
+    let text = engine_text();
+    let doc = Document::parse(&text).expect("llama.cpp.wxs is XML");
+    assert!(
+        !elements(&doc, "CustomAction")
+            .into_iter()
+            .any(|c| c.attribute("Id") == Some("StopProcesses")),
+        "llama.cpp.wxs has a StopProcesses action"
+    );
+    assert!(
+        !text.contains("StopProcessesCmd"),
+        "llama.cpp.wxs embeds the framework's process stopper"
+    );
+    for script in [
+        "installer/msi-stop-instances.ps1",
+        "installer/msi-start-instances.ps1",
+        REMOVE_INSTANCES_PS1,
+    ] {
+        let body = read(script);
+        let code: Vec<&str> = body
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect();
+        let code = code.join("\n");
+        assert!(
+            !code.contains("Stop-Process") && !code.contains("Get-Process"),
+            "{script} kills processes by name:\n{code}"
+        );
+    }
+}
+
+/// The removal page says what the checkbox deletes: the whole of
+/// `%ProgramData%\llama.cpp`, so every folder in it, `state\` (the slot
+/// snapshots) as well as the configuration, logs and models. Both the text
+/// above the checkbox and its label; a folder added to the tree must be
+/// named there too.
+#[test]
+fn the_engine_removal_page_names_every_folder_it_deletes() {
+    let text = engine_text();
+    let doc = Document::parse(&text).expect("llama.cpp.wxs is XML");
+    let folders: Vec<String> = engine_data_dirs(&doc)
+        .into_keys()
+        .filter(|k| !k.is_empty())
+        .collect();
+    assert_eq!(folders, ["config", "logs", "models", "state"]);
+    let check = elements(&doc, "Control")
+        .into_iter()
+        .find(|c| c.attribute("Type") == Some("CheckBox"))
+        .expect("the removal page's CheckBox");
+    let dialog = check
+        .ancestors()
+        .find(|n| n.is_element() && n.tag_name().name() == "Dialog")
+        .expect("the checkbox's Dialog");
+    let config_text = dialog
+        .descendants()
+        .find(|n| n.is_element() && n.attribute("Id") == Some("ConfigText"))
+        .expect("the text above the checkbox (ConfigText)");
+    for (what, node) in [("checkbox", check), ("text", config_text)] {
+        let said = node.attribute("Text").unwrap_or_default().to_lowercase();
+        for folder in &folders {
+            let word = if folder == "config" {
+                "configuration"
+            } else {
+                folder.as_str()
+            };
+            assert!(
+                said.contains(word),
+                "the {what} does not name {word}: {said:?}"
+            );
+        }
+    }
+}
+
 /// Ticked, in a full-UI removal (UILevel 5) that is not the old half of an
 /// upgrade, `%ProgramData%\llama.cpp` goes, after the files (the services
 /// stopped, nothing holds a log). Not impersonated: users have no access to

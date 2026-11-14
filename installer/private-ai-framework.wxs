@@ -313,7 +313,7 @@
     <Property Id="LlamaStopProcessesPs" Value="$(var.StopProcessesCmd)" Hidden="yes" />
 
     <!--
-      Stop the configurator and llama-server (installer\msi-stop-processes.ps1)
+      Stop the configurator and pai (installer\msi-stop-processes.ps1)
       on every run that replaces or removes files: a first install or an
       upgrade (NOT Installed: the install being replaced is the one
       InstallDir names), a removal, a repair. Not on a feature change,

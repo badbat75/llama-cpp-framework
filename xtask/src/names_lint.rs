@@ -61,10 +61,8 @@ const WXS: &str = "installer/private-ai-framework.wxs";
 /// its own registration (the names 2.4 used, which it removes first).
 const ENGINE_WXS: &str = "installer/llama.cpp.wxs";
 
-/// The one installer file that may name the old executable: the process
-/// stopper, which must stop a 2.4 configurator still running while the
-/// upgrade replaces it.
-const OLD_PRODUCT_STOPPER: &str = "installer/msi-stop-processes.ps1";
+/// The framework's process stopper.
+const PROCESS_STOPPER: &str = "installer/msi-stop-processes.ps1";
 
 /// The one line of xtask that may spell `/opt/llama.cpp`: release 2.4's
 /// whole tree on macOS, now llama.cpp's own prefix there (its `.pkg`).
@@ -229,7 +227,7 @@ fn xtask_names_the_old_packages_only_in_their_constant() {
 /// The scripts and the installer sources never name the old packages, and
 /// the old product's names (its registry keys, its executable) only where the
 /// upgrade from 2.4 needs them: the MSI only searches the old keys, never
-/// writes them, and only the process stopper names the old executable.
+/// writes them, and none names the old executable.
 #[test]
 fn scripts_and_installer_name_the_old_product_only_for_the_upgrade() {
     let mut texts = Vec::new();
@@ -254,7 +252,7 @@ fn scripts_and_installer_name_the_old_product_only_for_the_upgrade() {
             if line.contains(OLD_PACKAGES) {
                 found.push(at.clone());
             }
-            if line.contains(old_exe) && rel != OLD_PRODUCT_STOPPER {
+            if line.contains(old_exe) {
                 found.push(at.clone());
             }
             // llama.cpp's own MSI registers under its own name, which was
@@ -401,11 +399,10 @@ fn the_msi_install_dir_follows_the_new_key_only() {
 
 /// The process stopper reads only the framework's key: `Software\llama.cpp`
 /// is llama.cpp's own now, and a 2.4 install is removed by llama.cpp's MSI
-/// (with 2.4's own stopper) before the framework's MSI runs. The 2.4
-/// executable's name may stay in its list (`OLD_PRODUCT_STOPPER`).
+/// (with 2.4's own stopper) before the framework's MSI runs.
 #[test]
 fn the_process_stopper_no_longer_reads_the_old_key() {
-    let stopper = read(OLD_PRODUCT_STOPPER);
+    let stopper = read(PROCESS_STOPPER);
     assert!(
         stopper.contains("private-ai-framework.wxs"),
         "msi-stop-processes.ps1 names its .wxs"

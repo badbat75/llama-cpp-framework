@@ -899,8 +899,53 @@ mod tests {
         assert!(names.contains(&"pai-config"), "{get}");
     }
 
+    /// The framework's MSI replaces only its own executables: the two a user
+    /// runs (`pai`, `pai-config`) are the stopper's, the two services
+    /// (`pai-manager`, `pai-bff`) the SCM's. llama-server is not in the
+    /// framework's `bin\` any more: it is llama.cpp's, in its own install
+    /// folder, run by the instance services, which the framework's
+    /// `pai-manager uninstall-services` and llama.cpp's own MSI stop. Nor is
+    /// release 2.4's configurator: llama.cpp's MSI removes a 2.4 install
+    /// before this one runs. So the stopper names exactly `pai` and
+    /// `pai-config`, and no line of its code names llama-server.
+    #[test]
+    fn the_process_stopper_stops_only_the_framework_s_user_programs() {
+        let stopper = read("installer/msi-stop-processes.ps1");
+        let get = stopper
+            .lines()
+            .find(|l| l.contains("Get-Process -Name"))
+            .expect("the stopper's Get-Process");
+        let names: Vec<&str> = get
+            .split("-Name")
+            .nth(1)
+            .and_then(|r| r.split("-ErrorAction").next())
+            .unwrap_or_default()
+            .split(',')
+            .map(|n| n.trim().trim_matches('\''))
+            .collect();
+        assert_eq!(names, ["pai", "pai-config"], "{get}");
+        let code: Vec<&str> = stopper
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect();
+        let code = code.join("\n");
+        assert!(
+            !code.to_lowercase().contains("llama-server"),
+            "the stopper still looks for llama-server:\n{code}"
+        );
+        let header: Vec<&str> = stopper
+            .lines()
+            .take_while(|l| l.trim_start().starts_with('#'))
+            .collect();
+        let header = header.join("\n");
+        assert!(
+            !header.contains("and llama-server"),
+            "the header still says it stops llama-server:\n{header}"
+        );
+    }
+
     /// Already true, kept so: the process stopper stops the configurator
-    /// and llama-server, never the manager, whose service the SCM stops
+    /// and `pai`, never the manager, whose service the SCM stops
     /// (ServiceControl); and it stays immediate, before InstallValidate.
     #[test]
     fn the_process_stopper_leaves_the_manager_to_the_scm() {
