@@ -668,3 +668,87 @@ fn prerequisites_script_leaves_powershell_alone_under_minimal() {
         first_use + 1
     );
 }
+
+/// The body of a PowerShell function, from `function <name> {` to the next
+/// line that is a lone `}` at column 0.
+fn ps_function<'a>(script: &'a str, name: &str) -> &'a str {
+    let head = format!("function {name} {{");
+    let start = script
+        .find(&head)
+        .unwrap_or_else(|| panic!("{PREREQ}: no `{head}`"));
+    let end = script[start..]
+        .find("\n}")
+        .map(|i| start + i)
+        .unwrap_or_else(|| panic!("{PREREQ}: `{head}` never closes"));
+    &script[start..end]
+}
+
+/// WiX 7's `wix extension list -g` exits 2 with no output when no global
+/// extension is installed (a fresh runner, run 43645109145): `Install-Wix`
+/// reads that as no extensions and goes on to `extension add`, failing only
+/// on a non-zero exit WITH output (WIX7015, the EULA, first).
+#[test]
+fn prerequisites_script_reads_an_empty_wix_list_as_no_extensions() {
+    let script = read(PREREQ);
+    let body = ps_function(&script, "Install-Wix");
+    let pos = |needle: &str| {
+        body.find(needle)
+            .unwrap_or_else(|| panic!("{PREREQ}: Install-Wix has no `{needle}`"))
+    };
+    let list = pos("extension list -g");
+    let failed = pos("wix extension list failed");
+    let add = pos("extension add -g");
+    let empty = list
+        + body[list..failed]
+            .find("IsNullOrWhiteSpace($list)")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{PREREQ}: Install-Wix returns `wix extension list failed` on any non-zero exit; \
+                     an empty output (`[string]::IsNullOrWhiteSpace($list)`) must mean no extensions"
+                )
+            });
+    assert!(
+        list < empty && failed < add,
+        "{PREREQ}: Install-Wix out of order"
+    );
+}
+
+/// The EULA step accepts the EULA (checked), then only prints `wix --version`
+/// and the global extension list for the log: the list exits 2 when empty,
+/// so neither its exit code nor the step's last exit code may fail the job
+/// (the runner's pwsh wrapper exits with `$LASTEXITCODE`: the step ends with
+/// `exit 0`).
+#[test]
+fn installers_windows_eula_step_prints_the_wix_list_without_failing_on_it() {
+    let text = workflow();
+    let start = after(&text, 0, "name: Accept the WiX EULA", "the WiX EULA step");
+    let end = text[start + 1..]
+        .find("- name:")
+        .map(|i| start + 1 + i)
+        .unwrap_or(text.len());
+    let step = &text[start..end];
+    let accept = step
+        .find("wix eula accept wix7")
+        .expect("the EULA step no longer accepts the EULA");
+    assert!(
+        step[accept..].contains("throw \"wix eula accept failed"),
+        "the EULA acceptance is no longer checked"
+    );
+    assert!(
+        step.contains("wix --version"),
+        "the EULA step does not print `wix --version`"
+    );
+    let list = step
+        .find("wix extension list -g")
+        .expect("the EULA step does not print `wix extension list -g`");
+    assert!(
+        !step[list..].contains("throw"),
+        "the EULA step throws after `wix extension list -g`: it exits 2 when no extension is installed"
+    );
+    let last = step
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or_default();
+    assert_eq!(last, "exit 0", "the EULA step does not end with `exit 0`");
+}

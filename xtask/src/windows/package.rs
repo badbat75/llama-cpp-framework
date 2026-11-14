@@ -324,15 +324,16 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
         String::from_utf8_lossy(&list.stdout),
         String::from_utf8_lossy(&list.stderr)
     );
-    if !list.status.success() {
-        if list_text.contains("WIX7015") {
-            bail!(
-                "WiX {wix_version} needs its EULA accepted once per user before it builds anything. Read it (https://opensourcemaintenancefee.org), then run: wix eula accept {}",
-                pin.eula_id
-            );
+    let list_text = match msi::wix_extension_list(list.status.success(), &list_text) {
+        msi::WixExtensionList::Listed(text) => text,
+        msi::WixExtensionList::EulaNeeded => bail!(
+            "WiX {wix_version} needs its EULA accepted once per user before it builds anything. Read it (https://opensourcemaintenancefee.org), then run: wix eula accept {}",
+            pin.eula_id
+        ),
+        msi::WixExtensionList::Failed(text) => {
+            bail!("wix extension list failed: {}", text.trim())
         }
-        bail!("wix extension list failed: {}", list_text.trim());
-    }
+    };
     for ext in &pin.extensions {
         let want = format!("{ext} {wix_version}");
         let present = list_text.lines().any(|l| {

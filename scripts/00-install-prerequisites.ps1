@@ -486,7 +486,8 @@ function Install-Wix {
     if (@($env:PATH -split ';') -notcontains $toolsDir) { $env:PATH = "$toolsDir;$env:PATH" }
     # Any command but --version doubles as the EULA check (WIX7015 until accepted).
     $list = & $wixExe extension list -g 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
+    # WiX 7 exits non-zero with no output when no global extension is installed: no extensions, add them.
+    if ($LASTEXITCODE -ne 0 -and -not [string]::IsNullOrWhiteSpace($list)) {
         if ($list -match 'WIX7015') {
             return "EULA not accepted: read https://opensourcemaintenancefee.org, then run: wix eula accept $($wixPin.EulaId) (and re-run this script for the extensions)"
         }

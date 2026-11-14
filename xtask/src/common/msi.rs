@@ -211,6 +211,33 @@ pub fn removal_args(product: Product, product_code: &str) -> Vec<String> {
     args
 }
 
+/// What `wix extension list -g` answered, read from its exit status and its
+/// output (stdout and stderr together).
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, PartialEq)]
+pub enum WixExtensionList {
+    /// WIX7015: WiX v7+ builds nothing until `wix eula accept <id>`.
+    EulaNeeded,
+    /// The global extensions, one per line; empty when none is installed.
+    Listed(String),
+    /// Any other failure, with what WiX printed.
+    Failed(String),
+}
+
+/// Reads `wix extension list -g`: WiX 7 exits non-zero with no output when
+/// no global extension is installed (a fresh runner), which is an empty
+/// list, not a failure.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn wix_extension_list(success: bool, text: &str) -> WixExtensionList {
+    if success || text.trim().is_empty() {
+        WixExtensionList::Listed(text.to_string())
+    } else if text.contains("WIX7015") {
+        WixExtensionList::EulaNeeded
+    } else {
+        WixExtensionList::Failed(text.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CARGO_EXES;
@@ -1429,4 +1456,73 @@ mod tests {
     mod engine_lifecycle;
     mod minimal;
     mod two_installers;
+
+    /// The real output of WiX 7.0.1 before `wix eula accept wix7`.
+    #[test]
+    fn wix_extension_list_failure_with_wix7015_needs_the_eula() {
+        use super::{wix_extension_list, WixExtensionList};
+        let text = "wix.exe : error WIX7015: You must accept the Open Source Maintenance Fee EULA to use WiX Toolset v7.\n";
+        assert_eq!(
+            wix_extension_list(false, text),
+            WixExtensionList::EulaNeeded
+        );
+    }
+
+    /// A fresh runner: no global extension, exit 2 and nothing printed. The
+    /// extensions must then be added, not the package refused.
+    #[test]
+    fn wix_extension_list_failure_with_no_output_is_an_empty_list() {
+        use super::{wix_extension_list, WixExtensionList};
+        for text in ["", "\r\n", "  \n\t"] {
+            match wix_extension_list(false, text) {
+                WixExtensionList::Listed(list) => assert!(
+                    list.trim().is_empty(),
+                    "{text:?}: listed {list:?}, expected no extension"
+                ),
+                other => panic!("{text:?}: {other:?}, expected an empty list"),
+            }
+        }
+    }
+
+    #[test]
+    fn wix_extension_list_failure_with_other_output_fails_with_that_text() {
+        use super::{wix_extension_list, WixExtensionList};
+        let text = "wix.exe : error WIX0001: something else broke\n";
+        match wix_extension_list(false, text) {
+            WixExtensionList::Failed(msg) => assert!(
+                msg.contains("WIX0001: something else broke"),
+                "the failure drops WiX's text: {msg:?}"
+            ),
+            other => panic!("{other:?}, expected a failure"),
+        }
+    }
+
+    #[test]
+    fn wix_extension_list_success_is_the_list() {
+        use super::{wix_extension_list, WixExtensionList};
+        let text = "WixToolset.UI.wixext 7.0.1\nWixToolset.Util.wixext 7.0.1\n";
+        match wix_extension_list(true, text) {
+            WixExtensionList::Listed(list) => assert!(
+                list.contains("WixToolset.UI.wixext 7.0.1")
+                    && list.contains("WixToolset.Util.wixext 7.0.1"),
+                "lines lost: {list:?}"
+            ),
+            other => panic!("{other:?}, expected the list"),
+        }
+    }
+
+    /// `xtask package` reads the list through `wix_extension_list`, the
+    /// tested decision, instead of its own check on the exit status.
+    #[test]
+    fn windows_package_reads_the_wix_list_through_the_tested_function() {
+        let src = read("xtask/src/windows/package.rs");
+        assert!(
+            src.contains("wix_extension_list("),
+            "xtask/src/windows/package.rs does not call msi::wix_extension_list"
+        );
+        assert!(
+            !src.contains("contains(\"WIX7015\")"),
+            "xtask/src/windows/package.rs still checks WIX7015 itself"
+        );
+    }
 }

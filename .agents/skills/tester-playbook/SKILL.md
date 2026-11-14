@@ -485,3 +485,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - xtask's names lint (`names_lint::xtask_code_names_the_new_executable_tree_and_variable`) also refuses
   `/opt/llama.cpp` in an xtask test literal, even in a workflow needle: run `cargo test -p xtask` whole,
   not just your filter, and split it in a const (`concat!("/opt/llama", ".cpp/bin/...")`).
+- A GitHub Actions `pwsh` step ends with the last native command's `$LASTEXITCODE`, even without a `throw`:
+  the runner prepends `$ErrorActionPreference = 'stop'` and appends
+  `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`. A step that only prints a
+  command allowed to fail must end with `exit 0`, so pin that line too. Source: "Exit codes and error action
+  preference" in https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+  (checked 2026-11-14).
