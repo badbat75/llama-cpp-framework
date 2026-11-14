@@ -16,3 +16,14 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   bff still returns `unavailable`, `not-authorized` and `failed` until slice 6 moves them.
 - `pai-config` (Slint, `crates/config/`) is the reference for what each task looks like today; its
   texts are in `crates/core/strings/en_US.toml`.
+- To see a slice rendered before the bff has its routes: `npm --prefix fe run build`, copy `fe/dist`
+  to the scratchpad and add the API replies as static files (`api/session`, `api/version`,
+  `api/instances/index.html` since `instances` is also a folder, `api/instances/<id>/server`), served
+  on 127.0.0.1 by a small Python server. Firefox here is a snap: its `--profile` and screenshot paths
+  must be under `~/snap/firefox/common/` (it cannot see `/tmp`), and deleting that folder afterwards
+  may be refused by the permission check: tell the user. `--headless --screenshot` shoots at the load
+  event, before the fetches answer: add to the copied `index.html` an `<img>` the server answers after
+  2 s. Dark mode: `user.js` with `ui.systemUsesDarkTheme` 1. Clicks and focus cannot be driven this
+  way; those stay read from the code.
+- jsdom applies no CSS, so the review checks specificity by eye: `input[type='text']` (0,1,1) with
+  `font: inherit` beats a class such as `.mono` (0,1,0).
