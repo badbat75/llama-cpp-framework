@@ -329,6 +329,8 @@ Lessons only: the rules are in `AGENTS.md`.
   fake `ManagerClient` (`tests/instances.rs`); every request under `tokio::time::timeout` (tokio `time`
   is a bff dev-dependency). A fake that sleeps runs in `spawn_blocking`, which the test runtime waits
   for at its end (tokio's `spawn_blocking` docs), so keep the sleep short (2 s against a 200 ms timeout).
+  `cargo test -p pai-bff --test a --test b` stops at the first red test binary: run each `--test`
+  on its own to see every red.
 - In fe tests, read a new string through a `text(key)` helper that throws when the key is missing from
   `en_US.json`: the red names the missing string instead of failing on `findByText(undefined)`. The
   fe's `strings.test.ts` sees a key only as a literal `t('key'` (a template key like
@@ -505,3 +507,18 @@ Lessons only: the rules are in `AGENTS.md`.
   `root.namespaces().any(|ns| ns.name() == Some("util") && ns.uri() == ..)`. Util attribute tables:
   docs.firegiant.com/wix/schema/util/<element>/ (past offset 100000). A per-step workflow pin uses
   `steps()` in `xtask/src/ci_windows.rs` (each `      - ` entry with its lines; step keys at 8 spaces).
+- llama-server and a missing `LLAMA_CACHE`: the cached-model listing returns empty when the folder does
+  not exist (`common/hf-cache.cpp`, `if (!fs::exists(cache_path))`) and a download creates it
+  (`fs_get_cache_file` -> `common_create_directories`); only `--slot-save-path` must exist before the
+  start. The configurator's scans skip a missing folder (`model_scan.rs` `read_dir` else continue) and
+  its downloads create their parents (`hf.rs`).
+- A pure unit test whose expectation is a `paths::` default (the user's `<data root>/state`) races
+  `data_root_e2e`, which moves the root on another thread: assert its shape (`ends_with("state")`, not
+  the instance folder) and leave the exact path to an e2e phase.
+- Web UI (`fe/`, from the web UI session's tester): the nav, the Overview and the instance page each read
+  `/api/instances`, so a `deferred()` whose one `Response` is given to every read breaks the second
+  `json()` (a body reads once): gate the reads instead, `() => gate.promise.then(() => reply(..))`. The
+  focus move to the `h1` happens on a route change, not on the first render: `navigate()` first. A hint
+  under `hidden` is still in its field's `textContent`: never assert a unit or label with
+  `textContent.toContain`. To check text in JSX, parse with `ts.createSourceFile(..., ScriptKind.TSX)`,
+  not a regex.

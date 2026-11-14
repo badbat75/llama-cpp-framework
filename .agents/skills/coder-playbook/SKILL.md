@@ -46,6 +46,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - Each crate's tests that redirect the data tree (`paths::redirect_for_tests`, which sets
   `PRIVATE_AI_DATA_ROOT`) run as phases of ONE `#[test]` in its `src/tests/mod.rs` (`data_root_e2e`
   in core and manager, the UI test in config).
+  A phase fn (`#[cfg(test)] pub(crate) fn ..._e2e`) placed after `mod tests` fails clippy's
+  `items_after_test_module` under `-D warnings`: it goes above the test module.
 - The names lints (`config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) scan code lines for
   the old project names; whole-line comments are skipped, so a test that must name an old name spells
   it in halves with `concat!`. xtask's lint also scans comments for the old package name: only
@@ -286,3 +288,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - Some tests pin a caller's source text (`server_control::tests::app_save_body` wants a literal
   `render_for(` in pai-app's `server_cfg::save`): grep the tests for a function's name before
   renaming or swapping the call, even when the brief suggests it.
+- fe CSS: `input[type='text']` (0,1,1) beats a bare class (0,1,0), so a class meant to restyle an input
+  needs `input.cls` too. `npm --prefix fe run` runs in `fe/`, where Prettier reads `fe/.prettierignore`
+  (default `--ignore-path` is `.gitignore` and `.prettierignore` in the cwd); it ignores the designer's
+  Markdown (`DESIGN.md`, `briefs/`), which no formatter touches.
