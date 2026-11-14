@@ -220,12 +220,16 @@ pub const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
 const ERROR_SERVICE_ALREADY_RUNNING: u32 = 1056;
 const ERROR_SERVICE_DOES_NOT_EXIST: u32 = 1060;
 const ERROR_SERVICE_NOT_ACTIVE: u32 = 1062;
+/// `dwWin32ExitCode` of a service not started since the last boot.
+const ERROR_SERVICE_NEVER_STARTED: u32 = 1077;
 
 /// The core's state of a service from its `SERVICE_STATUS`.
 pub fn unit_state(current_state: u32, win32_exit_code: u32, service_exit_code: u32) -> UnitState {
     match current_state {
         SERVICE_STOPPED => match (win32_exit_code, service_exit_code) {
             (0, _) | (ERROR_SERVICE_SPECIFIC_ERROR, 0) => UnitState::Inactive,
+            // Created but never started since the boot: nothing failed.
+            (ERROR_SERVICE_NEVER_STARTED, _) => UnitState::Inactive,
             _ => UnitState::Failed,
         },
         SERVICE_START_PENDING | SERVICE_CONTINUE_PENDING => UnitState::Activating,
@@ -945,6 +949,19 @@ mod tests {
         );
         assert_eq!(
             unit_state(STOPPED, ERROR_SERVICE_SPECIFIC_ERROR, 0),
+            UnitState::Inactive
+        );
+    }
+
+    /// The manager creates an instance's service at its start without
+    /// starting it; until a start since the last boot, the SCM reports it
+    /// stopped with ERROR_SERVICE_NEVER_STARTED (1077, "No attempts to start
+    /// the service have been made since the last boot"): nothing failed.
+    #[test]
+    fn a_service_never_started_is_inactive() {
+        const ERROR_SERVICE_NEVER_STARTED: u32 = 1077;
+        assert_eq!(
+            unit_state(STOPPED, ERROR_SERVICE_NEVER_STARTED, 0),
             UnitState::Inactive
         );
     }

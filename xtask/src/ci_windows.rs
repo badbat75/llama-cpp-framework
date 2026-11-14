@@ -811,3 +811,37 @@ fn installers_windows_eula_step_prints_the_wix_list_without_failing_on_it() {
         .unwrap_or_default();
     assert_eq!(last, "exit 0", "the EULA step does not end with `exit 0`");
 }
+
+/// The check step reads `/api/instances` (items `{id, engine, state}`) and
+/// throws unless it lists exactly the instance `default`, engine
+/// `llama.cpp`, state `inactive`: a fresh install starts no instance, and a
+/// status of 200 alone let a never-started instance reported as `failed`
+/// (SCM exit code 1077 misread) pass.
+#[test]
+fn installers_windows_checks_the_fresh_instance_is_default_and_inactive() {
+    let text = workflow();
+    let step = steps(&text)
+        .into_iter()
+        .find(|s| s[0].contains("Check the installed products"))
+        .unwrap_or_else(|| panic!("{WORKFLOW}: no `Check the installed products` step"))
+        .join("\n");
+    let from = after(&step, 0, "/api/instances", "the /api/instances request");
+    let rest = &step[from..];
+    let parse = after(rest, 0, "ConvertFrom-Json", "the reply parsed as JSON");
+    let checks = &rest[parse..];
+    for needle in [
+        ".Count",
+        ".id",
+        "'default'",
+        ".engine",
+        "'llama.cpp'",
+        ".state",
+        "'inactive'",
+        "throw",
+    ] {
+        assert!(
+            checks.contains(needle),
+            "{WORKFLOW}: the /api/instances reply is not checked for `{needle}` after ConvertFrom-Json"
+        );
+    }
+}

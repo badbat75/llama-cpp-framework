@@ -154,6 +154,8 @@ jobs:
           $instances = Invoke-WebRequest 'http://127.0.0.1:8590/api/instances' -UseBasicParsing -SkipHttpErrorCheck
           if ($instances.StatusCode -ne 200) { throw "/api/instances answered $($instances.StatusCode): $($instances.Content)" }
           $instances.Content
+          $list = @($instances.Content | ConvertFrom-Json)
+          if ($list.Count -ne 1 -or $list[0].id -ne 'default' -or $list[0].engine -ne 'llama.cpp' -or $list[0].state -ne 'inactive') { throw "/api/instances is not the one inactive llama.cpp instance 'default': $($instances.Content)" }
 
       - name: Repair both (test plan step 7)
         timeout-minutes: 20

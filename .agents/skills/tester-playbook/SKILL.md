@@ -534,3 +534,9 @@ Lessons only: the rules are in `AGENTS.md`.
   skipped with "Failed to resolve user", the other lines still apply, exit 65; so `|| true` is needed
   and the second run after the user exists does the work. Every new header-free or engine-headed file
   goes on the exclusion list of `the_system_files_and_scripts_name_the_core_package`.
+- A Windows service's `SERVICE_STATUS` is not only what the service itself reported: one never started
+  since the last boot reads `SERVICE_STOPPED` with `dwWin32ExitCode` 1077 (ERROR_SERVICE_NEVER_STARTED),
+  filled in by the SCM. Pin states the SCM produces on its own, not only the ones `run-instance` reports.
+- The workflow tests in `xtask/src/ci_windows.rs` only match text: when a step checks a reply's fields,
+  confirm the names and values against their producer by hand (`/api/instances` in
+  `crates/bff/src/lib.rs`, the state names in `crates/core/src/client.rs`), since nothing runs the step.
