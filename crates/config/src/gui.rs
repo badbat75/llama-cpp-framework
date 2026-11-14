@@ -741,7 +741,15 @@ fn string_model(items: Vec<String>) -> ModelRc<SharedString> {
 
 fn load_server_into_ui(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let form = server_form::config_to_form(&server_cfg::load());
+    let instance_dirs = crate::server_control::dirs_left_unset(
+        crate::server_control::backend().kind(),
+        crate::server_control::Os::current(),
+    )
+    .then(|| server_form::InstanceDirs {
+        models: paths::instance_models_dir(),
+        state: paths::instance_state_dir(),
+    });
+    let form = server_form::config_to_form_for(&server_cfg::load(), instance_dirs.as_ref());
     populate_bind_options(app, form.hostname.as_str());
     refresh_server_snapshot(app);
     // Set form + base together so `server_dirty` reads false right after load.

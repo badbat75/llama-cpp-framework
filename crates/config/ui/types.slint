@@ -266,6 +266,8 @@ export struct ServerForm {
     models_memory_margin: string,
     models_memory_margin_default: bool,
     models_dir: string,
+    // The placeholder of the models folder field (server_form::config_to_form_for).
+    models_dir_placeholder: string,
     // ROCBLAS_USE_HIPBLASLT (the SDK tuning card's ROCm half), a TRI-state
     // carried as a string exactly like PresetForm's `flash_attn`: "default"
     // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
@@ -305,6 +307,8 @@ export struct ServerForm {
     // the toggle is switched on rather than after the disk fills.
     save_state_on_shutdown: bool,
     state_dir: string,
+    // The placeholder of the snapshot folder field (server_form::config_to_form_for).
+    state_dir_placeholder: string,
     // Integration base URL (server.ini OpencodeBaseUrl). When base_url_default is
     // true, the field shows the auto-derived URL and nothing is written to server.ini.
     opencode_base_url: string,

@@ -130,6 +130,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
+        models_dir_placeholder: crate::strings::t("models-folder-placeholder").into(),
         // Driven by the tensor-placement table, which reads and rewrites this one
         // string; no second copy of the rules exists (see src/tensor_override.rs).
         // The SDK tuning card's ROCm knob: a TRI-state through the same helper
@@ -163,6 +164,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // where the per-model dumps would land before turning the toggle on.
         save_state_on_shutdown: cfg.save_state_on_shutdown_or_default(),
         state_dir: cfg.state_dir_or_default().into(),
+        state_dir_placeholder: crate::strings::t("snapshot-folder-placeholder").into(),
         // Base URL: when unset, show auto-derived and check the default box.
         opencode_base_url: cfg
             .opencode_base_url
@@ -174,6 +176,46 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         opencode_api_key: cfg.opencode_api_key.clone().unwrap_or_default().into(),
         api_key_nokey: cfg.opencode_api_key.is_none(),
     }
+}
+
+/// The instances' default folders (`paths::instance_models_dir`,
+/// `paths::instance_state_dir`), named by the hints of the blank ModelsDir and
+/// StateDir fields where a save leaves them unset
+/// (`server_control::dirs_left_unset`).
+pub struct InstanceDirs {
+    pub models: std::path::PathBuf,
+    pub state: std::path::PathBuf,
+}
+
+/// `config_to_form`, with `instance_dirs` where a save leaves an unset
+/// ModelsDir and StateDir unset: each unset field then stays blank, its
+/// placeholder naming the instance default.
+pub fn config_to_form_for(
+    cfg: &server_cfg::ServerConfig,
+    instance_dirs: Option<&InstanceDirs>,
+) -> ServerForm {
+    let mut form = config_to_form(cfg);
+    let Some(dirs) = instance_dirs else {
+        return form;
+    };
+    let unset = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+    if unset(&cfg.models_dir) {
+        form.models_dir = SharedString::default();
+    }
+    if unset(&cfg.state_dir) {
+        form.state_dir = SharedString::default();
+    }
+    form.models_dir_placeholder = crate::strings::fill(
+        "models-folder-instance-placeholder",
+        &[&dirs.models.display()],
+    )
+    .into();
+    form.state_dir_placeholder = crate::strings::fill(
+        "snapshot-folder-instance-placeholder",
+        &[&dirs.state.display()],
+    )
+    .into();
+    form
 }
 
 /// The editable form → `ServerConfig`. The `*_default` checkbox decides
@@ -436,6 +478,207 @@ mod tests {
         let cfg = form_to_config(&form);
         assert_eq!(cfg.threads, None);
         assert_eq!(cfg.threads_batch, None);
+    }
+
+    // ── The two folders under the Windows manager ──────────────────────
+    // A save there leaves an unset ModelsDir and StateDir unset
+    // (`server_control::dirs_left_unset`, `server_cfg::render_for`), so the
+    // instance uses the engine's folders under %ProgramData%\llama.cpp,
+    // which its account can read, not the saving user's ~\.llama.cpp.
+
+    /// The keys of the two hints, each with `{0}` for the folder.
+    const MODELS_HINT_KEY: &str = "models-folder-instance-placeholder";
+    const STATE_HINT_KEY: &str = "snapshot-folder-instance-placeholder";
+
+    /// The instance defaults as `paths::` gives them on Windows; passed in,
+    /// so no unit test reads `paths::` (the e2e redirects it on another thread).
+    fn windows_instance_dirs() -> InstanceDirs {
+        InstanceDirs {
+            // Split, so the names lint does not read the engine's folder as
+            // the old per-user tree.
+            models: concat!(r"C:\ProgramData\llama", r".cpp\models").into(),
+            state: concat!(r"C:\ProgramData\llama", r".cpp\state").into(),
+        }
+    }
+
+    /// Both hints are in the strings file, each with the folder's slot: the
+    /// path stays in the code.
+    #[test]
+    fn the_instance_folder_hints_are_in_the_strings_file() {
+        for key in [MODELS_HINT_KEY, STATE_HINT_KEY] {
+            let text = crate::strings::t(key);
+            assert_ne!(text, key, "{key} is not in en_US.toml");
+            assert!(
+                text.contains("{0}"),
+                "{key} has no {{0}} for the folder: {text}"
+            );
+        }
+    }
+
+    /// Unset (or blank) stays blank in the form, so the user sees nothing
+    /// was chosen; the placeholder names the folder the instance will use.
+    #[test]
+    fn under_the_windows_manager_unset_folders_show_blank_with_the_instance_default() {
+        let dirs = windows_instance_dirs();
+        for cfg in [
+            ServerConfig::default(),
+            ServerConfig {
+                models_dir: Some("  ".into()),
+                state_dir: Some(String::new()),
+                ..ServerConfig::default()
+            },
+        ] {
+            let form = config_to_form_for(&cfg, Some(&dirs));
+            assert_eq!(form.models_dir.as_str(), "", "{cfg:?}");
+            assert_eq!(form.state_dir.as_str(), "", "{cfg:?}");
+            assert_eq!(
+                form.models_dir_placeholder.as_str(),
+                crate::strings::fill(MODELS_HINT_KEY, &[&dirs.models.display()])
+            );
+            assert_eq!(
+                form.state_dir_placeholder.as_str(),
+                crate::strings::fill(STATE_HINT_KEY, &[&dirs.state.display()])
+            );
+            assert!(
+                form.models_dir_placeholder
+                    .contains(&*dirs.models.to_string_lossy()),
+                "{}",
+                form.models_dir_placeholder
+            );
+            assert!(
+                form.state_dir_placeholder
+                    .contains(&*dirs.state.to_string_lossy()),
+                "{}",
+                form.state_dir_placeholder
+            );
+        }
+    }
+
+    /// The whole Save of an untouched form: blank fields map back to unset,
+    /// and the manager's file then names neither folder (only their
+    /// commented hints), so nothing of the user's home reaches it.
+    #[test]
+    fn under_the_windows_manager_blank_folders_save_as_unset() {
+        let loaded = ServerConfig {
+            port: Some(8100),
+            ..ServerConfig::default()
+        };
+        let saved = form_to_config(&config_to_form_for(&loaded, Some(&windows_instance_dirs())));
+        assert_eq!(saved.models_dir, None);
+        assert_eq!(saved.state_dir, None);
+        assert_eq!(saved.port, Some(8100));
+        let text = server_cfg::render_for(&saved, true);
+        for key in ["ModelsDir", "StateDir"] {
+            assert!(
+                !text.lines().any(|l| l.trim_start().starts_with(key)),
+                "{key} written:\n{text}"
+            );
+        }
+        assert!(
+            !text.contains(".llama.cpp\\") && !text.contains("/.llama.cpp"),
+            "{text}"
+        );
+    }
+
+    /// A folder the user typed (or the file names) is shown and written as
+    /// it is, and the rest of the form is what `config_to_form` gives.
+    #[test]
+    fn under_the_windows_manager_a_chosen_folder_is_shown_and_kept() {
+        let cfg = ServerConfig {
+            port: Some(9090),
+            models_dir: Some(r"E:\models".into()),
+            save_state_on_shutdown: Some(true),
+            state_dir: Some(r"E:\llama-state".into()),
+            ..ServerConfig::default()
+        };
+        let dirs = windows_instance_dirs();
+        let form = config_to_form_for(&cfg, Some(&dirs));
+        assert_eq!(form.models_dir.as_str(), r"E:\models");
+        assert_eq!(form.state_dir.as_str(), r"E:\llama-state");
+        // Cleared, the field would show where the instance goes instead.
+        assert!(form
+            .models_dir_placeholder
+            .contains(&*dirs.models.to_string_lossy()));
+        assert!(form
+            .state_dir_placeholder
+            .contains(&*dirs.state.to_string_lossy()));
+        assert_eq!(form_to_config(&form), form_to_config(&config_to_form(&cfg)));
+        assert_eq!(
+            form_to_config(&form).models_dir.as_deref(),
+            Some(r"E:\models")
+        );
+        assert_eq!(
+            form_to_config(&form).state_dir.as_deref(),
+            Some(r"E:\llama-state")
+        );
+
+        // Typing a folder into the blank field writes that folder.
+        let mut blank =
+            config_to_form_for(&ServerConfig::default(), Some(&windows_instance_dirs()));
+        blank.models_dir = r"D:\llm".into();
+        assert_eq!(
+            form_to_config(&blank).models_dir.as_deref(),
+            Some(r"D:\llm")
+        );
+        assert_eq!(form_to_config(&blank).state_dir, None);
+    }
+
+    /// Elsewhere (Linux under its manager, macOS) nothing changes: the form
+    /// is `config_to_form`'s, with the general hints of the two fields.
+    #[test]
+    fn elsewhere_the_form_is_unchanged_with_the_general_hints() {
+        let cfg = ServerConfig {
+            models_dir: Some("/home/u/.llama.cpp".into()),
+            state_dir: Some("/home/u/.local/share/private-ai/state".into()),
+            ..ServerConfig::default()
+        };
+        let form = config_to_form_for(&cfg, None);
+        assert_eq!(form, config_to_form(&cfg));
+        assert_eq!(form.models_dir.as_str(), "/home/u/.llama.cpp");
+        assert_eq!(
+            form.models_dir_placeholder.as_str(),
+            crate::strings::t("models-folder-placeholder")
+        );
+        assert_eq!(
+            form.state_dir_placeholder.as_str(),
+            crate::strings::t("snapshot-folder-placeholder")
+        );
+    }
+
+    /// The code of `gui.rs`'s `load_server_into_ui`, the one place the
+    /// Server tab is filled from the file.
+    fn load_server_into_ui_body() -> String {
+        let code = include_str!("gui.rs");
+        let start = code
+            .find("fn load_server_into_ui(")
+            .expect("fn load_server_into_ui");
+        let rest = &code[start..];
+        rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+    }
+
+    /// The GUI fills the form with the instance defaults exactly where a
+    /// save leaves the folders unset, for the real backend and OS (the same
+    /// choice `server_cfg::save` makes). The Windows branch only
+    /// type-checks on Linux, hence a check on the text.
+    #[test]
+    fn the_gui_fills_the_form_for_the_backend_and_os() {
+        let body = load_server_into_ui_body();
+        for want in [
+            "config_to_form_for(",
+            "dirs_left_unset(",
+            "Os::current()",
+            "instance_models_dir()",
+            "instance_state_dir()",
+        ] {
+            assert!(
+                body.contains(want),
+                "load_server_into_ui has no {want}:\n{body}"
+            );
+        }
+        assert!(
+            !include_str!("gui.rs").contains("server_form::config_to_form(&"),
+            "gui.rs still fills a form with config_to_form"
+        );
     }
 
     /// form_to_config strips trailing /v1 and / from the Base URL so the

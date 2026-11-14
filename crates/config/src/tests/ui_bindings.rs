@@ -232,6 +232,39 @@ fn set_server_form(st: &AppState, mutate: impl FnOnce(&mut ServerForm)) {
     st.set_server_form(form);
 }
 
+/// The models and snapshot folder fields show the placeholder the form
+/// carries: under the Windows manager it names the instance's default
+/// folder, so it cannot be a fixed text of the page.
+fn assert_folder_placeholders_come_from_the_form(app: &AppWindow, st: &AppState) {
+    // The Server page is materialized only while its tab is shown.
+    let tab_before = st.get_current_tab();
+    st.set_current_tab(0);
+    let before = st.get_server_form();
+    for (models, state) in [
+        (
+            r"C:\ProgramData\engine\models (probe)",
+            r"C:\ProgramData\engine\state (probe)",
+        ),
+        ("models hint probe", "state hint probe"),
+    ] {
+        set_server_form(st, |f| {
+            f.models_dir_placeholder = models.into();
+            f.state_dir_placeholder = state.into();
+        });
+        for want in [models, state] {
+            let found = itest::ElementQuery::from_root(app)
+                .match_descendants()
+                .match_predicate(move |e| e.accessible_placeholder_text().as_deref() == Some(want))
+                .find_all();
+            // The query yields a match once per ancestor it descends
+            // through, so the count is not the number of fields.
+            assert!(!found.is_empty(), "no field shows the placeholder {want:?}");
+        }
+    }
+    st.set_server_form(before);
+    st.set_current_tab(tab_before);
+}
+
 /// The "a wrapped value escapes its card" regression (shipped in v1.11.2, fixed
 /// in v1.11.3): a long `Draft` value in the Models tab's "Model info" card was
 /// painted OUTSIDE the card's rounded rectangle, over the heading of the card
@@ -573,6 +606,9 @@ fn editable_widgets_track_model_after_edit() {
 
     // ── Label columns (components.slint `LabelColumn`) ───────────────────
     assert_label_columns_are_computed(&app, &st);
+
+    // ── The folder fields' hints (server_form::config_to_form_for) ───────
+    assert_folder_placeholders_come_from_the_form(&app, &st);
 
     // ── E2E save/revert/delete flow (src/tests/save_flow.rs) ─────────────
     // Shares this single #[test] and window: the testing backend is a

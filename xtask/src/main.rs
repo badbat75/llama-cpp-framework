@@ -73,10 +73,10 @@ enum Phase {
         #[arg(value_enum)]
         module: Option<Module>,
     },
-    /// Package the build in ./dist/: a .deb and an .rpm on Linux, an MSI per
-    /// product on Windows, a .pkg on macOS.
+    /// Package the build in ./dist/: eight .deb and eight .rpm on Linux, an
+    /// MSI per product on Windows, five .pkg on macOS.
     Package {
-        /// The product to package (Linux and Windows; default: both). The
+        /// The product to package (every OS; default: both). The
         /// packages of the other one in ./dist/ are left as they are.
         #[arg(value_enum)]
         product: Option<Product>,

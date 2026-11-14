@@ -152,7 +152,7 @@ export component ServerPage inherits ScrollView {
                 hint: Strings.t("models-folder-hint");
                 LineEdit {
                     text <=> AppState.server_form.models_dir;
-                    placeholder-text: Strings.t("models-folder-placeholder");
+                    placeholder-text: AppState.server_form.models_dir_placeholder;
                 }
                 Button {
                     text: Strings.t("browse");
@@ -222,7 +222,7 @@ export component ServerPage inherits ScrollView {
                 LineEdit {
                     text <=> AppState.server_form.state_dir;
                     enabled: AppState.server_form.save_state_on_shutdown;
-                    placeholder-text: Strings.t("snapshot-folder-placeholder");
+                    placeholder-text: AppState.server_form.state_dir_placeholder;
                 }
                 Button {
                     text: Strings.t("browse");

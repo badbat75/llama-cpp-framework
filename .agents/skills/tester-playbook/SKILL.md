@@ -438,3 +438,16 @@ Lessons only: the rules are in `AGENTS.md`.
   at the render covers `pai`, not the GUI's Save.
 - `Path::new(..)` is already a `&Path`: passing `&data_root` for one fails `cargo clippy --all-targets
   -D warnings` (needless_borrow) in the coder's lint run. Pass it bare.
+- A slint field's placeholder is read with `ElementHandle::accessible_placeholder_text()` over
+  `itest::ElementQuery::from_root(app).match_descendants().match_predicate(..).find_all()`: the query
+  yields one match per ancestor it descends through, so assert non-empty, never a count. Each page is an
+  `if current_tab == N`: set `st.set_current_tab(N)` in the phase (and put it back), or its widgets are
+  not in the tree.
+- pai-config's names lint also flags `llama.cpp\` inside a Windows path (`C:\ProgramData\llama.cpp\..`):
+  split it with `concat!(r"C:\ProgramData\llama", r".cpp\models")`.
+- Never `git stash` to compare with HEAD: other sessions edit the same tree (docs, fe/), and a stash
+  takes their work too. Run the one test on its own instead.
+- A throwaway git repo in a test (`xtask/src/common/version.rs` tests): run git with
+  `-c user.name=.. -c user.email=.. -c commit.gpgsign=false -c tag.gpgsign=false`,
+  `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so the user's signing or hooks never apply.
+  After a fallback is removed, grep its old output (`b0-`) for doc comments of callers still describing it.
