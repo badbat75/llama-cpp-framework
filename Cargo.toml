@@ -16,7 +16,7 @@ resolver = "2"
 # pai-manager, pai-bff, pai-config: `version.workspace = true`); xtask names
 # the packages after it (`version::framework`).
 [workspace.package]
-version = "2.4.0"
+version = "2.99.1"
 
 # Incremental compilation is OFF on purpose: Cargo garbage-collects the sessions
 # *inside* target\debug\incremental\<crate>-<hash>\ but never removes an obsolete

@@ -3517,7 +3517,7 @@ dependencies = [
 
 [[package]]
 name = "pai-app"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -3533,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "pai-bff"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "axum",
  "http-body-util",
@@ -3547,7 +3547,7 @@ dependencies = [
 
 [[package]]
 name = "pai-cli"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3559,7 +3559,7 @@ dependencies = [
 
 [[package]]
 name = "pai-config"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "anyhow",
  "i-slint-backend-testing",
@@ -3578,7 +3578,7 @@ dependencies = [
 
 [[package]]
 name = "pai-core"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "if-addrs",
  "serde_json",
@@ -3590,7 +3590,7 @@ dependencies = [
 
 [[package]]
 name = "pai-manager"
-version = "2.4.0"
+version = "2.99.1"
 dependencies = [
  "blocking",
  "pai-core",
