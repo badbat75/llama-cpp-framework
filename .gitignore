@@ -13,6 +13,10 @@ resources/node_modules/
 resources/package.json
 resources/package-lock.json
 
+# the web UI's npm packages; its build output, fe/dist, is already caught by
+# dist/ above (xtask build runs npm ci and npm run build in fe/)
+fe/node_modules/
+
 # the project skills live in .agents/skills (shared across harnesses);
 # .claude/skills is a symlink to it; .claude/agents holds the Claude Code
 # subagents, a symlink to .opencode/agents; settings.json sets the default agent;

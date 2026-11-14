@@ -526,7 +526,7 @@ proposals to review with the user):
    `pai-core` and `pai-app`: axum on `127.0.0.1:8590` by default (the address from its own config,
    nothing on the LAN yet), `GET /api/version` (the framework version) and a placeholder page at `/`
    embedded in the binary; tests bind an ephemeral port. It links no Slint (the lock-walk lint).
-2. **The `fe` scaffold.** `fe/` at the repo root: React + Vite in TypeScript, one page that reads
+2. (done) **The `fe` scaffold.** `fe/` at the repo root: React + Vite in TypeScript, one page that reads
    `/api/version`; `xtask build` builds it with npm (already a build requirement for the icon) and
    the bff embeds `fe/dist`; the bff's tests use a fixture when `fe/dist` is absent.
 3. **Packaging.** (Also decide a graceful stop on SIGTERM / service stop: the skeleton has none.) Linux: a `private-ai-bff.service` unit (its own system user or `private-ai`:

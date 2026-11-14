@@ -94,7 +94,7 @@ async fn version_answers_the_framework_version_as_json() {
     );
 }
 
-/// `GET /` is an HTML page (the placeholder until the web UI is embedded).
+/// `GET /` is an HTML page: the embedded web UI (`tests/fe.rs` checks which).
 #[tokio::test]
 async fn root_serves_an_html_page() {
     let r = send(Method::GET, "/").await;

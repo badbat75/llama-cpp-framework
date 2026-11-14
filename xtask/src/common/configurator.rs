@@ -18,8 +18,12 @@ use std::path::PathBuf;
 #[cfg_attr(not(unix), allow(dead_code))]
 pub const NEXT_TO_SERVER: &[&str] = &["pai-config", "pai"];
 
-/// Builds pai-config, pai and pai-manager in release mode and returns cargo's
-/// target dir.
+/// The npm commands `build` runs in `fe/` before cargo: a clean install from
+/// the committed lock, then Vite's build into `fe/dist`, which pai-bff embeds.
+pub const FE_STEPS: &[&[&str]] = &[&["ci"], &["run", "build"]];
+
+/// Builds the web UI, then pai-config, pai, pai-manager and pai-bff in release
+/// mode and returns cargo's target dir.
 /// `llama_cpp_dir` is the clone the architecture tables come from; `build_jobs` caps
 /// cargo (0 = cargo's default, all cores).
 pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
@@ -75,6 +79,15 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
         )?;
     }
 
+    // The web UI pai-bff embeds (its build script reads fe/dist), built
+    // first. npm is npm.cmd on Windows, hence the PATH lookup.
+    ui::head("Building the web UI (fe/)...");
+    let fe = repo.join("fe");
+    let npm = util::which("npm").context("npm not found: node + npm build the web UI in fe/")?;
+    for step in FE_STEPS {
+        run_cmd(cmd(&npm).current_dir(&fe).args(*step))?;
+    }
+
     // Its own target dir under build/<os>, never the other OS's. Cap cargo
     // at the C++ build's job count (0 = cargo's default, all cores).
     let target = util::build_root().join("cargo-target");
@@ -89,9 +102,13 @@ pub fn build(llama_cpp_dir: &str, build_jobs: u32) -> Result<PathBuf> {
         "pai-cli",
         "-p",
         "pai-manager",
+        "-p",
+        "pai-bff",
     ]);
     // Its build script generates the architecture tables from this clone.
     c.env("PRIVATE_AI_LLAMA_CPP_DIR", llama_cpp_dir);
+    // pai-bff embeds the web UI just built, never its test fixture.
+    c.env("PRIVATE_AI_FE_DIST", fe.join("dist"));
     if build_jobs > 0 {
         c.arg("--jobs").arg(build_jobs.to_string());
     }
@@ -133,7 +150,7 @@ pub fn set_mode(p: &Path, mode: u32) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::NEXT_TO_SERVER;
+    use super::{FE_STEPS, NEXT_TO_SERVER};
 
     /// This file's code without its tests, which spell the names they look for.
     fn production() -> String {
@@ -173,5 +190,64 @@ mod tests {
             code.matches("NEXT_TO_SERVER").count() >= 2,
             "install_next_to_server does not copy NEXT_TO_SERVER"
         );
+    }
+
+    /// The web UI is built before the bff that embeds it: a clean install
+    /// from the committed lock (`npm ci`, which refuses a lock out of step
+    /// with package.json), then Vite's build into `fe/dist`.
+    #[test]
+    fn the_web_ui_is_built_with_npm_ci_then_the_build_script() {
+        assert_eq!(FE_STEPS, [&["ci"][..], &["run", "build"][..]]);
+    }
+
+    /// The steps run in `fe/`, through the PATH's npm (npm.cmd on Windows),
+    /// and before cargo builds pai-bff, which embeds `fe/dist`.
+    #[test]
+    fn the_build_runs_the_web_ui_steps_in_fe_before_cargo() {
+        let code = production();
+        let steps = code
+            .find("in FE_STEPS")
+            .expect("build does not run FE_STEPS");
+        let fe_dir = code.find("join(\"fe\")").expect("no fe/ directory");
+        let cargo = code
+            .find("\"build\",\n        \"--release\"")
+            .expect("the cargo build");
+        assert!(steps < cargo, "FE_STEPS run after the cargo build");
+        assert!(fe_dir < cargo, "fe/ is named only after the cargo build");
+    }
+
+    /// `xtask build` compiles the bff with the other workspace programs.
+    #[test]
+    fn the_build_compiles_the_bff() {
+        let code = production();
+        let cargo = code
+            .find("\"build\",\n        \"--release\"")
+            .expect("the cargo build");
+        assert!(
+            code[cargo..].contains("\"pai-bff\""),
+            "common/configurator.rs does not build -p pai-bff"
+        );
+    }
+
+    /// The cargo build is told where the web UI is, absolute, so pai-bff
+    /// embeds `fe/dist` and never its test fixture by accident: the value is
+    /// `fe.join("dist")`, set after FE_STEPS and before cargo runs.
+    #[test]
+    fn the_bff_is_given_the_web_ui_it_embeds() {
+        let code = production();
+        let at = code
+            .find("\"PRIVATE_AI_FE_DIST\"")
+            .expect("build does not set PRIVATE_AI_FE_DIST");
+        let statement = &code[at..at + code[at..].find(';').expect("end of statement")];
+        assert!(
+            statement.contains("fe.join(\"dist\")")
+                || statement.contains("repo.join(\"fe\").join(\"dist\")"),
+            "PRIVATE_AI_FE_DIST is not <repo>/fe/dist: {statement}"
+        );
+        let steps = code.find("in FE_STEPS").expect("FE_STEPS");
+        let run = code.find("run_cmd(&mut c)").expect("the cargo run");
+        assert!(steps < at && at < run, "set outside FE_STEPS..cargo");
+        let let_fe = code.find("let fe = repo.join(\"fe\")").expect("let fe");
+        assert!(let_fe < at, "fe is not <repo>/fe");
     }
 }

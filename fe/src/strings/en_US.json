@@ -1,0 +1,4 @@
+{
+  "version-label": "Version {0}",
+  "version-unavailable": "The version could not be read from the service."
+}

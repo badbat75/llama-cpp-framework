@@ -284,3 +284,21 @@ Lessons only: the rules are in `AGENTS.md`.
   socket test reserves a free loopback port (bind `127.0.0.1:0`, drop), writes it into the config under
   the child's data root, polls a raw HTTP/1.1 GET over `TcpStream` with a deadline and kills the child
   in a `Drop` guard; no HTTP client dependency is needed.
+- The web UI (`fe/`, React + Vite + TS) is tested with Vitest in jsdom: `npm --prefix fe test`
+  (`vitest run`; `npm --prefix fe ci` first if `fe/node_modules` is missing). Globals are off, so a
+  test file calls Testing Library's `cleanup()` in its own `afterEach`; fetch is mocked with
+  `vi.stubGlobal('fetch', vi.fn(..))`. The machine's npm is Debian's 9.2.0: an install whose peer
+  ranges disagree (vitest 5.0.5 beside `@vitest/*` 5.1.0) dies with `Cannot read properties of null
+  (reading 'edgesOut')`; align the versions rather than add `--legacy-peer-deps`. Try installs in a
+  /tmp copy of `package.json` first.
+- The bff's embedded page is tested on whatever the build embedded (`fe/dist` or
+  `crates/bff/fe-fixture`), taken from `build.rs`'s `rustc-env` `PAI_BFF_FE_DIR` (`tests/fe.rs`
+  `embedded()`), never re-decided at run time: a `fe/dist` made after the build reruns nothing, so a
+  run-time check disagrees with the binary. Read its `index.html`, follow the
+  `/assets/...` it names and compare bytes, so the same tests hold with or without node. A real
+  `vite build` emits no CSS for the scaffold: only the fixture exercises `text/css`.
+- A build script cannot be run by a test: pin it on its text from `crates/<c>/tests/*.rs`, comment
+  lines dropped first (they explain what the code must not do), e.g. the arguments of every `watch(`
+  call in `crates/bff/build.rs` (`tests/build_script.rs`).
+- `option_env!("X").expect(..)` is denied by clippy (`option_env_unwrap`): for a variable a build
+  script exports, use `env!("X")` and accept the compile error as the red until it exists.

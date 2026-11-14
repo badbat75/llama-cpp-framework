@@ -161,3 +161,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `bff.rs` a CLI print path, so every message is a `cli.toml` key printed inside those two fns. Its
   `/api/version` body uses `serde_json`, a normal dependency (axum's `json` feature links it anyway).
   `pai_core::ini::parse_sections` does not strip a UTF-8 BOM (`trim` keeps U+FEFF): strip it first.
+- pai-bff embeds the web UI through `crates/bff/build.rs` (`PRIVATE_AI_FE_DIST`, absolute only, else
+  `fe/dist` with an `index.html`, else `fe-fixture`) into OUT_DIR's `fe_files.rs`. A missing
+  `rerun-if-changed` path makes cargo rerun the script and rebuild the crate at EVERY build (cargo's
+  `fingerprint/mod.rs`; the book is silent), so the fixture branch watches only existing paths
+  (`fe/src`, `fe/index.html`): a plain `npm run build` is embedded only once one of those changes.
+  The tests stay right meanwhile: build.rs exports the chosen dir as `PAI_BFF_FE_DIR`
+  (`cargo:rustc-env`, seen by the integration tests too), which `tests/fe.rs` reads instead of
+  deciding again. `fe/dist` is gitignored (`dist/`).
