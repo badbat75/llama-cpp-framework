@@ -622,3 +622,49 @@ fn installers_windows_points_the_dist_root_at_the_runner_temp() {
         );
     }
 }
+
+/// Under `-Minimal` the script never installs or upgrades
+/// `Microsoft.PowerShell`, the winget package of the shell running it: run
+/// 43644571519 upgraded the step's own pwsh.exe (7.6.9 to 7.6.10) and the
+/// step ended with exit code 1 right after. The entry stays in
+/// `$wingetPackages` for a local run and is dropped from it, under
+/// `$Minimal`, before the list is first read (the pre-state capture that
+/// splits it into the packages to install and to upgrade).
+#[test]
+fn prerequisites_script_leaves_powershell_alone_under_minimal() {
+    let script = read(PREREQ);
+    let lines: Vec<&str> = script.lines().collect();
+    let code = |l: &str| !l.trim_start().starts_with('#');
+    let list_start = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("$wingetPackages = @("))
+        .unwrap_or_else(|| panic!("{PREREQ}: no `$wingetPackages = @(` list"));
+    let list_end = list_start
+        + lines[list_start..]
+            .iter()
+            .position(|l| l.trim() == ")")
+            .unwrap_or_else(|| panic!("{PREREQ}: the `$wingetPackages` list never closes"));
+    assert!(
+        lines[list_start..list_end]
+            .iter()
+            .any(|l| code(l) && l.contains("'Microsoft.PowerShell'")),
+        "{PREREQ}: Microsoft.PowerShell left the winget list: a local run still installs it"
+    );
+    let first_use = list_end
+        + lines[list_end..]
+            .iter()
+            .position(|l| code(l) && l.contains("foreach ($p in $wingetPackages)"))
+            .unwrap_or_else(|| panic!("{PREREQ}: `$wingetPackages` is never iterated"));
+    let dropped = lines[list_end..first_use].iter().any(|l| {
+        code(l)
+            && l.contains("$Minimal")
+            && l.contains("$wingetPackages =")
+            && l.contains("Microsoft.PowerShell")
+    });
+    assert!(
+        dropped,
+        "{PREREQ}: under -Minimal Microsoft.PowerShell is not dropped from `$wingetPackages` \
+         before line {}: the script upgrades the pwsh.exe running it",
+        first_use + 1
+    );
+}

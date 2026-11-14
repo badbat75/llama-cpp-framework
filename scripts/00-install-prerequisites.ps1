@@ -38,8 +38,9 @@
 #
 # -Minimal installs the toolchain without the GPU SDKs: nothing is looked up at
 # AMD, NVIDIA or LunarG, for the CI-only build of `xtask configure --minimal`
-# (docs\build-compiling.md, "The minimal build"). WiX, OpenSSL, sccache and
-# Rust are handled as without it.
+# (docs\build-compiling.md, "The minimal build"). It also leaves PowerShell 7
+# alone: the script runs in pwsh.exe, and upgrading it under the running shell
+# kills the run. WiX, OpenSSL, sccache and Rust are handled as without it.
 #
 # Without winget (a CI runner image may lack it) the winget packages are
 # neither checked nor installed, and the run goes on with what is there.
@@ -113,6 +114,9 @@ $wingetPackages = @(
     @{ Id = $wixPin.DotNetSdkWingetId ; Name = '.NET SDK' }
     @{ Id = 'OpenJS.NodeJS.LTS'       ; Name = 'Node.js (LTS)' }
 )
+# Under -Minimal (CI) PowerShell 7 is the shell running this script: winget
+# upgrading it replaces pwsh.exe under the run, which then dies.
+if ($Minimal) { $wingetPackages = @($wingetPackages | Where-Object { $_.Id -ne 'Microsoft.PowerShell' }) }
 # No winget, no winget legs: the packages are left as they are, said once in
 # the state and once in the report.
 $haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
