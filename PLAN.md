@@ -501,18 +501,12 @@ macOS (no manager) and a future bff write what the GUI would refuse. The bff's s
 
 Slices, each test first, in order:
 
-1. **Left from slice 1 (done: under the Linux manager, as on Windows, an unset ModelsDir or StateDir is
-   not written and means `/var/lib/private-ai/.llama.cpp` and `.../.local/share/private-ai/state`)**:
-   whether the instance unit creates `/var/lib/private-ai/.llama.cpp` (its `StateDirectory=` lists only
-   `private-ai` and `private-ai/.local/share/private-ai`; llama-server may need the folder at start);
-   `pai server show` and `slot_state::restore_newest` still resolve an unset folder with the user's own
-   default under the manager. **Decided with the user on 2026-11-15:** on Linux the instance's default
-   models folder becomes a shared `/var/lib/llama.cpp/models`, as on Windows: everyone reads it, only
-   the service and root write it (the service user's home `/var/lib/private-ai` is 0750, so users saw
-   no models there); created at install (tmpfiles.d or the unit), `paths::instance_models_dir` and the
-   shipped `server@default.ini` follow; a normal user's download there is refused with the existing
-   message; no migration (pre-release). `slot_state::save_all` must not create or prune a folder from
-   the user's process under the manager.
+1. **Left from slice 1**: `slot_state::save_all` (the snapshot save before a stop) still creates and
+   prunes the user's own state folder under the manager, where the instance's account owns the state
+   folder: decide whether the configurator saves there at all. (Done: under the Linux manager, as on
+   Windows, an unset ModelsDir or StateDir is not written and means the instance folders; the shared
+   `/var/lib/llama.cpp/models` decided with the user on 2026-11-15, created by the engine's tmpfiles.d
+   entry; `pai server show` and the restore read the instance folders.)
 2. **The Server checks move below the GUI**: Port, ModelsMax (no negatives) and ModelsMemoryMargin
    ranges, log level 0..5, the base URL's trailing `/` and `/v1` stripped (`pai server set` can store
    `/v1` and get `/v1/v1`), threads at most the CPU count, a bind list mixing `0.0.0.0` with other

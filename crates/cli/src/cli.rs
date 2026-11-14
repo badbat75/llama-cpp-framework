@@ -819,7 +819,19 @@ fn run_bench_query(q: BenchQuery) -> Result<()> {
 /// (the label column fits the longest key, "RocblasUseHipblaslt:"). Pure so the
 /// test below can pin that every `ServerConfig` field is printed; a field added
 /// to the schema but forgotten here would otherwise be a silent omission.
-fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
+///
+/// For the backend `kind` on `os` (pure): an unset ModelsDir or
+/// StateDir prints the folder the instance really uses with "(default)":
+/// under the manager on Linux and Windows the instance's defaults
+/// `instance_models` and `instance_state` (`paths::instance_models_dir`,
+/// `paths::instance_state_dir`), not the user's own.
+fn show_lines_for(
+    cfg: &server_cfg::ServerConfig,
+    kind: server_control::Kind,
+    os: server_control::Os,
+    instance_models: &std::path::Path,
+    instance_state: &std::path::Path,
+) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
         out.push_str(&format!("  {label:<21} {value}\n"));
@@ -848,9 +860,14 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
         cfg.models_memory_margin
             .map_or_else(|| "off (default)".into(), |v| format!("{v} MiB")),
     );
+    let configured = |v: &Option<String>| v.as_deref().is_some_and(|s| !s.trim().is_empty());
     row(
         "ModelsDir:",
-        cfg.models_dir.clone().unwrap_or_else(|| "-".into()),
+        if server_control::dirs_left_unset(kind, os) && !configured(&cfg.models_dir) {
+            format!("{} (default)", instance_models.display())
+        } else {
+            cfg.models_dir.clone().unwrap_or_else(|| "-".into())
+        },
     );
     row(
         "RocblasUseHipblaslt:",
@@ -896,9 +913,12 @@ fn show_lines(cfg: &server_cfg::ServerConfig) -> String {
     );
     row(
         "StateDir:",
-        cfg.state_dir
-            .clone()
-            .unwrap_or_else(|| format!("{} (default)", cfg.state_dir_or_default())),
+        if configured(&cfg.state_dir) {
+            cfg.state_dir.clone().unwrap_or_default()
+        } else {
+            let dir = server_cfg::effective_state_dir(cfg, kind, os, instance_state);
+            format!("{} (default)", dir.display())
+        },
     );
     row(
         "OpencodeBaseUrl:",
@@ -925,7 +945,16 @@ fn run_server(c: ServerCmd) -> Result<()> {
         ServerCmd::Show => {
             let cfg = server_cfg::load();
             println!("server.ini: {}", config_path(ConfigFile::Server).display());
-            print!("{}", show_lines(&cfg));
+            print!(
+                "{}",
+                show_lines_for(
+                    &cfg,
+                    server_control::backend().kind(),
+                    server_control::Os::current(),
+                    &crate::paths::instance_models_dir(),
+                    &crate::paths::instance_state_dir(),
+                )
+            );
             Ok(())
         }
         ServerCmd::Set(s) => {
@@ -2416,7 +2445,13 @@ mod tests {
             ("OpencodeBaseUrl:", opencode_base_url.unwrap()),
             ("OpencodeApiKey:", opencode_api_key.unwrap()),
         ];
-        let out = show_lines(&cfg);
+        let out = show_lines_for(
+            &cfg,
+            server_control::Kind::Manager,
+            server_control::Os::Linux,
+            Path::new(LINUX_INSTANCE_MODELS),
+            Path::new(LINUX_INSTANCE_STATE),
+        );
         for (label, value) in needles {
             // Label and value must share a LINE: two separate contains() could
             // both pass off other fields (e.g. ModelsMax "3" matching inside
@@ -2425,6 +2460,173 @@ mod tests {
                 out.lines().any(|l| l.contains(label) && l.contains(&value)),
                 "no line pairs {label:?} with {value:?} in:\n{out}"
             );
+        }
+    }
+
+    // ── server show: the folders an unset ModelsDir / StateDir mean ────────
+
+    use std::path::Path;
+
+    /// The instances' defaults as `paths::` gives them on each OS; passed
+    /// in, so no unit test reads `paths::`. The Windows ones split, so the
+    /// names lint does not read the engine's folder as the old user tree.
+    const LINUX_INSTANCE_MODELS: &str = "/var/lib/llama.cpp/models";
+    const LINUX_INSTANCE_STATE: &str = "/var/lib/private-ai/.local/share/private-ai/state";
+    const WINDOWS_INSTANCE_MODELS: &str = concat!(r"C:\ProgramData\llama", r".cpp\models");
+    const WINDOWS_INSTANCE_STATE: &str = concat!(r"C:\ProgramData\llama", r".cpp\state");
+
+    /// The value of `server show`'s row `label` (the text after the label).
+    fn row<'a>(out: &'a str, label: &str) -> &'a str {
+        out.lines()
+            .find_map(|l| l.trim_start().strip_prefix(label))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("no {label} row in:\n{out}"))
+    }
+
+    fn unset_dirs() -> [ServerConfig; 2] {
+        [
+            ServerConfig::default(),
+            ServerConfig {
+                models_dir: Some("  ".into()),
+                state_dir: Some(String::new()),
+                ..ServerConfig::default()
+            },
+        ]
+    }
+
+    /// Under the manager (Linux and Windows) an unset or blank ModelsDir or
+    /// StateDir is shown as the folder the instance uses (the one its launch
+    /// fills in), marked "(default)": not the user's `~/.llama.cpp` or data
+    /// root, which the instance's account never reads.
+    #[test]
+    fn server_show_names_the_instance_defaults_under_the_manager() {
+        for (os, models, state) in [
+            (
+                server_control::Os::Linux,
+                LINUX_INSTANCE_MODELS,
+                LINUX_INSTANCE_STATE,
+            ),
+            (
+                server_control::Os::Windows,
+                WINDOWS_INSTANCE_MODELS,
+                WINDOWS_INSTANCE_STATE,
+            ),
+        ] {
+            for cfg in unset_dirs() {
+                let out = show_lines_for(
+                    &cfg,
+                    server_control::Kind::Manager,
+                    os,
+                    Path::new(models),
+                    Path::new(state),
+                );
+                assert_eq!(
+                    row(&out, "ModelsDir:"),
+                    format!("{models} (default)"),
+                    "{os:?} {cfg:?}"
+                );
+                assert_eq!(
+                    row(&out, "StateDir:"),
+                    format!("{state} (default)"),
+                    "{os:?} {cfg:?}"
+                );
+            }
+        }
+    }
+
+    /// A configured folder is shown as set, with no "(default)", under every
+    /// backend and OS.
+    #[test]
+    fn server_show_prints_configured_dirs_as_set() {
+        let cfg = ServerConfig {
+            models_dir: Some("/srv/llm".into()),
+            state_dir: Some("/srv/llama-state".into()),
+            ..ServerConfig::default()
+        };
+        for kind in [server_control::Kind::Manager, server_control::Kind::Direct] {
+            for os in [
+                server_control::Os::Linux,
+                server_control::Os::Windows,
+                server_control::Os::MacOs,
+            ] {
+                let out = show_lines_for(
+                    &cfg,
+                    kind,
+                    os,
+                    Path::new(LINUX_INSTANCE_MODELS),
+                    Path::new(LINUX_INSTANCE_STATE),
+                );
+                assert_eq!(row(&out, "ModelsDir:"), "/srv/llm", "{kind:?} {os:?}");
+                assert_eq!(
+                    row(&out, "StateDir:"),
+                    "/srv/llama-state",
+                    "{kind:?} {os:?}"
+                );
+            }
+        }
+    }
+
+    /// Elsewhere (macOS, a direct launch) neither row names the instance's
+    /// folders, and an unset StateDir stays the user's default marked
+    /// "(default)", as before.
+    #[test]
+    fn server_show_elsewhere_keeps_the_user_defaults() {
+        for (kind, os) in [
+            (server_control::Kind::Manager, server_control::Os::MacOs),
+            (server_control::Kind::Direct, server_control::Os::Linux),
+            (server_control::Kind::Direct, server_control::Os::Windows),
+            (server_control::Kind::Direct, server_control::Os::MacOs),
+        ] {
+            for cfg in unset_dirs() {
+                let out = show_lines_for(
+                    &cfg,
+                    kind,
+                    os,
+                    Path::new(LINUX_INSTANCE_MODELS),
+                    Path::new(LINUX_INSTANCE_STATE),
+                );
+                for label in ["ModelsDir:", "StateDir:"] {
+                    let value = row(&out, label);
+                    assert!(
+                        !value.contains(LINUX_INSTANCE_MODELS)
+                            && !value.contains(LINUX_INSTANCE_STATE),
+                        "{kind:?} {os:?} {label} {value}"
+                    );
+                }
+                let state = row(&out, "StateDir:");
+                assert!(
+                    state.ends_with(" (default)") && state.len() > " (default)".len(),
+                    "{kind:?} {os:?}: {state}"
+                );
+            }
+        }
+    }
+
+    /// `pai server show` prints through the pure rule above for the real
+    /// backend and OS and the instances' real folders. The Windows branch
+    /// only type-checks on Linux, hence a check on the text.
+    #[test]
+    fn server_show_resolves_the_dirs_for_the_backend_and_os() {
+        let code = include_str!("cli.rs");
+        let start = code.find("\nfn run_server(").expect("fn run_server");
+        let rest = &code[start..];
+        let body = &rest[..rest.find("\n}\n").expect("end of fn")];
+        let show = &body[body.find("ServerCmd::Show").expect("Show arm")..];
+        let mut show = show[..show.find("ServerCmd::Set").expect("Set arm")].to_string();
+        // The arm may print through `show_lines(&cfg)`, which then resolves.
+        if show.contains("show_lines(") {
+            let start = code.find("\nfn show_lines(").expect("fn show_lines");
+            let rest = &code[start..];
+            show.push_str(&rest[..rest.find("\n}\n").expect("end of fn")]);
+        }
+        for want in [
+            "show_lines_for(",
+            ".kind()",
+            "Os::current()",
+            "instance_models_dir()",
+            "instance_state_dir()",
+        ] {
+            assert!(show.contains(want), "server show has no {want}:\n{show}");
         }
     }
 

@@ -148,13 +148,16 @@ fn real_paths_child() {
             paths::system_log_dir(),
             PathBuf::from("/var/log/private-ai")
         );
-        // The instances' default models directory on Linux is the one the
-        // engine's shipped `server@default.ini` names: the service user's
-        // home (`/var/lib/private-ai`), unchanged by the Windows layout.
+        // The instances' default models directory on Linux is the shared
+        // one the engine's shipped `server@default.ini` names and its
+        // tmpfiles.d entry creates, everyone reading it, as
+        // `%ProgramData%\llama.cpp\models` on Windows (decided with the
+        // user on 2026-11-15): not under the service user's home, which is
+        // 0750.
         #[cfg(target_os = "linux")]
         assert_eq!(
             paths::instance_models_dir(),
-            PathBuf::from("/var/lib/private-ai/.llama.cpp")
+            PathBuf::from("/var/lib/llama.cpp/models")
         );
         // And its default StateDir is the service user's, the one the shipped
         // `server@default.ini` names (under the data root the instance unit's

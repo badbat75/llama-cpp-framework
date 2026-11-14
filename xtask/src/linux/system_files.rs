@@ -37,6 +37,8 @@ const ENGINE_ETC: &str = "/etc/llama.cpp";
 /// The links `systemctl enable` makes for an enabled instance (the
 /// template's `WantedBy=multi-user.target`), up to the instance's id.
 const INSTANCE_LINKS: &str = "/etc/systemd/system/multi-user.target.wants/llama.cpp@";
+/// The engine's tmpfiles.d entry, by name.
+const TMPFILES_NAME: &str = "llama.cpp.conf";
 /// Where the engine's package ships its defaults, read-only.
 const ENGINE_DEFAULTS: &str = "/usr/share/private-ai/llama.cpp";
 /// Asks the system bus to read its policies again.
@@ -85,7 +87,30 @@ pub fn files() -> Vec<(&'static str, String)> {
             "usr/share/private-ai/llama.cpp/presets.ini",
             include_str!("../../../crates/core/defaults/presets.ini").to_string(),
         ),
+        ("usr/lib/tmpfiles.d/llama.cpp.conf", engine_tmpfiles()),
     ]
+}
+
+/// The engine's tmpfiles.d entry: the instances' shared default models
+/// folder (`paths::instance_models_dir`), readable by everyone, written by
+/// the service user. Not a StateDirectory= of the instance unit, whose one
+/// StateDirectoryMode= keeps the service user's home 0750.
+fn engine_tmpfiles() -> String {
+    format!(
+        "{}d /var/lib/llama.cpp 0755 root root -\n\
+         d /var/lib/llama.cpp/models 0755 private-ai private-ai -\n",
+        header_of(Component::Llama, "#")
+    )
+}
+
+/// Applies the engine's tmpfiles.d entry from a `.deb` postinst, as
+/// debhelper's autoscript postinst-init-tmpfiles does, behind `indent`.
+fn deb_create_tmpfiles(indent: &str) -> String {
+    format!(
+        "{indent}if [ -x \"$(command -v systemd-tmpfiles)\" ]; then\n\
+         {indent}\tsystemd-tmpfiles ${{DPKG_ROOT:+--root=\"$DPKG_ROOT\"}} --create {TMPFILES_NAME} || true\n\
+         {indent}fi\n"
+    )
 }
 
 /// `private-ai-manager.service`: `pai-manager serve`, as root.
@@ -293,7 +318,8 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
     let postinst = format!(
         r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
 	systemd-sysusers ${{DPKG_ROOT:+--root="$DPKG_ROOT"}} private-ai.conf
-
+	# The engine's shared models folder, owned by the user just created.
+{tmpfiles}
 	# was-enabled is true on a first install, false once disabled.
 	if deb-systemd-helper --quiet was-enabled {MANAGER_SERVICE}; then
 		deb-systemd-helper enable {MANAGER_SERVICE} >/dev/null || true
@@ -312,7 +338,8 @@ pub fn deb_scripts(c: Component) -> Vec<(&'static str, String)> {
 		fi
 	fi
 fi
-"#
+"#,
+        tmpfiles = deb_create_tmpfiles("\t")
     );
     // Stopped before its files are replaced, on upgrade as on removal.
     let prerm = format!(
@@ -456,7 +483,7 @@ fn engine_deb_scripts() -> Vec<(&'static str, String)> {
     let postinst = format!(
         r#"{head}if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
 	if [ "$1" = "configure" ]; then
-{copy}	fi
+{copy}{tmpfiles}	fi
 	if [ -d /run/systemd/system ]; then
 		systemctl --system daemon-reload >/dev/null || true
 {start}	fi
@@ -466,6 +493,7 @@ fn engine_deb_scripts() -> Vec<(&'static str, String)> {
 fi
 "#,
         copy = copy_missing_defaults("\t\t", true),
+        tmpfiles = deb_create_tmpfiles("\t\t"),
         start = start_recorded_instances("\t\t")
     );
     let prerm = format!(
@@ -639,7 +667,8 @@ if [ -d /run/systemd/system ]; then
 fi
 
 %posttrans
-{copy}if [ -d /run/systemd/system ]; then
+{copy}systemd-tmpfiles --create {TMPFILES_NAME} || :
+if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || :
 {start}fi
 rm -f {RECORD}
@@ -738,13 +767,14 @@ mod tests {
                 BFF_UNIT,
                 BFF_SYSUSERS,
                 DEFAULT_SERVER,
-                DEFAULT_PRESETS
+                DEFAULT_PRESETS,
+                TMPFILES
             ]
         );
         for (path, text) in &got {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
-                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS => Component::Llama,
+                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS | TMPFILES => Component::Llama,
                 _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
@@ -754,7 +784,7 @@ mod tests {
                 DBUS_POLICY => dbus_policy(),
                 POLKIT_POLICY => polkit_policy(),
                 BFF_UNIT => bff_unit(),
-                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS => text.clone(),
+                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS | TMPFILES => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -1003,10 +1033,13 @@ mod tests {
     fn the_service_users_home_and_data_root_exist_before_the_launch() {
         let unit = instance_unit();
         let service = section(&unit, "[Service]");
-        assert!(
-            service.contains(&"StateDirectory=private-ai private-ai/.local/share/private-ai"),
-            "{unit}"
-        );
+        let dirs = state_directories(&unit);
+        for want in ["private-ai", "private-ai/.local/share/private-ai"] {
+            assert!(
+                dirs.contains(&want),
+                "no {want} in StateDirectory=:\n{unit}"
+            );
+        }
         assert!(service.contains(&"StateDirectoryMode=0750"), "{unit}");
         let home = sysusers()
             .lines()
@@ -1019,6 +1052,145 @@ mod tests {
             section(&manager, "[Service]").contains(&format!("Environment=HOME={home}").as_str()),
             "the manager resolves defaults from the same home:\n{manager}"
         );
+    }
+
+    /// The entries of the instance unit's one `StateDirectory=` line.
+    fn state_directories(unit: &str) -> Vec<&str> {
+        let lines: Vec<&str> = section(unit, "[Service]")
+            .into_iter()
+            .filter(|l| l.starts_with("StateDirectory="))
+            .collect();
+        assert_eq!(lines.len(), 1, "one StateDirectory= line:\n{unit}");
+        lines[0]["StateDirectory=".len()..]
+            .split_whitespace()
+            .collect()
+    }
+
+    /// The engine's tmpfiles.d entry (tmpfiles.d(5): "Packages should
+    /// install their configuration files in /usr/lib/tmpfiles.d").
+    const TMPFILES: &str = "usr/lib/tmpfiles.d/llama.cpp.conf";
+
+    /// The `.conf` lines of the engine's tmpfiles.d entry, comments and
+    /// blanks left out.
+    fn tmpfiles_lines() -> Vec<String> {
+        file(TMPFILES)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// An instance whose `server@<id>.ini` leaves ModelsDir unset uses the
+    /// shared `/var/lib/llama.cpp/models` (`paths::instance_models_dir` on
+    /// Linux, as `%ProgramData%\llama.cpp\models` on Windows; decided with
+    /// the user on 2026-11-15): everyone reads it, only the service user
+    /// and root write it. The engine's package, which owns the instance
+    /// unit, creates it with a tmpfiles.d entry (`d`: "Create a directory.
+    /// The mode and ownership will be adjusted if specified", tmpfiles.d(5)),
+    /// since the unit's one StateDirectoryMode= applies to every
+    /// StateDirectory= entry (systemd.exec(5)) and the home stays 0750.
+    #[test]
+    fn the_engine_ships_a_tmpfiles_entry_for_the_shared_models_folder() {
+        assert!(
+            files().iter().any(|(p, _)| *p == TMPFILES),
+            "no {TMPFILES} among the system files"
+        );
+        assert_eq!(components::of(TMPFILES), Component::Llama);
+        let text = file(TMPFILES);
+        assert!(
+            text.starts_with(&header_of(Component::Llama, "#")),
+            "the engine's header:\n{text}"
+        );
+        assert_eq!(
+            tmpfiles_lines(),
+            [
+                concat!("d /var/lib/llama", ".cpp 0755 root root -"),
+                concat!(
+                    "d /var/lib/llama",
+                    ".cpp/models 0755 private-ai private-ai -"
+                ),
+            ],
+            "{text}"
+        );
+        // The folder the shipped starting values name is the one created.
+        let server = file(DEFAULT_SERVER);
+        assert!(
+            server
+                .lines()
+                .any(|l| l.trim() == concat!("ModelsDir = /var/lib/llama", ".cpp/models")),
+            "{server}"
+        );
+    }
+
+    /// The instance unit no longer creates a models folder: its
+    /// StateDirectory= keeps the service user's home and data root, 0750
+    /// (the slot states hold conversations), and nothing under the home
+    /// stands for the models any more.
+    #[test]
+    fn the_instance_unit_creates_only_the_home_and_the_data_root() {
+        let unit = instance_unit();
+        assert_eq!(
+            state_directories(&unit),
+            ["private-ai", "private-ai/.local/share/private-ai"],
+            "{unit}"
+        );
+        let modes = section(&unit, "[Service]")
+            .into_iter()
+            .filter(|l| l.starts_with("StateDirectoryMode="))
+            .collect::<Vec<_>>();
+        assert_eq!(modes, ["StateDirectoryMode=0750"], "{unit}");
+    }
+
+    /// The engine's `.deb` postinst applies its entry on configure, as
+    /// debhelper's autoscript postinst-init-tmpfiles does (`systemd-tmpfiles
+    /// ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create <file> || true`, behind
+    /// `command -v systemd-tmpfiles`, so the engine asks for no systemd
+    /// package). On a first install the engine is configured before the
+    /// core (the core depends on it), when the user private-ai does not
+    /// exist yet: the core's postinst applies the entry again right after
+    /// systemd-sysusers creates the user.
+    #[test]
+    fn the_deb_postinsts_create_the_shared_models_folder() {
+        let create =
+            r#"systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create llama.cpp.conf"#;
+        let guard = r#"if [ -x "$(command -v systemd-tmpfiles)" ]; then"#;
+        let postinst = |c: Component| {
+            deb_scripts(c)
+                .into_iter()
+                .find(|(n, _)| *n == "postinst")
+                .unwrap()
+                .1
+        };
+        let engine = postinst(Component::Llama);
+        let configure = at(&engine, r#"if [ "$1" = "configure" ] ||"#);
+        let g = at(&engine, guard);
+        let tmp = at(&engine, create);
+        assert!(configure < g && g < tmp, "{engine}");
+        assert_eq!(deb_depends(Component::Llama), "");
+
+        let core = postinst(Component::Core);
+        let users = at(
+            &core,
+            r#"systemd-sysusers ${DPKG_ROOT:+--root="$DPKG_ROOT"} private-ai.conf"#,
+        );
+        let tmp = at(&core, create);
+        assert!(users < tmp, "the folder after its owner exists:\n{core}");
+        let running = at(&core, "if [ -d /run/systemd/system ]; then");
+        assert!(tmp < running, "before the manager starts:\n{core}");
+    }
+
+    /// The engine's `.rpm` applies its entry in %posttrans, which runs after
+    /// every package's %post of the transaction, so the core's %post has
+    /// created the user private-ai by then (the core requires the engine,
+    /// whose %post runs first), and before the recorded instances start.
+    #[test]
+    fn the_engine_rpm_creates_the_shared_models_folder_after_the_user() {
+        let text = rpm_scriptlets(Component::Llama);
+        let posttrans = scriptlet(&text, "%posttrans");
+        let tmp = at(&posttrans, "systemd-tmpfiles --create llama.cpp.conf || :");
+        let start = at(&posttrans, "systemctl start");
+        assert!(tmp < start, "{posttrans}");
     }
 
     // ── The service user ────────────────────────────────────────────────
@@ -1817,6 +1989,7 @@ mod tests {
                     INSTANCE_UNIT,
                     DEFAULT_SERVER,
                     DEFAULT_PRESETS,
+                    TMPFILES,
                 ]
                 .contains(p)
             })
@@ -1921,7 +2094,7 @@ mod tests {
                           llama.cpp@gpu1.service     loaded active running llama.cpp server gpu1 (Private AI Framework)\n";
 
     /// A scratch directory with fake `systemctl`, `deb-systemd-invoke`,
-    /// `deb-systemd-helper`, `systemd-sysusers` and `busctl`, each logging
+    /// `deb-systemd-helper`, `systemd-sysusers`, `systemd-tmpfiles` and `busctl`, each logging
     /// its name and arguments, a line per call; the fake systemctl answers
     /// `list-units` with the lines in `active` and every other call with
     /// success (`is-enabled` included).
@@ -1944,6 +2117,7 @@ mod tests {
                 "deb-systemd-invoke",
                 "deb-systemd-helper",
                 "systemd-sysusers",
+                "systemd-tmpfiles",
                 "busctl",
                 "chown",
                 "chgrp",

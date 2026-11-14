@@ -295,3 +295,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI (`fe/`, from the web UI session's coder): a fixed-size drawn control (`appearance: none` with
   width and height) inside a flex row needs `flex: none`, or a wrapping sibling shrinks it at narrow
   widths; only a rendered check at 375px catches it.
+- A new engine (or bff) file in `xtask/src/linux/system_files.rs` `files()` also needs its path in the
+  exclusion list of `the_system_files_and_scripts_name_the_core_package`, which wants the core's header
+  on every other file: when the tester's tests did not add it, report the conflict, do not edit it.

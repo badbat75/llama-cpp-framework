@@ -841,16 +841,18 @@ mod tests {
 
     /// The engine's starting values for the instance `default`: the keys
     /// llama-server needs to come up under the service (where it listens,
-    /// where the models are) with today's defaults, the paths resolved for
-    /// the service user whose home is `/var/lib/private-ai` (the instance
-    /// unit's StateDirectory=). StateDir is among them because `render`
+    /// where the models are) with today's defaults: the models in the shared
+    /// `/var/lib/llama.cpp/models` (the engine's tmpfiles.d entry creates
+    /// it, everyone reads it), the state resolved for the service user
+    /// whose home is `/var/lib/private-ai` (the instance unit's
+    /// StateDirectory=). StateDir is among them because `render`
     /// always writes it out: left blank, the manager's first write would
     /// resolve it against the manager's own home instead.
     fn starting_values() -> ServerConfig {
         ServerConfig {
             port: Some(DEFAULT_PORT),
             hostname: Some("localhost".into()),
-            models_dir: Some("/var/lib/private-ai/.llama.cpp".into()),
+            models_dir: Some("/var/lib/llama.cpp/models".into()),
             state_dir: Some("/var/lib/private-ai/.local/share/private-ai/state".into()),
             ..ServerConfig::default()
         }
@@ -918,7 +920,7 @@ mod tests {
         for line in [
             "Port = 9931",
             "Hostname = localhost",
-            "ModelsDir = /var/lib/private-ai/.llama.cpp",
+            "ModelsDir = /var/lib/llama.cpp/models",
             "StateDir = /var/lib/private-ai/.local/share/private-ai/state",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}: {written}");
@@ -1079,7 +1081,7 @@ mod tests {
     #[test]
     fn render_for_without_leaving_unset_is_render() {
         let cfg = ServerConfig {
-            models_dir: Some("/var/lib/private-ai/.llama.cpp".into()),
+            models_dir: Some("/var/lib/llama.cpp/models".into()),
             state_dir: Some("/var/lib/private-ai/.local/share/private-ai/state".into()),
             ..ServerConfig::default()
         };

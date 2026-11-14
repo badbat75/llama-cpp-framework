@@ -62,6 +62,25 @@ pub fn effective_models_dir(
     cfg.models_dir_or_default()
 }
 
+/// The StateDir of the running instance (pure): the configured one; when
+/// unset or blank, the instance's default folder `instance_state` where a
+/// save leaves the folders unset (`server_control::dirs_left_unset`, the
+/// manager on Linux and Windows), else the user's
+/// `slot_state::state_dir(cfg)`.
+pub fn effective_state_dir(
+    cfg: &ServerConfig,
+    kind: server_control::Kind,
+    os: Os,
+    instance_state: &std::path::Path,
+) -> std::path::PathBuf {
+    if server_control::dirs_left_unset(kind, os)
+        && cfg.state_dir.as_deref().is_none_or(|s| s.trim().is_empty())
+    {
+        return instance_state.to_path_buf();
+    }
+    crate::slot_state::state_dir(cfg)
+}
+
 /// Whether a preset save or a download may seed an unset ModelsDir into the
 /// server file (pure): only when it is unset or blank, and never where a
 /// save leaves the folders unset (the instance default is in force there).
@@ -100,10 +119,10 @@ mod tests {
         Path::new(concat!(r"C:\ProgramData\llama", r".cpp\models"))
     }
 
-    /// The same on Linux: the service user's home, as the engine's shipped
-    /// `server@default.ini` names it.
+    /// The same on Linux: the shared folder the engine's shipped
+    /// `server@default.ini` names.
     fn linux_instance_models() -> &'static Path {
-        Path::new(concat!("/var/lib/private-ai/.llama", ".cpp"))
+        Path::new("/var/lib/llama.cpp/models")
     }
 
     fn unset_configs() -> [ServerConfig; 3] {
@@ -210,6 +229,84 @@ mod tests {
                 assert!(
                     !seeds_models_dir(&set_config(), kind, os),
                     "{kind:?} {os:?}"
+                );
+            }
+        }
+    }
+
+    /// The instances' default StateDir as `paths::instance_state_dir` gives
+    /// it on Windows and Linux; passed in, so no unit test reads `paths::`.
+    fn instance_state(os: Os) -> &'static Path {
+        match os {
+            Os::Windows => Path::new(concat!(r"C:\ProgramData\llama", r".cpp\state")),
+            _ => Path::new("/var/lib/private-ai/.local/share/private-ai/state"),
+        }
+    }
+
+    fn unset_state_configs() -> [ServerConfig; 3] {
+        [
+            ServerConfig::default(),
+            ServerConfig {
+                state_dir: Some(String::new()),
+                ..ServerConfig::default()
+            },
+            ServerConfig {
+                state_dir: Some("   ".into()),
+                ..ServerConfig::default()
+            },
+        ]
+    }
+
+    /// Under the manager (Windows and Linux) an unset (or blank) StateDir
+    /// is the instance's folder, where the instance writes its snapshots,
+    /// never the user's data root: `pai server show` names it and the
+    /// restore after a start reads it.
+    #[test]
+    fn under_the_manager_an_unset_state_dir_is_the_instance_folder() {
+        for os in [Os::Windows, Os::Linux] {
+            for cfg in unset_state_configs() {
+                assert_eq!(
+                    effective_state_dir(&cfg, Kind::Manager, os, instance_state(os)),
+                    instance_state(os),
+                    "{os:?} {cfg:?}"
+                );
+            }
+        }
+    }
+
+    /// A configured StateDir wins on every OS and backend; elsewhere
+    /// (macOS, any direct launch) an unset one is the user's default
+    /// (`slot_state::state_dir`, `<data root>/state`).
+    #[test]
+    fn a_configured_state_dir_wins_and_elsewhere_the_user_default_stays() {
+        let set = ServerConfig {
+            state_dir: Some(r"E:\llama-state".into()),
+            ..ServerConfig::default()
+        };
+        for kind in [Kind::Manager, Kind::Direct] {
+            for os in [Os::Windows, Os::Linux, Os::MacOs] {
+                assert_eq!(
+                    effective_state_dir(&set, kind, os, instance_state(os)),
+                    Path::new(r"E:\llama-state"),
+                    "{kind:?} {os:?}"
+                );
+            }
+        }
+        for (kind, os) in [
+            (Kind::Manager, Os::MacOs),
+            (Kind::Direct, Os::Linux),
+            (Kind::Direct, Os::MacOs),
+            (Kind::Direct, Os::Windows),
+        ] {
+            // The user's default is `<data root>/state`; the data root is
+            // not compared, since `data_root_e2e` moves it on another thread.
+            for cfg in unset_state_configs() {
+                let got = effective_state_dir(&cfg, kind, os, instance_state(os));
+                assert_ne!(got, instance_state(os), "{kind:?} {os:?} {cfg:?}");
+                assert!(
+                    got.ends_with("state") && got.is_absolute(),
+                    "{kind:?} {os:?} {cfg:?}: {}",
+                    got.display()
                 );
             }
         }

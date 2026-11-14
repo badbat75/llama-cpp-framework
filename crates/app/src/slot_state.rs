@@ -379,7 +379,12 @@ pub fn restore_newest_with(
     alive: impl FnMut() -> bool,
 ) -> Result<Option<Transfer>, String> {
     let port = cfg.port_or_default() as u16;
-    let dir = state_dir(cfg);
+    let dir = crate::server_cfg::effective_state_dir(
+        cfg,
+        crate::server_control::backend().kind(),
+        crate::server_control::Os::current(),
+        &crate::paths::instance_state_dir(),
+    );
     let Some(newest) = dumps_newest_first(&dir).into_iter().next() else {
         return Ok(None);
     };
@@ -396,6 +401,49 @@ pub fn restore_newest_with(
 
     wait_listening(port, LISTEN_TIMEOUT, LISTEN_POLL, alive)?;
     slot_action(port, "restore", model, &filename).map(Some)
+}
+
+/// E2E phase for `data_root_e2e` (`src/tests/mod.rs`): it redirects the data
+/// tree. Under the manager (Linux and Windows; the test build's default
+/// backend is a manager) an instance whose StateDir is unset writes its
+/// snapshots to the engine's `paths::instance_state_dir()`, the folder its
+/// launch passes as `--slot-save-path`; the restore after a start reads that
+/// folder, not the user's data root. On macOS it is the user's default, as
+/// before. A dump no preset matches is refused before any request, so the
+/// error names the file the restore picked.
+#[cfg(test)]
+pub(crate) fn restore_reads_the_instance_state_dir_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let instance = crate::paths::instance_state_dir();
+    let user = pai_core::slot_state::default_state_dir();
+    assert_ne!(instance, user, "fixture sanity: the two defaults differ");
+    std::fs::create_dir_all(&instance).expect("instance state dir");
+    std::fs::create_dir_all(&user).expect("user state dir");
+    let instance_dump = state_file_name("Qwen3.8-27B");
+    let user_dump = state_file_name("Qwen3.8-Flash-Next");
+    std::fs::write(instance.join(&instance_dump), b"dump").expect("instance dump");
+    std::fs::write(user.join(&user_dump), b"dump").expect("user dump");
+
+    let expected = if cfg!(any(windows, target_os = "linux")) {
+        &instance_dump
+    } else {
+        &user_dump
+    };
+    for cfg in [
+        crate::server_cfg::ServerConfig::default(),
+        crate::server_cfg::ServerConfig {
+            state_dir: Some("  ".into()),
+            ..Default::default()
+        },
+    ] {
+        let got = restore_newest_with(&cfg, &[], || false).map(|t| t.map(|t| t.model));
+        assert_eq!(
+            got,
+            Err(strings::fill("dump-no-model", &[expected])),
+            "the restore reads the instance's state folder for {cfg:?}"
+        );
+    }
 }
 
 #[cfg(test)]

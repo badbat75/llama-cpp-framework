@@ -624,12 +624,13 @@ mod tests {
     }
 
     /// Under the Linux manager the same: both folders blank, each hint naming
-    /// the instance default under the service user's home, and the Save of
+    /// the instance default (the shared models folder, the state under the
+    /// service user's home), and the Save of
     /// the untouched form names no folder of the saving user's.
     #[test]
     fn under_the_linux_manager_unset_folders_show_blank_with_the_instance_default() {
         let dirs = InstanceDirs {
-            models: concat!("/var/lib/private-ai/.llama", ".cpp").into(),
+            models: "/var/lib/llama.cpp/models".into(),
             state: "/var/lib/private-ai/.local/share/private-ai/state".into(),
         };
         let form = config_to_form_for(&ServerConfig::default(), Some(&dirs));

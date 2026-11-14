@@ -2264,6 +2264,7 @@ mod tests {
                     "/usr/lib/systemd",
                     "/usr/lib/systemd/system",
                     "/usr/lib/sysusers.d",
+                    "/usr/lib/tmpfiles.d",
                     "/usr/share/dbus-1",
                     "/usr/share/dbus-1/system.d",
                     "/usr/share/polkit-1",
@@ -2333,6 +2334,36 @@ mod tests {
             !spec.lines().any(|l| l.trim_start().starts_with("%config")),
             "{spec}"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The engine's `.rpm` takes its tmpfiles.d entry (the shared models
+    /// folder) by name, in one `%files` line, never /usr/lib/tmpfiles.d,
+    /// which systemd owns; no other package takes it.
+    #[test]
+    fn the_engine_rpm_takes_its_tmpfiles_entry_by_name() {
+        let rel = "usr/lib/tmpfiles.d/llama.cpp.conf";
+        let text = system_files::files()
+            .into_iter()
+            .find(|(r, _)| *r == rel)
+            .unwrap_or_else(|| panic!("{rel} is not among the system files"))
+            .1;
+        let dir = scratch("rpm-spec-tmpfiles");
+        let llama = dir.join("llama");
+        put(&llama, "usr/bin/llama-server", ELF, 0o755);
+        put(&llama, rel, text.as_bytes(), 0o644);
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml", &llama);
+        check_files(&spec, &llama);
+        let listed = files_section(&spec);
+        let path = format!("/{rel}");
+        assert_eq!(
+            listed.iter().filter(|l| **l == path).count(),
+            1,
+            "{path} by name, once:\n{spec}"
+        );
+        assert_eq!(components::of(rel), Component::Llama);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

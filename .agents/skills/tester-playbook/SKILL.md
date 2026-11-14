@@ -522,3 +522,15 @@ Lessons only: the rules are in `AGENTS.md`.
   under `hidden` is still in its field's `textContent`: never assert a unit or label with
   `textContent.toContain`. To check text in JSX, parse with `ts.createSourceFile(..., ScriptKind.TSX)`,
   not a regex.
+- A folder that needs a mode other than the unit's one `StateDirectoryMode=` (it applies to every
+  `StateDirectory=` entry, `man 5 systemd.exec`) ships as a tmpfiles.d `d` line in `/usr/lib/tmpfiles.d`
+  (debhelper's autoscript `postinst-init-tmpfiles`: `systemd-tmpfiles ${DPKG_ROOT:+--root=..} --create
+  <file> || true` behind `command -v`). The engine (`llama.cpp`) installs before the core that creates
+  the user `private-ai` (the core depends on it): a line owned by that user needs the core's postinst
+  to apply it again after `systemd-sysusers`; on rpm the engine's `%posttrans` runs after every `%post`.
+  The script `Sandbox` fakes `systemd-tmpfiles` too: add every new system tool a script calls to its
+  fake list, or the sandboxed run calls the real one.
+  Measured (systemd 259, `--root=` on a scratch tree): a tmpfiles line whose owner does not exist is
+  skipped with "Failed to resolve user", the other lines still apply, exit 65; so `|| true` is needed
+  and the second run after the user exists does the work. Every new header-free or engine-headed file
+  goes on the exclusion list of `the_system_files_and_scripts_name_the_core_package`.

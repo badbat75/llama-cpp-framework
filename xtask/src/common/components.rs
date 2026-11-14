@@ -126,10 +126,12 @@ pub fn of(rel: &str) -> Component {
     {
         return Component::Bff;
     }
-    // The engine's instance unit (the engine owns its unit) and its shipped
-    // defaults, copied into /etc/llama.cpp by its maintainer scripts.
+    // The engine's instance unit (the engine owns its unit), its shipped
+    // defaults, copied into /etc/llama.cpp by its maintainer scripts, and
+    // its tmpfiles.d entry (the instances' shared models folder).
     if path == "usr/lib/systemd/system/llama.cpp@.service"
         || path.starts_with("usr/share/private-ai/llama.cpp/")
+        || path == "usr/lib/tmpfiles.d/llama.cpp.conf"
     {
         return Component::Llama;
     }

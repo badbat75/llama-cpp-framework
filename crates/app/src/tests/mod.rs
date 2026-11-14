@@ -30,4 +30,7 @@ fn data_root_e2e() {
 
     // ── The per-user config handed to the manager (migration.rs) ─────────
     crate::migration::config_import_e2e();
+
+    // ── The restore reads the instance's state folder (slot_state.rs) ────
+    crate::slot_state::restore_reads_the_instance_state_dir_e2e();
 }

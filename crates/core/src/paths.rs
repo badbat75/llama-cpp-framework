@@ -182,8 +182,9 @@ fn program_data() -> PathBuf {
 }
 
 /// The default ModelsDir of the instances: `%ProgramData%\llama.cpp\models`
-/// on Windows, the service user's `/var/lib/private-ai/.llama.cpp` on Linux
-/// (the one the engine's shipped `server@default.ini` names) and, on macOS,
+/// on Windows, the shared `/var/lib/llama.cpp/models` on Linux (the one the
+/// engine's shipped `server@default.ini` names and its tmpfiles.d entry
+/// creates, readable by everyone) and, on macOS,
 /// where the configurator runs llama-server as the user, the user's own
 /// `~/.llama.cpp` (`server_cfg::default_models_dir`). Under the test
 /// override it is `<override>/engine-models` on every OS.
@@ -197,7 +198,7 @@ pub fn instance_models_dir() -> PathBuf {
     }
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from("/var/lib").join(APP_DIR).join(".llama.cpp")
+        PathBuf::from("/var/lib/llama.cpp/models")
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
