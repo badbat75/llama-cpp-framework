@@ -178,3 +178,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - Adding a `Component` to `components::ALL` touches every `match` over it in `linux/package.rs`
   (`version_of`, `texts`), `old_package` (no 2.4 predecessor), `exact_requires`/`depends_on_llama`
   and the rpm `Requires(...)` of a package with scriptlets.
+- pai-bff's serving runtime (`serve.rs`) is built by hand: a handler that uses `tokio::time` needs
+  `.enable_time()` there, or it panics at the first request. The router tests run under
+  `#[tokio::test]` (timer on) and miss it; only the binary test (`tests/pai_bff_binary.rs`) catches it.
+- The fe's JSX-text lint (`strings.test.ts`) flags letters between any `>` and the next `<` with no
+  `{`/`}` between them, code included (`</p>\n  else if (x) content =`): write each branch as a braced
+  `if (..) { return <..> }` so a brace always sits between the tags.

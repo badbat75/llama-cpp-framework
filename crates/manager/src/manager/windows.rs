@@ -22,8 +22,12 @@ pub const MANAGER_SERVICE: &str = "private-ai-manager";
 /// The named pipe's security descriptor (SDDL): network logons denied,
 /// SYSTEM and Administrators full access, interactive users read and write
 /// data only (`pai_core::client::pipe::CLIENT_ACCESS`), never
-/// `FILE_CREATE_PIPE_INSTANCE`.
-pub const PIPE_SDDL: &str = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12008b;;;IU)";
+/// `FILE_CREATE_PIPE_INSTANCE`. The last ACE gives the same client rights to
+/// `NT SERVICE\private-ai-bff`, the bff's account, by its service SID
+/// ([MS-LSAT] 3.1.1.1.2: fixed by the service's name); its token is neither
+/// interactive nor an administrator's, so it may only ask the read-only calls.
+pub const PIPE_SDDL: &str = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12008b;;;IU)\
+    (A;;0x12008b;;;S-1-5-80-4088784262-1422927641-1363593751-33154763-2531830098)";
 
 /// `CreateNamedPipeW`'s pipe mode: a byte stream, blocking, remote clients
 /// rejected.
@@ -407,7 +411,99 @@ mod tests {
     #[test]
     fn nobody_else_is_on_the_pipe() {
         let trustees: Vec<String> = aces(PIPE_SDDL).into_iter().map(|a| a.3).collect();
-        assert_eq!(trustees, ["NU", "SY", "BA", "IU"], "{PIPE_SDDL:?}");
+        let bff = service_sid(BFF_SERVICE);
+        assert_eq!(
+            trustees,
+            ["NU", "SY", "BA", "IU", bff.as_str()],
+            "{PIPE_SDDL:?}"
+        );
+    }
+
+    /// The bff's Windows service, as the MSI installs it and `pai-bff
+    /// service` registers its control handler under.
+    const BFF_SERVICE: &str = "private-ai-bff";
+
+    /// The SID of service `name`, as Windows derives it ([MS-LSAT] 3.1.1.1.2,
+    /// "Configurable Translation Database and Corresponding View"): the name
+    /// upper-cased in UTF-16, its SHA-1 read as five unsigned 32-bit
+    /// integers, `S-1-5-80-h0-h1-h2-h3-h4`. A virtual account
+    /// `NT SERVICE\<name>` has it as its user SID.
+    fn service_sid(name: &str) -> String {
+        use sha1::{Digest, Sha1};
+        let utf16: Vec<u8> = name
+            .to_uppercase()
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let hash = Sha1::digest(&utf16);
+        let words: Vec<String> = hash
+            .chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]).to_string())
+            .collect();
+        format!("S-1-5-80-{}", words.join("-"))
+    }
+
+    /// The helper against known SIDs: the example in [MS-LSAT] 3.1.1.1.2
+    /// (ALG) and `NT SERVICE\TrustedInstaller`, whose SID owns the system's
+    /// files; the case of the name does not matter.
+    #[test]
+    fn the_service_sid_rule_gives_the_documented_sids() {
+        assert_eq!(
+            service_sid("ALG"),
+            "S-1-5-80-2387347252-3645287876-2469496166-3824418187-3586569773"
+        );
+        assert_eq!(
+            service_sid("TrustedInstaller"),
+            "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+        );
+        assert_eq!(service_sid("alg"), service_sid("ALG"));
+    }
+
+    /// The bff runs as the virtual account `NT SERVICE\private-ai-bff`,
+    /// which is not interactive: the pipe gives its SID (the service SID,
+    /// fixed by the service's name, so a constant in the descriptor) the
+    /// client's rights and nothing more, so it can connect and ask the calls
+    /// that need no authorization.
+    #[test]
+    fn the_bff_s_account_gets_exactly_the_client_s_rights() {
+        let bff = service_sid(BFF_SERVICE);
+        let aces = aces(PIPE_SDDL);
+        let mine: Vec<_> = aces.iter().filter(|a| a.3 == bff).collect();
+        assert_eq!(mine.len(), 1, "one ACE for {bff}: {PIPE_SDDL:?}");
+        let (kind, flags, rights, _) = mine[0];
+        assert_eq!((kind.as_str(), flags.as_str()), ("A", ""));
+        let mask = u32::from_str_radix(rights.trim_start_matches("0x"), 16)
+            .unwrap_or_else(|_| panic!("rights as hex: {rights:?}"));
+        assert_eq!(mask, CLIENT_ACCESS);
+        assert_eq!(mask & 0x4, 0, "FILE_CREATE_PIPE_INSTANCE: {rights}");
+    }
+
+    /// Connecting is all the bff gets: its token (the service SID as user,
+    /// SERVICE and ALL SERVICES, no INTERACTIVE, no Administrators) may
+    /// neither control nor configure, so through the pipe it reads the
+    /// instances and their states only.
+    #[test]
+    fn the_bff_s_token_may_neither_control_nor_configure() {
+        let bff = service_sid(BFF_SERVICE);
+        let mut groups = common();
+        groups.push(group("S-1-5-6", 0x7)); // SERVICE
+        groups.push(group("S-1-5-80-0", 0x7)); // NT SERVICE\ALL SERVICES
+        let facts = TokenFacts::from_groups(&bff, &groups);
+        assert_eq!(
+            facts,
+            TokenFacts {
+                sid: bff.clone(),
+                interactive: false,
+                admin_member: false,
+            }
+        );
+        for action in [Action::Control, Action::Configure] {
+            assert!(!allowed(&facts, action), "{action:?}");
+            let authorized = TokenAuthority::with_caller(facts.clone(), |c| {
+                TokenAuthority.is_authorized(c, action)
+            });
+            assert!(!authorized, "{action:?} through the authority");
+        }
     }
 
     #[test]

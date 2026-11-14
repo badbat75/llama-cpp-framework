@@ -349,3 +349,60 @@ fn service_with_an_argument_is_a_usage_error() {
     assert!(r.stderr.contains("--bogus"), "{}", r.stderr);
     assert_filled(&r.stderr);
 }
+
+// ── The manager, under the test redirect ────────────────────────────────
+
+/// Under `PRIVATE_AI_DATA_ROOT` the shipped router dials no manager, as
+/// pai-app's `system_connect` does: `/api/instances` answers 503
+/// `{"error": "unavailable"}` at once. The child's system bus is a socket
+/// this test listens on, so a bff that dials the bus anyway is caught by the
+/// accept, not hidden by a missing socket.
+#[cfg(unix)]
+#[test]
+fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
+    use std::os::unix::net::UnixListener;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bus = dir.path().join("bus");
+    let listener = UnixListener::bind(&bus).expect("listen on the fake bus");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let addr: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().expect("addr");
+    write_bff_ini(dir.path(), &addr.to_string());
+    let mut cmd = command(dir.path(), &[]);
+    cmd.env(
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        format!("unix:path={}", bus.display()),
+    );
+    let mut child = Serving(cmd.spawn().expect("spawn pai-bff"));
+
+    let deadline = Instant::now() + DEADLINE;
+    let (status, headers, body) = loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut e) = child.0.stderr.take() {
+                let _ = e.read_to_string(&mut err);
+            }
+            panic!("pai-bff exited ({status}) instead of serving: {err}");
+        }
+        match get(addr, "/api/instances") {
+            Ok(reply) => break reply,
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
+        }
+    };
+    assert!(status.contains(" 503 "), "{status}\n{body}");
+    assert!(
+        headers.contains("content-type: application/json"),
+        "{headers}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
+    assert_eq!(
+        json,
+        serde_json::json!({ "error": "unavailable" }),
+        "{body}"
+    );
+    match listener.accept() {
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("pai-bff dialed the system bus under the test redirect"),
+        Err(e) => panic!("accept on the fake bus: {e}"),
+    }
+}

@@ -5,9 +5,26 @@ pub mod bff;
 pub mod listen;
 pub mod serve;
 
-/// The bff's HTTP routes: `GET /api/version`, the web UI's page at `/` and
-/// its files under `/assets/`.
+use pai_core::client::ClientError;
+
+/// A connection to the manager, as the bff asks it.
+pub type Client = Box<dyn pai_core::client::ManagerClient + Send + Sync>;
+
+/// How the bff connects to the manager, called for each request that asks it.
+pub type Connect = std::sync::Arc<dyn Fn() -> Result<Client, ClientError> + Send + Sync>;
+
+/// How long a request waits for the manager, the connect included.
+const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
+/// system's manager, the web UI's page at `/` and its files under `/assets/`.
 pub fn router() -> axum::Router {
+    router_with(std::sync::Arc::new(system_connect), MANAGER_TIMEOUT)
+}
+
+/// The routes of [`router`], the manager reached through `connect`, each
+/// answer that asks it given up after `timeout`.
+pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Router {
     use axum::extract::Path;
     use axum::routing::get;
     axum::Router::new()
@@ -22,6 +39,59 @@ pub fn router() -> axum::Router {
                 axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
             }),
         )
+        .route(
+            "/api/instances",
+            get(move || instances(connect.clone(), timeout)),
+        )
+}
+
+/// The manager of this system: the D-Bus service on Linux, the named pipe on
+/// Windows, none on macOS; under the test redirect (`PRIVATE_AI_DATA_ROOT`)
+/// none, so a test never dials the real one.
+fn system_connect() -> Result<Client, ClientError> {
+    if std::env::var_os("PRIVATE_AI_DATA_ROOT").is_some() {
+        return Err(ClientError::Unavailable);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        pai_core::client::dbus::DbusClient::connect_system().map(|c| Box::new(c) as Client)
+    }
+    #[cfg(windows)]
+    {
+        pai_core::client::pipe::connect().map(|c| Box::new(c) as Client)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        Err(ClientError::Unavailable)
+    }
+}
+
+/// `GET /api/instances`: `[{"id", "state"}]` in the manager's order, or
+/// `{"error": key}`, never the manager's detail.
+async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
+        let client = connect()?;
+        let mut list = Vec::new();
+        for id in client.list_instances()? {
+            match client.status(&id) {
+                Ok(state) => list.push(serde_json::json!({ "id": id, "state": state.name() })),
+                Err(ClientError::NoInstance) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(list)
+    });
+    let (status, key) = match tokio::time::timeout(timeout, ask).await {
+        Ok(Ok(Ok(list))) => return axum::Json(list).into_response(),
+        Ok(Ok(Err(ClientError::Unavailable))) | Err(_) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+        }
+        Ok(Ok(Err(ClientError::NotAuthorized))) => (StatusCode::BAD_GATEWAY, "not-authorized"),
+        Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "failed"),
+    };
+    (status, axum::Json(serde_json::json!({ "error": key }))).into_response()
 }
 
 /// The embedded web UI: (path under its directory, bytes, content type) for

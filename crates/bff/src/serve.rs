@@ -21,9 +21,11 @@ pub fn serve(
     addr: SocketAddr,
     stop: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ServeError> {
-    // The IO driver also drives tokio's signals.
+    // The IO driver also drives tokio's signals; the timer, the deadline on
+    // the manager.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
+        .enable_time()
         .build()
         .map_err(ServeError::Runtime)?;
     runtime.block_on(async {

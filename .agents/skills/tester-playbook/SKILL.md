@@ -310,3 +310,17 @@ Lessons only: the rules are in `AGENTS.md`.
   --offline=true ./x.service` (exposure score).
 - `paths::installed_share_dir` looks at `<exe>/../../share`: for a program in `/usr/libexec/private-ai`
   that is `/usr/libexec/share`, so a libexec program (pai-manager, pai-bff) finds no `cli.toml` there.
+- A Windows service's SID (`NT SERVICE\<name>`, a virtual account's user SID) is computable:
+  [MS-LSAT] 3.1.1.1.2 (learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lsat/252cb6b0-2edc-4403-9d75-5b2786ba859e):
+  SHA-1 of the upper-case UTF-16LE name, five little-endian u32, `S-1-5-80-...`. Its example (ALG) and
+  TrustedInstaller check the rule; pai-manager's tests derive it with the `sha1` dev-dependency
+  (`service_sid` in `manager/windows.rs`). Quick check: `python3 -I -c` with hashlib and `struct.unpack('<5I', ..)`.
+- A bff route that asks the manager is tested through `pai_bff::router_with(connect, timeout)` and a
+  fake `ManagerClient` (`tests/instances.rs`); every request under `tokio::time::timeout` (tokio `time`
+  is a bff dev-dependency). A fake that sleeps runs in `spawn_blocking`, which the test runtime waits
+  for at its end (tokio's `spawn_blocking` docs), so keep the sleep short (2 s against a 200 ms timeout).
+- In fe tests, read a new string through a `text(key)` helper that throws when the key is missing from
+  `en_US.json`: the red names the missing string instead of failing on `findByText(undefined)`. The
+  fe's `strings.test.ts` sees a key only as a literal `t('key'` (a template key like
+  `t(\`state-${s}\`)` counts its value as unused) and flags any letters between `>` and `<` in a
+  `.tsx`, a `? :` chain written inline in JSX included.

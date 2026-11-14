@@ -36,6 +36,19 @@ impl InstanceState {
             other => InstanceState::Other(other.to_string()),
         }
     }
+
+    /// The manager's name of the state, the one [`InstanceState::from_name`]
+    /// read.
+    pub fn name(&self) -> &str {
+        match self {
+            InstanceState::Active => "active",
+            InstanceState::Inactive => "inactive",
+            InstanceState::Activating => "activating",
+            InstanceState::Deactivating => "deactivating",
+            InstanceState::Failed => "failed",
+            InstanceState::Other(name) => name,
+        }
+    }
 }
 
 /// Why a call to the manager failed: one variant per error the manager
@@ -176,6 +189,23 @@ mod tests {
                 InstanceState::Other(name.to_string()),
                 "{name:?}"
             );
+        }
+    }
+
+    /// The name a state was read from is the name it gives back, an unknown
+    /// one included: what the bff passes on to the web UI.
+    #[test]
+    fn every_state_gives_back_the_manager_s_name() {
+        for name in [
+            "active",
+            "inactive",
+            "activating",
+            "deactivating",
+            "failed",
+            "maintenance",
+            "",
+        ] {
+            assert_eq!(InstanceState::from_name(name).name(), name, "{name:?}");
         }
     }
 

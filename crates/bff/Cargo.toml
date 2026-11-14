@@ -25,8 +25,8 @@ pai-core = { path = "../core" }
 axum = "0.8.9"
 # axum's runtime; the version already in the lock. `signal` for the graceful
 # stop on SIGTERM and Ctrl-C, `sync` for the Windows service's stop control
-# (serve.rs).
-tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros", "signal", "sync"] }
+# (serve.rs), `time` for the deadline on the manager (lib.rs `instances`).
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros", "signal", "sync", "time"] }
 # The `/api/version` body; axum's `json` feature already links it.
 serde_json = "1"
 
@@ -41,5 +41,7 @@ pai-core = { path = "../core", features = ["test-support"] }
 # request, http-body-util reads the body back (tests/router.rs).
 tower = { version = "0.5.3", features = ["util"] }
 http-body-util = "0.1.5"
+# The instances tests put a deadline on each answer (tests/instances.rs).
+tokio = { version = "1.54", features = ["time"] }
 serde_json = "1"
 tempfile = "3"

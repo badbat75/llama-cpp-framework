@@ -1,4 +1,17 @@
 {
   "version-label": "Version {0}",
-  "version-unavailable": "The version could not be read from the service."
+  "version-unavailable": "The version could not be read from the service.",
+  "instances-title": "Instances",
+  "instances-column-id": "Instance",
+  "instances-column-state": "State",
+  "instances-empty": "No instances are configured.",
+  "instances-failed": "The instances could not be read.",
+  "instances-manager-unavailable": "The manager is not running or does not answer.",
+  "instances-not-authorized": "The manager refused the web service's request.",
+  "instance-state-active": "Running",
+  "instance-state-inactive": "Stopped",
+  "instance-state-activating": "Starting",
+  "instance-state-deactivating": "Stopping",
+  "instance-state-failed": "Failed",
+  "instance-state-other": "Unknown ({0})"
 }
