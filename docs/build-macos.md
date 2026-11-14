@@ -1,7 +1,7 @@
 ---
 title: Building on macOS
 type: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 # Building on macOS
@@ -60,30 +60,32 @@ directory, loader and `glslc` are
 tree's binaries find the SDK's loader through their build RPATH. A changed compiler path wipes the build directory, since a
 new Xcode can move it.
 
-**Package.** `pkgbuild` writes three `.pkg` files from one staged tree, split by path as
-[on Linux](build-packaging.md#packaging). It refuses a built `pai-config` whose version differs from
-the root `Cargo.toml`'s.
+**Package.** `pkgbuild` writes four `.pkg` files from one staged tree, split by path as
+[on Linux](build-packaging.md#packaging). It refuses to run without `llama-server`, `pai-config` and `pai`
+in the build's `bin/`, and refuses a built `pai-config` whose version differs from the root
+`Cargo.toml`'s.
 
 | Package | File | Identifier ends in |
 | --- | --- | --- |
 | `config` | `private-ai-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |
+| `cli` | `private-ai-framework-cli-v<framework>-<llama>-arm64.pkg` | `.cli` |
 | `llama` | `private-ai-framework-llama-v<framework>-<llama>-arm64.pkg` | `.llama` |
 | `vulkan` | `private-ai-framework-vulkan-v<sdk>-arm64.pkg` | `.vulkan` |
 
-The identifier starts with `org.privateai.framework`. Release 2.4's packages had other names and identifiers, and nothing in `xtask` removes a 2.4 install under `/opt/llama.cpp`. `config` and `llama` carry the framework's
+The identifier starts with `org.privateai.framework`. Release 2.4's packages had other names and identifiers, and nothing in `xtask` removes a 2.4 install under `/opt/llama.cpp`. `config`, `cli` and `llama` carry the framework's
 version, and `vulkan` the SDK's, or the framework's for an SDK outside the layout.
 
-**A `.pkg` has no dependency mechanism, so nothing ties the three together.** `xtask install` lays down the newest of
+**A `.pkg` has no dependency mechanism, so nothing ties the four together.** `xtask install` lays down the newest of
 each with `installer`, or only the files given. Without the `vulkan` package ggml skips that backend and Metal runs.
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config` | The build's `bin/` without `test-*`, `pai-config` beside the server |
+| `/opt/private-ai/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | The build's `bin/` without `test-*`, `pai-config` and `pai` beside the server |
 | `/opt/private-ai/lib/` | `vulkan` | The Vulkan loader and MoltenVK |
-| `/opt/private-ai/share/benchmarks/` | `config` | The benchmark method |
-| `/opt/private-ai/share/strings/` | `config` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
+| `/opt/private-ai/share/benchmarks/` | `cli` | The benchmark method |
+| `/opt/private-ai/share/strings/` | `config`; `cli.toml` in `cli` | The configurator's text: the GUI's `en_US.toml`, the CLI's `cli.toml` |
 | `/opt/private-ai/share/licenses/<suffix>/` | Each its own | The licence texts, with the MoltenVK and Vulkan loader ones in `vulkan/`; see [Packaging](build-packaging.md#packaging) |
-| `/usr/local/bin/` | `llama`; `pai-config` in `config` | A symlink per executable |
+| `/usr/local/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | A symlink per executable |
 | `/usr/local/share/vulkan/icd.d/private-ai-framework-MoltenVK_icd.json` | `vulkan` | The driver manifest, with an absolute `library_path` into `/opt/private-ai/lib` |
 
 - The manifest goes there because the loader does not look next to itself. A system-wide Vulkan SDK

@@ -327,13 +327,15 @@ Slices, each test first: **1** (done: `pai-app` holds the shared modules, with a
 feature for the fakes pai-config's tests use; it passes the Windows GNU check given
 `PRIVATE_AI_LLAMA_CPP_DIR`); **2** (done) `crates/cli` (package `pai-cli`,
 binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing beyond what the GUI
-needs, no console attach); **3** (done) packaging: `pai` in the `-config` package or its own (decide then),
-`/usr/bin/pai`, the MSI's PATH, and `installer/msi-stop-processes.ps1` running `pai.exe control
-stop-and-close` (falling back to `pai-config.exe` for an older install: after slice 2 `pai-config`
-only points to `pai`, so until slice 3 the MSI's graceful stop is skipped); **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>` (the commands, the crate lists and
-the test topology are done; left, after slice 3: how `pai` is built by xtask, packaged, installed and put on PATH on
-each OS, in the root README, `docs/build-packaging.md`, `docs/build-macos.md`, `installer/AGENTS.md`
-and the `AGENTS.md` map, and the MSI's graceful stop once the script runs `pai.exe`).
+needs, no console attach); **3** (done) packaging: `pai` in its own `-cli` package on Linux and macOS,
+`/usr/bin/pai`, `pai.exe` on the MSI's PATH, and `installer/msi-stop-processes.ps1` running `pai.exe
+control stop-and-close`; **4** (done) docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`,
+and how `pai` is built, packaged, installed and put on PATH on each OS.
+
+Left: "the packages ship both" holds in xtask's code and tests only. No package with `pai` has been
+built yet (`dist/` holds only 2.4.0 packages, `xtask/src/macos/package.rs` is not compiled on Linux):
+the Linux packages in step 1's real run, the MSI in the Windows build of step 2 (the installer test
+plan's `pai --version` and graceful-stop checks). The step closes with that run.
 
 - Done when: `pai` runs every command `pai-config` runs today with the same output; `pai-config` opens
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship

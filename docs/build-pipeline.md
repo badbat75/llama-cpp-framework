@@ -1,15 +1,15 @@
 ---
 title: Build pipeline
 type: reference
-updated: 2026-11-13
+updated: 2026-11-14
 ---
 
 # Build pipeline
 
 The pipeline turns a llama.cpp release into an installable package with the CUDA, Vulkan and ROCm
-backends and the `pai-config` configurator. It runs on Windows (one MSI) and Linux (five `.deb`
-and five `.rpm` packages: the configurator, llama.cpp and one per GPU runtime). It also runs on macOS
-(Apple Silicon, three `.pkg`), where it is written but untested.
+backends, the `pai-config` configurator and its command line `pai`. It runs on Windows (one MSI) and
+Linux (six `.deb` and six `.rpm` packages: the GUI, the command line, llama.cpp and one per GPU
+runtime). It also runs on macOS (Apple Silicon, four `.pkg`), where it is written but untested.
 
 **In short.** Run the bootstrap script once, which also runs `xtask prereq` on Linux and macOS. Then
 run `xtask configure`, `build`, `package` and `install` in that order. `xtask <phase>` is short for
@@ -36,7 +36,7 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | Bootstrap script | Installs Rust and the system packages. On Windows, also the GPU dists, sccache and WiX. | System packages; Windows dists under the dist root |
 | `xtask prereq` | Linux, macOS: installs sccache and the newest GPU dists. On Windows it refuses: the script does this. | Dists under the dist root |
 | `xtask configure` | Detects paths and tools, derives the GPU targets, records the dist root. | `build/<os>/config-build.*`; on Windows also `.cargo/config.toml` |
-| `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then the configurator. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/` |
+| `xtask build` | Checks out the newest llama.cpp release, applies the patches, builds llama.cpp, then `pai-config`, `pai` and `pai-manager`. | `build/<os>/llama.cpp-cmake/`, `build/<os>/cargo-target/` |
 | `xtask package` | Stages the binaries and GPU runtimes, then builds the packages. | `dist/` |
 | `xtask install` | Installs the newest package in `dist/`, on Linux and macOS the newest of each: first install, upgrade, reinstall or downgrade. | The machine |
 
@@ -104,7 +104,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Packages | One MSI | Five `.deb`, five `.rpm` | Three `.pkg` |
+| Packages | One MSI | Six `.deb`, six `.rpm` | Four `.pkg` |
 | Installs to | `Program Files\private-ai` (choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land

@@ -57,6 +57,10 @@ Lessons only: the rules are in `AGENTS.md`.
   check on Linux: the docs give the override with an absolute path (the script runs in its crate dir).
 - After the command line moved to `pai` (package `pai-cli`), grep `pai-config (server|preset|control|bench|config)`
   in every `.md` and in skill `description:` lines; `pai-config` stays where it is the GUI, the
-  executable a script runs (`--version`, `sdk-devices`) or what xtask builds and packages. Scripts that
-  still call a command on `pai-config.exe` (`installer/msi-stop-processes.ps1`) now get exit 2: say so
-  where the docs describe them.
+  executable a script runs (`--version`, `sdk-devices`) or what xtask builds and packages. A command run
+  on a GUI-only `pai-config.exe` gets exit 2; the MSI's stopper tries `pai.exe` first for that reason.
+- When a package is added, grep the counts in words (`five`, `three`, `all five`) as well as the file
+  lists: README, `AGENTS.md`, `docs/build-pipeline.md` (intro and the OS table), `build-packaging.md`
+  (relations table, `.deb`/`.rpm` scan bullets) and `build-macos.md` each repeat them. A package with
+  no 2.4 predecessor is an exception in every "each replaces" sentence. Sizes measured on the old split
+  are not the new packages': say so instead of carrying them over.
