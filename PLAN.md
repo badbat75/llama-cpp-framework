@@ -387,9 +387,14 @@ Decided with the user on 2026-11-14:
 - **The runtimes belong to the engine:** `llama.cpp-rocm`, `llama.cpp-cuda`, `llama.cpp-vulkan`,
   versioned by their SDK as today, recommended by `llama.cpp`; each replaces its 2.4 predecessor.
 - **A new `private-ai-framework-core`** holds what the framework puts in `-llama` today: pai-manager,
-  the systemd units (`llama.cpp@.service` included: it runs `pai-manager run-instance`), the D-Bus and
-  polkit policies, the sysusers entry, `cli.toml` and the maintainer scripts. Every framework package
-  requires it.
+  `private-ai-manager.service`, the D-Bus and polkit policies, the sysusers entry, `cli.toml` and the
+  manager's maintainer scripts. Every framework package requires it.
+- **The engine's instance unit belongs to the engine** (user, 2026-11-14): `llama.cpp@.service` ships in
+  the `llama.cpp` package, which stops its running instances before its files are replaced and starts
+  them again afterwards. Its `ExecStart` stays `pai-manager run-instance %i`, which the engine does not
+  require (core requires the engine, not the reverse): the unit carries
+  `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager`, so without the framework it does not
+  run. A later engine brings its own unit the same way (`strata@.service`).
 - **Framework packages carry only the framework's version** (`2.99.1`, no `+llama.cpp...`) and
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
@@ -407,17 +412,16 @@ R2 and the release process in `AGENTS.md` (installer name, release title) follow
 
 Asked by the user on 2026-11-14: **the packages stop the services they hold** before their files are
 replaced, on upgrade as on removal, and start again afterwards what was running: `core` stops the
-manager and the running instances (`llama.cpp@*`), `bff` its service (deb `prerm upgrade`, rpm `%pre`
+manager, `llama.cpp` its running instances (`llama.cpp@*`), `bff` its service (deb `prerm upgrade`, rpm `%pre`
 of the new package, since rpm runs the old `%preun` after the new files are in place), and their
 `postinst` / `%posttrans` start the manager and bring back the instances that were running.
 `xtask install` then no longer refuses because of the framework's own services: only a llama-server
 outside them (started by hand) stops it; an open `pai-config` or `pai` is named in a warning, not a
 refusal.
 
-Found after slice 1: the engine package has no maintainer scripts, so upgrading `llama.cpp` alone
-leaves running instances on the old llama-server (only `core`'s scripts restart them). Fix in slice 2:
-`core` restarts the running instances when the engine's files change (a dpkg file trigger on the
-engine's directory and an rpm `%transfiletriggerin`, so the engine stays free of the framework).
+Found after slice 1: the engine package had no maintainer scripts, so upgrading `llama.cpp` alone left
+running instances on the old llama-server; settled by the engine owning its unit and its scripts
+(above).
 
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
