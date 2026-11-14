@@ -544,7 +544,7 @@ access with authentication.
 
 ## Waiting for the user
 
-- Step 1, to review (taken by the coordinator on 2026-11-14):
+- Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
     `pai-manager uninstall-services` (a deferred custom action) and recreated by the new manager from
     the instances on disk; an instance that was running without boot start comes back stopped.
@@ -553,7 +553,7 @@ access with authentication.
   - The MSI creates `%ProgramData%\private-ai\models`; making it pai-config's default ModelsDir on
     Windows is a follow-up (the virtual accounts cannot read the user's home).
   - The manager service restarts after a failure, as the Linux unit does.
-- Step 3, to review (taken by the coordinator on 2026-11-14): `pai` gets its own package,
+- Step 3, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: `pai` gets its own package,
   `private-ai-framework-cli`, on Linux and macOS, with no dependency on the configurator or the
   graphics libraries (a headless server installs only the command line); on Windows `pai.exe` is in
   the one MSI beside `pai-config.exe`, on the PATH. `pai-config` given a command prints one line
@@ -562,7 +562,7 @@ access with authentication.
   the manager) and ships the benchmark method and `cli.toml`, which both programs read, so `-config`
   requires `-cli`: a desktop install gets `pai` too. The MSI's process stopper also stops a `pai`
   running from `bin\` (an interrupted sweep puts its key back at the next start).
-- Step 10, to review (taken by the coordinator on 2026-11-14): the bff listens on `127.0.0.1:8590` by
+- Step 10, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: the bff listens on `127.0.0.1:8590` by
   default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
   (requires `-llama`), runs as `DynamicUser=yes` on Linux and as the virtual account
   `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Before any
