@@ -697,6 +697,22 @@ proposals to review with the user):
 Every slice that changes what users see starts with a brief from the `designer` agent and ends with its
 review (user, 2026-11-14).
 
+Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed here):
+
+- **Who is acting.** The user logs in to the web UI with their OS account (PAM on Linux, `LogonUser` on
+  Windows); the bff forwards that identity to `private-ai-manager`, which applies today's rules
+  (`control` for any user, `configure` for administrators). Before this exists, nothing changes
+  anything through the bff.
+- **Engines.** Each preset declares its engine (llama.cpp today, Strata later); the web UI shows one
+  mixed preset list, and each engine keeps its own file (llama.cpp's `presets.ini` as today). Only
+  llama.cpp for now.
+- **First editing slice.** The whole UI's structure in `fe/DESIGN.md`, then the Server page of instance
+  `default` with the same controls and checks as `pai-config`. The web UI session (`fe/` only) sends
+  the coordinator the bff API contract it needs (login and session, reading and writing the server and
+  preset files, start, stop, restart, with error keys) and the checks that live only in the Slint layer
+  and must be exposed from `pai-app`, the manager or the bff rather than copied into `fe/`; the bff
+  side is scheduled from that contract.
+
 Later slices (not yet written): editing through the manager, the gateway, the benchmark portal, LAN
 access with authentication.
 
@@ -723,9 +739,8 @@ access with authentication.
 - Step 10, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: the bff listens on `127.0.0.1:8590` by
   default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
   (requires `-core` since step 11), runs as the static system user `private-ai-bff` on Linux (first `DynamicUser=yes`, replaced on 2026-11-14 after the real install: dbus-daemon drops a dynamic user at Hello) and as the virtual account
-  `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Before any
-  slice that changes something through the bff, a design of who is acting (today any local user could
-  act through the bff's account). `cli.toml` moved to `-llama`, and with step 11 to `-core`, which every package requires (the
+  `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Who is acting:
+  decided (step 10). `cli.toml` moved to `-llama`, and with step 11 to `-core`, which every package requires (the
   manager and the bff print from it).
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
