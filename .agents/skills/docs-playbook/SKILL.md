@@ -127,9 +127,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - Windows-style paths written through a Python script need a raw string: `"docs\build-macos.md"` puts a
   backspace byte in the file (one sat in `AGENTS.md` as `docs\x08uild-macos.md`). `grep -c $'\x08'`
   the files after such an edit.
-- `xtask install` takes no product on any OS (only files); `package` and `build` do. On macOS a
-  non-release llama.cpp clone is named `b<N>`, and `components::is_file_of` wants a digit after `-v`,
-  so `llama.cpp-vb<N>-arm64.pkg` is not picked from `dist/` by `install`.
+- `xtask install` takes no product on any OS (only files); `package` and `build` do.
+  `version::llama_build` refuses a non-release clone on every OS: there is no `b<N>` package name.
+- Before writing "X no longer writes Y" (a closed gap), grep every caller of the default behind it
+  (`models_dir_or_default`, `set_server_key("ModelsDir"`): `hf::save_preset` still pinned the user's
+  folder after the Server tab stopped. Scope the claim to what the commit changed, list the rest.
 - The release process (`.agents/skills/release/SKILL.md`) lists every package file per OS and the upload globs:
   when `components.rs`, `msi::file_name` or `macos_pkg::file_name` change a name, fix it there too. Only
   Windows refuses a 2 GiB asset (`windows/package.rs`); nothing pins the llama.cpp tag across the

@@ -183,8 +183,8 @@ holds `config\` (the instances' server and preset files, which users reach only 
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
 protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
 `models\` or `state\` there, not the profile of the account it runs under, and runs in `state\`; `pai`
-leaves both unset at a save, but the GUI configurator's Save still writes the user's `~\.llama.cpp`
-and per-user state folder (open, `PLAN.md` step 11). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
+and the configurator's Server tab leave both unset at a save (a Hugging Face download still pins
+the user's `~\.llama.cpp`: the known gaps in [installer\AGENTS.md](../installer/AGENTS.md)). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
 
