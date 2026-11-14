@@ -342,6 +342,28 @@ plan's `pai --version` and graceful-stop checks). The step closes with that run.
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship
   both; the docs name `pai` for commands.
 
+### 12. Start the instance at boot instead of at the configurator's launch
+
+Covers: R8. Asked by the user on 2026-11-14, before step 11's later slices.
+
+The Settings tab's "start llama-server when pai-config launches" (`settings.ini`
+`StartServerOnLaunch`, per user) no longer fits a service: on Linux and Windows it becomes "start
+llama-server when the system starts", and its state is the service manager's own, as for "Start at
+login": on Linux the instance's unit is enabled (`systemctl enable llama.cpp@default`: the template
+gains `[Install] WantedBy=multi-user.target`), on Windows the SCM start type of `llama.cpp_default` is
+automatic or manual. The manager reads and changes it (a new pair of calls, under `configure`, as
+systemd's own enabling asks for an administrator) and no longer starts every instance at its own start:
+systemd and the SCM start the enabled ones, so `systemctl enable/disable` by hand and the GUI agree.
+The GUI and `pai` show and change it through the manager; pai-config no longer starts the server when
+it launches. macOS keeps today's toggle, label and `StartServerOnLaunch` (no services there). A new
+instance starts disabled, as the old setting defaulted to off. Requirement change to R8: the manager no
+longer starts every instance at boot, only the enabled ones are started, by the OS.
+
+- Done when: the toggle reads "start llama-server when the system starts" on Linux and Windows and
+  follows `systemctl is-enabled llama.cpp@default` (or the SCM start type), both ways; a user without
+  `configure` is refused; pai-config's launch starts nothing; macOS unchanged; tried on the real
+  install.
+
 ### 11. Decouple the framework from its engines
 
 Covers: R12. Comes before step 1's real run, so the packages installed for real are the new ones.
