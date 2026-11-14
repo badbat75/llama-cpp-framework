@@ -102,3 +102,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - The content of the engine's shipped `crates/core/defaults/server@default.ini` (starting values only,
   pinned by `server_cfg.rs` tests) is described in one place, `build-packaging.md` ("No config file is
   shipped"); `AGENTS.md`, the READMEs and `PLAN.md` only name the file. Change that paragraph alone.
+- A maintainer-script change is described in `build-packaging.md`'s "When" table (Removal, Purge rows),
+  the `DPKG_ROOT` sentence below it and the rpm `Requires(<tag>)` sentence; the "not run for real" line
+  of the install log stays until a real removal or purge. A Windows manager message key is named only in
+  `installer/AGENTS.md`'s manager bullet: grep `cli.toml`'s old key in every `.md` after a rename.

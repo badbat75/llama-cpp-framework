@@ -105,8 +105,8 @@ Decisions taken with the user on 2026-11-13:
   user (`llama-cpp`, `private-ai` after step 2; in the GPU groups) and its `ExecStart` is a launcher that reads `server@<id>.ini`
   itself and execs llama-server with `runstate::server_args()`, so a unit started by hand
   (`systemctl start llama.cpp@default`) runs the same command as one the manager starts.
-  `private-ai-manager.service` owns the D-Bus name on the system bus, starts at boot the instances it
-  finds as `server@<id>.ini` files (one for now) and starts, stops and reports them through systemd's
+  `private-ai-manager.service` owns the D-Bus name on the system bus, lists the instances it
+  finds as `server@<id>.ini` files (systemd starts at boot the enabled ones) and starts, stops and reports them through systemd's
   own D-Bus API. It reads instance state from systemd every time and keeps none of its own, so a unit a
   user started or stopped with `systemctl` is still one it manages. Every call that changes something
   is checked with polkit (`CheckAuthorization`, subject = the caller's bus name).
@@ -400,7 +400,9 @@ Decided with the user on 2026-11-14:
   **owns the instance services** `llama.cpp_<id>` and ships **its own default configuration**
   (`server@default.ini`, an empty `presets.ini`, read-only, copied into the engine's configuration
   folder, e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
-  Windows). To settle in slice 3: the exact folders, where the instance logs and models go, and the
+  Windows). Two small Windows manager fixes go with it (found 2026-11-14): `windows::entry::serve`'s doc
+  comment still says "or started", and `scm.rs` `sync` reports an SCM-wide failure with an empty
+  instance id ("instance ``"). To settle in slice 3: the exact folders, where the instance logs and models go, and the
   release assets (two installers per release).
 - **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
 - **The build is split too:** the engine and the framework are separate builds, so either can be

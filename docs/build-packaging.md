@@ -381,20 +381,20 @@ package's `%pre`, since rpm runs the old package's `%preun` only after the new f
 | --- | --- | --- |
 | Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) | Copy the missing defaults into `/etc/llama.cpp/` (the `.rpm` in `%posttrans`); `daemon-reload`; no instance is enabled or started |
 | Upgrade | Stop the manager; afterwards the same as an install, the manager restarted (the `.rpm` only while it is enabled) | Record the active `llama.cpp@*` units in `/run/llama.cpp.instances` and stop them; afterwards copy the missing defaults, `daemon-reload`, start each recorded unit, delete the record |
-| Removal | Stop the manager; `daemon-reload` (the `.rpm` also disables it) | Stop every instance; `daemon-reload`, delete the record; `/etc/llama.cpp/` is kept. An enabled instance stays enabled: its `multi-user.target.wants/` link is left behind (open, `PLAN.md` step 12) |
-| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept | Remove `/etc/llama.cpp/` |
+| Removal | Stop the manager; `daemon-reload` (the `.rpm` also disables it) | Stop every instance; `daemon-reload`, delete the record; `/etc/llama.cpp/` is kept. The `.rpm` also disables each instance linked in `/etc/systemd/system/multi-user.target.wants/` (on the last erase only, not on an upgrade); the `.deb` keeps the enablement, as Debian does for a package's own units |
+| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept | Remove `/etc/llama.cpp/` and the instances' `multi-user.target.wants/llama.cpp@*.service` links, which deb-systemd-helper does not know since the manager made them |
 
 `core`'s scripts never touch the instances, and none enables one: an instance starts at boot only once
 the user enables it. `bff`'s scripts do the same as `core`'s for `private-ai-bff.service` alone:
 `systemd-sysusers private-ai-bff.conf`, then enable and start it on install, stop it before an upgrade
 and restart it after (the `.rpm` in `%posttrans`, while it is enabled), stop it on removal (the `.rpm`
 also disables it), and forget its enablement state on purge. Under `DPKG_ROOT` (a chroot install)
-`llama.cpp`'s copy of the defaults stays inside the root and asks the host for no group, so the server
-file is copied 0644 there. These scripts run in xtask's tests in a sandbox with a fake `systemctl`, the
+`llama.cpp`'s copy of the defaults and its purge stay inside the root, and the copy asks the host for
+no group, so the server file is copied 0644 there. These scripts run in xtask's tests in a sandbox with a fake `systemctl`, the
 chroot install included.
 
 The `.deb` `Depends` on `systemd | systemd-standalone-sysusers | systemd-sysusers` for those scripts;
-the `.rpm` of `core` and of `bff` `Requires(pre)`, `(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd (`llama.cpp`'s none), and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
+the `.rpm` of `core` and of `bff` `Requires(pre)`, `(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd (`llama.cpp`'s the same but `(post)`, a scriptlet it does not have), and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
 create when missing.
 
 <details>
