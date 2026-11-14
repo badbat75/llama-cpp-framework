@@ -193,7 +193,7 @@
 //!
 //! `ctx-size` is the context the estimate reserved the KV cache for
 //! (`Shape::ctx`: `REF_CTX`, or the model's own when shorter), since the cut
-//! was sized for it. Writing it turns `fit` off (`form::fit_allowed`), which
+//! was sized for it. Writing it turns `fit` off (`presets::fit_allowed`), which
 //! is also what the placement needs: `common/fit.cpp` shrinks an unset
 //! context against the TOTAL free memory before giving up on a
 //! `tensor-split` or a tensor override set by hand, so with the context left
@@ -2005,15 +2005,18 @@ pub fn none_recommended() -> String {
     strings::t("none-recommended")
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+// The GGUF writer below is pai-config's too (`save_flow`): the rest of the
+// module is this file's own tests, compiled only into them.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code, unused_imports))]
+pub mod tests {
     use super::*;
     use crate::hf::RepoFile;
     use std::sync::atomic::AtomicU32;
 
     // ── a GGUF writer for the fixtures (also `hf`'s and `save_flow`'s) ──
 
-    pub(crate) enum W<'a> {
+    pub enum W<'a> {
         U32(u32),
         U64(u64),
         Str(&'a str),
@@ -2030,7 +2033,7 @@ pub(crate) mod tests {
     /// A GGUF v3 file's header for `kvs` and `tensors` (name, bytes), and the
     /// whole file's size (offsets laid out as llama.cpp does: each tensor
     /// aligned to 32).
-    pub(crate) fn gguf(kvs: &[(&str, W)], tensors: &[(&str, u64)]) -> (Vec<u8>, u64) {
+    pub fn gguf(kvs: &[(&str, W)], tensors: &[(&str, u64)]) -> (Vec<u8>, u64) {
         let mut out = b"GGUF".to_vec();
         out.extend_from_slice(&3u32.to_le_bytes());
         out.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
@@ -2237,7 +2240,7 @@ pub(crate) mod tests {
     }
 
     /// `header` padded with a hole to `size` bytes.
-    pub(crate) fn write_sparse(path: &Path, header: &[u8], size: u64) {
+    pub fn write_sparse(path: &Path, header: &[u8], size: u64) {
         std::fs::write(path, header).unwrap();
         std::fs::OpenOptions::new()
             .write(true)

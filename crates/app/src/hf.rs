@@ -2744,7 +2744,7 @@ where
 /// | `model_draft` + `spec_type` | the drafter's path; its HEADER's verdict, else the sidecar's prefix | the user asked for it; the header tells DSpark from DFlash, which a name cannot (`gguf::draft_spec_type`) |
 /// | `temp`, `top_k`, `top_p`, `min_p`, `repeat_penalty` | `general.sampling.*` | llama-server already applies these from the file (`common_init_sampler_from_model`); written, they show in the form as the values in force instead of "default" |
 /// | `jinja` | `off` for an embedded NON-Jinja template, else `on` | `--jinja` is upstream's default, and with it a legacy template string would be rendered as Jinja text; only the legacy route reads it |
-/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned preset load: context and GPU layers stay unset (`form::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
+/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned preset load: context and GPU layers stay unset (`presets::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
 /// | `device`, `tensor_split`, `n_cpu_moe`, `n_gpu_layers`, `ctx_size`, `device_draft`, `mmproj_device`, `mmproj_offload`, `placement_note` | `placement`: `hf_fit::placement` of the downloaded files' estimate on this machine, the mmproj and the drafter fetched counted (`local_extras`), `None` without a GPU estimate | the split per card, or the CPU part, the dialog showed for this quantization with these extras (the table in `hf_fit`'s header says which keys in which case); `fit` turns off with `ctx_size` set, as the form would make it, so the cut is not resized against the TOTAL memory (`common/fit.cpp`); the mmproj keys only with an mmproj, `device_draft` only with a drafter |
 ///
 /// And what the header could justify but is left alone, on purpose:
@@ -2806,7 +2806,7 @@ pub fn derive_preset(
         }
         p.placement_note = pl.note.clone();
     }
-    p.fit = crate::form::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none());
+    p.fit = crate::presets::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none());
     if let Some(m) = model {
         let sm = &m.sampling;
         p.temp = sm.temp;
@@ -4426,7 +4426,7 @@ mod tests {
         );
         assert_eq!(p.jinja, Some(true));
         assert!(p.fit);
-        assert!(crate::form::fit_allowed(
+        assert!(crate::presets::fit_allowed(
             p.ctx_size.is_none(),
             p.n_gpu_layers.is_none()
         ));
@@ -4574,7 +4574,7 @@ mod tests {
         );
         assert!(
             !p.fit,
-            "the context is set, so the fit is off (form::fit_allowed)"
+            "the context is set, so the fit is off (presets::fit_allowed)"
         );
         assert_eq!(
             p.device_draft, "CUDA0",
@@ -4614,10 +4614,8 @@ mod tests {
         );
         let back = presets::read_presets(&path);
         assert_eq!(back, std::slice::from_ref(&p));
-        // Through the form, as a GUI save does: unchanged, so not dirty either.
-        let f = crate::form::preset_to_form(&p);
-        assert_eq!(crate::form::form_to_preset(&f), p);
-        assert!(!f.fit, "the form agrees the fit is off");
+        // The form half of this round trip is pai-config's (the form is a
+        // Slint struct): `form::tests::rich_preset_round_trips`.
     }
 
     #[test]

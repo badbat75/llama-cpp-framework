@@ -20,8 +20,10 @@
 // elsewhere must not touch `paths::` (or anything that resolves the config
 // dir): cargo runs tests on parallel threads, so they would race the e2e
 // thread nondeterministically.
+mod app_split_lint;
 mod binding_lint;
 mod control_lint;
+mod migration_hooks;
 mod names_lint;
 mod save_flow;
 mod ui_bindings;

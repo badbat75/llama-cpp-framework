@@ -217,6 +217,9 @@ impl Mode {
         }
     }
 
+    // Public since the move into pai-app, where clippy reads it as the
+    // FromStr look-alike it has always been: kept as written.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Mode {
         if s == "synthetic" {
             Mode::Synthetic
@@ -265,6 +268,9 @@ impl Concurrency {
         }
     }
 
+    // Public since the move into pai-app, where clippy reads it as the
+    // FromStr look-alike it has always been: kept as written.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Concurrency> {
         Concurrency::ALL.into_iter().find(|c| c.as_str() == s)
     }

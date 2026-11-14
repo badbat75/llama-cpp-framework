@@ -292,7 +292,7 @@ fn run(exe: &std::path::Path) -> Option<String> {
 /// Parse the `--list-devices` block. Each device is an indented line shaped
 /// `  CUDA0: NVIDIA GeForce RTX 4070 SUPER (12281 MiB, 10844 MiB free)`. The
 /// `Available devices:` header and any non-indented noise are ignored.
-pub(crate) fn parse(s: &str) -> Vec<DeviceOption> {
+pub fn parse(s: &str) -> Vec<DeviceOption> {
     let mut out: Vec<DeviceOption> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for line in s.lines() {

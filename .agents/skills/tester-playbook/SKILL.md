@@ -19,7 +19,9 @@ Lessons only: the rules are in `AGENTS.md`.
   a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that calls
   `crate::paths::redirect_for_tests(dir.path())` on its own tempdir (it sets the variable and asserts the
   paths follow it before any IO, so a broken redirect fails instead of writing the real tree), and call it at the end of `editable_widgets_track_model_after_edit` in
-  `src/tests/ui_bindings.rs`; filter on that name to run it. Pure helpers stay plain unit tests. Nothing
+  `src/tests/ui_bindings.rs`; filter on that name to run it. A phase of a module in pai-app
+  (`crates/app`: presets, bench, server_control, migration, startup...) goes in pai-app's own runner,
+  `data_root_e2e` in `crates/app/src/tests/mod.rs`, the same rule in that crate. Pure helpers stay plain unit tests. Nothing
   unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
 - Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
   which hides every other test in the binary.
@@ -243,3 +245,15 @@ Lessons only: the rules are in `AGENTS.md`.
   (restore it after).
 - A real chown(2) seam is testable without root: an owner may give its file any group it belongs to
   (`id -Gn`, the gid from `getent group <name>`); an unknown group name must come back `NotFound`.
+- `#[cfg(test)]` is off in a library compiled as a dependency: an item another crate's tests need
+  (a fake, an `_e2e` phase, the test branch of `server_control::backend()`) goes behind a
+  `test-support` feature its dev-dependency turns on, as in pai-core. Without it, the dependent's
+  tests silently take the real backend.
+- The configurator's source lints read files by path: `control_lint` (`src_dirs`), `binding_lint`
+  (`src_dirs`) and `names_lint` walk `crates/app/src` beside `crates/config/src`. A new crate holding
+  configurator code must be added to all three, or they keep passing while scanning less.
+- Cargo.lock writes each dependency on its own line (`"name"`, `"name version"` when two versions
+  exist, plus `(source)`), and lists dev and build dependencies of every target: a walk over it
+  over-reports, never misses (`crates/app/src/tests/deps_lint.rs`).
+- After a move between crates, diff the test names against HEAD (`-- --list` of both crates now vs
+  the old crate in a worktree): only renames should show, each accounted for.

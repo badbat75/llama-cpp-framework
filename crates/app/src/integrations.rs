@@ -99,7 +99,7 @@ const OPENCODE_COMPACTION_BUFFER: i64 = 20_000;
 // ── opencode.json ──────────────────────────────────────────────────────
 
 /// Returns the preset IDs currently registered as models in opencode.json.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn opencode_model_ids() -> Vec<String> {
     let cfg = read_opencode();
     cfg.as_ref()

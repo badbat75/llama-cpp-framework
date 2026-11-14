@@ -922,8 +922,11 @@ mod tests {
             )
         }
 
+        /// One value the test touches: its key, its name and its starting
+        /// content (type and bytes), `None` when it did not exist.
+        type Saved = (&'static str, String, Option<(u32, Vec<u8>)>);
         /// The starting state of every value the test touches, put back on drop.
-        struct Restore(Vec<(&'static str, String, Option<(u32, Vec<u8>)>)>);
+        struct Restore(Vec<Saved>);
         impl Drop for Restore {
             fn drop(&mut self) {
                 for (sub, name, value) in &self.0 {

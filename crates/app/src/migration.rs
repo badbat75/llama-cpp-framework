@@ -222,22 +222,62 @@ pub(crate) fn migration_e2e() {
     assert!(new_entry.is_file() && !old_entry.exists());
 }
 
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): what
+/// the hand-over reports, named with the system paths under the redirect,
+/// and the offer's body naming the system directory.
 #[cfg(test)]
-mod tests {
-    // `main` (a binary root no test can call) runs the migration before the
-    // GUI or the CLI can read or write the user's tree: a text check of the
-    // order of the calls in `main.rs`.
-    #[test]
-    fn main_migrates_before_the_gui_or_the_cli_runs() {
-        let main = include_str!("main.rs");
-        let at = |needle: &str| {
-            main.find(needle)
-                .unwrap_or_else(|| panic!("main.rs has no {needle}"))
-        };
-        let migrate = at("migration::run()");
-        assert!(migrate < at("gui::run("), "migrate before the GUI");
-        assert!(migrate < at("Cli::parse()"), "migrate before the CLI");
-    }
+pub(crate) fn config_import_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use pai_core::client::{ClientError, InstanceState};
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let log = fake::log();
+    let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
+    let path = |f: ConfigFile| b.config_path(f).display().to_string();
+
+    // The body names the system directory the files go to.
+    let system_dir = b
+        .config_path(ConfigFile::Server)
+        .parent()
+        .expect("system dir")
+        .display()
+        .to_string();
+    let body = import_offer_body(&b);
+    assert!(body.contains(&system_dir), "{body:?} names {system_dir}");
+
+    // Written: one line per file, naming where it went, in order.
+    let all = Import {
+        written: vec![ConfigFile::Server, ConfigFile::Presets],
+        refused: None,
+    };
+    let lines = all.lines(&b);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
+    assert!(lines[1].contains(&path(ConfigFile::Presets)), "{lines:?}");
+    assert_ne!(lines[0], lines[1]);
+
+    // Refused: the written lines, then one naming the file and carrying the
+    // refusal's own text.
+    let text = ClientError::NotAuthorized.text();
+    let stopped = Import {
+        written: vec![ConfigFile::Server],
+        refused: Some((ConfigFile::Presets, text.clone())),
+    };
+    let lines = stopped.lines(&b);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
+    assert!(
+        lines[1].contains(&path(ConfigFile::Presets)) && lines[1].contains(&text),
+        "{lines:?}"
+    );
+
+    // Nothing: one line saying so, which is not a key left unfilled.
+    let lines = Import::default().lines(&b);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        !lines[0].is_empty() && lines[0].contains(' '),
+        "a sentence, not a bare key: {lines:?}"
+    );
 }
 
 /// Handing the per-user configuration to the manager: offered, never done
@@ -611,82 +651,4 @@ mod import_tests {
         assert!(!import_offered(&b, dir.path()));
         assert_eq!(fake::writes(&log), Vec::<String>::new());
     }
-
-    /// The GUI asks at start (`gui::run`, which no test can call): a text
-    /// check that it decides with `import_offered` and hands over with
-    /// `import_user_config`. `main` runs the 2.4 tree move before the GUI
-    /// (`main_migrates_before_the_gui_or_the_cli_runs`), so the per-user
-    /// files are found in their new place.
-    #[test]
-    fn the_gui_offers_the_import_at_start() {
-        let gui = include_str!("gui.rs");
-        let run = &gui[gui.find("pub fn run(").expect("gui::run")..];
-        let run = &run[..run.find("\n}\n").expect("end of gui::run")];
-        assert!(
-            run.contains("import_offered("),
-            "gui::run decides with migration::import_offered"
-        );
-        assert!(
-            gui.contains("import_user_config("),
-            "the dialog's Import runs migration::import_user_config"
-        );
-    }
-}
-
-/// E2E phase (called from `editable_widgets_track_model_after_edit`): what
-/// the hand-over reports, named with the system paths under the redirect,
-/// and the offer's body naming the system directory.
-#[cfg(test)]
-pub(crate) fn config_import_e2e() {
-    use crate::server_control::fake::{self, FakeClient};
-    use pai_core::client::{ClientError, InstanceState};
-    let dir = tempfile::tempdir().expect("tempdir");
-    crate::paths::redirect_for_tests(dir.path());
-    let log = fake::log();
-    let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
-    let path = |f: ConfigFile| b.config_path(f).display().to_string();
-
-    // The body names the system directory the files go to.
-    let system_dir = b
-        .config_path(ConfigFile::Server)
-        .parent()
-        .expect("system dir")
-        .display()
-        .to_string();
-    let body = import_offer_body(&b);
-    assert!(body.contains(&system_dir), "{body:?} names {system_dir}");
-
-    // Written: one line per file, naming where it went, in order.
-    let all = Import {
-        written: vec![ConfigFile::Server, ConfigFile::Presets],
-        refused: None,
-    };
-    let lines = all.lines(&b);
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
-    assert!(lines[1].contains(&path(ConfigFile::Presets)), "{lines:?}");
-    assert_ne!(lines[0], lines[1]);
-
-    // Refused: the written lines, then one naming the file and carrying the
-    // refusal's own text.
-    let text = ClientError::NotAuthorized.text();
-    let stopped = Import {
-        written: vec![ConfigFile::Server],
-        refused: Some((ConfigFile::Presets, text.clone())),
-    };
-    let lines = stopped.lines(&b);
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
-    assert!(
-        lines[1].contains(&path(ConfigFile::Presets)) && lines[1].contains(&text),
-        "{lines:?}"
-    );
-
-    // Nothing: one line saying so, which is not a key left unfilled.
-    let lines = Import::default().lines(&b);
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert!(
-        !lines[0].is_empty() && lines[0].contains(' '),
-        "a sentence, not a bare key: {lines:?}"
-    );
 }

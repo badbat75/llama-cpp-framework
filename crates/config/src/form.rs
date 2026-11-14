@@ -11,6 +11,8 @@ use slint::SharedString;
 
 use crate::gui::PresetForm;
 use crate::{ini, presets, server_cfg};
+// The two rules the CLI and pai-app's modules share with the form.
+pub(crate) use crate::presets::{fit_allowed, tri_bool};
 use pai_core::checks::{NGRAM_DRAFT, NGRAM_HITS, NGRAM_SIZE};
 
 /// The preset's string value, or the schema default when it's empty, so the
@@ -37,18 +39,6 @@ pub(crate) fn tri_state(v: Option<bool>) -> SharedString {
         None => "default",
     }
     .into()
-}
-
-/// The form spelling → `Option<bool>`, the inverse of `tri_state`. Anything that
-/// isn't an explicit on/off is `None`: the natural simplification
-/// `Some(s == "on")` collapses "default" into an explicit off, which is a real
-/// flag (`--no-flash-attn` / `--no-reasoning-preserve`) with real consequences.
-pub(crate) fn tri_bool(s: &str) -> Option<bool> {
-    match s {
-        "on" => Some(true),
-        "off" => Some(false),
-        _ => None,
-    }
 }
 
 /// An enum-valued string field where empty means "omit the flag": carried to the
@@ -152,15 +142,6 @@ const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
 // it, the only kind that lets a `-` be typed at all (see `cache_ram`).
 const HINT_REASONING_BUDGET: i32 = -1;
 const HINT_N_PREDICT: i32 = -1;
-
-/// Whether `fit` may be on: only with the context and the GPU layers both left
-/// at default, the two things the fit sizes. Set by hand, either one leaves the
-/// fit nothing to decide there (it keeps a user's context, and gives up on the
-/// layer placement altogether, `common/fit.cpp`), so the key is written `off`.
-/// `AppState.fit_allowed` is the same rule for the checkbox.
-pub fn fit_allowed(ctx_size_default: bool, n_gpu_layers_default: bool) -> bool {
-    ctx_size_default && n_gpu_layers_default
-}
 
 pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     // String/bool domain defaults are pulled from `Preset::default()` so the form
@@ -1318,5 +1299,90 @@ mod tests {
             ..Preset::default()
         };
         assert_eq!(round_trip(&p).reasoning_budget_message, msg);
+    }
+
+    /// A preset made at download (pai-app's `hf::preset_from_download`, placed
+    /// per card with the context set) goes through the form unchanged, as a
+    /// GUI save does: not dirty either, and the form agrees the fit is off.
+    /// The INI half of the round trip is pai-app's
+    /// (`a_download_is_placed_per_card_and_survives_the_ini_and_the_form`).
+    #[test]
+    fn a_download_made_preset_survives_the_form() {
+        use pai_app::hf::{preset_from_download, Downloaded, Sidecar};
+        use pai_app::hf_fit::tests::{gguf, write_sparse, W};
+        use pai_app::hf_fit::{self, Budget, Gpu};
+        const MIB: u64 = 1 << 20;
+
+        let dir = tempfile::tempdir().unwrap();
+        // The same download as pai-app's: four blocks of a MoE model, an
+        // image encoder and an MTP drafter, a second card larger by exactly
+        // what the extras take.
+        let mut tensors = vec![("token_embd.weight".to_string(), 8 * MIB)];
+        for b in 0..4 {
+            tensors.push((format!("blk.{b}.attn_q.weight"), 2 * MIB));
+            tensors.push((format!("blk.{b}.ffn_up_exps.weight"), 16 * MIB));
+        }
+        tensors.push(("output.weight".into(), 4 * MIB));
+        let t: Vec<(&str, u64)> = tensors.iter().map(|(n, s)| (n.as_str(), *s)).collect();
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(4)),
+                ("qwen3moe.context_length", W::U32(4096)),
+                ("qwen3moe.embedding_length", W::U32(256)),
+                ("qwen3moe.attention.head_count", W::U32(4)),
+                ("qwen3moe.attention.head_count_kv", W::U32(1)),
+                ("qwen3moe.attention.key_length", W::U32(64)),
+                ("qwen3moe.attention.value_length", W::U32(64)),
+            ],
+            &t,
+        );
+        let model = dir.path().join("m-Q4_K_M.gguf");
+        write_sparse(&model, &h, size);
+        let mmproj = dir.path().join("mmproj-F16.gguf");
+        std::fs::write(&mmproj, vec![0u8; MIB as usize]).unwrap();
+        let (dh, dsize) = gguf(
+            &[("general.architecture", W::Str("qwen3"))],
+            &[("blk.0.attn_q.weight", 2 * MIB)],
+        );
+        let draft = dir.path().join("m-MTP-Q8_0.gguf");
+        write_sparse(&draft, &dh, dsize);
+        let d = Downloaded {
+            repo: "o/r".into(),
+            project_url: "https://huggingface.co/o/r".into(),
+            model,
+            mmproj: Some(mmproj),
+            draft: Some((Sidecar::Mtp, draft)),
+        };
+        let room = (MIB + hf_fit::MMPROJ_COMPUTE + 2 * MIB + hf_fit::DRAFT_COMPUTE) / MIB;
+        let card = |id: &str, name: &str, usable_mib: u64| Gpu {
+            id: id.into(),
+            name: name.into(),
+            total_mib: usable_mib + hf_fit::GPU_RESERVE / MIB,
+        };
+        let b = Budget {
+            gpus: vec![
+                card("ROCm1", "AMD Radeon AI PRO R9700", 48),
+                card("CUDA0", "NVIDIA GeForce RTX 4070 SUPER", 24 + room),
+            ],
+            ram: Some(60 << 30),
+            ram_total: Some(64 << 30),
+        };
+
+        let p = preset_from_download(&d, &[], Some(&b));
+        // Placed per card, as pai-app's test pins; the context set, so no fit.
+        assert_eq!(
+            (p.device.as_str(), p.ctx_size, p.device_draft.as_str()),
+            ("ROCm1,CUDA0", Some(4096), "CUDA0")
+        );
+        assert!(!p.fit, "the context is set, so the fit is off");
+        assert!(
+            !p.placement_note.is_empty(),
+            "a placed download carries its note"
+        );
+
+        let f = preset_to_form(&p);
+        assert_eq!(form_to_preset(&f), p);
+        assert!(!f.fit, "the form agrees the fit is off");
     }
 }

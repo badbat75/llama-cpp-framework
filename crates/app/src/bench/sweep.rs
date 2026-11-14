@@ -461,6 +461,9 @@ pub enum Apply {
 }
 
 impl Apply {
+    // Public since the move into pai-app, where clippy reads it as the
+    // FromStr look-alike it has always been: kept as written.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Apply {
         match s {
             "best" => Apply::Best,
@@ -1403,7 +1406,7 @@ fn report_leg(leg: &Leg, mode: Mode) {
     }
 }
 
-/// E2E phase (called from `editable_widgets_track_model_after_edit`): the
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
 /// value a sweep will put back is read from the instance's presets.ini through
 /// the seam (the manager's file), not from the per-user one.
 #[cfg(test)]

@@ -22,6 +22,9 @@ pub enum Format {
 }
 
 impl Format {
+    // Public since the move into pai-app, where clippy reads it as the
+    // FromStr look-alike it has always been: kept as written.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Format {
         match s {
             "csv" => Format::Csv,

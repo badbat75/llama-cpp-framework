@@ -21,25 +21,16 @@ path = "src/main.rs"
 # The modules shared with pai-manager (paths, INI, server config, the
 # launch, strings).
 pai-core = { path = "../core" }
+# The configurator's logic without a GUI (presets, benchmarks, HF, GGUF, the
+# configuration, the server control seam), shared with the CLI.
+pai-app = { path = "../app" }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
 clap = { version = "4.6", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 rfd = { version = "0.17", default-features = false }
-# The Tensor placement picker reads which tensors a rule's regex matches
-# (tensor_picker.rs). Already in the lock as a transitive dependency.
-regex = "1.13"
-# bench.db (bench/db.rs): the benchmark store, one schema shared with the
-# repo's benchmarks/. `bundled` compiles SQLite in, so Windows needs no DLL.
-rusqlite = { version = "0.41", features = ["bundled"] }
-# Image prompts (bench::resolve_images): the image a prompt names is decoded,
-# fitted into the run's image size and re-encoded as JPEG at send time. Both
-# are already in the lock (slint's own image loading).
+# The Benchmark tab and `bench run --image` read an image prompt's size and
+# kind. Already in the lock (slint's own image loading, and pai-app).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-base64 = "0.23"
-# `bench run` puts the preset back when interrupted (bench/interrupt.rs).
-# `termination` adds SIGTERM and SIGHUP to Ctrl-C.
-ctrlc = { version = "3.5", features = ["termination"] }
 
 # rfd has no file-dialog backend without a feature on Linux, and its build
 # script refuses to compile with none chosen. xdg-portal talks to the desktop
@@ -50,34 +41,27 @@ ctrlc = { version = "3.5", features = ["termination"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 
-# Every Win32 call the crate makes (registry, single instance, console, HW
-# Monitor, process handles), with the signatures and constants Microsoft's
-# metadata declares instead of hand-written ones. 0.61 is the version slint's
-# winit already compiles, so it adds nothing to the build. Each module is a
-# feature: a new call may need one more.
+# The Win32 calls left in the GUI (single instance, the console attach of
+# main.rs), with the signatures and constants Microsoft's metadata declares
+# instead of hand-written ones. 0.61 is the version slint's winit already
+# compiles, so it adds nothing to the build. Each module is a feature: a new
+# call may need one more.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
-    "Wdk_Graphics_Direct3D",
-    "Win32_Devices_DeviceAndDriverInstallation",
-    "Win32_Devices_Properties",
     "Win32_Foundation",
     "Win32_Security",
-    "Win32_Storage_FileSystem",
     "Win32_System_Console",
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Performance",
-    "Win32_System_ProcessStatus",
-    "Win32_System_Registry",
-    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]
 pai-core = { path = "../core", features = ["test-support"] }
+# pai-app's test doubles (the fake manager backend a test build picks), so
+# the GUI and CLI tests never reach the real manager.
+pai-app = { path = "../app", features = ["test-support"] }
 tempfile = "3"
+serde_json = "1"
 # Headless Slint backend for the UI regression tests (src/tests/ui_bindings.rs).
 # Already in the tree as an optional dep of slint; pinned to the same version.
 i-slint-backend-testing = "1.18"

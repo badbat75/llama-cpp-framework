@@ -323,8 +323,9 @@ Skia and the graphics libraries; on Windows a console executable replaces the co
 today's one binary; the CLI and the shared crate become type-checkable on the Windows GNU target
 (W15), which Skia blocks today.
 
-Slices, each test first: **1** `pai-app` with the shared modules moved out of `pai-config` (code
-moved, not changed; a lint that `pai-app` links no Slint); **2** `crates/cli` (package `pai-cli`,
+Slices, each test first: **1** (done: `pai-app` holds the shared modules, with a `test-support`
+feature for the fakes pai-config's tests use; it passes the Windows GNU check given
+`PRIVATE_AI_LLAMA_CPP_DIR`); **2** `crates/cli` (package `pai-cli`,
 binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing beyond what the GUI
 needs, no console attach); **3** packaging: `pai` in the `-config` package or its own (decide then),
 `/usr/bin/pai`, the MSI's PATH; **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`.

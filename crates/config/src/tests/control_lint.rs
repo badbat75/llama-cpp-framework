@@ -42,6 +42,19 @@ fn hits(line: &str) -> Vec<String> {
     found
 }
 
+/// The `src/` of the crates that hold the configurator's code: the GUI (this
+/// crate) and the logic it shares with the CLI (pai-app).
+fn src_dirs() -> [PathBuf; 2] {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    ["app", "config"].map(|c| crates.join(c).join("src"))
+}
+
+/// A source's path from `crates/`, as a violation names it.
+fn rel(file: &Path) -> &Path {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    file.strip_prefix(crates).unwrap_or(file)
+}
+
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("src dir") {
         let path = entry.expect("dir entry").path();
@@ -57,9 +70,10 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn only_the_seam_starts_stops_or_probes_llama_server() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    sources(&src, &mut files);
+    for src in src_dirs() {
+        sources(&src, &mut files);
+    }
     let mut violations = String::new();
     for file in files {
         let name = file.file_name().unwrap().to_string_lossy().to_string();
@@ -69,11 +83,7 @@ fn only_the_seam_starts_stops_or_probes_llama_server() {
         let text = std::fs::read_to_string(&file).expect("read source");
         for (n, line) in text.lines().enumerate() {
             for hit in hits(line) {
-                violations.push_str(&format!(
-                    "\n  {}:{}: {hit}",
-                    file.strip_prefix(&src).unwrap().display(),
-                    n + 1
-                ));
+                violations.push_str(&format!("\n  {}:{}: {hit}", rel(&file).display(), n + 1));
             }
         }
     }
@@ -211,9 +221,10 @@ fn production_lines(text: &str) -> Vec<(usize, &str)> {
 
 #[test]
 fn only_the_seam_reads_or_writes_the_config_files() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    sources(&src, &mut files);
+    for src in src_dirs() {
+        sources(&src, &mut files);
+    }
     let mut violations = String::new();
     for file in files {
         let name = file.file_name().unwrap().to_string_lossy().to_string();
@@ -223,10 +234,7 @@ fn only_the_seam_reads_or_writes_the_config_files() {
         let text = std::fs::read_to_string(&file).expect("read source");
         for (n, line) in production_lines(&text) {
             for hit in config_hits(line) {
-                violations.push_str(&format!(
-                    "\n  {}:{n}: {hit}",
-                    file.strip_prefix(&src).unwrap().display()
-                ));
+                violations.push_str(&format!("\n  {}:{n}: {hit}", rel(&file).display()));
             }
         }
     }
@@ -364,9 +372,10 @@ fn log_hits(line: &str) -> Vec<String> {
 
 #[test]
 fn only_the_seam_reads_the_instances_log() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    sources(&src, &mut files);
+    for src in src_dirs() {
+        sources(&src, &mut files);
+    }
     let mut violations = String::new();
     for file in files {
         let name = file.file_name().unwrap().to_string_lossy().to_string();
@@ -376,10 +385,7 @@ fn only_the_seam_reads_the_instances_log() {
         let text = std::fs::read_to_string(&file).expect("read source");
         for (n, line) in production_lines(&text) {
             for hit in log_hits(line) {
-                violations.push_str(&format!(
-                    "\n  {}:{n}: {hit}",
-                    file.strip_prefix(&src).unwrap().display()
-                ));
+                violations.push_str(&format!("\n  {}:{n}: {hit}", rel(&file).display()));
             }
         }
     }

@@ -587,7 +587,7 @@ pub struct Preset {
     /// the model (`params_base.fit_params`, `server-context.cpp`).
     ///
     /// The form allows it only with `ctx_size` and `n_gpu_layers` unset
-    /// (`form::fit_allowed`): those are what it sizes.
+    /// (`presets::fit_allowed`): those are what it sizes.
     pub fit: bool,
     /// The fit's two bounds, read only with `fit` on (the form disables them
     /// otherwise). `fit_ctx` (--fit-ctx): the smallest context the fit may cut
@@ -1446,7 +1446,7 @@ pub(crate) fn set_server_key(key: &str, value: &str) -> io::Result<()> {
 /// boundary), so a hand-authored id (a future `preset set`/import, or an
 /// editable-id GUI change) can't corrupt the file. Emptiness is a separate
 /// check so `rename` can keep its own "…is empty" message.
-pub(crate) fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     checks::valid_preset_id(id)
 }
 
@@ -1645,7 +1645,7 @@ pub(crate) fn unique_id(base: &str, existing: &[String]) -> String {
 /// case: `ini::find_section_header` (and so `save`'s replace) matches headers
 /// case-insensitively, so a new `Qwen3-8B-Q4_K_M` saved next to a tuned
 /// `[qwen3-8b-q4_k_m]` would replace it wholesale.
-pub(crate) fn id_taken(id: &str, existing: &[String]) -> bool {
+pub fn id_taken(id: &str, existing: &[String]) -> bool {
     existing.iter().any(|e| e.eq_ignore_ascii_case(id))
 }
 
@@ -1654,7 +1654,7 @@ pub(crate) fn id_taken(id: &str, existing: &[String]) -> bool {
 /// an empty id is a `[]` section `save` refuses), de-conflicted by `unique_id`.
 /// Shared by the Models tab's New / Clone and the Hugging Face download, so
 /// the three can never disagree on it.
-pub(crate) fn new_preset_id(model_path: &str, existing: &[String]) -> String {
+pub fn new_preset_id(model_path: &str, existing: &[String]) -> String {
     let base = make_id(model_path);
     let base = if base.is_empty() {
         "preset".to_string()
@@ -2119,6 +2119,27 @@ fn emit_f64(out: &mut String, key: &str, val: Option<f64>) {
 fn emit_i32(out: &mut String, key: &str, val: Option<i32>) {
     if let Some(v) = val {
         out.push_str(&format!("{key} = {v}\r\n"));
+    }
+}
+
+/// Whether `fit` may be on: only with the context and the GPU layers both left
+/// at default, the two things the fit sizes. Set by hand, either one leaves the
+/// fit nothing to decide there (it keeps a user's context, and gives up on the
+/// layer placement altogether, `common/fit.cpp`), so the key is written `off`.
+/// `AppState.fit_allowed` is the same rule for the checkbox.
+pub fn fit_allowed(ctx_size_default: bool, n_gpu_layers_default: bool) -> bool {
+    ctx_size_default && n_gpu_layers_default
+}
+
+/// The form spelling → `Option<bool>`, the inverse of `form::tri_state`. Anything that
+/// isn't an explicit on/off is `None`: the natural simplification
+/// `Some(s == "on")` collapses "default" into an explicit off, which is a real
+/// flag (`--no-flash-attn` / `--no-reasoning-preserve`) with real consequences.
+pub fn tri_bool(s: &str) -> Option<bool> {
+    match s {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
     }
 }
 

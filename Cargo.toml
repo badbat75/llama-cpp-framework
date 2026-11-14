@@ -1,17 +1,18 @@
-# The cargo workspace: the configurator (pai-config), the service manager
-# (pai-manager), the library both share (pai-core), the build orchestrator
-# (xtask, run as `cargo run -p xtask -- <phase>`) and the docs site generator
-# (tools/site, `cargo run -p docs-site`). xtask drives llama.cpp's CMake build
+# The cargo workspace: the configurator (pai-config), its logic without a GUI
+# (pai-app), the service manager (pai-manager), the library they share
+# (pai-core), the build orchestrator (xtask, run as
+# `cargo run -p xtask -- <phase>`) and the docs site generator (tools/site,
+# `cargo run -p docs-site`). xtask drives llama.cpp's CMake build
 # and this workspace's cargo build side by side; xtask, docs-site and the
 # framework crates do not depend on each other, and CI builds docs-site
 # alone. Profiles live here because cargo only reads them from the workspace
 # root.
 [workspace]
-members = ["crates/core", "crates/manager", "crates/config", "xtask", "tools/site"]
+members = ["crates/core", "crates/app", "crates/manager", "crates/config", "xtask", "tools/site"]
 resolver = "2"
 
-# The framework version, one for its crates (pai-core, pai-manager, pai-config:
-# `version.workspace = true`); xtask names the packages after it
+# The framework version, one for its crates (pai-core, pai-app, pai-manager,
+# pai-config: `version.workspace = true`); xtask names the packages after it
 # (`version::framework`).
 [workspace.package]
 version = "2.4.0"

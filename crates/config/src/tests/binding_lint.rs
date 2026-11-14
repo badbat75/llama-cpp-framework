@@ -434,11 +434,11 @@ fn strings_file(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
-/// The `src/` of every crate whose text the files hold: this one, the core and
-/// the manager.
-fn src_dirs() -> [std::path::PathBuf; 3] {
+/// The `src/` of every crate whose text the files hold: this one, the shared
+/// logic (pai-app), the core and the manager.
+fn src_dirs() -> [std::path::PathBuf; 4] {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    ["config", "core", "manager"].map(|c| crates.join(c).join("src"))
+    ["app", "config", "core", "manager"].map(|c| crates.join(c).join("src"))
 }
 
 /// Every `.rs` of every crate in `src_dirs`, as `rust_sources` picks them.

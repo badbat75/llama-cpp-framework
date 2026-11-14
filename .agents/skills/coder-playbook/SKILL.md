@@ -9,8 +9,15 @@ Lessons only: the rules are in `AGENTS.md`.
   control, or a pattern that cannot match itself.
 - When a test fails, check whether the test or the code is wrong before changing either.
 - A screenshot that comes out blank proves nothing about a GUI. Check that it really shows the window.
-- The framework is three crates under `crates/`: `core` (`pai-core`, no GUI), `manager` (`pai-manager`,
-  the `pai-manager` bin, core only) and `config` (`pai-config`, GUI + CLI). The config and manager
+- The framework is four crates under `crates/`: `core` (`pai-core`, no GUI), `manager` (`pai-manager`,
+  the `pai-manager` bin, core only), `app` (`pai-app`, the configurator's logic without Slint) and
+  `config` (`pai-config`, GUI + CLI). config's `lib.rs` brings pai-app's modules in with
+  `use pai_app::{...}`, so `crate::presets::x` still resolves in gui and cli; pai-app's modules are
+  `pub mod`, so an item gui or cli needs is `pub`. The `cfg(test)` items pai-config's tests use
+  (`server_control::fake`, the test branch of `backend()`, `hf_fit::tests`' GGUF writer) are
+  `cfg(any(test, feature = "test-support"))`; a normal `cargo build -p pai-config` leaves the feature
+  off (check: `touch crates/app/src/lib.rs && cargo build -p pai-config -v`, no `feature="test-support"`
+  on the `pai_app` rustc line). The config and manager
   lib roots `use pai_core::{paths, ...}` so `crate::paths::x` still resolves; a module split between
   core and config (`server_cfg`, `slot_state`, `runstate` over `pai_core::launch`) re-exports the core
   half with `pub use`. A `#[cfg(test)]` item of core is invisible to the other crates' tests: gate it
@@ -130,3 +137,10 @@ Lessons only: the rules are in `AGENTS.md`.
   only the GNU-target clippy shows it. Name it in the `cfg(not(unix))` branch (`let _ = (file, group);`).
 - `pai_core::ini::atomic_write` sets no mode or group: the manager writes its served files through
   `service::write_served_file` (0640 + group `private-ai` for `server@<id>.ini`, 0644 for the presets).
+- clippy's `items_after_test_module` looks only at the FIRST `#[cfg(test)]` module of a file and stays
+  quiet when a `mod` follows it: turning a leading `#[cfg(test)] mod fake` into
+  `cfg(any(test, feature = ...))` made it fire on the `mod tests` with e2e phases after it.
+- A module going from private to `pub mod` (the move into pai-app) exposes its inherent `from_str`s to
+  `clippy::should_implement_trait`; they carry an `allow` rather than a rewrite.
+- `cargo check -p pai-app --target x86_64-pc-windows-gnu` needs `PRIVATE_AI_LLAMA_CPP_DIR` set to the
+  Linux clone (`build/linux/llama.cpp`): the build script reads the Windows clone path by default.

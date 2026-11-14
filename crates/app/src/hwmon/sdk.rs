@@ -568,6 +568,7 @@ unsafe fn report_vulkan(lib: *mut c_void) -> Option<()> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     fn touch(root: &Path, rel: &str) -> PathBuf {
         let p = root.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -575,6 +576,7 @@ mod tests {
         p
     }
 
+    #[cfg(not(windows))]
     fn canon(p: &Path) -> Option<PathBuf> {
         p.canonicalize().ok()
     }

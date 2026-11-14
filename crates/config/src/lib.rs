@@ -1,45 +1,30 @@
-//! pai-config's library: the configurator's modules (`main.rs`), over
-//! the shared core (`pai-core`).
+//! pai-config's library: the configurator's GUI and CLI modules (`main.rs`),
+//! over the logic they share (`pai-app`) and the shared core (`pai-core`).
 
 // The core modules, under the names the sources use (`crate::paths`, ...).
 pub use pai_core::strings;
-use pai_core::{ini, net_ifaces, paths, proc};
+use pai_core::{ini, net_ifaces, paths};
 
+// The GUI-free modules, under the names the sources use (`crate::presets`, ...).
+#[cfg(any(target_os = "linux", windows))]
+use pai_app::hwmon;
+pub use pai_app::migration;
 #[cfg(test)]
-#[path = "../arch_tables.rs"]
-mod arch_tables;
-mod bench;
+use pai_app::sha256;
+use pai_app::{
+    bench, devices, gguf, hf, hf_fit, integrations, kv_cache, linked_files, model_scan, moe_cache,
+    presets, runstate, server_cfg, server_control, server_version, settings, slot_state, startup,
+    tensor_picker,
+};
+
 pub mod cli;
-mod devices;
 mod form;
-mod gguf;
 mod gpu_split;
 pub mod gui;
-mod hf;
-mod hf_fit;
-mod http;
-#[cfg(any(target_os = "linux", windows))]
-mod hwmon;
-mod integrations;
-mod kv_cache;
-mod linked_files;
-pub mod migration;
-mod model_scan;
-mod moe_cache;
-mod presets;
-mod runstate;
-mod server_cfg;
-mod server_control;
 mod server_form;
-mod server_version;
-mod settings;
-mod sha256;
 #[cfg(windows)]
 mod single_instance;
-mod slot_state;
-mod startup;
 mod tensor_override;
-mod tensor_picker;
 // Cross-cutting end-to-end tests (e.g. the Slint UI regression test) live under
 // src/tests/; per-module unit tests stay inline in their own files.
 #[cfg(test)]
