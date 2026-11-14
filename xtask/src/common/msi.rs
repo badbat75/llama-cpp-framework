@@ -1,6 +1,6 @@
 //! What the Windows package holds beyond the harvested tree: the
 //! executables of the cargo workspace that `xtask package` stages into
-//! `bin\`, and (in the tests) the manager's service and the machine-wide data
+//! `bin\`, and (in the tests) the manager's and the bff's services and the machine-wide data
 //! tree under `%ProgramData%\private-ai` that `installer\private-ai-framework.wxs`
 //! registers and creates. The tests read the `.wxs` as XML, so they run on
 //! every OS; nothing here builds the MSI.
@@ -8,7 +8,12 @@
 /// The cargo workspace's executables that `xtask package` copies from
 /// cargo's release dir into `staging\bin\` on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub const CARGO_EXES: &[&str] = &["pai-config.exe", "pai.exe", "pai-manager.exe"];
+pub const CARGO_EXES: &[&str] = &[
+    "pai-config.exe",
+    "pai.exe",
+    "pai-manager.exe",
+    "pai-bff.exe",
+];
 
 #[cfg(test)]
 mod tests {
@@ -723,6 +728,220 @@ mod tests {
             .find(|c| c.attribute("Action") == Some("StopProcesses"))
             .expect("StopProcesses sequenced");
         assert_eq!(custom.attribute("Before"), Some("InstallValidate"));
+    }
+
+    // ── pai-bff, the web service ─────────────────────────────────────────
+
+    /// The bff's SCM service, the Linux unit's name without `.service`.
+    const BFF_SERVICE: &str = "private-ai-bff";
+
+    /// The one `ServiceInstall` of the bff.
+    fn bff_service_install<'a, 'i>(doc: &'a Document<'i>) -> Node<'a, 'i> {
+        let found: Vec<_> = elements(doc, "ServiceInstall")
+            .into_iter()
+            .filter(|n| n.attribute("Name") == Some(BFF_SERVICE))
+            .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "one ServiceInstall Name=\"{BFF_SERVICE}\" in the .wxs, found {}",
+            found.len()
+        );
+        found[0]
+    }
+
+    /// `pai-bff.exe` is staged into `bin\` from cargo's release dir, beside
+    /// the manager.
+    #[test]
+    fn cargo_exes_stage_the_bff_beside_the_manager() {
+        assert!(
+            CARGO_EXES.contains(&"pai-bff.exe"),
+            "pai-bff.exe not in {CARGO_EXES:?}"
+        );
+    }
+
+    /// As for the manager: the service's executable is the key path of the
+    /// component that installs the service, so `pai-bff.exe` is left out of
+    /// the harvest of `bin\` and declared once, there.
+    #[test]
+    fn the_bff_exe_is_not_harvested() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let bin = elements(&doc, "Files")
+            .into_iter()
+            .find(|f| f.attribute("Directory") == Some("BINFOLDER"))
+            .expect("the harvest of bin\\");
+        let excluded: Vec<&str> = children(bin, "Exclude")
+            .into_iter()
+            .filter_map(|e| e.attribute("Files"))
+            .collect();
+        assert!(
+            excluded.iter().any(|f| f.ends_with(r"\bin\pai-bff.exe")),
+            "bin\\pai-bff.exe is still harvested: Exclude {excluded:?}"
+        );
+    }
+
+    #[test]
+    fn the_bff_exe_is_the_key_path_of_its_own_service_component() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let files: Vec<_> = elements(&doc, "File")
+            .into_iter()
+            .filter(|f| {
+                f.attribute("Source")
+                    .is_some_and(|s| s.ends_with(r"\bin\pai-bff.exe"))
+            })
+            .collect();
+        assert_eq!(files.len(), 1, "one File for bin\\pai-bff.exe");
+        let file = files[0];
+        assert!(
+            file.attribute("Source")
+                .is_some_and(|s| s.starts_with("$(var.StagingDir)")),
+            "{:?}",
+            file.attribute("Source")
+        );
+        assert_eq!(file.attribute("KeyPath"), Some("yes"));
+        let component = component_of(file);
+        assert_eq!(
+            file.attribute("Directory")
+                .or_else(|| component.attribute("Directory")),
+            Some("BINFOLDER")
+        );
+        let install = bff_service_install(&doc);
+        assert_eq!(
+            component_of(install).attribute("Id"),
+            component.attribute("Id"),
+            "the ServiceInstall is not in pai-bff.exe's component"
+        );
+        assert_ne!(
+            component.attribute("Id"),
+            component_of(manager_service_install(&doc)).attribute("Id"),
+            "the bff has a component of its own, not the manager's"
+        );
+    }
+
+    /// Its own process, started at boot, `pai-bff service` (the entry that
+    /// hands the process to the service dispatcher), as its virtual account
+    /// `NT SERVICE\private-ai-bff`, the way the instances run as `NT
+    /// SERVICE\llama.cpp_<id>`: it then carries the same `NT SERVICE\ALL
+    /// SERVICES` read on `config\` (where `bff.ini` is) that the instances
+    /// rely on. CreateService (lpServiceStartName): "If the service is
+    /// configured to use a virtual account, specify the name as NT
+    /// SERVICE\ServiceName"; lpPassword: "If the account name ... is the name
+    /// of a managed service account or virtual account name, the lpPassword
+    /// parameter must be NULL". The ServiceInstall table's StartName and
+    /// Password are CreateService's parameters.
+    #[test]
+    fn the_bff_service_runs_service_as_its_virtual_account_at_boot() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let s = bff_service_install(&doc);
+        assert_eq!(s.attribute("Type"), Some("ownProcess"));
+        assert_eq!(s.attribute("Start"), Some("auto"));
+        assert_eq!(s.attribute("ErrorControl"), Some("normal"));
+        assert_eq!(s.attribute("Arguments"), Some("service"));
+        assert_eq!(
+            s.attribute("Account"),
+            Some(format!(r"NT SERVICE\{BFF_SERVICE}").as_str())
+        );
+        assert_eq!(s.attribute("Password"), None, "no password: NULL");
+        assert_ne!(s.attribute("Interactive"), Some("yes"));
+        assert_ne!(s.attribute("Vital"), Some("no"));
+    }
+
+    /// The names Services shows, in English: the display name the Linux
+    /// unit's Description (linux/system_files.rs).
+    #[test]
+    fn the_bff_service_has_an_english_display_name_and_description() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let s = bff_service_install(&doc);
+        assert_eq!(
+            s.attribute("DisplayName"),
+            Some("Private AI Framework web service")
+        );
+        let description = s.attribute("Description").unwrap_or_default();
+        assert!(description.len() > 20, "Description {description:?}");
+        assert!(description.is_ascii(), "Description {description:?}");
+        assert!(
+            !description.contains('\u{2014}'),
+            "em-dash in {description:?}"
+        );
+        assert_ne!(s.attribute("EraseDescription"), Some("yes"));
+    }
+
+    /// The counterpart of the Linux unit's `Restart=on-failure`.
+    #[test]
+    fn the_bff_service_restarts_after_a_failure() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let s = bff_service_install(&doc);
+        let actions: Vec<_> = children(s, "ServiceConfigFailureActions")
+            .into_iter()
+            .chain(
+                elements(&doc, "ServiceConfigFailureActions")
+                    .into_iter()
+                    .filter(|a| a.attribute("ServiceName") == Some(BFF_SERVICE)),
+            )
+            .collect();
+        assert_eq!(
+            actions.len(),
+            1,
+            "one ServiceConfigFailureActions for {BFF_SERVICE}"
+        );
+        let a = actions[0];
+        assert_eq!(a.attribute("OnInstall"), Some("yes"));
+        assert_eq!(a.attribute("OnReinstall"), Some("yes"));
+        let failures = children(a, "Failure");
+        let first = failures.first().expect("a first Failure");
+        assert_eq!(first.attribute("Action"), Some("restartService"));
+        let delay: u64 = first
+            .attribute("Delay")
+            .and_then(|d| d.parse().ok())
+            .expect("a Delay in milliseconds");
+        assert!((1_000..=60_000).contains(&delay), "Delay {delay} ms");
+    }
+
+    /// Started at the end of the install, stopped before its files are
+    /// replaced or removed, deleted on uninstall, by the SCM.
+    #[test]
+    fn the_bff_service_starts_on_install_stops_on_both_and_goes_on_uninstall() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let controls: Vec<_> = elements(&doc, "ServiceControl")
+            .into_iter()
+            .filter(|c| c.attribute("Name") == Some(BFF_SERVICE))
+            .collect();
+        assert_eq!(
+            controls.len(),
+            1,
+            "one ServiceControl Name=\"{BFF_SERVICE}\""
+        );
+        let c = controls[0];
+        assert_eq!(c.attribute("Start"), Some("install"));
+        assert_eq!(c.attribute("Stop"), Some("both"));
+        assert_eq!(c.attribute("Remove"), Some("uninstall"));
+        assert_ne!(c.attribute("Wait"), Some("no"));
+        assert_eq!(
+            component_of(c).attribute("Id"),
+            component_of(bff_service_install(&doc)).attribute("Id")
+        );
+    }
+
+    #[test]
+    fn the_bff_service_is_part_of_the_main_feature() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let component = component_of(bff_service_install(&doc));
+        let id = component.attribute("Id").expect("the component has an Id");
+        assert!(in_main_feature(&doc, id), "component {id} is not in Main");
+    }
+
+    /// The SCM stops the bff (ServiceControl), never the process stopper.
+    #[test]
+    fn the_process_stopper_leaves_the_bff_to_the_scm() {
+        let stopper = read("installer/msi-stop-processes.ps1");
+        assert!(!stopper.contains("pai-bff"), "the stopper names pai-bff");
     }
 
     // ── %ProgramData%\private-ai ─────────────────────────────────────────

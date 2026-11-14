@@ -1,6 +1,7 @@
-//! Package phase (cargo run -p xtask -- package): the Linux build as six .deb
-//! and six .rpm packages in ./dist/ (common/components.rs says which file goes
-//! where): pai-config, pai, llama.cpp, and the ROCm, CUDA and Vulkan runtimes.
+//! Package phase (cargo run -p xtask -- package): the Linux build as seven .deb
+//! and seven .rpm packages in ./dist/ (common/components.rs says which file goes
+//! where): pai-config, pai, pai-bff, llama.cpp, and the ROCm, CUDA and Vulkan
+//! runtimes.
 //! The counterpart of the Windows MSI (windows/package.rs). Requires a successful
 //! build; patchelf, dpkg-dev and rpm come from the prerequisites.
 //!
@@ -10,7 +11,8 @@
 //!                         files (the distributions' llama.cpp packages are
 //!                         refused by Conflicts, so no file is shared)
 //!   /usr/libexec/private-ai/
-//!                         pai-manager, internal: the units call it by full path
+//!                         pai-manager and pai-bff, internal: the units call
+//!                         them by full path
 //!   /usr/lib/private-ai/  llama.cpp's shared libraries and the ggml backends,
 //!                         a private directory (never a system library
 //!                         directory): the executables find it by RUNPATH and
@@ -35,11 +37,13 @@
 //!   /usr/share/polkit-1/  the system files of the services, in the llama.cpp
 //!                         package (linux/system_files.rs), with the
 //!                         maintainer scripts that create the service user and
-//!                         enable, start and stop the manager
+//!                         enable, start and stop the manager; the web
+//!                         service's unit in the bff's package, with its own
+//!                         maintainer scripts
 //!
-//! pai-config, pai and llama.cpp carry <framework>+llama.cpp.<tag> as
-//! version: pai-config requires pai's and llama.cpp's exact one, pai
-//! llama.cpp's. A runtime carries its
+//! pai-config, pai, pai-bff and llama.cpp carry <framework>+llama.cpp.<tag> as
+//! version: pai-config requires pai's and llama.cpp's exact one, pai and
+//! pai-bff llama.cpp's. A runtime carries its
 //! SDK's version and is optional: llama.cpp recommends the one it was built
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
@@ -81,7 +85,7 @@ const RPM_RELEASE: &str = "1";
 // Relative to the package root.
 const LIB_DIR: &str = "usr/lib/private-ai"; // llama.cpp's libraries, the ggml backends
 const RT_DIR: &str = "usr/lib/private-ai/lib"; // the bundled GPU runtimes
-const LIBEXEC_DIR: &str = "usr/libexec/private-ai"; // pai-manager
+const LIBEXEC_DIR: &str = "usr/libexec/private-ai"; // pai-manager, pai-bff
 /// The RUNPATH of every staged llama.cpp ELF file: [`LIB_DIR`], [`RT_DIR`] and
 /// libomp's directory in it, by absolute path.
 const RUNPATH: &str =
@@ -90,9 +94,10 @@ const RUNPATH: &str =
 /// Where a file the build produces is installed, relative to the package
 /// root: an executable of the build's `bin/` (or `pai-config`, `pai`) in
 /// `usr/bin`, a library or ggml backend in the private `usr/lib/private-ai`,
-/// `pai-manager` (from cargo's target dir) in `usr/libexec/private-ai`.
+/// `pai-manager` and `pai-bff` (from cargo's target dir) in
+/// `usr/libexec/private-ai`.
 fn place(name: &str) -> String {
-    if name == "pai-manager" {
+    if name == "pai-manager" || name == "pai-bff" {
         format!("{LIBEXEC_DIR}/{name}")
     } else if name.starts_with("lib") && name.contains(".so") {
         format!("{LIB_DIR}/{name}")
@@ -339,12 +344,19 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     if built != fw_version {
         bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
     }
-    // pai-manager, built beside pai-config by the build phase.
+    // pai-manager and pai-bff, built beside pai-config by the build phase.
     let manager = build_root.join("cargo-target/release/pai-manager");
     if !util::is_executable(&manager) {
         bail!(
             "pai-manager not found at {}. Run cargo run -p xtask -- build first.",
             manager.display()
+        );
+    }
+    let bff = build_root.join("cargo-target/release/pai-bff");
+    if !util::is_executable(&bff) {
+        bail!(
+            "pai-bff not found at {}. Run cargo run -p xtask -- build first.",
+            bff.display()
         );
     }
     if which("patchelf").is_none() {
@@ -394,6 +406,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     }
     std::fs::copy(&manager, stage.join(place("pai-manager")))
         .with_context(|| format!("copying {}", manager.display()))?;
+    std::fs::copy(&bff, stage.join(place("pai-bff")))
+        .with_context(|| format!("copying {}", bff.display()))?;
     crate::common::bench_share::stage(&stage.join(share("benchmarks")))?;
     crate::common::strings_share::stage(&stage.join(share("strings")))?;
     if !tests.is_empty() {
@@ -571,8 +585,8 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
     // beside them, so $ORIGIN cannot reach them: every llama.cpp ELF gets
     // RUNPATH (/usr/lib/private-ai, its lib/ with the runtimes and lib/llvm/lib
     // with libomp, by absolute path). The bundled runtime libraries are left
-    // exactly as their vendor built them, and pai-manager links nothing of
-    // llama.cpp and gets none. LD_LIBRARY_PATH still wins over RUNPATH.
+    // exactly as their vendor built them, and pai-manager and pai-bff link
+    // nothing of llama.cpp and get none. LD_LIBRARY_PATH still wins over RUNPATH.
     ui::head("Stripping and setting RUNPATH...");
     let staged = [stage.join("usr/bin"), stage.join(LIB_DIR)];
     // llama.cpp's own files: the runtimes in lib/ and .kpack are not stripped.
@@ -607,9 +621,11 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             executables += 1;
         }
     }
-    let manager_staged = stage.join(place("pai-manager"));
-    run_cmd(cmd("strip").arg("--strip-unneeded").arg(&manager_staged))?;
-    set_mode(&manager_staged, 0o755)?;
+    for name in ["pai-manager", "pai-bff"] {
+        let staged = stage.join(place(name));
+        run_cmd(cmd("strip").arg("--strip-unneeded").arg(&staged))?;
+        set_mode(&staged, 0o755)?;
+    }
     let after = size();
     ui::dim(format!(
         "{executables} executables, {before} MiB -> {after} MiB stripped"
@@ -649,7 +665,9 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
         None => sdk_version(dists.find_cuda()),
     };
     let version_of = |c: Component| match c {
-        Component::Config | Component::Cli | Component::Llama => pkg_version.clone(),
+        Component::Config | Component::Cli | Component::Bff | Component::Llama => {
+            pkg_version.clone()
+        }
         Component::Rocm => sdk_version(Some(PathBuf::from(&hip_root))),
         Component::Cuda => cuda_version.clone(),
         Component::Vulkan => sdk_version(dists.find_vulkan()),
@@ -778,7 +796,7 @@ pub fn run(want_deb: bool, want_rpm: bool, keep_staging: bool) -> Result<()> {
             summary,
             description: &description,
             homepage: &homepage,
-            depends_on_llama: matches!(*c, Component::Config | Component::Cli)
+            depends_on_llama: matches!(*c, Component::Config | Component::Cli | Component::Bff)
                 .then_some(pkg_version.as_str()),
             runtimes: if *c == Component::Llama {
                 &runtimes
@@ -866,6 +884,12 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
             "CUDA runtime libraries for llama.cpp",
             "The CUDA and NCCL libraries the CUDA backend of llama.cpp loads. Only the NVIDIA\n\
              driver has to be installed besides it.\n"
+                .to_string(),
+        ),
+        Component::Bff => (
+            "pai-bff: the web service of the framework",
+            "pai-bff, the web service of the framework: the web UI and the API it calls,\n\
+             on this machine only. A systemd service, started at boot.\n"
                 .to_string(),
         ),
         Component::Vulkan => (
@@ -1004,9 +1028,9 @@ fn deb_control(
 }
 
 /// The 2.3 and 2.4 package of a component, which this one takes over; None
-/// for the command line, which those releases did not have.
+/// for the command line and the bff, which those releases did not have.
 fn old_package(c: Component) -> Option<String> {
-    (c != Component::Cli).then(|| format!("{MONOLITH}-{}", c.suffix()))
+    (!matches!(c, Component::Cli | Component::Bff)).then(|| format!("{MONOLITH}-{}", c.suffix()))
 }
 
 /// The `.rpm` relations, one tag per line.
@@ -1041,6 +1065,8 @@ fn rpm_relations(f: &Fields) -> String {
     }
     if f.component == Component::Llama {
         lines.push("Conflicts:      llama-cpp".into());
+    }
+    if matches!(f.component, Component::Llama | Component::Bff) {
         // What the scriptlets run (Fedora's %systemd_requires, plus %posttrans).
         for tag in ["post", "preun", "postun", "posttrans"] {
             lines.push(format!("Requires({tag}): systemd"));
@@ -1613,10 +1639,10 @@ mod tests {
     }
 
     /// The read-only data (the benchmark method, the language files, the
-    /// licences) under /usr/share/private-ai: what both front ends read (the
-    /// benchmark method, `cli.toml`) in the command line's package, the GUI's
-    /// language files in the configurator's, each package's own licences in
-    /// that package.
+    /// licences) under /usr/share/private-ai: the benchmark method in the
+    /// command line's package, `cli.toml` (what every program prints) in
+    /// llama.cpp's, the GUI's language files in the configurator's, each
+    /// package's own licences in that package.
     #[test]
     fn the_data_goes_under_usr_share_private_ai() {
         assert_eq!(share("benchmarks"), "usr/share/private-ai/benchmarks");
@@ -1630,7 +1656,7 @@ mod tests {
                 format!("{}/specs/standard-1.1.ini", share("benchmarks")),
                 Component::Cli,
             ),
-            (format!("{}/cli.toml", share("strings")), Component::Cli),
+            (format!("{}/cli.toml", share("strings")), Component::Llama),
             (
                 format!("{}/en_US.toml", share("strings")),
                 Component::Config,
@@ -1788,7 +1814,7 @@ mod tests {
     }
 
     /// The command line's `.rpm` lists its files (`pai`, the benchmark
-    /// method, `cli.toml`, its licences and copyright) and nothing of the
+    /// method, its licences and copyright) and nothing of the
     /// GUI's, and names no package of 2.4 or earlier.
     #[test]
     fn the_cli_rpm_spec_lists_its_files() {
@@ -1804,7 +1830,6 @@ mod tests {
                 "usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt",
                 0o644,
             ),
-            ("usr/share/private-ai/strings/cli.toml", 0o644),
             ("usr/share/private-ai/licenses/cli/README.txt", 0o644),
             ("usr/share/doc/private-ai-framework-cli/copyright", 0o644),
         ] {
@@ -2189,5 +2214,199 @@ mod tests {
         }
         assert!(!rpm_relations(&f).contains("Requires(post)"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ── pai-bff, the web service, in a package of its own ───────────────
+
+    /// pai-bff is a service, not a user command: beside pai-manager in
+    /// /usr/libexec/private-ai, in the bff's package.
+    #[test]
+    fn pai_bff_goes_to_libexec_in_the_bff_package() {
+        assert_eq!(place("pai-bff"), "usr/libexec/private-ai/pai-bff");
+        assert_eq!(components::of(&place("pai-bff")), Component::Bff);
+        assert_eq!(place("pai-manager"), "usr/libexec/private-ai/pai-manager");
+    }
+
+    /// The bff's unit calls pai-bff by full path, where `place` puts it.
+    #[test]
+    fn the_bff_unit_runs_pai_bff_where_the_package_places_it() {
+        let exe = format!("/{}", place("pai-bff"));
+        let unit = super::super::system_files::bff_unit();
+        assert!(unit.contains(&format!("\nExecStart={exe}\n")), "{unit}");
+    }
+
+    /// The bff talks to the manager of the llama.cpp package (the next
+    /// slices), so it requires that package at its own version, like the
+    /// command line; nothing of the GUI or the command line. It has no
+    /// predecessor in 2.4, so it names no package of 2.4 or earlier. Its
+    /// scriptlets run systemctl, so the `.rpm` needs systemd for them, as
+    /// the llama.cpp package does.
+    #[test]
+    fn the_bff_requires_llama_cpp_exactly_and_systemd_for_its_scriptlets() {
+        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+        let rpm = rpm_relations(&f);
+        let mut lines: Vec<String> = rpm
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        lines.sort();
+        let mut want = vec![
+            format!("Requires: private-ai-framework-llama = {FW}"),
+            "Requires(post): systemd".to_string(),
+            "Requires(preun): systemd".to_string(),
+            "Requires(postun): systemd".to_string(),
+            "Requires(posttrans): systemd".to_string(),
+        ];
+        want.sort();
+        assert_eq!(lines, want, "{rpm}");
+        assert_eq!(
+            deb_relations(&f),
+            (String::new(), String::new(), String::new())
+        );
+    }
+
+    /// The bff's `.deb` Depends: what dpkg-shlibdeps found for pai-bff (or
+    /// the fixed C libraries when it gives none) and llama.cpp's package at
+    /// its version; no GUI, no command line, no graphics library, nothing
+    /// for its scripts (system_files::deb_depends is empty for it).
+    #[test]
+    fn the_bff_deb_depends_on_llama_cpp_and_nothing_of_the_front_ends() {
+        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+        for scanned in ["", "libc6 (>= 2.34), libgcc-s1 (>= 4.2)"] {
+            let depends = depends_line(&f, scanned);
+            let parts: Vec<&str> = depends.split(", ").collect();
+            assert!(
+                parts.contains(&format!("private-ai-framework-llama (= {FW})").as_str()),
+                "{scanned:?}: {depends}"
+            );
+            assert!(
+                parts.iter().any(|p| p.starts_with("libc6")),
+                "{scanned:?}: {depends}"
+            );
+            for other in [
+                "private-ai-framework-config",
+                "private-ai-framework-cli",
+                "libfontconfig",
+                "libfreetype",
+                "libxkbcommon",
+                "libwayland",
+                "libx11",
+                "libegl",
+                "sysusers",
+            ] {
+                assert!(
+                    !depends.contains(other),
+                    "{scanned:?}: {other} in {depends}"
+                );
+            }
+        }
+    }
+
+    /// The bff's control file: its identity and Depends, and no
+    /// Conflicts, Replaces or Provides (no package of 2.4 held it).
+    #[test]
+    fn the_bff_deb_names_no_package_of_2_4() {
+        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+        let depends = format!("libc6, private-ai-framework-llama (= {FW})");
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
+        let lines: Vec<&str> = text.lines().collect();
+        for want in [
+            "Package: private-ai-framework-bff".to_string(),
+            format!("Version: {FW}"),
+            format!("Depends: {depends}"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{text}");
+        }
+        for tag in ["Conflicts:", "Replaces:", "Provides:", "Breaks:"] {
+            assert!(
+                !lines.iter().any(|l| l.starts_with(tag)),
+                "{tag} in:\n{text}"
+            );
+        }
+        assert!(!text.contains(OLD), "{text}");
+    }
+
+    /// The bff's `.rpm` lists its files as rpmbuild checks them (pai-bff,
+    /// its unit by name, its licences and copyright), runs its scriptlets
+    /// before `%files`, and names no package of 2.4 or earlier.
+    #[test]
+    fn the_bff_rpm_spec_lists_its_files_and_scriptlets() {
+        use super::super::system_files::rpm_scriptlets;
+        let dir = scratch("rpm-spec-bff");
+        let bff = dir.join("bff");
+        for (rel, mode) in [
+            ("usr/libexec/private-ai/pai-bff", 0o755),
+            ("usr/lib/systemd/system/private-ai-bff.service", 0o644),
+            ("usr/share/private-ai/licenses/bff/README.txt", 0o644),
+            ("usr/share/doc/private-ai-framework-bff/copyright", 0o644),
+        ] {
+            put(&bff, rel, ELF, mode);
+        }
+        let f = fields_v(Component::Bff, FW, &[], Some(FW));
+        let spec = rpm_spec(&f, "MIT", "libggml", &bff);
+        check_files(&spec, &bff);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let lines: Vec<&str> = spec.lines().collect();
+        for want in [
+            "Name:           private-ai-framework-bff".to_string(),
+            format!("Version:        {FW}"),
+        ] {
+            assert!(lines.contains(&want.as_str()), "{want} missing:\n{spec}");
+        }
+        for line in rpm_relations(&f).lines() {
+            assert!(lines.contains(&line), "{line} missing:\n{spec}");
+        }
+        let listed = files_section(&spec);
+        assert!(
+            listed.contains(&"/usr/lib/systemd/system/private-ai-bff.service".to_string()),
+            "{spec}"
+        );
+        let scriptlets = rpm_scriptlets(Component::Bff);
+        assert!(!scriptlets.is_empty());
+        let at = spec
+            .find(&scriptlets)
+            .unwrap_or_else(|| panic!("the scriptlets are missing:\n{spec}"));
+        assert!(at < spec.find("\n%files\n").unwrap(), "{spec}");
+        assert!(!spec.contains(OLD), "{spec}");
+        assert!(!spec.contains("Obsoletes:"), "{spec}");
+        assert!(!spec.contains("org.privateai.Config"), "{spec}");
+    }
+
+    /// The description says what the package holds: pai-bff, the web
+    /// service.
+    #[test]
+    fn the_bff_description_names_the_web_service() {
+        let (summary, description) = texts(Component::Bff, "v0.9.0");
+        assert!(summary.starts_with("pai-bff:"), "{summary}");
+        assert!(description.contains("pai-bff"), "{description}");
+        assert!(description.to_lowercase().contains("web"), "{description}");
+        assert!(!description.contains('\u{2014}'), "{description}");
+    }
+
+    /// The package phase itself (`run`, which needs a build and is not run
+    /// here): pai-bff is copied from cargo's release dir, as pai-manager is,
+    /// to where `place` says, and the bff's package requires llama.cpp's at
+    /// the package version. Read from the code before the tests.
+    #[test]
+    fn the_package_phase_stages_pai_bff_and_requires_llama_cpp_for_it() {
+        let src = include_str!("package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(
+            code.contains(r#""cargo-target/release/pai-bff""#),
+            "run() does not take pai-bff from cargo's release dir"
+        );
+        assert!(
+            code.contains(r#"place("pai-bff")"#),
+            "run() does not stage pai-bff where place() says"
+        );
+        let field = code
+            .split("depends_on_llama: ")
+            .nth(1)
+            .and_then(|rest| rest.split(".then_some").next())
+            .expect("the depends_on_llama field in run()");
+        assert!(
+            field.contains("Component::Bff"),
+            "the bff's package does not require llama.cpp's: {field}"
+        );
     }
 }

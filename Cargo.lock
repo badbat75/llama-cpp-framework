@@ -3542,6 +3542,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "windows-service",
 ]
 
 [[package]]
@@ -5004,6 +5005,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

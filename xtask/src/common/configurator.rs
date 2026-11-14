@@ -250,4 +250,79 @@ mod tests {
         let let_fe = code.find("let fe = repo.join(\"fe\")").expect("let fe");
         assert!(let_fe < at, "fe is not <repo>/fe");
     }
+
+    /// The first report call, `rows.opt(` or `rows.miss(`, after the first
+    /// `"<tool>"` in a configure phase's source: how a missing tool is
+    /// reported (`miss` is a gap that fails the phase, `opt` a warning).
+    fn report_of(source: &str, tool: &str) -> Option<&'static str> {
+        let from = source.find(&format!("\"{tool}\""))?;
+        let rest = &source[from..];
+        let opt = rest.find("rows.opt(");
+        let miss = rest.find("rows.miss(");
+        match (opt, miss) {
+            (Some(o), Some(m)) if o < m => Some("opt"),
+            (_, Some(_)) => Some("miss"),
+            (Some(_), None) => Some("opt"),
+            (None, None) => None,
+        }
+    }
+
+    /// `xtask build` builds the web UI with npm on every OS (FE_STEPS) and
+    /// fails without it, so `xtask configure` reports node and npm as
+    /// required on every OS, a gap that fails the phase like cmake, not an
+    /// optional warning; the old "chat UI falls back" hint is gone (it was
+    /// about llama.cpp's own UI). Windows checked neither before.
+    #[test]
+    fn configure_requires_node_and_npm_on_every_os() {
+        for (name, source) in [
+            ("linux/configure.rs", include_str!("../linux/configure.rs")),
+            ("macos/configure.rs", include_str!("../macos/configure.rs")),
+            (
+                "windows/configure.rs",
+                include_str!("../windows/configure.rs"),
+            ),
+        ] {
+            for tool in ["node", "npm"] {
+                assert_eq!(
+                    report_of(source, tool),
+                    Some("miss"),
+                    "{name}: a missing {tool} is not a required gap"
+                );
+            }
+            assert!(
+                !source.contains("falls back to the prebuilt download"),
+                "{name} still calls node and npm optional"
+            );
+        }
+    }
+
+    #[test]
+    fn report_of_reads_the_first_report_after_the_tool() {
+        let opt = r#"for tool in ["node"] { match which(tool) { Some(p) => rows.ok(tool, p), None => rows.opt(tool, "x") } } rows.miss("cargo", "y")"#;
+        assert_eq!(report_of(opt, "node"), Some("opt"));
+        let miss = r#"for (tool, hint) in [("node", "a"), ("npm", "b")] { match find(tool) { Some(p) => rows.ok(tool, p), None => rows.miss(tool, hint) } }"#;
+        assert_eq!(report_of(miss, "npm"), Some("miss"));
+        assert_eq!(report_of(miss, "git"), None);
+    }
+
+    /// The Windows bootstrap installs what `xtask build` needs for the web
+    /// UI: Node.js LTS (which brings npm) through winget, in the same list
+    /// as its other winget packages, so it is installed when missing and
+    /// upgraded with them. The id is the winget-pkgs manifest's
+    /// PackageIdentifier (manifests/o/OpenJS/NodeJS/LTS: `OpenJS.NodeJS.LTS`,
+    /// "Node.js (LTS)").
+    #[test]
+    fn the_windows_bootstrap_installs_node_lts_with_winget() {
+        let script = include_str!("../../../scripts/00-install-prerequisites.ps1");
+        let list = script
+            .split("$wingetPackages = @(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n)").next())
+            .expect("the $wingetPackages list");
+        assert!(
+            list.lines()
+                .any(|l| l.contains("Id = 'OpenJS.NodeJS.LTS'") && l.contains("Name = ")),
+            "Node.js LTS is not in $wingetPackages:\n{list}"
+        );
+    }
 }

@@ -1,6 +1,7 @@
 //! The `pai-bff` entry point.
 
 use crate::listen::{self, ListenError};
+use crate::serve::{self, ServeError};
 use pai_core::strings;
 
 /// Runs the service, returning the exit code. A failure prints one error
@@ -19,14 +20,22 @@ pub fn main() -> i32 {
 
 /// What `main` does, its failure as an exit code and a message.
 fn run(args: &[String]) -> Result<i32, (i32, String)> {
+    let service = args.first().is_some_and(|a| a == "service");
     if let Some(arg) = args.first() {
         if arg == "--version" && args.len() == 1 {
             let version = env!("CARGO_PKG_VERSION");
             println!("{}", strings::fill("bff-version", &[&version]));
             return Ok(0);
         }
-        let unknown = if arg == "--version" { &args[1] } else { arg };
-        return Err((2, strings::fill("bff-unknown-argument", &[unknown])));
+        if !(service && args.len() == 1) {
+            let known = arg == "--version" || service;
+            let unknown = if known { &args[1] } else { arg };
+            return Err((2, strings::fill("bff-unknown-argument", &[unknown])));
+        }
+    }
+    #[cfg(not(windows))]
+    if service {
+        return Err((1, strings::t("bff-service-unavailable")));
     }
     let path = listen::config_path();
     let addr = listen::load(&path).map_err(|e| {
@@ -43,17 +52,23 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         };
         (1, text)
     })?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .build()
-        .map_err(|e| (1, strings::fill("bff-serve-failed", &[&e])))?;
-    runtime.block_on(async {
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .map_err(|e| (1, strings::fill("bff-bind-failed", &[&addr, &e])))?;
-        axum::serve(listener, crate::router())
-            .await
-            .map_err(|e| (1, strings::fill("bff-serve-failed", &[&e])))?;
-        Ok(0)
-    })
+    #[cfg(windows)]
+    if service {
+        use crate::serve::windows::{self, ServiceError};
+        return match windows::run(addr) {
+            Ok(()) => Ok(0),
+            Err(ServiceError::NotAService) => Err((1, strings::t("bff-service-unavailable"))),
+            Err(ServiceError::Dispatcher(e)) => Err((1, strings::fill("bff-serve-failed", &[&e]))),
+        };
+    }
+    serve::serve(addr, serve::stop_signal()).map_err(|e| {
+        let text = match e {
+            ServeError::Bind(e) => strings::fill("bff-bind-failed", &[&addr, &e]),
+            ServeError::Runtime(e) | ServeError::Serve(e) => {
+                strings::fill("bff-serve-failed", &[&e])
+            }
+        };
+        (1, text)
+    })?;
+    Ok(0)
 }

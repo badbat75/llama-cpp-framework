@@ -142,11 +142,13 @@
       staging tree.
     -->
     <ComponentGroup Id="Payload">
-      <!-- pai-manager.exe is the key path of ManagerService, which installs
-           its service: Windows Installer wants the service's executable
-           there, so it is not harvested too. -->
+      <!-- pai-manager.exe and pai-bff.exe are the key paths of
+           ManagerService and BffService, which install their services:
+           Windows Installer wants the service's executable there, so they
+           are not harvested too. -->
       <Files Directory="BINFOLDER" Include="$(var.StagingDir)\bin\**">
         <Exclude Files="$(var.StagingDir)\bin\pai-manager.exe" />
+        <Exclude Files="$(var.StagingDir)\bin\pai-bff.exe" />
       </Files>
       <!-- Read-only: the benchmark method, share\benchmarks\specs (every
            published standard-<X.Y>.ini) and share\benchmarks\prompts, and the
@@ -211,6 +213,29 @@
         </ServiceConfigFailureActions>
       </ServiceInstall>
       <ServiceControl Id="ManagerService" Name="private-ai-manager" Start="install" Stop="both" Remove="uninstall" />
+    </Component>
+
+    <!--
+      The web service, private-ai-bff: pai-bff service, as its virtual
+      account NT SERVICE\private-ai-bff (no Password: a virtual account takes
+      none), started at boot. It reads config\bff.ini through the read that
+      NT SERVICE\ALL SERVICES has on config\. Restarted a few seconds after a
+      crash (the Linux unit's Restart=on-failure). The SCM stops it before
+      its files are replaced or removed and deletes it on uninstall; the
+      process stopper leaves it alone.
+    -->
+    <Component Id="BffService" Directory="BINFOLDER">
+      <File Id="PaiBffExe" Source="$(var.StagingDir)\bin\pai-bff.exe" KeyPath="yes" />
+      <ServiceInstall Id="BffService" Name="private-ai-bff"
+                      DisplayName="Private AI Framework web service"
+                      Description="Serves the web UI of Private AI Framework and the API it calls, on this machine only."
+                      Type="ownProcess" Start="auto" ErrorControl="normal" Arguments="service"
+                      Account="NT SERVICE\private-ai-bff">
+        <ServiceConfigFailureActions OnInstall="yes" OnReinstall="yes" ResetPeriod="86400">
+          <Failure Action="restartService" Delay="5000" />
+        </ServiceConfigFailureActions>
+      </ServiceInstall>
+      <ServiceControl Id="BffService" Name="private-ai-bff" Start="install" Stop="both" Remove="uninstall" />
     </Component>
 
     <!--
@@ -280,6 +305,7 @@
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="MachineRegistration" />
       <ComponentRef Id="ManagerService" />
+      <ComponentRef Id="BffService" />
       <ComponentRef Id="MachineDataRoot" />
       <ComponentRef Id="MachineDataConfig" />
       <ComponentRef Id="MachineDataLogs" />

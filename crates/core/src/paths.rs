@@ -387,14 +387,37 @@ pub fn llama_bin_from(exe: &Path, stem: &str) -> Option<PathBuf> {
     None
 }
 
+/// The directories [`installed_share_dir`] looks in for `sub`, in order,
+/// for a program at `exe`. Pure: nothing is read.
+pub fn installed_share_candidates(exe: &Path, sub: &str) -> Vec<PathBuf> {
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let Some(up) = dir.parent() else {
+        return Vec::new();
+    };
+    // The Linux packages' services: `<prefix>/libexec/private-ai/<exe>`.
+    if dir.file_name().is_some_and(|n| n == "private-ai")
+        && up.file_name().is_some_and(|n| n == "libexec")
+    {
+        return match up.parent() {
+            Some(prefix) => vec![prefix.join("share").join("private-ai").join(sub)],
+            None => Vec::new(),
+        };
+    }
+    let share = up.join("share");
+    vec![share.join("private-ai").join(sub), share.join(sub)]
+}
+
 /// The installed read-only data directory `sub` (`benchmarks`, `strings`)
 /// for a program at `exe`, or `None` when no package installed it there:
-/// `<prefix>/share/private-ai/<sub>` for the Linux packages (`/usr/bin/..`),
+/// `<prefix>/share/private-ai/<sub>` for the Linux packages (`/usr/bin/..`
+/// and the services' `/usr/libexec/private-ai/..`),
 /// `<prefix>/share/<sub>` for a tree under its own prefix (macOS
-/// `/opt/private-ai/bin/..`).
+/// `/opt/private-ai/bin/..`, Windows `<InstallDir>\bin\..`): the first
+/// existing one of [`installed_share_candidates`].
 pub fn installed_share_dir(exe: &Path, sub: &str) -> Option<PathBuf> {
-    let share = exe.parent()?.parent()?.join("share");
-    [share.join("private-ai").join(sub), share.join(sub)]
+    installed_share_candidates(exe, sub)
         .into_iter()
         .find(|d| d.is_dir())
 }
@@ -581,7 +604,10 @@ pub(crate) fn instance_log_paths_e2e() {
 
 #[cfg(test)]
 mod tests {
-    use super::{installed_share_dir, llama_bin_from, newest_version, valid_instance_id};
+    use super::{
+        installed_share_candidates, installed_share_dir, llama_bin_from, newest_version,
+        valid_instance_id,
+    };
     use std::path::{Path, PathBuf};
 
     /// An empty file at `root/rel`, its directories made.
@@ -690,6 +716,77 @@ mod tests {
             canon(installed_share_dir(&exe, "strings")),
             Some(ours.canonicalize().unwrap())
         );
+    }
+
+    /// Where each install puts the read-only data (the benchmark method,
+    /// the strings files), looked for first: for a program in /usr/bin AND
+    /// in /usr/libexec/private-ai (pai-manager, pai-bff) the Linux packages'
+    /// /usr/share/private-ai, never /usr/libexec/share; for macOS
+    /// /opt/private-ai/bin, /opt/private-ai/share; for Windows
+    /// <InstallDir>\bin, <InstallDir>\share (spelled with `/` here, the
+    /// same components).
+    #[test]
+    fn the_share_dir_is_looked_for_where_each_install_puts_it() {
+        let first = |exe: &str| {
+            installed_share_candidates(Path::new(exe), "strings")
+                .into_iter()
+                .next()
+        };
+        assert_eq!(
+            first("/usr/bin/pai"),
+            Some(PathBuf::from("/usr/share/private-ai/strings"))
+        );
+        for exe in [
+            "/usr/libexec/private-ai/pai-bff",
+            "/usr/libexec/private-ai/pai-manager",
+        ] {
+            let all = installed_share_candidates(Path::new(exe), "strings");
+            assert_eq!(
+                all.first(),
+                Some(&PathBuf::from("/usr/share/private-ai/strings")),
+                "{exe}: {all:?}"
+            );
+            assert!(
+                !all.iter().any(|d| d.starts_with("/usr/libexec")),
+                "{exe}: {all:?}"
+            );
+        }
+        for (exe, want) in [
+            ("/opt/private-ai/bin/pai", "/opt/private-ai/share/strings"),
+            (
+                "/C/Program Files/private-ai/bin/pai-bff.exe",
+                "/C/Program Files/private-ai/share/strings",
+            ),
+        ] {
+            let all = installed_share_candidates(Path::new(exe), "strings");
+            assert!(all.contains(&PathBuf::from(want)), "{exe}: {all:?}");
+        }
+        let all = installed_share_candidates(Path::new("/usr/bin/pai"), "benchmarks");
+        assert_eq!(
+            all.first(),
+            Some(&PathBuf::from("/usr/share/private-ai/benchmarks"))
+        );
+    }
+
+    /// The Linux packages' services in /usr/libexec/private-ai find the
+    /// installed strings, so their error lines are texts, not bare keys.
+    #[test]
+    fn a_program_in_libexec_finds_the_usr_share_data() {
+        let root = tempfile::tempdir().unwrap();
+        let ours = root.path().join("usr/share/private-ai/strings");
+        std::fs::create_dir_all(&ours).unwrap();
+        for exe in [
+            "usr/libexec/private-ai/pai-bff",
+            "usr/libexec/private-ai/pai-manager",
+        ] {
+            let exe = touch(root.path(), exe);
+            assert_eq!(
+                canon(installed_share_dir(&exe, "strings")),
+                Some(ours.canonicalize().unwrap()),
+                "{}",
+                exe.display()
+            );
+        }
     }
 
     /// A tree under its own prefix (macOS, /opt/private-ai) keeps its

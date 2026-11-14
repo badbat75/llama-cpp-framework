@@ -302,3 +302,11 @@ Lessons only: the rules are in `AGENTS.md`.
   call in `crates/bff/build.rs` (`tests/build_script.rs`).
 - `option_env!("X").expect(..)` is denied by clippy (`option_env_unwrap`): for a variable a build
   script exports, use `env!("X")` and accept the compile error as the red until it exists.
+- A graceful stop is pinned from the binary test: send the signal with `Command::new("kill").args(["-TERM",
+  &pid])` (no libc dependency), wait with a deadline, expect `status.code() == Some(0)`; a death by
+  signal reads `None`, which is the red before the handler exists.
+- A candidate systemd unit is checked without installing it: write it to /tmp with `ExecStart=/usr/bin/true`
+  and run `systemd-analyze verify ./x.service` (unknown directives fail) and `systemd-analyze security
+  --offline=true ./x.service` (exposure score).
+- `paths::installed_share_dir` looks at `<exe>/../../share`: for a program in `/usr/libexec/private-ai`
+  that is `/usr/libexec/share`, so a libexec program (pai-manager, pai-bff) finds no `cli.toml` there.

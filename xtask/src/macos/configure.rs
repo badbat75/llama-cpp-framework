@@ -77,13 +77,11 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
             None => rows.miss(tool, "run scripts/00-install-prerequisites.sh"),
         }
     }
+    // The build phase builds the web UI with npm.
     for tool in ["node", "npm"] {
         match which(tool) {
             Some(p) => rows.ok(tool, p.display().to_string()),
-            None => rows.opt(
-                tool,
-                "not found (the chat UI falls back to the prebuilt download)",
-            ),
+            None => rows.miss(tool, "run scripts/00-install-prerequisites.sh"),
         }
     }
     let home_cargo = util::home().join(".cargo/bin/cargo");

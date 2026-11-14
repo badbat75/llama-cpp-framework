@@ -101,6 +101,7 @@ $wingetPackages = @(
     @{ Id = 'Microsoft.PowerShell'    ; Name = 'PowerShell 7+' }
     @{ Id = 'ShiningLight.OpenSSL.Dev'; Name = 'OpenSSL' }
     @{ Id = $wixPin.DotNetSdkWingetId ; Name = '.NET SDK' }
+    @{ Id = 'OpenJS.NodeJS.LTS'       ; Name = 'Node.js (LTS)' }
 )
 
 $sources = Import-PowerShellDataFile (Join-Path $repoRoot 'installer\dist-sources.psd1')

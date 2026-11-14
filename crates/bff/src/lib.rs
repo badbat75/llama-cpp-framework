@@ -3,6 +3,7 @@
 
 pub mod bff;
 pub mod listen;
+pub mod serve;
 
 /// The bff's HTTP routes: `GET /api/version`, the web UI's page at `/` and
 /// its files under `/assets/`.

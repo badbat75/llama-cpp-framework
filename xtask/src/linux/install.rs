@@ -675,4 +675,23 @@ mod tests {
             Some(SERVICE)
         ));
     }
+
+    /// pai-bff runs only as its service (a dynamic user, restarted by the
+    /// bff's maintainer scripts), from /usr/libexec/private-ai like the
+    /// manager, and maps no library of /usr/lib/private-ai: it never stops
+    /// the install, whatever its uid. Already true, kept so.
+    #[test]
+    fn the_bff_never_blocks_the_install() {
+        const SERVICE: u32 = 988;
+        let bff = b"/usr/libexec/private-ai/pai-bff\0".as_slice();
+        assert!(!runs_packaged_program(bff));
+        for uid in [Some(61_234), Some(0), Some(1000), None] {
+            for service in [Some(SERVICE), None] {
+                assert!(
+                    !blocks_install(bff, "", uid, service),
+                    "{uid:?} {service:?}"
+                );
+            }
+        }
+    }
 }

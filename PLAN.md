@@ -529,12 +529,10 @@ proposals to review with the user):
 2. (done) **The `fe` scaffold.** `fe/` at the repo root: React + Vite in TypeScript, one page that reads
    `/api/version`; `xtask build` builds it with npm (already a build requirement for the icon) and
    the bff embeds `fe/dist`; the bff's tests use a fixture when `fe/dist` is absent.
-3. **Packaging.** Also: `xtask configure` (Linux, macOS) still calls node and npm optional and
-   Windows configure checks neither, while `xtask build` now needs npm for the web UI; the root
-   `Cargo.toml` comments omit pai-cli and pai-bff. (Also decide a graceful stop on SIGTERM / service stop: the skeleton has none.) Linux: a `private-ai-bff.service` unit (its own system user or `private-ai`:
-   decided in the slice) in the `-llama` package or its own; Windows: a service in the MSI beside
-   the manager; macOS: left out like the manager. Checked on the package contents; running it is
-   the user's run.
+3. (done) **Packaging.** Left for the user's runs: on Windows a bad `bff.ini` or a bind failure of
+   the service is reported only as an SCM start failure (no log yet: write it to a file as the
+   instances do, a later slice), and whether the bff's virtual account reads `config\` (the
+   ALL SERVICES check in `installer/AGENTS.md`).
 4. **The first read-only page.** The state of the instance `default` and its server settings shown
    read-only, through `private-ai-manager` as the GUI reads them (the bff's account and the
    manager's authorization decided here).
@@ -562,6 +560,13 @@ access with authentication.
   the manager) and ships the benchmark method and `cli.toml`, which both programs read, so `-config`
   requires `-cli`: a desktop install gets `pai` too. The MSI's process stopper also stops a `pai`
   running from `bin\` (an interrupted sweep puts its key back at the next start).
+- Step 10, to review (taken by the coordinator on 2026-11-14): the bff listens on `127.0.0.1:8590` by
+  default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
+  (requires `-llama`), runs as `DynamicUser=yes` on Linux and as the virtual account
+  `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Before any
+  slice that changes something through the bff, a design of who is acting (today any local user could
+  act through the bff's account). `cli.toml` moved to `-llama`, which every package requires (the
+  manager and the bff print from it).
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
 - Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,

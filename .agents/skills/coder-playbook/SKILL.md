@@ -169,3 +169,12 @@ Lessons only: the rules are in `AGENTS.md`.
   The tests stay right meanwhile: build.rs exports the chosen dir as `PAI_BFF_FE_DIR`
   (`cargo:rustc-env`, seen by the integration tests too), which `tests/fe.rs` reads instead of
   deciding again. `fe/dist` is gitignored (`dist/`).
+- pai-bff's serving lives in `serve.rs` (no strings: it returns `ServeError`, `bff::run` fills the
+  keys); the graceful stop is `with_graceful_shutdown(stop_signal())` on a current-thread runtime
+  with `enable_io` (tokio's signal driver rides on the IO driver). `serve::windows` hands
+  `pai-bff service` to the SCM dispatcher like the manager's `entry.rs`; ERROR 1063 means a console.
+- A test helper that only `#[cfg(unix)]` tests call is dead code on the Windows target: the GNU
+  `clippy --all-targets` fails on it while plain `clippy` (no tests) passes. Report it to the tester.
+- Adding a `Component` to `components::ALL` touches every `match` over it in `linux/package.rs`
+  (`version_of`, `texts`), `old_package` (no 2.4 predecessor), `exact_requires`/`depends_on_llama`
+  and the rpm `Requires(...)` of a package with scriptlets.

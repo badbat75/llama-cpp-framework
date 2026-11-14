@@ -231,3 +231,121 @@ fn it_serves_on_the_configured_address() {
     let (status, _, _) = get(addr, "/no-such-page").expect("GET /no-such-page");
     assert!(status.contains(" 404 "), "{status}");
 }
+
+// ── Stopping as a service ───────────────────────────────────────────────
+
+/// A pai-bff serving on a free loopback port, once it answers
+/// `/api/version` (so the signal reaches a running server, not one still
+/// starting).
+#[cfg(unix)]
+fn serving(root: &Path) -> Serving {
+    let addr: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().expect("addr");
+    write_bff_ini(root, &addr.to_string());
+    let mut child = Serving(command(root, &[]).spawn().expect("spawn pai-bff"));
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut e) = child.0.stderr.take() {
+                let _ = e.read_to_string(&mut err);
+            }
+            panic!("pai-bff exited ({status}) instead of serving: {err}");
+        }
+        match get(addr, "/api/version") {
+            Ok(_) => return child,
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
+        }
+    }
+}
+
+/// Sends `signal` (a `kill` name: TERM, INT) to the child and waits for it
+/// to exit: (exit code, stderr). None as the code means a signal ended it,
+/// not the program.
+#[cfg(unix)]
+fn stop_with(child: &mut Serving, signal: &str) -> (Option<i32>, String) {
+    let pid = child.0.id().to_string();
+    let sent = Command::new("kill")
+        .args([&format!("-{signal}"), &pid])
+        .status()
+        .expect("run kill");
+    assert!(sent.success(), "kill -{signal} {pid} failed");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            break status;
+        }
+        if Instant::now() > deadline {
+            panic!("pai-bff still running 10 s after SIG{signal}: no graceful stop");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut err = String::new();
+    if let Some(mut e) = child.0.stderr.take() {
+        let _ = e.read_to_string(&mut err);
+    }
+    (status.code(), err)
+}
+
+/// systemd stops a unit with SIGTERM (systemd.kill(5) KillSignal=, SIGTERM
+/// by default) and counts any exit other than 0 (or a SIGTERM death it
+/// expects) as how it ended: pai-bff stops serving and exits 0 on it, with
+/// nothing on stderr (axum's `with_graceful_shutdown`, on a tokio signal).
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_it_with_exit_code_0() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = serving(dir.path());
+    let (code, stderr) = stop_with(&mut child, "TERM");
+    assert_eq!(
+        code,
+        Some(0),
+        "ended by the signal, not by pai-bff: {stderr}"
+    );
+    assert!(stderr.trim().is_empty(), "{stderr}");
+}
+
+/// Ctrl-C in a terminal (SIGINT) stops it the same way.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_it_with_exit_code_0() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = serving(dir.path());
+    let (code, stderr) = stop_with(&mut child, "INT");
+    assert_eq!(
+        code,
+        Some(0),
+        "ended by the signal, not by pai-bff: {stderr}"
+    );
+    assert!(stderr.trim().is_empty(), "{stderr}");
+}
+
+// ── The Windows service entry ───────────────────────────────────────────
+
+/// `pai-bff service` is what the MSI's service runs: the entry that hands
+/// the process to the Windows service dispatcher. Outside the SCM (any
+/// other OS, or a console on Windows, where the dispatcher refuses at once)
+/// it is a known command that cannot run: exit 1 with one filled error
+/// line, never the usage error (2) and never serving. A free port is
+/// configured, so a run that serves anyway never touches the default one.
+#[test]
+fn service_outside_the_service_manager_is_refused_without_serving() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_bff_ini(dir.path(), &format!("127.0.0.1:{}", free_port()));
+    let r = pai_bff(dir.path(), &["service"]);
+    assert_eq!(r.code, Some(1), "stdout: {} stderr: {}", r.stdout, r.stderr);
+    assert!(r.stderr.starts_with("Error: "), "{}", r.stderr);
+    assert_filled(&r.stderr);
+}
+
+/// `service` takes nothing after it: anything more is a usage error naming
+/// the extra argument.
+#[test]
+fn service_with_an_argument_is_a_usage_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_bff_ini(dir.path(), &format!("127.0.0.1:{}", free_port()));
+    let r = pai_bff(dir.path(), &["service", "--bogus"]);
+    assert_eq!(r.code, Some(2), "stdout: {} stderr: {}", r.stdout, r.stderr);
+    assert!(r.stderr.contains("--bogus"), "{}", r.stderr);
+    assert_filled(&r.stderr);
+}

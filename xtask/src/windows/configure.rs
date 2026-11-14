@@ -221,6 +221,15 @@ pub fn run(llama_cpp_dir: Option<PathBuf>, dist_root: Option<PathBuf>) -> Result
         ("ninja", "Ninja, via winget install Ninja-build.Ninja"),
         ("clang", "Clang, via the ROCm dist, Visual Studio or LLVM"),
         ("git", "Git, from https://git-scm.com/"),
+        // The build phase builds the web UI with npm (npm.cmd).
+        (
+            "node",
+            "Node.js, via scripts\\00-install-prerequisites.ps1 (winget OpenJS.NodeJS.LTS)",
+        ),
+        (
+            "npm",
+            "npm, with Node.js: scripts\\00-install-prerequisites.ps1",
+        ),
     ] {
         let found = if tool == "clang" {
             clang.clone()
