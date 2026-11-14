@@ -546,6 +546,16 @@ Lessons only: the rules are in `AGENTS.md`.
   pin the shipped wiring with one request to the binary (`tests/pai_bff_binary.rs`).
 - `cargo test --test a --test b` stops after the first binary that fails: add `--no-fail-fast` to see
   every red.
+- A hand check of the web UI against the real bff can click and type: drive the snap's `geckodriver
+  --port <free>` over plain WebDriver HTTP from a `python3 -I` urllib script (`POST /session` with
+  `moz:firefoxOptions` `args: ["-headless"]`, then `/url`, `/element`, `/element/<id>/value`,
+  `/click`, `/execute/sync`, `GET /screenshot` as base64 PNG): the screenshots come back over HTTP,
+  so they land anywhere (no `~/snap` profile), and a 2 s sleep after each load lets the fetches answer.
+  Firefox will not go below 500 px wide. The geckodriver left running cannot be killed from outside
+  its snap (AppArmor: "Permission denied", even unsandboxed): `snap run --shell
+  firefox.geckodriver -c 'kill -TERM <pid>'` does it. The bff's `build/windows/cargo-target` is the
+  target dir here (the generated `.cargo/config.toml` in this tree pins it); `grep -a -c <hashed asset name>` on the
+  binary confirms it embeds the `fe/dist` just built.
 - A rate limit or lockout tested one request at a time misses the race: a check before a slow call and
   a record after it lets parallel requests all pass the check. Pin it with a fake that sleeps in the
   seam, a `multi_thread` tokio test and a `JoinSet` of N requests on router clones, asserting the seam's

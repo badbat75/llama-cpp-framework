@@ -77,6 +77,16 @@ Checked by hand on Linux from the debug build (2026-11-14): `--version` exits 0,
 `text/html`, 405 to a `POST` and 404 elsewhere. Under `PRIVATE_AI_DATA_ROOT` `/api/instances`
 answered 503 `{"error":"unavailable"}` (the error shape before `{"key", "args"}`) and a `POST` to it 405.
 
+Checked by hand on Linux from the debug build with the web UI embedded (2026-11-15, bff at ecdf076,
+fe at 9c2c326, under `PRIVATE_AI_DATA_ROOT`): `/` served the built `index.html`, its two
+`/assets/` files 200 as `text/javascript; charset=utf-8` and `text/css; charset=utf-8`, byte for
+byte `fe/dist`; `GET /api/session` 401 `session-required`; a JSON `POST /api/session` 503
+`session-unavailable`, a non-JSON body (or no `application/json`) 400 `session-malformed`, an empty
+password 401 `session-bad-credentials`, none with a `Set-Cookie`; `/api/instances` 503
+`client-unavailable`. In headless Firefox the Overview showed the version and "The manager is not
+running or does not answer.", a sign-in attempt the session-unavailable message with the password
+cleared and focused, and `#/instances/default` the sign-in form with "Sign in to see this page.".
+
 ## The instances from the manager
 
 `GET /api/instances` asks `private-ai-manager` for `ListInstances`, then `Status` of each instance:
