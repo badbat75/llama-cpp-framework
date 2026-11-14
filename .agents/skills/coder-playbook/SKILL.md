@@ -259,3 +259,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - `windows::psd1_scalars` reads only `'quoted'` strings and `[int]N`/`N`: a bool in config-build.psd1
   is written `[int]0|1` (`Minimal`), since a `$true` would read back as missing. macOS's
   config-build.toml takes a new field with `#[serde(default)]` so an older config still parses.
+- `scripts/*.ps1` carry a UTF-8 BOM: a Python edit that reads with `utf-8` keeps U+FEFF in the text, and
+  writing it back with `utf-8-sig` doubles the BOM. Read and write with the same codec (`utf-8-sig`
+  both ways) and check `head -c 6 <file> | xxd`. No pwsh is installed here: a `.ps1` change is checked
+  by eye and by the text tests only.
+- `xtask/src/ci_windows.rs` pins `.github/workflows/installers-windows.yml` as text: every line that
+  says `msiexec` (a step name or a message too) must carry `/l*v`, and the order checks find the FIRST
+  `xtask -- <phase>`, so name the phases in step names without the ` -- `. Comment lines are dropped,
+  and a step is the text between two `\n      - ` lines: a check "before the repair" goes in the
+  repair's own step. Check the YAML still parses: `python3 -c "import yaml; yaml.safe_load(open(P))"`.

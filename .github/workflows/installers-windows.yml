@@ -1,0 +1,226 @@
+# Builds both Windows MSIs on GitHub's runner and tests them there: the
+# CI-only minimal llama.cpp (`xtask configure --minimal`, no GPU SDK), WiX's
+# first compile of llama.cpp's and the framework's MSIs, then the automatable
+# steps of the installer test plan (installer/AGENTS.md): the framework alone
+# refused, both installed, their folders, services and web service checked, a
+# repair of each, a silent uninstall of both and what is left. The MSIs and
+# every msiexec log are uploaded, pass or fail. Pinned as text by
+# xtask/src/ci_windows.rs.
+#
+# Started by hand only: every run needs the user's go-ahead (PLAN.md step 12).
+name: Installers (Windows)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: Get-PSDrive -PSProvider FileSystem | Format-Table Name, Used, Free -AutoSize
+
+      - name: Prerequisites (without GPU SDKs)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\00-install-prerequisites.ps1 -Minimal
+          # The script reports what it could not do rather than failing, and
+          # its PATH changes stay in this step: the later steps get the user
+          # scope tools through GITHUB_PATH.
+          foreach ($dir in "$env:USERPROFILE\.cargo\bin", "$env:USERPROFILE\.dotnet\tools", "$env:LOCALAPPDATA\Programs\sccache") {
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
+          }
+          if (-not (Test-Path "$env:USERPROFILE\.dotnet\tools\wix.exe")) { throw 'the prerequisites script left no wix.exe' }
+          exit 0
+
+      - name: Accept the WiX EULA (approved by the user for CI, 2026-11-14)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          wix eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "wix eula accept failed ($LASTEXITCODE)" }
+          # The extensions are added once the EULA is accepted: the script's second run does it.
+          & .\scripts\00-install-prerequisites.ps1 -Minimal
+          wix extension list -g
+          if ($LASTEXITCODE -ne 0) { throw "wix extension list failed ($LASTEXITCODE)" }
+
+      - name: xtask configure (minimal)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The runner's OpenSSL is in Program Files\OpenSSL, not winget's
+          # OpenSSL-Win64: put it first on PATH so configure finds it before
+          # Git's openssl.exe.
+          if (-not (Test-Path "$env:ProgramFiles\OpenSSL-Win64\include\openssl\ssl.h") -and (Test-Path "$env:ProgramFiles\OpenSSL\include\openssl\ssl.h")) {
+            $env:PATH = "$env:ProgramFiles\OpenSSL\bin;$env:PATH"
+          }
+          cargo run -p xtask -- configure --minimal
+          if ($LASTEXITCODE -ne 0) { throw "xtask configure failed ($LASTEXITCODE)" }
+
+      - name: xtask build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo run -p xtask -- build
+          if ($LASTEXITCODE -ne 0) { throw "xtask build failed ($LASTEXITCODE)" }
+
+      - name: Free disk space after the build
+        if: always()
+        run: Get-PSDrive -PSProvider FileSystem | Format-Table Name, Used, Free -AutoSize
+
+      - name: xtask package
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo run -p xtask -- package
+          if ($LASTEXITCODE -ne 0) { throw "xtask package failed ($LASTEXITCODE)" }
+          Get-ChildItem dist\*.msi | Format-Table Name, Length -AutoSize
+
+      - name: The framework alone is refused (test plan step 2)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fw = (Get-ChildItem dist\private-ai-framework-v*-x64.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/i `"$fw`" /qn /norestart /l*v `"$PWD\build\windows\ci-framework-alone.log`""
+          if ($p.ExitCode -ne 1603) { throw "the framework alone exited $($p.ExitCode), expected 1603" }
+          if (Test-Path 'HKLM:\Software\private-ai') { throw 'the refused install left HKLM\Software\private-ai' }
+          if (Get-Service private-ai-manager -ErrorAction SilentlyContinue) { throw 'the refused install left the private-ai-manager service' }
+          # 1603 is any fatal error: the launch condition's message
+          # (installer/private-ai-framework.wxs) proves it was the refusal.
+          if (-not (Select-String -LiteralPath "$PWD\build\windows\ci-framework-alone.log" -SimpleMatch 'must be installed first' -Quiet)) { throw 'the framework-alone log has no launch condition message' }
+          foreach ($dir in "$env:ProgramFiles\private-ai", "$env:ProgramData\private-ai") {
+            if (Test-Path $dir) { throw "the refused install left $dir" }
+          }
+
+      - name: xtask install
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo run -p xtask -- install
+          if ($LASTEXITCODE -ne 0) { throw "xtask install failed ($LASTEXITCODE)" }
+
+      - name: Check the installed products (test plan steps 3, 4, 21)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fwDir = (Get-ItemProperty 'HKLM:\Software\private-ai').InstallDir
+          $llDir = (Get-ItemProperty 'HKLM:\Software\llama.cpp').InstallDir
+          if (-not $fwDir -or -not $llDir) { throw "InstallDir missing: framework '$fwDir', llama.cpp '$llDir'" }
+          & (Join-Path $fwDir 'bin\pai.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw "pai.exe --version exited $LASTEXITCODE" }
+          & (Join-Path $llDir 'bin\llama-server.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw "llama-server.exe --version exited $LASTEXITCODE" }
+          foreach ($svc in 'private-ai-manager', 'private-ai-bff') {
+            (Get-Service $svc).WaitForStatus('Running', '00:00:30')
+          }
+          # As installer/private-ai-framework.wxs ServiceInstall declares them.
+          $expected = @{
+            'private-ai-manager' = @{ Exe = 'pai-manager.exe'; Arguments = 'serve'; Account = 'LocalSystem' }
+            'private-ai-bff'     = @{ Exe = 'pai-bff.exe'; Arguments = 'service'; Account = 'NT SERVICE\private-ai-bff' }
+          }
+          foreach ($svc in $expected.Keys) {
+            $e = $expected[$svc]
+            $s = Get-CimInstance Win32_Service -Filter "Name='$svc'"
+            if ($s.StartMode -ne 'Auto') { throw "$svc StartMode '$($s.StartMode)', expected Auto" }
+            # The image path may or may not be quoted.
+            $path = $s.PathName -replace '^"([^"]*)"', '$1'
+            $want = "$(Join-Path $fwDir "bin\$($e.Exe)") $($e.Arguments)"
+            if ($path -ne $want) { throw "$svc PathName '$($s.PathName)', expected $want" }
+            if ($s.StartName -ne $e.Account) { throw "$svc StartName '$($s.StartName)', expected $($e.Account)" }
+          }
+          foreach ($file in 'server@default.ini', 'presets.ini') {
+            if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "no $file in ProgramData\llama.cpp\config" }
+          }
+          $version = $null
+          foreach ($try in 1..15) {
+            try { $version = Invoke-RestMethod 'http://127.0.0.1:8590/api/version'; break } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $version) { throw 'http://127.0.0.1:8590/api/version does not answer' }
+          $version | ConvertTo-Json -Compress
+          # The framework version is [workspace.package] version in Cargo.toml.
+          $toml = Get-Content Cargo.toml -Raw
+          if ($toml -notmatch '(?ms)^\[workspace\.package\][^\[]*?^version\s*=\s*"([^"]+)"') { throw 'no [workspace.package] version in Cargo.toml' }
+          if ($version.version -ne $Matches[1]) { throw "/api/version says '$($version.version)', Cargo.toml '$($Matches[1])'" }
+          $instances = Invoke-WebRequest 'http://127.0.0.1:8590/api/instances' -UseBasicParsing -SkipHttpErrorCheck
+          if ($instances.StatusCode -ne 200) { throw "/api/instances answered $($instances.StatusCode): $($instances.Content)" }
+          $instances.Content
+
+      - name: Repair both (test plan step 7)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ll = (Get-ChildItem dist\llama.cpp-v*-x64.msi | Select-Object -First 1).FullName
+          $fw = (Get-ChildItem dist\private-ai-framework-v*-x64.msi | Select-Object -First 1).FullName
+          # The defaults are copied only when missing: a deleted one comes
+          # back, a changed one keeps the change.
+          $config = "$env:ProgramData\llama.cpp\config"
+          $marker = '; ci-repair-marker'
+          Remove-Item -LiteralPath "$config\presets.ini"
+          Add-Content -LiteralPath "$config\server@default.ini" -Value $marker
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/fecmus `"$ll`" /qn /norestart /l*v `"$PWD\build\windows\ci-repair-llama.cpp.log`""
+          if ($p.ExitCode -ne 0) { throw "the repair of llama.cpp exited $($p.ExitCode)" }
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/fecmus `"$fw`" /qn /norestart /l*v `"$PWD\build\windows\ci-repair-framework.log`""
+          if ($p.ExitCode -ne 0) { throw "the repair of the framework exited $($p.ExitCode)" }
+          foreach ($svc in 'private-ai-manager', 'private-ai-bff') {
+            (Get-Service $svc).WaitForStatus('Running', '00:00:30')
+          }
+          if (-not (Test-Path "$config\presets.ini")) { throw 'the repair did not restore the deleted presets.ini' }
+          if (-not (Select-String -LiteralPath "$config\server@default.ini" -SimpleMatch $marker -Quiet)) { throw 'the repair overwrote the changed server@default.ini' }
+          if (Test-Path "$env:ProgramData\llama.cpp\instances.running") { throw 'the repair left ProgramData\llama.cpp\instances.running' }
+
+      - name: Uninstall both and check what is left (test plan steps 12, 13, 14)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ll = (Get-ChildItem dist\llama.cpp-v*-x64.msi | Select-Object -First 1).FullName
+          $fw = (Get-ChildItem dist\private-ai-framework-v*-x64.msi | Select-Object -First 1).FullName
+          # Nothing writes into ProgramData\private-ai\config on the runner, and
+          # Windows Installer removes an empty folder: a file of the user's
+          # there must survive both uninstalls.
+          Set-Content -LiteralPath "$env:ProgramData\private-ai\config\bff.ini" -Value '[Bff]'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/x `"$fw`" /qn /norestart /l*v `"$PWD\build\windows\ci-uninstall-framework.log`""
+          if ($p.ExitCode -ne 0) { throw "the uninstall of the framework exited $($p.ExitCode)" }
+          # The framework's uninstall removes what it installed, before the engine's runs.
+          foreach ($svc in 'private-ai-manager', 'private-ai-bff') {
+            if (Get-Service $svc -ErrorAction SilentlyContinue) { throw "the framework uninstall left the service $svc" }
+          }
+          if (Test-Path 'HKLM:\Software\private-ai') { throw 'the framework uninstall left HKLM\Software\private-ai' }
+          if (Test-Path "$env:ProgramFiles\private-ai") { throw 'the framework uninstall left ProgramFiles\private-ai' }
+          # The engine does not depend on the framework: still installed, its config kept.
+          if (-not (Test-Path 'HKLM:\Software\llama.cpp')) { throw 'the framework uninstall removed HKLM\Software\llama.cpp' }
+          foreach ($file in 'server@default.ini', 'presets.ini') {
+            if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "the framework uninstall removed ProgramData\llama.cpp\config\$file" }
+          }
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/x `"$ll`" /qn /norestart /l*v `"$PWD\build\windows\ci-uninstall-llama.cpp.log`""
+          if ($p.ExitCode -ne 0) { throw "the uninstall of llama.cpp exited $($p.ExitCode)" }
+          foreach ($svc in 'private-ai-manager', 'private-ai-bff') {
+            if (Get-Service $svc -ErrorAction SilentlyContinue) { throw "the service $svc is still there" }
+          }
+          $instances = @(Get-Service 'llama.cpp_*' -ErrorAction SilentlyContinue)
+          if ($instances.Count) { throw "instance services left: $($instances.Name -join ', ')" }
+          foreach ($key in 'HKLM:\Software\private-ai', 'HKLM:\Software\llama.cpp') {
+            if (Test-Path $key) { throw "$key is still there" }
+          }
+          # A silent uninstall keeps the machine data trees.
+          if (-not (Test-Path -LiteralPath "$env:ProgramData\private-ai\config\bff.ini")) { throw 'ProgramData\private-ai\config\bff.ini is gone' }
+          foreach ($file in 'server@default.ini', 'presets.ini') {
+            if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "ProgramData\llama.cpp\config\$file is gone" }
+          }
+          foreach ($dir in "$env:ProgramFiles\private-ai", "$env:ProgramFiles\llama.cpp") {
+            if (Test-Path $dir) { throw "$dir is still there" }
+          }
+          $trees = @("$env:ProgramData\private-ai", "$env:ProgramData\llama.cpp") | Where-Object { Test-Path -LiteralPath $_ }
+          if ($trees) { Get-ChildItem -Recurse -Force -LiteralPath $trees | Select-Object FullName }
+
+      - name: Upload the MSIs and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows
+          path: |
+            dist/*.msi
+            build/windows/msi-*.log
+            build/windows/ci-*.log
+          if-no-files-found: warn

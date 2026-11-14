@@ -477,8 +477,14 @@ Slices, each test first: **1** (done) the reduced-build option in xtask: `xtask 
 (Windows, macOS; Linux refuses it), recorded in the config, GGML_CUDA/HIP/VULKAN off, the engine's file
 named `llama.cpp-v<release>-minimal-<arch>` so a release upload never takes it, no `-vulkan` `.pkg`;
 the Windows runner's own LLVM clang and OpenSSL should satisfy `configure` (read from the runner image,
-not run), and running the prerequisites script there avoids depending on PATH order for OpenSSL; **2** the Windows workflow (first
-WiX compile of both MSIs); **3** the macOS workflow (first `pkgbuild` run).
+not run), and running the prerequisites script there avoids depending on PATH order for OpenSSL; **2** (written, not yet run) the Windows workflow
+`.github/workflows/installers-windows.yml` (first WiX compile of both MSIs): prerequisites with
+`-Minimal` (which skips the GPU dists and works without winget), the WiX EULA accepted on the runner
+(user, 2026-11-14), the framework alone refused with its message, `xtask install`, the services'
+start mode, path and account, `/api/version` and `/api/instances`, a `/fecmus` repair that restores a
+deleted default and keeps a changed one, both uninstalls with what each must remove and keep, the MSIs
+and logs uploaded; left: its first run (the user's go-ahead), and `find_openssl` still knows only
+`OpenSSL-Win64` (the workflow puts the runner's `Program Files\OpenSSL` first on PATH); **3** the macOS workflow (first `pkgbuild` run).
 
 - Done when: both workflows have run green on GitHub at least once, from a run the user started or
   approved, and what they cover is written in `installer/AGENTS.md` and `docs/build-macos.md`.

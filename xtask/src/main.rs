@@ -21,6 +21,8 @@
 //! one being built is compiled. docs/build-pipeline.md explains the decisions
 //! behind each phase.
 
+#[cfg(test)]
+mod ci_windows;
 mod common;
 #[cfg(target_os = "linux")]
 mod linux;

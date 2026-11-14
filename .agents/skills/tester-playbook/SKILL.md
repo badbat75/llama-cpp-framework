@@ -465,3 +465,15 @@ Lessons only: the rules are in `AGENTS.md`.
   `images/windows/Windows2025-Readme.md` lists the tools, `images/windows/scripts/build/Install-<Tool>.ps1`
   says where each goes and whether it is on PATH (LLVM by choco, on PATH; OpenSSL in
   `C:\Program Files\OpenSSL`, its `bin` on PATH). Check there before writing a test for "the runner lacks X".
+- A GitHub workflow is pinned as text (`xtask/src/ci_windows.rs`: comment lines dropped, an `after()`
+  helper for order, msiexec switches matched after a space, quote or comma). Prove the helpers with a
+  throwaway candidate workflow written in place and deleted after. The runner label `windows-2025` is
+  the VS 2026 image: read `images/windows/Windows2025-VS2026-Readme.md`, not `Windows2025-Readme.md`
+  (the label map is in the runner-images `README.md`).
+- Reviewing a workflow or installer check: a check that only re-observes what was already true before
+  the action (files present before a repair, no instance service when none was ever made) proves
+  nothing; mutate first (delete, edit) and check the action undid or kept it. An msiexec exit code
+  alone (1603) is any fatal error: pair it with the expected message in the `/l*v` log.
+- A "kept after uninstall" check on a folder nothing wrote into proves nothing: Windows Installer removes
+  the empty folders it created. A workflow test (`xtask/src/ci_windows.rs`) pins a file written into it
+  before the `/x` and checked after; region checks there slice the text between `switches(.., "/x")`.

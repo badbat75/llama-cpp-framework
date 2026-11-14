@@ -36,11 +36,20 @@
 # pull`: xtask build pins the clone to a tag on a detached HEAD, so a pull
 # would always fail; the checkout onto the new tag is xtask build's job.)
 #
+# -Minimal installs the toolchain without the GPU SDKs: nothing is looked up at
+# AMD, NVIDIA or LunarG, for the CI-only build of `xtask configure --minimal`
+# (docs\build-compiling.md, "The minimal build"). WiX, OpenSSL, sccache and
+# Rust are handled as without it.
+#
+# Without winget (a CI runner image may lack it) the winget packages are
+# neither checked nor installed, and the run goes on with what is there.
+#
 # Safe to run any time: idempotent.
 
 [CmdletBinding()]
 param(
-    [string]$DistRoot  # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: PRIVATE_AI_DIST_ROOT, config-build.psd1, dist-sources.psd1
+    [string]$DistRoot,  # where the SDK dists live (<DistRoot>\<Name>\<Version>\windows). If omitted: PRIVATE_AI_DIST_ROOT, config-build.psd1, dist-sources.psd1
+    [switch]$Minimal    # no GPU SDK (ROCm, CUDA, Vulkan) is looked up or installed: the CI-only minimal build
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +61,7 @@ function Test-IsAdmin {
 
 function Get-WingetVersion {
     param([string]$Id)
+    if (-not $haveWinget) { return $null }
     # Locally relax EAP: under Windows PowerShell 5.1, which is exactly what
     # runs this script on a fresh machine, since it is the script that INSTALLS
     # PowerShell 7 (hence no `#requires -Version 7` like its siblings), a
@@ -103,6 +113,11 @@ $wingetPackages = @(
     @{ Id = $wixPin.DotNetSdkWingetId ; Name = '.NET SDK' }
     @{ Id = 'OpenJS.NodeJS.LTS'       ; Name = 'Node.js (LTS)' }
 )
+# No winget, no winget legs: the packages are left as they are, said once in
+# the state and once in the report.
+$haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+$wingetSkipped = @()
+if (-not $haveWinget) { $wingetSkipped = $wingetPackages; $wingetPackages = @() }
 
 $sources = Import-PowerShellDataFile (Join-Path $repoRoot 'installer\dist-sources.psd1')
 . (Join-Path $PSScriptRoot 'dists.ps1')
@@ -501,6 +516,7 @@ function Get-CargoExe {
 function Install-Rust {
     $ErrorActionPreference = 'Continue'
     if (Get-CargoExe) { return $null }
+    if (-not $haveWinget) { return 'winget not found: install Rust from https://rustup.rs' }
     Write-Host "  installing Rust (winget Rustlang.Rustup, user scope)" -ForegroundColor Cyan
     winget install --id Rustlang.Rustup --exact --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Host
     if (-not (Test-Path (Join-Path $cargoHome 'cargo.exe'))) {
@@ -603,6 +619,9 @@ foreach ($p in $wingetPackages) {
     if ($v) { Write-Host "  [OK] $($p.Name) $v" -ForegroundColor Green }
     else    { Write-Host "  [..] $($p.Name) not installed" -ForegroundColor Yellow }
 }
+if ($wingetSkipped.Count) {
+    Write-Host "  [..] winget not found: $(($wingetSkipped | ForEach-Object { $_.Name }) -join ', ') neither checked nor installed" -ForegroundColor Yellow
+}
 if ($sccacheBefore) { Write-Host "  [OK] sccache $sccacheBefore ($sccacheBeforeFrom)" -ForegroundColor Green }
 else                { Write-Host "  [..] sccache not installed" -ForegroundColor Yellow }
 if ($wixBefore) { Write-Host "  [OK] WiX Toolset $wixBefore" -ForegroundColor Green }
@@ -630,10 +649,15 @@ Write-Host ""
 # Best effort: an unreachable source keeps what is installed and says so in
 # the report; it never uninstalls or downgrades anything.
 
-Write-Host "Checking AMD, NVIDIA and LunarG for the newest stable releases..." -ForegroundColor DarkGray
-$rocmLatest   = Get-RocmLatestPublished
-$cudaLatest   = Get-CudaLatestPublished
-$vulkanLatest = Get-VulkanLatestPublished
+$rocmLatest = $cudaLatest = $vulkanLatest = $null
+if (-not $Minimal) {
+    Write-Host "Checking AMD, NVIDIA and LunarG for the newest stable releases..." -ForegroundColor DarkGray
+    $rocmLatest   = Get-RocmLatestPublished
+    $cudaLatest   = Get-CudaLatestPublished
+    $vulkanLatest = Get-VulkanLatestPublished
+} else {
+    Write-Host "-Minimal: no GPU SDK is looked up or installed" -ForegroundColor DarkGray
+}
 
 $cudaTarget = $null
 if ($cudaLatest -and (-not $cudaBefore -or $cudaBefore.Parsed -lt $cudaLatest.Parsed)) {
@@ -665,7 +689,9 @@ $rocmBlocked = $null   # why the machine cannot converge to the newest stable th
 $rocmBeforeParsed = $null
 if ($rocmBefore) { [void][version]::TryParse($rocmBefore, [ref]$rocmBeforeParsed) }
 $rocmInLayout = $rocmBeforeDir -and (@($rocmOnDisk.Values) -contains $rocmBeforeDir)
-if (-not $rocmLatest) {
+if ($Minimal) {
+    # Nothing to converge to: the ROCm dist is left as it is.
+} elseif (-not $rocmLatest) {
     $rocmBlocked = 'newest stable not resolved (offline? index unreachable?)'
 } elseif (-not $rocmInLayout -or -not $rocmBeforeParsed -or $rocmBeforeParsed -lt $rocmLatest.Parsed) {
     if ($rocmOnDisk.Contains($rocmLatest.Version)) {
@@ -1010,10 +1036,12 @@ if (Test-Path (Join-Path $rtDir $rtMarker)) {
 }
 # OpenSSL ships libs under lib\VC\x64\MD\ but cmake/find_package expects them
 # directly under lib\. Idempotent: safe to re-run after any OpenSSL touch.
+# OpenSSL-Win64 is winget's folder; OpenSSL is the one GitHub's Windows
+# runner image ships.
 $blocks += @'
 
-$d = "${env:ProgramFiles}\OpenSSL-Win64"
-if (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib") {
+foreach ($d in "${env:ProgramFiles}\OpenSSL-Win64", "${env:ProgramFiles}\OpenSSL") {
+    if (-not (Test-Path "$d\lib\VC\x64\MD\libcrypto.lib")) { continue }
     if (-not (Test-Path "$d\lib\libcrypto.lib")) {
         New-Item -ItemType SymbolicLink -Path "$d\lib\libcrypto.lib" -Target "$d\lib\VC\x64\MD\libcrypto.lib" | Out-Null
         Write-Host "  Created symlink: libcrypto.lib" -ForegroundColor DarkGray
@@ -1233,6 +1261,10 @@ if ($sccacheWingetRemoved) {
     Write-ReportRow "    " DarkGray "" "winget copy removed; consoles opened earlier still have its PATH entry"
 }
 
+if ($wingetSkipped.Count) {
+    Write-ReportRow "[..]" Yellow "winget" "not found: $(($wingetSkipped | ForEach-Object { $_.Name }) -join ', ') neither checked nor installed"
+}
+
 $wixAfter = Get-WixVersion
 if (-not $wixAfter) {
     Write-ReportRow "[!!]" Red "WiX Toolset" "not installed"
@@ -1265,6 +1297,8 @@ if (-not $cargoExe) {
 $rocmChanged = ($rocmBeforeDir -ne $rocmAfterDir)
 if (-not $rocmBefore -and $rocmAfter) {
     Write-ReportRow "[++]" Green "ROCm (TheRock)" "installed $rocmAfter in $rocmAfterDir"
+} elseif ($Minimal -and -not $rocmAfter) {
+    Write-ReportRow "[--]" DarkGray "ROCm (TheRock)" "skipped (-Minimal)"
 } elseif (-not $rocmBefore -and -not $rocmAfter) {
     $detail = 'install failed'
     if ($rocmBlocked) { $detail = "not installed: $rocmBlocked" }
@@ -1292,7 +1326,9 @@ if ($rocmBeforeDir -and $rocmBeforeDir -ne $rocmAfterDir -and (Test-Path $rocmBe
 # CUDA Toolkit and Vulkan SDK: the same verdicts, keyed on the newest
 # complete dist in the layout (what the build will use), before vs after.
 function Write-SdkRows([string]$Name, $Before, $After, $Latest, $Target) {
-    if (-not $After) {
+    if ($Minimal -and -not $After) {
+        Write-ReportRow "[--]" DarkGray $Name "skipped (-Minimal)"
+    } elseif (-not $After) {
         $detail = if ($Target) { "install of $($Target.Version) failed" }
                   elseif (-not $Latest) { 'not installed: newest release not resolved (offline?)' }
                   else { 'not installed' }
