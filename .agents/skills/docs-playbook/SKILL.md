@@ -83,6 +83,9 @@ Lessons only: the rules are in `AGENTS.md`.
   the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
   run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
   it answers 503 `unavailable`.
+- The fe can run ahead of the bff: a route the fe calls is served only if `router_with` in
+  `crates/bff/src/lib.rs` has it (`fe/briefs/api-contract.md` marks the rest "proposed"). Describe
+  such a page as built against the contract, and say what today's bff makes of it (404, no JSON body).
 - When a package is split or a file changes package, recheck what moved with the maintainer scripts:
   a "the scripts restart the services" sentence holds only for the package that has them. Each
   package's scripts are in `system_files.rs` (`deb_scripts`, `rpm_scriptlets`, one function per

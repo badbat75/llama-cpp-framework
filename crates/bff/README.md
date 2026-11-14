@@ -2,8 +2,9 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version and the manager's instances with their state, and serves a page that shows both,
-read-only (`PLAN.md` step 10).
+framework version and the manager's instances with their state (`PLAN.md` step 10). The web UI
+already has sign-in and a read-only Server page, built against routes the bff does not serve yet
+([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -101,16 +102,38 @@ the two calls the manager answers without authorization, and the only ones the b
 ## The web UI (`fe/`)
 
 React + Vite in TypeScript, exact versions in `fe/package.json` and a committed
-`package-lock.json`. One page (`fe/src/App.tsx`) shows, each read once when it opens and never the
-reply's body:
+`package-lock.json`, styled with plain CSS (`fe/src/index.css`). Its design guide is `fe/DESIGN.md`,
+kept by the `designer`; the slice briefs and the API contract the fe is built against
+(`api-contract.md`) are in `fe/briefs/`.
 
-- the version (`fe/src/Version.tsx`, from `/api/version`), or a fixed message on any failure;
-- the instances (`fe/src/Instances.tsx`, from `/api/instances`): a table of instance and state (the
-  five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`),
-  a message when there is none, and one message per error key: `unavailable` (the manager is not
-  running or does not answer), `not-authorized` (it refused the web service), anything else,
-  a malformed reply included, as "could not be read".
+**A shell with hash routes** (`fe/src/App.tsx`, `fe/src/route.ts`), since the bff serves only `/`
+and `/assets/`: a skip link, a banner (Sign in, or the user, the role and Sign out), a nav (behind a
+Menu button below 960px; the instances listed once signed in) and the route's page, whose heading
+takes the focus and names the document title on a change. Each page reads its data once when it
+opens and never shows a reply's text.
 
+| Route | Page | Who |
+| --- | --- | --- |
+| `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
+| `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`, read-only for every role: every control disabled, a notice for a non-administrator | signed in; otherwise the sign-in form in its place |
+| anything else | Not found | anyone |
+
+- **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
+  `{"user", "canConfigure"}` signs the page in, any other reply or failure leaves it signed out.
+  Sign out is `DELETE /api/session`, signed out whatever it answers; a 401 from the server read
+  signs the page out too.
+- **`/api/session` and `/api/instances/{id}/server` are not served by the bff yet**: they are
+  proposed in `fe/briefs/api-contract.md`, and the fe is tested against them with mocked replies
+  only. Today's bff answers 404 to both, so the page stays signed out with the Overview whole, an
+  instance page shows the sign-in form and, by the code, a sign-in shows the generic failure.
+- **Errors are `{"key", "args"}`** (`apiError` in `fe/src/api.ts`, the bff's shape since
+  `GET /api/instances` moved to it); the message is picked by the key, never by the status, apart
+  from 401. For the instances: `client-unavailable` (the manager is not running or does not
+  answer), `client-not-authorized` (it refused the web service), anything else, a malformed reply
+  or no answer included, as "could not be read". The server read adds `client-no-instance` (with a
+  link back to the Overview); the sign-in tells `session-bad-credentials` and
+  `session-too-many-attempts` (its seconds from `args`) from a generic failure.
 - **Text goes in `fe/src/strings/en_US.json`**, linked by key through `t(key, ...args)`
   (`fe/src/strings.ts`), with `pai-core`'s rules: `{N}` placeholders filled by position, a missing
   key shown as itself.
@@ -119,7 +142,8 @@ reply's body:
 - **Checks**, none of which writes a file: `npm --prefix fe run typecheck` (`tsc` over the app,
   `vite.config.ts` and, through `fe/tsconfig.test.json`, the tests, which `npm run build` does not
   type-check), `npm --prefix fe run lint` (ESLint, `fe/eslint.config.js`, no warning allowed) and
-  `npm --prefix fe run format:check` (Prettier, `fe/.prettierrc.json`). TypeScript stays on 6.0:
+  `npm --prefix fe run format:check` (Prettier, `fe/.prettierrc.json`; `fe/.prettierignore` leaves
+  out `fe/dist` and the designer's Markdown, `DESIGN.md` and `briefs/`). TypeScript stays on 6.0:
   typescript-eslint does not load 7 yet ("Later, not planned yet" in [PLAN.md](../../PLAN.md)).
 - **Built by `xtask build`**, embedded in the binary by `crates/bff/build.rs`: which directory it
   embeds and when it notices a new `fe/dist` are in
