@@ -45,8 +45,8 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | --- | --- |
 | `prereq` | `--dist-root <path>`, `--skip <steps>` |
 | `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
-| `build` | `llama` or `config` for one module (default: both, in that order) |
-| `package` | `--keep-staging`; Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>` |
+| `build` | `llama` (llama.cpp) or `framework` (the web UI and the four cargo binaries) for one product (default: both, in that order) |
+| `package` | `--keep-staging`; Linux `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are), `--deb`, `--rpm`; Windows `--wix <wix.exe>`. Windows and macOS refuse a product: one MSI, one `.pkg` set |
 | `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install); Linux `--deb`, `--rpm`; Linux and macOS `--force` |
 
 **After a change, re-run the phases below.** The bootstrap report names the same steps.
@@ -56,6 +56,8 @@ MSI itself is in [installer\AGENTS.md](../installer/AGENTS.md).
 | The ROCm dist or the dist root | `configure`, `build` (a full rebuild, since the compiler path moves), `package` |
 | The CUDA Toolkit, NCCL or the Vulkan SDK | `build`, `package`: the build finds the newest on every run |
 | A newer llama.cpp release | `build`, `package` |
+| The framework only (`crates/`, `fe/`), on Linux | `build framework`, `package framework` |
+| llama.cpp's patches or CMake options only, on Linux | `build llama`, `package llama` |
 | Tools or their paths | `configure` |
 
 ## Running the phases

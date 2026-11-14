@@ -93,7 +93,7 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
 
 **`xtask package` checks WiX first, then stages, builds into `dist/` and validates.** The check
 costs seconds, not a staging run: tool found, EULA accepted, extensions present (added when
-missing).
+missing). It takes no product (`llama`, `framework`): the MSI holds both.
 
 - WiX resolves as `--wix <wix.exe>`, then the recorded `WixExe`, then PATH and the dotnet tools
   directory.
@@ -187,9 +187,22 @@ The app directory wins the DLL search order, so they go in `bin\`.
 ### The `.deb` and `.rpm` (Linux)
 
 **`xtask package` builds eight packages per format from one staged tree, about 3.8 GiB installed with all
-of them.** `--deb` or `--rpm` builds one format. It refuses to run without `pai-config` and `pai` in the
-build's `bin/` or `pai-manager` and `pai-bff` in `cargo-target/release/`, when the built `pai-config --version` differs from the root `Cargo.toml`'s (a bump
-without a rebuild), and when the llama.cpp clone is not on a `vX.Y.Z` release tag.
+of them.** `--deb` or `--rpm` builds one format. `xtask package llama` packages the engine and its three
+runtimes alone, `xtask package framework` the framework's four alone; the other product's files in
+`dist/` are left as they are (run on this machine on 2026-11-14: `package llama --deb` rewrote only the
+four engine `.deb`, `package framework --deb` only the four framework ones, `package` all sixteen). It
+checks first what the product needs and refuses without it: the engine `llama-server` in
+`llama.cpp-cmake/bin/`, the framework `pai-config`, `pai`, `pai-manager` and `pai-bff` in
+`cargo-target/release/`. It also refuses, for the framework, a built `pai-config --version` that
+differs from the root `Cargo.toml`'s (a bump without a rebuild), and, for either, a llama.cpp clone not
+on a `vX.Y.Z` release tag: the framework needs the clone only for that tag, the minimum engine version
+it requires.
+
+**The framework's executables are staged from `cargo-target/release/`, only stripped.** They link
+nothing of llama.cpp, so they get no RUNPATH and no library closure; the copies of `pai-config` and `pai`
+beside `llama-server` are the build tree's, not the packages'. Checked on 2026-11-14: the `-cli`
+`.deb`'s `pai` runs with no RUNPATH and no missing library. llama.cpp's own files are stripped and get the
+RUNPATH described below.
 
 | Package | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |
@@ -322,8 +335,8 @@ directories alike, plus whatever names no architecture.
 | `lib/hipblaslt/library` | 467 MiB | 2198 MiB |
 | `.kpack` | 91 MiB | 2258 MiB |
 
-**RUNPATH is rewritten with `patchelf` on the ELF files staged in `/usr/bin` and `/usr/lib/private-ai`
-only** (the runtimes keep AMD's), after `strip --strip-unneeded` and never before, since stripping a
+**RUNPATH is rewritten with `patchelf` on llama.cpp's ELF files staged in `/usr/bin` and
+`/usr/lib/private-ai` only** (the runtimes keep AMD's, the framework's executables get none), after `strip --strip-unneeded` and never before, since stripping a
 patched file can drop the section patchelf appended. The value is absolute,
 `/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib`. `LD_LIBRARY_PATH`
 still wins over RUNPATH. That no file is opened under the dists or the build tree was checked by hand
@@ -476,6 +489,7 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
   system unit `llama.cpp@*.service` or `private-ai-*.service` under `/system.slice/`
   (`/proc/<pid>/cgroup`) is a service, which its package's scripts stop and start again. Any other
   program (an open `pai-config`, a `pai bench run`, a `llama-bench`) is ignored without a message.
-- It warns when a package other than a runtime predates the last `xtask build`. A runtime comes out of an SDK,
-  which the build does not change.
+- It warns when a package other than a runtime is older than the build tree's `llama-server`. A runtime
+  comes out of an SDK, which the build does not change. By the code only `xtask build llama` moves that
+  time: a framework package older than the last `build framework` gets no warning.
 - `sudo` is added when not root, here and on macOS.

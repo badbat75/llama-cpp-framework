@@ -43,7 +43,7 @@ then a system clang, then GCC.
   detected in the VS environment, and fall back to `HipPath\bin` and `HipPath\lib\llvm\bin`.
 - Linux: `git`, `cmake`, `ninja`, `g++`, `node`, `npm` and `cargo`.
 - macOS: Apple's `clang`, `git`, `cmake`, `ninja`, `node`, `npm` and `cargo`.
-- `node` and `npm` are required because `xtask build config` builds the
+- `node` and `npm` are required because `xtask build framework` builds the
   [web UI](#the-web-ui-and-pai-bff) and generates a missing `resources/llama.ico` with them.
 
 **WiX is checked but never a gap.** `WixExe` is `wix.exe` on PATH, else
@@ -400,13 +400,13 @@ tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is
 
 ## The web UI and pai-bff
 
-**`xtask build config` builds the web UI in `fe/` before cargo, so it needs node and npm on every
+**`xtask build framework` builds the web UI in `fe/` before cargo, so it needs node and npm on every
 OS.** It runs `npm ci` (a clean install from the committed `package-lock.json`, refused when the
 lock and `package.json` disagree) and `npm run build` (`tsc -b && vite build`, into `fe/dist`), then
 builds `pai-bff` with the other programs and sets `PRIVATE_AI_FE_DIST=<repo>/fe/dist`. A failed web
 build stops the build, and a built `pai-bff` never holds the test fixture. `pai-bff` stays in
 `cargo-target/release/`, not copied beside the server: `xtask package` takes it from there
-([Packaging](build-packaging.md)). What it serves is in [crates/bff/README.md](../crates/bff/README.md).
+([Packaging](build-packaging.md)), as on Linux it takes the other three. What it serves is in [crates/bff/README.md](../crates/bff/README.md).
 
 **`crates/bff/build.rs` compiles one directory into the binary**, as a table of path, bytes and
 content type, and fails when that directory holds no `index.html`:
@@ -524,8 +524,9 @@ which CMake leaves out of the computed RPATH. Without it, `libggml-cuda.so` cann
 linked against. Moving or deleting a dist breaks the backend that used it. The build ends by running
 `llama-server --version`.
 
-**The configurator is built last and copied beside the server**, into
-`build/linux/llama.cpp-cmake/bin/`.
+**The framework is built last (`xtask build framework`), and `pai-config` and `pai` are copied beside
+the server**, into `build/linux/llama.cpp-cmake/bin/`, where a build tree runs them. The packages do not
+use the copies: `xtask package` stages the framework's executables from `cargo-target/release/`.
 
 - It is staged and renamed over the old file, so a running configurator keeps its file.
 - `paths::llama_bin` looks in the exe's own directory first, so the copy is the one to launch. The
@@ -546,7 +547,7 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 | --- | --- |
 | `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI), `crates/cli` (`pai-cli`, binary `pai`, the configurator's command line), `crates/bff` (`pai-bff`, the backend-for-frontend service), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the six `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
-| `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
+| `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file, and which product, `llama` or `framework`, each package is) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |
 | `xtask/cmake/` | The checked-in llama.cpp CMake options |
 | `crates/app/build.rs`, `crates/app/arch_tables.rs` | `pai-app`'s build script and the [architecture tables](#generated-architecture-tables) it generates from the clone |

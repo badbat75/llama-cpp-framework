@@ -390,6 +390,11 @@ Decided with the user on 2026-11-14:
   require `llama.cpp (>= 1:<release built against>)`; a newer llama.cpp installs without a framework
   rebuild. Package files: `private-ai-framework-<component>-v<version>-<arch>`, and
   `llama.cpp-v<release>+pai<N>-<arch>` for the engine (and its runtimes by SDK version).
+- **Small xtask leftovers** (found 2026-11-14 by the docs agent, with slice 3): the headers of
+  `scripts/02-build.{sh,ps1}` and `03-package.{sh,ps1}` still say `[llama | config]` and "pai-config";
+  `xtask install` on Linux warns of a stale package only against `llama-server`'s date, so after
+  `build framework` an old framework package gets no warning; `common/configurator.rs` says the
+  framework build needs the clone "for the icon" (it is for `pai-app`'s architecture tables).
 - **Windows: two installers** (user, 2026-11-14, replacing "one MSI with two features"): the
   framework's MSI, named by the framework's version only (`private-ai-framework-v<version>-x64.msi`),
   and **llama.cpp's own MSI** with its runtimes, named and versioned by the engine's release alone, no
@@ -402,7 +407,14 @@ Decided with the user on 2026-11-14:
   folder, e.g. `%ProgramData%\llama.cpp\`, only when missing; `paths::engine_config_dir()` follows on
   Windows). Two small Windows manager fixes go with it (found 2026-11-14): `windows::entry::serve`'s doc
   comment still says "or started", and `scm.rs` `sync` reports an SCM-wide failure with an empty
-  instance id ("instance ``"). To settle in slice 3: the exact folders, where the instance logs and models go, and the
+  instance id ("instance ``"). Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
+  read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:
+  `config\` (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`; `paths::engine_config_dir()`),
+  `logs\` (`llama-server@<id>.log` and its `.previous.log`) and `models\` (the default `ModelsDir`);
+  `%ProgramData%\private-ai\` keeps only the framework's (`config\bff.ini`). Uninstalling llama.cpp's
+  MSI stops and deletes the instance services and **asks whether to remove its configuration too**
+  (user, 2026-11-14): a checkbox, cleared by default, as the framework's user-data question; a silent
+  or basic-UI uninstall, and every upgrade, keeps `%ProgramData%\llama.cpp\`. Still to settle: the
   release assets (two installers per release).
 - **macOS:** the same split of the `.pkg` (an engine `.pkg` beside the framework's).
 - **The build is split too:** the engine and the framework are separate builds, so either can be

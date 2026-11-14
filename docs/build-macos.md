@@ -62,8 +62,10 @@ new Xcode can move it.
 
 **Package.** `pkgbuild` writes four `.pkg` files from one staged tree, split by path as
 [on Linux](build-packaging.md#packaging). It refuses to run without `llama-server`, `pai-config` and `pai`
-in the build's `bin/`, and refuses a built `pai-config` whose version differs from the root
-`Cargo.toml`'s.
+in the build's `bin/` (`xtask build framework` copies the last two there), and refuses a built
+`pai-config` whose version differs from the root `Cargo.toml`'s. It takes no product: `xtask package
+llama` or `framework` is refused on macOS, which builds every `.pkg` at once. `xtask build llama` and
+`build framework` work as on Linux.
 
 **The macOS split of the engine from the framework is step 11 slice 4 in `PLAN.md`, not done.** The
 table below is the `.pkg` set before step 11. `components.rs` and `components::file_stem`, which macOS

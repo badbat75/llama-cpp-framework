@@ -106,3 +106,9 @@ Lessons only: the rules are in `AGENTS.md`.
   the `DPKG_ROOT` sentence below it and the rpm `Requires(<tag>)` sentence; the "not run for real" line
   of the install log stays until a real removal or purge. A Windows manager message key is named only in
   `installer/AGENTS.md`'s manager bullet: grep `cli.toml`'s old key in every `.md` after a rename.
+- When an xtask phase's arguments change, they are named in: `build-pipeline.md` (Options and "re-run"
+  tables), the README command table, `AGENTS.md`'s Windows `xtask build` bullet and Linux bullet,
+  `build-compiling.md` (node/npm line, web UI section, Linux "built last"), `build-packaging.md`
+  (MSI and `.deb`/`.rpm` intros), `build-macos.md` ("Package."), and the `scripts/0N-*` usage headers
+  (not ours: report them). `xtask install`'s "predates the build" warning keys on the build tree's
+  `llama-server` mtime only (`linux/install.rs`): recheck it when what a build updates changes.
