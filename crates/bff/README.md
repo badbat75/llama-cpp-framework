@@ -11,7 +11,7 @@ read-only (`PLAN.md` step 10).
 
 - Linux: the package `private-ai-framework-bff` (which requires `private-ai-framework-core`, not the
   engine) puts it in `/usr/libexec/private-ai/pai-bff` with `private-ai-bff.service`, enabled and
-  started at install, restarted on upgrade, stopped on removal. It runs as the static system user
+  started at install, stopped before an upgrade and started again after, stopped on removal. It runs as the static system user
   `private-ai-bff` (no home, no shell; created by the package's own sysusers.d entry), hardened with
   the sandbox `DynamicUser=` would imply written out: a `DynamicUser=` cannot work, because dbus-daemon
   drops a dynamic user's connection at `Hello` (on Ubuntu 26.04, dbus-daemon 1.16.2, `/api/instances`

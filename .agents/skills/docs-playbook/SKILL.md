@@ -81,8 +81,14 @@ Lessons only: the rules are in `AGENTS.md`.
   the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
   run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
   it answers 503 `unavailable`.
-- When a package is split, recheck what moved with the maintainer scripts: a package left with no
-  scripts (the engine `llama.cpp`) upgrades without restarting anything, so a "the scripts restart
-  the services" sentence now holds only for the package that has them. `components::file_stem` and
+- When a package is split or a file changes package, recheck what moved with the maintainer scripts:
+  a "the scripts restart the services" sentence holds only for the package that has them. Each
+  package's scripts are in `system_files.rs` (`deb_scripts`, `rpm_scriptlets`, one function per
+  package), its rpm `Requires(<tag>)` in `package.rs`. A unit's package is named in five places:
+  `build-packaging.md` (Holds table, paths table, system files heading and row), `AGENTS.md`'s Linux
+  bullet, the README package table, and the manager row of `crates/config/README.md`'s source map.
+- A setting that is the service manager's own state (start at login, start at boot) is described
+  once in full in "Through the manager" of `crates/config/README.md`; `AGENTS.md`, the README and
+  `installer/AGENTS.md` (its test plan) carry one line each. `components::file_stem` and
   `of()` are shared with macOS: a Linux split renames and resplits the `.pkg` set too, even when the
   macOS slice is "later"; say so on `build-macos.md` rather than leave its table looking current.

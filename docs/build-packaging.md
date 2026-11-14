@@ -135,8 +135,9 @@ basic-UI install does not show it.
 
 **The MSI installs the `private-ai-manager` service and the machine data tree.** The service is
 `pai-manager.exe serve` as LocalSystem, started at boot and restarted after a failure; it runs each
-instance as its own service, `llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>`,
-and serves the configurator over `\\.\pipe\private-ai-manager`. `%ProgramData%\private-ai\` holds
+instance as its own service, `llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>`
+(created with the manual start type; automatic once the configurator's "start llama-server when the
+system starts" is on, and the SCM then starts it at boot: the manager starts none itself), and serves the configurator over `\\.\pipe\private-ai-manager`. `%ProgramData%\private-ai\` holds
 `config\` (the instances' server and preset files, which users reach only through the manager),
 `logs\` (each instance's `llama-server@<id>.log`) and `models\`, each folder with a protected DACL,
 and outlives an uninstall. A removal, a repair or the old half of an upgrade runs
@@ -192,8 +193,8 @@ without a rebuild), and when the llama.cpp clone is not on a `vX.Y.Z` release ta
 | `private-ai-framework-config` | `pai-config` (the GUI), its language files, the desktop entry and its icon | `<framework>` | not measured |
 | `private-ai-framework-cli` | `pai` (the command line), the benchmark method; no graphics library | `<framework>` | not measured |
 | `private-ai-framework-bff` | `pai-bff` (the web service), `private-ai-bff.service` and the sysusers entry of its user | `<framework>` | not measured |
-| `private-ai-framework-core` | `pai-manager`, every other systemd unit (`llama.cpp@.service` included: it runs `pai-manager run-instance`), the D-Bus and polkit policies, the sysusers entry of `private-ai`, `cli.toml`, the manager's maintainer scripts | `<framework>` | not measured |
-| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp; nothing of the framework and no maintainer script | `1:<release>+pai<N>`, `1:1.0.0+pai1` | not measured |
+| `private-ai-framework-core` | `pai-manager`, `private-ai-manager.service`, the D-Bus and polkit policies, the sysusers entry of `private-ai`, `cli.toml`, the manager's maintainer scripts | `<framework>` | not measured |
+| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, the instance unit `llama.cpp@.service` and the scripts that stop and restart the instances; nothing else of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai1` | not measured |
 | `llama.cpp-rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
 | `llama.cpp-cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
 | `llama.cpp-vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
@@ -240,6 +241,14 @@ refused `nobody` the manager's `Stop`, `WriteFile` and `ReadFile` of `server@def
 `NotAuthorized`; the bff answered `/api/version`, `/api/instances` with `[]` and 200, and 503
 `unavailable` with the manager stopped. The `.rpm` files have not been installed.
 
+On the same install, the same day, with the start at boot of step 12 (reported by the user):
+`pai server boot on` left `systemctl is-enabled llama.cpp@default` at `enabled` and created the link in
+`multi-user.target.wants/`, `pai server boot off` left it `disabled`, and the Settings toggle matched
+systemd both ways. Reinstalling at the same version after `llama.cpp@.service` moved from `core` to
+`llama.cpp` needed a one-off `dpkg --force-overwrite`, since the installed `core` of that version still owned the
+file. Only pre-release builds of one version hit it; no fix is planned. The stop and restart of the services by the scripts (below) were checked in
+xtask's tests with a fake `systemctl`, not on this install.
+
 | Path | Package | Holds |
 | --- | --- | --- |
 | `/usr/bin/` | `llama.cpp`; `pai-config` in `config`, `pai` in `cli` | llama.cpp's executables, `pai-config` and `pai`, the real files |
@@ -251,7 +260,7 @@ refused `nobody` the manager's `Stop`, `WriteFile` and `ReadFile` of `server@def
 | `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
-| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `core`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
+| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
 
 **Each package's `copyright` and `Homepage` (rpm `URL`) name its own source.** The framework's
 packages carry this project's MIT licence and repository; `llama.cpp` carries llama.cpp's own licence
@@ -318,13 +327,13 @@ user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and mo
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
 ([Migration from 2.4](../crates/config/README.md#migration-from-24)).
 
-**The services' system files are in `core`, beside `pai-manager`, and the web service's unit and user in `bff`** (`xtask/src/linux/system_files.rs`,
+**The services' system files are in `core`, beside `pai-manager`, the instance unit in `llama.cpp`, and the web service's unit and user in `bff`** (`xtask/src/linux/system_files.rs`,
 installed 0644, overwritten on every upgrade; local changes go in a drop-in, `systemctl edit`):
 
 | File | What it does |
 | --- | --- |
 | `/usr/lib/systemd/system/private-ai-manager.service` | `pai-manager serve` as root, `Type=dbus` on `org.privateai.Manager1`, `HOME=/var/lib/private-ai` so a blank `ModelsDir` means the same as for the instances, `ConfigurationDirectory=private-ai`, `Restart=on-failure`, enabled for `multi-user.target` |
-| `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`; no `[Install]`: the manager starts the instances, at boot included; its output goes to journald |
+| `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`, `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager` (without the framework it does not run: the engine does not require it); `[Install] WantedBy=multi-user.target`, so an instance starts at boot once enabled, which no package does (the configurator's "start llama-server when the system starts", through the manager's `SetBootEnabled`); its output goes to journald |
 | `/usr/share/dbus-1/system.d/org.privateai.Manager1.conf` | Only root owns the name; anyone may call it, and polkit decides in each call |
 | `/usr/share/polkit-1/actions/org.privateai.manager.policy` | `org.privateai.manager.control` (start, stop, restart): `yes` in the active session, `auth_admin` otherwise; `org.privateai.manager.configure` (writing a file): `auth_admin_keep` |
 | `/usr/lib/sysusers.d/private-ai.conf` | The system user `private-ai`, home `/var/lib/private-ai`, in `render` and `video` |
@@ -339,23 +348,30 @@ are in the unit's test in `system_files.rs`. The sandbox `DynamicUser=` implied 
 Their texts (the unit descriptions, the polkit descriptions and messages) are read in place by systemd
 and polkit, so they are literal in the code, not in the strings files.
 
-**The maintainer scripts are `core`'s and `bff`'s** (`llama.cpp` has none), in debhelper's form for the `.deb` (`postinst`,
-`prerm`, `postrm`) and Fedora's systemd macros written out for the `.rpm` (`%post`, `%preun`,
-`%postun`, `%posttrans`):
+**The maintainer scripts are `core`'s, `llama.cpp`'s and `bff`'s**, in debhelper's form for the `.deb`
+(`postinst`, `prerm`, `postrm`) and Fedora's systemd macros written out for the `.rpm` (`%pre`, `%post`,
+`%preun`, `%postun`, `%posttrans`). **Each package stops the services it holds before its files are
+replaced, on upgrade as on removal, and an upgrade starts again what was running.** The `.deb` stops in
+`prerm` (`upgrade`, `remove`, `deconfigure`; not under `DPKG_ROOT`), the `.rpm` on an upgrade in the new
+package's `%pre`, since rpm runs the old package's `%preun` only after the new files are in place
+(rpm-scriptlets(7), EXECUTION ORDER).
 
-| When | What they do |
-| --- | --- |
-| Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) |
-| Upgrade of `core` | The same, then restart the manager and `try-restart` the running `llama.cpp@*` instances on the new `llama-server` (the `.rpm` only while the manager is enabled). An upgrade of `llama.cpp` alone runs no script, so running instances keep the old `llama-server` until they restart (read from the code, not tried) |
-| Removal | Stop the manager first, so it starts nothing, then the instances; `daemon-reload` (the `.rpm` also disables the manager) |
-| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept |
+| When | `core`: the manager | `llama.cpp`: the instances |
+| --- | --- | --- |
+| Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) | `daemon-reload`; no instance is enabled or started |
+| Upgrade | Stop the manager; afterwards the same as an install, the manager restarted (the `.rpm` only while it is enabled) | Record the active `llama.cpp@*` units in `/run/llama.cpp.instances` and stop them; afterwards `daemon-reload`, start each recorded unit, delete the record |
+| Removal | Stop the manager; `daemon-reload` (the `.rpm` also disables it) | Stop every instance; `daemon-reload`, delete the record. An enabled instance stays enabled: its `multi-user.target.wants/` link is left behind (open, `PLAN.md` step 12) |
+| Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept | Nothing more |
 
-`bff`'s scripts do the same for `private-ai-bff.service` alone: `systemd-sysusers private-ai-bff.conf`, then enable and start it on install,
-restart it on upgrade (the `.rpm` in `%posttrans`, while it is enabled), stop it on removal (the `.rpm`
-also disables it), and forget its enablement state on purge.
+`core`'s scripts never touch the instances, and none enables one: an instance starts at boot only once
+the user enables it. `bff`'s scripts do the same as `core`'s for `private-ai-bff.service` alone:
+`systemd-sysusers private-ai-bff.conf`, then enable and start it on install, stop it before an upgrade
+and restart it after (the `.rpm` in `%posttrans`, while it is enabled), stop it on removal (the `.rpm`
+also disables it), and forget its enablement state on purge. These scripts run in xtask's tests in a
+sandbox with a fake `systemctl`.
 
 The `.deb` `Depends` on `systemd | systemd-standalone-sysusers | systemd-sysusers` for those scripts;
-the `.rpm` of `core` and of `bff` `Requires(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd, and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
+the `.rpm` of `core` and of `bff` `Requires(pre)`, `(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd (`llama.cpp`'s none), and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
 create when missing.
 
 <details>
@@ -404,7 +420,7 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 | --- | --- | --- | --- |
 | Command | `msiexec /i <msi> /qb /norestart /l*v <log>` | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb` | Package manager's own | Laid down over it |
-| Running programs | The MSI's `StopProcesses` action stops them | Refused (`--force` overrides) | Refused (`--force` overrides) |
+| Running programs | The MSI's `StopProcesses` action stops them | A llama-server outside the services is refused (`--force` overrides) | Refused (`--force` overrides) |
 | Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**
@@ -430,11 +446,13 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 
 - The format comes from `ID` and `ID_LIKE` in `/etc/os-release`, and the package managers on PATH
   only second, since a Debian build host has `rpm` too.
-- Running programs are refused because rocBLAS and hipBLASLt load their kernel files lazily. A
-  server outliving the upgrade would read the new kernels with the old libraries. Only a user's
-  program counts: one whose argv[0] is `pai-config`, `pai` or a `llama-*` in `/usr/bin`, or that maps a file
-  of `/usr/lib/private-ai` (`/proc/<pid>/cmdline`, `/proc/<pid>/maps`). `pai-manager`, `pai-bff` and the
-  processes of the `private-ai` user do not: the maintainer scripts restart the services.
+- A running llama-server is refused because rocBLAS and hipBLASLt load their kernel files lazily: a
+  server outliving the upgrade would read the new kernels with the old libraries. Only a
+  `llama-server` outside the framework's services counts, one run from `/usr/bin` or mapping a file
+  of `/usr/lib/private-ai` (`/proc/<pid>/cmdline`, `/proc/<pid>/maps`). A process in the cgroup of a
+  system unit `llama.cpp@*.service` or `private-ai-*.service` under `/system.slice/`
+  (`/proc/<pid>/cgroup`) is a service, which its package's scripts stop and start again. Any other
+  program (an open `pai-config`, a `pai bench run`, a `llama-bench`) is ignored without a message.
 - It warns when a package other than a runtime predates the last `xtask build`. A runtime comes out of an SDK,
   which the build does not change.
 - `sudo` is added when not root, here and on macOS.

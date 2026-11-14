@@ -155,7 +155,7 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Run bare `cargo` on Linux with the Windows `.cargo/config.toml` present | It lands in `build/windows/cargo-target`. [Build parallelism](build-compiling.md#build-parallelism) |
 | Share a clone or build directory between systems | Line endings, patch state and `node_modules` mix. [Where things land](#where-things-land) |
 | Test a tree-built `llama-server` on Linux while the `llama.cpp` package is installed | It loads the installed backends from `GGML_BACKEND_DIR`, `/usr/lib/private-ai`, before its own. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
-| Upgrade the Linux packages under a running server | It would load new kernels with old libraries. [Install](build-packaging.md#install) |
+| Upgrade the Linux packages under a llama-server started by hand | It would load new kernels with old libraries; `xtask install` refuses (the services' instances are stopped and started again by `llama.cpp`'s scripts). [Install](build-packaging.md#install) |
 | Leave out the runtime package of a GPU the machine has | llama-server skips that backend at start, with only a log line. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSI](build-packaging.md#the-msi-windows) |
 | Switch the MSI to external cabinets | The release is one file, under GitHub's 2 GiB limit. [installer\AGENTS.md](../installer/AGENTS.md) |
