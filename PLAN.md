@@ -361,9 +361,10 @@ longer starts every instance at boot, only the enabled ones are started, by the 
 
 Code done (tests green, see the commit); left: the real try on the installed packages (needs an
 imported instance), the docs, and two loose ends: `manager-boot-start-failed` now reports the Windows
-service sync, its text should say so; removing `core` with an enabled instance leaves a dangling
-`multi-user.target.wants/llama.cpp@<id>.service` link (the removal scripts should disable the
-instances).
+service sync, its text should say so; removing `llama.cpp` (which now ships the unit) with an enabled instance leaves a
+dangling `multi-user.target.wants/llama.cpp@<id>.service` link (its removal scripts should disable
+the instances); the engine's rpm scriptlets call systemctl without `Requires(...): systemd` (guarded,
+but inconsistent with core and bff).
 
 - Done when: the toggle reads "start llama-server when the system starts" on Linux and Windows and
   follows `systemctl is-enabled llama.cpp@default` (or the SCM start type), both ways; a user without
