@@ -429,17 +429,23 @@ pub fn llama_bench_exe() -> Option<PathBuf> {
     llama_bin("llama-bench")
 }
 
+/// The per-OS directory under `build/` that the build phases generate
+/// everything into, for an OS named as `std::env::consts::OS` names it.
+/// Any other OS takes Linux's.
+pub fn build_os_dir(os: &str) -> &'static str {
+    match os {
+        "windows" => "windows",
+        "macos" => "macos",
+        _ => "linux",
+    }
+}
+
 /// [`llama_bin`] for a program at `exe`: the same search, from that path
 /// instead of the running one. The Linux packages put `pai-config` and
 /// llama.cpp's executables in `/usr/bin` and `pai-manager` in
 /// `/usr/libexec/private-ai`, which must find `/usr/bin/llama-server`.
 pub fn llama_bin_from(exe: &Path, stem: &str) -> Option<PathBuf> {
-    // The per-OS directory the build scripts generate everything into.
-    #[cfg(windows)]
-    const BUILD_OS_DIR: &str = "windows";
-    #[cfg(not(windows))]
-    const BUILD_OS_DIR: &str = "linux";
-
+    let os_dir = build_os_dir(std::env::consts::OS);
     let exe_dir = exe.parent()?;
     let name = binary_name(stem);
     let name = name.as_str();
@@ -458,14 +464,14 @@ pub fn llama_bin_from(exe: &Path, stem: &str) -> Option<PathBuf> {
             .join("..")
             .join("..")
             .join("build")
-            .join(BUILD_OS_DIR)
+            .join(os_dir)
             .join("llama.cpp-cmake")
             .join("bin")
             .join(name),
         exe_dir
             .join("..")
             .join("build")
-            .join(BUILD_OS_DIR)
+            .join(os_dir)
             .join("llama.cpp-cmake")
             .join("bin")
             .join(name),
@@ -926,6 +932,57 @@ mod tests {
             assert!(p.starts_with(pd), "{}", p.display());
         }
         assert_eq!(d.engine_config, pd.join(ENGINE).join("config"));
+    }
+
+    // ── The build tree of each OS ────────────────────────────────────────
+    // Every OS builds into its own `build/<os>/` (xtask's `util::build_root`):
+    // a tree build on macOS finds its llama-server under `build/macos/`,
+    // never under Linux's directory.
+
+    #[test]
+    fn each_os_has_its_own_build_directory() {
+        assert_eq!(super::build_os_dir("linux"), "linux");
+        assert_eq!(super::build_os_dir("macos"), "macos");
+        assert_eq!(super::build_os_dir("windows"), "windows");
+    }
+
+    /// `llama_bin_from` looks under the running OS's build directory,
+    /// through `build_os_dir`, with no per-OS constant of its own (the
+    /// macOS branch cannot run here).
+    #[test]
+    fn llama_bin_from_looks_under_the_running_os_build_directory() {
+        let body = body_of("llama_bin_from");
+        assert!(
+            body.contains("build_os_dir(std::env::consts::OS)"),
+            "llama_bin_from does not ask build_os_dir for this OS:\n{body}"
+        );
+        assert!(
+            !body.contains("BUILD_OS_DIR"),
+            "llama_bin_from still has its own per-OS constant:\n{body}"
+        );
+    }
+
+    /// A tree build run from `<repo>/<dir>/<exe>` finds the llama-server
+    /// of this OS's build directory.
+    #[test]
+    fn a_tree_build_finds_llama_server_under_its_os_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let os = super::build_os_dir(std::env::consts::OS);
+        let exe = touch(
+            root.path(),
+            &format!("target/{}", super::binary_name("pai-config")),
+        );
+        let server = touch(
+            root.path(),
+            &format!(
+                "build/{os}/llama.cpp-cmake/bin/{}",
+                super::binary_name("llama-server")
+            ),
+        );
+        assert_eq!(
+            canon(llama_bin_from(&exe, "llama-server")),
+            canon(Some(server))
+        );
     }
 
     /// The code of `name`'s body in this file, before the tests.

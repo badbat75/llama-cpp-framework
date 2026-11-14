@@ -261,8 +261,9 @@ pub fn of_product(product: Option<Product>) -> Vec<Component> {
 }
 
 /// The build revision of the llama.cpp package (`+pai<N>` in its version):
-/// raised when the patches or the build options change on the same
-/// llama.cpp release.
+/// raised when anything but llama.cpp's code changes on the same release
+/// (the patches, the build options, the package's scripts or files), back
+/// to 1 at every new llama.cpp release.
 pub const LLAMA_CPP_REVISION: u32 = 1;
 
 /// The version of the llama.cpp package built from release `llama_build`

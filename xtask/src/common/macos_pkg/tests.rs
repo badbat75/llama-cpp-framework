@@ -425,3 +425,37 @@ fn the_macos_install_phase_uses_the_split() {
         assert!(code.contains(want), "macos/install.rs does not call {want}");
     }
 }
+
+/// A `.pkg` is built from a llama.cpp release only, as on Linux and
+/// Windows: `run()` refuses a clone not on a release tag (named
+/// `b<N>`/`b0-<sha>` by `version::llama_build`, a name `install` cannot
+/// pick from dist/) right after reading it, before it stages or runs
+/// pkgbuild.
+#[test]
+fn macos_package_refuses_a_build_that_is_not_a_release() {
+    let code = code_of("macos/package.rs");
+    let run = code
+        .split("pub fn run(")
+        .nth(1)
+        .and_then(|r| r.split("\nfn ").next())
+        .expect("run()");
+    let check = run
+        .find("if !util::is_release_tag(&llama_build) {")
+        .expect("macOS run() does not check that llama.cpp is a release");
+    let after = run[check..].split_once('{').unwrap().1.trim_start();
+    assert!(
+        after.starts_with("bail!("),
+        "a llama.cpp build that is not a release is not refused:\n{}",
+        &run[check..check + 200.min(run.len() - check)]
+    );
+    assert!(
+        run.find("version::llama_build(") < Some(check),
+        "the release is checked before it is read"
+    );
+    for later in ["util::remove_all(&stage)", "cmd(\"pkgbuild\")"] {
+        let at = run
+            .find(later)
+            .unwrap_or_else(|| panic!("{later} not in run()"));
+        assert!(check < at, "{later} comes before the release check");
+    }
+}

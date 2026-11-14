@@ -106,7 +106,8 @@ enum Phase {
         rpm: bool,
         /// Install even while a program of the packages runs (Linux: one that
         /// holds a library of /usr/lib/private-ai; macOS: one from
-        /// /opt/private-ai/bin; on Windows the MSI stops them itself).
+        /// /opt/llama.cpp/bin or /opt/private-ai/bin; on Windows the MSI
+        /// stops them itself).
         #[arg(long)]
         force: bool,
         /// Print the command instead of running it.
@@ -369,5 +370,28 @@ mod cli_tests {
             .map(|m| m.to_possible_value().unwrap().get_name().to_string())
             .collect();
         assert_eq!(names, ["llama", "framework"]);
+    }
+
+    /// `install --force` names what it overrides on each OS: on macOS a
+    /// program of either tree, the engine's `bin/` (its llama-server) and
+    /// the framework's.
+    #[cfg(unix)]
+    #[test]
+    fn install_force_names_both_macos_trees() {
+        use crate::common::macos_pkg::{ENGINE_DIR, FRAMEWORK_DIR};
+        use clap::CommandFactory;
+        let cmd = Cli::command();
+        let install = cmd.find_subcommand("install").expect("install");
+        let force = install
+            .get_arguments()
+            .find(|a| a.get_id() == "force")
+            .expect("--force");
+        let help = force.get_help().expect("--force has help").to_string();
+        for tree in [ENGINE_DIR, FRAMEWORK_DIR] {
+            assert!(
+                help.contains(&format!("{tree}/bin")),
+                "--force does not name {tree}/bin: {help}"
+            );
+        }
     }
 }

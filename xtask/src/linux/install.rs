@@ -159,6 +159,26 @@ fn modified(p: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
+/// Whether `package`, a package of component `c`, was written before the
+/// last build under `build_root` of what it holds: a framework component
+/// against its own executable, the engine against llama-server. A runtime
+/// comes out of an SDK, which the build does not change, so it never is;
+/// nor is a package with no build to compare against.
+fn is_stale(c: Component, package: &Path, build_root: &Path) -> bool {
+    let built = match c {
+        Component::Config => "cargo-target/release/pai-config",
+        Component::Cli => "cargo-target/release/pai",
+        Component::Bff => "cargo-target/release/pai-bff",
+        Component::Core => "cargo-target/release/pai-manager",
+        Component::Llama => "llama.cpp-cmake/bin/llama-server",
+        Component::Rocm | Component::Cuda | Component::Vulkan => return false,
+    };
+    matches!(
+        (modified(&build_root.join(built)), modified(package)),
+        (Some(b), Some(m)) if b > m
+    )
+}
+
 /// Whether `/usr/bin/pai-config --version` (its last word, `reported`) is
 /// the version of the configurator's package just installed
 /// (`package_version`, as `Package::read` gives it).
@@ -349,19 +369,17 @@ pub fn run(format: Option<&str>, force: bool, dry_run: bool, files: Vec<PathBuf>
     };
 
     // A package written before the last build is not what the tree holds now.
-    // A runtime comes out of an SDK, which the build does not change.
-    let built = util::build_root().join("llama.cpp-cmake/bin/llama-server");
+    let build_root = util::build_root();
     for p in &picked {
-        let runtime = Component::RUNTIMES
-            .iter()
-            .any(|c| components::is_file_of(*c, &name(p)));
-        if let (false, Some(b), Some(m)) = (runtime, modified(&built), modified(p)) {
-            if b > m {
-                ui::warn(format!(
-                    "{} predates the last cargo run -p xtask -- build: run cargo run -p xtask -- package to package the new build",
-                    name(p)
-                ));
-            }
+        let stale = Component::ALL
+            .into_iter()
+            .find(|c| components::is_file_of(*c, &name(p)))
+            .is_some_and(|c| is_stale(c, p, &build_root));
+        if stale {
+            ui::warn(format!(
+                "{} predates the last cargo run -p xtask -- build: run cargo run -p xtask -- package to package the new build",
+                name(p)
+            ));
         }
     }
 
@@ -831,6 +849,148 @@ mod tests {
         assert!(
             run.contains("reports_version("),
             "run() checks pai-config's version inline"
+        );
+    }
+
+    // ── A package older than its build ──────────────────────────────────
+
+    /// A build tree as `xtask build` leaves it: llama-server of the engine,
+    /// the framework's four executables in cargo's release directory, each
+    /// written at `secs` after the epoch.
+    fn build_tree(root: &Path, engine_secs: u64, framework_secs: u64) {
+        let at = |p: PathBuf, secs: u64| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            let f = std::fs::File::create(&p).unwrap();
+            f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+        };
+        at(root.join("llama.cpp-cmake/bin/llama-server"), engine_secs);
+        for exe in ["pai-config", "pai", "pai-bff", "pai-manager"] {
+            at(root.join("cargo-target/release").join(exe), framework_secs);
+        }
+    }
+
+    /// A package file in `dir` written at `secs` after the epoch.
+    fn package_at(dir: &Path, file: &str, secs: u64) -> PathBuf {
+        let p = dir.join(file);
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+        p
+    }
+
+    struct Tmp(PathBuf);
+    impl Tmp {
+        fn new(name: &str) -> Tmp {
+            let d =
+                std::env::temp_dir().join(format!("xtask-install-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(d.join("dist")).unwrap();
+            Tmp(d)
+        }
+    }
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const FRAMEWORK: [(Component, &str); 4] = [
+        (
+            Component::Config,
+            "private-ai-framework-config-v2.99.1-amd64.deb",
+        ),
+        (Component::Cli, "private-ai-framework-cli-v2.99.1-amd64.deb"),
+        (Component::Bff, "private-ai-framework-bff-v2.99.1-amd64.deb"),
+        (
+            Component::Core,
+            "private-ai-framework-core-v2.99.1-amd64.deb",
+        ),
+    ];
+    const ENGINE: &str = "llama.cpp-v1.0.0+pai1-amd64.deb";
+
+    /// After `xtask build framework` the framework's packages predate its
+    /// executables, while llama-server is older than all of them: each
+    /// framework package is stale, the engine's is not.
+    #[test]
+    fn a_framework_package_older_than_the_framework_build_is_stale() {
+        let t = Tmp::new("stale-framework");
+        let dist = t.0.join("dist");
+        build_tree(&t.0, 1_000, 3_000);
+        for (c, file) in FRAMEWORK {
+            let p = package_at(&dist, file, 2_000);
+            assert!(is_stale(c, &p, &t.0), "{file} is not stale");
+        }
+        let engine = package_at(&dist, ENGINE, 2_000);
+        assert!(
+            !is_stale(Component::Llama, &engine, &t.0),
+            "{ENGINE} is stale"
+        );
+    }
+
+    /// After `xtask build llama` the engine's package predates llama-server,
+    /// while the framework's packages are newer than its executables.
+    #[test]
+    fn an_engine_package_older_than_llama_server_is_stale() {
+        let t = Tmp::new("stale-engine");
+        let dist = t.0.join("dist");
+        build_tree(&t.0, 3_000, 1_000);
+        let engine = package_at(&dist, ENGINE, 2_000);
+        assert!(
+            is_stale(Component::Llama, &engine, &t.0),
+            "{ENGINE} is not stale"
+        );
+        for (c, file) in FRAMEWORK {
+            let p = package_at(&dist, file, 2_000);
+            assert!(!is_stale(c, &p, &t.0), "{file} is stale");
+        }
+    }
+
+    /// Packages written after the whole build are not stale; a runtime comes
+    /// out of an SDK, which the build does not change, so it never is.
+    #[test]
+    fn packages_newer_than_the_build_and_runtimes_are_not_stale() {
+        let t = Tmp::new("fresh");
+        let dist = t.0.join("dist");
+        build_tree(&t.0, 2_000, 2_000);
+        for (c, file) in FRAMEWORK.into_iter().chain([(Component::Llama, ENGINE)]) {
+            let p = package_at(&dist, file, 3_000);
+            assert!(!is_stale(c, &p, &t.0), "{file} is stale");
+        }
+        build_tree(&t.0, 9_000, 9_000);
+        for (c, file) in [
+            (Component::Rocm, "llama.cpp-rocm-v10.1.0-amd64.deb"),
+            (Component::Cuda, "llama.cpp-cuda-v13.0.2-amd64.deb"),
+            (Component::Vulkan, "llama.cpp-vulkan-v1.4.363.1-amd64.deb"),
+        ] {
+            let p = package_at(&dist, file, 1_000);
+            assert!(!is_stale(c, &p, &t.0), "{file} is stale");
+        }
+    }
+
+    /// No build at all (packages copied in from elsewhere): nothing to
+    /// compare against, so no package is stale.
+    #[test]
+    fn without_a_build_no_package_is_stale() {
+        let t = Tmp::new("no-build");
+        let dist = t.0.join("dist");
+        for (c, file) in FRAMEWORK.into_iter().chain([(Component::Llama, ENGINE)]) {
+            let p = package_at(&dist, file, 1_000);
+            assert!(!is_stale(c, &p, &t.0), "{file} is stale");
+        }
+    }
+
+    /// `run()` warns through `is_stale` for each picked package, with its
+    /// component, against the build root, not llama-server's date alone.
+    #[test]
+    fn the_install_warning_uses_is_stale() {
+        let src = include_str!("install.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let run = code.split("pub fn run(").nth(1).expect("run()");
+        assert!(run.contains("is_stale("), "run() does not call is_stale");
+        assert!(
+            !run.contains("llama.cpp-cmake/bin/llama-server"),
+            "run() still compares every package with llama-server"
         );
     }
 }

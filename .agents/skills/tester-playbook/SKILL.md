@@ -423,3 +423,12 @@ Lessons only: the rules are in `AGENTS.md`.
   `tempfile`: use `temp_dir()` + pid behind a `Drop` guard. The xtask names lint refuses `opt/llama.cpp`
   in code lines (2.4's macOS tree, now the engine's prefix) except `ENGINE_DIR_SOURCE`'s one line; spell
   it `concat!("/opt/", "llama", ".cpp")` in tests.
+- A clap doc comment is pinned on what the user reads, not on the source text:
+  `Cli::command().find_subcommand("install")`, `.get_arguments().find(|a| a.get_id() == "force")`,
+  `.get_help()` (`clap::CommandFactory`; derive joins the doc lines with spaces). The names lint skips
+  `///` lines, so a doc comment may spell `/opt/llama.cpp`; the test names it through `macos_pkg::ENGINE_DIR`.
+- A staleness rule over file dates is tested on a temp tree with `std::fs::File::set_modified(UNIX_EPOCH
+  + secs)`: no sleeps, and both orders (package before and after the build) in one test each.
+- xtask's `common::macos_pkg` (and other per-OS modules) are `#[cfg(unix)]`: a test outside them that
+  imports one needs `#[cfg(unix)]` too, or `cargo check -p xtask --all-targets --target
+  x86_64-pc-windows-gnu` fails with E0432. Run that check on new xtask tests before handing over.

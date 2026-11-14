@@ -246,3 +246,6 @@ Lessons only: the rules are in `AGENTS.md`.
   `macos/install.rs` only call them (text-checked). `/opt/llama.cpp` is spelled once, as
   `macos_pkg::ENGINE_DIR` (xtask's names lint); pai-core spells it `root.join("opt").join(ENGINE_DIR)`.
   pai-core's macOS branch type-checks on Linux too: `cargo check -p pai-core --target aarch64-apple-darwin`.
+- `xtask::common::macos_pkg` is `#[cfg(unix)]`: a test outside it that `use`s it breaks the Windows
+  `--all-targets` check (E0432) though the Linux tests pass. Run the Windows check before reporting,
+  and send such a test back to the tester (it needs `#[cfg(unix)]`) rather than ungating the module.

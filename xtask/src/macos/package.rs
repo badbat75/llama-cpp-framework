@@ -127,6 +127,9 @@ pub fn run(product: Option<Product>, keep_staging: bool) -> Result<()> {
 
     let fw_version = version::framework()?;
     let llama_build = version::llama_build(&llama)?;
+    if !util::is_release_tag(&llama_build) {
+        bail!("llama.cpp {llama_build} is not a release (vX.Y.Z): packages are built from release tags only. Run cargo run -p xtask -- build to check out the latest release.");
+    }
     ui::head(format!("Framework version: {fw_version}"));
     ui::head(format!("llama.cpp release: {llama_build}"));
     ui::head("Architecture:      arm64");
