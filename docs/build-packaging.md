@@ -182,8 +182,9 @@ through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%Prog
 holds `config\` (the instances' server and preset files, which users reach only through the
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
 protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
-`models\` or `state\` there, not the profile of the account it runs under; a save from the
-configurator or `pai` still writes the user's `~\.llama.cpp` as `ModelsDir` (open, `PLAN.md` step 11). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
+`models\` or `state\` there, not the profile of the account it runs under, and runs in `state\`; `pai`
+leaves both unset at a save, but the GUI configurator's Save still writes the user's `~\.llama.cpp`
+and per-user state folder (open, `PLAN.md` step 11). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
 
@@ -509,7 +510,7 @@ leave out the runtime of a GPU the machine does not have. `--dry-run` prints the
 | --- | --- | --- | --- |
 | Command | `msiexec /i <msi> /qb /norestart /l*v <log>`, per MSI, llama.cpp's first | Package manager, see below | `sudo installer -pkg <pkg> -target /`, per package, the engine's first |
 | Downgrade | Removes the installed version first: `msiexec /x {ProductCode} /qb`, llama.cpp's with `KEEPINSTANCES=1` | Package manager's own | Laid down over it |
-| Running programs | The framework's `StopProcesses` action stops them; llama.cpp's MSI stops and restarts its running instances | A llama-server outside the services is refused (`--force` overrides) | A program from `/opt/llama.cpp/bin` or `/opt/private-ai/bin` is refused (`--force` overrides) |
+| Running programs | The framework's `StopProcesses` action stops `pai` and `pai-config`; llama.cpp's MSI stops and restarts its running instances, and leaves a hand-started llama-server to the files-in-use dialog | A llama-server outside the services is refused (`--force` overrides) | A program from `/opt/llama.cpp/bin` or `/opt/private-ai/bin` is refused (`--force` overrides) |
 | Success check | `DisplayVersion` matches the package | `pai-config --version`, when `config` is among the files | `pai-config --version`, when `config` is among the files |
 
 **Windows.**

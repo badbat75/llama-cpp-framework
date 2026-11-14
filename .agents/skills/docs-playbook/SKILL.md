@@ -139,3 +139,5 @@ Lessons only: the rules are in `AGENTS.md`.
 - When an OS gap closes (macOS's release-tag refusal, its build dir), grep `does not yet`, `Unlike Linux`,
   `macOS does not` and the "Open, by the code" list: `AGENTS.md` release steps, `build-packaging.md`'s
   file-name bullets and `build-macos.md` each repeat the gap.
+- When an item of `installer/AGENTS.md`'s "Known gaps" closes in code, remove it there AND turn it into
+  a test plan check (what a Windows run must show), since the fix is only type-checked.
