@@ -384,7 +384,7 @@ disagree until the next configure.
 ## Generated architecture tables
 
 **The configurator's per-architecture lists are generated from the clone, so a bare `cargo build` or
-`cargo test` of `pai-app`, and of `pai-config` over it, needs the clone: run `xtask build` first.**
+`cargo test` of `pai-app`, and of `pai-config` and `pai-cli` over it, needs the clone: run `xtask build` first.**
 `crates/app/build.rs`, with `crates/app/arch_tables.rs`, reads `src/llama-arch.cpp` and writes the recurrent, hybrid and
 tensor-split deny lists to `OUT_DIR`, from `llm_arch_is_recurrent`, `llm_arch_is_hybrid` and
 `llm_arch_supports_sm_tensor`. llama.cpp compiles them in and exposes them through no public API by name.
@@ -518,7 +518,7 @@ which `std::path` does not split on Linux. The code under test is not at fault.
 
 | Path | What it is |
 | --- | --- |
-| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI and CLI), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the four `pai-*` crates. |
+| `Cargo.toml` | The workspace: `crates/core` (package `pai-core`, the shared library), `crates/app` (`pai-app`, the configurator's logic without a GUI), `crates/manager` (`pai-manager`, the binary of the `private-ai-manager` service), `crates/config` (`pai-config`, the configurator's GUI), `crates/cli` (`pai-cli`, binary `pai`, the configurator's command line), `xtask` and `tools/site`. The profiles live here because cargo reads them only at the root, and so does the framework version, `[workspace.package] version`, one for the five `pai-*` crates. |
 | `xtask/src/main.rs` | The phases and their options |
 | `xtask/src/common/` | Shared: `dists.rs`, `llama.rs`, `cmake_options.rs`, `configurator.rs`, `prereq.rs`, `rocm.rs`, `version.rs`, `bench_share.rs`, `components.rs` (Linux and macOS: which package owns each staged file) |
 | `xtask/src/<os>/` | One OS's phases: `configure.rs`, `build_llama.rs`, `package.rs`, `install.rs`, `dists.rs` (the finders) |

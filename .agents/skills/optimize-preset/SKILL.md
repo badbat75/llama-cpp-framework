@@ -1,6 +1,6 @@
 ---
 name: optimize-preset
-description: Tune one model's section of presets.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with pai-config bench run and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
+description: Tune one model's section of presets.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with pai bench run and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
 ---
 
 # Optimize a preset (speed and VRAM)
@@ -26,11 +26,11 @@ bench.db. Never claim a number you did not measure; never apply a value that onl
 ## 1. Establish the baseline
 
 ```bash
-pai-config preset list                 # ids, model paths, switched-off ones
-pai-config preset show <id>            # the section as INI
-pai-config server show                 # Threads, ThreadsBatch, env knobs
-pai-config bench query campaigns --db benchmarks/bench.db
-pai-config bench query summary --db benchmarks/bench.db --model <name> \
+pai preset list                 # ids, model paths, switched-off ones
+pai preset show <id>            # the section as INI
+pai server show                 # Threads, ThreadsBatch, env knobs
+pai bench query campaigns --db benchmarks/bench.db
+pai bench query summary --db benchmarks/bench.db --model <name> \
   --show ctx-size,cache-type-k,n-cpu-moe,tensor-split,ubatch-size
 ```
 
@@ -135,8 +135,8 @@ Margins to keep (free memory after the prefill):
 ## 4. Measuring speed: one key per sweep
 
 ```bash
-pai-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
-  --reps 3 --prompt-file /opt/private-ai/share/benchmarks/prompts/bench-prompt-43k-1.0.txt \
+pai bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
+  --reps 3 --prompt-file /usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt \
   --campaign <model>-<key>-<yyyymmdd> --question "<what this answers>"
 ```
 
@@ -171,7 +171,7 @@ pai-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.
 - Two keys that must move together (e.g. `n-cpu-moe` + `tensor-split`): set one by
   editing presets.ini, sweep the other; or run one sweep per combination into the same
-  campaign. Restart (`pai-config control restart`) after every manual edit: the
+  campaign. Restart (`pai control restart`) after every manual edit: the
   router reads presets.ini only at start.
 - `--apply original` (default) leaves the preset as it was; apply the winner yourself
   after the memory check. After an interrupted sweep, restore with `--restore-to` (the
@@ -211,14 +211,14 @@ pai-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
 - A sweep restarts the server per leg, so one readout after it shows only the last leg:
   run a background sampler of free memory per card (the section 3 commands every 2 s,
   into a file) and take each leg's minimum after its load phase.
-- On Windows `pai-config.exe` is a GUI-subsystem binary: a shell does not wait for
-  it (`&` returns at once, bash loses it after a minute) and a sweep started twice runs
-  both at once and wrecks both. Run it from PowerShell with `Start-Process -FilePath
-  <exe> -ArgumentList @(...) -NoNewWindow -PassThru -RedirectStandardOutput <out>
-  -RedirectStandardError <err>` and wait with `$p.WaitForExit()` (not `-Wait`, which
-  also waits for the llama-server the sweep leaves running). `-ArgumentList` does not
-  quote an element with spaces: wrap the `--question` text in literal double quotes, or
-  the sweep dies at once with `unexpected argument`. Before starting one, check
+- On Windows the command line is `pai.exe`, a console executable (no `windows_subsystem`:
+  `crates/cli/src/tests/split_lint.rs`), so a shell should wait for it; it has not yet run on
+  Windows, so check that the prompt does not come back at once. If it does, start it with
+  `Start-Process -FilePath <exe> -ArgumentList @(...) -NoNewWindow -PassThru
+  -RedirectStandardOutput <out> -RedirectStandardError <err>` and wait with `$p.WaitForExit()`
+  (not `-Wait`, which also waits for the llama-server the sweep leaves running); `-ArgumentList`
+  does not quote an element with spaces, so wrap the `--question` text in literal double quotes.
+  A sweep started twice runs both at once and wrecks both: before starting one, check
   `Get-CimInstance Win32_Process` for a running `bench run`.
 - Where a prefill step goes (when a lever's effect needs explaining, not for every
   run): stop the server, start a standalone llama-server with the child's argument list
@@ -253,8 +253,8 @@ pai-config bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
 Read results:
 
 ```bash
-pai-config bench query summary --campaign <campaign> --show <key>
-pai-config bench query diff <run-a> <run-b>
+pai bench query summary --campaign <campaign> --show <key>
+pai bench query diff <run-a> <run-b>
 ```
 
 (Add `--db benchmarks/bench.db` when `settings.ini` `BenchDb` does not already point at
@@ -271,7 +271,7 @@ the repo's database; on this machine it does.)
 - Ctrl-C or SIGTERM on `bench run` puts the keys and the server back and exits with 130. A `sweep-pending-*.json` left behind means kill -9, a crash or a power cut: put its value back, delete the marker.
 - Check the keys you believe a preset has in the load log's arguments (`spec-draft-n-max` absent means the default 3), not from memory, before writing them in a question or a guide.
 - Never `pkill -f <pattern>` with a pattern that appears in your own command line; use
-  `pai-config control stop|restart`, or kill by PID. The same self-match makes a
+  `pai control stop|restart`, or kill by PID. The same self-match makes a
   `while pgrep -f <pattern>` wait loop spin forever.
 - Never drop or reorder `device` on a multi-GPU preset without meaning to.
 - `spec-type = draft-mtp` on a model without MTP layers fails to load.
@@ -291,7 +291,7 @@ the repo's database; on this machine it does.)
    when the trade is speed vs margin or context.
 2. Apply the chosen values to presets.ini (back up first), restart, run one confirming
    long-prompt measurement and the memory readout.
-3. `pai-config bench answer <campaign> "<conclusion with the numbers>"`, and
+3. `pai bench answer <campaign> "<conclusion with the numbers>"`, and
    `bench publish <campaign> --to benchmarks/bench.db` when the runs went to the
    working db. Scan for secrets before committing: the db is public.
 4. Update the guides in the same change: the row in the model/card guide's settings

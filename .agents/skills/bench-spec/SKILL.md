@@ -1,6 +1,6 @@
 ---
 name: bench-spec
-description: Create, change or review a versioned benchmark spec (benchmarks/specs/*.ini, run by pai-config bench run --spec) or one of the prompts a spec pins. Use when asked to add or edit a spec, a pass, a prompt, a temperature, repetition or concurrency rule of the benchmark method, to bump a spec version, or to judge whether a measurement follows a spec.
+description: Create, change or review a versioned benchmark spec (benchmarks/specs/*.ini, run by pai bench run --spec) or one of the prompts a spec pins. Use when asked to add or edit a spec, a pass, a prompt, a temperature, repetition or concurrency rule of the benchmark method, to bump a spec version, or to judge whether a measurement follows a spec.
 ---
 
 # Benchmark specs: the method, versioned

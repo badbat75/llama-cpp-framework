@@ -13,7 +13,7 @@ are in `docs/AGENTS.md`; this skill is how to make the page worth reading.
 
 - `docs/AGENTS.md`: page types, required sections, table columns, charts, citations.
 - The whole page you will change, not only the section. Then query what it should say:
-  `pai-config bench query campaigns --db benchmarks/bench.db`, `... query run <id>`.
+  `pai bench query campaigns --db benchmarks/bench.db`, `... query run <id>`.
 - `docs/templates/<type>.md` for a new page.
 
 ## 1. A finding is merged, never appended

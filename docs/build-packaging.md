@@ -172,7 +172,7 @@ from the root `Cargo.toml`'s, a bump without a rebuild.
 
 | Package `private-ai-framework-` | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |
-| `config` | `pai-config` (GUI and CLI), its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
+| `config` | `pai-config`, its text, the benchmark method, the desktop entry | `<framework>+llama.cpp.<tag>` | 18 / 21 MiB |
 | `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp | `<framework>+llama.cpp.<tag>` | 190 / 229 MiB |
 | `rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
 | `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |

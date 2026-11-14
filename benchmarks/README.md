@@ -27,8 +27,8 @@ logs and reports too: the file is public with the repo. A campaign the docs cite
 copied here, with its answer:
 
 ```sh
-pai-config bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
-pai-config bench publish sweep-20261016-181500 --to benchmarks/bench.db
+pai bench answer sweep-20261016-181500 "4 wins up to 40k, 3 beyond"
+pai bench publish sweep-20261016-181500 --to benchmarks/bench.db
 ```
 
 `publish` copies whole campaigns and everything their runs point at (the machine matched
@@ -77,7 +77,7 @@ keeps the preset's sampling. The off switch is for the benchmark only; the prese
 its speculator.
 
 ```sh
-pai-config bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
+pai bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
 ```
 
 `--spec standard` runs the newest published version, `--spec standard-1.0` that one: every
@@ -122,12 +122,12 @@ committed (the `spec-reviewer` subagent of Claude Code and OpenCode runs it). A 
 `custom`). Compare like with like:
 
 ```sh
-pai-config bench query summary --db benchmarks/bench.db --param spec-version=1.0 --param spec-pass=real
+pai bench query summary --db benchmarks/bench.db --param spec-version=1.0 --param spec-pass=real
 ```
 
 ## Querying
 
-`pai-config bench query` reads the working database, or this one with
+`pai bench query` reads the working database, or this one with
 `--db benchmarks/bench.db`, read-only:
 
 ```sh

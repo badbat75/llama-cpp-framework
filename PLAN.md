@@ -44,7 +44,7 @@ as the column says. A requirement still open must be covered by a step.
 | W12 | Every change to a benchmark spec is reviewed by `spec-reviewer` before it is committed | Applies to every step |
 | W13 | The coordinator only coordinates: the tester writes and reruns the tests, the coder runs the linter and the format check, the coordinator reads their reports and commits | Met: `AGENTS.md` "Roles", `.opencode/agents/` |
 | W14 | Every release until 3.0.0 is a 2.99.x pre-release (2.99.0, 2.99.1, ...), decided on 2026-11-13; 3.0.0 is the user's call | Applies to every release |
-| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-app, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
+| W15 | Windows-only code is type-checked on Linux by the coder, `cargo check` and `cargo clippy` with `--target x86_64-pc-windows-gnu`, for pai-core, pai-app, pai-cli, pai-manager and xtask (MinGW installed by the user; no crate code uses `cfg(target_env)`); pai-config is left out because slint's Skia renderer builds only with MSVC, so its Windows code is checked by the user's build on Windows (user, 2026-11-13) | Applies to every slice ("Commands" in `AGENTS.md`) |
 
 ## Definition of Done
 
@@ -211,7 +211,7 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
 7. **Migration** (done on the configurator's side; tried for real with the packages of slice 5).
    When the backend is the manager, the user has a per-user `server.ini` and some per-user file has no
    system copy, the GUI offers the import at start (Import / Not now, asked again next start) and
-   `pai-config config import` does it: `server@default.ini`, then `presets.ini`, then
+   `pai config import` does it: `server@default.ini`, then `presets.ini`, then
    `presets.ini.disabled` (the manager checks presets against the instances' `ModelsMax`), exact bytes,
    never overwriting a system file, stopping at a refusal and resuming on the next run; the user's
    files are left in place.
@@ -330,7 +330,10 @@ binary `pai`) with today's CLI, `pai-config` left GUI-only (no argument parsing 
 needs, no console attach); **3** packaging: `pai` in the `-config` package or its own (decide then),
 `/usr/bin/pai`, the MSI's PATH, and `installer/msi-stop-processes.ps1` running `pai.exe control
 stop-and-close` (falling back to `pai-config.exe` for an older install: after slice 2 `pai-config`
-only points to `pai`, so until slice 3 the MSI's graceful stop is skipped); **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>`.
+only points to `pai`, so until slice 3 the MSI's graceful stop is skipped); **4** docs, skills and guides from `pai-config <cmd>` to `pai <cmd>` (the commands, the crate lists and
+the test topology are done; left, after slice 3: how `pai` is built by xtask, packaged, installed and put on PATH on
+each OS, in the root README, `docs/build-packaging.md`, `docs/build-macos.md`, `installer/AGENTS.md`
+and the `AGENTS.md` map, and the MSI's graceful stop once the script runs `pai.exe`).
 
 - Done when: `pai` runs every command `pai-config` runs today with the same output; `pai-config` opens
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship
@@ -526,6 +529,11 @@ skeleton with its packaging and one read-only page.
   - The MSI creates `%ProgramData%\private-ai\models`; making it pai-config's default ModelsDir on
     Windows is a follow-up (the virtual accounts cannot read the user's home).
   - The manager service restarts after a failure, as the Linux unit does.
+- Step 3, to review (taken by the coordinator on 2026-11-14): `pai` gets its own package,
+  `private-ai-framework-cli`, on Linux and macOS, with no dependency on the configurator or the
+  graphics libraries (a headless server installs only the command line); on Windows `pai.exe` is in
+  the one MSI beside `pai-config.exe`, on the PATH. `pai-config` given a command prints one line
+  naming `pai <args>` and exits 2.
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.
 - Step 2: a Windows build of the renamed MSI and the installer test plan of `installer/AGENTS.md`,

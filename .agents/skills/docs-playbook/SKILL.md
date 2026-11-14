@@ -36,7 +36,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - After an install-layout change, grep the old prefix (`/opt/private-ai`) in the root `README.md`,
   `docs/build-*.md`, `AGENTS.md` and `crates/*/README.md`: the root README repeats the paths. A check
   done by hand on the old layout (an `strace`, a run) is not true of the new one: say it was not repeated.
-- Windows code is type-checked with the GNU target only (`pai-core`, `pai-app`, `pai-manager`, `xtask`),
+- Windows code is type-checked with the GNU target only (`pai-core`, `pai-app`, `pai-cli`, `pai-manager`,
+  `xtask`),
   and `pai-config`'s Windows arms not even that: say "type-checked only, not run on Windows" beside each
   Windows fact until the user's Windows run, and put what only that run can settle in the installer
   test plan (`installer/AGENTS.md`), not in the prose as fact.
@@ -54,3 +55,8 @@ Lessons only: the rules are in `AGENTS.md`.
   Windows arm, which `build.rs` emits what, the test crate a command needs: `cargo test -p <new>`).
 - A build script that reads `build/<os>/...` of the TARGET OS (pai-app's clone lookup) fails the GNU
   check on Linux: the docs give the override with an absolute path (the script runs in its crate dir).
+- After the command line moved to `pai` (package `pai-cli`), grep `pai-config (server|preset|control|bench|config)`
+  in every `.md` and in skill `description:` lines; `pai-config` stays where it is the GUI, the
+  executable a script runs (`--version`, `sdk-devices`) or what xtask builds and packages. Scripts that
+  still call a command on `pai-config.exe` (`installer/msi-stop-processes.ps1`) now get exit 2: say so
+  where the docs describe them.

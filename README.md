@@ -4,7 +4,7 @@
 
 A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend; no separate web UI is bundled.
 
-Beside llama.cpp it ships **`pai-config`**, a GUI + CLI configurator (Rust, [Slint](https://slint.dev)) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
+Beside llama.cpp it ships **`pai-config`**, a GUI configurator (Rust, [Slint](https://slint.dev); its command line is **`pai`**) that writes `llama-server`'s `server.ini` and per-model `presets.ini`, starts and stops the server, and benchmarks presets into a public SQLite database (`benchmarks/bench.db`) with a versioned method, so numbers from two machines compare like with like.
 
 **Read the guides at [badbat75.github.io/llama-cpp-framework](https://badbat75.github.io/llama-cpp-framework/)**: the measured per-card and per-model settings with interactive charts drawn from `bench.db`, linked citations and a page per cited benchmark campaign. The same guides are the Markdown files in [docs/](docs/README.md).
 
@@ -37,7 +37,7 @@ Beside llama.cpp it ships **`pai-config`**, a GUI + CLI configurator (Rust, [Sli
 - Hugging Face search and download that creates the preset and recommends a quantization that fits this machine's GPUs.
 - Conversation snapshots: each model's KV cache saved on stop and restored on the next start, so a restart does not re-read a long conversation.
 - Integrations: the OpenCode provider (one model per enabled preset) and a Claude Code environment snippet; log rotation; start at login.
-- The same operations headless: `pai-config server|preset|control|bench ...`.
+- The same operations headless: `pai server|preset|control|bench|config ...`.
 
 **Benchmarks** ([benchmarks/README.md](benchmarks/README.md))
 
@@ -140,7 +140,7 @@ The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained, so th
 | `private-ai-framework-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
 | `private-ai-framework-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
 
-`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. Each package upgrades in place the packages of release 2.4 and earlier, `llama-cpp-framework` and `llama-cpp-framework-<component>`, which it replaces. They install the executables in `/usr/bin/` (`llama-server`, `pai-config`, the other llama.cpp tools), the libraries and runtimes in `/usr/lib/private-ai/`, a desktop entry that puts the configurator ("Private AI Framework") in the applications menu, and, in `llama`, the `private-ai-manager` service that runs llama-server as the systemd instance `llama.cpp@default` (enabled and started on install, logging to the journal: `journalctl -u llama.cpp@default`). The configurator is its client: the server and preset files are the service's, in `/etc/private-ai/`, changed through it with polkit asking for an administrator's password; `settings.ini` stays per user in `~/.config/private-ai/` (benchmark runs in `~/.local/share/private-ai/`). At its first start `pai-config` moves there what release 2.4 kept under `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` ([details](crates/config/README.md#migration-from-24)) and offers to copy a per-user `server.ini` and presets to the service (`pai-config config import`; [details](crates/config/README.md#through-the-manager-linux-windows)). Details: [docs/build-packaging.md](docs/build-packaging.md#the-deb-and-rpm-linux). A backend whose GPU, driver or runtime package is missing is skipped at start.
+`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. Each package upgrades in place the packages of release 2.4 and earlier, `llama-cpp-framework` and `llama-cpp-framework-<component>`, which it replaces. They install the executables in `/usr/bin/` (`llama-server`, `pai-config`, the other llama.cpp tools), the libraries and runtimes in `/usr/lib/private-ai/`, a desktop entry that puts the configurator ("Private AI Framework") in the applications menu, and, in `llama`, the `private-ai-manager` service that runs llama-server as the systemd instance `llama.cpp@default` (enabled and started on install, logging to the journal: `journalctl -u llama.cpp@default`). The configurator is its client: the server and preset files are the service's, in `/etc/private-ai/`, changed through it with polkit asking for an administrator's password; `settings.ini` stays per user in `~/.config/private-ai/` (benchmark runs in `~/.local/share/private-ai/`). At its first start `pai-config` moves there what release 2.4 kept under `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` ([details](crates/config/README.md#migration-from-24)) and offers to copy a per-user `server.ini` and presets to the service (`pai config import`; [details](crates/config/README.md#through-the-manager-linux-windows)). Details: [docs/build-packaging.md](docs/build-packaging.md#the-deb-and-rpm-linux). A backend whose GPU, driver or runtime package is missing is skipped at start.
 
 The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `PRIVATE_AI_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
 
@@ -180,7 +180,7 @@ All build artifacts live under `build\`, in a per-OS directory (`build\windows\`
 │       └── wix-obj/            ← WiX intermediates (xtask package, transient)
 ├── dist/                    ← final installer .msi
 ├── installer/               ← the MSI source (.wxs + custom-action script), the WiX pin, dist-sources.psd1 (where external dists come from)
-├── crates/                  ← the Rust crates: core/ (pai-core, shared), manager/ (pai-manager, the runtime service binary), config/ (pai-config, the GUI + CLI configurator)
+├── crates/                  ← the Rust crates: core/ (pai-core, shared), app/ (pai-app, the configurator's logic without a GUI), manager/ (pai-manager, the runtime service binary), config/ (pai-config, the GUI configurator), cli/ (pai-cli: pai, its command line)
 ├── patches/                 ← checked-in build workarounds (HIP clang runtime wrapper, per clang major)
 ├── resources/               ← icon generator (llama.ico is built on demand, gitignored)
 ├── scripts/                 ← helpers: 00-install-prerequisites (.ps1/.sh) and thin wrappers over the cargo phases
@@ -206,7 +206,7 @@ Settings are split between build-time and runtime so the same scripts work both 
 | Paths | `DistRoot`, `LlamaCppDir`, `OpenSSLDir`, `HipPath`, `VsDevShell`, `WixExe` |
 | Build | `GpuTargets`, `BuildType`, `CCompiler`, `CxxCompiler`, `Linker`, `BuildJobs` |
 
-Runtime configs are created and edited with `pai-config` (GUI when launched with no arguments, headless CLI via `server` / `preset` subcommands). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("Private AI Framework"). On Windows and Linux the server and preset files belong to the `private-ai-manager` service, and `pai-config` changes them through it. See [crates\config\README.md](crates/config/README.md).
+Runtime configs are created and edited with `pai-config` (the GUI) or headless with `pai` (`pai server`, `pai preset`, ...). The installer ships it in `bin\` next to `llama-server.exe`, with an optional Start Menu shortcut ("Private AI Framework"). On Windows and Linux the server and preset files belong to the `private-ai-manager` service, and `pai-config` and `pai` change them through it. See [crates\config\README.md](crates/config/README.md).
 
 ## Phases
 
@@ -221,7 +221,8 @@ Runtime configs are created and edited with `pai-config` (GUI when launched with
 | `xtask build` | Builds **both** llama.cpp (CMake configure out-of-source into `build\<os>\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** `pai-config` with `pai-manager` (`cargo build --release` into `build\<os>\cargo-target\`). `xtask build llama` and `xtask build config` build one of them. Auto-clones llama.cpp into `build\<os>\llama.cpp\`. Uses sccache when available. |
 | `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\private-ai-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
 | `xtask install` | Installs the newest package in `dist/` on this machine, on Linux and macOS the newest of each component or the files named (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program of the packages runs: on Linux one in `/usr/bin` or holding a library of `/usr/lib/private-ai`, the services aside, which the packages restart; on macOS one from `/opt/private-ai`; the MSI stops them itself). |
-| `crates\config\` | Rust GUI + CLI configurator for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [crates\config\README.md](crates/config/README.md). |
+| `crates\config\` | Rust GUI configurator `pai-config` for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [crates\config\README.md](crates/config/README.md). |
+| `crates\cli\` | `pai`, the configurator's command line (package `pai-cli`): the same operations headless. Documented with the GUI in [crates\config\README.md](crates/config/README.md). |
 
 ## Packaging
 
@@ -233,6 +234,6 @@ Runtime configs are created and edited with `pai-config` (GUI when launched with
 - Optionally adds `bin\` to the system PATH.
 - Optionally creates a Start Menu shortcut ("Private AI Framework" → `pai-config.exe`).
 - No install-time configuration page: all runtime configuration (server settings and per-model presets) is done post-install with `pai-config`.
-- Stops a running `pai-config` and `llama-server` before it replaces or removes their files (gracefully first, so the conversation snapshot is saved).
+- Stops a running `pai-config` and `llama-server` before it replaces or removes their files (gracefully first, so the conversation snapshot is saved; a `pai-config.exe` that only opens the GUI answers the graceful command with a pointer to `pai`, so for such an install only the force-stop runs until the script calls `pai.exe`: [installer\AGENTS.md](installer/AGENTS.md)).
 - Supports upgrades (removes the previous version first; refuses a downgrade), release 2.4's `llama.cpp-framework` included: an install directory chosen in 2.4 is kept, the old default `C:\Program Files\llama.cpp\` becomes `C:\Program Files\private-ai\`, and `pai-config` moves the 2.4 user tree `%LOCALAPPDATA%\llama.cpp\` at its first start. On a machine with a previous installation that is not this MSI, it stops before changing anything and asks to uninstall that one first from Settings > Apps (answering No to its question keeps the user data).
 - Is listed in Settings > Apps (and Programs and Features). Uninstalling from there removes the manager's and the instances' services and preserves `%LOCALAPPDATA%\private-ai\` (settings, benchmark results, an earlier install's configs and logs) unless the user ticks the box that offers to delete it; a silent uninstall always preserves it.
