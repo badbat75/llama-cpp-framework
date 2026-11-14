@@ -770,10 +770,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 
 6. (6a done: `GET /api/instances` items `{id, engine, state}`, errors `{key, args}`) **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
    `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
-   Linux, `LogonUser` on Windows); the manager learns who acts. Open, for the user: how a signed-in
-   administrator's save passes Linux polkit `configure` (`auth_admin_keep`) without the bff keeping a
-   password (a polkit rule for `private-ai-bff` acting for a user it authenticated, with the admin test
-   done by group, is the coordinator's proposal), and where a web user's own state lives
+   Linux, `LogonUser` on Windows); the manager learns who acts. Decided with the user on 2026-11-15: the
+   bff vouches for the user it authenticated: a polkit rule lets `private-ai-bff` call the manager, the
+   bff passes the user name, and the manager allows `configure` only when that user is in `sudo` or
+   `wheel` (Windows: Administrators), `control` for any signed-in user; no password is kept. Open, for
+   the user: where a web user's own state lives
    (`settings.ini`, `bench.db`, HF token, `opencode.json`; it blocks the Downloads, Benchmarks and
    Settings pages). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
    `client-*` keys, together with the fe build that reads them.
