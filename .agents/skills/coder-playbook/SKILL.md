@@ -268,6 +268,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `xtask -- <phase>`, so name the phases in step names without the ` -- `. Comment lines are dropped,
   and a step is the text between two `\n      - ` lines: a check "before the repair" goes in the
   repair's own step. Check the YAML still parses: `python3 -c "import yaml; yaml.safe_load(open(P))"`.
+- `xtask/src/ci_macos.rs` pins `installers-macos.yml` the same way: a check "between package and
+  install" matches literal text, so spell each package name out (a `for c in config cli core` loop
+  fails it). xtask's names lint rejects `opt/llama.cpp` in any non-comment line of `xtask/src/*.rs`,
+  tests included: a test needle naming the engine prefix must be split (`concat!`), report it.
 - A GitHub Action's Node runtime is the `runs: using:` of its `action.yml` at the tag:
   `gh api repos/actions/<name>/contents/action.yml?ref=v7 --jq .content | base64 -d`; its majors via
   `gh api repos/actions/<name>/releases`. A workflow argument like `$env:RUNNER_TEMP\dists` is a bare

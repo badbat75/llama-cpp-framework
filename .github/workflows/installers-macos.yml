@@ -1,0 +1,120 @@
+# Builds the four macOS .pkg on GitHub's Apple Silicon runner and tests them
+# there: the CI-only minimal llama.cpp (`xtask configure --minimal`, Metal
+# only, no Vulkan SDK), `pkgbuild` of the engine's and the framework's
+# packages, an install with `xtask install`, the installed trees checked, and
+# a reinstall of the same version that must restore a removed file. No
+# uninstall: the project documents none for a .pkg (docs/build-macos.md). The
+# packages are uploaded, pass or fail. Pinned as text by xtask/src/ci_macos.rs.
+#
+# Started by hand only: every run needs the user's go-ahead (PLAN.md step 12).
+name: Installers (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: df -h
+
+      - name: Prerequisites (without the Vulkan SDK)
+        run: |
+          set -euo pipefail
+          scripts/00-install-prerequisites.sh --skip vulkan
+          # rustup and sccache install for the user: the later steps get
+          # them through GITHUB_PATH.
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: xtask configure (minimal)
+        run: |
+          set -euo pipefail
+          cargo run -p xtask -- configure --minimal
+
+      - name: xtask build
+        run: |
+          set -euo pipefail
+          cargo run -p xtask -- build
+
+      - name: Free disk space after the build
+        if: always()
+        run: df -h
+
+      - name: xtask package
+        run: |
+          set -euo pipefail
+          cargo run -p xtask -- package
+          ls -l dist/
+          version=$(awk '/^\[workspace\.package\]/ {f = 1; next} /^\[/ {f = 0} f && $1 == "version" {gsub(/"/, "", $3); print $3; exit}' Cargo.toml)
+          [[ -n "$version" ]] || { echo "no [workspace.package] version in Cargo.toml" >&2; exit 1; }
+          # A minimal build packages four: the engine's carries -minimal,
+          # and there is no llama.cpp-vulkan runtime.
+          engine=(dist/llama.cpp-v*-minimal-arm64.pkg)
+          [[ ${#engine[@]} -eq 1 && -f "${engine[0]}" ]] || { echo "expected one dist/llama.cpp-v<release>-minimal-arm64.pkg: ${engine[*]}" >&2; exit 1; }
+          for f in "dist/private-ai-framework-config-v$version-arm64.pkg" \
+                   "dist/private-ai-framework-cli-v$version-arm64.pkg" \
+                   "dist/private-ai-framework-core-v$version-arm64.pkg"; do
+            [[ -f "$f" ]] || { echo "no $f" >&2; exit 1; }
+          done
+          if compgen -G 'dist/llama.cpp-vulkan*' > /dev/null; then
+            echo "a minimal build packaged a llama.cpp-vulkan runtime" >&2; exit 1
+          fi
+          n=$(find dist -maxdepth 1 -name '*.pkg' | wc -l | tr -d ' ')
+          [[ "$n" -eq 4 ]] || { echo "expected 4 .pkg in dist/, found $n" >&2; exit 1; }
+
+      - name: xtask install
+        run: |
+          set -euo pipefail
+          # As the runner's user: xtask runs sudo installer itself.
+          cargo run -p xtask -- install
+
+      - name: Check the installed products
+        run: |
+          set -euo pipefail
+          /opt/llama.cpp/bin/llama-server --version
+          version=$(awk '/^\[workspace\.package\]/ {f = 1; next} /^\[/ {f = 0} f && $1 == "version" {gsub(/"/, "", $3); print $3; exit}' Cargo.toml)
+          pai=$(/opt/private-ai/bin/pai --version)
+          echo "$pai"
+          [[ "$pai" == "pai $version" ]] || { echo "pai --version says '$pai', Cargo.toml '$version'" >&2; exit 1; }
+          for link in /usr/local/bin/llama-server:/opt/llama.cpp/bin/ /usr/local/bin/pai:/opt/private-ai/bin/ /usr/local/bin/pai-config:/opt/private-ai/bin/; do
+            path=${link%%:*}; prefix=${link#*:}
+            target=$(readlink "$path") || { echo "$path is not a link" >&2; exit 1; }
+            echo "$path -> $target"
+            [[ "$target" == "$prefix"* ]] || { echo "$path points to $target, not into $prefix" >&2; exit 1; }
+          done
+          pkgs=$(pkgutil --pkgs)
+          for id in org.privateai.llama.cpp org.privateai.framework.config org.privateai.framework.cli org.privateai.framework.core; do
+            grep -qx "$id" <<< "$pkgs" || { echo "pkgutil --pkgs does not list $id" >&2; exit 1; }
+          done
+
+      - name: Reinstall the same version
+        run: |
+          set -euo pipefail
+          # The files are there before the reinstall: one is removed so that
+          # seeing it afterwards proves the reinstall laid it down again.
+          sudo rm /opt/private-ai/bin/pai-config
+          cargo run -p xtask -- install
+          [[ -x /opt/private-ai/bin/pai-config ]] || { echo "the reinstall did not restore /opt/private-ai/bin/pai-config" >&2; exit 1; }
+          /opt/llama.cpp/bin/llama-server --version
+          /opt/private-ai/bin/pai --version
+
+      - name: Upload the packages
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installers-macos
+          path: dist/*.pkg
+          if-no-files-found: warn

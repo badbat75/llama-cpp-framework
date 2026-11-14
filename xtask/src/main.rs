@@ -22,6 +22,8 @@
 //! behind each phase.
 
 #[cfg(test)]
+mod ci_macos;
+#[cfg(test)]
 mod ci_windows;
 mod common;
 #[cfg(target_os = "linux")]

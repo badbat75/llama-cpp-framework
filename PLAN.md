@@ -484,7 +484,11 @@ not run), and running the prerequisites script there avoids depending on PATH or
 start mode, path and account, `/api/version` and `/api/instances`, a `/fecmus` repair that restores a
 deleted default and keeps a changed one, both uninstalls with what each must remove and keep, the MSIs
 and logs uploaded; left: its first run (the user's go-ahead), and `find_openssl` still knows only
-`OpenSSL-Win64` (the workflow puts the runner's `Program Files\OpenSSL` first on PATH); **3** the macOS workflow (first `pkgbuild` run).
+`OpenSSL-Win64` (the workflow puts the runner's `Program Files\OpenSSL` first on PATH); **3** (written, not yet run) the macOS workflow `.github/workflows/installers-macos.yml`
+(first `pkgbuild` run): prerequisites with `--skip vulkan`, `configure --minimal`, exactly four `.pkg`,
+`xtask install`, the two `--version` from `/opt`, the `/usr/local/bin` links and the `pkgutil`
+receipts, then a reinstall of the same version that must restore a removed `pai-config`; no uninstall
+(the project documents none for macOS).
 
 - Done when: both workflows have run green on GitHub at least once, from a run the user started or
   approved, and what they cover is written in `installer/AGENTS.md` and `docs/build-macos.md`.

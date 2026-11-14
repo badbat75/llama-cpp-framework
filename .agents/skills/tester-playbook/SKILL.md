@@ -477,3 +477,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - A "kept after uninstall" check on a folder nothing wrote into proves nothing: Windows Installer removes
   the empty folders it created. A workflow test (`xtask/src/ci_windows.rs`) pins a file written into it
   before the `/x` and checked after; region checks there slice the text between `switches(.., "/x")`.
+- The macOS workflow (`xtask/src/ci_macos.rs`) needs no prerequisites switch: the script passes
+  `--skip vulkan` on to `xtask prereq`. `macos-15` (arm64) already has Homebrew, cmake, ninja, node,
+  Rust and the Command Line Tools (`images/macos/macos-15-arm64-Readme.md`). `xtask install` adds
+  `sudo` to `installer` itself, so the workflow runs it unprefixed (pinned). A `.pkg` has no documented
+  uninstall, so the check after install is a same-version reinstall that restores a removed file.
+- xtask's names lint (`names_lint::xtask_code_names_the_new_executable_tree_and_variable`) also refuses
+  `/opt/llama.cpp` in an xtask test literal, even in a workflow needle: run `cargo test -p xtask` whole,
+  not just your filter, and split it in a const (`concat!("/opt/llama", ".cpp/bin/...")`).
