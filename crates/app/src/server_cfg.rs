@@ -44,3 +44,217 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// The ModelsDir the configurator scans, downloads into and browses from
+/// (pure): the configured one; when unset or blank, the instance's default
+/// folder `instance_models` where a save leaves the folders unset
+/// (`server_control::dirs_left_unset`, the Windows manager), else the
+/// user's `models_dir_or_default()`.
+pub fn effective_models_dir(
+    cfg: &ServerConfig,
+    kind: server_control::Kind,
+    os: Os,
+    instance_models: &std::path::Path,
+) -> String {
+    if server_control::dirs_left_unset(kind, os) && configured_models_dir(cfg).is_none() {
+        return instance_models.to_string_lossy().into_owned();
+    }
+    cfg.models_dir_or_default()
+}
+
+/// Whether a preset save or a download may seed an unset ModelsDir into the
+/// server file (pure): only when it is unset or blank, and never where a
+/// save leaves the folders unset (the instance default is in force there).
+pub fn seeds_models_dir(cfg: &ServerConfig, kind: server_control::Kind, os: Os) -> bool {
+    configured_models_dir(cfg).is_none() && !server_control::dirs_left_unset(kind, os)
+}
+
+/// The configured ModelsDir, `None` when unset or blank.
+fn configured_models_dir(cfg: &ServerConfig) -> Option<&str> {
+    cfg.models_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// `effective_models_dir` for the saved config, the real backend and OS.
+pub fn models_dir() -> String {
+    effective_models_dir(
+        &load(),
+        server_control::backend().kind(),
+        Os::current(),
+        &crate::paths::instance_models_dir(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server_control::Kind;
+    use std::path::Path;
+
+    /// The instance default as `paths::instance_models_dir` gives it on
+    /// Windows; passed in, so no unit test reads `paths::`. Split, so the
+    /// names lint does not read the engine's folder as the old user tree.
+    fn instance_models() -> &'static Path {
+        Path::new(concat!(r"C:\ProgramData\llama", r".cpp\models"))
+    }
+
+    fn unset_configs() -> [ServerConfig; 3] {
+        [
+            ServerConfig::default(),
+            ServerConfig {
+                models_dir: Some(String::new()),
+                ..ServerConfig::default()
+            },
+            ServerConfig {
+                models_dir: Some("   ".into()),
+                ..ServerConfig::default()
+            },
+        ]
+    }
+
+    fn set_config() -> ServerConfig {
+        ServerConfig {
+            models_dir: Some(r"E:\models".into()),
+            ..ServerConfig::default()
+        }
+    }
+
+    /// Under the Windows manager an unset (or blank) ModelsDir is the
+    /// instance's folder, never the user's `~\.llama.cpp`, which the
+    /// instance's account cannot read: the scans, the downloads and the
+    /// Browse start all follow it.
+    #[test]
+    fn under_the_windows_manager_an_unset_models_dir_is_the_instance_folder() {
+        for cfg in unset_configs() {
+            assert_eq!(
+                effective_models_dir(&cfg, Kind::Manager, Os::Windows, instance_models()),
+                instance_models().to_string_lossy(),
+                "{cfg:?}"
+            );
+            assert_ne!(
+                effective_models_dir(&cfg, Kind::Manager, Os::Windows, instance_models()),
+                cfg.models_dir_or_default(),
+                "{cfg:?}"
+            );
+        }
+    }
+
+    /// A configured ModelsDir wins everywhere, the Windows manager included.
+    #[test]
+    fn a_configured_models_dir_wins_on_every_os_and_backend() {
+        for kind in [Kind::Manager, Kind::Direct] {
+            for os in [Os::Windows, Os::Linux, Os::MacOs] {
+                assert_eq!(
+                    effective_models_dir(&set_config(), kind, os, instance_models()),
+                    r"E:\models",
+                    "{kind:?} {os:?}"
+                );
+            }
+        }
+    }
+
+    /// Elsewhere (the Linux manager, macOS, any direct launch) an unset one
+    /// is the user's default, as before.
+    #[test]
+    fn elsewhere_an_unset_models_dir_is_the_user_default() {
+        let cases = [
+            (Kind::Manager, Os::Linux),
+            (Kind::Manager, Os::MacOs),
+            (Kind::Direct, Os::Linux),
+            (Kind::Direct, Os::MacOs),
+            (Kind::Direct, Os::Windows),
+        ];
+        for (kind, os) in cases {
+            for cfg in unset_configs() {
+                assert_eq!(
+                    effective_models_dir(&cfg, kind, os, instance_models()),
+                    cfg.models_dir_or_default(),
+                    "{kind:?} {os:?} {cfg:?}"
+                );
+            }
+        }
+    }
+
+    /// Nothing seeds ModelsDir into the Windows manager's file: the instance
+    /// default is already in force, and a folder inferred from a model path
+    /// or a download would pin one the instance may not read. Elsewhere an
+    /// unset one is seeded as before; a set one never is.
+    #[test]
+    fn models_dir_is_seeded_only_when_unset_and_not_under_the_windows_manager() {
+        for cfg in unset_configs() {
+            assert!(
+                !seeds_models_dir(&cfg, Kind::Manager, Os::Windows),
+                "{cfg:?}"
+            );
+            for (kind, os) in [
+                (Kind::Manager, Os::Linux),
+                (Kind::Manager, Os::MacOs),
+                (Kind::Direct, Os::MacOs),
+                (Kind::Direct, Os::Linux),
+            ] {
+                assert!(seeds_models_dir(&cfg, kind, os), "{kind:?} {os:?} {cfg:?}");
+            }
+        }
+        for kind in [Kind::Manager, Kind::Direct] {
+            for os in [Os::Windows, Os::Linux, Os::MacOs] {
+                assert!(
+                    !seeds_models_dir(&set_config(), kind, os),
+                    "{kind:?} {os:?}"
+                );
+            }
+        }
+    }
+
+    /// The body of the top-level `pub fn <name>(` in `code` (test functions
+    /// are indented, so a line-start match is the production one).
+    fn fn_body(code: &str, name: &str) -> String {
+        let start = code
+            .find(&format!("\npub fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name}"));
+        let rest = &code[start..];
+        rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+    }
+
+    /// `models_dir()` resolves for the real backend and OS through the pure
+    /// rule above. The Windows branch only type-checks on Linux, hence a
+    /// check on the text.
+    #[test]
+    fn models_dir_resolves_for_the_backend_and_os() {
+        let body = fn_body(include_str!("server_cfg.rs"), "models_dir");
+        for want in [
+            "effective_models_dir(",
+            "Os::current()",
+            "instance_models_dir()",
+            ".kind()",
+        ] {
+            assert!(body.contains(want), "models_dir has no {want}:\n{body}");
+        }
+    }
+
+    /// The two places that seed ModelsDir (a Hugging Face download's preset
+    /// and the first preset save) ask `seeds_models_dir` for the real
+    /// backend and OS, instead of seeding whenever it is unset.
+    #[test]
+    fn preset_saves_seed_models_dir_through_the_rule() {
+        for (file, code) in [
+            (
+                "hf.rs save_preset",
+                fn_body(include_str!("hf.rs"), "save_preset"),
+            ),
+            (
+                "presets.rs save",
+                fn_body(include_str!("presets.rs"), "save"),
+            ),
+        ] {
+            for want in ["seeds_models_dir(", "Os::current()"] {
+                assert!(code.contains(want), "{file} has no {want}:\n{code}");
+            }
+            assert!(
+                !code.contains(concat!("models_dir", ".is_none()")),
+                "{file} still seeds whenever ModelsDir is unset:\n{code}"
+            );
+        }
+    }
+}

@@ -357,7 +357,7 @@ pub(super) fn wire(app: &AppWindow) -> Result<HwWindow, slint::PlatformError> {
             live.store(id, Ordering::Relaxed);
 
             // Read on every opening, so the disk follows a ModelsDir edit.
-            let models_dir = PathBuf::from(server_cfg::load().models_dir_or_default());
+            let models_dir = PathBuf::from(server_cfg::models_dir());
             let live = live.clone();
             let off = off.clone();
             let win_weak = win_weak.clone();

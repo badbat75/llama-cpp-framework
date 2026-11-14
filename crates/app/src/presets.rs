@@ -72,7 +72,7 @@ use std::path::PathBuf;
 
 use crate::ini;
 use crate::server_cfg;
-use crate::server_control::{self, ConfigFile};
+use crate::server_control::{self, ConfigFile, Os};
 use pai_core::checks;
 // The startup-count tests read llama.cpp's default `ModelsMax` from here.
 #[cfg(test)]
@@ -1419,8 +1419,8 @@ pub fn save(preset: &Preset) -> io::Result<()> {
     let body = render_section(preset);
     let text = files.read(file)?.unwrap_or_default();
     files.write(file, &ini::text::replace_section(&text, &preset.id, &body))?;
-    // `load()` already normalizes blank to None (opt_nonblank in from_keys).
-    if server_cfg::load().models_dir.is_none() {
+    // Never where the instance default is in force (`seeds_models_dir`).
+    if server_cfg::seeds_models_dir(&server_cfg::load(), files.kind(), Os::current()) {
         if let Some(models_dir) = infer_models_dir(&preset.model) {
             let _ = set_server_key("ModelsDir", &models_dir);
         }

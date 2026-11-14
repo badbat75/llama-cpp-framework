@@ -1072,7 +1072,7 @@ fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::
     if chosen.is_empty() {
         return Default::default();
     }
-    let models_dir = server_cfg::load().models_dir_or_default();
+    let models_dir = server_cfg::models_dir();
     crate::linked_files::delete(&chosen, &models_dir, false)
 }
 
@@ -1264,7 +1264,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
 fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     // SAVED config, like refresh_file_options; see the note there.
-    let models_dir = server_cfg::load().models_dir_or_default();
+    let models_dir = server_cfg::models_dir();
     let scanned = model_scan::list(&models_dir, model_scan::Category::Model.subdir());
     state.borrow_mut().dialog_models_all = scanned;
     s.set_dialog_filter(SharedString::from(""));

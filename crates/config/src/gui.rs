@@ -1021,7 +1021,7 @@ fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // what a launch would use: an unsaved ModelsDir edit must not make the
     // pickers list models the server won't find. The Server tab's Save
     // handler re-runs this hub, so the scans follow the file.
-    let models_dir = server_cfg::load().models_dir_or_default();
+    let models_dir = server_cfg::models_dir();
     let form = s.get_form();
 
     let model_scan_result = model_scan::list(&models_dir, model_scan::Category::Model.subdir());

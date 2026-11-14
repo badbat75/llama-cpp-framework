@@ -681,6 +681,46 @@ mod tests {
         );
     }
 
+    /// The GUI's model scans (the pickers, the Models tab, the HW Monitor's
+    /// disk), its Hugging Face downloads, the linked-file delete and the
+    /// folder Browse start all resolve ModelsDir through pai-app's
+    /// `server_cfg::models_dir()`, so under the Windows manager an unset one
+    /// is the instance's folder, not the user's `~\.llama.cpp`. Checked on
+    /// the text: the Windows branch only type-checks on Linux.
+    #[test]
+    fn the_gui_resolves_models_dir_for_the_backend_and_os() {
+        let files = [
+            ("gui.rs", include_str!("gui.rs")),
+            ("gui/models_tab.rs", include_str!("gui/models_tab.rs")),
+            ("gui/hw_window.rs", include_str!("gui/hw_window.rs")),
+            ("gui/hf_dialog.rs", include_str!("gui/hf_dialog.rs")),
+            ("gui/server_tab.rs", include_str!("gui/server_tab.rs")),
+        ];
+        for (name, code) in files {
+            for old in [
+                concat!("models_dir_or", "_default()"),
+                concat!("default_models", "_dir()"),
+            ] {
+                assert!(!code.contains(old), "{name} still calls {old}");
+            }
+            assert!(
+                code.contains("server_cfg::models_dir()"),
+                "{name} does not resolve through server_cfg::models_dir()"
+            );
+        }
+    }
+
+    /// The snapshot folder's hint holds on every OS: under the Windows
+    /// manager the default is the instance's `%ProgramData%` folder (the
+    /// field's placeholder names it), not the user data folder.
+    #[test]
+    fn the_snapshot_folder_hint_does_not_place_the_default_in_the_user_folder() {
+        let hint = crate::strings::t("snapshot-folder-hint");
+        assert_ne!(hint, "snapshot-folder-hint");
+        assert!(!hint.to_lowercase().contains("user data folder"), "{hint}");
+        assert!(hint.contains("--slot-save-path"), "{hint}");
+    }
+
     /// form_to_config strips trailing /v1 and / from the Base URL so the
     /// convention "store without suffix" holds even when the user typed it.
     #[test]

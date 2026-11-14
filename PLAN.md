@@ -413,9 +413,7 @@ Decided with the user on 2026-11-14:
   Windows instances without ModelsDir/StateDir use `%ProgramData%\llama.cpp\{models,state}`; `xtask
   install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
   2.4-chosen install folder. Left: the real WiX build and the installer test plan on
-  Windows (the user); on Windows under the manager the GUI's model scans (`gui.rs` refresh, `models_tab.rs`,
-  `hw_window.rs`) and the StateDir Browse still start from `models_dir_or_default()` (the user's
-  `~\.llama.cpp`), and `snapshot-folder-hint` still says the default is in the user data folder; a Hugging Face download (`downloads.rs`, `pai preset download`) goes into `models_dir_or_default()` and `hf::save_preset` then writes that folder as `ModelsDir` into the manager's file; the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour, and the root `README.md` still says a save from `pai-config` or `pai` writes `~\.llama.cpp` (the
+  Windows (the user); the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour, and the root `README.md` still says a save from `pai-config` or `pai` writes `~\.llama.cpp` (the
   Server form itself shows both folders blank with the instance default as hint since the user's
   2026-11-14 choice).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:

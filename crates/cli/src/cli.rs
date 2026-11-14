@@ -1075,7 +1075,7 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
             println!("{}", strings::fill("kept-files", &[&names.join(", ")]));
         }
     } else {
-        let models_dir = server_cfg::load().models_dir_or_default();
+        let models_dir = server_cfg::models_dir();
         let out = linked_files::delete(&chosen, &models_dir, even_if_shared);
         for (f, size) in &out.removed {
             println!(
@@ -1246,7 +1246,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         println!("{line}");
     }
 
-    let models_dir = std::path::PathBuf::from(server_cfg::load().models_dir_or_default());
+    let models_dir = std::path::PathBuf::from(server_cfg::models_dir());
     let job = hf::DownloadJob::new(
         &listing,
         listing.default,
@@ -1672,6 +1672,24 @@ mod tests {
     // The only guard on `server set`'s schema mirror: every other server-field
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
+
+    /// `pai preset download` and `pai preset rm --delete-files` resolve
+    /// ModelsDir through pai-app's resolver (`models_dir` in its server_cfg),
+    /// so under the Windows manager an unset one is the instance's folder (and the
+    /// download writes no `~\.llama.cpp` into the manager's file). Checked on
+    /// the text: the Windows branch only type-checks on Linux.
+    #[test]
+    fn the_cli_resolves_models_dir_for_the_backend_and_os() {
+        let code = include_str!("cli.rs");
+        let old = concat!("models_dir_or", "_default()");
+        assert!(!code.contains(old), "cli.rs still calls {old}");
+        assert!(
+            code.matches(concat!("server_cfg::", "models_dir()"))
+                .count()
+                >= 2,
+            "cli.rs does not resolve both the download and the delete through pai-app's resolver"
+        );
+    }
 
     /// The CLI calls itself `pai`, the executable's name: in `--version`,
     /// `--help` and its errors.

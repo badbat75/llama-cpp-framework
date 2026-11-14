@@ -86,7 +86,7 @@ pub(super) fn wire(app: &AppWindow, tray: &AppTray, state: &Rc<RefCell<State>>) 
         let start = if !current.is_empty() {
             PathBuf::from(current.as_str())
         } else {
-            PathBuf::from(server_cfg::default_models_dir())
+            PathBuf::from(server_cfg::models_dir())
         };
         pick_dir(&start)
             .map(|p| SharedString::from(p.to_string_lossy().into_owned()))

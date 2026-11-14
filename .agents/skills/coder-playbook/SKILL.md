@@ -276,3 +276,6 @@ Lessons only: the rules are in `AGENTS.md`.
   `gh api repos/actions/<name>/contents/action.yml?ref=v7 --jq .content | base64 -d`; its majors via
   `gh api repos/actions/<name>/releases`. A workflow argument like `$env:RUNNER_TEMP\dists` is a bare
   PowerShell token, expanded without quotes; the windows runners have only C: and D:.
+- The ModelsDir the GUI and CLI scan, download into and browse from is `pai_app::server_cfg::models_dir()`
+  (the instance's folder under the Windows manager when unset), never `models_dir_or_default()`;
+  seeding ModelsDir into the server file asks `server_cfg::seeds_models_dir`. Text-check tests pin both.

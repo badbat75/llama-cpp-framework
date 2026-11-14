@@ -477,7 +477,7 @@ fn clear_listing(app: &AppWindow) {
 }
 
 fn models_dir() -> PathBuf {
-    PathBuf::from(server_cfg::load().models_dir_or_default())
+    PathBuf::from(server_cfg::models_dir())
 }
 
 /// Recompute the summary line from the current pick and choices.

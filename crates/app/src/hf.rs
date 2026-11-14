@@ -1797,6 +1797,29 @@ pub struct DownloadJob {
     pub server_exe: PathBuf,
 }
 
+/// Refuse a ModelsDir the user cannot write (under the Windows manager, the
+/// instance's folder for a user who is not elevated) before any child starts:
+/// the folder is created when missing, then a probe file is created and
+/// removed.
+fn check_writable(dir: &Path) -> Result<(), HfError> {
+    let refused = || {
+        HfError::Io(strings::fill(
+            "download-folder-not-writable",
+            &[&dir.display()],
+        ))
+    };
+    std::fs::create_dir_all(dir).map_err(|_| refused())?;
+    let probe = dir.join(format!(".pai-write-probe-{}", std::process::id()));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|_| refused())?;
+    drop(file);
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 impl DownloadJob {
     /// A job for `listing.candidates[index]`. `mmproj` is a wish (ignored when
     /// the candidate has none, as llama.cpp ignores it); a `sidecar` the
@@ -1842,6 +1865,7 @@ impl DownloadJob {
                 return Err(HfError::SidecarMissing { what: s.label() });
             }
         }
+        check_writable(&models_dir)?;
         Ok(DownloadJob {
             repo: listing.repo.clone(),
             commit: listing.commit.clone(),
@@ -2870,7 +2894,9 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
 /// Tests); `derive_preset` is the tested part.
 pub fn save_preset(p: &Preset, models_dir: &Path) -> std::io::Result<()> {
     presets::validate_for_save(p)?;
-    if crate::server_cfg::load().models_dir.is_none() {
+    let cfg = crate::server_cfg::load();
+    let kind = crate::server_control::backend().kind();
+    if crate::server_cfg::seeds_models_dir(&cfg, kind, crate::server_control::Os::current()) {
         presets::set_server_key("ModelsDir", &models_dir.to_string_lossy())?;
     }
     presets::save(p)
@@ -3684,6 +3710,116 @@ mod tests {
             models_dir: models_dir.to_path_buf(),
             token: Some(Token::new("hf_tok").unwrap()),
             server_exe: PathBuf::from("llama-server"),
+        }
+    }
+
+    /// Whether a write into `dir` really fails (root ignores the mode).
+    #[cfg(unix)]
+    fn write_refused(dir: &Path) -> bool {
+        let probe = dir.join("probe");
+        let refused = std::fs::write(&probe, b"x").is_err();
+        let _ = std::fs::remove_file(&probe);
+        refused
+    }
+
+    #[cfg(unix)]
+    fn set_mode(dir: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+
+    /// A download into a ModelsDir the user cannot write (under the Windows
+    /// manager, the instance's `%ProgramData%\llama.cpp\models` for a user
+    /// who is not elevated) is refused at once, naming the folder, before a
+    /// child is started; not left to fail inside llama-server.
+    #[cfg(unix)]
+    #[test]
+    fn a_download_into_a_folder_the_user_cannot_write_is_refused_naming_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models = tmp.path().join("models");
+        std::fs::create_dir(&models).unwrap();
+        let missing = tmp.path().join("ro").join("models");
+        std::fs::create_dir(tmp.path().join("ro")).unwrap();
+        set_mode(&models, 0o555);
+        set_mode(&tmp.path().join("ro"), 0o555);
+        if !write_refused(&models) {
+            set_mode(&models, 0o755);
+            set_mode(&tmp.path().join("ro"), 0o755);
+            eprintln!("skipped: the mode does not stop this user (root)");
+            return;
+        }
+        let results: Vec<(PathBuf, Result<DownloadJob, HfError>)> = [models.clone(), missing]
+            .into_iter()
+            .map(|dir| {
+                let r = DownloadJob::for_server(
+                    &listing(),
+                    0,
+                    false,
+                    None,
+                    dir.clone(),
+                    None,
+                    PathBuf::from("llama-server"),
+                );
+                (dir, r)
+            })
+            .collect();
+        let left: Vec<_> = std::fs::read_dir(&models).unwrap().collect();
+        set_mode(&models, 0o755);
+        set_mode(&tmp.path().join("ro"), 0o755);
+        for (dir, r) in results {
+            let err = r
+                .err()
+                .unwrap_or_else(|| panic!("{} was accepted", dir.display()));
+            assert_eq!(
+                err.to_string(),
+                strings::fill("download-folder-not-writable", &[&dir.display()]),
+                "{}",
+                dir.display()
+            );
+        }
+        assert!(left.is_empty(), "files left in the folder: {left:?}");
+    }
+
+    /// A writable folder, or one not created yet under a writable parent,
+    /// is accepted, and the check leaves no file behind.
+    #[test]
+    fn a_download_into_a_writable_folder_is_accepted_and_leaves_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let models = tmp.path().join("models");
+        std::fs::create_dir(&models).unwrap();
+        for dir in [models.clone(), tmp.path().join("new").join("models")] {
+            let job = DownloadJob::for_server(
+                &listing(),
+                0,
+                false,
+                None,
+                dir.clone(),
+                None,
+                PathBuf::from("llama-server"),
+            )
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+            assert_eq!(job.models_dir, dir);
+        }
+        let left: Vec<_> = std::fs::read_dir(&models).unwrap().collect();
+        assert!(left.is_empty(), "files left in the folder: {left:?}");
+    }
+
+    /// The refusal is text the user reads, in both strings files (the GUI's
+    /// dialog and `pai preset download`), with the folder's slot.
+    #[test]
+    fn the_unwritable_folder_refusal_is_in_both_strings_files() {
+        for (name, text) in [
+            ("en_US.toml", include_str!("../../core/strings/en_US.toml")),
+            ("cli.toml", include_str!("../../core/strings/cli.toml")),
+        ] {
+            let line = text
+                .lines()
+                .find(|l| l.starts_with("download-folder-not-writable ="))
+                .unwrap_or_else(|| panic!("download-folder-not-writable is not in {name}"));
+            assert!(
+                line.contains("{0}"),
+                "{name}: no {{0}} for the folder: {line}"
+            );
         }
     }
 

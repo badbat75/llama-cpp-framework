@@ -454,7 +454,8 @@ Lessons only: the rules are in `AGENTS.md`.
   After a fallback is removed, grep its old output (`b0-`) for doc comments of callers still describing it.
 - "Not written again" is pinned by setting the file's mtime in the past (`File::set_modified`, std)
   and asserting it did not move; a read-only file in a 555 directory pins a failed write (skip as
-  root). A fixture's expected text can be produced by the code itself on a sibling temp path
+  root; a passing run hides the skip's `eprintln!`, so on a rerun confirm it did not skip with
+  `cargo test -p <crate> <name> -- --nocapture`). A fixture's expected text can be produced by the code itself on a sibling temp path
   (`startup.rs` `fresh_entry`: what an enable writes now), which keeps the test free of the
   machine's `/usr/bin/pai-config` and `current_exe()`.
 - After restoring a throwaway candidate from a `tar` backup, `touch` the restored sources: tar keeps
@@ -491,3 +492,7 @@ Lessons only: the rules are in `AGENTS.md`.
   command allowed to fail must end with `exit 0`, so pin that line too. Source: "Exit codes and error action
   preference" in https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
   (checked 2026-11-14).
+- A text pin that counts or forbids a call in a file that also holds the test (cli.rs, gui.rs) matches
+  its own doc comment and assertion message too: split the needle with `concat!` and keep the literal
+  out of the comment and the message. A body pin on a top-level fn finds `"\npub fn <name>("` (test fns
+  are indented), since presets.rs has `#[cfg(test)]` items before its production fns.
