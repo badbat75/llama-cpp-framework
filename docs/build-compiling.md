@@ -27,6 +27,7 @@ missing.** The config is still written, so you can fix the gaps one at a time.
 | Linker | `Linker` | `linker_type` | n/a |
 | nvcc host compiler | n/a | `cuda_host_compiler` | n/a |
 | Jobs and build type | `BuildJobs`, `BuildType` (Release) | `build_jobs`, `build_type` | `build_jobs`, `build_type` |
+| Minimal build | `Minimal` (`1` or `0`) | n/a | `minimal` |
 | Windows only | `OpenSSLDir`, `VsDevShell`, `WixExe` | n/a | n/a |
 
 **The CUDA Toolkit, NCCL and the Vulkan SDK are shown, not recorded.** The build finds the newest of
@@ -49,6 +50,23 @@ then a system clang, then GCC.
 **WiX is checked but never a gap.** `WixExe` is `wix.exe` on PATH, else
 `%USERPROFILE%\.dotnet\tools`. A missing or off-pin version is a warning, because only
 `xtask package` needs it.
+
+### The minimal build
+
+**`xtask configure --minimal` records a build without the GPU backends that need an SDK, for CI
+only.** It is meant for GitHub's runners, which have no ROCm, CUDA or Vulkan SDK (`PLAN.md` step 12).
+Read from the code and its tests (`xtask/src/main.rs`, `cmake_options.rs`, `msi.rs`, `macos_pkg.rs`);
+the Windows and macOS branches are type-checked only and have never run.
+
+- `xtask build` adds `xtask/cmake/minimal.toml` over the OS options: `GGML_CUDA`, `GGML_HIP` and
+  `GGML_VULKAN` off, every other option as in the full build. Windows is left with the CPU backends,
+  macOS with Metal. Windows also skips the check for ROCm clang 24 or newer.
+- `xtask package` names the engine's file `llama.cpp-v<release>-minimal-<arch>.msi` or `.pkg`, which
+  no release upload command matches, and on macOS builds no `llama.cpp-vulkan` package. The framework's
+  packages are the same build either way and keep their names. `xtask install` takes the minimal
+  engine file like any other.
+- Linux refuses `--minimal`: its GPU runtimes are separate packages already.
+- The flag stays in the config until the next `configure` without it.
 
 ## Release tag and patches
 
@@ -91,6 +109,7 @@ Each `build_llama.rs` adds what depends on this machine, and owns the `-U` unset
 | --- | --- | --- |
 | `xtask/cmake/common.toml` | Every OS: the generator (`Ninja`) and the defines | Checked in |
 | `xtask/cmake/<os>.toml` | One OS: its defines follow the common ones and replace an entry of the same name | `linux.toml`, `macos.toml` |
+| `xtask/cmake/minimal.toml` | The [minimal build](#the-minimal-build) only: applied last, replacing by name | The three SDK backends off |
 
 An entry is one `NAME[:TYPE]=VALUE` string. An invalid one or an unknown key fails before cmake
 runs, so a typo fails as a typo. `cmake_options` in `xtask/src/common/cmake_options.rs` reads them,

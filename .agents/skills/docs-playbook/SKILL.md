@@ -145,3 +145,6 @@ Lessons only: the rules are in `AGENTS.md`.
   pointers (what the area is, the guide, a safety rule the guide lacks), never a copy of the guide.
   A new fact goes in the guide; before cutting one from `AGENTS.md`, grep the guide for it and move it
   there if missing. Task workflows (the release) live in skills.
+- The CI-only minimal build (`configure --minimal`) is described once, in "The minimal build" of
+  `build-compiling.md`; `build-pipeline.md` (Options), `build-packaging.md` (file names),
+  `build-macos.md` and the `release` skill (step 8) carry a line each and link there.

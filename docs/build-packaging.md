@@ -40,6 +40,8 @@ and per user on macOS.
 For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai1-amd64.deb`,
 `llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.1-x64.msi`, `llama.cpp-v1.0.0-x64.msi`. Release 2.4 and
 earlier named them `llama-cpp-framework-*`: the new packages upgrade those in place (below, per format).
+A [minimal build](build-compiling.md#the-minimal-build) (Windows and macOS, CI only) names the engine's
+file `llama.cpp-v<release>-minimal-<arch>.msi` or `.pkg` and is never a release asset.
 
 - `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
   `pai-*` crates: the configurator and the framework are versioned together.

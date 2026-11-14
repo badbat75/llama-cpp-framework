@@ -26,6 +26,7 @@ One GitHub release per framework release carries every package of every OS: the 
    - Windows (PowerShell, no glob): `gh release upload X.Y.Z dist\private-ai-framework-vX.Y.Z-x64.msi dist\llama.cpp-vA.B.C-x64.msi`
    - Linux: `gh release upload X.Y.Z dist/private-ai-framework-*-vX.Y.Z-* dist/llama.cpp-vA.B.C+pai<N>-* dist/llama.cpp-{rocm,cuda,vulkan}-v*` (one file per runtime and format: remove older SDK versions first)
    - macOS: `gh release upload X.Y.Z dist/private-ai-framework-*-vX.Y.Z-arm64.pkg dist/llama.cpp-vA.B.C-arm64.pkg dist/llama.cpp-vulkan-v*-arm64.pkg`
+   - A `-minimal` engine file (`llama.cpp-vA.B.C-minimal-*`, from `xtask configure --minimal`, a CI build without GPU backends) is never a release asset: release machines configure without the flag.
    - A llama.cpp-only rebuild (`+pai<N+1>`, same release) goes out with the next framework release, or as re-uploaded assets of the current one (`gh release upload X.Y.Z <files> --clobber` overwrites assets of the same name).
 
 **Formatting conventions** (older releases show a `bNNNN` llama.cpp token instead of `vA.B.C`, and 2.4.0 and earlier the `llama-cpp-framework-` installer prefix; until 3.0.0, `X.Y.Z` is `2.99.N`, e.g. tag `2.99.0`, title `v2.99.0 (llama.cpp vA.B.C)`):

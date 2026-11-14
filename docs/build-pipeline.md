@@ -47,7 +47,7 @@ been compiled by WiX or run on Windows.
 | Phase | Options |
 | --- | --- |
 | `prereq` | `--dist-root <path>`, `--skip <steps>` |
-| `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`) |
+| `configure` | `--dist-root <path>`, `--llama-cpp-dir <path>` (default `build/<os>/llama.cpp`); Windows and macOS `--minimal`, a build without the GPU SDKs for CI, never a release ([the minimal build](build-compiling.md#the-minimal-build)) |
 | `build` | `llama` (llama.cpp) or `framework` (the web UI and the four cargo binaries) for one product (default: both, in that order) |
 | `package` | `--keep-staging`; `llama` or `framework` for one product's packages (default: both; the other product's files in `dist/` are left as they are); Linux `--deb`, `--rpm`; Windows `--wix <wix.exe>` |
 | `install` | `--dry-run`, a package file (Linux and macOS: any number, and only those install; Windows: at most one of each product, llama.cpp's first); Linux `--deb`, `--rpm`; Linux and macOS `--force` |

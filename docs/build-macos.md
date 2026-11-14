@@ -51,7 +51,9 @@ there. The CPU backend keeps `GGML_CPU_ALL_VARIANTS`, which upstream implements 
   `libvulkan.1.dylib` and the MoltenVK manifest.
 
 **Configure** writes `build/macos/config-build.toml`: Apple's `clang` and `clang++` by full path
-(`xcrun --find`), the dist root, the clone, build type and jobs.
+(`xcrun --find`), the dist root, the clone, build type and jobs, and `minimal` for
+`configure --minimal` ([the minimal build](build-compiling.md#the-minimal-build): Metal only, no
+Vulkan, for CI).
 
 **Build** uses the [shared checkout and patches](build-compiling.md#release-tag-and-patches) and
 [options](build-compiling.md#cmake-options), Apple's clang and Ninja. The Vulkan SDK's include
@@ -77,7 +79,8 @@ own prefix: llama.cpp in `/opt/llama.cpp` with its Vulkan runtime, the framework
 
 For example `llama.cpp-v1.0.0-arm64.pkg` and `private-ai-framework-cli-v2.99.1-arm64.pkg` (the
 `macos_pkg` tests). The engine's file has no `+pai<N>`: no system package shares its name. macOS has no
-manager and no web service, so no `bff` package, and `core` holds only `cli.toml`.
+manager and no web service, so no `bff` package, and `core` holds only `cli.toml`. A minimal build
+packages four: no `llama.cpp-vulkan`, and the engine is `llama.cpp-v<release>-minimal-arm64.pkg`.
 
 `xtask package llama` or `framework` builds one product's packages and leaves the other's files in
 `dist/`, as `xtask build llama` and `build framework` build one. The engine needs `llama-server` in the
