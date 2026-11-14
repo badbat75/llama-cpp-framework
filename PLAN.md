@@ -377,9 +377,14 @@ Decided with the user on 2026-11-14:
 The 2.99.x packages were never published, so no upgrade relation names them. Requirement change: R1,
 R2 and the release process in `AGENTS.md` (installer name, release title) follow this.
 
+Found after slice 1: the engine package has no maintainer scripts, so upgrading `llama.cpp` alone
+leaves running instances on the old llama-server (only `core`'s scripts restart them). Fix in slice 2:
+`core` restarts the running instances when the engine's files change (a dpkg file trigger on the
+engine's directory and an rpm `%transfiletriggerin`, so the engine stays free of the framework).
+
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
-files and the engine's homepage are llama.cpp's); **2** the build split in xtask; **3** the MSI's two features and its name;
+files and the engine's homepage are llama.cpp's); **2** the build split in xtask, and the instances restarted when the engine is upgraded; **3** the MSI's two features and its name;
 **4** the macOS `.pkg`; **5** docs and the release process.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
@@ -609,10 +614,10 @@ access with authentication.
   running from `bin\` (an interrupted sweep puts its key back at the next start).
 - Step 10, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: the bff listens on `127.0.0.1:8590` by
   default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
-  (requires `-llama`), runs as the static system user `private-ai-bff` on Linux (first `DynamicUser=yes`, replaced on 2026-11-14 after the real install: dbus-daemon drops a dynamic user at Hello) and as the virtual account
+  (requires `-core` since step 11), runs as the static system user `private-ai-bff` on Linux (first `DynamicUser=yes`, replaced on 2026-11-14 after the real install: dbus-daemon drops a dynamic user at Hello) and as the virtual account
   `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Before any
   slice that changes something through the bff, a design of who is acting (today any local user could
-  act through the bff's account). `cli.toml` moved to `-llama`, which every package requires (the
+  act through the bff's account). `cli.toml` moved to `-llama`, and with step 11 to `-core`, which every package requires (the
   manager and the bff print from it).
 - Step 1: the real run of the Linux packages, after the Windows slices (user, 2026-11-14), together
   with the Windows build: `xtask build`, `package`, `install`, then the step's checks.

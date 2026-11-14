@@ -65,6 +65,13 @@ new Xcode can move it.
 in the build's `bin/`, and refuses a built `pai-config` whose version differs from the root
 `Cargo.toml`'s.
 
+**The macOS split of the engine from the framework is step 11 slice 4 in `PLAN.md`, not done.** The
+table below is the `.pkg` set before step 11. `components.rs` and `components::file_stem`, which macOS
+shares with Linux, already changed with the Linux split: read from the code, and not built on a Mac,
+`xtask package` would now also write a `core` package holding `cli.toml`, and name the engine's file
+`llama.cpp-v<framework>-arm64.pkg`, the Vulkan one `llama.cpp-vulkan-v<sdk>-arm64.pkg` and the
+framework's without the llama.cpp tag. Slice 4 settles it.
+
 | Package | File | Identifier ends in |
 | --- | --- | --- |
 | `config` | `private-ai-framework-config-v<framework>-<llama>-arm64.pkg` | `.config` |

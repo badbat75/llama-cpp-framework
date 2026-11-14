@@ -1,6 +1,6 @@
 # Private AI Framework
 
-> **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in seven `.deb` and seven `.rpm` packages (see [Linux](#linux)), macOS on Apple Silicon in four `.pkg` (see [macOS](#macos), untested).
+> **Windows first**: the full pipeline (build, installer) targets Windows 10/11 and ends in an MSI. Linux ends in eight `.deb` and eight `.rpm` packages, the engine `llama.cpp` apart from the framework (see [Linux](#linux)), macOS on Apple Silicon in four `.pkg` (see [macOS](#macos), untested).
 
 A build orchestrator, run with cargo (`cargo run -p xtask -- <phase>`, the crate in `xtask/`), that builds and packages [llama.cpp](https://github.com/ggerganov/llama.cpp) with multi-GPU backend support (CUDA, Vulkan, ROCm/HIP on Windows and Linux; Metal and Vulkan on macOS) and MSI packaging (WiX Toolset) on Windows. The chat UI built into `llama-server` is used as the frontend. `pai-bff`, a local service with its own web UI (`fe/`), ships as a service on Linux and Windows; its web UI shows, read-only, the framework version and the manager's instances with their state so far.
 
@@ -106,7 +106,7 @@ cargo run -p xtask -- install
 
 ## Linux
 
-Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `pai-config` and `pai` beside it, packaged as seven `.deb` and seven `.rpm` packages.
+Debian/Ubuntu: the same cargo phases end at a working `llama-server` with the CUDA, Vulkan and HIP backends and `pai-config` and `pai` beside it, packaged as eight `.deb` and eight `.rpm` packages: the framework's four at the framework's version, the engine `llama.cpp` and its three GPU runtimes at their own.
 
 ```bash
 # 1. First time only (no Rust yet): apt packages (sudo), Rust (rustup), then the dists.
@@ -122,8 +122,9 @@ cargo run -p xtask -- configure
 # 3. Build llama.cpp, pai-config and pai into build/linux/llama.cpp-cmake/bin/
 cargo run -p xtask -- build
 
-# 4. Package: dist/private-ai-framework-{config,cli,bff,llama}-v<version>-<llamaRelease>-amd64.deb,
-#    dist/private-ai-framework-{rocm,cuda,vulkan}-v<sdkVersion>-amd64.deb, and the same as -x86_64.rpm
+# 4. Package: dist/private-ai-framework-{config,cli,bff,core}-v<version>-amd64.deb,
+#    dist/llama.cpp-v<release>+pai<N>-amd64.deb, dist/llama.cpp-{rocm,cuda,vulkan}-v<sdkVersion>-amd64.deb,
+#    and the same as -x86_64.rpm (llama.cpp must be on a release tag)
 cargo run -p xtask -- package
 
 # 5. Install (or upgrade, or reinstall) the newest package of each component in dist/: the .deb
@@ -135,15 +136,16 @@ The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained, so th
 
 | Package | Holds | Version |
 |---|---|---|
-| `private-ai-framework-config` | `pai-config`, the GUI, and its data (requires `cli` and `llama` at the same version) | framework + llama.cpp release |
-| `private-ai-framework-cli` | `pai`, the command line, and the benchmark method (requires `llama` at the same version; no graphics library) | framework + llama.cpp release |
-| `private-ai-framework-bff` | `pai-bff`, the web service, and its systemd unit (requires `llama` at the same version) | framework + llama.cpp release |
-| `private-ai-framework-llama` | llama.cpp's programs and libraries, the ggml backends included, and the text every program prints | framework + llama.cpp release |
-| `private-ai-framework-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
-| `private-ai-framework-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
-| `private-ai-framework-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
+| `private-ai-framework-config` | `pai-config`, the GUI, and its data (requires `cli` and `core` at the same version, `llama.cpp` at least at the release it was built against) | framework, `2.99.1` |
+| `private-ai-framework-cli` | `pai`, the command line, and the benchmark method (requires `core` at the same version and `llama.cpp` at least; no graphics library) | framework |
+| `private-ai-framework-bff` | `pai-bff`, the web service, its systemd unit and its user (requires `core` at the same version) | framework |
+| `private-ai-framework-core` | `pai-manager`, the systemd units, the D-Bus and polkit policies, the service user and the text every program prints (requires `llama.cpp` at least) | framework |
+| `llama.cpp` | The engine: llama.cpp's programs and libraries, the ggml backends included, nothing of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai1` |
+| `llama.cpp-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
+| `llama.cpp-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
+| `llama.cpp-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
 
-`llama` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. A headless server installs `llama`, `cli` and its runtimes, without `config` and the graphics libraries it pulls in. Each package but `cli` and `bff`, which are new, upgrades in place the packages of release 2.4 and earlier, `llama-cpp-framework` and `llama-cpp-framework-<component>`, which it replaces. They install the executables in `/usr/bin/` (`llama-server`, `pai-config`, `pai`, the other llama.cpp tools), the libraries and runtimes in `/usr/lib/private-ai/`, a desktop entry that puts the configurator ("Private AI Framework") in the applications menu, and, in `llama`, the `private-ai-manager` service that runs llama-server as the systemd instance `llama.cpp@default` (enabled and started on install, logging to the journal: `journalctl -u llama.cpp@default`), and, in `bff`, the `private-ai-bff` service that serves the web UI on `http://127.0.0.1:8590` (enabled and started on install, as a user systemd allocates at each start). The configurator is its client: the server and preset files are the service's, in `/etc/private-ai/`, changed through it with polkit asking for an administrator's password; `settings.ini` stays per user in `~/.config/private-ai/` (benchmark runs in `~/.local/share/private-ai/`). At its first start `pai-config` moves there what release 2.4 kept under `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` ([details](crates/config/README.md#migration-from-24)) and offers to copy a per-user `server.ini` and presets to the service (`pai config import`; [details](crates/config/README.md#through-the-manager-linux-windows)). Details: [docs/build-packaging.md](docs/build-packaging.md#the-deb-and-rpm-linux). A backend whose GPU, driver or runtime package is missing is skipped at start.
+`llama.cpp` recommends the three runtimes and refuses any other version of them; leave out the ones the machine has no use for. A newer `llama.cpp` installs without rebuilding the framework. A headless server installs `core`, `cli`, `llama.cpp` and its runtimes, without `config` and the graphics libraries it pulls in. `config`, `llama.cpp` and the runtimes upgrade in place the packages of release 2.4 and earlier, `llama-cpp-framework` and `llama-cpp-framework-<component>`, which they replace (`llama.cpp` replaces `-llama`); `llama.cpp` refuses to sit beside the distribution's own (`llama.cpp-tools` on Ubuntu, `llama-cpp` on Fedora). They install the executables in `/usr/bin/` (`llama-server`, `pai-config`, `pai`, the other llama.cpp tools), the libraries and runtimes in `/usr/lib/private-ai/`, a desktop entry that puts the configurator ("Private AI Framework") in the applications menu, and, in `core`, the `private-ai-manager` service that runs llama-server as the systemd instance `llama.cpp@default` (enabled and started on install, logging to the journal: `journalctl -u llama.cpp@default`), and, in `bff`, the `private-ai-bff` service that serves the web UI on `http://127.0.0.1:8590` (enabled and started on install, as the system user `private-ai-bff`). The configurator is its client: the server and preset files are the service's, in `/etc/private-ai/`, changed through it with polkit asking for an administrator's password; `settings.ini` stays per user in `~/.config/private-ai/` (benchmark runs in `~/.local/share/private-ai/`). At its first start `pai-config` moves there what release 2.4 kept under `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` ([details](crates/config/README.md#migration-from-24)) and offers to copy a per-user `server.ini` and presets to the service (`pai config import`; [details](crates/config/README.md#through-the-manager-linux-windows)). Details: [docs/build-packaging.md](docs/build-packaging.md#the-deb-and-rpm-linux). A backend whose GPU, driver or runtime package is missing is skipped at start.
 
 The dists install side by side as `<root>/<version>/linux` under `/mnt/data` (`TheRock`, `CUDA`, `VulkanSDK`; for another mountpoint pass `--dist-root <path>` to `scripts/00-install-prerequisites.sh` and `xtask configure`, which records it, or set `PRIVATE_AI_DIST_ROOT`), about 27 GB in all, and nothing is added to the environment: the scripts find the newest of each on every run. Everything generated lives under `build/linux/`, apart from the Windows artifacts under `build/windows/`. Details: [docs/build-prerequisites.md](docs/build-prerequisites.md#dist-layout-and-root).
 
@@ -160,7 +162,7 @@ scripts/00-install-prerequisites.sh
 # 2. to 5., as on Linux:
 cargo run -p xtask -- configure
 cargo run -p xtask -- build
-cargo run -p xtask -- package    # dist/private-ai-framework-{config,cli,llama}-v<version>-<llamaRelease>-arm64.pkg, -vulkan-v<sdkVersion>-arm64.pkg
+cargo run -p xtask -- package    # four .pkg; their names follow the engine split in step 11 slice 4: docs/build-macos.md
 cargo run -p xtask -- install    # sudo installer -pkg ... -target /, once per package
 ```
 
@@ -223,7 +225,7 @@ Runtime configs are created and edited with `pai-config` (the GUI) or headless w
 | `xtask prereq` | Linux and macOS: sccache and the newest stable GPU SDK dists, the llama.cpp release check. Accepts `--dist-root`, `--skip`. |
 | `xtask configure` | Detects environment, verifies tools, writes the build config (`config-build.psd1` on Windows, `config-build.toml` elsewhere). Accepts `--llama-cpp-dir` and `--dist-root`. |
 | `xtask build` | Builds **both** llama.cpp (CMake configure out-of-source into `build\<os>\llama.cpp-cmake\` + Ninja, checked out at the newest `vX.Y.Z` release tag: upstream also tags every merge to master `bNNNN`, and those nightlies are not candidates) **and** the web UI in `fe\` (`npm ci`, `npm run build`), then `pai-config`, `pai`, `pai-manager` and `pai-bff` (`cargo build --release` into `build\<os>\cargo-target\`). `xtask build llama` and `xtask build config` build one of them. Auto-clones llama.cpp into `build\<os>\llama.cpp\`. Uses sccache when available. |
-| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\private-ai-framework-v<version>-<llamaBuild>-<arch>.msi` and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
+| `xtask package` | Windows: stages into `build\windows\staging\`, then runs WiX to produce `dist\private-ai-framework-v<version>-<llamaBuild>-<arch>.msi` (the llama.cpp release leaves the name with `PLAN.md` step 11 slice 3) and validates it (`--wix`, `--keep-staging`). Linux: the `.deb` and `.rpm` of each component (`--deb`, `--rpm`); macOS: the `.pkg` of each component. |
 | `xtask install` | Installs the newest package in `dist/` on this machine, on Linux and macOS the newest of each component or the files named (`--dry-run`). Windows: the MSI through `msiexec /qb` (progress bar and the UAC prompt, all features, the recorded install directory; a downgrade removes the installed version first). Linux and macOS: the `.deb`, `.rpm` or `.pkg` through the package manager (`--force` installs while a program of the packages runs: on Linux one in `/usr/bin` or holding a library of `/usr/lib/private-ai`, the services aside, which the packages restart; on macOS one from `/opt/private-ai`; the MSI stops them itself). |
 | `crates\config\` | Rust GUI configurator `pai-config` for `server.ini` / `presets.ini`, opencode/Claude Code integrations, and llama-server start/stop. See [crates\config\README.md](crates/config/README.md). |
 | `crates\cli\` | `pai`, the configurator's command line (package `pai-cli`): the same operations headless. Documented with the GUI in [crates\config\README.md](crates/config/README.md). |
@@ -231,7 +233,7 @@ Runtime configs are created and edited with `pai-config` (the GUI) or headless w
 
 ## Packaging
 
-`xtask package` produces a Windows Installer package at `dist\private-ai-framework-v<version>-<llamaRelease>-<arch>.msi` (e.g. `private-ai-framework-v2.99.0-v0.9.0-x64.msi`: the framework version first, the bundled llama.cpp release second). The package:
+`xtask package` produces a Windows Installer package at `dist\private-ai-framework-v<version>-<llamaRelease>-<arch>.msi` (e.g. `private-ai-framework-v2.99.0-v0.9.0-x64.msi`: the framework version first, the bundled llama.cpp release second, until `PLAN.md` step 11 slice 3 splits the MSI into two features and names it by the framework's version alone). The package:
 
 - Installs llama.cpp binaries to `C:\Program Files\private-ai\` by default, the directory choosable (`pai-config.exe`, `pai.exe`, `pai-manager.exe`, `pai-bff.exe` and `llama.ico` go into `bin\` next to `llama-server.exe`).
 - Installs the `private-ai-manager` service (LocalSystem, started at boot), which runs each llama-server instance as its own service (`llama.cpp_<id>`, under the virtual account `NT SERVICE\llama.cpp_<id>`) and serves the configurator over the named pipe `\\.\pipe\private-ai-manager`: any interactive user may start and stop the server, only a member of Administrators may change its settings. The server and preset files are in `%ProgramData%\private-ai\config\`, the instance's log in `%ProgramData%\private-ai\logs\llama-server@default.log`; the MSI also creates `%ProgramData%\private-ai\models\`, which the instances can read (a models folder in a user's profile is not readable by them). These folders outlive an uninstall. Written and type-checked, not yet run on Windows ([installer\AGENTS.md](installer/AGENTS.md)).

@@ -8,8 +8,9 @@ updated: 2026-11-14
 
 The pipeline turns a llama.cpp release into an installable package with the CUDA, Vulkan and ROCm
 backends, the `pai-config` configurator and its command line `pai`. It runs on Windows (one MSI) and
-Linux (seven `.deb` and seven `.rpm` packages: the GUI, the command line, the web service, llama.cpp
-and one per GPU runtime). It also runs on macOS (Apple Silicon, four `.pkg`), where it is written but untested.
+Linux (eight `.deb` and eight `.rpm` packages: the framework's GUI, command line, web service and
+core, at the framework's version, and the engine `llama.cpp` with one package per GPU runtime, at their
+own versions). It also runs on macOS (Apple Silicon, four `.pkg`), where it is written but untested.
 
 **In short.** Run the bootstrap script once, which also runs `xtask prereq` on Linux and macOS. Then
 run `xtask configure`, `build`, `package` and `install` in that order. `xtask <phase>` is short for
@@ -104,7 +105,7 @@ says. The configurator always goes to `build/<os>/cargo-target`.
 | Dists | `TheRock`, `CUDA`, `VulkanSDK` | The same, with `NCCL` | `VulkanSDK` |
 | Machine environment | `HIP_PATH` and PATH of the active ROCm dist | None | None |
 | sccache binary | `%LOCALAPPDATA%\Programs\sccache\sccache.exe` | `~/.local/bin/sccache` | `~/.local/bin/sccache` |
-| Packages | One MSI | Seven `.deb`, seven `.rpm` | Four `.pkg` |
+| Packages | One MSI | Eight `.deb`, eight `.rpm` | Four `.pkg` |
 | Installs to | `Program Files\private-ai` (choosable) | `/usr` (`/usr/bin`, `/usr/lib/private-ai`, `/usr/libexec/private-ai`, `/usr/share/private-ai`) | `/opt/private-ai`, links in `/usr/local/bin` |
 
 ## Where things land
@@ -153,7 +154,7 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Export `HIP_PATH` or `ROCM_PATH` before `xtask configure` on Linux | A usable one wins over the layout. [Dist layout and root](build-prerequisites.md#dist-layout-and-root) |
 | Run bare `cargo` on Linux with the Windows `.cargo/config.toml` present | It lands in `build/windows/cargo-target`. [Build parallelism](build-compiling.md#build-parallelism) |
 | Share a clone or build directory between systems | Line endings, patch state and `node_modules` mix. [Where things land](#where-things-land) |
-| Test a tree-built `llama-server` on Linux while the `llama` package is installed | It loads the installed backends from `GGML_BACKEND_DIR`, `/usr/lib/private-ai`, before its own. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
+| Test a tree-built `llama-server` on Linux while the `llama.cpp` package is installed | It loads the installed backends from `GGML_BACKEND_DIR`, `/usr/lib/private-ai`, before its own. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Upgrade the Linux packages under a running server | It would load new kernels with old libraries. [Install](build-packaging.md#install) |
 | Leave out the runtime package of a GPU the machine has | llama-server skips that backend at start, with only a log line. [The `.deb` and `.rpm`](build-packaging.md#the-deb-and-rpm-linux) |
 | Copy all of `OpenSSLDir\bin` into the package | Most of it is providers that must not ship. [The MSI](build-packaging.md#the-msi-windows) |

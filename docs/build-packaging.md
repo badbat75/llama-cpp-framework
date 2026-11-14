@@ -17,29 +17,35 @@ packages down. The `.pkg` files are on [the macOS page](build-macos.md). The MSI
 Windows that also means the VC++ runtime. Each OS stages into `build/<os>/staging/`, and the staged
 tree is the installed tree.
 
-**Windows ships one MSI. Linux ships seven packages per format and macOS four, so a machine can leave out
+**Windows ships one MSI. Linux ships eight packages per format and macOS four, so a machine can leave out
 the runtime of a GPU it does not have, and a headless server the GUI.** `xtask/src/common/components.rs` splits the staged tree by
-path, so no file lands in two packages or in none.
+path, so no file lands in two packages or in none. On Linux the engine, llama.cpp, is packaged apart
+from the framework, under its own name and version (`PLAN.md` step 11, R12); the MSI and the macOS
+`.pkg` files get the same split in later slices of that step (3 and 4), and until then keep the
+layout described here and on [the macOS page](build-macos.md).
 
 | OS | Package | File in `dist/` |
 | --- | --- | --- |
-| Windows | The MSI | `private-ai-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build) |
-| Linux | `config`, `cli`, `bff`, `llama` | `private-ai-framework-<package>-v<framework>-<llama>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
-| Linux | `rocm`, `cuda`, `vulkan` | `private-ai-framework-<package>-v<sdk>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
+| Windows | The MSI | `private-ai-framework-v<framework>-<llama>-x64.msi` (`arm64` on an ARM build); `private-ai-framework-v<framework>-x64.msi` once step 11 slice 3 lands |
+| Linux | The framework: `config`, `cli`, `bff`, `core` | `private-ai-framework-<package>-v<framework>-amd64.deb`, `-x86_64.rpm` (`arm64`, `aarch64` on ARM) |
+| Linux | The engine, `llama.cpp` | `llama.cpp-v<release>+pai<N>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
+| Linux | Its runtimes, `llama.cpp-rocm`, `-cuda`, `-vulkan` | `llama.cpp-<sdk>-v<sdk version>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | macOS | `config`, `cli`, `llama`, `vulkan` | [The macOS page](build-macos.md) |
 
-For example, `private-ai-framework-v2.99.0-v0.9.0-x64.msi`, `private-ai-framework-llama-v2.99.0-v0.9.0-amd64.deb`,
-`private-ai-framework-rocm-v10.1.0-amd64.deb`. Release 2.4 and earlier named them `llama-cpp-framework-*`:
-the new packages upgrade those in place (below, per format).
+For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai1-amd64.deb`,
+`llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.0-v0.9.0-x64.msi`. Release 2.4 and
+earlier named them `llama-cpp-framework-*`: the new packages upgrade those in place (below, per format).
 
 - `<framework>` is the `[workspace.package]` version of the root `Cargo.toml`, one for the
   `pai-*` crates: the configurator and the framework are versioned together.
-- `<llama>` is `git describe --tags` of the clone, which prefers the annotated release tag over the
-  nightly on the same commit.
-- Anything but an exact `vX.Y.Z` falls back to `b<rev-list --count>`, shaped so a non-release
-  package cannot pass for one.
-- `<sdk>` is the version of the SDK in the dist layout. An SDK outside the layout takes the package
-  version of `config`, `cli`, `bff` and `llama`.
+- `<release>` (`<llama>` in the MSI's name) is `git describe --tags` of the clone, which prefers the
+  annotated release tag over the nightly on the same commit. On Linux `xtask package` refuses a clone
+  that is not on an exact `vX.Y.Z` release; elsewhere anything else falls back to
+  `b<rev-list --count>`, shaped so a non-release package cannot pass for one.
+- `<N>` is our build revision of that release, `LLAMA_CPP_REVISION` in `components.rs` (1), raised
+  when the patches or the build options change on the same release.
+- `<sdk version>` is the version of the SDK in the dist layout. An SDK outside the layout takes the
+  framework's version.
 
 **Every OS ships the benchmark method read-only** in `share/benchmarks/`: each `standard-<X.Y>.ini`,
 `standard.versions`, and the prompts with their images. `bench_share.rs` stages it, and on Linux and
@@ -47,9 +53,9 @@ macOS it is in the `cli` package.
 
 **Every OS ships the configurator's text read-only** in `share/strings/`: `en_US.toml`, the GUI's
 language file, and `cli.toml`, the text every program prints (`pai`, `pai-manager`, `pai-bff`).
-`strings_share.rs` stages every `*.toml` of `crates/core/strings/`; on Linux and macOS `cli.toml` is
-in the `llama` package, which every framework package requires on Linux, and the GUI's language files
-are in `config`.
+`strings_share.rs` stages every `*.toml` of `crates/core/strings/`; on Linux `cli.toml` is in the
+`core` package, which every other framework package requires, and the GUI's language files are in
+`config`. macOS: [its page](build-macos.md).
 
 **llama.cpp's test harnesses are pruned on every OS.** On Windows the installer can put `bin\` on
 the system PATH. On Linux every staged executable lands in `/usr/bin`, and on macOS each gets a command
@@ -62,7 +68,8 @@ restricted to what resolves inside a dist. Everything else stays a system librar
 
 **Every package carries its licences.** The MSI holds them in `share\licenses\` beside `bin\`. On Linux
 each package holds its own `/usr/share/private-ai/licenses/<package>/`, and on macOS its own
-`/opt/private-ai/share/licenses/<package>/`, since no two packages can own one file. `licenses.rs` (`xtask/src/common/`) stages them:
+`/opt/private-ai/share/licenses/<package>/`, since no two packages can own one file (the directory is
+named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`xtask/src/common/`) stages them:
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
   icon font, and a text for every bundled library.
@@ -76,8 +83,8 @@ each package holds its own `/usr/share/private-ai/licenses/<package>/`, and on m
   `installer/licenses/`, whose README says where each was taken from: the Vulkan loader is Apache
   2.0 there on every OS, since it is Khronos' open-source loader code, whatever package carries it.
 - NVIDIA's terms are not an open-source licence. They install as `NVIDIA-CUDA-EULA.txt`, and
-  `ggml-cuda` needs them too, since it links NVIDIA's static runtime: on Linux both `llama` and `cuda`
-  carry them.
+  `ggml-cuda` needs them too, since it links NVIDIA's static runtime: on Linux both `llama.cpp` and
+  `llama.cpp-cuda` carry them.
 
 ### The MSI (Windows)
 
@@ -175,39 +182,48 @@ The app directory wins the DLL search order, so they go in `bin\`.
 
 ### The `.deb` and `.rpm` (Linux)
 
-**`xtask package` builds seven packages per format from one staged tree, about 3.8 GiB installed with all
+**`xtask package` builds eight packages per format from one staged tree, about 3.8 GiB installed with all
 of them.** `--deb` or `--rpm` builds one format. It refuses to run without `pai-config` and `pai` in the
-build's `bin/` or `pai-manager` and `pai-bff` in `cargo-target/release/`, and when the built `pai-config --version` differs from the root `Cargo.toml`'s, a bump
-without a rebuild.
+build's `bin/` or `pai-manager` and `pai-bff` in `cargo-target/release/`, when the built `pai-config --version` differs from the root `Cargo.toml`'s (a bump
+without a rebuild), and when the llama.cpp clone is not on a `vX.Y.Z` release tag.
 
-| Package `private-ai-framework-` | Holds | Version | `.deb` / `.rpm` |
+| Package | Holds | Version | `.deb` / `.rpm` |
 | --- | --- | --- | --- |
-| `config` | `pai-config` (the GUI), its language files, the desktop entry and its icon | `<framework>+llama.cpp.<tag>` | not measured |
-| `cli` | `pai` (the command line), the benchmark method; no graphics library | `<framework>+llama.cpp.<tag>` | not measured |
-| `bff` | `pai-bff` (the web service) and `private-ai-bff.service` | `<framework>+llama.cpp.<tag>` | not measured |
-| `llama` | llama.cpp with the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, `pai-manager` and its system files, `cli.toml` | `<framework>+llama.cpp.<tag>` | 190 / 229 MiB |
-| `rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
-| `cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
-| `vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
+| `private-ai-framework-config` | `pai-config` (the GUI), its language files, the desktop entry and its icon | `<framework>` | not measured |
+| `private-ai-framework-cli` | `pai` (the command line), the benchmark method; no graphics library | `<framework>` | not measured |
+| `private-ai-framework-bff` | `pai-bff` (the web service), `private-ai-bff.service` and the sysusers entry of its user | `<framework>` | not measured |
+| `private-ai-framework-core` | `pai-manager`, every other systemd unit (`llama.cpp@.service` included: it runs `pai-manager run-instance`), the D-Bus and polkit policies, the sysusers entry of `private-ai`, `cli.toml`, the manager's maintainer scripts | `<framework>` | not measured |
+| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp; nothing of the framework and no maintainer script | `1:<release>+pai<N>`, `1:1.0.0+pai1` | not measured |
+| `llama.cpp-rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
+| `llama.cpp-cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
+| `llama.cpp-vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
 
-Sizes are of the v1.0.0 build (framework 2.4.0), as `xtask package` prints them, rounded up to the MiB.
-That build had one `config` package of 18 / 21 MiB holding what `config` and `cli` hold now, without
-the `pai` binary, and no `bff`.
+The runtimes' sizes are of the v1.0.0 build (framework 2.4.0), as `xtask package` printed them, rounded
+up to the MiB: they hold the same files as then. The framework's packages and `llama.cpp` divide 2.4's
+`config` (18 / 21 MiB) and `llama` (190 / 229 MiB) another way and have not been measured.
+
+**The engine carries its own version, the framework packages only the framework's.** `llama.cpp` is
+`1:<release>+pai<N>`: the epoch `1:` because Ubuntu 26.04 ships its own `llama.cpp` at `8681+dfsg-1`,
+which apt would otherwise rank above `1.0.0` (the epoch is compared first), and `+pai<N>` our build
+revision. The `.rpm` spells it Epoch `1`, Version `<release>`, Release `pai<N>`; every other `.rpm` has
+Release `1` and no epoch. A newer llama.cpp therefore installs without a framework rebuild.
+`xtask install` compares the epochs and reads an rpm's version with `%{EVR}`.
 
 **A runtime package holds only the external SDK's libraries, so it changes only with the SDK.** A new
 llama.cpp on the same SDKs leaves the three as they are. Each is optional: a backend whose runtime is
 missing is skipped at start, with only a log line.
 
-**The packages tie each other to exact versions:**
+**The relations:**
 
 | Relation | `.deb` | `.rpm` |
 | --- | --- | --- |
-| `config` needs `cli` and `llama`, `cli` and `bff` need `llama`, each at exactly its version | `Depends` `(= <version>)` | `Requires` `= <version>` |
-| `llama` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
-| `llama` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
-| All but `cli` and `bff` replace `llama-cpp-framework`, the single package of the releases up to 2.2.0 | `Conflicts`, `Replaces` | `Obsoletes` `<= 2.2.0` |
-| Each but `cli` and `bff`, which those releases did not have, replaces its component's package of releases 2.3 and 2.4, `llama-cpp-framework-<package>`, and stands in for it | `Conflicts`, `Replaces`, `Provides` `(= <version>)` | `Obsoletes` `< 2.4.1` (`config`, `llama`) or `<= <version>` (a runtime), `Provides` `= <version>-1` |
-| `llama` keeps out the distribution's own package | `Conflicts: llama.cpp` | `Conflicts: llama-cpp` |
+| `config` needs `cli` and `core`; `cli` and `bff` need `core`; each at exactly its version | `Depends` `(= <version>)` | `Requires` `= <version>` |
+| `config`, `cli` and `core` need the engine at least at the release they were built against; `bff` does not run it | `Depends: llama.cpp (>= 1:<release>)` | `Requires: llama.cpp >= 1:<release>` |
+| `llama.cpp` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
+| `llama.cpp` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
+| `llama.cpp` keeps out the distribution's package of the same commands | `Conflicts: llama.cpp-tools` (Ubuntu) | `Conflicts: llama-cpp` (Fedora) |
+| `config`, `llama.cpp` and the runtimes replace `llama-cpp-framework`, the single package of the releases up to 2.2.0 | `Conflicts`, `Replaces` | `Obsoletes` `<= 2.2.0` |
+| The same replace their component's package of releases 2.3 and 2.4 (`llama-cpp-framework-config`, `-llama`, `-rocm`, `-cuda`, `-vulkan`) and stand in for it; `cli`, `bff` and `core` had none | `Conflicts`, `Replaces`, `Provides` `(= <version>)` | `Obsoletes` `< 2.4.1` (`config`, `llama.cpp`) or `<= <version>` (a runtime), `Provides` `= <EVR>` |
 
 **The `Obsoletes` is versioned, the `.deb` pair is not.** rpm matches an unversioned `Obsoletes` against
 every version of the name, future ones included, so it would remove a package that later takes the name
@@ -216,22 +232,31 @@ the old files, so those stay unversioned. Against the 2.4 component packages, `<
 (rpm orders it above 2.4.0, below 2.4.1); a runtime is versioned by its SDK, with no last version known
 under the old name, so its own version bounds the old package.
 
-**`config`, `cli`, `bff` and `llama` carry `<framework>+llama.cpp.<tag>`**, for example `2.2.0+llama.cpp.v0.9.0`. A
-rebuild on a newer llama.cpp alone is then an upgrade to apt and dnf. dpkg and rpm both order
-`2.2.0` < `2.2.0+llama.cpp.v0.9.0` < `2.2.0+llama.cpp.v0.10.0` < `2.2.1+...`.
+**Checked on a real install** (Ubuntu 26.04, 2026-11-14, the `.deb` files of 2.99.1 with llama.cpp
+`1:1.0.0+pai1`, reported by the user): the eight packages installed over 2.4.0 and removed its five
+packages; the users `private-ai` and `private-ai-bff` were created, `private-ai-manager` and
+`private-ai-bff` were active and no `llama-server` was started; `pai --version` printed `2.99.1`; polkit
+refused `nobody` the manager's `Stop`, `WriteFile` and `ReadFile` of `server@default.ini` with
+`NotAuthorized`; the bff answered `/api/version`, `/api/instances` with `[]` and 200, and 503
+`unavailable` with the manager stopped. The `.rpm` files have not been installed.
 
 | Path | Package | Holds |
 | --- | --- | --- |
-| `/usr/bin/` | `llama`; `pai-config` in `config`, `pai` in `cli` | llama.cpp's executables, `pai-config` and `pai`, the real files |
-| `/usr/libexec/private-ai/` | `llama`; `pai-bff` in `bff` | `pai-manager` and `pai-bff`, which the units call by full path |
-| `/usr/lib/private-ai/` | `llama` | llama.cpp's libraries (`libllama`, `libmtmd`) and the ggml backends, a private directory, never a system library directory |
-| `/usr/lib/private-ai/lib/` | `rocm`, `cuda`, `vulkan`; `llvm/lib/libomp.so` in `llama` | The bundled runtimes |
-| `/usr/lib/private-ai/.kpack/` | `rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
+| `/usr/bin/` | `llama.cpp`; `pai-config` in `config`, `pai` in `cli` | llama.cpp's executables, `pai-config` and `pai`, the real files |
+| `/usr/libexec/private-ai/` | `core`; `pai-bff` in `bff` | `pai-manager` and `pai-bff`, which the units call by full path |
+| `/usr/lib/private-ai/` | `llama.cpp` | llama.cpp's libraries (`libllama`, `libmtmd`) and the ggml backends, a private directory, never a system library directory |
+| `/usr/lib/private-ai/lib/` | The runtimes; `llvm/lib/libomp.so` in `llama.cpp` | The bundled runtimes |
+| `/usr/lib/private-ai/.kpack/` | `llama.cpp-rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
 | `/usr/share/private-ai/benchmarks/` | `cli` | The benchmark method |
-| `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `llama` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
-| `/usr/share/private-ai/licenses/<package>/` | Each its own | The licence texts and their `README.txt` |
-| `/usr/share/` | `config`; `doc/<pkg>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
-| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `llama`; `private-ai-bff.service` in `bff` | The services' system files, below |
+| `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
+| `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
+| `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
+| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/` | `core`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
+
+**Each package's `copyright` and `Homepage` (rpm `URL`) name its own source.** The framework's
+packages carry this project's MIT licence and repository; `llama.cpp` carries llama.cpp's own licence
+and its upstream, `https://github.com/ggml-org/llama.cpp`; a runtime's describes the SDK libraries it
+redistributes, with the same upstream.
 
 **Staging skips `cmake --install` and places each file of the build's `bin/` by name** (`place` in
 `xtask/src/linux/package.rs`): a `lib*.so*` in `/usr/lib/private-ai`, every other executable in
@@ -244,7 +269,7 @@ of `Provides`.
 
 **ggml finds its backends through `GGML_BACKEND_DIR=/usr/lib/private-ai`** (`xtask/cmake/linux.toml`),
 which ggml searches before the executable's directory and the working directory
-(`ggml_backend_load_best` in `ggml/src/ggml-backend-reg.cpp`). So while the `llama` package is installed,
+(`ggml_backend_load_best` in `ggml/src/ggml-backend-reg.cpp`). So while the `llama.cpp` package is installed,
 a `llama-server` built in the tree loads the installed backends, not its own; with nothing installed
 there, it finds its own beside it.
 
@@ -263,7 +288,7 @@ dists and the Vulkan SDK's loader directory. Each lands under its soname with sy
 **The ROCm part mirrors the dist's `lib/` layout** (`lib/`, `lib/llvm/lib/`,
 `lib/rocm_sysdeps/lib/`, `lib/rocblas/library/`, `lib/hipblaslt/library/`). AMD's libraries find
 each other and their kernel files through `$ORIGIN`-relative RUNPATHs and paths, so a mirrored tree
-needs no patching of anything AMD shipped. `libomp.so` comes along in the `llama` package, not `rocm`,
+needs no patching of anything AMD shipped. `libomp.so` comes along in the `llama.cpp` package, not `llama.cpp-rocm`,
 because ggml-base itself links the dist's OpenMP runtime.
 
 CUDA (`libcudart`, `libcublas`, `libcublasLt`, about 575 MiB), NCCL and the Vulkan loader go flat
@@ -293,7 +318,7 @@ user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and mo
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
 ([Migration from 2.4](../crates/config/README.md#migration-from-24)).
 
-**The services' system files are in `llama`, beside `pai-manager`, and the web service's unit in `bff`** (`xtask/src/linux/system_files.rs`,
+**The services' system files are in `core`, beside `pai-manager`, and the web service's unit and user in `bff`** (`xtask/src/linux/system_files.rs`,
 installed 0644, overwritten on every upgrade; local changes go in a drop-in, `systemctl edit`):
 
 | File | What it does |
@@ -303,47 +328,53 @@ installed 0644, overwritten on every upgrade; local changes go in a drop-in, `sy
 | `/usr/share/dbus-1/system.d/org.privateai.Manager1.conf` | Only root owns the name; anyone may call it, and polkit decides in each call |
 | `/usr/share/polkit-1/actions/org.privateai.manager.policy` | `org.privateai.manager.control` (start, stop, restart): `yes` in the active session, `auth_admin` otherwise; `org.privateai.manager.configure` (writing a file): `auth_admin_keep` |
 | `/usr/lib/sysusers.d/private-ai.conf` | The system user `private-ai`, home `/var/lib/private-ai`, in `render` and `video` |
-| `/usr/lib/systemd/system/private-ai-bff.service` (`bff`) | `pai-bff`, `Type=exec`, as a user allocated at each start (`DynamicUser=yes`, nothing in sysusers.d), with no capability, no device, the kernel and cgroups out of reach and only `AF_UNIX`, `AF_INET`, `AF_INET6` sockets; it reads `/etc/private-ai/bff.ini` and writes nothing; `Restart=on-failure`, enabled for `multi-user.target` |
+| `/usr/lib/systemd/system/private-ai-bff.service` (`bff`) | `pai-bff`, `Type=exec`, as the static user and group `private-ai-bff`, hardened (`ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `RemoveIPC=yes`, `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`), with no capability, no device, the kernel and cgroups out of reach and only `AF_UNIX`, `AF_INET`, `AF_INET6` sockets; it reads `/etc/private-ai/bff.ini` and writes nothing; `Restart=on-failure`, enabled for `multi-user.target` |
+| `/usr/lib/sysusers.d/private-ai-bff.conf` (`bff`) | The system user `private-ai-bff`, with no home and no shell |
+
+**The bff runs as a static user, not a `DynamicUser=`:** it calls the manager on the system bus, and
+dbus-daemon drops a dynamic user's connection at `Hello`. On Ubuntu 26.04 (dbus-daemon 1.16.2) a
+`DynamicUser=yes` bff answered `/api/instances` with 503; the reproduction and the upstream reports
+are in the unit's test in `system_files.rs`. The sandbox `DynamicUser=` implied is written out instead.
 
 Their texts (the unit descriptions, the polkit descriptions and messages) are read in place by systemd
 and polkit, so they are literal in the code, not in the strings files.
 
-**The maintainer scripts are `llama`'s and `bff`'s**, in debhelper's form for the `.deb` (`postinst`,
+**The maintainer scripts are `core`'s and `bff`'s** (`llama.cpp` has none), in debhelper's form for the `.deb` (`postinst`,
 `prerm`, `postrm`) and Fedora's systemd macros written out for the `.rpm` (`%post`, `%preun`,
 `%postun`, `%posttrans`):
 
 | When | What they do |
 | --- | --- |
 | Install | `systemd-sysusers private-ai.conf`, enable the manager, `daemon-reload`, reload the bus policies, start the manager (the `.rpm` in `%posttrans`, once the old package's files are gone) |
-| Upgrade | The same, then restart the manager and `try-restart` the running `llama.cpp@*` instances on the new `llama-server` (the `.rpm` only while the manager is enabled) |
+| Upgrade of `core` | The same, then restart the manager and `try-restart` the running `llama.cpp@*` instances on the new `llama-server` (the `.rpm` only while the manager is enabled). An upgrade of `llama.cpp` alone runs no script, so running instances keep the old `llama-server` until they restart (read from the code, not tried) |
 | Removal | Stop the manager first, so it starts nothing, then the instances; `daemon-reload` (the `.rpm` also disables the manager) |
 | Purge (`.deb`) | Forget the manager's enablement state; `/etc/private-ai` and `/var/lib/private-ai` are kept |
 
-`bff`'s scripts do the same for `private-ai-bff.service` alone: enable and start it on install,
+`bff`'s scripts do the same for `private-ai-bff.service` alone: `systemd-sysusers private-ai-bff.conf`, then enable and start it on install,
 restart it on upgrade (the `.rpm` in `%posttrans`, while it is enabled), stop it on removal (the `.rpm`
 also disables it), and forget its enablement state on purge.
 
 The `.deb` `Depends` on `systemd | systemd-standalone-sysusers | systemd-sysusers` for those scripts;
-the `.rpm` of `llama` and of `bff` `Requires(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd, and `llama`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
+the `.rpm` of `core` and of `bff` `Requires(post)`, `(preun)`, `(postun)` and `(posttrans)` systemd, and `core`'s takes weak dependencies on the `render` and `video` groups, which the sysusers `m` lines
 create when missing.
 
 <details>
 <summary>Dependencies, payload and metadata</summary>
 
 **`.deb` `Depends`** come from `dpkg-shlibdeps` over each package's staged ELF files, with the library
-directories of all seven given as private paths, so a library another package carries asks for nothing.
+directories of all eight given as private paths, so a library another package carries asks for nothing.
 `libvulkan1` is dropped because the loader is bundled.
 
 - `libggml-cuda.so` and the `libcu*` files are left out of the scan. They link the driver's
   `libcuda.so.1`, which no Debian package provides, and `dpkg-shlibdeps` fails on a library it
   cannot find.
-- A fixed list is the fallback of `config`, `cli`, `bff` and `llama` (font libraries for `config` alone). A runtime asks for nothing it does not bring along.
+- A fixed list is the fallback of every package but the runtimes (font libraries for `config` alone). A runtime asks for nothing it does not bring along.
 - What the configurator only `dlopen`s (xkbcommon, Wayland, X11, EGL) is `Recommends` of `config` alone:
   neither the Vulkan loader nor the Vulkan backend names those libraries.
 
 **`.rpm`** keeps rpm's automatic scan.
 
-- `__requires_exclude` covers every library of the seven, and `libcuda`.
+- `__requires_exclude` covers every library of the eight, and `libcuda`.
 - Those libraries are excluded from `Provides` too.
 - `rpmbuild` runs against a throwaway `_dbpath`, since a Debian host has no rpm database.
 
@@ -359,8 +390,6 @@ expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. `usr/share/do
 includes that package's `share/licenses/<package>/README.txt` and points to the directory.
 
 **Maintainer.** `PRIVATE_AI_MAINTAINER` sets it, else git's `user.name` and `user.email`.
-
-**A `-` in the llama.cpp token** becomes `.` in the version, since rpm's Version does not allow it.
 
 </details>
 

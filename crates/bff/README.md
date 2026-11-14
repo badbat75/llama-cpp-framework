@@ -9,9 +9,15 @@ read-only (`PLAN.md` step 10).
 `build/<os>/cargo-target/release/`; the packaging is in
 [docs/build-packaging.md](../../docs/build-packaging.md).
 
-- Linux: the package `private-ai-framework-bff` puts it in `/usr/libexec/private-ai/pai-bff` with
-  `private-ai-bff.service` (`DynamicUser=yes`, hardened), enabled and started at install, restarted
-  on upgrade, stopped on removal.
+- Linux: the package `private-ai-framework-bff` (which requires `private-ai-framework-core`, not the
+  engine) puts it in `/usr/libexec/private-ai/pai-bff` with `private-ai-bff.service`, enabled and
+  started at install, restarted on upgrade, stopped on removal. It runs as the static system user
+  `private-ai-bff` (no home, no shell; created by the package's own sysusers.d entry), hardened with
+  the sandbox `DynamicUser=` would imply written out: a `DynamicUser=` cannot work, because dbus-daemon
+  drops a dynamic user's connection at `Hello` (on Ubuntu 26.04, dbus-daemon 1.16.2, `/api/instances`
+  answered 503; sources in the unit's test in `xtask/src/linux/system_files.rs`). Checked on the real
+  install of 2.99.1 on Ubuntu 26.04 (2026-11-14, by the user): the service active, `/api/version`
+  answered, `/api/instances` `[]` with 200, and 503 `unavailable` with the manager stopped.
 - Windows: the MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
   `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
   the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
@@ -85,7 +91,7 @@ the two calls the manager answers without authorization, and the only ones the b
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
-  send to the manager; neither call asks polkit, and with no session the bff's `DynamicUser` gets no
+  send to the manager; neither call asks polkit, and with no session the bff's user `private-ai-bff` gets no
   `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
   `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive nor an
   administrator's, so the manager refuses it `control` and `configure`
