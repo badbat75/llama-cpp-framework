@@ -10,9 +10,20 @@ The macOS build from prerequisites to package, kept in one place because it diff
 systems in every phase. What it shares with them is linked where it applies, and the phases are in
 [Build pipeline](build-pipeline.md).
 
-**The macOS build is Apple Silicon only and untested.** It was written on Linux and compile-checked
-for `aarch64-apple-darwin` only, so the first run on a Mac is its test. `configure` refuses another
-architecture. The phases are in `xtask/src/macos/`, and everything generated goes to `build/macos/`.
+**The macOS build is Apple Silicon only, and only its minimal build has run.** It was written on
+Linux and compile-checked for `aarch64-apple-darwin`; its one run is the CI workflow below, never a
+user's Mac. `configure` refuses another architecture. The phases are in `xtask/src/macos/`, and
+everything generated goes to `build/macos/`.
+
+**CI.** `.github/workflows/installers-macos.yml` runs on GitHub's `macos-15` (arm64) runner, started
+by hand only (`workflow_dispatch`). It ran green on its first run, 43645311957 (36 min, 2026-11-14,
+as commit `2439e72` records). It covers the prerequisites with `--skip vulkan`, `configure --minimal`,
+`build`, `package` (exactly the four `.pkg` of a minimal build), `xtask install`,
+`llama-server --version` and `pai --version` from `/opt` (`pai`'s against `Cargo.toml`), the `/usr/local/bin`
+symlinks, the four `pkgutil` receipts, and a reinstall of the same version that must restore a removed
+`pai-config`; the `.pkg` files are uploaded. It does not cover the Vulkan SDK, MoltenVK or the
+`llama.cpp-vulkan` package, a model run, a launch of the GUI, an upgrade from an older version or an
+uninstall (the project documents none for a `.pkg`).
 
 **Backends.** Metal is part of the system, and Vulkan runs through MoltenVK. No CUDA or ROCm exists
 there. The CPU backend keeps `GGML_CPU_ALL_VARIANTS`, which upstream implements on Apple as
@@ -62,8 +73,8 @@ directory, loader and `glslc` are
 tree's binaries find the SDK's loader through their build RPATH. A changed compiler path wipes the build directory, since a
 new Xcode can move it.
 
-**Package.** Type-checked only: `xtask package` and `xtask install` on macOS have never run on a Mac,
-and no `pkgbuild` has run here; what follows is read from the code (`xtask/src/macos/package.rs`,
+**Package.** `xtask package` and `xtask install` have run only in the CI workflow above, on a
+minimal build; the rest, the Vulkan package first, is read from the code (`xtask/src/macos/package.rs`,
 `install.rs` and the pure `xtask/src/common/macos_pkg.rs`, whose tests run on Linux). As
 [on Linux](build-packaging.md#packaging), the engine is packaged apart from the framework, each in its
 own prefix: llama.cpp in `/opt/llama.cpp` with its Vulkan runtime, the framework in `/opt/private-ai`.

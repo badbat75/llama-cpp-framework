@@ -16,7 +16,7 @@ as the column says. A requirement still open must be covered by a step.
 |---|---|---|
 | R1 | Build llama.cpp (newest release tag, plus `patches/llama.cpp/`) with CUDA, Vulkan and ROCm/HIP on Windows and Linux; every phase a cargo command | Met: release 2.4.0 |
 | R2 | Package it: an MSI on Windows, split `.deb` and `.rpm` on Linux, self-contained but for the GPU drivers | Met: release 2.4.0 |
-| R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Written, never run on a Mac |
+| R3 | The same on macOS, Apple Silicon only (Metal + Vulkan through MoltenVK, split `.pkg`) | Minimal build (Metal only) built, installed and reinstalled on GitHub's macos-15 runner (step 12); Vulkan, the GUI and a model run never run on a Mac |
 | R4 | A GUI + CLI configurator (`llama-cpp-config`, becoming `private-ai-config`: step 2) for `server.ini` and the per-model `presets.ini` | Met: release 2.4.0 |
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
 | R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 5 |
@@ -413,7 +413,7 @@ Decided with the user on 2026-11-14:
   Windows instances without ModelsDir/StateDir use `%ProgramData%\llama.cpp\{models,state}`; `xtask
   install <engine> <framework>`; two stale mentions gone. Accepted as is: llama.cpp's MSI takes a
   2.4-chosen install folder. Left: the real WiX build and the installer test plan on
-  Windows (the user); the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour, and the root `README.md` still says a save from `pai-config` or `pai` writes `~\.llama.cpp` (the
+  Windows (the user); the `startup.rs` module header and a `server_tab.rs` comment describe the old behaviour (the
   Server form itself shows both folders blank with the instance default as hint since the user's
   2026-11-14 choice).) Folders (user, 2026-11-14): the program in `%ProgramFiles%\llama.cpp\` (with the
   read-only defaults); everything of the engine's instances under `%ProgramData%\llama.cpp\`:

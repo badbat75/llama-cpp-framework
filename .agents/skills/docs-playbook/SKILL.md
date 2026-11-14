@@ -148,3 +148,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - The CI-only minimal build (`configure --minimal`) is described once, in "The minimal build" of
   `build-compiling.md`; `build-pipeline.md` (Options), `build-packaging.md` (file names),
   `build-macos.md` and the `release` skill (step 8) carry a line each and link there.
+- The installer CI workflows (`.github/workflows/installers-*.yml`, started by hand) are described in
+  `docs/build-macos.md` ("CI.") and `installer/AGENTS.md` (the Status paragraph). A run's id and result
+  come from the coordinator's commit (no web fetch): cite the commit. When one goes green, also grep
+  "untested", "never run on a Mac" and "not yet compiled by WiX" in `AGENTS.md`, `PLAN.md` R3 and
+  `build-packaging.md`, which repeat the status.

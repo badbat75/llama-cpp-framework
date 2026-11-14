@@ -1791,7 +1791,7 @@ pub struct DownloadJob {
     /// Fetch the candidate's mmproj (when it has one).
     pub mmproj: bool,
     pub sidecar: Option<Sidecar>,
-    /// The ModelsDir the server reads (`ServerConfig::models_dir_or_default`).
+    /// The ModelsDir the server reads (`server_cfg::models_dir`).
     pub models_dir: PathBuf,
     pub token: Option<Token>,
     pub server_exe: PathBuf,
