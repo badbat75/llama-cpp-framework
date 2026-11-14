@@ -41,8 +41,10 @@ Lessons only: the rules are in `AGENTS.md`.
   Windows fact until the user's Windows run, and put what only that run can settle in the installer
   test plan (`installer/AGENTS.md`), not in the prose as fact.
 - When files move out of the per-user tree (to the manager's machine directory), check what still
-  keys on them: the MSI's user-data dialog shows only when `config\server.ini` exists in
-  `%LOCALAPPDATA%\private-ai`, and the root README's config table and uninstall line name the old
-  place.
+  keys on them or names them: the MSI's user-data dialog (`LLAMA_USERDATA_FOUND` and the dialog text in
+  the `.wxs`, described in `installer/AGENTS.md` with its test plan step), the root README's config
+  table and uninstall line.
+- A string the docs paraphrase (the import offer, a dialog's text): read its current value in
+  `crates/core/strings/*.toml` or the `.wxs` before writing, and grep `PLAN.md` too, which quotes them.
 - A renamed heading renames its anchor: grep `#<old-slug>` in every `.md` (the root README links into
   `crates/config/README.md`) before and after.

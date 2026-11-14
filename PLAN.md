@@ -218,12 +218,6 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
 
 Points of design, and what is still open:
 
-- Follow-ups found by the Windows docs pass (2026-11-14), small, before step 1 closes: the MSI's
-  user-data dialog offers deletion only when the per-user `server.ini` exists, which a user under the
-  manager never has, and its text still names configuration and presets; the `import-offer-body` text
-  promises a password prompt, which Windows never shows (a standard user's import is refused); the
-  README's `xtask install` row still names `/opt/private-ai` for Linux.
-
 - The service user must be able to read `ModelsDir` (and write it, as `LLAMA_CACHE`, for downloads by
   name). A models directory under a home with mode 0700 is not readable by `llama-cpp`: the manager
   reports it rather than changing permissions (agreed with the user on 2026-11-13).
@@ -269,8 +263,8 @@ What changes:
   macOS `.pkg` names, the MSI `private-ai-framework-v<version>-v<llama tag>-x64.msi`. An upgrade replaces
   the old packages: `Replaces`/`Conflicts`/`Provides` on the `.deb`, `Obsoletes`/`Provides` on the `.rpm`,
   the same `UpgradeCode` on the MSI (so MajorUpgrade still removes the old product).
-- **Paths:** install `/opt/private-ai` (Linux, macOS) and the Windows install dir; user data
-  `~/.config/private-ai`, `~/.local/share/private-ai`, `%LOCALAPPDATA%\private-ai`; the registry key; the
+- **Paths:** install `/usr` (Linux, its `private-ai` subdirectories), `/opt/private-ai` (macOS) and
+  the Windows install dir; user data `~/.config/private-ai`, `~/.local/share/private-ai`, `%LOCALAPPDATA%\private-ai`; the registry key; the
   system config dir of step 1 (`/etc/private-ai`, `%ProgramData%\private-ai\config`). The engine's names
   keep `llama.cpp`: the unit `llama.cpp@<id>`, `llama-server`, the `-llama` package's contents.
 - **Migration:** the first run of the new version moves the old user tree to the new one once, when the

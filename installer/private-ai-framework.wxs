@@ -96,14 +96,10 @@
     <Launch Condition="Installed OR ((NOT PREVIOUSUNINSTALLSTRING OR (PREVIOUSUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)) AND (NOT NEWUNINSTALLSTRING OR (NEWUNINSTALLSTRING ~&gt;&lt; &quot;msiexec&quot;)))"
             Message="A previous installation of Private AI Framework must be uninstalled first: Settings &gt; Apps &gt; Private AI Framework &gt; Uninstall. Answer No when it asks whether to delete your data, to keep your configuration. Then run this installer again." />
 
-    <!-- The uninstalling user's data tree, and whether it holds a config:
-         the removal dialog offers it only when config\server.ini exists. -->
+    <!-- The uninstalling user's data tree: the removal dialog offers its
+         deletion whenever the folder exists. -->
     <Property Id="LLAMA_USERDATA_FOUND" Secure="yes">
-      <DirectorySearch Id="UserDataRoot" Path="[LocalAppDataFolder]private-ai" Depth="0">
-        <DirectorySearch Id="UserDataConfig" Path="config" Depth="0">
-          <FileSearch Id="UserDataServerIni" Name="server.ini" />
-        </DirectorySearch>
-      </DirectorySearch>
+      <DirectorySearch Id="UserDataRoot" Path="[LocalAppDataFolder]private-ai" Depth="0" />
     </Property>
     <!-- Set by the removal dialog's checkbox only (see DeleteUserData). -->
     <Property Id="LLAMA_DELETEUSERDATA" Secure="yes" />
@@ -465,7 +461,7 @@
                  Text="Click Remove to remove Private AI Framework v$(var.Version) from this computer: the programs, the PATH entry and the Start Menu shortcut." />
         <Control Id="UserDataText" Type="Text" X="25" Y="105" Width="320" Height="60" NoPrefix="yes" Hidden="yes"
                  ShowCondition="LLAMA_USERDATA_FOUND"
-                 Text="Your configuration, model presets, logs and benchmark results are in&#13;&#10;[PRIVATE_AI_USERDATA_DIR]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
+                 Text="Your settings, benchmark results and logs, and an earlier install's server settings and presets, are in&#13;&#10;[PRIVATE_AI_USERDATA_DIR]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
         <Control Id="DeleteUserData" Type="CheckBox" X="25" Y="170" Width="320" Height="17" Hidden="yes"
                  ShowCondition="LLAMA_USERDATA_FOUND" Property="LLAMA_DELETEUSERDATA" CheckBoxValue="1"
                  Text="&amp;Also delete them (this cannot be undone)" />

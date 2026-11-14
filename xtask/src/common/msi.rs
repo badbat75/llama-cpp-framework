@@ -747,6 +747,101 @@ mod tests {
         assert_eq!(d.writers(), writers);
     }
 
+    /// The one `Property` with this id.
+    fn property<'a, 'i>(doc: &'a Document<'i>, id: &str) -> Node<'a, 'i> {
+        let found: Vec<_> = elements(doc, "Property")
+            .into_iter()
+            .filter(|p| p.attribute("Id") == Some(id))
+            .collect();
+        assert_eq!(found.len(), 1, "one Property {id}");
+        found[0]
+    }
+
+    /// The one `Control` with this id.
+    fn control<'a, 'i>(doc: &'a Document<'i>, id: &str) -> Node<'a, 'i> {
+        let found: Vec<_> = elements(doc, "Control")
+            .into_iter()
+            .filter(|c| c.attribute("Id") == Some(id))
+            .collect();
+        assert_eq!(found.len(), 1, "one Control {id}");
+        found[0]
+    }
+
+    /// Under the manager the per-user tree never holds a `config\server.ini`
+    /// of this install, so the removal dialog's offer is keyed on the tree
+    /// itself: a DirectorySearch with no FileSearch below it sets its
+    /// property to the folder's path when the folder exists (AppSearch: a
+    /// signature not in the Signature table is a directory search).
+    #[test]
+    fn the_user_data_offer_is_found_from_the_per_user_tree_itself() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let found = property(&doc, "LLAMA_USERDATA_FOUND");
+        assert_eq!(found.attribute("Secure"), Some("yes"));
+        let searches: Vec<_> = found.children().filter(|n| n.is_element()).collect();
+        assert_eq!(searches.len(), 1, "one search under the property");
+        let search = searches[0];
+        assert_eq!(search.tag_name().name(), "DirectorySearch");
+        assert_eq!(
+            search.attribute("Path"),
+            Some("[LocalAppDataFolder]private-ai")
+        );
+        assert_eq!(search.attribute("Depth"), Some("0"));
+        assert!(
+            !search.descendants().skip(1).any(|n| n.is_element()),
+            "nothing searched below the tree: the folder itself is the signature"
+        );
+        for n in found.descendants().filter(|n| n.is_element()) {
+            for a in n.attributes() {
+                assert!(
+                    !a.value().to_lowercase().contains("server.ini"),
+                    "{} {}={:?} names server.ini",
+                    n.tag_name().name(),
+                    a.name(),
+                    a.value()
+                );
+            }
+        }
+    }
+
+    /// The removal dialog names what the per-user tree holds under the
+    /// manager (settings, benchmark results, logs and an earlier install's
+    /// server settings and presets), never that the configuration lives
+    /// there, and keeps the folder and the "kept unless ticked" promise.
+    #[test]
+    fn the_user_data_text_names_what_the_tree_holds_under_the_manager() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let ctl = control(&doc, "UserDataText");
+        assert_eq!(ctl.attribute("ShowCondition"), Some("LLAMA_USERDATA_FOUND"));
+        let body = ctl.attribute("Text").expect("UserDataText has a Text");
+        let lower = body.to_lowercase();
+        assert!(
+            body.contains("\r\n[PRIVATE_AI_USERDATA_DIR]\r\n"),
+            "{body:?}"
+        );
+        assert!(
+            body.contains("They are kept unless you tick the box below"),
+            "{body:?}"
+        );
+        for word in [
+            "settings",
+            "benchmark results",
+            "logs",
+            "earlier install",
+            "presets",
+        ] {
+            assert!(lower.contains(word), "{body:?} names {word}");
+        }
+        assert!(!lower.contains("configuration"), "{body:?}");
+        let check = control(&doc, "DeleteUserData");
+        assert_eq!(
+            check.attribute("ShowCondition"),
+            Some("LLAMA_USERDATA_FOUND")
+        );
+        assert_eq!(check.attribute("Property"), Some("LLAMA_DELETEUSERDATA"));
+    }
+
     /// The machine's config, logs and models outlive an upgrade and an
     /// uninstall: Windows Installer removes a CreateFolder folder only when
     /// it is empty, and nothing else in the package deletes them.

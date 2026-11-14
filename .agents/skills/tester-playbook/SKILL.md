@@ -234,6 +234,9 @@ Lessons only: the rules are in `AGENTS.md`.
   character 100000: WebFetch with `offset: 100000`); what the compiler accepts where, from
   `src/wix/WixToolset.Core/Compiler.cs` at the pinned tag on GitHub (the element page's children list
   can omit one: CreateFolder accepts the core `PermissionEx`).
+  What an MSI search sets is not on the WiX page: read the Windows Installer tables on learn.microsoft.com
+  (`appsearch-table`: a signature with no Signature row is a directory search, its property set to the
+  directory's path; `drlocator-table` for Depth).
 - A new parameter on a core method (the caller on `Manager::read_file`): a stub that takes it and keeps
   the old body gives assertion reds in every phase, where a `todo!` would stop the one e2e `#[test]` at
   its first read. To see each later phase red, run a copy of `src/tests/mod.rs` calling only that phase
