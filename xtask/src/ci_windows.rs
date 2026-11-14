@@ -548,3 +548,77 @@ fn prerequisites_script_has_a_minimal_switch_without_gpu_dists() {
         }
     }
 }
+
+/// The value after `option` on `line`: the next whitespace-separated token,
+/// its quotes removed; `None` when the option is absent.
+fn option_value(line: &str, option: &str) -> Option<String> {
+    let mut tokens = line.split_whitespace();
+    tokens.find(|t| *t == option)?;
+    tokens
+        .next()
+        .map(|v| v.trim_matches(|c| c == '"' || c == '\'').to_string())
+}
+
+/// The runner has no `E:` drive, the default dist root of
+/// `installer/dist-sources.psd1` (run 43644178525 stopped in the
+/// prerequisites step at `Join-Path $DistRoot`): every prerequisites call
+/// passes `-DistRoot` and `xtask configure` passes `--dist-root`, both naming
+/// the same directory under `$env:RUNNER_TEMP`.
+#[test]
+fn installers_windows_points_the_dist_root_at_the_runner_temp() {
+    // Both options exist with these spellings.
+    let script = read(PREREQ);
+    let param_end = script.find("\n)").expect("the script's param() block");
+    assert!(
+        script[..param_end].contains("[string]$DistRoot"),
+        "{PREREQ}: no [string]$DistRoot in param()"
+    );
+    let main = read("xtask/src/main.rs");
+    let configure = main
+        .find("    Configure {")
+        .expect("xtask/src/main.rs: no Configure phase");
+    let block_end = configure
+        + main[configure..]
+            .find("\n    },")
+            .expect("end of Configure");
+    let block = &main[configure..block_end];
+    let field = block
+        .find("dist_root: Option<PathBuf>")
+        .expect("xtask configure has no dist_root field (--dist-root)");
+    assert!(
+        block[..field]
+            .trim_end()
+            .lines()
+            .last()
+            .is_some_and(|l| l.contains("#[arg(long)]")),
+        "xtask configure's dist_root is not a plain --dist-root option"
+    );
+
+    let text = workflow();
+    let prereq_lines: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("00-install-prerequisites.ps1"))
+        .collect();
+    assert!(
+        !prereq_lines.is_empty(),
+        "the workflow never runs the prerequisites script"
+    );
+    let configure_line = text
+        .lines()
+        .find(|l| l.contains("xtask -- configure"))
+        .expect("the workflow runs xtask configure");
+    let root = option_value(configure_line, "--dist-root")
+        .unwrap_or_else(|| panic!("xtask configure runs without --dist-root: {configure_line}"));
+    assert!(
+        root.starts_with("$env:RUNNER_TEMP\\") && root.len() > "$env:RUNNER_TEMP\\".len(),
+        "--dist-root is not a directory under $env:RUNNER_TEMP: {root}"
+    );
+    for line in prereq_lines {
+        assert_eq!(
+            option_value(line, "-DistRoot").as_deref(),
+            Some(root.as_str()),
+            "the prerequisites call does not pass -DistRoot {root}: {}",
+            line.trim()
+        );
+    }
+}

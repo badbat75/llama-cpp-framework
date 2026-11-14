@@ -34,7 +34,9 @@ jobs:
       - name: Prerequisites (without GPU SDKs)
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\00-install-prerequisites.ps1 -Minimal
+          # The runner has no E: drive, the default dist root: every
+          # prerequisites run and xtask configure name this one instead.
+          & .\scripts\00-install-prerequisites.ps1 -Minimal -DistRoot $env:RUNNER_TEMP\dists
           # The script reports what it could not do rather than failing, and
           # its PATH changes stay in this step: the later steps get the user
           # scope tools through GITHUB_PATH.
@@ -50,7 +52,7 @@ jobs:
           wix eula accept wix7
           if ($LASTEXITCODE -ne 0) { throw "wix eula accept failed ($LASTEXITCODE)" }
           # The extensions are added once the EULA is accepted: the script's second run does it.
-          & .\scripts\00-install-prerequisites.ps1 -Minimal
+          & .\scripts\00-install-prerequisites.ps1 -Minimal -DistRoot $env:RUNNER_TEMP\dists
           wix extension list -g
           if ($LASTEXITCODE -ne 0) { throw "wix extension list failed ($LASTEXITCODE)" }
 
@@ -63,7 +65,7 @@ jobs:
           if (-not (Test-Path "$env:ProgramFiles\OpenSSL-Win64\include\openssl\ssl.h") -and (Test-Path "$env:ProgramFiles\OpenSSL\include\openssl\ssl.h")) {
             $env:PATH = "$env:ProgramFiles\OpenSSL\bin;$env:PATH"
           }
-          cargo run -p xtask -- configure --minimal
+          cargo run -p xtask -- configure --minimal --dist-root $env:RUNNER_TEMP\dists
           if ($LASTEXITCODE -ne 0) { throw "xtask configure failed ($LASTEXITCODE)" }
 
       - name: xtask build
@@ -216,7 +218,7 @@ jobs:
 
       - name: Upload the MSIs and the logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-windows
           path: |

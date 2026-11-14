@@ -268,3 +268,7 @@ Lessons only: the rules are in `AGENTS.md`.
   `xtask -- <phase>`, so name the phases in step names without the ` -- `. Comment lines are dropped,
   and a step is the text between two `\n      - ` lines: a check "before the repair" goes in the
   repair's own step. Check the YAML still parses: `python3 -c "import yaml; yaml.safe_load(open(P))"`.
+- A GitHub Action's Node runtime is the `runs: using:` of its `action.yml` at the tag:
+  `gh api repos/actions/<name>/contents/action.yml?ref=v7 --jq .content | base64 -d`; its majors via
+  `gh api repos/actions/<name>/releases`. A workflow argument like `$env:RUNNER_TEMP\dists` is a bare
+  PowerShell token, expanded without quotes; the windows runners have only C: and D:.
