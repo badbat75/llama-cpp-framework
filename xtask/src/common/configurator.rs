@@ -1,6 +1,7 @@
 //! `build framework` (02-build, second half): pai-config (the GUI), pai (the
 //! command line) and pai-manager, built with cargo. A product of its own: it
-//! needs nothing from the llama.cpp build but the clone (for the icon). What
+//! needs nothing from the llama.cpp build but the clone (`pai-app`'s
+//! architecture tables). What
 //! follows the cargo build is the OS's: Linux and macOS copy the front ends
 //! next to llama-server (`install_next_to_server`), where macOS packages them
 //! from and a Linux build tree runs them; the Linux and Windows package

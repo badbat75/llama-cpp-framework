@@ -35,6 +35,13 @@ const OLD_NAMES: [&str; 10] = [
 const MIGRATION_MODULE: &str = "core/src/migrate.rs";
 const MIGRATION_NAMES: [&str; 2] = ["llama-cpp-config", r#"join("llama.cpp")"#];
 
+/// The one file allowed to name `HKLM\Software\llama.cpp`, relative to
+/// `crates/`: since the Windows split it is llama.cpp's own MSI's
+/// registration, where pai-manager finds llama-server
+/// (`paths::engine_install_dir`), no longer the old product's key.
+const ENGINE_KEY_MODULE: &str = "core/src/paths.rs";
+const ENGINE_KEY_NAMES: [&str; 1] = [r"Software\llama.cpp"];
+
 /// The old manager executable; the manager's service keeps the name
 /// (`MANAGER_SERVICE_NAMES`).
 const OLD_MANAGER: &str = "private-ai-manager";
@@ -66,6 +73,8 @@ fn hits(path: &Path) -> Vec<String> {
     let toml = path.extension().is_some_and(|e| e == "toml");
     let exempt: &[&str] = if path.ends_with(MIGRATION_MODULE) {
         &MIGRATION_NAMES
+    } else if path.ends_with(ENGINE_KEY_MODULE) {
+        &ENGINE_KEY_NAMES
     } else {
         &[]
     };
@@ -221,5 +230,31 @@ fn only_the_migration_module_may_name_the_old_tree_and_entry() {
     let real = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(MIGRATION_MODULE);
+    assert!(real.is_file(), "{real:?}");
+}
+
+// The engine's registration key is named in paths.rs alone (where the engine's
+// folder is read); anywhere else it is still refused, and paths.rs still
+// refuses every other old name.
+#[test]
+fn only_paths_may_name_the_engine_registration_key() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let src = dir.path().join("core").join("src");
+    std::fs::create_dir_all(&src).expect("src");
+    let text = format!(
+        "const KEY: &str = r\"{}\";\nlet v = env!(\"{}\");\n",
+        concat!("Software", r"\llama.cpp"),
+        concat!("LLAMA", "_FW_GPU_LOCK"),
+    );
+    for name in ["paths.rs", "startup.rs"] {
+        std::fs::write(src.join(name), &text).expect("fixture");
+    }
+    let paths = hits(&src.join("paths.rs"));
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].contains("_FW_GPU_LOCK"), "{paths:?}");
+    assert_eq!(hits(&src.join("startup.rs")).len(), 2);
+    let real = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(ENGINE_KEY_MODULE);
     assert!(real.is_file(), "{real:?}");
 }

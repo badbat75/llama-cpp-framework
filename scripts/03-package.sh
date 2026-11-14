@@ -5,7 +5,8 @@
 # a successful build. The logic, and what the packages install, is in
 # xtask/src/<os>/package.rs; this script only runs it.
 #
-# Usage: scripts/03-package.sh [--deb] [--rpm] [--keep-staging]   (--deb/--rpm: Linux)
+# Usage: scripts/03-package.sh [llama | framework] [--deb] [--rpm] [--keep-staging]
+#        (default: both products; --deb/--rpm: Linux)
 # The same as: cargo run -p xtask -- package [options]
 set -euo pipefail
 repo="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")"

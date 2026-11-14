@@ -1,26 +1,26 @@
 //! Install phase on Windows (cargo run -p xtask -- install): installs the
-//! newest MSI the package phase left in .\dist\ (or the one given) with
+//! newest MSI of llama.cpp the package phase left in .\dist\, then the newest
+//! of the framework (only what is there; or the one given), each with
 //! msiexec, basic UI: a progress bar and the UAC prompt the per-machine
 //! package needs (/qn would show none and fail unelevated). A first install,
 //! an upgrade and a same-version repackage are one command, the MSI's
 //! MajorUpgrade (AllowSameVersionUpgrades). A downgrade, which the MSI
-//! refuses, removes the installed version first (basic UI, so the user data
-//! under %LOCALAPPDATA%\private-ai is kept: installer\AGENTS.md).
+//! refuses, removes the installed version of that product first (basic UI,
+//! so the framework's user data under %LOCALAPPDATA%\private-ai and the
+//! engine's %ProgramData%\llama.cpp are kept: installer\AGENTS.md).
 //!
 //! Running programs need no check here: the package's StopProcesses custom
 //! action stops the configurator and llama-server before files are replaced.
 //! All features go to the recorded InstallDir (or the default directory);
 //! for another choice run the .msi itself, with its full UI.
 
+use crate::common::msi;
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, vercmp};
+use crate::Product;
 use anyhow::{bail, Context, Result};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-
-const PKG_NAME: &str = "private-ai-framework";
-/// The Apps entry the package writes (64-bit view).
-const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\private-ai";
 
 fn name(p: &Path) -> String {
     p.file_name()
@@ -29,13 +29,11 @@ fn name(p: &Path) -> String {
         .into_owned()
 }
 
-fn modified(p: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(p).and_then(|m| m.modified()).ok()
-}
-
-/// One REG_SZ value of the Apps entry, None when the entry or value is absent.
-fn reg_value(value: &str) -> Option<String> {
-    let text = output(cmd("reg").args(["query", UNINSTALL_KEY, "/v", value, "/reg:64"]))?;
+/// One REG_SZ value of a product's Apps entry, None when the entry or value
+/// is absent.
+fn reg_value(product: Product, value: &str) -> Option<String> {
+    let key = msi::uninstall_key(product);
+    let text = output(cmd("reg").args(["query", key, "/v", value, "/reg:64"]))?;
     // "    <name>    REG_SZ    <data>"
     text.lines().find_map(|l| {
         let rest = l
@@ -69,8 +67,7 @@ fn msiexec(args: &[String], log: &Path) -> Result<()> {
 
 pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
     let out_dir = util::repo_root().join("dist");
-    let prefix = format!("{PKG_NAME}-v");
-    let msi = match file {
+    let plan = match file {
         Some(f) => {
             if !f.is_file()
                 || f.extension()
@@ -79,33 +76,42 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
             {
                 bail!("not an .msi: {}", f.display());
             }
-            util::absolute(&f)
+            vec![util::absolute(&f)]
         }
-        None => std::fs::read_dir(&out_dir)
-            .map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|p| {
-                let n = name(p);
-                n.starts_with(&prefix) && n.ends_with("-x64.msi")
-            })
-            .max_by_key(|p| modified(p))
-            .with_context(|| {
-                format!(
-                    "no {PKG_NAME} .msi in {}. Run cargo run -p xtask -- package first.",
-                    out_dir.display()
-                )
-            })?,
+        None => msi::install_plan(&out_dir),
     };
-    // private-ai-framework-v<fw>-<llama>-x64.msi -> <fw>
-    let new_version = name(&msi)
-        .strip_prefix(&prefix)
-        .and_then(|r| r.split('-').next())
-        .unwrap_or_default()
-        .to_string();
-    let old_version = reg_value("DisplayVersion").unwrap_or_default();
+    if plan.is_empty() {
+        bail!(
+            "nothing to install: no llama.cpp or private-ai-framework .msi in {}. Run cargo run -p xtask -- package first.",
+            out_dir.display()
+        );
+    }
+    let logs = util::build_root();
+    std::fs::create_dir_all(&logs)?;
+    for msi in &plan {
+        install(msi, dry_run, &logs)?;
+    }
+    if dry_run {
+        ui::dim("(dry run: nothing installed)");
+    }
+    Ok(())
+}
 
-    ui::head(format!("Package:   {}", name(&msi)));
+/// One MSI: a downgrade removes that product's installed version first.
+fn install(msi: &Path, dry_run: bool, logs: &Path) -> Result<()> {
+    let (product, new_version) = msi::msi_product(&name(msi)).with_context(|| {
+        format!(
+            "{} is not named as xtask package names an MSI (llama.cpp-v<release>-x64.msi, private-ai-framework-v<version>-x64.msi)",
+            name(msi)
+        )
+    })?;
+    let tag = match product {
+        Product::Llama => "llama.cpp",
+        Product::Framework => "private-ai-framework",
+    };
+    let old_version = reg_value(product, "DisplayVersion").unwrap_or_default();
+
+    ui::head(format!("Package:   {}", name(msi)));
     ui::head(format!(
         "Installed: {}",
         if old_version.is_empty() {
@@ -115,18 +121,15 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
         }
     ));
 
-    let logs = util::build_root();
-    std::fs::create_dir_all(&logs)?;
-
     // ── Downgrade: the MSI refuses it, so the installed version goes first ──
     let mut remove = None;
     if !old_version.is_empty() && vercmp(&new_version, &old_version) == Ordering::Less {
-        // UninstallString is "MsiExec.exe /I{ProductCode} LLAMA_UNINSTALL=1".
-        let code = reg_value("UninstallString")
+        // UninstallString is "MsiExec.exe /I{ProductCode} <PROPERTY>=1".
+        let code = reg_value(product, "UninstallString")
             .and_then(|s| Some(s[s.find('{')?..=s.find('}')?].to_string()))
             .context("downgrade: the installed version's ProductCode is not in its Apps entry; uninstall it from Settings > Apps")?;
         ui::warn(format!(
-            "Downgrade: {old_version} is removed first (user data kept)"
+            "Downgrade: {tag} {old_version} is removed first (its data kept)"
         ));
         remove = Some(vec!["/x".to_string(), code, "/qb".into()]);
     }
@@ -139,18 +142,17 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
         ));
     }
     if dry_run {
-        ui::dim("(dry run: nothing installed)");
         return Ok(());
     }
     if let Some(args) = &remove {
-        msiexec(args, &logs.join("msi-uninstall.log"))?;
+        msiexec(args, &logs.join(format!("msi-uninstall-{tag}.log")))?;
     }
-    msiexec(&install, &logs.join("msi-install.log"))?;
+    msiexec(&install, &logs.join(format!("msi-install-{tag}.log")))?;
 
-    let version = reg_value("DisplayVersion").unwrap_or_default();
+    let version = reg_value(product, "DisplayVersion").unwrap_or_default();
     if version != new_version {
         bail!(
-            "the Apps entry reports '{}', the package is {new_version}",
+            "the Apps entry of {tag} reports '{}', the package is {new_version}",
             if version.is_empty() {
                 "nothing"
             } else {
@@ -159,7 +161,7 @@ pub fn run(dry_run: bool, file: Option<PathBuf>) -> Result<()> {
         );
     }
     ui::say("");
-    ui::ok(format!("{PKG_NAME} {new_version} installed"));
+    ui::ok(format!("{tag} {new_version} installed"));
     ui::say("");
     Ok(())
 }

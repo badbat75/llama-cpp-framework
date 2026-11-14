@@ -29,12 +29,14 @@ serde_json = "1"
 zbus = "5.19"
 
 # The Win32 calls of proc.rs (the std handles a child must not inherit) and
-# of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`).
+# of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`), and the
+# engine's registration (paths.rs: `RegGetValueW`).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Console",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
 ] }
 
 [dev-dependencies]

@@ -4,8 +4,8 @@
 # xtask\src\common\configurator.rs; this script only runs them.
 # docs\build-compiling.md explains the decisions behind the build.
 #
-# Usage: .\scripts\02-build.ps1 [llama | config]   (default: both, in that order)
-# The same as: cargo run -p xtask -- build [llama | config]
+# Usage: .\scripts\02-build.ps1 [llama | framework]   (default: both, in that order)
+# The same as: cargo run -p xtask -- build [llama | framework]
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $env:CARGO_TARGET_DIR = Join-Path $repo 'build\windows\cargo-target'

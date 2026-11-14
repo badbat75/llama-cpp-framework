@@ -5,8 +5,8 @@
 # xtask/src/common/configurator.rs; this script only runs them.
 # docs/build-compiling.md explains the decisions behind the build.
 #
-# Usage: scripts/02-build.sh [llama | config]   (default: both, in that order)
-# The same as: cargo run -p xtask -- build [options]
+# Usage: scripts/02-build.sh [llama | framework]   (default: both, in that order)
+# The same as: cargo run -p xtask -- build [llama | framework]
 set -euo pipefail
 repo="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")"
 # build/linux or build/macos: everything generated stays per OS.

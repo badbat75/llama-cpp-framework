@@ -1,8 +1,10 @@
-//! Package phase on Windows (cargo run -p xtask -- package): stages the llama.cpp build,
-//! pai-config and pai-manager into build\windows\staging\ (the GPU runtimes the
-//! backends load included, copied out of the dists), builds the MSI into
-//! .\dist\ with the WiX Toolset pinned in installer\wix-toolset.psd1 and
-//! validates it. installer\AGENTS.md says what the MSI does with the tree.
+//! Package phase on Windows (cargo run -p xtask -- package [llama|framework]):
+//! two MSIs, each staged on its own under build\windows\staging\: llama.cpp's
+//! (the llama.cpp build, the GPU runtimes the backends load, copied out of the
+//! dists, and its defaults) and the framework's (pai-config, pai, pai-manager,
+//! pai-bff), built into .\dist\ with the WiX Toolset pinned in
+//! installer\wix-toolset.psd1 and validated. installer\AGENTS.md says what
+//! each MSI does with its tree.
 
 use super::build_llama::load_build_env;
 use crate::common::licenses;
@@ -10,6 +12,7 @@ use crate::common::msi;
 use crate::common::ui;
 use crate::common::util::{self, cmd, gfx_arch, run as run_cmd};
 use crate::common::version;
+use crate::Product;
 use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
@@ -266,13 +269,16 @@ fn script_command(path: &Path) -> Result<String> {
     Ok(encoded_command(&body.join("\n")))
 }
 
-pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
+pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
     let (cfg, dists) = load_build_env()?; // cmake --install needs the VS env
     let repo = util::repo_root();
 
     // ── Versions ────────────────────────────────────────────────────────
+    // The framework's MSI requires llama.cpp at the release it was built
+    // against, so both need a release checkout.
     let framework_version = version::framework()?;
     let llama_build = version::llama_build(Path::new(&cfg.llama_cpp_dir))?;
+    let llama_version = msi::product_version(&llama_build)?;
 
     // Architecture token for the package name (native 64-bit build).
     let is_arm = ["PROCESSOR_ARCHITEW6432", "PROCESSOR_ARCHITECTURE"]
@@ -347,393 +353,419 @@ pub fn run(keep_staging: bool, wix_arg: Option<PathBuf>) -> Result<()> {
         wix.display()
     ));
 
-    // ── Stage llama.cpp with cmake --install ────────────────────────────
     let build_root = util::build_root();
-    let build_dir = build_root.join("llama.cpp-cmake");
-    let stage = build_root.join("staging");
-    let stage_bin = stage.join("bin");
     let out_dir = repo.join("dist");
-    util::remove_all(&stage)?;
-    std::fs::create_dir_all(&stage)?;
     std::fs::create_dir_all(&out_dir)?;
-    crate::common::bench_share::stage(&stage.join("share").join("benchmarks"))?;
-    crate::common::strings_share::stage(&stage.join("share").join("strings"))?;
 
-    ui::head("Staging llama.cpp binaries...");
-    run_cmd(
-        cmd("cmake")
-            .arg("--install")
-            .arg(&build_dir)
-            .arg("--prefix")
-            .arg(&stage),
-    )?;
+    for product in msi::products(product) {
+        let stage = msi::staging_dir(&build_root, product);
+        let stage_bin = stage.join("bin");
+        util::remove_all(&stage)?;
+        std::fs::create_dir_all(&stage_bin)?;
 
-    // llama.cpp's own test harnesses (test-*.exe): unit tests, and
-    // unwanted here because the installer offers to put bin\ on the SYSTEM
-    // PATH. The C headers go too: the installer does not ship them, and the
-    // MSI harvests the staging tree whole.
-    let tests: Vec<PathBuf> = files_in(&stage_bin)
-        .into_iter()
-        .filter(|p| {
-            let n = name_of(p).to_ascii_lowercase();
-            n.starts_with("test") && n.ends_with(".exe")
-        })
-        .collect();
-    if !tests.is_empty() {
-        let bytes: u64 = tests
+        // ── Stage the product ───────────────────────────────────────────
+        let mut defines: Vec<(&str, String)> = Vec::new();
+        let mut hip_root = None;
+        if product == Product::Llama {
+            let build_dir = build_root.join("llama.cpp-cmake");
+            ui::head("Staging llama.cpp binaries...");
+            run_cmd(
+                cmd("cmake")
+                    .arg("--install")
+                    .arg(&build_dir)
+                    .arg("--prefix")
+                    .arg(&stage),
+            )?;
+
+            // llama.cpp's own test harnesses (test-*.exe): unit tests, not
+            // part of an installed engine. The C headers go too: the installer does not ship them, and the
+            // MSI harvests the staging tree whole.
+            let tests: Vec<PathBuf> = files_in(&stage_bin)
+                .into_iter()
+                .filter(|p| {
+                    let n = name_of(p).to_ascii_lowercase();
+                    n.starts_with("test") && n.ends_with(".exe")
+                })
+                .collect();
+            if !tests.is_empty() {
+                let bytes: u64 = tests
+                    .iter()
+                    .filter_map(|p| std::fs::metadata(p).ok())
+                    .map(|m| m.len())
+                    .sum();
+                for t in &tests {
+                    std::fs::remove_file(t)?;
+                }
+                ui::dim(format!(
+                    "Pruned {} llama.cpp test binaries ({:.1} MB)",
+                    tests.len(),
+                    bytes as f64 / (1 << 20) as f64
+                ));
+            }
+            util::remove_all(&stage.join("include"))?;
+
+            // ── The OpenSSL runtime next to llama-server.exe ────────────────────
+            // llama-server links OpenSSL dynamically; on a machine without OpenSSL
+            // it fails at load, so those DLLs ship in bin\ (the application dir wins
+            // the DLL search order). The ABI-versioned names are read from EVERY
+            // staged .exe and .dll, not a name pattern: llama.cpp moves its imports
+            // between DLLs (llama-server.exe is a thin launcher of
+            // llama-server-impl.dll since v0.2.0).
+            let mut ssl_sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for bin in walk(&stage_bin).into_iter().filter(|p| is_pe(p)) {
+                for name in openssl_imports(&bin)? {
+                    ssl_sources.entry(name).or_default().push(name_of(&bin));
+                }
+            }
+            if ssl_sources.is_empty() {
+                bail!("No OpenSSL import names found in ANY staged binary: import scan broken or llama.cpp stopped linking OpenSSL; refusing to package a server that may not start on clean machines");
+            }
+            for (name, users) in &ssl_sources {
+                let src = Path::new(&cfg.openssl_dir).join("bin").join(name);
+                if !src.is_file() {
+                    bail!(
+                        "OpenSSL runtime {name} not found in {}\\bin, but {} imports it and would fail to load on machines without OpenSSL",
+                        cfg.openssl_dir,
+                        users.join(", ")
+                    );
+                }
+                std::fs::copy(&src, stage_bin.join(name))?;
+                ui::dim(format!(
+                    "Staged {name} (OpenSSL runtime, imported by {})",
+                    users.join(", ")
+                ));
+            }
+
+            // ── Bundle the GPU runtimes ─────────────────────────────────────────
+            // The import closure of the staged binaries, restricted to what
+            // resolves inside a dist (ROCm, CUDA, Vulkan SDK with the loader the
+            // prerequisites put in its Runtime\): everything else is a system library
+            // and stays one (Windows' DLLs, the VC++ runtime). Flat in bin\, next to llama-server.exe, which
+            // precedes System32 in the search order, so the bundled amdhip64_*.dll
+            // also wins over the driver's copy and the dist's rocBLAS never runs
+            // against the DRIVER's HIP runtime (the mix that aborts BF16/F16 models on
+            // gfx1201 at the first prefill batch).
+            hip_root = Some(PathBuf::from(&cfg.hip_path))
+                .filter(|p| !cfg.hip_path.is_empty() && p.is_dir());
+            let mut runtime_dirs: Vec<(&str, Vec<PathBuf>)> = Vec::new();
+            if let Some(h) = &hip_root {
+                runtime_dirs.push(("ROCm", vec![h.join("bin")]));
+            }
+            if let Some(c) = dists.find_cuda() {
+                runtime_dirs.push(("CUDA", vec![c.join(r"bin\x64"), c.join("bin")]));
+            }
+            if let Some(v) = dists.find_vulkan() {
+                runtime_dirs.push(("Vulkan", vec![v.join("Bin"), v.join("Runtime")]));
+            }
+
+            ui::head("Bundling the GPU runtimes...");
+            let mut bundled: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+            let mut pending: VecDeque<PathBuf> = files_in(&stage_bin)
+                .into_iter()
+                .filter(|p| is_pe(p))
+                .collect();
+            while let Some(bin) = pending.pop_front() {
+                for name in pe_imports(&bin)? {
+                    let dest = stage_bin.join(&name);
+                    if dest.exists() {
+                        continue;
+                    }
+                    for (dist, dirs) in &runtime_dirs {
+                        let Some(src) = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file())
+                        else {
+                            continue;
+                        };
+                        std::fs::copy(&src, &dest)?;
+                        pending.push_back(dest);
+                        bundled.entry(dist).or_default().push(name.clone());
+                        break;
+                    }
+                }
+            }
+
+            // A backend whose runtime did not resolve would be dropped silently by
+            // ggml on every machine that lacks the SDK, which is every machine but
+            // this one.
+            for (backend, prefix, suffix) in [
+                ("ggml-hip.dll", "hipblas", ".dll"),
+                ("ggml-cuda.dll", "cublas64_", ".dll"),
+            ] {
+                let runtime_present = if prefix == "hipblas" {
+                    stage_bin.join("hipblas.dll").is_file()
+                } else {
+                    any_like(&stage_bin, prefix, suffix)
+                };
+                if stage_bin.join(backend).is_file() && !runtime_present {
+                    bail!(
+                        "{backend} is staged but {prefix}{} was not found in its dist under {}; refusing to package a backend that cannot load",
+                        if prefix == "hipblas" { ".dll" } else { "*.dll" },
+                        dists.root.display()
+                    );
+                }
+            }
+            // Not every machine has a loader of its own, whatever its driver: this one
+            // resolved a stranger's copy through PATH, so the backend lived on that.
+            if stage_bin.join("ggml-vulkan.dll").is_file()
+                && !stage_bin.join("vulkan-1.dll").is_file()
+            {
+                bail!(
+                    "ggml-vulkan.dll is staged but vulkan-1.dll was not found in the Runtime directory of a Vulkan SDK under {}; run scripts\\00-install-prerequisites.ps1, which puts it there",
+                    dists.root.display()
+                );
+            }
+
+            // What no import table shows, ROCm only:
+            //   - amd_comgr*.dll: the HIP runtime asks for it by bare name at run
+            //     time, and System32 holds the DRIVER's build (with a Ryzen iGPU
+            //     visible that mix makes hipGetDeviceCount fail).
+            //   - the kernel stores: rocBLAS and hipBLASLt load their precompiled
+            //     kernels per GPU architecture from rocblas\library and
+            //     hipblaslt\library beside the DLLs, and the kpack archives sit in
+            //     <dist>\.kpack, which is <bin>\..\.kpack here as there. Only the BLAS
+            //     archives, and only the architectures this build targets; entries
+            //     that name no architecture are shared and always copied.
+            if let Some(hip) = hip_root
+                .as_ref()
+                .filter(|_| any_like(&stage_bin, "amdhip64_", ".dll"))
+            {
+                let hip_bin = hip.join("bin");
+                for f in files_in(&hip_bin) {
+                    let n = name_of(&f);
+                    let l = n.to_ascii_lowercase();
+                    if l.starts_with("amd_comgr") && l.ends_with(".dll") {
+                        std::fs::copy(&f, stage_bin.join(&n))?;
+                        bundled.entry("ROCm").or_default().push(n);
+                    }
+                }
+                let targets: BTreeSet<String> = cfg
+                    .gpu_targets
+                    .split(';')
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.to_ascii_lowercase())
+                    .collect();
+                let wanted = |name: &str| {
+                    gfx_arch(name)
+                        .map(|a| targets.contains(&a.to_ascii_lowercase()))
+                        .unwrap_or(true)
+                };
+                for sub in [r"rocblas\library", r"hipblaslt\library"] {
+                    let from = hip_bin.join(sub);
+                    let Ok(rd) = std::fs::read_dir(&from) else {
+                        continue;
+                    };
+                    let to = stage_bin.join(sub);
+                    std::fs::create_dir_all(&to)?;
+                    for e in rd.flatten() {
+                        if wanted(&e.file_name().to_string_lossy()) {
+                            copy_into(&e.path(), &to)?;
+                        }
+                    }
+                    ui::dim(format!("  {sub}: {} MiB", size_mib(&to)));
+                }
+                let kpack = hip.join(".kpack");
+                if kpack.is_dir() {
+                    let to = stage.join(".kpack");
+                    std::fs::create_dir_all(&to)?;
+                    for f in files_in(&kpack) {
+                        let n = name_of(&f);
+                        if n.starts_with("blas_lib_") && n.ends_with(".kpack") && wanted(&n) {
+                            std::fs::copy(&f, to.join(&n))?;
+                        }
+                    }
+                    ui::dim(format!("  .kpack: {} MiB", size_mib(&to)));
+                }
+            }
+            for (dist, _) in &runtime_dirs {
+                let mut names = bundled.get(dist).cloned().unwrap_or_default();
+                names.sort();
+                let what = if names.is_empty() {
+                    "nothing to bundle (its runtime is a system library)".to_string()
+                } else {
+                    names.join(", ")
+                };
+                ui::dim(format!("  {dist}: {what}"));
+            }
+
+            // The engine's defaults, read-only in share\defaults\: the MSI
+            // copies each into %ProgramData%\llama.cpp\config\ when missing.
+            let defaults = stage.join("share").join("defaults");
+            std::fs::create_dir_all(&defaults)?;
+            for (name, text) in msi::engine_defaults() {
+                std::fs::write(defaults.join(name), text)?;
+            }
+            defines.extend([
+                ("Version", llama_version.clone()),
+                ("HasLib", (stage.join("lib").exists() as u8).to_string()),
+                (
+                    "HasKpack",
+                    (stage.join(".kpack").exists() as u8).to_string(),
+                ),
+                (
+                    "RemoveInstancesCmd",
+                    script_command(&repo.join(r"installer\msi-remove-instances.ps1"))?,
+                ),
+            ]);
+        } else {
+            crate::common::bench_share::stage(&stage.join("share").join("benchmarks"))?;
+            crate::common::strings_share::stage(&stage.join("share").join("strings"))?;
+            // ── The cargo workspace's executables ───────────────────────
+            // Straight from cargo's release output, into bin\ where they are
+            // installed: the staging tree is the installed tree, file for file.
+            for exe in msi::CARGO_EXES {
+                let built = build_root.join(r"cargo-target\release").join(exe);
+                if !built.is_file() {
+                    bail!(
+                        "{exe} not found at {}. Run cargo run -p xtask -- build first.",
+                        built.display()
+                    );
+                }
+                std::fs::copy(&built, stage_bin.join(exe))?;
+                ui::dim(format!("Staged {exe}"));
+            }
+            defines.extend([
+                ("Version", framework_version.clone()),
+                ("LlamaCppMin", llama_version.clone()),
+                (
+                    "StopProcessesCmd",
+                    script_command(&repo.join(r"installer\msi-stop-processes.ps1"))?,
+                ),
+            ]);
+        }
+
+        // The icon (the Apps list entry, the Start Menu shortcut, the MSI's
+        // own): generated, not checked in; regenerated here if it went missing.
+        let resources = repo.join("resources");
+        let ico = resources.join("llama.ico");
+        if !ico.is_file() {
+            ui::head("llama.ico missing: regenerating from the llama.cpp webui logo...");
+            if !resources.join(r"node_modules\sharp-ico").is_dir() {
+                let npm = util::which("npm")
+                    .context("npm not found: node + npm generate resources\\llama.ico")?;
+                run_cmd(cmd(npm).current_dir(&resources).args([
+                    "install",
+                    "--no-save",
+                    "sharp",
+                    "sharp-ico",
+                ]))?;
+            }
+            run_cmd(
+                cmd("node")
+                    .current_dir(&resources)
+                    .arg("generate-llama-ico.mjs"),
+            )?;
+        }
+        std::fs::copy(&ico, stage_bin.join("llama.ico"))?;
+
+        // ── Licences ────────────────────────────────────────────────────
+        let sources = licenses::Sources {
+            llama_cpp: PathBuf::from(&cfg.llama_cpp_dir),
+            rocm: hip_root.clone(),
+            cuda: dists.find_cuda(),
+            openssl: (!cfg.openssl_dir.is_empty()).then(|| PathBuf::from(&cfg.openssl_dir)),
+        };
+        let share = stage.join("share");
+        let entries = licenses::stage(&share, &licenses::libraries_under(&stage), &sources)?;
+        let read_text = |p: &Path| -> Result<String> {
+            let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+            Ok(String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let own = read_text(&repo.join("LICENSE"))?;
+        let bundles_cuda = entries.iter().any(|e| e.file == licenses::CUDA_EULA_FILE);
+        let eula = if bundles_cuda {
+            Some(read_text(
+                &share.join("licenses").join(licenses::CUDA_EULA_FILE),
+            )?)
+        } else {
+            None
+        };
+        // Beside the intermediates: it is shown by the installer, not installed.
+        let license_rtf = stage.with_extension("license.rtf");
+        std::fs::write(
+            &license_rtf,
+            licenses::installer_page(&entries, &own, eula.as_deref()),
+        )?;
+
+        // ── The MSI ─────────────────────────────────────────────────────
+        // llama.cpp-v1.0.0-x64.msi and private-ai-framework-v2.99.1-x64.msi:
+        // each named by its own version only.
+        let installer = msi::file_name(product, &framework_version, &llama_build, arch);
+        let out_file = out_dir.join(&installer);
+        let wxs = repo.join(msi::wxs(product));
+        let obj = stage.with_extension("wix-obj");
+
+        let files = walk(&stage);
+        let payload: u64 = files
             .iter()
-            .filter_map(|p| std::fs::metadata(p).ok())
+            .filter_map(|f| std::fs::metadata(f).ok())
             .map(|m| m.len())
             .sum();
-        for t in &tests {
-            std::fs::remove_file(t)?;
+        defines.extend([
+            ("StagingDir", stage.display().to_string()),
+            ("EstimatedSizeKb", payload.div_ceil(1024).to_string()),
+            ("LicenseRtf", license_rtf.display().to_string()),
+        ]);
+        // The .wixpdb (debug symbols of the package) goes with the
+        // intermediates, not beside the .msi in dist\.
+        let mut c = cmd(&wix);
+        c.args(["build", "-arch", "x64", "-intermediatefolder"])
+            .arg(&obj)
+            .arg("-pdb")
+            .arg(obj.join("package.wixpdb"))
+            .arg("-o")
+            .arg(&out_file);
+        for ext in &pin.extensions {
+            c.arg("-ext").arg(format!("{ext}/{wix_version}"));
         }
-        ui::dim(format!(
-            "Pruned {} llama.cpp test binaries ({:.1} MB)",
-            tests.len(),
-            bytes as f64 / (1 << 20) as f64
+        for (k, v) in &defines {
+            c.arg("-d").arg(format!("{k}={v}"));
+        }
+        c.arg(&wxs);
+
+        ui::head(format!(
+            "Building {installer} ({:.2} GB of payload, {} files)...",
+            payload as f64 / GIB as f64,
+            files.len()
         ));
-    }
-    util::remove_all(&stage.join("include"))?;
+        util::remove_all(&out_file)?;
+        let t = Instant::now();
+        run_cmd(&mut c)?;
+        let secs = t.elapsed().as_secs();
+        ui::dim(format!("wix build: {:02}:{:02}", secs / 60, secs % 60));
 
-    // ── The OpenSSL runtime next to llama-server.exe ────────────────────
-    // llama-server links OpenSSL dynamically; on a machine without OpenSSL
-    // it fails at load, so those DLLs ship in bin\ (the application dir wins
-    // the DLL search order). The ABI-versioned names are read from EVERY
-    // staged .exe and .dll, not a name pattern: llama.cpp moves its imports
-    // between DLLs (llama-server.exe is a thin launcher of
-    // llama-server-impl.dll since v0.2.0).
-    let mut ssl_sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for bin in walk(&stage_bin).into_iter().filter(|p| is_pe(p)) {
-        for name in openssl_imports(&bin)? {
-            ssl_sources.entry(name).or_default().push(name_of(&bin));
-        }
-    }
-    if ssl_sources.is_empty() {
-        bail!("No OpenSSL import names found in ANY staged binary: import scan broken or llama.cpp stopped linking OpenSSL; refusing to package a server that may not start on clean machines");
-    }
-    for (name, users) in &ssl_sources {
-        let src = Path::new(&cfg.openssl_dir).join("bin").join(name);
-        if !src.is_file() {
+        // GitHub refuses release assets of 2 GiB or more, and the package must
+        // stay ONE file (embedded cabinets): fail rather than publish what
+        // cannot upload.
+        let msi_bytes = std::fs::metadata(&out_file)?.len();
+        if msi_bytes >= 2 * GIB {
             bail!(
-                "OpenSSL runtime {name} not found in {}\\bin, but {} imports it and would fail to load on machines without OpenSSL",
-                cfg.openssl_dir,
-                users.join(", ")
+                "{installer} is {:.2} GiB, over GitHub's 2 GiB release-asset limit. Options: fewer HIP targets (GpuTargets), a higher compression level, or splitting the ROCm kernel stores into a separate package.",
+                msi_bytes as f64 / GIB as f64
             );
         }
-        std::fs::copy(&src, stage_bin.join(name))?;
-        ui::dim(format!(
-            "Staged {name} (OpenSSL runtime, imported by {})",
-            users.join(", ")
-        ));
-    }
 
-    // ── Bundle the GPU runtimes ─────────────────────────────────────────
-    // The import closure of the staged binaries, restricted to what
-    // resolves inside a dist (ROCm, CUDA, Vulkan SDK with the loader the
-    // prerequisites put in its Runtime\): everything else is a system library
-    // and stays one (Windows' DLLs, the VC++ runtime). Flat in bin\, next to llama-server.exe, which
-    // precedes System32 in the search order, so the bundled amdhip64_*.dll
-    // also wins over the driver's copy and the dist's rocBLAS never runs
-    // against the DRIVER's HIP runtime (the mix that aborts BF16/F16 models on
-    // gfx1201 at the first prefill batch).
-    let hip_root =
-        Some(PathBuf::from(&cfg.hip_path)).filter(|p| !cfg.hip_path.is_empty() && p.is_dir());
-    let mut runtime_dirs: Vec<(&str, Vec<PathBuf>)> = Vec::new();
-    if let Some(h) = &hip_root {
-        runtime_dirs.push(("ROCm", vec![h.join("bin")]));
-    }
-    if let Some(c) = dists.find_cuda() {
-        runtime_dirs.push(("CUDA", vec![c.join(r"bin\x64"), c.join("bin")]));
-    }
-    if let Some(v) = dists.find_vulkan() {
-        runtime_dirs.push(("Vulkan", vec![v.join("Bin"), v.join("Runtime")]));
-    }
-
-    ui::head("Bundling the GPU runtimes...");
-    let mut bundled: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    let mut pending: VecDeque<PathBuf> = files_in(&stage_bin)
-        .into_iter()
-        .filter(|p| is_pe(p))
-        .collect();
-    while let Some(bin) = pending.pop_front() {
-        for name in pe_imports(&bin)? {
-            let dest = stage_bin.join(&name);
-            if dest.exists() {
-                continue;
-            }
-            for (dist, dirs) in &runtime_dirs {
-                let Some(src) = dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file()) else {
-                    continue;
-                };
-                std::fs::copy(&src, &dest)?;
-                pending.push_back(dest);
-                bundled.entry(dist).or_default().push(name.clone());
-                break;
-            }
-        }
-    }
-
-    // A backend whose runtime did not resolve would be dropped silently by
-    // ggml on every machine that lacks the SDK, which is every machine but
-    // this one.
-    for (backend, prefix, suffix) in [
-        ("ggml-hip.dll", "hipblas", ".dll"),
-        ("ggml-cuda.dll", "cublas64_", ".dll"),
-    ] {
-        let runtime_present = if prefix == "hipblas" {
-            stage_bin.join("hipblas.dll").is_file()
-        } else {
-            any_like(&stage_bin, prefix, suffix)
-        };
-        if stage_bin.join(backend).is_file() && !runtime_present {
-            bail!(
-                "{backend} is staged but {prefix}{} was not found in its dist under {}; refusing to package a backend that cannot load",
-                if prefix == "hipblas" { ".dll" } else { "*.dll" },
-                dists.root.display()
-            );
-        }
-    }
-    // Not every machine has a loader of its own, whatever its driver: this one
-    // resolved a stranger's copy through PATH, so the backend lived on that.
-    if stage_bin.join("ggml-vulkan.dll").is_file() && !stage_bin.join("vulkan-1.dll").is_file() {
-        bail!(
-            "ggml-vulkan.dll is staged but vulkan-1.dll was not found in the Runtime directory of a Vulkan SDK under {}; run scripts\\00-install-prerequisites.ps1, which puts it there",
-            dists.root.display()
-        );
-    }
-
-    // What no import table shows, ROCm only:
-    //   - amd_comgr*.dll: the HIP runtime asks for it by bare name at run
-    //     time, and System32 holds the DRIVER's build (with a Ryzen iGPU
-    //     visible that mix makes hipGetDeviceCount fail).
-    //   - the kernel stores: rocBLAS and hipBLASLt load their precompiled
-    //     kernels per GPU architecture from rocblas\library and
-    //     hipblaslt\library beside the DLLs, and the kpack archives sit in
-    //     <dist>\.kpack, which is <bin>\..\.kpack here as there. Only the BLAS
-    //     archives, and only the architectures this build targets; entries
-    //     that name no architecture are shared and always copied.
-    if let Some(hip) = hip_root
-        .as_ref()
-        .filter(|_| any_like(&stage_bin, "amdhip64_", ".dll"))
-    {
-        let hip_bin = hip.join("bin");
-        for f in files_in(&hip_bin) {
-            let n = name_of(&f);
-            let l = n.to_ascii_lowercase();
-            if l.starts_with("amd_comgr") && l.ends_with(".dll") {
-                std::fs::copy(&f, stage_bin.join(&n))?;
-                bundled.entry("ROCm").or_default().push(n);
-            }
-        }
-        let targets: BTreeSet<String> = cfg
-            .gpu_targets
-            .split(';')
-            .filter(|t| !t.is_empty())
-            .map(|t| t.to_ascii_lowercase())
-            .collect();
-        let wanted = |name: &str| {
-            gfx_arch(name)
-                .map(|a| targets.contains(&a.to_ascii_lowercase()))
-                .unwrap_or(true)
-        };
-        for sub in [r"rocblas\library", r"hipblaslt\library"] {
-            let from = hip_bin.join(sub);
-            let Ok(rd) = std::fs::read_dir(&from) else {
-                continue;
-            };
-            let to = stage_bin.join(sub);
-            std::fs::create_dir_all(&to)?;
-            for e in rd.flatten() {
-                if wanted(&e.file_name().to_string_lossy()) {
-                    copy_into(&e.path(), &to)?;
-                }
-            }
-            ui::dim(format!("  {sub}: {} MiB", size_mib(&to)));
-        }
-        let kpack = hip.join(".kpack");
-        if kpack.is_dir() {
-            let to = stage.join(".kpack");
-            std::fs::create_dir_all(&to)?;
-            for f in files_in(&kpack) {
-                let n = name_of(&f);
-                if n.starts_with("blas_lib_") && n.ends_with(".kpack") && wanted(&n) {
-                    std::fs::copy(&f, to.join(&n))?;
-                }
-            }
-            ui::dim(format!("  .kpack: {} MiB", size_mib(&to)));
-        }
-    }
-    for (dist, _) in &runtime_dirs {
-        let mut names = bundled.get(dist).cloned().unwrap_or_default();
-        names.sort();
-        let what = if names.is_empty() {
-            "nothing to bundle (its runtime is a system library)".to_string()
-        } else {
-            names.join(", ")
-        };
-        ui::dim(format!("  {dist}: {what}"));
-    }
-
-    // ── The cargo workspace's executables and the icon ─────────────
-    // Straight from cargo's release output, into bin\ where they are
-    // installed: the staging tree is the installed tree, file for file.
-    for exe in msi::CARGO_EXES {
-        let built = build_root.join(r"cargo-target\release").join(exe);
-        if !built.is_file() {
-            bail!(
-                "{exe} not found at {}. Run cargo run -p xtask -- build first.",
-                built.display()
-            );
-        }
-        std::fs::copy(&built, stage_bin.join(exe))?;
-        ui::dim(format!("Staged {exe}"));
-    }
-
-    // The icon (the Apps list entry, the Start Menu shortcut, the MSI's
-    // own): generated, not checked in; regenerated here if it went missing.
-    let resources = repo.join("resources");
-    let ico = resources.join("llama.ico");
-    if !ico.is_file() {
-        ui::head("llama.ico missing: regenerating from the llama.cpp webui logo...");
-        if !resources.join(r"node_modules\sharp-ico").is_dir() {
-            let npm = util::which("npm")
-                .context("npm not found: node + npm generate resources\\llama.ico")?;
-            run_cmd(cmd(npm).current_dir(&resources).args([
-                "install",
-                "--no-save",
-                "sharp",
-                "sharp-ico",
-            ]))?;
-        }
+        // ICE validation; the suppressed ICEs, and why, are in installer\AGENTS.md.
+        ui::head("Validating the MSI (ICE)...");
         run_cmd(
-            cmd("node")
-                .current_dir(&resources)
-                .arg("generate-llama-ico.mjs"),
+            cmd(&wix)
+                .args(["msi", "validate", "-sice", "ICE61"])
+                .arg(&out_file),
         )?;
+
+        let _ = util::remove_all(&obj);
+        if !keep_staging {
+            util::remove_all(&stage)?;
+        }
+        let secs = t.elapsed().as_secs();
+        ui::say("");
+        ui::ok(format!(
+            "Installer created: {} ({:.1} MB, {:02}:{:02})",
+            out_file.display(),
+            msi_bytes as f64 / (1 << 20) as f64,
+            secs / 60,
+            secs % 60
+        ));
+        ui::say("");
     }
-    std::fs::copy(&ico, stage_bin.join("llama.ico"))?;
-
-    // ── The MSI ─────────────────────────────────────────────────────────
-    // e.g. private-ai-framework-v2.99.0-v0.9.0-x64.msi: the framework's own
-    // version first, the bundled llama.cpp release second.
-    let installer = format!("private-ai-framework-v{framework_version}-{llama_build}-{arch}.msi");
-    let out_file = out_dir.join(&installer);
-    let wxs = repo.join(r"installer\private-ai-framework.wxs");
-    let obj = build_root.join("wix-obj");
-
-    // ── Licences ────────────────────────────────────────────────────────
-    let sources = licenses::Sources {
-        llama_cpp: PathBuf::from(&cfg.llama_cpp_dir),
-        rocm: hip_root.clone(),
-        cuda: dists.find_cuda(),
-        openssl: (!cfg.openssl_dir.is_empty()).then(|| PathBuf::from(&cfg.openssl_dir)),
-    };
-    let share = stage.join("share");
-    let entries = licenses::stage(&share, &licenses::libraries_under(&stage), &sources)?;
-    let read_text = |p: &Path| -> Result<String> {
-        let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    };
-    let own = read_text(&repo.join("LICENSE"))?;
-    let bundles_cuda = entries.iter().any(|e| e.file == licenses::CUDA_EULA_FILE);
-    let eula = if bundles_cuda {
-        Some(read_text(
-            &share.join("licenses").join(licenses::CUDA_EULA_FILE),
-        )?)
-    } else {
-        None
-    };
-    // Beside the intermediates: it is shown by the installer, not installed.
-    let license_rtf = build_root.join("license.rtf");
-    std::fs::write(
-        &license_rtf,
-        licenses::installer_page(&entries, &own, eula.as_deref()),
-    )?;
-
-    let files = walk(&stage);
-    let payload: u64 = files
-        .iter()
-        .filter_map(|f| std::fs::metadata(f).ok())
-        .map(|m| m.len())
-        .sum();
-    let defines: Vec<(&str, String)> = vec![
-        ("Version", framework_version.clone()),
-        ("LlamaBuild", llama_build.clone()),
-        ("StagingDir", stage.display().to_string()),
-        ("HasLib", (stage.join("lib").exists() as u8).to_string()),
-        (
-            "HasKpack",
-            (stage.join(".kpack").exists() as u8).to_string(),
-        ),
-        ("EstimatedSizeKb", payload.div_ceil(1024).to_string()),
-        ("LicenseRtf", license_rtf.display().to_string()),
-        (
-            "StopProcessesCmd",
-            script_command(&repo.join(r"installer\msi-stop-processes.ps1"))?,
-        ),
-    ];
-    // The .wixpdb (debug symbols of the package) goes with the
-    // intermediates, not beside the .msi in dist\.
-    let mut c = cmd(&wix);
-    c.args(["build", "-arch", "x64", "-intermediatefolder"])
-        .arg(&obj)
-        .arg("-pdb")
-        .arg(obj.join("package.wixpdb"))
-        .arg("-o")
-        .arg(&out_file);
-    for ext in &pin.extensions {
-        c.arg("-ext").arg(format!("{ext}/{wix_version}"));
-    }
-    for (k, v) in &defines {
-        c.arg("-d").arg(format!("{k}={v}"));
-    }
-    c.arg(&wxs);
-
-    ui::head(format!(
-        "Building the MSI ({:.2} GB of payload, {} files)...",
-        payload as f64 / GIB as f64,
-        files.len()
-    ));
-    util::remove_all(&out_file)?;
-    let t = Instant::now();
-    run_cmd(&mut c)?;
-    let secs = t.elapsed().as_secs();
-    ui::dim(format!("wix build: {:02}:{:02}", secs / 60, secs % 60));
-
-    // GitHub refuses release assets of 2 GiB or more, and the package must
-    // stay ONE file (embedded cabinets): fail rather than publish what
-    // cannot upload.
-    let msi_bytes = std::fs::metadata(&out_file)?.len();
-    if msi_bytes >= 2 * GIB {
-        bail!(
-            "{installer} is {:.2} GiB, over GitHub's 2 GiB release-asset limit. Options: fewer HIP targets (GpuTargets), a higher compression level, or splitting the ROCm kernel stores into a separate package.",
-            msi_bytes as f64 / GIB as f64
-        );
-    }
-
-    // ICE validation; the suppressed ICEs, and why, are in installer\AGENTS.md.
-    ui::head("Validating the MSI (ICE)...");
-    run_cmd(
-        cmd(&wix)
-            .args(["msi", "validate", "-sice", "ICE61"])
-            .arg(&out_file),
-    )?;
-
-    let _ = util::remove_all(&obj);
-    if !keep_staging {
-        util::remove_all(&stage)?;
-    }
-    let secs = t.elapsed().as_secs();
-    ui::say("");
-    ui::ok(format!(
-        "Installer created: {} ({:.1} MB, {:02}:{:02})",
-        out_file.display(),
-        msi_bytes as f64 / (1 << 20) as f64,
-        secs / 60,
-        secs % 60
-    ));
-    ui::say("");
     Ok(())
 }
 

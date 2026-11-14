@@ -461,6 +461,84 @@ pub fn llama_bin_from(exe: &Path, stem: &str) -> Option<PathBuf> {
     None
 }
 
+/// [`llama_bin_from`], then llama.cpp's own install `engine_dir` (on
+/// Windows the folder llama.cpp's MSI registers, [`engine_install_dir`]):
+/// `<engine_dir>\bin\<binary>`, looked for after the tree builds, so a tree
+/// build keeps running the llama-server it built.
+pub fn llama_bin_with_engine(exe: &Path, stem: &str, engine_dir: Option<&Path>) -> Option<PathBuf> {
+    llama_bin_from(exe, stem).or_else(|| {
+        let c = engine_dir?.join("bin").join(binary_name(stem));
+        c.is_file().then(|| {
+            c.canonicalize()
+                .map(strip_extended_prefix)
+                .unwrap_or_else(|_| c.clone())
+        })
+    })
+}
+
+/// The folder llama.cpp's own MSI installed into, from its registration
+/// (`HKLM\Software\llama.cpp` `InstallDir`); `None` elsewhere than Windows
+/// and when no engine is registered.
+pub fn engine_install_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let dir = win_reg::machine_reg_sz(r"Software\llama.cpp", "InstallDir")?;
+        (!dir.is_empty()).then(|| PathBuf::from(dir))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// One `REG_SZ` under `HKLM` (64-bit view of a 64-bit program), for
+/// [`engine_install_dir`].
+#[cfg(windows)]
+mod win_reg {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+
+    pub(super) fn machine_reg_sz(subkey: &str, value: &str) -> Option<String> {
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+        let (sub, name) = (wide(subkey), wide(value));
+        let mut len: u32 = 0;
+        // SAFETY: NUL-terminated names; a null buffer asks for the size.
+        let sized = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut len,
+            )
+        };
+        if sized != ERROR_SUCCESS {
+            return None;
+        }
+        let mut buf: Vec<u16> = vec![0; len as usize / 2 + 1];
+        let mut bytes = (buf.len() * 2) as u32;
+        // SAFETY: the buffer holds `bytes` bytes.
+        let read = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                sub.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if read != ERROR_SUCCESS {
+            return None;
+        }
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..end]))
+    }
+}
+
 /// The directories [`installed_share_dir`] looks in for `sub`, in order,
 /// for a program at `exe`. Pure: nothing is read.
 pub fn installed_share_candidates(exe: &Path, sub: &str) -> Vec<PathBuf> {
@@ -508,8 +586,14 @@ pub fn installed_share_dir(exe: &Path, sub: &str) -> Option<PathBuf> {
 /// 4. `<exe-dir>\..\..\build\<os>\llama.cpp-cmake\bin\<binary>`: a bare
 ///    `cargo build` at the workspace root (exe in `target\release`)
 /// 5. `<exe-dir>\..\build\<os>\llama.cpp-cmake\bin\<binary>`: alt dev layout
+/// 6. `<engine>\bin\<binary>`, `<engine>` the folder llama.cpp's own MSI
+///    registers ([`engine_install_dir`], Windows)
 pub fn llama_bin(stem: &str) -> Option<PathBuf> {
-    llama_bin_from(&std::env::current_exe().ok()?, stem)
+    llama_bin_with_engine(
+        &std::env::current_exe().ok()?,
+        stem,
+        engine_install_dir().as_deref(),
+    )
 }
 
 /// Drop the `\\?\` extended-length prefix Windows' `canonicalize` prepends:
@@ -726,8 +810,8 @@ pub(crate) fn instance_models_dir_e2e() {
 #[cfg(test)]
 mod tests {
     use super::{
-        installed_share_candidates, installed_share_dir, llama_bin_from, newest_version,
-        valid_instance_id, windows_machine_dirs,
+        installed_share_candidates, installed_share_dir, llama_bin_from, llama_bin_with_engine,
+        newest_version, valid_instance_id, windows_machine_dirs,
     };
     use std::path::{Path, PathBuf};
 
@@ -815,6 +899,96 @@ mod tests {
                 "{name} does not use windows_machine_dirs:\n{body}"
             );
         }
+    }
+
+    // ── llama-server from llama.cpp's own install (Windows) ──────────────
+    // The framework's MSI holds no llama.cpp file: pai-manager in
+    // `%ProgramFiles%\private-ai\bin` finds llama-server in the folder
+    // llama.cpp's MSI registers (`HKLM\Software\llama.cpp` `InstallDir`),
+    // under its `bin\`. Spelled with `/` here, the same components.
+
+    /// The framework's install finds the engine's llama-server (and
+    /// llama-bench) in `<engine InstallDir>\bin`.
+    #[test]
+    fn the_framework_finds_llama_server_in_the_engine_install() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = root.path().join("Program Files/llama.cpp");
+        let server = touch(
+            &engine,
+            &format!("bin/{}", super::binary_name("llama-server")),
+        );
+        let bench = touch(
+            &engine,
+            &format!("bin/{}", super::binary_name("llama-bench")),
+        );
+        let manager = touch(root.path(), "Program Files/private-ai/bin/pai-manager.exe");
+        assert_eq!(
+            canon(llama_bin_with_engine(
+                &manager,
+                "llama-server",
+                Some(&engine)
+            )),
+            Some(server.canonicalize().unwrap())
+        );
+        assert_eq!(
+            canon(llama_bin_with_engine(
+                &manager,
+                "llama-bench",
+                Some(&engine)
+            )),
+            Some(bench.canonicalize().unwrap())
+        );
+    }
+
+    /// No engine registered, or one registered whose llama-server is gone:
+    /// nothing, not a guess.
+    #[test]
+    fn no_engine_or_an_empty_engine_finds_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = touch(root.path(), "Program Files/private-ai/bin/pai-manager.exe");
+        assert_eq!(llama_bin_with_engine(&manager, "llama-server", None), None);
+        let engine = root.path().join("Program Files/llama.cpp");
+        std::fs::create_dir_all(engine.join("bin")).unwrap();
+        assert_eq!(
+            llama_bin_with_engine(&manager, "llama-server", Some(&engine)),
+            None
+        );
+    }
+
+    /// A tree build keeps running the llama-server it built, even with an
+    /// engine installed; without an engine it is `llama_bin_from`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_tree_build_wins_over_the_installed_engine() {
+        let root = tempfile::tempdir().unwrap();
+        let tree = touch(root.path(), "build/linux/llama.cpp-cmake/bin/llama-server");
+        let engine = root.path().join("Program Files/llama.cpp");
+        touch(&engine, "bin/llama-server");
+        let exe = touch(root.path(), "build/linux/cargo-target/release/pai-manager");
+        assert_eq!(
+            canon(llama_bin_with_engine(&exe, "llama-server", Some(&engine))),
+            Some(tree.canonicalize().unwrap())
+        );
+        assert_eq!(
+            llama_bin_with_engine(&exe, "llama-server", None),
+            llama_bin_from(&exe, "llama-server")
+        );
+    }
+
+    /// The running program's search (`llama_bin`, behind
+    /// `llama_server_exe`) goes through the engine's registration, read from
+    /// `HKLM\Software\llama.cpp` `InstallDir` (the Windows branch only
+    /// type-checks on Linux).
+    #[test]
+    fn llama_bin_asks_the_engine_registration() {
+        let body = body_of("llama_bin");
+        assert!(
+            body.contains("llama_bin_with_engine(") && body.contains("engine_install_dir()"),
+            "llama_bin does not look in the engine's install:\n{body}"
+        );
+        let reg = body_of("engine_install_dir");
+        assert!(reg.contains(r#"r"Software\llama.cpp""#), "{reg}");
+        assert!(reg.contains(r#""InstallDir""#), "{reg}");
     }
 
     /// No llama-server anywhere it is looked for: nothing, not a guess.

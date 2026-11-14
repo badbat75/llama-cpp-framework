@@ -228,3 +228,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `paths::ENGINE_DIR`: config's names lint refuses `join("llama.cpp")` and `ProgramData\llama.cpp`
   in code lines (comments pass). A helper outside `main`/`run` that fills only `cli.toml` keys
   belongs in binding_lint's `CLI_ONLY_FNS` (the tester adds it); never copy CLI keys into en_US.toml.
+- The names lints (`cargo test -p xtask names_lint`, `cargo test -p pai-config -- names_lint`) pin
+  old-name rules and older installer text that a new slice can contradict (the engine now owns
+  `Software\llama.cpp`, the framework MSI's name dropped the llama.cpp release). Run both before
+  starting: a contradiction goes to the tester; never split an attribute or move a key into a
+  comment to slip past a lint.
+- Windows `xtask package` loops over `msi::products(product)`, each with its own staging dir
+  (`msi::staging_dir`), `.wxs`, licence page and wix-obj beside it (`stage.with_extension(..)`); the
+  engine's defaults come from `crates/core/defaults/windows/` through `msi::engine_defaults`.

@@ -2,14 +2,15 @@
 <!--
   Private AI Framework MSI (WiX Toolset; the version and the extensions are
   pinned in installer\wix-toolset.psd1). Built by xtask package, which passes:
-    Version          framework version (crates\config\Cargo.toml), X.Y.Z
-    LlamaBuild       the bundled llama.cpp release tag (v0.7.0; a bNNNN build
-                     number only when the checkout was not on a release)
-    StagingDir       build\windows\staging: the tree that ships, as is
-    HasLib, HasKpack 1 when staging holds lib\ / .kpack\ (no .kpack\ without
-                     the HIP backend), else 0
+    Version          framework version (the root Cargo.toml), X.Y.Z
+    LlamaCppMin      the llama.cpp release the framework was built against,
+                     without its v (1.0.0): the oldest engine it installs over
+    StagingDir       the framework's staging tree: the tree that ships, as is
     EstimatedSizeKb  the payload size, for the Apps list
+    LicenseRtf       the licence page xtask package writes
     StopProcessesCmd installer\msi-stop-processes.ps1 as -EncodedCommand base64
+  It holds no llama.cpp file: llama.cpp's own MSI (llama.cpp.wxs) installs
+  the engine, and this one refuses to install without it.
   installer\AGENTS.md says why each piece is the way it is.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -23,7 +24,7 @@
     directory). ProductCode is generated per build (Package has no
     ProductCode attribute), so every package is a major upgrade of the last.
   -->
-  <Package Name="Private AI Framework v$(var.Version) (llama $(var.LlamaBuild))"
+  <Package Name="Private AI Framework v$(var.Version)"
            Manufacturer="Private AI Framework"
            Version="$(var.Version)"
            UpgradeCode="F21D044C-04F5-478D-8F0A-A9B940DB23C3"
@@ -33,11 +34,9 @@
 
     <!--
       Old product removed in full before anything of this one is written
-      (afterInstallValidate, the default): the most robust order for a tree of
-      thousands of files whose component set changes with every llama.cpp
-      release. Same-version upgrades are allowed because the MSI version is
-      the FRAMEWORK version alone: a repackage on a newer llama.cpp keeps it,
-      and must still replace the installed package (ICE61 warns about it).
+      (afterInstallValidate, the default): the most robust order. Same-version
+      upgrades are allowed: a repackage keeps the framework version and must
+      still replace the installed package (ICE61 warns about it).
     -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of Private AI Framework is already installed. To install this older version, uninstall the installed one first (Settings, Apps)." />
@@ -62,18 +61,26 @@
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
 
     <!-- The directory an earlier install recorded, as the default for this
-         one. On an upgrade from 2.4 only the old key holds it: a directory
-         chosen in 2.4 is kept, while the old default moves to the new one
-         (private-ai under Program Files). The old key is only searched,
-         never written. -->
+         one. HKLM\Software\llama.cpp, where 2.4 recorded its directory, is
+         the engine's now, and llama.cpp's MSI removes a 2.4 install before
+         this one can see it: it is not read. -->
     <Property Id="INSTALLFOLDER" Secure="yes">
       <RegistrySearch Id="PreviousInstallDir" Root="HKLM" Key="Software\private-ai" Name="InstallDir" Type="directory" Bitness="always64" />
     </Property>
-    <Property Id="OLDINSTALLDIR" Secure="yes">
-      <RegistrySearch Id="OldInstallDir" Root="HKLM" Key="Software\llama.cpp" Name="InstallDir" Type="directory" Bitness="always64" />
-    </Property>
-    <SetProperty Id="OLDDEFAULTDIR" Value="[ProgramFiles64Folder]llama.cpp\" Before="AppSearch" Sequence="both"/>
-    <SetProperty Id="INSTALLFOLDER" Value="[OLDINSTALLDIR]" After="AppSearch" Sequence="both" Condition="NOT INSTALLFOLDER AND OLDINSTALLDIR AND OLDINSTALLDIR ~&lt;&gt; OLDDEFAULTDIR"/>
+
+    <!--
+      llama.cpp at the release this framework was built against, or newer.
+      Windows Installer compares no versions in a condition, so the engine is
+      found by its UpgradeCode (llama.cpp.wxs): FindRelatedProducts compares
+      its ProductVersion with Minimum (included) and runs before
+      LaunchConditions in both sequences; OnlyDetect, so it is never removed.
+      Maintenance (Installed) is never refused.
+    -->
+    <Upgrade Id="386BFFA7-BF06-4004-BA17-3F5C752DA61A">
+      <UpgradeVersion Minimum="$(var.LlamaCppMin)" IncludeMinimum="yes" OnlyDetect="yes" Property="LLAMACPPFOUND" />
+    </Upgrade>
+    <Launch Condition="Installed OR LLAMACPPFOUND"
+            Message="llama.cpp v$(var.LlamaCppMin) or newer must be installed first: run its installer, llama.cpp-v$(var.LlamaCppMin)-x64.msi or a newer one, then this installer again." />
 
     <!--
       Guard against a previous installation that is not this MSI: the Apps
@@ -108,26 +115,22 @@
     <Property Id="LLAMA_UNINSTALL" Secure="yes" />
     <SetProperty Id="PRIVATE_AI_USERDATA_DIR" Value="[LocalAppDataFolder]private-ai" Before="AppSearch" Sequence="both" Condition="NOT PRIVATE_AI_USERDATA_DIR" />
 
-    <!-- ── Layout: bin\, lib\, .kpack\ under the install root, no file at the root ── -->
+    <!-- ── Layout: bin\ and share\ under the install root, no file at the root ── -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="private-ai">
         <Directory Id="BINFOLDER" Name="bin" />
-        <Directory Id="LIBFOLDER" Name="lib" />
         <Directory Id="SHAREFOLDER" Name="share" />
-        <Directory Id="KPACKFOLDER" Name=".kpack" />
       </Directory>
     </StandardDirectory>
     <!--
-      The machine's data tree, %ProgramData%\private-ai: config\ (the
-      instances' server@<id>.ini and presets.ini, written by the manager),
-      logs\ (each instance's llama-server@<id>.log) and models\ (a default
-      ModelsDir). Each folder has its own protected DACL (MachineData below).
+      The framework's machine data tree, %ProgramData%\private-ai: config\
+      (bff.ini). The instances' config, logs and models are the engine's,
+      under %ProgramData%\llama.cpp (llama.cpp's MSI). Each folder has its own
+      protected DACL (MachineData below).
     -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="MACHINEDATAFOLDER" Name="private-ai">
         <Directory Id="MACHINECONFIGFOLDER" Name="config" />
-        <Directory Id="MACHINELOGSFOLDER" Name="logs" />
-        <Directory Id="MACHINEMODELSFOLDER" Name="models" />
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
@@ -138,8 +141,7 @@
     <!--
       The payload, harvested at build time: one component per file, its GUID
       derived from the target path, so the same file keeps its component
-      across builds. Subdirectories (bin\rocblas\library, ...) follow the
-      staging tree.
+      across builds. Subdirectories follow the staging tree.
     -->
     <ComponentGroup Id="Payload">
       <!-- pai-manager.exe and pai-bff.exe are the key paths of
@@ -155,17 +157,11 @@
            configurator's language files and the CLI's cli.toml, share\strings.
            pai-config finds them from its own path, bin\..\share. -->
       <Files Directory="SHAREFOLDER" Include="$(var.StagingDir)\share\**" />
-<?if $(var.HasLib) = 1 ?>
-      <Files Directory="LIBFOLDER" Include="$(var.StagingDir)\lib\**" />
-<?endif?>
-<?if $(var.HasKpack) = 1 ?>
-      <Files Directory="KPACKFOLDER" Include="$(var.StagingDir)\.kpack\**" />
-<?endif?>
     </ComponentGroup>
 
     <!--
-      HKLM\Software\private-ai (64-bit view, as the package is x64): InstallDir
-      and LlamaBuild, read by the configurator (startup.rs) and by
+      HKLM\Software\private-ai (64-bit view, as the package is x64): InstallDir,
+      read by the configurator (startup.rs) and by
       scripts\00-install-prerequisites.ps1. InstallDir carries a trailing backslash
       here (an MSI directory property always does); every reader joins paths
       onto it.
@@ -173,10 +169,9 @@
     <Component Id="MachineRegistration" Directory="INSTALLFOLDER">
       <RegistryKey Root="HKLM" Key="Software\private-ai" ForceDeleteOnUninstall="yes">
         <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
-        <RegistryValue Name="LlamaBuild" Type="string" Value="$(var.LlamaBuild)" />
       </RegistryKey>
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\private-ai" ForceDeleteOnUninstall="yes">
-        <RegistryValue Name="DisplayName" Type="string" Value="Private AI Framework v$(var.Version) (llama $(var.LlamaBuild))" />
+        <RegistryValue Name="DisplayName" Type="string" Value="Private AI Framework v$(var.Version)" />
         <RegistryValue Name="DisplayVersion" Type="string" Value="$(var.Version)" />
         <RegistryValue Name="Publisher" Type="string" Value="Private AI Framework" />
         <RegistryValue Name="DisplayIcon" Type="string" Value="[BINFOLDER]llama.ico" />
@@ -195,7 +190,7 @@
       The manager's service, private-ai-manager: pai-manager serve, as
       LocalSystem (no Account: a null StartName is LocalSystem), started at
       boot. It creates, starts and deletes the instances' services and owns
-      config\ under %ProgramData%\private-ai. Restarted a few seconds after
+      config\ under %ProgramData%\llama.cpp. Restarted a few seconds after
       a crash (the Linux unit's Restart=on-failure), else the pipe is gone
       until the next boot. The SCM stops it before its files are replaced or
       removed and deletes it on uninstall; the process stopper leaves it alone.
@@ -243,12 +238,10 @@
       (P: nothing inherited from %ProgramData%, whose ACL lets any user
       create files; OICI: files and subfolders inherit it). SY is SYSTEM,
       BA Administrators, BU Users, S-1-5-80-0 NT SERVICE\ALL SERVICES (the
-      instances' virtual accounts); 0x1200a9 is read and execute, 0x1301bf
-      modify (read, write, execute, delete; no WRITE_DAC, WRITE_OWNER or
-      delete child). The root: users read. config\: the services read, users
-      have no ACE (they go through the manager). logs\ and models\: the
-      services modify, users read. Windows Installer removes such a folder
-      only when it is empty, so the machine's data outlives an uninstall.
+      web service's virtual account); 0x1200a9 is read and execute. The root:
+      users read. config\: the services read, users have no ACE. Windows
+      Installer removes such a folder only when it is empty, so the machine's
+      data outlives an uninstall.
       The key path of each component is its folder, so the GUIDs are fixed.
     -->
     <Component Id="MachineDataRoot" Directory="MACHINEDATAFOLDER" Guid="08C0350C-AD98-45B0-AC36-0D84ABD0DF40" KeyPath="yes">
@@ -261,17 +254,6 @@
         <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-80-0)" />
       </CreateFolder>
     </Component>
-    <Component Id="MachineDataLogs" Directory="MACHINELOGSFOLDER" Guid="C02CA00D-07D8-4A4E-A089-9421FD461A73" KeyPath="yes">
-      <CreateFolder>
-        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
-      </CreateFolder>
-    </Component>
-    <Component Id="MachineDataModels" Directory="MACHINEMODELSFOLDER" Guid="E8AD86CB-EF76-4CF7-A1F6-21B99F4764CC" KeyPath="yes">
-      <CreateFolder>
-        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
-      </CreateFolder>
-    </Component>
-
     <!--
       Optional: bin\ appended to the MACHINE PATH, removed again on uninstall.
       Windows Installer broadcasts WM_SETTINGCHANGE itself after changing the
@@ -299,8 +281,8 @@
     </Component>
 
     <!-- ── Features: the CustomizeDlg tree ── -->
-    <Feature Id="Main" Title="llama.cpp binaries (required)"
-             Description="llama.cpp binaries, the pai-config configurator and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
+    <Feature Id="Main" Title="Private AI Framework (required)"
+             Description="The pai-config configurator, the pai command line, the manager and the web service."
              Level="1" AllowAbsent="no" AllowAdvertise="no" ConfigurableDirectory="INSTALLFOLDER" Display="expand">
       <ComponentGroupRef Id="Payload" />
       <ComponentRef Id="MachineRegistration" />
@@ -308,8 +290,6 @@
       <ComponentRef Id="BffService" />
       <ComponentRef Id="MachineDataRoot" />
       <ComponentRef Id="MachineDataConfig" />
-      <ComponentRef Id="MachineDataLogs" />
-      <ComponentRef Id="MachineDataModels" />
     </Feature>
     <Feature Id="SystemPathFeature" Title="Add to system PATH"
              Description="Add the Private AI Framework bin directory to the system PATH."
@@ -454,7 +434,7 @@
         <Control Id="Title" Type="Text" X="135" Y="15" Width="225" Height="30" Transparent="yes" NoPrefix="yes"
                  Text="{\WixUI_Font_Bigger}Private AI Framework v$(var.Version)" />
         <Control Id="Description" Type="Text" X="135" Y="45" Width="225" Height="185" Transparent="yes" NoPrefix="yes"
-                 Text="This installs Private AI Framework (llama.cpp $(var.LlamaBuild)) with the pai-config configurator. The AMD ROCm, NVIDIA CUDA, Vulkan loader and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: the driver of the GPU, any vendor&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
+                 Text="This installs Private AI Framework with the pai-config configurator, the pai command line, the manager service and the web service.&#13;&#10;&#13;&#10;Needed, not included:&#13;&#10;- llama.cpp v$(var.LlamaCppMin) or newer, from its own installer: install it first&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- the GPU drivers llama.cpp's installer names" />
       </Dialog>
 
       <!--

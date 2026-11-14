@@ -11,7 +11,7 @@
 //! - `build`: llama.cpp (CMake + Ninja) and the framework (cargo), two
 //!   separate products: `build llama`, `build framework`, or both
 //! - `package`: the `.deb` and the `.rpm` (Linux, of one product or both),
-//!   the MSI (Windows), the `.pkg` (macOS)
+//!   an MSI of each (Windows), the `.pkg` (macOS)
 //! - `install`: installs the newest package on this machine
 //!
 //! `common/` is what the operating systems share (the dist layout, the
@@ -73,11 +73,11 @@ enum Phase {
         #[arg(value_enum)]
         module: Option<Module>,
     },
-    /// Package the build in ./dist/: a .deb and an .rpm on Linux, the MSI on
-    /// Windows, a .pkg on macOS.
+    /// Package the build in ./dist/: a .deb and an .rpm on Linux, an MSI per
+    /// product on Windows, a .pkg on macOS.
     Package {
-        /// The product to package (Linux; default: both). The packages of
-        /// the other one in ./dist/ are left as they are.
+        /// The product to package (Linux and Windows; default: both). The
+        /// packages of the other one in ./dist/ are left as they are.
         #[arg(value_enum)]
         product: Option<Product>,
         /// Build the .deb (Linux; default: both formats).
@@ -218,10 +218,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     "--deb and --rpm are Linux packages; on Windows the package is the MSI"
                 );
             }
-            if product.is_some() {
-                anyhow::bail!("on Windows the MSI holds both products: give none");
-            }
-            windows::package::run(keep_staging, wix)
+            windows::package::run(product, keep_staging, wix)
         }
         Phase::Install {
             deb,

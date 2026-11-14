@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  llama.cpp's own MSI (WiX Toolset; the version and the extensions are pinned
+  in installer\wix-toolset.psd1): the engine, its GPU runtimes and its default
+  configuration, beside the framework's MSI (private-ai-framework.wxs), which
+  holds no llama.cpp file. Built by xtask package, which passes:
+    Version            the llama.cpp release without its v (1.0.0)
+    StagingDir         the engine's staging tree: the tree that ships, as is
+    HasLib, HasKpack   1 when staging holds lib\ / .kpack\ (no .kpack\ without
+                       the HIP backend), else 0
+    EstimatedSizeKb    the payload size, for the Apps list
+    LicenseRtf         the licence page xtask package writes
+    RemoveInstancesCmd installer\msi-remove-instances.ps1 as -EncodedCommand base64
+  installer\AGENTS.md says why each piece is the way it is.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <!--
+    UpgradeCode: the identity every version of llama.cpp's MSI shares, never
+    to change (a new value installs side by side with the old one). It is
+    not the framework's: each product is upgraded on its own, and the
+    framework's MSI finds this one by it to require a minimum release.
+    ProductCode is generated per build.
+  -->
+  <Package Name="llama.cpp v$(var.Version)"
+           Manufacturer="Private AI Framework"
+           Version="$(var.Version)"
+           UpgradeCode="386BFFA7-BF06-4004-BA17-3F5C752DA61A"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <!--
+      The old release removed in full before anything of this one is written
+      (afterInstallValidate, the default). Same-version upgrades are allowed:
+      a repackage of the same release keeps its ProductVersion and must still
+      replace the installed package (ICE61 warns about it).
+    -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of llama.cpp is already installed. To install this older version, uninstall the installed one first (Settings, Apps)." />
+
+    <!--
+      Release 2.4 and earlier of the framework (named llama.cpp-framework, the
+      framework's UpgradeCode) installed into Program Files\llama.cpp and
+      registered HKLM\Software\llama.cpp, which are this package's now: such an
+      install is removed (not OnlyDetect, so RemoveExistingProducts removes
+      what FindRelatedProducts found), and only below 2.99.0, so a 2.99+
+      framework is never touched.
+    -->
+    <Upgrade Id="F21D044C-04F5-478D-8F0A-A9B940DB23C3">
+      <UpgradeVersion Maximum="2.99.0" IncludeMaximum="no" Property="OLDFRAMEWORKFOUND" />
+    </Upgrade>
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" MaximumUncompressedMediaSize="128" />
+
+    <!-- Our own Apps entry (EngineRegistration), as the framework's: the
+         MSI's own runs its Uninstall as a basic UI, where the configuration
+         question cannot show. -->
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+
+    <!-- The folder an earlier install of this package recorded. -->
+    <Property Id="INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="PreviousInstallDir" Root="HKLM" Key="Software\llama.cpp" Name="InstallDir" Type="directory" Bitness="always64" />
+    </Property>
+
+    <!-- Set by the removal dialog's checkbox only (see DeleteEngineData). -->
+    <Property Id="LLAMA_CPP_DELETECONFIG" Secure="yes" />
+    <!-- Set by our Apps entry's UninstallString: open the UI on the removal
+         dialog instead of the maintenance wizard. -->
+    <Property Id="LLAMA_CPP_UNINSTALL" Secure="yes" />
+
+    <!-- ── Layout: bin\, lib\, share\, .kpack\ under the install root ── -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="llama.cpp">
+        <Directory Id="BINFOLDER" Name="bin" />
+        <Directory Id="LIBFOLDER" Name="lib" />
+        <Directory Id="SHAREFOLDER" Name="share" />
+        <Directory Id="KPACKFOLDER" Name=".kpack" />
+      </Directory>
+    </StandardDirectory>
+    <!--
+      The instances' machine tree, %ProgramData%\llama.cpp: config\ (each
+      instance's server@<id>.ini and presets.ini, written by pai-manager),
+      logs\ (llama-server@<id>.log) and models\ (the default ModelsDir).
+    -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ENGINEDATAFOLDER" Name="llama.cpp">
+        <Directory Id="ENGINECONFIGFOLDER" Name="config" />
+        <Directory Id="ENGINELOGSFOLDER" Name="logs" />
+        <Directory Id="ENGINEMODELSFOLDER" Name="models" />
+      </Directory>
+    </StandardDirectory>
+
+    <!--
+      The payload, harvested at build time: llama.cpp's executables and DLLs,
+      the ggml backends and the GPU runtimes flat in bin\; share\ with the
+      licences and the read-only defaults (share\defaults); for ROCm, lib\ and
+      the kernel archives beside bin\.
+    -->
+    <ComponentGroup Id="Payload">
+      <Files Directory="BINFOLDER" Include="$(var.StagingDir)\bin\**" />
+      <Files Directory="SHAREFOLDER" Include="$(var.StagingDir)\share\**" />
+<?if $(var.HasLib) = 1 ?>
+      <Files Directory="LIBFOLDER" Include="$(var.StagingDir)\lib\**" />
+<?endif?>
+<?if $(var.HasKpack) = 1 ?>
+      <Files Directory="KPACKFOLDER" Include="$(var.StagingDir)\.kpack\**" />
+<?endif?>
+    </ComponentGroup>
+
+    <!--
+      HKLM\Software\llama.cpp (64-bit view): InstallDir, where pai-manager
+      finds llama-server (bin\ under it), and Version, the release. And the
+      Apps entry Uninstall\llama.cpp.
+    -->
+    <Component Id="EngineRegistration" Directory="INSTALLFOLDER">
+      <RegistryKey Root="HKLM" Key="Software\llama.cpp" ForceDeleteOnUninstall="yes">
+        <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Name="Version" Type="string" Value="$(var.Version)" />
+      </RegistryKey>
+      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp" ForceDeleteOnUninstall="yes">
+        <RegistryValue Name="DisplayName" Type="string" Value="llama.cpp v$(var.Version)" />
+        <RegistryValue Name="DisplayVersion" Type="string" Value="$(var.Version)" />
+        <RegistryValue Name="Publisher" Type="string" Value="Private AI Framework" />
+        <RegistryValue Name="DisplayIcon" Type="string" Value="[BINFOLDER]llama.ico" />
+        <RegistryValue Name="InstallLocation" Type="string" Value="[INSTALLFOLDER]" />
+        <RegistryValue Name="EstimatedSize" Type="integer" Value="$(var.EstimatedSizeKb)" />
+        <!-- Uninstall: the full UI, opened on the removal dialog (LlamaCppRemoveDlg). -->
+        <RegistryValue Name="UninstallString" Type="string" Value="MsiExec.exe /I[ProductCode] LLAMA_CPP_UNINSTALL=1" />
+        <RegistryValue Name="QuietUninstallString" Type="string" Value="MsiExec.exe /X[ProductCode] /qn" />
+        <RegistryValue Name="ModifyPath" Type="string" Value="MsiExec.exe /I[ProductCode]" />
+        <RegistryValue Name="NoRepair" Type="integer" Value="1" />
+      </RegistryKey>
+    </Component>
+
+    <!--
+      %ProgramData%\llama.cpp and its folders, each with a protected DACL (P:
+      nothing inherited from %ProgramData%; OICI: inherited below). SY SYSTEM,
+      BA Administrators, BU Users, S-1-5-80-0 NT SERVICE\ALL SERVICES (the
+      instances' virtual accounts); 0x1200a9 read and execute, 0x1301bf
+      modify without WRITE_DAC, WRITE_OWNER or delete child. The root: users
+      read. config\: the services read, users have no ACE (they go through
+      pai-manager). logs\ and models\: the services modify, users read. The
+      key path of each component is its folder, so the GUIDs are fixed.
+    -->
+    <Component Id="EngineDataRoot" Directory="ENGINEDATAFOLDER" Guid="CFFB075B-ABFA-4BDD-B519-55270E6540B2" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="EngineDataConfig" Directory="ENGINECONFIGFOLDER" Guid="236606F7-D25A-44D0-BED0-FEEC00F286C2" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;S-1-5-80-0)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="EngineDataLogs" Directory="ENGINELOGSFOLDER" Guid="7DC41C96-6898-4B9C-8025-89868DFFFB02" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+    <Component Id="EngineDataModels" Directory="ENGINEMODELSFOLDER" Guid="D212449F-487D-4E45-BCD4-B67C9346ECE7" KeyPath="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;S-1-5-80-0)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+
+    <!--
+      The defaults, copied into config\ only when missing: NeverOverwrite
+      (not installed when the key file exists, so what the user or the
+      manager wrote stays, on repair and upgrade too) and Permanent (an
+      uninstall or the old half of an upgrade leaves the file). Writable: the
+      manager rewrites it.
+    -->
+    <Component Id="DefaultServerIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
+      <File Id="DefaultServerIni" Source="$(var.StagingDir)\share\defaults\server@default.ini" KeyPath="yes" />
+    </Component>
+    <Component Id="DefaultPresetsIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
+      <File Id="DefaultPresetsIni" Source="$(var.StagingDir)\share\defaults\presets.ini" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="llama.cpp (required)"
+             Description="llama.cpp's programs, the ggml backends and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
+             Level="1" AllowAbsent="no" AllowAdvertise="no" ConfigurableDirectory="INSTALLFOLDER" Display="expand">
+      <ComponentGroupRef Id="Payload" />
+      <ComponentRef Id="EngineRegistration" />
+      <ComponentRef Id="EngineDataRoot" />
+      <ComponentRef Id="EngineDataConfig" />
+      <ComponentRef Id="EngineDataLogs" />
+      <ComponentRef Id="EngineDataModels" />
+      <ComponentRef Id="DefaultServerIni" />
+      <ComponentRef Id="DefaultPresetsIni" />
+    </Feature>
+
+    <!-- ── Custom actions ── -->
+
+    <!-- The script, base64 for -EncodedCommand, in the Property table (a
+         script inlined in a SetProperty overflows its 255 characters:
+         ICE03). Hidden keeps it out of the log. -->
+    <Property Id="LlamaCppRemoveInstancesPs" Value="$(var.RemoveInstancesCmd)" Hidden="yes" />
+
+    <!--
+      The instance services (llama.cpp_<id>) are created at run time by
+      pai-manager, so Windows Installer does not know them: on an uninstall
+      that is not the old half of an upgrade they are stopped and deleted
+      (installer\msi-remove-instances.ps1). A PowerShell script, not the
+      framework's manager: the engine does not require the framework. Deferred and
+      not impersonated (deleting a service takes LocalSystem), before the files
+      go; Return="ignore": a service left behind never rolls the uninstall back.
+    -->
+    <SetProperty Id="RemoveInstanceServices" Sequence="execute" Before="RemoveInstanceServices"
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand [LlamaCppRemoveInstancesPs]" />
+    <CustomAction Id="RemoveInstanceServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!--
+      %ProgramData%\llama.cpp, deleted only when the removal dialog's checkbox
+      was ticked, in a full-UI removal (UILevel 5) that is not the old half of
+      an upgrade: a silent or basic-UI removal keeps it whatever properties it
+      was given. After RemoveFiles (the services are gone, nothing holds a
+      log). Not impersonated: users have no access to config\.
+    -->
+    <SetProperty Id="DeleteEngineData" Sequence="execute" Before="DeleteEngineData"
+                 Value="&quot;[System64Folder]cmd.exe&quot; /d /c rd /s /q &quot;[ENGINEDATAFOLDER]&quot;" />
+    <CustomAction Id="DeleteEngineData" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RemoveInstanceServices" After="StopServices"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="DeleteEngineData" After="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND LLAMA_CPP_DELETECONFIG=&quot;1&quot; AND UILevel &gt;= 5" />
+    </InstallExecuteSequence>
+
+    <!-- ── UI ── -->
+    <UI Id="LlamaCppUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="LicenseAgreementDlg" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <!--
+        First install: LlamaCppWelcomeDlg (the runtime-requirements notice) ->
+        LicenseAgreementDlg -> CustomizeDlg (Browse for the install folder) ->
+        VerifyReadyDlg, as the framework's MSI.
+      -->
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="LlamaCppWelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" />
+
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="LlamaCppWelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="1" Condition="Installed" />
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="CustomizeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" />
+
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="CustomizeDlg" Order="1" Condition="NOT Installed OR WixUI_InstallMode = &quot;Change&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND WixUI_InstallMode &lt;&gt; &quot;Change&quot;" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="ChangeButton" Event="NewDialog" Value="CustomizeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="LlamaCppRemoveDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Dialog Id="LlamaCppWelcomeDlg" Width="370" Height="270" Title="!(loc.WelcomeDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="!(loc.WelcomeDlgBitmap)" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUIBack)" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Title" Type="Text" X="135" Y="15" Width="225" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Bigger}llama.cpp v$(var.Version)" />
+        <Control Id="Description" Type="Text" X="135" Y="45" Width="225" Height="185" Transparent="yes" NoPrefix="yes"
+                 Text="This installs llama.cpp v$(var.Version). The AMD ROCm, NVIDIA CUDA, Vulkan loader and OpenSSL runtime libraries are bundled.&#13;&#10;&#13;&#10;Not bundled, needed at runtime:&#13;&#10;- Visual C++ Redistributable x64: always required&#13;&#10;- AMD GPU: the Adrenalin driver&#13;&#10;- NVIDIA GPU: the NVIDIA driver&#13;&#10;- Vulkan: the driver of the GPU, any vendor&#13;&#10;&#13;&#10;A backend whose driver is missing is skipped when llama-server starts." />
+      </Dialog>
+
+      <!--
+        Removal, with the configuration question. Reached from
+        MaintenanceTypeDlg's Remove, and FIRST when the UI was opened by our
+        Apps entry's Uninstall (LLAMA_CPP_UNINSTALL=1). The checkbox starts
+        cleared: keeping %ProgramData%\llama.cpp is the default.
+      -->
+      <Dialog Id="LlamaCppRemoveDlg" Width="370" Height="270" Title="!(loc.VerifyReadyDlg_Title)">
+        <Control Id="Remove" Type="PushButton" ElevationShield="yes" X="212" Y="243" Width="80" Height="17" Default="yes" Text="!(loc.VerifyReadyDlgRemove)">
+          <Publish Property="WixUI_InstallMode" Value="Remove" />
+          <Publish Event="Remove" Value="All" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="156" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)"
+                 DisableCondition="LLAMA_CPP_UNINSTALL OR Preselected" EnableCondition="NOT LLAMA_CPP_UNINSTALL AND NOT Preselected">
+          <Publish Event="NewDialog" Value="MaintenanceTypeDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.VerifyReadyDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="15" Width="300" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Remove llama.cpp" />
+        <Control Id="Text" Type="Text" X="25" Y="60" Width="320" Height="40" NoPrefix="yes"
+                 Text="Click Remove to remove llama.cpp v$(var.Version) from this computer, with the services of its instances." />
+        <Control Id="ConfigText" Type="Text" X="25" Y="105" Width="320" Height="60" NoPrefix="yes"
+                 Text="The instances' configuration, logs and models are in&#13;&#10;[ENGINEDATAFOLDER]&#13;&#10;They are kept unless you tick the box below, so a later install finds them again." />
+        <Control Id="DeleteConfig" Type="CheckBox" X="25" Y="170" Width="320" Height="17"
+                 Property="LLAMA_CPP_DELETECONFIG" CheckBoxValue="1"
+                 Text="&amp;Also delete the configuration, logs and models (this cannot be undone)" />
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="LlamaCppWelcomeDlg" Before="ProgressDlg" Condition="NOT Installed" />
+        <Show Dialog="LlamaCppRemoveDlg" Before="ProgressDlg"
+              Condition="Installed AND NOT RESUME AND NOT PATCH AND (LLAMA_CPP_UNINSTALL OR (Preselected AND REMOVE~=&quot;ALL&quot;))" />
+        <Show Dialog="override MaintenanceWelcomeDlg" Before="ProgressDlg"
+              Condition="Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH AND NOT LLAMA_CPP_UNINSTALL" />
+      </InstallUISequence>
+    </UI>
+    <UIRef Id="WixUI_Common" />
+    <ui:WixUI Id="WixUI_Common" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+  </Package>
+</Wix>

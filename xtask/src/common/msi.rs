@@ -15,6 +15,150 @@ pub const CARGO_EXES: &[&str] = &[
     "pai-bff.exe",
 ];
 
+use crate::common::util;
+use crate::Product;
+use anyhow::bail;
+use std::path::{Path, PathBuf};
+
+/// The products `xtask package` builds an MSI of on Windows: `product`, or
+/// both when None.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn products(product: Option<Product>) -> Vec<Product> {
+    match product {
+        Some(p) => vec![p],
+        None => vec![Product::Llama, Product::Framework],
+    }
+}
+
+/// The MSI's file name: `llama.cpp-v<release>-<arch>.msi` for the engine,
+/// `private-ai-framework-v<version>-<arch>.msi` for the framework.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn file_name(
+    product: Product,
+    framework_version: &str,
+    llama_build: &str,
+    arch: &str,
+) -> String {
+    match product {
+        Product::Llama => format!("llama.cpp-{llama_build}-{arch}.msi"),
+        Product::Framework => format!("private-ai-framework-v{framework_version}-{arch}.msi"),
+    }
+}
+
+/// The engine's MSI ProductVersion, from its release tag (`v1.0.0` ->
+/// `1.0.0`); refuses what is not a release an MSI version can hold
+/// (ProductVersion: major and minor at most 255, build at most 65535).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn product_version(llama_build: &str) -> anyhow::Result<String> {
+    let Some(version) = llama_build
+        .strip_prefix('v')
+        .filter(|_| util::is_release_tag(llama_build))
+    else {
+        bail!("llama.cpp {llama_build:?} is not a release (vX.Y.Z): an MSI needs one");
+    };
+    let fields: Vec<u64> = version
+        .split('.')
+        .map(|f| f.parse::<u64>())
+        .collect::<Result<_, _>>()?;
+    if fields[0] > 255 || fields[1] > 255 || fields[2] > 65535 {
+        bail!("llama.cpp {llama_build} does not fit an MSI ProductVersion (255.255.65535 at most)");
+    }
+    Ok(version.to_string())
+}
+
+/// Where a product is staged before its MSI is built, under `build_root`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn staging_dir(build_root: &Path, product: Product) -> PathBuf {
+    build_root.join("staging").join(match product {
+        Product::Llama => "llama",
+        Product::Framework => "framework",
+    })
+}
+
+/// The `.wxs` of a product, relative to the repo root.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn wxs(product: Product) -> &'static str {
+    match product {
+        Product::Llama => "installer/llama.cpp.wxs",
+        Product::Framework => "installer/private-ai-framework.wxs",
+    }
+}
+
+/// The engine's read-only defaults on Windows, staged into
+/// `share\defaults\` of llama.cpp's MSI: (file name, content).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn engine_defaults() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "server@default.ini",
+            include_str!("../../../crates/core/defaults/windows/server@default.ini").to_string(),
+        ),
+        (
+            "presets.ini",
+            include_str!("../../../crates/core/defaults/windows/presets.ini").to_string(),
+        ),
+    ]
+}
+
+/// The product and version of an MSI file this package phase writes
+/// (`llama.cpp-v1.0.0-x64.msi` -> engine `1.0.0`,
+/// `private-ai-framework-v2.99.1-x64.msi` -> framework `2.99.1`); None for
+/// any other name, the earlier two-version framework name included.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn msi_product(name: &str) -> Option<(Product, String)> {
+    let stem = name.strip_suffix("-x64.msi")?;
+    let (product, version) = if let Some(v) = stem.strip_prefix("llama.cpp-v") {
+        (Product::Llama, v)
+    } else {
+        (
+            Product::Framework,
+            stem.strip_prefix("private-ai-framework-v")?,
+        )
+    };
+    util::is_release_tag(&format!("v{version}")).then(|| (product, version.to_string()))
+}
+
+/// What `xtask install` installs from `dir` on Windows, in order: the
+/// newest (last written) MSI of llama.cpp, then the newest of the
+/// framework; a product with no MSI there is left out (the framework's MSI
+/// itself refuses to install without the engine).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn install_plan(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<(Product, std::time::SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let (product, _) = msi_product(&e.file_name().to_string_lossy())?;
+                    let written = e.metadata().ok()?.modified().ok()?;
+                    Some((product, written, e.path()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort_by_key(|(_, written, _)| std::cmp::Reverse(*written));
+    [Product::Llama, Product::Framework]
+        .into_iter()
+        .filter_map(|p| {
+            found
+                .iter()
+                .find(|(q, _, _)| *q == p)
+                .map(|(_, _, f)| f.clone())
+        })
+        .collect()
+}
+
+/// The Apps entry each product's MSI writes (64-bit view), where `xtask
+/// install` reads the installed version and the ProductCode of a downgrade.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn uninstall_key(product: Product) -> &'static str {
+    match product {
+        Product::Llama => r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\llama.cpp",
+        Product::Framework => {
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\private-ai"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CARGO_EXES;
@@ -655,24 +799,25 @@ mod tests {
     /// The graceful stop runs `pai.exe control stop-and-close` (the
     /// conversation snapshot, then llama-server, then the GUI's close), and
     /// falls back to `pai-config.exe` when there is no `pai.exe` (an older
-    /// install, whose GUI binary still had the command), then to the 2.4
-    /// configurator: tried in that order, each only when the one before is
-    /// missing.
+    /// install, whose GUI binary still had the command), only when `pai.exe`
+    /// is missing. No fallback to the 2.4 configurator: llama.cpp's MSI,
+    /// installed first, removes a 2.4 install, so none is left to stop.
     #[test]
     fn the_graceful_stop_runs_pai_then_an_older_installs_configurator() {
         let stopper = read("installer/msi-stop-processes.ps1");
-        let old = concat!("llama-cpp", "-config.exe");
         let assignments: Vec<&str> = stopper
             .lines()
             .map(str::trim)
             .filter(|l| l.contains("$exe = Join-Path $bin "))
             .collect();
         let want = [
-            "$exe = Join-Path $bin 'pai.exe'".to_string(),
-            "if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }"
-                .to_string(),
-            format!("if (-not (Test-Path -LiteralPath $exe)) {{ $exe = Join-Path $bin '{old}' }}"),
+            "$exe = Join-Path $bin 'pai.exe'",
+            "if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }",
         ];
+        assert!(
+            !stopper.contains(concat!("llama-cpp", "-config.exe")),
+            "the stopper still falls back to the 2.4 configurator"
+        );
         assert_eq!(assignments, want, "{stopper}");
         let start = stopper
             .lines()
@@ -946,32 +1091,39 @@ mod tests {
 
     // ── %ProgramData%\private-ai ─────────────────────────────────────────
 
-    /// The ids of `%ProgramData%\private-ai` (key "") and of its `config`,
-    /// `logs` and `models` folders.
-    fn data_dirs(doc: &Document) -> BTreeMap<String, String> {
+    /// The ids of `%ProgramData%\<root>` (key "") and of its folders `subs`;
+    /// fails when `root` holds any other folder.
+    fn data_dirs_in(doc: &Document, root: &str, subs: &[&str]) -> BTreeMap<String, String> {
         let common = elements(doc, "StandardDirectory")
             .into_iter()
             .find(|d| d.attribute("Id") == Some("CommonAppDataFolder"))
             .expect("StandardDirectory CommonAppDataFolder (%ProgramData%)");
-        let root = children(common, "Directory")
+        let dir = children(common, "Directory")
             .into_iter()
-            .find(|d| d.attribute("Name") == Some("private-ai"))
-            .expect("Directory Name=\"private-ai\" under CommonAppDataFolder");
+            .find(|d| d.attribute("Name") == Some(root))
+            .unwrap_or_else(|| panic!("Directory Name=\"{root}\" under CommonAppDataFolder"));
         let mut ids = BTreeMap::new();
-        ids.insert(String::new(), root.attribute("Id").expect("Id").to_string());
-        for name in ["config", "logs", "models"] {
-            let dir = children(root, "Directory")
+        ids.insert(String::new(), dir.attribute("Id").expect("Id").to_string());
+        let names: Vec<&str> = children(dir, "Directory")
+            .into_iter()
+            .filter_map(|d| d.attribute("Name"))
+            .collect();
+        assert_eq!(names, subs, "the folders of %ProgramData%\\{root}");
+        for name in subs {
+            let d = children(dir, "Directory")
                 .into_iter()
-                .find(|d| d.attribute("Name") == Some(name))
-                .unwrap_or_else(|| {
-                    panic!("Directory Name=\"{name}\" under %ProgramData%\\private-ai")
-                });
-            ids.insert(
-                name.to_string(),
-                dir.attribute("Id").expect("Id").to_string(),
-            );
+                .find(|d| d.attribute("Name") == Some(*name))
+                .expect("listed above");
+            ids.insert(name.to_string(), d.attribute("Id").expect("Id").to_string());
         }
         ids
+    }
+
+    /// The framework's machine tree: `%ProgramData%\private-ai\config` only
+    /// (`bff.ini`); the instances' config, logs and models are the engine's,
+    /// under `%ProgramData%\llama.cpp` (llama.cpp's own MSI).
+    fn data_dirs(doc: &Document) -> BTreeMap<String, String> {
+        data_dirs_in(doc, "private-ai", &["config"])
     }
 
     /// The DACL the MSI sets on folder `id` (a CreateFolder with one
@@ -1007,7 +1159,7 @@ mod tests {
         let text = read(WXS);
         let doc = Document::parse(&text).expect("the .wxs is XML");
         let ids = data_dirs(&doc);
-        assert_eq!(ids.len(), 4, "{ids:?}");
+        assert_eq!(ids.len(), 2, "{ids:?}");
     }
 
     /// Protected (nothing inherited from `%ProgramData%`, whose default ACL
@@ -1050,44 +1202,6 @@ mod tests {
         for user in [USERS, "S-1-5-11", "S-1-1-0", "S-1-5-4"] {
             assert!(!d.names(user), "config\\ names {user}");
         }
-    }
-
-    /// logs\: each instance's service creates and rotates its
-    /// `llama-server@<id>.log` (a rename to `.previous.log`: modify), users
-    /// read it in the configurator's Log window.
-    #[test]
-    fn the_logs_folder_is_written_by_the_services_and_read_by_users() {
-        let text = read(WXS);
-        let doc = Document::parse(&text).expect("the .wxs is XML");
-        let ids = data_dirs(&doc);
-        let d = folder_dacl(&doc, &ids["logs"]);
-        assert!(d.protected, "logs\\ inherits from its parent");
-        assert_eq!(d.granted(SYSTEM) & FULL, FULL);
-        assert_eq!(d.granted(ADMINISTRATORS) & FULL, FULL);
-        assert_eq!(d.granted(ALL_SERVICES) & MODIFY, MODIFY);
-        assert_eq!(d.granted(USERS) & READ, READ);
-        let mut writers = vec![SYSTEM, ADMINISTRATORS, ALL_SERVICES];
-        writers.sort();
-        assert_eq!(d.writers(), writers);
-    }
-
-    /// models\: a default ModelsDir the instances can read, and write as
-    /// `LLAMA_CACHE` (a model downloaded by name); users read, an
-    /// administrator adds models.
-    #[test]
-    fn the_models_folder_is_written_by_the_services_and_read_by_users() {
-        let text = read(WXS);
-        let doc = Document::parse(&text).expect("the .wxs is XML");
-        let ids = data_dirs(&doc);
-        let d = folder_dacl(&doc, &ids["models"]);
-        assert!(d.protected, "models\\ inherits from its parent");
-        assert_eq!(d.granted(SYSTEM) & FULL, FULL);
-        assert_eq!(d.granted(ADMINISTRATORS) & FULL, FULL);
-        assert_eq!(d.granted(ALL_SERVICES) & MODIFY, MODIFY);
-        assert_eq!(d.granted(USERS) & READ, READ);
-        let mut writers = vec![SYSTEM, ADMINISTRATORS, ALL_SERVICES];
-        writers.sort();
-        assert_eq!(d.writers(), writers);
     }
 
     /// The one `Property` with this id.
@@ -1213,4 +1327,7 @@ mod tests {
             );
         }
     }
+
+    /// llama.cpp's own MSI and the framework's MSI without llama.cpp.
+    mod two_installers;
 }

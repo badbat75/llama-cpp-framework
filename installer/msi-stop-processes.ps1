@@ -28,16 +28,13 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'   # no CLIXML progress records in the MSI log
 try {
+    # Only the framework's own key: Software\llama.cpp is llama.cpp's MSI's,
+    # and that MSI, installed first, removes a 2.4 install before this runs.
     $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\private-ai').InstallDir
-    # An upgrade from 2.4 finds only the old key and the old executable,
-    # llama-cpp-config: a 2.4 configurator may still be running while the MSI
-    # replaces it, so it is stopped like the new one.
-    if (-not $dir) { $dir = (Get-ItemProperty -LiteralPath 'HKLM:\Software\llama.cpp').InstallDir }
     if (-not $dir) { exit 0 }
     $bin = (Join-Path $dir 'bin').TrimEnd('\') + '\'
     $exe = Join-Path $bin 'pai.exe'
     if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'pai-config.exe' }
-    if (-not (Test-Path -LiteralPath $exe)) { $exe = Join-Path $bin 'llama-cpp-config.exe' }
 
     function Get-Ours {
         Get-Process -Name 'llama-server', 'pai', 'pai-config', 'llama-cpp-config' -ErrorAction SilentlyContinue |

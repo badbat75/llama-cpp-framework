@@ -404,3 +404,10 @@ Lessons only: the rules are in `AGENTS.md`.
   spell the directory through a const (`const ENGINE: &str = "llama.cpp"; pd.join(ENGINE)`).
   Windows path decisions are pinned through `paths::windows_machine_dirs(program_data)`, pure, plus a
   text check that each real-path fn's body calls it.
+- A new test file beside a big inline `mod tests`: declare `mod <name>;` inside it (msi.rs's
+  `mod tests { mod two_installers; }` lives at `common/msi/tests/two_installers.rs`); `use super::*;`
+  reaches the parent's private helpers (`elements`, `dacl`, `folder_dacl`...), no `pub` needed.
+- Windows Installer conditions never compare versions ("Conditional Statement Syntax" on
+  learn.microsoft.com): pin a minimum version of another product as `Upgrade Id=<its UpgradeCode>` +
+  `UpgradeVersion OnlyDetect="yes" Minimum=...` (FindRelatedProducts runs before LaunchConditions),
+  then a `Launch` on its property, not a RegistrySearch compared in a condition.
