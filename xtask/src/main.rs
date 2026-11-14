@@ -261,13 +261,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             keep_staging,
             wix,
         } => {
-            if product.is_some() {
-                anyhow::bail!("on macOS the package phase builds every .pkg: give no product");
-            }
             if deb || rpm || wix.is_some() {
                 anyhow::bail!("--deb, --rpm and --wix are other systems' packages; on macOS the packages are .pkg files");
             }
-            macos::package::run(keep_staging)
+            macos::package::run(product, keep_staging)
         }
         Phase::Install {
             deb,

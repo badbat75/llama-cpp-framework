@@ -11,6 +11,9 @@ pub mod configurator;
 pub mod dists;
 pub mod licenses;
 pub mod llama;
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod macos_pkg;
 pub mod msi;
 #[cfg(unix)]
 pub mod prereq;

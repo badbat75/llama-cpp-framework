@@ -66,6 +66,13 @@ const ENGINE_WXS: &str = "installer/llama.cpp.wxs";
 /// upgrade replaces it.
 const OLD_PRODUCT_STOPPER: &str = "installer/msi-stop-processes.ps1";
 
+/// The one line of xtask that may spell `/opt/llama.cpp`: release 2.4's
+/// whole tree on macOS, now llama.cpp's own prefix there (its `.pkg`).
+const ENGINE_DIR_SOURCE: (&str, &str) = (
+    "xtask/src/common/macos_pkg.rs",
+    concat!(r#"pub const ENGINE_DIR: &str = "/opt/llama"#, r#".cpp";"#),
+);
+
 /// Lines of xtask's code (not whole-line comments) naming an old name.
 #[test]
 fn xtask_code_names_the_new_executable_tree_and_variable() {
@@ -83,6 +90,9 @@ fn xtask_code_names_the_new_executable_tree_and_variable() {
         let text = std::fs::read_to_string(path).expect("read source");
         for (n, line) in text.lines().enumerate() {
             if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if path.ends_with(ENGINE_DIR_SOURCE.0) && line.trim() == ENGINE_DIR_SOURCE.1 {
                 continue;
             }
             if old_names.iter().any(|old| line.contains(old)) {
@@ -432,12 +442,20 @@ fn the_windows_and_macos_phases_name_the_new_packages() {
         install.contains("msi::uninstall_key("),
         "windows/install.rs reads no product's Apps entry through msi::uninstall_key"
     );
+    // The macOS identifiers and the MoltenVK manifest come from
+    // common/macos_pkg.rs (their values pinned by its tests): the framework's
+    // under `org.privateai.framework`, the engine's under its own name.
     let macos = read("xtask/src/macos/package.rs");
-    for want in [
-        r#"pub const PKG_ID: &str = "org.privateai.framework";"#,
-        r#"const ICD_NAME: &str = "private-ai-framework-MoltenVK_icd.json";"#,
-    ] {
+    for want in ["macos_pkg::identifier(", "macos_pkg::icd_manifest()"] {
         assert!(macos.contains(want), "macos/package.rs has no {want}");
+    }
+    let pkg = read("xtask/src/common/macos_pkg.rs");
+    for want in [
+        r#""org.privateai.framework.{}""#,
+        r#""org.privateai.{ENGINE_NAME}""#,
+        r#""{ICD_DIR}/{ENGINE_NAME}-MoltenVK_icd.json""#,
+    ] {
+        assert!(pkg.contains(want), "common/macos_pkg.rs has no {want}");
     }
 }
 

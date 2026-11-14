@@ -455,7 +455,7 @@ running instances on the old llama-server; settled by the engine owning its unit
 Slices, each test first: **1** (done) the Linux split (`core`, the engine and its runtimes,
 versions, relations, file names; a non-release llama.cpp build is refused; the runtimes' copyright
 files and the engine's homepage are llama.cpp's); **2** (done, Linux) the packages stop the services they hold (the engine its instances, with its unit), and the build split in xtask (`xtask build|package [llama|framework]`); **2b** (done, Linux) the engine's configuration in `/etc/llama.cpp/` with its defaults copied when missing; **3** the two Windows installers (the framework's and llama.cpp's);
-**4** the macOS `.pkg`; **5** docs and the release process.
+**4** (done, type-checked only: the engine's `.pkg` in `/opt/llama.cpp`, `org.privateai.llama.cpp`, `llama.cpp-v<release>-arm64.pkg` and its `-vulkan` runtime; the framework's `config`, `cli`, `core` in `/opt/private-ai`; `xtask package|install` per product; left: a 2.4 macOS install in `/opt/llama.cpp` is not removed, and `paths::llama_bin_from` looks under `build/linux/` on macOS too) the macOS `.pkg`; **5** docs and the release process.
 
 - Done when: `xtask package` on Linux makes the framework packages at `2.99.1` requiring `llama.cpp (>=
   1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;

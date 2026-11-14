@@ -498,18 +498,33 @@ pub fn llama_bin_with_engine(exe: &Path, stem: &str, engine_dir: Option<&Path>) 
 }
 
 /// The folder llama.cpp's own MSI installed into, from its registration
-/// (`HKLM\Software\llama.cpp` `InstallDir`); `None` elsewhere than Windows
-/// and when no engine is registered.
+/// (`HKLM\Software\llama.cpp` `InstallDir`), on macOS its `.pkg` install
+/// ([`macos_engine_install_dir`] under `/`); `None` on Linux and when no
+/// engine is installed.
 pub fn engine_install_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let dir = win_reg::machine_reg_sz(r"Software\llama.cpp", "InstallDir")?;
         (!dir.is_empty()).then(|| PathBuf::from(dir))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_engine_install_dir(Path::new("/"))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         None
     }
+}
+
+/// llama.cpp's own `.pkg` install under the filesystem root `root` on
+/// macOS (`<root>/opt/llama.cpp`), when it holds `bin/llama-server`.
+pub fn macos_engine_install_dir(root: &Path) -> Option<PathBuf> {
+    let dir = root.join("opt").join(ENGINE_DIR);
+    dir.join("bin")
+        .join("llama-server")
+        .is_file()
+        .then_some(dir)
 }
 
 /// One `REG_SZ` under `HKLM` (64-bit view of a 64-bit program), for
@@ -851,7 +866,7 @@ pub(crate) fn instance_models_dir_e2e() {
 mod tests {
     use super::{
         installed_share_candidates, installed_share_dir, llama_bin_from, llama_bin_with_engine,
-        newest_version, valid_instance_id, windows_machine_dirs,
+        macos_engine_install_dir, newest_version, valid_instance_id, windows_machine_dirs,
     };
     use std::path::{Path, PathBuf};
 
@@ -1034,6 +1049,87 @@ mod tests {
         let reg = body_of("engine_install_dir");
         assert!(reg.contains(r#"r"Software\llama.cpp""#), "{reg}");
         assert!(reg.contains(r#""InstallDir""#), "{reg}");
+    }
+
+    // ── llama-server from llama.cpp's own .pkg (macOS) ───────────────────
+    // The engine's `.pkg` installs under `/opt/llama.cpp`, apart from the
+    // framework's `/opt/private-ai`: `pai-config` there finds llama-server
+    // in the engine's `bin/` when no tree build is around. Pure over the
+    // filesystem root, so it is pinned on Linux.
+
+    /// The engine's tree when it holds `bin/llama-server`.
+    #[test]
+    fn the_macos_engine_install_is_found_under_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        touch(root.path(), "opt/llama.cpp/bin/llama-server");
+        assert_eq!(
+            macos_engine_install_dir(root.path()),
+            Some(root.path().join("opt").join(ENGINE))
+        );
+    }
+
+    /// No engine, an empty one, or a `llama-server` that is a directory:
+    /// nothing, not a guess. 2.4's framework tree (`/opt/private-ai` never
+    /// held llama-server since the split) is not the engine.
+    #[test]
+    fn no_macos_engine_install_finds_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(macos_engine_install_dir(root.path()), None);
+        std::fs::create_dir_all(root.path().join("opt").join(ENGINE).join("bin")).unwrap();
+        assert_eq!(macos_engine_install_dir(root.path()), None);
+        std::fs::create_dir_all(
+            root.path()
+                .join("opt")
+                .join(ENGINE)
+                .join("bin")
+                .join("llama-server"),
+        )
+        .unwrap();
+        assert_eq!(macos_engine_install_dir(root.path()), None);
+        let other = tempfile::tempdir().unwrap();
+        touch(other.path(), "opt/private-ai/bin/llama-server");
+        assert_eq!(macos_engine_install_dir(other.path()), None);
+    }
+
+    /// `pai-config` in `/opt/private-ai/bin` finds the engine's
+    /// llama-server and llama-bench through it.
+    #[cfg(unix)]
+    #[test]
+    fn the_macos_framework_finds_llama_server_in_the_engine_pkg() {
+        let root = tempfile::tempdir().unwrap();
+        let server = touch(root.path(), "opt/llama.cpp/bin/llama-server");
+        let bench = touch(root.path(), "opt/llama.cpp/bin/llama-bench");
+        let config = touch(root.path(), "opt/private-ai/bin/pai-config");
+        let engine = macos_engine_install_dir(root.path());
+        assert_eq!(
+            canon(llama_bin_with_engine(
+                &config,
+                "llama-server",
+                engine.as_deref()
+            )),
+            Some(server.canonicalize().unwrap())
+        );
+        assert_eq!(
+            canon(llama_bin_with_engine(
+                &config,
+                "llama-bench",
+                engine.as_deref()
+            )),
+            Some(bench.canonicalize().unwrap())
+        );
+    }
+
+    /// On macOS the running program's engine is the `.pkg` install under
+    /// `/`: `engine_install_dir` asks `macos_engine_install_dir` (the macOS
+    /// branch only type-checks there).
+    #[test]
+    fn engine_install_dir_asks_the_macos_pkg_install() {
+        let body = body_of("engine_install_dir");
+        assert!(body.contains(r#"target_os = "macos""#), "{body}");
+        assert!(
+            body.contains(r#"macos_engine_install_dir(Path::new("/"))"#),
+            "engine_install_dir does not look under / on macOS:\n{body}"
+        );
     }
 
     /// No llama-server anywhere it is looked for: nothing, not a guess.

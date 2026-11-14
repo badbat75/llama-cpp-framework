@@ -417,3 +417,9 @@ Lessons only: the rules are in `AGENTS.md`.
   `runs_in(doc, action)` lists where a sequence entry runs. With `MajorUpgrade` scheduled
   afterInstallValidate, the old package is removed before the new one's deferred actions can run, so a
   "before the files are replaced on upgrade" action runs in the OLD package (`UPGRADINGPRODUCTCODE`).
+- xtask's `macos/` is `cfg(target_os = "macos")`: pin a macOS packaging choice as a pure item in
+  `common/macos_pkg.rs` (tests in `common/macos_pkg/tests.rs`) plus text checks on `macos/*.rs` and
+  `main.rs`; `cargo check -p xtask --target aarch64-apple-darwin` type-checks the Mac side. xtask has no
+  `tempfile`: use `temp_dir()` + pid behind a `Drop` guard. The xtask names lint refuses `opt/llama.cpp`
+  in code lines (2.4's macOS tree, now the engine's prefix) except `ENGINE_DIR_SOURCE`'s one line; spell
+  it `concat!("/opt/", "llama", ".cpp")` in tests.

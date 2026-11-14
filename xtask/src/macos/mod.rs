@@ -17,9 +17,6 @@ pub mod prereq;
 use crate::common::configurator;
 use anyhow::Result;
 
-/// The package's prefix on the target machine, and the payload path of it.
-pub const OPT_DIR: &str = "/opt/private-ai";
-
 /// `build framework`: the framework, pai-config and pai copied next to
 /// llama-server.
 pub fn build_config() -> Result<()> {

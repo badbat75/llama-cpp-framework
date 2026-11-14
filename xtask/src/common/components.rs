@@ -23,6 +23,7 @@
 //!   each is optional, and each is versioned by its SDK: a new llama.cpp on the
 //!   same SDK leaves them as they are.
 
+use crate::common::macos_pkg;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -91,7 +92,14 @@ impl Component {
 pub fn of(rel: &str) -> Component {
     let path = rel.trim_start_matches('/');
     let name = path.rsplit('/').next().unwrap_or(path);
-    // macOS: one tree under /opt/private-ai.
+    // macOS: the engine's tree (its runtime in lib/), apart from the
+    // framework's under /opt/private-ai.
+    if let Some(inner) = path
+        .strip_prefix(macos_pkg::ENGINE_DIR.trim_start_matches('/'))
+        .and_then(|rest| rest.strip_prefix('/'))
+    {
+        return private(inner, name);
+    }
     if let Some(inner) = path.strip_prefix("opt/private-ai/") {
         if inner == "bin/pai" {
             return Component::Cli;
@@ -162,8 +170,8 @@ fn shared_data(data: &str) -> Component {
     }
 }
 
-/// The owner of a file under a private tree (`/opt/private-ai` on macOS,
-/// `/usr/lib/private-ai` on Linux), by its path `inner` in that tree: the
+/// The owner of a file under a private tree (`/opt/llama.cpp` and
+/// `/opt/private-ai` on macOS, `/usr/lib/private-ai` on Linux), by its path `inner` in that tree: the
 /// runtimes in `lib/` and the kpack archives belong to their SDK, the rest
 /// (llama.cpp's libraries and backends, libomp) to llama.cpp.
 fn private(inner: &str, name: &str) -> Component {

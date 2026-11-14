@@ -1,12 +1,16 @@
-//! Package phase on macOS (cargo run -p xtask -- package): four .pkg files
-//! (pai-config, pai, llama.cpp, the Vulkan runtime: common/components.rs says
-//! which file goes where; ROCm and CUDA do not exist here). Stages the build into
-//! /opt/private-ai (binaries, backends, pai-config and pai in bin/, the
-//! bundled Vulkan loader and MoltenVK in lib/), a symlink per executable in
-//! /usr/local/bin, the MoltenVK driver manifest in
-//! /usr/local/share/vulkan/icd.d, and builds them with pkgbuild into ./dist/.
-//! A component package states no dependencies: `xtask install` lays down all
-//! four, and without the Vulkan one ggml skips that backend and Metal runs.
+//! Package phase on macOS (cargo run -p xtask -- package [llama|framework]):
+//! the engine's two .pkg files (llama.cpp and its Vulkan runtime) and the
+//! framework's three (pai-config, pai, core with the strings every program
+//! prints), or one product's (common/macos_pkg.rs and common/components.rs
+//! say which file goes where; ROCm and CUDA do not exist here). Stages two
+//! trees: the engine's /opt/llama.cpp (llama.cpp's executables, libraries
+//! and backends in bin/, the bundled Vulkan loader and MoltenVK in lib/) and
+//! the framework's /opt/private-ai (pai-config and pai in bin/, its data in
+//! share/), a symlink per executable in /usr/local/bin, the MoltenVK driver
+//! manifest in /usr/local/share/vulkan/icd.d, and builds them with pkgbuild
+//! into ./dist/. A component package states no dependencies: `xtask install`
+//! lays down the engine's first, and without the Vulkan one ggml skips that
+//! backend and Metal runs.
 //!
 //! Self-contained: Metal is part of the system, and what Vulkan needs comes
 //! out of the SDK the build linked. WHICH libraries is not a list kept here:
@@ -18,24 +22,20 @@
 //! and not re-signed, binary).
 //!
 //! The driver manifest goes where the Vulkan loader looks for it (the loader
-//! does not search next to itself): /usr/local/share/vulkan/icd.d, under a
-//! name of its own, with an absolute library_path into /opt/private-ai/lib. A
+//! does not search next to itself): /usr/local/share/vulkan/icd.d, under the
+//! engine's name, with an absolute library_path into /opt/llama.cpp/lib. A
 //! system-wide Vulkan SDK install adds its own MoltenVK manifest there too.
 
 use super::build_llama::load_build_env;
-use super::OPT_DIR;
-use crate::common::components::{self, Component};
+use crate::common::components::{self, Component, Product};
 use crate::common::licenses;
+use crate::common::macos_pkg::{self, ENGINE_DIR, FRAMEWORK_DIR};
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, run as run_cmd, which};
 use crate::common::version;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-
-pub const PKG_ID: &str = "org.privateai.framework";
-const ICD_NAME: &str = "private-ai-framework-MoltenVK_icd.json";
-const ICD_DIR: &str = "/usr/local/share/vulkan/icd.d";
 
 fn is_macho(p: &Path) -> bool {
     use std::io::Read;
@@ -116,7 +116,7 @@ fn resolve(dep: &str, orig: &Path, orig_rpaths: &[String]) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-pub fn run(keep_staging: bool) -> Result<()> {
+pub fn run(product: Option<Product>, keep_staging: bool) -> Result<()> {
     let (cfg, dists) = load_build_env()?;
     let repo = util::repo_root();
     let build_root = util::build_root();
@@ -131,8 +131,19 @@ pub fn run(keep_staging: bool) -> Result<()> {
     ui::head(format!("llama.cpp release: {llama_build}"));
     ui::head("Architecture:      arm64");
 
+    let wanted = macos_pkg::of_product(product);
+    let engine = wanted.contains(&Component::Llama);
+    let framework = wanted.iter().any(|c| c.product() == Product::Framework);
+
     // ── Preconditions ───────────────────────────────────────────────────
-    for exe in ["llama-server", "pai-config", "pai"] {
+    let mut needed = Vec::new();
+    if engine {
+        needed.push("llama-server");
+    }
+    if framework {
+        needed.extend(["pai-config", "pai"]);
+    }
+    for exe in needed {
         if !util::is_executable(&bin.join(exe)) {
             bail!(
                 "{exe} not found in {}. Run cargo run -p xtask -- build first.",
@@ -140,11 +151,13 @@ pub fn run(keep_staging: bool) -> Result<()> {
             );
         }
     }
-    let built = output(cmd(bin.join("pai-config")).arg("--version"))
-        .and_then(|s| s.split_whitespace().last().map(str::to_string))
-        .unwrap_or_default();
-    if built != fw_version {
-        bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+    if framework {
+        let built = output(cmd(bin.join("pai-config")).arg("--version"))
+            .and_then(|s| s.split_whitespace().last().map(str::to_string))
+            .unwrap_or_default();
+        if built != fw_version {
+            bail!("the built pai-config is {built}, Cargo.toml says {fw_version}. Run cargo run -p xtask -- build first.");
+        }
     }
     for tool in ["pkgbuild", "otool", "install_name_tool", "codesign"] {
         if which(tool).is_none() {
@@ -155,22 +168,26 @@ pub fn run(keep_staging: bool) -> Result<()> {
     }
 
     // ── Stage ───────────────────────────────────────────────────────────
-    let opt_bin = under(&stage, &format!("{OPT_DIR}/bin"));
-    let opt_lib = under(&stage, &format!("{OPT_DIR}/lib"));
+    let engine_tree = under(&stage, ENGINE_DIR);
+    let framework_tree = under(&stage, FRAMEWORK_DIR);
+    let engine_bin = engine_tree.join("bin");
+    let engine_lib = engine_tree.join("lib");
     let links = under(&stage, "/usr/local/bin");
-    let icd_dir = under(&stage, ICD_DIR);
     util::remove_all(&stage)?;
-    for d in [&opt_bin, &opt_lib, &links, &icd_dir, &out_dir] {
+    for d in [&links, &out_dir] {
         std::fs::create_dir_all(d)?;
     }
-    crate::common::bench_share::stage(&under(&stage, OPT_DIR).join("share/benchmarks"))?;
-    crate::common::strings_share::stage(&under(&stage, OPT_DIR).join("share/strings"))?;
+    if framework {
+        crate::common::bench_share::stage(&framework_tree.join("share/benchmarks"))?;
+        crate::common::strings_share::stage(&framework_tree.join("share/strings"))?;
+    }
 
     ui::head("Staging binaries...");
-    // The build's bin/ as is (executables, the backend dylibs and
-    // pai-config and pai side by side), llama.cpp's own test-* harnesses left
-    // out. `orig` remembers where each staged Mach-O came from, to resolve
-    // its @rpath dependencies as the build tree does.
+    // The build's bin/ (executables, the backend dylibs and pai-config and
+    // pai side by side), each file into its own tree's bin/ and only the
+    // packaged product's, llama.cpp's own test-* harnesses left out. `orig`
+    // remembers where each staged Mach-O came from, to resolve its @rpath
+    // dependencies as the build tree does.
     let mut orig: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&bin)?
         .flatten()
@@ -182,7 +199,12 @@ pub fn run(keep_staging: bool) -> Result<()> {
         if n.starts_with("test-") || !src.is_file() {
             continue;
         }
-        let dest = opt_bin.join(&n);
+        let at = macos_pkg::staged_path(&n);
+        if !wanted.contains(&components::of(&at)) {
+            continue;
+        }
+        let dest = under(&stage, &at);
+        std::fs::create_dir_all(dest.parent().unwrap())?;
         std::fs::copy(&src, &dest).with_context(|| format!("copying {}", src.display()))?;
         if is_macho(&dest) {
             orig.push((dest, src));
@@ -192,7 +214,8 @@ pub fn run(keep_staging: bool) -> Result<()> {
     // ── Vulkan: MoltenVK and its manifest ──────────────────────────────
     let sdk = dists.find_vulkan();
     let sdk_canon = sdk.as_deref().and_then(|d| d.canonicalize().ok());
-    if let Some(sdk) = &sdk {
+    let vulkan = wanted.contains(&Component::Vulkan);
+    if let Some(sdk) = sdk.as_ref().filter(|_| vulkan) {
         let src_icd = super::dists::moltenvk_icd(sdk);
         let text = std::fs::read_to_string(&src_icd)
             .with_context(|| format!("reading {}", src_icd.display()))?;
@@ -203,23 +226,24 @@ pub fn run(keep_staging: bool) -> Result<()> {
             .context("MoltenVK_icd.json has no ICD.library_path")?
             .to_string();
         let lib_path = src_icd.parent().unwrap().join(&lib);
-        let dest = opt_lib.join("libMoltenVK.dylib");
+        let dest = under(&stage, &macos_pkg::moltenvk_path());
+        std::fs::create_dir_all(dest.parent().unwrap())?;
         std::fs::copy(&lib_path, &dest)
             .with_context(|| format!("copying {}", lib_path.display()))?;
         orig.push((dest, lib_path));
-        json["ICD"]["library_path"] = format!("{OPT_DIR}/lib/libMoltenVK.dylib").into();
-        std::fs::write(
-            icd_dir.join(ICD_NAME),
-            serde_json::to_string_pretty(&json)? + "\n",
-        )?;
+        json["ICD"]["library_path"] = macos_pkg::moltenvk_path().into();
+        let manifest = under(&stage, &macos_pkg::icd_manifest());
+        std::fs::create_dir_all(manifest.parent().unwrap())?;
+        std::fs::write(&manifest, serde_json::to_string_pretty(&json)? + "\n")?;
         ui::dim(format!("MoltenVK and its manifest from {}", sdk.display()));
-    } else {
+    } else if vulkan {
         ui::warn("No Vulkan SDK in the dists: the package has no MoltenVK (Vulkan backend unusable, Metal unaffected)");
     }
 
     // ── Dependency closure ─────────────────────────────────────────────
-    // Every non-system dependency must be staged or come from the SDK (it
-    // is then copied into lib/ under the name it is asked for and given an
+    // Per tree: every non-system dependency must be staged in the file's
+    // own tree or, for the engine's, come from the SDK (it is then copied
+    // into the engine's lib/ under the name it is asked for and given an
     // @rpath install name). The closure grows as libraries are added.
     ui::head("Resolving dependencies...");
     let mut i = 0;
@@ -228,12 +252,18 @@ pub fn run(keep_staging: bool) -> Result<()> {
         let (staged, src) = orig[i].clone();
         i += 1;
         let src_rpaths = rpaths(&src);
+        let in_engine = staged.starts_with(&engine_tree);
+        let tree = if in_engine {
+            &engine_tree
+        } else {
+            &framework_tree
+        };
         for dep in deps(&staged) {
             if is_system(&dep) {
                 continue;
             }
             let base = util::basename(&dep).to_string();
-            if opt_bin.join(&base).is_file() || opt_lib.join(&base).is_file() {
+            if tree.join("bin").join(&base).is_file() || tree.join("lib").join(&base).is_file() {
                 if !dep.starts_with('@') {
                     run_cmd(
                         cmd("install_name_tool")
@@ -245,7 +275,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
             }
             let found = resolve(&dep, &src, &src_rpaths).and_then(|p| p.canonicalize().ok());
             let from_sdk = match (&found, &sdk_canon) {
-                (Some(f), Some(s)) => f.starts_with(s),
+                (Some(f), Some(s)) => in_engine && f.starts_with(s),
                 _ => false,
             };
             if !from_sdk {
@@ -256,7 +286,8 @@ pub fn run(keep_staging: bool) -> Result<()> {
                 );
             }
             let found = found.unwrap();
-            let dest = opt_lib.join(&base);
+            std::fs::create_dir_all(&engine_lib)?;
+            let dest = engine_lib.join(&base);
             std::fs::copy(&found, &dest).with_context(|| format!("copying {}", found.display()))?;
             run_cmd(
                 cmd("install_name_tool")
@@ -282,8 +313,9 @@ pub fn run(keep_staging: bool) -> Result<()> {
     }
 
     // ── Rpaths and signatures ──────────────────────────────────────────
-    // Build paths out, paths relative to the file in: bin/ finds its
-    // neighbours and lib/, lib/ finds itself.
+    // Build paths out, paths relative to the file in: the engine's bin/
+    // finds its neighbours and lib/, lib/ finds itself, the framework's
+    // bin/ its neighbours.
     ui::head("Rewriting rpaths and signing (ad hoc)...");
     for (staged, _) in &orig {
         let mut c = cmd("install_name_tool");
@@ -291,7 +323,7 @@ pub fn run(keep_staging: bool) -> Result<()> {
             c.args(["-delete_rpath", &r]);
         }
         c.args(["-add_rpath", "@loader_path"]);
-        if staged.parent() == Some(opt_bin.as_path()) {
+        if staged.parent() == Some(engine_bin.as_path()) {
             c.args(["-add_rpath", "@loader_path/../lib"]);
         }
         run_cmd(c.arg(staged))?;
@@ -302,11 +334,10 @@ pub fn run(keep_staging: bool) -> Result<()> {
     let mut n_links = 0;
     for (staged, _) in &orig {
         let n = name_of(staged);
-        if staged.parent() == Some(opt_bin.as_path())
-            && !n.ends_with(".dylib")
-            && !n.ends_with(".so")
-        {
-            std::os::unix::fs::symlink(format!("{OPT_DIR}/bin/{n}"), links.join(&n))?;
+        let in_bin = staged.parent() == Some(engine_bin.as_path())
+            || staged.parent() == Some(framework_tree.join("bin").as_path());
+        if in_bin && !n.ends_with(".dylib") && !n.ends_with(".so") {
+            std::os::unix::fs::symlink(macos_pkg::staged_path(&n), links.join(&n))?;
             n_links += 1;
         }
     }
@@ -321,24 +352,28 @@ pub fn run(keep_staging: bool) -> Result<()> {
         .and_then(components::dist_version)
         .unwrap_or_else(|| fw_version.clone());
     let mut created = Vec::new();
-    for c in present {
+    for c in present.into_iter().filter(|c| wanted.contains(c)) {
         let root = components::root(&roots, c);
-        let opt = under(&root, OPT_DIR);
+        let tree = if c.product() == Product::Llama {
+            under(&root, ENGINE_DIR)
+        } else {
+            under(&root, FRAMEWORK_DIR)
+        };
         licenses::stage_in(
-            &opt.join("share/licenses").join(c.suffix()),
-            &licenses::libraries_under(&opt),
+            &tree.join("share/licenses").join(c.suffix()),
+            &licenses::libraries_under(&tree),
             &licenses::Sources {
                 llama_cpp: llama.clone(),
                 ..Default::default()
             },
         )?;
-        let version = if c == Component::Vulkan {
-            vulkan_version.as_str()
-        } else {
-            fw_version.as_str()
-        };
-        let stem = components::file_stem(c, &fw_version, &llama_build, version);
-        let pkg = out_dir.join(format!("{stem}-arm64.pkg"));
+        let version = macos_pkg::version(c, &fw_version, &llama_build, &vulkan_version);
+        let pkg = out_dir.join(macos_pkg::file_name(
+            c,
+            &fw_version,
+            &llama_build,
+            &vulkan_version,
+        ));
         let _ = std::fs::remove_file(&pkg);
         ui::head(format!("Building {}...", name_of(&pkg)));
         run_cmd(
@@ -349,9 +384,9 @@ pub fn run(keep_staging: bool) -> Result<()> {
                     "--install-location",
                     "/",
                     "--identifier",
-                    &format!("{PKG_ID}.{}", c.suffix()),
+                    &macos_pkg::identifier(c),
                     "--version",
-                    version,
+                    &version,
                 ])
                 .arg(&pkg),
         )?;

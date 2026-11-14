@@ -4,11 +4,12 @@
 //! A first install, an upgrade, a reinstall and a downgrade are the same
 //! command: a flat component package is laid down whatever is there.
 //!
-//! Refuses to run while a program from /opt/private-ai is running (--force
-//! goes ahead): a server that outlives the install keeps the old libraries.
+//! The engine's packages go down first, then the framework's. Refuses to
+//! run while a program from either installed tree is running (--force goes
+//! ahead): a server that outlives the install keeps the old libraries.
 
-use super::OPT_DIR;
 use crate::common::components::{self, Component};
+use crate::common::macos_pkg::{self, ENGINE_DIR, FRAMEWORK_DIR};
 use crate::common::ui;
 use crate::common::util::{self, cmd, output, run as run_cmd};
 use anyhow::{bail, Result};
@@ -30,8 +31,7 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
             .collect();
         if found.is_empty() {
             bail!(
-                "no {} .pkg in {}. Run cargo run -p xtask -- package first.",
-                components::BASE_NAME,
+                "no .pkg in {}. Run cargo run -p xtask -- package first.",
                 out_dir.display()
             );
         }
@@ -46,7 +46,8 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
         }
         given
     };
-    // private-ai-framework-config-v<fw>-<llama>-arm64.pkg -> <fw>
+    let pkgs = macos_pkg::install_order(pkgs);
+    // private-ai-framework-config-v<fw>-arm64.pkg -> <fw>
     let config_prefix = format!("{}-v", Component::Config.package());
     let new_version = pkgs.iter().find_map(|p| {
         let file = name(p);
@@ -54,7 +55,7 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
             .and_then(|r| r.split('-').next())
             .map(str::to_string)
     });
-    let old_version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
+    let old_version = output(cmd(format!("{FRAMEWORK_DIR}/bin/pai-config")).arg("--version"))
         .and_then(|s| s.split_whitespace().last().map(str::to_string))
         .unwrap_or_default();
 
@@ -73,9 +74,9 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     // ── Running programs ────────────────────────────────────────────────
     // BSD pgrep: -l with -f prints the full command line.
     let running =
-        output(cmd("pgrep").args(["-l", "-f", &format!("^{OPT_DIR}/bin/")])).unwrap_or_default();
+        output(cmd("pgrep").args(["-l", "-f", &macos_pkg::running_pattern()])).unwrap_or_default();
     if !running.is_empty() {
-        ui::warn(format!("Running from {OPT_DIR}:"));
+        ui::warn(format!("Running from {ENGINE_DIR} or {FRAMEWORK_DIR}:"));
         for line in running.lines() {
             ui::dim(format!("  {line}"));
         }
@@ -108,12 +109,12 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
     }
 
     if let Some(new_version) = &new_version {
-        let version = output(cmd(format!("{OPT_DIR}/bin/pai-config")).arg("--version"))
+        let version = output(cmd(format!("{FRAMEWORK_DIR}/bin/pai-config")).arg("--version"))
             .and_then(|s| s.split_whitespace().last().map(str::to_string))
             .unwrap_or_default();
         if version != *new_version {
             bail!(
-                "{OPT_DIR}/bin/pai-config reports '{}', the package is {new_version}",
+                "{FRAMEWORK_DIR}/bin/pai-config reports '{}', the package is {new_version}",
                 if version.is_empty() {
                     "nothing"
                 } else {
@@ -123,7 +124,7 @@ pub fn run(force: bool, dry_run: bool, files: Vec<PathBuf>) -> Result<()> {
         }
     }
     ui::say("");
-    ui::ok(format!("{} packages installed in {OPT_DIR}", pkgs.len()));
+    ui::ok(format!("{} packages installed", pkgs.len()));
     if !running.is_empty() {
         ui::warn("Restart the programs listed above to use it");
     }
