@@ -540,3 +540,17 @@ Lessons only: the rules are in `AGENTS.md`.
 - The workflow tests in `xtask/src/ci_windows.rs` only match text: when a step checks a reply's fields,
   confirm the names and values against their producer by hand (`/api/instances` in
   `crates/bff/src/lib.rs`, the state names in `crates/core/src/client.rs`), since nothing runs the step.
+- A bff route that reads the client address (`axum::extract::ConnectInfo<SocketAddr>`) is tested with
+  `oneshot` by inserting `ConnectInfo(addr)` into the request's extensions; that hides whether
+  serve.rs serves with `into_make_service_with_connect_info` (without it the route answers 500), so
+  pin the shipped wiring with one request to the binary (`tests/pai_bff_binary.rs`).
+- `cargo test --test a --test b` stops after the first binary that fails: add `--no-fail-fast` to see
+  every red.
+- A rate limit or lockout tested one request at a time misses the race: a check before a slow call and
+  a record after it lets parallel requests all pass the check. Pin it with a fake that sleeps in the
+  seam, a `multi_thread` tokio test and a `JoinSet` of N requests on router clones, asserting the seam's
+  call count. Also try the key's spellings (case, domain prefixes) the real backend treats as one.
+- Reviewing a slot reserved under a lock and given back by a `Drop` guard in an async handler: check there
+  is no `.await` between the reservation and the guard's creation (a cancelled future would leak the
+  slot), and that every `MutexGuard` on the same lock is dropped before the guard (else the `Drop`
+  deadlocks). A cancelled request leaves its `spawn_blocking` call running, unrecorded.

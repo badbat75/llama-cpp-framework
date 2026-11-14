@@ -16,7 +16,8 @@ pub enum ServeError {
 }
 
 /// Serve [`crate::router`] on `addr` until `stop` resolves, then let the
-/// open requests finish and return.
+/// open requests finish and return. Each request carries the client's
+/// address (`ConnectInfo`), which the sign-in lockout reads.
 pub fn serve(
     addr: SocketAddr,
     stop: impl Future<Output = ()> + Send + 'static,
@@ -32,10 +33,13 @@ pub fn serve(
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(ServeError::Bind)?;
-        axum::serve(listener, crate::router())
-            .with_graceful_shutdown(stop)
-            .await
-            .map_err(ServeError::Serve)
+        axum::serve(
+            listener,
+            crate::router().into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(stop)
+        .await
+        .map_err(ServeError::Serve)
     })
 }
 

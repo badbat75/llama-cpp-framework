@@ -183,6 +183,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - pai-bff's serving runtime (`serve.rs`) is built by hand: a handler that uses `tokio::time` needs
   `.enable_time()` there, or it panics at the first request. The router tests run under
   `#[tokio::test]` (timer on) and miss it; only the binary test (`tests/pai_bff_binary.rs`) catches it.
+  Likewise a handler that extracts `ConnectInfo<SocketAddr>` (the sign-in lockout) needs `serve.rs`
+  to serve `into_make_service_with_connect_info::<SocketAddr>()`, or it answers 500: the router
+  tests insert `ConnectInfo` into the request's extensions by hand and cannot see it.
+- A limit checked under a mutex before an `.await` (the sign-in lockout around `spawn_blocking`) must
+  reserve its slot under that same lock, or concurrent requests all pass the check. Give the slot back
+  from a `Drop` guard (`session.rs` `InFlight`): axum drops the handler future when the client goes
+  away, and a decrement written after the `.await` would then never run. Never drop the guard while
+  holding the store's guard (it locks the same mutex).
 - The fe's JSX-text lint (`strings.test.ts`) flags letters between any `>` and the next `<` with no
   `{`/`}` between them, code included (`</p>\n  else if (x) content =`): write each branch as a braced
   `if (..) { return <..> }` so a brace always sits between the tags.

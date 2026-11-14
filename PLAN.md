@@ -762,7 +762,12 @@ their field, 409, 401 mid-edit) and 1c (start, stop, restart, state polling, boo
 The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI
 session's, following the coordinator's shape; the fe is built against mocks), each test first:
 
-6. (6a done: `GET /api/instances` items `{id, engine, state}`, errors `{key, args}`) **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
+6. (6a done: `GET /api/instances` items `{id, engine, state}`, errors `{key, args}`; 6b part 1 done: the
+   session routes over an `Authenticator` seam, the shipped bff answering 503 `session-unavailable`
+   until the real backend; left for the backend part: an abandoned request's check keeps running
+   unrecorded (bound concurrent checks), LogonUser spellings of one account (`.\user`, `HOST\user`,
+   `user@host`) need one lock key, a per-address cap across user names (spraying), `Secure` and
+   `__Host-` on the cookie once the bff leaves loopback) **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
    `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
    Linux, `LogonUser` on Windows); the manager learns who acts. Decided with the user on 2026-11-15: the
    bff vouches for the user it authenticated: a polkit rule lets `private-ai-bff` call the manager, the

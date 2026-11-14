@@ -2,8 +2,9 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version and the manager's instances with their state (`PLAN.md` step 10). The web UI
-already has sign-in and a read-only Server page, built against routes the bff does not serve yet
+framework version and the manager's instances with their state, and has the session routes, whose
+check against the operating system is not wired yet: every sign-in answers 503 (`PLAN.md` step 10).
+The web UI already has a read-only Server page, built against a route the bff does not serve yet
 ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
@@ -61,6 +62,9 @@ runtime (axum).
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}` |
 | `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
+| `POST /api/session` | Signs in: `{"user", "canConfigure"}` and the session cookie ([below](#the-session)) |
+| `GET /api/session` | `{"user", "canConfigure"}` of the cookie's session |
+| `DELETE /api/session` | Signs out: 204, the cookie cleared |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -102,6 +106,33 @@ the two calls the manager answers without authorization, and the only ones the b
   ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls the bff makes passed the pipe in
   CI (run 43651545466); the refusals are type-checked only.
 
+## The session
+
+`POST /api/session` takes `{"username": <text>, "password": <text>}` as `application/json` and asks
+the authenticator (`session::Authenticator` in `crates/bff/src/session.rs`) on a blocking thread.
+The shipped one, `SystemAuthenticator`, answers unavailable to every sign-in until PAM (Linux) and
+LogonUser (Windows) are wired; under `PRIVATE_AI_DATA_ROOT` it must never ask the real system.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"user", "canConfigure"}`, both from the authenticator (its account name, not the one typed) | Signed in; `Set-Cookie: pai_session=<id>; HttpOnly; SameSite=Strict; Path=/` |
+| 400 | `{"key": "session-malformed", "args": []}` | Not JSON, another content type, `username` or `password` missing or not text, an empty `username` |
+| 401 | `{"key": "session-bad-credentials", "args": []}` | No such account or the wrong password (not told apart); an empty password, refused without asking |
+| 429 | `{"key": "session-too-many-attempts", "args": [<seconds left>]}` | 5 refusals for one typed user from one client address (any port) within 60 s lock that pair for 60 s from the 5th, the authenticator not asked |
+| 503 | `{"key": "session-unavailable", "args": []}` | The authenticator could not check at all, or no random id could be drawn |
+
+- **The cookie** carries an opaque id: 32 bytes from the OS's random source (the `getrandom` crate,
+  since std has no stable one) in hex. No `Secure` while the bff serves plain HTTP on loopback (a
+  browser would not send it back over `http`), no `Domain`. The password is neither kept nor sent back.
+- **`GET` and `DELETE /api/session`** answer 401 `{"key": "session-required", "args": []}` with no
+  cookie, an unknown id or an expired one. `DELETE` ends the session (a replayed id is refused) and
+  clears the cookie (`Max-Age=0`); the user's other sessions stay.
+- **A session ends after 30 minutes without a request that uses it**; each use moves the deadline.
+- **In memory only**: a restart of the bff signs everyone out. The lockout reads the client's
+  address from the connection (`serve.rs` serves `into_make_service_with_connect_info`).
+- The time comes from a clock handed to `router_with_session` (`Instant::now` in the service), so
+  the tests move it.
+
 ## The web UI (`fe/`)
 
 React + Vite in TypeScript, exact versions in `fe/package.json` and a committed
@@ -126,10 +157,11 @@ opens and never shows a reply's text.
   `{"user", "canConfigure"}` signs the page in, any other reply or failure leaves it signed out.
   Sign out is `DELETE /api/session`, signed out whatever it answers; a 401 from the server read
   signs the page out too.
-- **`/api/session` and `/api/instances/{id}/server` are not served by the bff yet**: they are
-  proposed in `fe/briefs/api-contract.md`, and the fe is tested against them with mocked replies
-  only. Today's bff answers 404 to both, so the page stays signed out with the Overview whole, an
-  instance page shows the sign-in form and, by the code, a sign-in shows the generic failure.
+- **`/api/instances/{id}/server` is not served by the bff yet**: it is proposed in
+  `fe/briefs/api-contract.md`, and the fe is tested against it with mocked replies only. The bff
+  serves `/api/session`, but until its authenticator is wired every sign-in answers 503
+  `session-unavailable`, so the page stays signed out with the Overview whole and an instance page
+  shows the sign-in form.
 - **Errors are `{"key", "args"}`** (`apiError` in `fe/src/api.ts`, the bff's shape since
   `GET /api/instances` moved to it); the message is picked by the key, never by the status, apart
   from 401. For the instances: `client-unavailable` (the manager is not running or does not
@@ -157,7 +189,8 @@ opens and never shows a reply's text.
 `cargo test -p pai-bff` needs no node: without `fe/dist` it embeds the fixture
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
 the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` against a fake
-manager (`router_with`, a short timeout); `tests/pai_bff_binary.rs` runs the binary with
+manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/session` through
+`router_with_session` with a fake authenticator and a clock the test moves; `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

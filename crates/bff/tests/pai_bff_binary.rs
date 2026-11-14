@@ -240,23 +240,7 @@ fn it_serves_on_the_configured_address() {
 #[cfg(unix)]
 fn serving(root: &Path) -> Serving {
     let addr: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().expect("addr");
-    write_bff_ini(root, &addr.to_string());
-    let mut child = Serving(command(root, &[]).spawn().expect("spawn pai-bff"));
-    let deadline = Instant::now() + DEADLINE;
-    loop {
-        if let Some(status) = child.0.try_wait().expect("try_wait") {
-            let mut err = String::new();
-            if let Some(mut e) = child.0.stderr.take() {
-                let _ = e.read_to_string(&mut err);
-            }
-            panic!("pai-bff exited ({status}) instead of serving: {err}");
-        }
-        match get(addr, "/api/version") {
-            Ok(_) => return child,
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
-        }
-    }
+    serving_on(root, addr)
 }
 
 /// Sends `signal` (a `kill` name: TERM, INT) to the child and waits for it
@@ -404,5 +388,81 @@ fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
         Ok(_) => panic!("pai-bff dialed the system bus under the test redirect"),
         Err(e) => panic!("accept on the fake bus: {e}"),
+    }
+}
+
+/// One HTTP/1.1 POST of a JSON body over a plain socket: (status line,
+/// headers, body).
+#[cfg(unix)]
+fn post_json(
+    addr: SocketAddr,
+    path: &str,
+    body: &str,
+) -> std::io::Result<(String, String, String)> {
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(2))?;
+    s.set_read_timeout(Some(Duration::from_secs(10)))?;
+    write!(
+        s,
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    let mut raw = String::new();
+    s.read_to_string(&mut raw)?;
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((&raw, ""));
+    let (status, headers) = head.split_once("\r\n").unwrap_or((head, ""));
+    Ok((
+        status.to_string(),
+        headers.to_ascii_lowercase(),
+        body.to_string(),
+    ))
+}
+
+/// The shipped router signs in over a real socket (the lockout reads the
+/// client's address, which only the server's connection info gives), and
+/// under `PRIVATE_AI_DATA_ROOT` its authenticator asks no real PAM or
+/// LogonUser: 503 `{"key": "session-unavailable", "args": []}`, no cookie.
+#[cfg(unix)]
+#[test]
+fn sign_in_under_the_test_redirect_is_unavailable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let addr: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().expect("addr");
+    let mut child = serving_on(dir.path(), addr);
+    let r = post_json(
+        addr,
+        "/api/session",
+        r#"{"username": "root", "password": "not-a-real-password"}"#,
+    );
+    let _ = child.0.kill();
+    let (status, headers, body) = r.expect("POST /api/session");
+    assert!(status.contains(" 503 "), "{status}\n{body}");
+    assert!(!headers.contains("set-cookie"), "{headers}");
+    let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
+    assert_eq!(
+        json,
+        serde_json::json!({ "key": "session-unavailable", "args": [] }),
+        "{body}"
+    );
+}
+
+/// `serving` on a given address.
+#[cfg(unix)]
+fn serving_on(root: &Path, addr: SocketAddr) -> Serving {
+    write_bff_ini(root, &addr.to_string());
+    let mut child = Serving(command(root, &[]).spawn().expect("spawn pai-bff"));
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut e) = child.0.stderr.take() {
+                let _ = e.read_to_string(&mut err);
+            }
+            panic!("pai-bff exited ({status}) instead of serving: {err}");
+        }
+        match get(addr, "/api/version") {
+            Ok(_) => return child,
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
+        }
     }
 }

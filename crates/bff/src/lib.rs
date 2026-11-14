@@ -4,6 +4,7 @@
 pub mod bff;
 pub mod listen;
 pub mod serve;
+pub mod session;
 
 use pai_core::client::ClientError;
 
@@ -20,9 +21,15 @@ const ENGINE_LLAMA_CPP: &str = "llama.cpp";
 const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
-/// system's manager, the web UI's page at `/` and its files under `/assets/`.
+/// system's manager, `/api/session` through the system's authenticator, the
+/// web UI's page at `/` and its files under `/assets/`.
 pub fn router() -> axum::Router {
-    router_with(std::sync::Arc::new(system_connect), MANAGER_TIMEOUT)
+    router_with_session(
+        std::sync::Arc::new(system_connect),
+        MANAGER_TIMEOUT,
+        std::sync::Arc::new(session::SystemAuthenticator),
+        std::sync::Arc::new(std::time::Instant::now),
+    )
 }
 
 /// The routes of [`router`], the manager reached through `connect`, each
@@ -46,6 +53,17 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
             "/api/instances",
             get(move || instances(connect.clone(), timeout)),
         )
+}
+
+/// The routes of [`router_with`] plus the session routes, signing in
+/// through `auth` and reading the time from `clock`.
+pub fn router_with_session(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+) -> axum::Router {
+    router_with(connect, timeout).merge(session::routes(auth, clock))
 }
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on
