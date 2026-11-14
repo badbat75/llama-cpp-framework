@@ -696,6 +696,11 @@ access with authentication.
 
 ## Later, not planned yet
 
+- **TypeScript 7 for the web UI:** `fe/` stays on TypeScript 6.0.x (user, 2026-11-14) because
+  typescript-eslint supports `>=4.8.4 <6.1.0` and TS 7.0 has no API for external tools (expected
+  with 7.1: typescript-eslint issue #12518, Microsoft's TS 7.0 announcement). Move to 7 only when
+  every tool of the `fe/` stack supports it (typescript-eslint first), checked in each tool's own
+  docs.
 - **macOS build stack, unverified:** `crates/app/build.rs` `emit_build_stack` reads the CMake
   cache under `build/windows` or `build/linux` only, so on a Mac the recorded SDK versions would come
   out empty (found by reading; nothing has run on a Mac, R3).
