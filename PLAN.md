@@ -21,7 +21,7 @@ as the column says. A requirement still open must be covered by a step.
 | R5 | Every measurement in `benchmarks/bench.db`, under a versioned spec, public: no credentials, no local paths | Met |
 | R6 | Per-GPU and per-model guides where every value traces to a campaign, published as a site | Met, but their figures predate v0.9.0: step 5 |
 | R7 | The fastest presets for the test machine's GPUs: port an out-of-tree optimization when its gain pays for its upkeep | Open: steps 4 to 9 |
-| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`, which starts the instances at boot and is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
+| R8 | llama-server runs as an OS service per instance (`llama.cpp@<id>` on Linux, config `server@<id>.ini`, a Windows service) managed by the runtime service `private-ai-manager`; the OS starts at boot the instances enabled for it (systemd, the SCM start type), set through the manager, which is what the GUI and CLI talk to (D-Bus plus polkit on Linux, a named pipe with an ACL on Windows); units started by hand stay under its management; the manager owns every check on the config it writes and the GUI is a thin client; later engines (Strata) are to fit the same manager | Open: step 1 |
 | R9 | The project is `private-ai-framework`, its executables `pai-config` and `pai-manager` (decided 2026-11-13), with upgrades from the old packages and the user's data carried over | Open: step 2 |
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
@@ -343,35 +343,6 @@ plan's `pai --version` and graceful-stop checks). The step closes with that run.
   the GUI only; `pai-app` and `pai-cli` link no Slint and pass the Windows GNU check; the packages ship
   both; the docs name `pai` for commands.
 
-### 12. Start the instance at boot instead of at the configurator's launch
-
-Covers: R8. Asked by the user on 2026-11-14, before step 11's later slices.
-
-The Settings tab's "start llama-server when pai-config launches" (`settings.ini`
-`StartServerOnLaunch`, per user) no longer fits a service: on Linux and Windows it becomes "start
-llama-server when the system starts", and its state is the service manager's own, as for "Start at
-login": on Linux the instance's unit is enabled (`systemctl enable llama.cpp@default`: the template
-gains `[Install] WantedBy=multi-user.target`), on Windows the SCM start type of `llama.cpp_default` is
-automatic or manual. The manager reads and changes it (a new pair of calls, under `configure`, as
-systemd's own enabling asks for an administrator) and no longer starts every instance at its own start:
-systemd and the SCM start the enabled ones, so `systemctl enable/disable` by hand and the GUI agree.
-The GUI and `pai` show and change it through the manager; pai-config no longer starts the server when
-it launches. macOS keeps today's toggle, label and `StartServerOnLaunch` (no services there). A new
-instance starts disabled, as the old setting defaulted to off. Requirement change to R8: the manager no
-longer starts every instance at boot, only the enabled ones are started, by the OS.
-
-Code done (tests green, see the commit); left: the real try on the installed packages (needs an
-imported instance), the docs, and two loose ends: `manager-boot-start-failed` now reports the Windows
-service sync, its text should say so; removing `llama.cpp` (which now ships the unit) with an enabled instance leaves a
-dangling `multi-user.target.wants/llama.cpp@<id>.service` link (its removal scripts should disable
-the instances); the engine's rpm scriptlets call systemctl without `Requires(...): systemd` (guarded,
-but inconsistent with core and bff).
-
-- Done when: the toggle reads "start llama-server when the system starts" on Linux and Windows and
-  follows `systemctl is-enabled llama.cpp@default` (or the SCM start type), both ways; a user without
-  `configure` is refused; pai-config's launch starts nothing; macOS unchanged; tried on the real
-  install.
-
 ### 11. Decouple the framework from its engines
 
 Covers: R12. Comes before step 1's real run, so the packages installed for real are the new ones.
@@ -405,7 +376,7 @@ Decided with the user on 2026-11-14:
   an empty `presets.ini`) and its postinst copies each to `/etc/llama.cpp/` only when missing
   (`server@default.ini` 0640 root:private-ai), so an upgrade never touches what the user or the manager
   wrote and dpkg asks nothing; the instance `default` then exists from the first install, disabled at
-  boot (step 12). No migration between pre-release layouts (user, 2026-11-14): nothing moves files
+  boot. No migration between pre-release layouts (user, 2026-11-14): nothing moves files
   from `/etc/private-ai/`. Windows and macOS: to settle with the
   user in their slices (the same split would be `%ProgramData%\llama.cpp\`).
   **The format belongs to the framework, the engine ships only starting values** (user,

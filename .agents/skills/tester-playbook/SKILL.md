@@ -378,6 +378,10 @@ Lessons only: the rules are in `AGENTS.md`.
   private-ai exists after `set_group(true)`), `chown`, `chgrp` and `install` (copies, applies `-m`, only
   logs `-g`/`-o`, so it runs unprivileged), and its `systemctl` appends `has-default=yes|no` to each
   logged call: the order of a copy against a start is read from the log line.
+  It also moves `/etc/systemd/system` (`SYSTEM_UNITS`; `$DPKG_ROOT`-prefixed in `run_chroot`), and
+  `enable_instance` makes an instance's `multi-user.target.wants` link. Enabled template instances
+  are known only by those links: `systemctl list-unit-files 'getty@*'` lists the template alone
+  (systemd 259), so a script cannot query them, and a test must pin the links, not a systemctl answer.
 - A run-time-read fixture file (`std::fs::read_to_string(CARGO_MANIFEST_DIR/..)`) gives a red naming
   the missing file, where `include_str!` would stop the whole crate from compiling.
 - A maintainer script that must work in a chroot install (dpkg `--root`, `DPKG_ROOT`) is run with

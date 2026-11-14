@@ -1172,6 +1172,12 @@ fn rpm_relations(f: &Fields) -> String {
             lines.push(format!("Requires({tag}): systemd"));
         }
     }
+    if f.component == Component::Llama {
+        // The engine's scriptlets run systemctl too; it has no %post.
+        for tag in ["pre", "preun", "postun", "posttrans"] {
+            lines.push(format!("Requires({tag}): systemd"));
+        }
+    }
     lines.join("\n")
 }
 
@@ -2496,6 +2502,46 @@ mod tests {
             deb_relations(&f),
             (String::new(), String::new(), String::new())
         );
+    }
+
+    /// The engine's scriptlets run systemctl (its instances), so its `.rpm`
+    /// needs systemd for each scriptlet it has, as the core and the bff do
+    /// (Fedora's `%systemd_requires`, plus %pre and %posttrans), and for no
+    /// scriptlet it lacks; its runtimes run no scriptlet and need nothing.
+    #[test]
+    fn the_engine_rpm_requires_systemd_for_each_of_its_scriptlets() {
+        use super::super::system_files::rpm_scriptlets;
+        let scriptlets = rpm_scriptlets(Component::Llama);
+        let has: Vec<&str> = scriptlets
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('%'))
+            .collect();
+        assert!(
+            has.contains(&"pre") && has.contains(&"posttrans"),
+            "{scriptlets}"
+        );
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let rpm = rpm_relations(&f);
+        let lines: Vec<String> = rpm
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        for tag in ["pre", "post", "preun", "postun", "posttrans"] {
+            let want = format!("Requires({tag}): systemd");
+            assert_eq!(
+                lines.contains(&want),
+                has.contains(&tag),
+                "{want}: the engine's scriptlets are {has:?}\n{rpm}"
+            );
+        }
+        for (c, v) in [
+            (Component::Rocm, "10.1.0"),
+            (Component::Vulkan, "1.4.328.1"),
+        ] {
+            let rpm = rpm_relations(&fields_v(c, v, &[], None));
+            assert!(!rpm.contains("Requires("), "{c:?}:\n{rpm}");
+        }
     }
 
     /// The bff's `.deb` Depends: what dpkg-shlibdeps found for pai-bff (or

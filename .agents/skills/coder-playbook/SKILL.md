@@ -213,3 +213,6 @@ Lessons only: the rules are in `AGENTS.md`.
   empty, run the test, and `ast.literal_eval` the `right:` value into the file. In `rpm_spec`, a system
   file under `/usr/share/private-ai/` is already taken by that directory's `%files` line: listing it by
   name too makes rpmbuild warn "File listed twice".
+- `cargo clippy -p xtask --target x86_64-pc-windows-gnu` prints two `xtask (manifest)` warnings
+  (`serde_json` and `sha2`, unused on that target) and still exits 0: they come from
+  `xtask/Cargo.toml`, not from the code, and are not a lint failure.

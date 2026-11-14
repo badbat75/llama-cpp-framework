@@ -34,6 +34,9 @@ const RECORD: &str = "/run/llama.cpp.instances";
 /// The engine's configuration directory, where the manager keeps the
 /// instance files (`paths::engine_config_dir` in pai-core).
 const ENGINE_ETC: &str = "/etc/llama.cpp";
+/// The links `systemctl enable` makes for an enabled instance (the
+/// template's `WantedBy=multi-user.target`), up to the instance's id.
+const INSTANCE_LINKS: &str = "/etc/systemd/system/multi-user.target.wants/llama.cpp@";
 /// Where the engine's package ships its defaults, read-only.
 const ENGINE_DEFAULTS: &str = "/usr/share/private-ai/llama.cpp";
 /// Asks the system bus to read its policies again.
@@ -445,7 +448,9 @@ fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
 /// and stopped before its files are replaced, and started again, each by
 /// name, once the new files are in place; the record forgotten on removal.
 /// On configure the missing defaults are copied first; a purge deletes the
-/// engine's configuration, a removal keeps it.
+/// engine's configuration and the instances' enablement links (dangling by
+/// then: deb-systemd-helper knows no instance the manager enabled), a
+/// removal keeps both.
 fn engine_deb_scripts() -> Vec<(&'static str, String)> {
     let head = format!("#!/bin/sh\nset -e\n{}\n", header_of(Component::Llama, "#"));
     let postinst = format!(
@@ -477,6 +482,7 @@ fi
 
 if [ "$1" = "purge" ]; then
 	rm -rf "$DPKG_ROOT{ENGINE_ETC}"
+	rm -f "$DPKG_ROOT{INSTANCE_LINKS}"*.service
 fi
 "#
     );
@@ -608,7 +614,8 @@ fi
 /// records the running instances and stops them (the old %preun runs only
 /// after the new files are in place), and %posttrans starts the recorded
 /// ones again, after the missing defaults are copied; the last removal stops
-/// them and keeps the configuration.
+/// and disables them (no enablement link left dangling) and keeps the
+/// configuration.
 fn engine_rpm_scriptlets() -> String {
     format!(
         r#"%pre
@@ -616,8 +623,14 @@ if [ $1 -ge 2 ] && [ -d /run/systemd/system ]; then
 {record}fi
 
 %preun
-if [ $1 -eq 0 ] && [ -d /run/systemd/system ]; then
-    systemctl stop {INSTANCES} || :
+if [ $1 -eq 0 ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl stop {INSTANCES} || :
+    fi
+    for link in {INSTANCE_LINKS}*.service; do
+        [ -L "$link" ] || continue
+        systemctl --no-reload disable "${{link##*/}}" || :
+    done
 fi
 
 %postun
@@ -2022,6 +2035,11 @@ exit 0
             self.dir.join("etc-engine")
         }
 
+        /// The sandbox's `/etc/systemd/system`.
+        fn units(&self) -> std::path::PathBuf {
+            self.dir.join("etc-systemd")
+        }
+
         /// Whether the group private-ai exists, for the fake getent.
         fn set_group(&self, exists: bool) {
             let flag = self.dir.join("group-exists");
@@ -2069,7 +2087,8 @@ exit 0
                     ENGINE_DEFAULTS,
                     &self.dir.join("share-engine").display().to_string(),
                 )
-                .replace(ENGINE_ETC, &self.etc().display().to_string());
+                .replace(ENGINE_ETC, &self.etc().display().to_string())
+                .replace(SYSTEM_UNITS, &self.units().display().to_string());
             // Nothing may reach the real system: every /run, /etc and
             // /usr/share/private-ai path is moved, and the tools are called
             // through PATH only.
@@ -2104,7 +2123,7 @@ exit 0
                 "a /run path the test does not move:\n{script}"
             );
             let mut rest = text.clone();
-            for path in [ENGINE_ETC, ENGINE_DEFAULTS] {
+            for path in [ENGINE_ETC, ENGINE_DEFAULTS, SYSTEM_UNITS] {
                 for prefix in ["${DPKG_ROOT}", "$DPKG_ROOT"] {
                     rest = rest.replace(&format!("{prefix}{path}"), "<root>");
                 }
@@ -2165,6 +2184,22 @@ exit 0
                 .map(String::from)
                 .collect()
         }
+    }
+
+    /// The administrator's unit directory, where `systemctl enable` puts
+    /// the links of an enabled instance (systemd.unit(5), "Unit File Load
+    /// Path": `/etc/systemd/system`). The sandbox moves it.
+    const SYSTEM_UNITS: &str = "/etc/systemd/system";
+
+    /// Enables instance `id` as `systemctl enable llama.cpp@<id>` does with
+    /// the template's `WantedBy=multi-user.target`: a link
+    /// `multi-user.target.wants/llama.cpp@<id>.service` under `units`,
+    /// pointing at `target` (the template's file, gone once the package's
+    /// files are removed).
+    fn enable_instance(units: &std::path::Path, id: &str, target: &std::path::Path) {
+        let wants = units.join("multi-user.target.wants");
+        std::fs::create_dir_all(&wants).unwrap();
+        std::os::unix::fs::symlink(target, wants.join(format!("llama.cpp@{id}.service"))).unwrap();
     }
 
     impl Drop for Sandbox {
@@ -2793,5 +2828,163 @@ exit 0
         let log = sb.run_chroot(&deb(Component::Llama, "postrm"), &["purge"], &root);
         assert!(!etc.exists(), "the chroot's /etc/llama.cpp purged: {log:?}");
         assert!(share.join("server@default.ini").is_file(), "{log:?}");
+    }
+
+    /// Whether any call disables a unit.
+    fn disables(log: &[String]) -> bool {
+        log.iter()
+            .any(|l| l.split_whitespace().any(|w| w == "disable"))
+    }
+
+    /// The links of the instances `ids` in the sandbox's
+    /// `multi-user.target.wants`, by whether each is still there.
+    fn links_left(sb: &Sandbox, ids: &[&str]) -> Vec<(String, bool)> {
+        let wants = sb.units().join("multi-user.target.wants");
+        ids.iter()
+            .map(|id| {
+                let link = wants.join(format!("llama.cpp@{id}.service"));
+                (id.to_string(), link.symlink_metadata().is_ok())
+            })
+            .collect()
+    }
+
+    /// The last erase of the engine's `.rpm` (%preun with `$1 = 0`, while
+    /// the template's unit file still exists) disables every enabled
+    /// instance, so no `multi-user.target.wants/llama.cpp@<id>.service`
+    /// link is left dangling once the unit is gone; with systemd not
+    /// running too, since `systemctl disable` only edits the links (as the
+    /// core's %preun does). The old package's %preun of an upgrade
+    /// (`$1 = 1`) disables nothing, and a machine with no enabled instance
+    /// gets no disable call (no literal `llama.cpp@*.service` from an
+    /// unmatched glob). Other units' links are not the engine's.
+    #[test]
+    fn the_engine_rpm_erase_disables_the_enabled_instances() {
+        let text = rpm_scriptlets(Component::Llama);
+        let preun = format!("#!/bin/sh\n{}\n", scriptlet(&text, "%preun"));
+        let setup = |name: &str| {
+            let sb = Sandbox::new(name);
+            let template = sb.dir.join("llama.cpp@.service");
+            std::fs::write(&template, "[Unit]\n").unwrap();
+            for id in ["default", "gpu1"] {
+                enable_instance(&sb.units(), id, &template);
+            }
+            let manager = sb.dir.join("private-ai-manager.service");
+            std::fs::write(&manager, "[Unit]\n").unwrap();
+            std::os::unix::fs::symlink(
+                &manager,
+                sb.units()
+                    .join("multi-user.target.wants")
+                    .join("private-ai-manager.service"),
+            )
+            .unwrap();
+            sb
+        };
+        for systemd in [true, false] {
+            let sb = setup("engine-rpm-erase");
+            let log = sb.run(&preun, &["0"], systemd, None);
+            for unit in ["llama.cpp@default.service", "llama.cpp@gpu1.service"] {
+                assert!(
+                    call(&log, &["disable", unit]).is_some(),
+                    "{unit} disabled on erase (systemd running: {systemd}): {log:?}"
+                );
+            }
+            assert!(
+                !log.iter()
+                    .any(|l| l.contains("disable") && l.contains("private-ai-manager")),
+                "{log:?}"
+            );
+            assert!(
+                !log.iter()
+                    .any(|l| l.contains("disable") && l.contains("llama.cpp@*")),
+                "a glob passed as a unit: {log:?}"
+            );
+        }
+        let sb = setup("engine-rpm-erase-upgrade");
+        let log = sb.run(&preun, &["1"], true, None);
+        assert!(!disables(&log), "nothing disabled on an upgrade: {log:?}");
+
+        let sb = Sandbox::new("engine-rpm-erase-none");
+        let log = sb.run(&preun, &["0"], true, None);
+        assert!(!disables(&log), "no wants directory: {log:?}");
+        std::fs::create_dir_all(sb.units().join("multi-user.target.wants")).unwrap();
+        let log = sb.run(&preun, &["0"], true, None);
+        assert!(!disables(&log), "no enabled instance: {log:?}");
+    }
+
+    /// The engine's `.deb` follows Debian: an instance's enablement
+    /// survives `remove` (and every upgrade) and goes on `purge`, as
+    /// dh_installsystemd's postrm does for a package's own units
+    /// (`deb-systemd-helper purge` on `purge` only, the autoscript
+    /// /usr/share/debhelper/autoscripts/postrm-systemd of debhelper 13.31;
+    /// `purge` is `disable` that also drops the state, /usr/bin/deb-systemd-
+    /// helper of init-system-helpers 1.69). deb-systemd-helper knows only
+    /// the units it enabled itself, never an instance the manager enabled,
+    /// and the template's file is gone by postrm, so the purge removes the
+    /// links itself: every `multi-user.target.wants/llama.cpp@*.service`
+    /// (dangling by then), and no other unit's link.
+    #[test]
+    fn the_engine_deb_purge_removes_the_instances_enablement_links() {
+        let postrm = deb(Component::Llama, "postrm");
+        let ids = ["default", "gpu1"];
+        let setup = |name: &str| {
+            let sb = Sandbox::new(name);
+            let gone = sb.dir.join("removed").join("llama.cpp@.service");
+            for id in ids {
+                enable_instance(&sb.units(), id, &gone);
+            }
+            let manager = sb.dir.join("private-ai-manager.service");
+            std::fs::write(&manager, "[Unit]\n").unwrap();
+            std::os::unix::fs::symlink(
+                &manager,
+                sb.units()
+                    .join("multi-user.target.wants")
+                    .join("private-ai-manager.service"),
+            )
+            .unwrap();
+            sb
+        };
+        for arg in ["remove", "upgrade"] {
+            let sb = setup("engine-postrm-links-kept");
+            let log = sb.run(&postrm, &[arg], true, None);
+            for (id, left) in links_left(&sb, &ids) {
+                assert!(left, "{id}'s link kept on {arg}: {log:?}");
+            }
+        }
+        let sb = setup("engine-postrm-links-purged");
+        let log = sb.run(&postrm, &["purge"], true, None);
+        for (id, left) in links_left(&sb, &ids) {
+            assert!(!left, "{id}'s link removed on purge: {log:?}");
+        }
+        assert!(
+            sb.units()
+                .join("multi-user.target.wants")
+                .join("private-ai-manager.service")
+                .symlink_metadata()
+                .is_ok(),
+            "another unit's link is not the engine's: {log:?}"
+        );
+        // Nothing enabled: the purge still succeeds (Sandbox::exec asserts it).
+        let sb = Sandbox::new("engine-postrm-links-none");
+        sb.run(&postrm, &["purge"], true, None);
+    }
+
+    /// A chroot purge (`DPKG_ROOT`) removes the links of the chroot's
+    /// `$DPKG_ROOT/etc/systemd/system`, never the host's: `run_chroot`
+    /// refuses an /etc path not under `$DPKG_ROOT` before the script runs.
+    #[test]
+    fn a_chroot_purge_removes_the_instances_links_inside_dpkg_root() {
+        let sb = Sandbox::new("engine-chroot-links");
+        let root = sb.dir.join("root");
+        let units = root.join(SYSTEM_UNITS.trim_start_matches('/'));
+        enable_instance(&units, "default", &sb.dir.join("removed"));
+        let log = sb.run_chroot(&deb(Component::Llama, "postrm"), &["purge"], &root);
+        assert!(
+            units
+                .join("multi-user.target.wants")
+                .join("llama.cpp@default.service")
+                .symlink_metadata()
+                .is_err(),
+            "the chroot's link removed on purge: {log:?}"
+        );
     }
 }

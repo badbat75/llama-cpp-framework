@@ -126,7 +126,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
                 let detail = service::error_reply(e).1;
                 eprintln!(
                     "{}",
-                    strings::fill("manager-boot-start-failed", &[&id, &detail])
+                    strings::fill("manager-service-sync-failed", &[&id, &detail])
                 );
             })
             .map_err(|e| (1, strings::fill("manager-serve-failed", &[&e])))?;
@@ -314,6 +314,49 @@ mod tests {
                 "subcommand {cmd:?}"
             );
         }
+    }
+
+    /// At its start the Windows manager sets up each instance's SCM service
+    /// (`windows::entry::serve` syncs them) and starts none: a failure there
+    /// says the instance's service could not be set up, not that a start at
+    /// boot failed, under a key of its own; the old key is gone. The
+    /// Windows arm only type-checks on Linux, so its key is read in the
+    /// source, before the tests.
+    #[test]
+    fn a_failed_service_sync_says_the_service_could_not_be_set_up() {
+        let cli = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
+        assert!(
+            !cli.contains_key("manager-boot-start-failed"),
+            "the old key is left in cli.toml"
+        );
+        let key = "manager-service-sync-failed";
+        let text = cli
+            .get(key)
+            .unwrap_or_else(|| panic!("{key} missing from cli.toml"));
+        assert!(text.contains("{0}") && text.contains("{1}"), "{text:?}");
+        let lower = text.to_lowercase();
+        assert!(
+            lower.contains("service") && lower.contains("set up"),
+            "{text:?}"
+        );
+        for word in ["boot", "start"] {
+            assert!(!lower.contains(word), "{word} in {text:?}");
+        }
+        let source = include_str!("manager.rs");
+        let code = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("the code");
+        let serve = code
+            .split("#[cfg(windows)]\n        ManagerCommand::Serve =>")
+            .nth(1)
+            .expect("the Windows Serve arm");
+        let serve = serve.split("ManagerCommand::").next().unwrap();
+        assert!(
+            serve.contains(&format!("strings::fill(\"{key}\"")),
+            "the Windows Serve arm does not report with {key}:\n{serve}"
+        );
+        assert!(!code.contains("manager-boot-start-failed"), "{code}");
     }
 
     #[test]
