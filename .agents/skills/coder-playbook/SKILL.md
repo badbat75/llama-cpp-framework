@@ -292,3 +292,6 @@ Lessons only: the rules are in `AGENTS.md`.
   needs `input.cls` too. `npm --prefix fe run` runs in `fe/`, where Prettier reads `fe/.prettierignore`
   (default `--ignore-path` is `.gitignore` and `.prettierignore` in the cwd); it ignores the designer's
   Markdown (`DESIGN.md`, `briefs/`), which no formatter touches.
+- Web UI (`fe/`, from the web UI session's coder): a fixed-size drawn control (`appearance: none` with
+  width and height) inside a flex row needs `flex: none`, or a wrapping sibling shrinks it at narrow
+  widths; only a rendered check at 375px catches it.

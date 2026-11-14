@@ -760,6 +760,11 @@ Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed he
   and must be exposed from `pai-app`, the manager or the bff rather than copied into `fe/`; the bff
   side is scheduled from that contract.
 
+The web UI's side (the web UI session, `fe/` only): slice 1a done (e19f3d2: the shell with hash routes,
+sign-in against `/api/session`, the read-only Server page, built against mocks; not yet tried against a
+real bff); next 1b (editing and save for administrators: save bar, client checks, refusals beside
+their field, 409, 401 mid-edit) and 1c (start, stop, restart, state polling, boot).
+
 The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI
 session's, following the coordinator's shape; the fe is built against mocks), each test first:
 
