@@ -2,7 +2,7 @@
 //! (`bin/pai-manager.rs`), over the shared core (`pai-core`).
 
 // The core modules this crate uses, under the names its sources use.
-use pai_core::{ini, launch, net_ifaces, paths, server_cfg, strings};
+use pai_core::{launch, net_ifaces, paths, server_cfg, strings};
 
 pub mod manager;
 // The end-to-end test that runs every phase redirecting the data root

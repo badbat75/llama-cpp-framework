@@ -126,3 +126,7 @@ Lessons only: the rules are in `AGENTS.md`.
   or one registry value: a CreateFolder-only component (a folder as key path, e.g. the
   `%ProgramData%\private-ai` folders with their PermissionEx) needs an explicit `Guid`, fixed forever.
   The `.wxs` tests in `xtask/src/common/msi.rs` run on Linux; nothing there builds the MSI.
+- A parameter used only inside a `#[cfg(unix)]` block is an unused variable on the Windows target:
+  only the GNU-target clippy shows it. Name it in the `cfg(not(unix))` branch (`let _ = (file, group);`).
+- `pai_core::ini::atomic_write` sets no mode or group: the manager writes its served files through
+  `service::write_served_file` (0640 + group `private-ai` for `server@<id>.ini`, 0644 for the presets).

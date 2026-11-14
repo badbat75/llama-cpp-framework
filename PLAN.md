@@ -233,7 +233,10 @@ Points of design, and what is still open:
   user; their default directory moves with it.
 - `OpencodeApiKey` sits in `server@<id>.ini` (user, 2026-11-14): the server files are mode 0640
   root:private-ai (the instance still reads them; on Windows the ACL counterpart), and reading them
-  through the manager needs the `control` authorization. A slice of its own, after 6b.
+  through the manager needs the `control` authorization (done: the manager writes them so, with
+  the group set before the rename, and refuses a save when the group is missing; the preset files stay
+  0644 and open to read; `/etc/private-ai` stays 0755). A file an earlier version wrote 0644 is
+  tightened at its next save.
 - Windows accounts and logs (user, 2026-11-14): each instance runs as its virtual account
   `NT SERVICE\llama.cpp_<id>`, LocalService the fallback if GPU compute fails from session 0; a
   ModelsDir it cannot read is reported, and the MSI may create a default models folder under

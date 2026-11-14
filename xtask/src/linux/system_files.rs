@@ -66,6 +66,7 @@ pub fn manager_unit() -> String {
          # The services' home: a blank ModelsDir means the same to the manager as to the instances.\n\
          Environment=HOME=/var/lib/private-ai\n\
          ConfigurationDirectory=private-ai\n\
+         ConfigurationDirectoryMode=0755\n\
          Restart=on-failure\n\
          \n\
          [Install]\n\
@@ -475,6 +476,28 @@ mod tests {
             ["WantedBy=multi-user.target"],
             "{unit}"
         );
+    }
+
+    /// /etc/private-ai stays 0755, set explicitly (systemd.exec(5)
+    /// ConfigurationDirectoryMode=, whose default is 0755 today): the
+    /// instances, running as private-ai, must traverse it to read their
+    /// files, and systemd makes a ConfigurationDirectory= owned by root
+    /// whatever User= says (so 0750 would lock them out). The secret is kept
+    /// by the files' own mode instead: the manager writes `server@<id>.ini`
+    /// 0640 root:private-ai (`service::write_served_file`), and systemd
+    /// never changes the ownership of what is inside a
+    /// ConfigurationDirectory= (systemd.exec(5): "Except in case of
+    /// ConfigurationDirectory=, the innermost specified directories will be
+    /// owned by the user and group specified in User= and Group=").
+    #[test]
+    fn the_config_directory_stays_0755_so_the_instances_reach_their_files() {
+        let unit = manager_unit();
+        let service = section(&unit, "[Service]");
+        let modes: Vec<&&str> = service
+            .iter()
+            .filter(|l| l.starts_with("ConfigurationDirectoryMode="))
+            .collect();
+        assert_eq!(modes, [&"ConfigurationDirectoryMode=0755"], "{unit}");
     }
 
     /// The names the units spell are the ones the manager uses: its bus name

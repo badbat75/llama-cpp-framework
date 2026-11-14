@@ -65,11 +65,10 @@ fn core_in(state: UnitState, allow: bool, failing: &[&str]) -> Arc<Core> {
     let mut service = FakeService::new();
     service.state = state;
     service.failing = failing.iter().map(|s| s.to_string()).collect();
-    Arc::new(Manager::new(
-        service,
-        FakeAuthority::new(allow),
-        FakeResolver::lan(),
-    ))
+    Arc::new(
+        Manager::new(service, FakeAuthority::new(allow), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new()),
+    )
 }
 
 fn core(allow: bool, failing: &[&str]) -> Arc<Core> {
@@ -168,9 +167,21 @@ pub(crate) fn manager_dbus_client_e2e() {
             client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n"),
             Err(ClientError::NotAuthorized)
         );
+        // An instance file can hold a secret (OpencodeApiKey): its read
+        // needs the control authorization, refused here unasked.
+        assert_eq!(
+            client.read_file("server@default.ini"),
+            Err(ClientError::NotAuthorized),
+            "an instance file read with no identity"
+        );
+        assert_eq!(
+            client.read_file("server@nope.ini"),
+            Err(ClientError::NotAuthorized),
+            "refused before it is known whether the instance exists"
+        );
         assert_eq!(calls(&c), vec![]);
         assert_eq!(asked(&c), vec![]);
-        // Reads need no caller.
+        // The preset files, list and status need no caller.
         assert_eq!(
             client.list_instances(),
             Ok(vec!["broken".to_string(), "default".to_string()])
@@ -191,12 +202,18 @@ pub(crate) fn manager_dbus_client_e2e() {
             client.write_file("presets.ini", ""),
             Err(ClientError::NotAuthorized)
         );
+        assert_eq!(
+            client.read_file("server@default.ini"),
+            Err(ClientError::NotAuthorized),
+            "a refused caller reads no instance file"
+        );
         assert_eq!(calls(&c), vec![], "a refused caller starts nothing");
         assert_eq!(
             asked(&c),
             vec![
                 (alice.clone(), Action::Control),
-                (alice.clone(), Action::Configure)
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Control)
             ]
         );
         assert_eq!(

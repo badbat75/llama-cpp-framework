@@ -20,6 +20,9 @@ fn data_root_e2e() {
     // Both seams are fakes.
     crate::manager::service::manager_e2e();
 
+    // ── Manager core: the instance files hold a secret ──────────────────
+    crate::manager::service::manager_instance_files_e2e();
+
     // ── Manager core while polkit waits for a password ──────────────────
     crate::manager::service::manager_waits_e2e();
 

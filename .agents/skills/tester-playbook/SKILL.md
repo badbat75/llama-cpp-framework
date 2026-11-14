@@ -234,3 +234,9 @@ Lessons only: the rules are in `AGENTS.md`.
   character 100000: WebFetch with `offset: 100000`); what the compiler accepts where, from
   `src/wix/WixToolset.Core/Compiler.cs` at the pinned tag on GitHub (the element page's children list
   can omit one: CreateFolder accepts the core `PermissionEx`).
+- A new parameter on a core method (the caller on `Manager::read_file`): a stub that takes it and keeps
+  the old body gives assertion reds in every phase, where a `todo!` would stop the one e2e `#[test]` at
+  its first read. To see each later phase red, run a copy of `src/tests/mod.rs` calling only that phase
+  (restore it after).
+- A real chown(2) seam is testable without root: an owner may give its file any group it belongs to
+  (`id -Gn`, the gid from `getent group <name>`); an unknown group name must come back `NotFound`.

@@ -76,7 +76,9 @@ where
         Request::Restart(id) => changer(caller)
             .and_then(|c| manager.restart(c, &id))
             .map(|()| Value::Null),
-        Request::ReadFile(name) => manager.read_file(&name).map(|text| json!(text)),
+        Request::ReadFile(name) => manager
+            .read_file(changer(caller).ok(), &name)
+            .map(|text| json!(text)),
         Request::WriteFile(name, contents) => changer(caller)
             .and_then(|c| manager.write_file(c, &name, &contents))
             .map(|()| Value::Null),
@@ -151,6 +153,7 @@ mod tests {
         let mut service = FakeService::new();
         service.state = state;
         Manager::new(service, FakeAuthority::new(allow), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new())
     }
 
     fn core(allow: bool) -> Core {
@@ -420,6 +423,28 @@ mod tests {
         );
     }
 
+    /// An instance file can hold a secret (`OpencodeApiKey`): reading one
+    /// asks the authority for control as the connection's caller, and a
+    /// refused caller gets NotAuthorized without the file being read (here
+    /// before any path is resolved: this test never reaches `paths::`), an
+    /// instance that does not exist included.
+    #[test]
+    fn reading_an_instance_file_asks_control_and_a_refused_caller_reads_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "ReadFile", "name": "server@default.ini"}),
+                json!({"method": "ReadFile", "name": "server@nope.ini"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("NotAuthorized", "NotAuthorized"); 2]);
+        assert_eq!(asked(&c), vec![(alice(), Action::Control); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
     /// A connection with no identity (the D-Bus call with no sender) is
     /// refused every change before anybody is asked, even by an authority
     /// that would allow it.
@@ -434,6 +459,7 @@ mod tests {
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Restart", "id": "default"}),
                 json!({"method": "WriteFile", "name": "presets.ini", "contents": ""}),
+                json!({"method": "ReadFile", "name": "server@default.ini"}),
                 json!({"method": "Status", "id": "default"}),
             ]),
         );
@@ -445,10 +471,11 @@ mod tests {
                 refused.clone(),
                 refused.clone(),
                 refused.clone(),
+                refused.clone(),
                 refused,
                 json!({"ok": "active"}),
             ],
-            "reads need no caller"
+            "an instance file's read is refused like a change; status needs no caller"
         );
         assert_eq!(asked(&c), vec![], "nobody asked");
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
@@ -518,7 +545,8 @@ mod tests {
     fn a_service_failure_carries_its_message() {
         let mut service = FakeService::new();
         service.failing = vec!["default".into()];
-        let c = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan());
+        let c = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new());
         let (result, replies) = serve(
             &c,
             alice(),

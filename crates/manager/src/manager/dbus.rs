@@ -150,11 +150,21 @@ where
         Ok(self.core(move |m| m.restart(&caller, &id)).await?)
     }
 
-    async fn read_file(&self, name: String) -> Result<(bool, String), Error> {
-        Ok(match self.core(move |m| m.read_file(&name)).await? {
-            Some(text) => (true, text),
-            None => (false, String::new()),
-        })
+    async fn read_file(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        name: String,
+    ) -> Result<(bool, String), Error> {
+        let caller = sender_of(&header).ok();
+        Ok(
+            match self
+                .core(move |m| m.read_file(caller.as_ref(), &name))
+                .await?
+            {
+                Some(text) => (true, text),
+                None => (false, String::new()),
+            },
+        )
     }
 
     async fn write_file(
@@ -364,11 +374,10 @@ pub(crate) fn manager_dbus_e2e() {
         let mut service = FakeService::new();
         service.state = state;
         service.failing = failing.iter().map(|s| s.to_string()).collect();
-        Arc::new(Manager::new(
-            service,
-            FakeAuthority::new(authority),
-            FakeResolver::lan(),
-        ))
+        Arc::new(
+            Manager::new(service, FakeAuthority::new(authority), FakeResolver::lan())
+                .with_group(crate::manager::service::fakes::FakeGroup::new()),
+        )
     };
     let core = |authority: bool, failing: &[&str]| core_in(UnitState::Active, authority, failing);
     // A method call: Ok(reply), or Err((error name, message)).
@@ -612,7 +621,8 @@ pub(crate) fn manager_dbus_waits_e2e() {
         FakeService::new(),
         GateAuthority::new(&alice, &gate, &[(&alice, true)]),
         FakeResolver::lan(),
-    );
+    )
+    .with_group(crate::manager::service::fakes::FakeGroup::new());
     let iface = ManagerInterface::new(Arc::new(core));
 
     let (s0, s1) = UnixStream::pair().expect("socket pair");
@@ -716,11 +726,14 @@ pub(crate) fn manager_dbus_checks_e2e() {
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
 
-    let core = Arc::new(Manager::new(
-        FakeService::new(),
-        FakeAuthority::new(true),
-        FakeResolver::lan(),
-    ));
+    let core = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new()),
+    );
     let (s0, s1) = UnixStream::pair().expect("socket pair");
     let iface = ManagerInterface::new(core);
     let server = std::thread::spawn(move || {

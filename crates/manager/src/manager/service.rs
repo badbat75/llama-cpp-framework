@@ -14,7 +14,8 @@ use std::net::IpAddr;
 /// A guarded action, one polkit action id each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// Start, stop or restart an instance.
+    /// Start, stop or restart an instance; read an instance file (it can
+    /// hold a secret, `OpencodeApiKey`).
     Control,
     /// Write a config file.
     Configure,
@@ -142,6 +143,101 @@ pub fn config_file(name: &str) -> Option<ConfigFile> {
     }
 }
 
+/// The group an instance file belongs to on Unix: the instances run as it
+/// (the sysusers.d entry of the Linux package), so they read their file
+/// while other users do not.
+pub const INSTANCE_GROUP: &str = "private-ai";
+
+/// The mode a served file is written with on Unix: 0640 for an instance
+/// file (it can hold `OpencodeApiKey`), 0644 for the preset files.
+pub fn file_mode(file: &ConfigFile) -> u32 {
+    match file {
+        ConfigFile::Instance(_) => 0o640,
+        ConfigFile::Presets | ConfigFile::PresetsDisabled => 0o644,
+    }
+}
+
+/// Gives a file the manager wrote its group, the owner unchanged (chown(2)
+/// on Unix). A seam, so tests change no group and need no root.
+pub trait FileGroup {
+    /// Err `NotFound` when no group has this name.
+    fn set_group(&self, path: &std::path::Path, group: &str) -> std::io::Result<()>;
+}
+
+/// The system's groups: the group looked up by name, then chown(2).
+pub struct SystemGroup;
+
+impl FileGroup for SystemGroup {
+    #[cfg(unix)]
+    fn set_group(&self, path: &std::path::Path, group: &str) -> std::io::Result<()> {
+        // /etc/group's lines are `name:password:gid:members`.
+        let groups = std::fs::read_to_string("/etc/group")?;
+        let gid = groups
+            .lines()
+            .map(|line| line.split(':').collect::<Vec<_>>())
+            .find(|fields| fields.len() >= 3 && fields[0] == group)
+            .and_then(|fields| fields[2].parse::<u32>().ok())
+            .ok_or(std::io::ErrorKind::NotFound)?;
+        std::os::unix::fs::chown(path, None, Some(gid))
+    }
+
+    #[cfg(not(unix))]
+    fn set_group(&self, _path: &std::path::Path, _group: &str) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Replace `path` with `contents` atomically (a temp file beside it, synced,
+/// then renamed over it). On Unix the temp file has `file_mode(file)` before
+/// any byte is written and, for an instance file, its group set to
+/// [`INSTANCE_GROUP`] through `group` before the rename. Any failure leaves
+/// the old file as it was and no temp file.
+pub fn write_served_file(
+    path: &std::path::Path,
+    file: &ConfigFile,
+    contents: &str,
+    group: &dyn FileGroup,
+) -> std::io::Result<()> {
+    let tmp = path.with_extension(
+        path.extension()
+            .map(|e| format!("{}.tmp", e.to_string_lossy()))
+            .unwrap_or_else(|| "tmp".to_string()),
+    );
+    let write = || -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            options.mode(file_mode(file));
+            let out = options.open(&tmp)?;
+            // The umask can narrow the mode `open` gave, and a temp file
+            // left over keeps its own: set it whole.
+            out.set_permissions(std::fs::Permissions::from_mode(file_mode(file)))?;
+            write_synced(out, contents)?;
+            if let ConfigFile::Instance(_) = file {
+                group.set_group(&tmp, INSTANCE_GROUP)?;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (file, group);
+            write_synced(options.open(&tmp)?, contents)?;
+        }
+        std::fs::rename(&tmp, path)
+    };
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// Write `contents` to `out` and flush them to the disk before the rename
+/// (`pai_core::ini::atomic_write` says why).
+fn write_synced(mut out: std::fs::File, contents: &str) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut out, contents.as_bytes())?;
+    out.sync_all()
+}
+
 /// A host name the resolver could not turn into addresses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveError(pub String);
@@ -213,8 +309,10 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     service: S,
     authority: A,
     resolver: R,
+    /// Sets the group of a written instance file.
+    group: Box<dyn FileGroup + Send + Sync>,
     /// Held by a write from its address check to its rename, so a check
-    /// sees every write before it (and `ini::atomic_write`'s one temp
+    /// sees every write before it (and `write_served_file`'s one temp
     /// name per file is never shared). Taken only after the authorization:
     /// a caller polkit is still asking about holds up nobody.
     writing: std::sync::Mutex<()>,
@@ -226,8 +324,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             service,
             authority,
             resolver,
+            group: Box::new(SystemGroup),
             writing: std::sync::Mutex::new(()),
         }
+    }
+
+    /// This manager with `group` setting the group of the instance files it
+    /// writes, in place of [`SystemGroup`].
+    pub fn with_group(mut self, group: impl FileGroup + Send + Sync + 'static) -> Self {
+        self.group = Box::new(group);
+        self
     }
 
     pub fn service(&self) -> &S {
@@ -272,8 +378,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         self.service.restart(id).map_err(ManagerError::Service)
     }
 
-    /// The contents of file `name`, None when it does not exist.
-    pub fn read_file(&self, name: &str) -> Result<Option<String>, ManagerError> {
+    /// The contents of file `name`, None when it does not exist. An instance
+    /// file needs the control authorization: `caller` None (a transport
+    /// with no identity for the call) or refused is NotAuthorized, nothing
+    /// read; the preset files need none.
+    pub fn read_file(
+        &self,
+        caller: Option<&Caller>,
+        name: &str,
+    ) -> Result<Option<String>, ManagerError> {
+        let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+        if let ConfigFile::Instance(_) = file {
+            self.authorize(caller.ok_or(ManagerError::NotAuthorized)?, Action::Control)?;
+        }
         let path = file_path(name)?;
         match std::fs::read_to_string(path) {
             Ok(text) => Ok(Some(text)),
@@ -301,7 +418,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let dir = crate::paths::system_config_dir();
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         std::fs::create_dir_all(&dir).map_err(io)?;
-        crate::ini::atomic_write(&dir.join(name), contents).map_err(io)
+        write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
     }
 
     /// Start every instance at the service's own start, past any failure:
@@ -524,6 +641,59 @@ pub(crate) mod fakes {
         }
     }
 
+    /// A group seam that changes no group: it records each call, with the
+    /// file's mode at that moment (Unix; 0 elsewhere), and fails with
+    /// `fail` when set.
+    pub struct FakeGroup {
+        pub fail: Option<std::io::ErrorKind>,
+        pub calls: std::sync::Arc<Mutex<Vec<GroupCall>>>,
+    }
+
+    /// One recorded [`FakeGroup`] call.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct GroupCall {
+        pub path: std::path::PathBuf,
+        pub group: String,
+        pub mode: u32,
+    }
+
+    impl FakeGroup {
+        pub fn new() -> Self {
+            Self {
+                fail: None,
+                calls: Default::default(),
+            }
+        }
+
+        pub fn failing(kind: std::io::ErrorKind) -> Self {
+            Self {
+                fail: Some(kind),
+                ..Self::new()
+            }
+        }
+    }
+
+    impl FileGroup for FakeGroup {
+        fn set_group(&self, path: &std::path::Path, group: &str) -> std::io::Result<()> {
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::metadata(path).map_or(0, |m| m.permissions().mode() & 0o7777)
+            };
+            #[cfg(not(unix))]
+            let mode = 0;
+            self.calls.lock().unwrap().push(GroupCall {
+                path: path.to_path_buf(),
+                group: group.to_string(),
+                mode,
+            });
+            match self.fail {
+                Some(kind) => Err(kind.into()),
+                None => Ok(()),
+            }
+        }
+    }
+
     /// The longest a gate holds a call, and the longest a test waits for one:
     /// a test that never opens its gate fails instead of hanging.
     pub const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -704,7 +874,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(false),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(
             m.write_file(&alice, "server@default.ini", "[Server]\nPort = 8081\n"),
             Err(ManagerError::NotAuthorized),
@@ -735,7 +906,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(true),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(m.list_instances(), Vec::<String>::new());
         assert_eq!(m.start(&alice, "default"), Err(ManagerError::NoInstance));
         assert_eq!(m.restart(&alice, "default"), Err(ManagerError::NoInstance));
@@ -762,7 +934,7 @@ pub(crate) fn manager_e2e() {
             );
         }
         assert_eq!(
-            m.read_file("presets.ini"),
+            m.read_file(Some(&alice), "presets.ini"),
             Ok(None),
             "missing file reads as None"
         );
@@ -794,7 +966,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(true),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(
             m.write_file(&alice, "server@default.ini", default_ini),
             Ok(())
@@ -820,22 +993,27 @@ pub(crate) fn manager_e2e() {
         // A new instance file is how an instance is added.
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
-            m.read_file("server@default.ini"),
+            m.read_file(Some(&alice), "server@default.ini"),
             Ok(Some(default_ini.into()))
         );
-        assert_eq!(m.read_file("presets.ini"), Ok(Some(presets.into())));
+        assert_eq!(
+            m.read_file(Some(&alice), "presets.ini"),
+            Ok(Some(presets.into()))
+        );
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
             "a write calls no service"
         );
-        assert!(
-            m.authority()
-                .asked
-                .lock()
-                .unwrap()
-                .iter()
-                .all(|(c, a)| c == &alice && *a == Action::Configure),
-            "writes ask for configure"
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Control),
+            ],
+            "writes ask for configure, the instance file's read for control, \
+             the preset file's read for nothing"
         );
 
         // Any other name is refused, and nothing is created or read.
@@ -847,7 +1025,7 @@ pub(crate) fn manager_e2e() {
                 "write {name:?}"
             );
             assert_eq!(
-                m.read_file(&name),
+                m.read_file(Some(&alice), &name),
                 Err(ManagerError::BadFileName),
                 "read {name:?}"
             );
@@ -859,15 +1037,19 @@ pub(crate) fn manager_e2e() {
         );
     }
 
-    // ── Reads, list and status ask no authorization ──────────────────────
+    // ── Preset reads, list and status ask no authorization ───────────────
     {
         let m = Manager::new(
             FakeService::new(),
             FakeAuthority::new(false),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(m.list_instances(), ["default"]);
-        assert_eq!(m.read_file("presets.ini"), Ok(Some(presets.into())));
+        assert_eq!(
+            m.read_file(Some(&alice), "presets.ini"),
+            Ok(Some(presets.into()))
+        );
         assert_eq!(m.status("default"), Ok(UnitState::Active));
         assert!(
             m.authority().asked.lock().unwrap().is_empty(),
@@ -885,7 +1067,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(false),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(m.start(&alice, "default"), Err(ManagerError::NotAuthorized));
         assert_eq!(m.stop(&alice, "default"), Err(ManagerError::NotAuthorized));
         assert_eq!(
@@ -925,7 +1108,8 @@ pub(crate) fn manager_e2e() {
     {
         let mut service = FakeService::new();
         service.state = UnitState::Failed;
-        let m = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan());
+        let m = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(m.start(&alice, "default"), Ok(()));
         assert_eq!(m.stop(&alice, "default"), Ok(()));
         assert_eq!(m.restart(&alice, "default"), Ok(()));
@@ -960,7 +1144,8 @@ pub(crate) fn manager_e2e() {
     {
         let mut service = FakeService::new();
         service.failing = vec!["default".into()];
-        let m = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan());
+        let m = Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert!(
             matches!(m.start(&alice, "default"), Err(ManagerError::Service(_))),
             "start failure"
@@ -977,7 +1162,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(true),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         // The same address as `default` (127.0.0.1:8081): refused, naming it.
         assert_eq!(
             m.write_file(&alice, "server@lan-2.ini", default_ini),
@@ -1144,7 +1330,8 @@ pub(crate) fn manager_e2e() {
             FakeService::new(),
             FakeAuthority::new(true),
             FakeResolver::lan(),
-        );
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new());
         let before = files_in(&sys);
         std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o555)).expect("chmod");
         // Root writes into a read-only directory anyway: then there is no
@@ -1171,7 +1358,8 @@ pub(crate) fn manager_e2e() {
     {
         let mut service = FakeService::new();
         service.failing = vec!["default".into()];
-        let m = Manager::new(service, FakeAuthority::new(false), FakeResolver::lan());
+        let m = Manager::new(service, FakeAuthority::new(false), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new());
         let failures = m.start_all_at_boot();
         assert_eq!(failures.len(), 1, "one failure: {failures:?}");
         assert_eq!(failures[0].0, "default");
@@ -1189,6 +1377,107 @@ pub(crate) fn manager_e2e() {
         assert!(
             m.authority().asked.lock().unwrap().is_empty(),
             "boot asks no authorization"
+        );
+    }
+}
+
+/// E2E phase for the instance files' secret (`OpencodeApiKey`), for this
+/// crate's e2e test to call (it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`): an authorized read
+/// of an instance file, a preset read with no caller, and the writes going
+/// through the group seam with their modes.
+#[cfg(test)]
+pub(crate) fn manager_instance_files_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::system_config_dir();
+    let alice = Caller(":1.42".into());
+    let names = || -> std::collections::BTreeSet<String> {
+        std::fs::read_dir(&sys)
+            .expect("read_dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect()
+    };
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+
+    // ── Writes go through the group seam: instance files only ────────────
+    {
+        let group = FakeGroup::new();
+        let group_calls = group.calls.clone();
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(group);
+        assert_eq!(m.write_file(&alice, "server@default.ini", ini), Ok(()));
+        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+        let c = group_calls.lock().unwrap().clone();
+        assert_eq!(c.len(), 1, "one group change, the instance file's: {c:?}");
+        assert_eq!(c[0].group, INSTANCE_GROUP);
+        assert_eq!(c[0].path.parent(), Some(sys.as_path()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode =
+                |n: &str| std::fs::metadata(sys.join(n)).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(mode("server@default.ini"), 0o640);
+            assert_eq!(mode("presets.ini"), 0o644);
+            assert_eq!(c[0].mode, 0o640);
+        }
+
+        // ── An authorized read of an instance file: asked, then read ─────
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Ok(Some(ini.into()))
+        );
+        assert_eq!(m.read_file(Some(&alice), "server@nope.ini"), Ok(None));
+        // ── The preset files need no caller at all ───────────────────────
+        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(presets.into())));
+        assert_eq!(m.read_file(None, "presets.ini.disabled"), Ok(None));
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Control),
+                (alice.clone(), Action::Control),
+            ],
+            "the instance file reads ask for control, the preset reads nothing"
+        );
+    }
+
+    // ── No group private-ai: the write refused, the old file kept ────────
+    {
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::failing(std::io::ErrorKind::NotFound));
+        let before = names();
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 8090\n"),
+            Err(ManagerError::Io(std::io::ErrorKind::NotFound))
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),
+            ini,
+            "the old file is kept"
+        );
+        assert_eq!(names(), before, "no temp file left");
+        // The preset files need no group: still written.
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "presets.ini.disabled",
+                "[Old]\nmodel = /m/old.gguf\n"
+            ),
+            Ok(())
         );
     }
 }
@@ -1239,11 +1528,14 @@ pub(crate) fn manager_waits_e2e() {
         std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
 
         let gate = Gate::new();
-        let m = Arc::new(Manager::new(
-            FakeService::new(),
-            GateAuthority::new(&alice, &gate, &[(&alice, true), (&bob, true)]),
-            FakeResolver::lan(),
-        ));
+        let m = Arc::new(
+            Manager::new(
+                FakeService::new(),
+                GateAuthority::new(&alice, &gate, &[(&alice, true), (&bob, true)]),
+                FakeResolver::lan(),
+            )
+            .with_group(crate::manager::service::fakes::FakeGroup::new()),
+        );
         let pending = {
             let (m, alice) = (m.clone(), alice.clone());
             on_thread(move || m.start(&alice, "default"))
@@ -1266,7 +1558,7 @@ pub(crate) fn manager_waits_e2e() {
         assert_eq!(answer(&gate, "list_instances", list), vec!["default"]);
         let read = {
             let m = m.clone();
-            on_thread(move || m.read_file("presets.ini"))
+            on_thread(move || m.read_file(None, "presets.ini"))
         };
         assert_eq!(
             answer(&gate, "read_file", read),
@@ -1344,11 +1636,14 @@ pub(crate) fn manager_waits_e2e() {
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
 
         let gate = Gate::new();
-        let m = Arc::new(Manager::new(
-            FakeService::new(),
-            GateAuthority::new(&alice, &gate, &[(&alice, false), (&bob, true)]),
-            FakeResolver::lan(),
-        ));
+        let m = Arc::new(
+            Manager::new(
+                FakeService::new(),
+                GateAuthority::new(&alice, &gate, &[(&alice, false), (&bob, true)]),
+                FakeResolver::lan(),
+            )
+            .with_group(crate::manager::service::fakes::FakeGroup::new()),
+        );
         let pending = {
             let (m, alice) = (m.clone(), alice.clone());
             on_thread(move || m.write_file(&alice, "server@default.ini", "[Server]\nPort = 9\n"))
@@ -1398,11 +1693,10 @@ pub(crate) fn manager_waits_e2e() {
             "slow-box",
             &gate,
         );
-        let m = Arc::new(Manager::new(
-            FakeService::new(),
-            FakeAuthority::new(true),
-            resolver,
-        ));
+        let m = Arc::new(
+            Manager::new(FakeService::new(), FakeAuthority::new(true), resolver)
+                .with_group(crate::manager::service::fakes::FakeGroup::new()),
+        );
         let lan_a = "[Server]\nPort = 8081\nHostname = 192.168.1.5\n";
         let lan_b = "[Server]\nPort = 8081\nHostname = gpu-box\n";
         let first = {
@@ -1468,6 +1762,7 @@ pub(crate) fn manager_checks_e2e() {
             FakeAuthority::new(allow),
             FakeResolver::lan(),
         )
+        .with_group(crate::manager::service::fakes::FakeGroup::new())
     };
     let refusal = |key: &'static str, values: &[&str]| Refusal {
         key,
@@ -1742,6 +2037,330 @@ mod tests {
             "presets.ini ",
         ] {
             assert_eq!(config_file(name), None, "name {name:?}");
+        }
+    }
+
+    // ── Instance files hold a secret: reads need control ───────────────
+    // Refused before any path is resolved, so these never reach `paths::`.
+
+    fn core(
+        allow: bool,
+    ) -> Manager<super::fakes::FakeService, super::fakes::FakeAuthority, FakeResolver> {
+        Manager::new(
+            super::fakes::FakeService::new(),
+            super::fakes::FakeAuthority::new(allow),
+            FakeResolver::lan(),
+        )
+        .with_group(super::fakes::FakeGroup::new())
+    }
+
+    fn asked(
+        m: &Manager<super::fakes::FakeService, super::fakes::FakeAuthority, FakeResolver>,
+    ) -> Vec<(Caller, Action)> {
+        m.authority().asked.lock().unwrap().clone()
+    }
+
+    /// An instance file can hold `OpencodeApiKey`: reading it asks the
+    /// authority for control, with the caller; a refusal is NotAuthorized
+    /// and nothing is read, whether the instance exists or not (a refused
+    /// caller learns nothing about which ids exist).
+    #[test]
+    fn reading_an_instance_file_asks_control_and_a_refusal_reads_nothing() {
+        let alice = Caller(":1.42".into());
+        let m = core(false);
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "server@nope.ini"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(asked(&m), vec![(alice.clone(), Action::Control); 2]);
+    }
+
+    /// A transport with no identity for the call (a D-Bus call with no
+    /// sender, a pipe connection with no token) gets no instance file, and
+    /// nobody is asked, even an authority that would allow it.
+    #[test]
+    fn reading_an_instance_file_with_no_caller_is_refused_unasked() {
+        let m = core(true);
+        assert_eq!(
+            m.read_file(None, "server@default.ini"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(asked(&m), vec![]);
+    }
+
+    /// A name that is no served file is refused as one before anybody is
+    /// asked, with or without a caller.
+    #[test]
+    fn a_read_of_a_bad_name_asks_nobody() {
+        let alice = Caller(":1.42".into());
+        let m = core(false);
+        for name in ["server.ini", "../server@default.ini", "server@Bad.ini"] {
+            assert_eq!(
+                m.read_file(Some(&alice), name),
+                Err(ManagerError::BadFileName),
+                "{name}"
+            );
+            assert_eq!(
+                m.read_file(None, name),
+                Err(ManagerError::BadFileName),
+                "{name}"
+            );
+        }
+        assert_eq!(asked(&m), vec![]);
+    }
+
+    // ── Instance files: mode 0640, group private-ai ─────────────────────
+
+    /// The instance file can hold a secret: 0640, read by root and the
+    /// instances' group. The preset files hold none: 0644, as before.
+    #[test]
+    fn file_mode_is_0640_for_instance_files_and_0644_for_the_presets() {
+        assert_eq!(file_mode(&ConfigFile::Instance("default".into())), 0o640);
+        assert_eq!(file_mode(&ConfigFile::Instance("lan-2".into())), 0o640);
+        assert_eq!(file_mode(&ConfigFile::Presets), 0o644);
+        assert_eq!(file_mode(&ConfigFile::PresetsDisabled), 0o644);
+    }
+
+    /// The group is the service user's, as the Linux package's sysusers.d
+    /// entry names it (xtask `system_files::sysusers`).
+    #[test]
+    fn the_instance_group_is_the_service_users() {
+        assert_eq!(INSTANCE_GROUP, "private-ai");
+    }
+
+    #[cfg(unix)]
+    mod unix_files {
+        use super::super::fakes::{FakeGroup, GroupCall};
+        use super::super::*;
+        use std::collections::BTreeSet;
+        use std::io::ErrorKind;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::path::Path;
+
+        fn mode(p: &Path) -> u32 {
+            std::fs::metadata(p).expect("metadata").permissions().mode() & 0o7777
+        }
+
+        fn names(dir: &Path) -> BTreeSet<String> {
+            std::fs::read_dir(dir)
+                .expect("read_dir")
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        }
+
+        fn calls(g: &FakeGroup) -> Vec<GroupCall> {
+            g.calls.lock().unwrap().clone()
+        }
+
+        const INI: &str = "[Server]\nPort = 8080\nOpencodeApiKey = sk-local-3f9a\n";
+
+        /// A new instance file: 0640 from the start (the temp file had the
+        /// mode when the group was set, so the secret was never world
+        /// readable), its group set to private-ai on the temp file before
+        /// the rename, no temp file left.
+        #[test]
+        fn an_instance_file_is_written_0640_with_its_group_set_before_the_rename() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            let g = FakeGroup::new();
+            write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+                .expect("write");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), INI);
+            assert_eq!(mode(&path), 0o640);
+            let c = calls(&g);
+            assert_eq!(c.len(), 1, "one group change: {c:?}");
+            assert_eq!(c[0].group, "private-ai");
+            assert_eq!(
+                c[0].mode, 0o640,
+                "the temp file was 0640 when its group was set"
+            );
+            assert_ne!(
+                c[0].path, path,
+                "the group is set on the temp file, before the rename"
+            );
+            assert_eq!(
+                c[0].path.parent(),
+                Some(dir.path()),
+                "the temp file is beside it"
+            );
+            assert!(!c[0].path.exists(), "the temp file was renamed");
+            assert_eq!(
+                names(dir.path()),
+                BTreeSet::from(["server@default.ini".to_string()])
+            );
+        }
+
+        /// A file the previous version wrote 0644 becomes 0640 on its next
+        /// write: the rename replaces it with the new file.
+        #[test]
+        fn a_0644_instance_file_is_0640_after_its_next_write() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            std::fs::write(&path, "[Server]\nPort = 8081\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let g = FakeGroup::new();
+            write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+                .expect("write");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), INI);
+            assert_eq!(mode(&path), 0o640);
+            assert_eq!(calls(&g).len(), 1);
+        }
+
+        /// The preset files hold no secret: 0644, whatever was there, and
+        /// their group is left alone (root's, the manager's own).
+        #[test]
+        fn preset_files_are_written_0644_and_keep_their_group() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let presets = dir.path().join("presets.ini");
+            std::fs::write(&presets, "[Old]\nmodel = /m/old.gguf\n").unwrap();
+            std::fs::set_permissions(&presets, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let g = FakeGroup::new();
+            let text = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+            write_served_file(&presets, &ConfigFile::Presets, text, &g).expect("presets");
+            let disabled = dir.path().join("presets.ini.disabled");
+            write_served_file(&disabled, &ConfigFile::PresetsDisabled, text, &g).expect("disabled");
+            assert_eq!(std::fs::read_to_string(&presets).unwrap(), text);
+            assert_eq!(std::fs::read_to_string(&disabled).unwrap(), text);
+            assert_eq!(mode(&presets), 0o644);
+            assert_eq!(mode(&disabled), 0o644);
+            assert_eq!(calls(&g), vec![], "no group change for a preset file");
+            assert_eq!(
+                names(dir.path()),
+                BTreeSet::from([
+                    "presets.ini".to_string(),
+                    "presets.ini.disabled".to_string()
+                ])
+            );
+        }
+
+        /// No group private-ai (the package's sysusers.d entry did not run):
+        /// a 0640 root:root file would stop the instance from reading its
+        /// config at the next start, and 0644 would show the secret, so the
+        /// write is refused with the seam's NotFound, the old file kept and
+        /// no temp file left.
+        #[test]
+        fn a_missing_group_refuses_the_write_and_keeps_the_old_file() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            let old = "[Server]\nPort = 8081\n";
+            std::fs::write(&path, old).unwrap();
+            let g = FakeGroup::failing(ErrorKind::NotFound);
+            let e = write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+                .expect_err("a missing group refuses the write");
+            assert_eq!(e.kind(), ErrorKind::NotFound);
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                old,
+                "the old file is kept"
+            );
+            assert_eq!(calls(&g).len(), 1);
+            assert_eq!(
+                names(dir.path()),
+                BTreeSet::from(["server@default.ini".to_string()])
+            );
+
+            // A new instance: nothing created at all.
+            let new = dir.path().join("server@lan-2.ini");
+            let e = write_served_file(&new, &ConfigFile::Instance("lan-2".into()), INI, &g)
+                .expect_err("refused");
+            assert_eq!(e.kind(), ErrorKind::NotFound);
+            assert!(!new.exists());
+            assert_eq!(
+                names(dir.path()),
+                BTreeSet::from(["server@default.ini".to_string()])
+            );
+        }
+
+        /// A write that cannot create its temp file fails and leaves the
+        /// old file and the directory as they were.
+        #[test]
+        fn a_failed_write_leaves_the_old_file_and_no_temp() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            let old = "[Server]\nPort = 8081\n";
+            std::fs::write(&path, old).unwrap();
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+            let probe = std::fs::write(dir.path().join("probe"), "x");
+            let g = FakeGroup::new();
+            let result = write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g);
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+            if probe.is_ok() {
+                eprintln!("skipped: the directory's mode does not stop this user (root)");
+                return;
+            }
+            assert!(result.is_err(), "the write must fail: {result:?}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
+            assert_eq!(
+                names(dir.path()),
+                BTreeSet::from(["server@default.ini".to_string()])
+            );
+            assert_eq!(
+                calls(&g),
+                vec![],
+                "no group change for a file never written"
+            );
+        }
+
+        /// The group of `name` and its gid, from the system's group
+        /// database (`getent group`): read only.
+        fn gid_of(name: &str) -> u32 {
+            let out = std::process::Command::new("getent")
+                .args(["group", name])
+                .output()
+                .expect("getent");
+            let line = String::from_utf8(out.stdout).expect("utf-8");
+            line.trim()
+                .split(':')
+                .nth(2)
+                .expect("gid field")
+                .parse()
+                .expect("gid")
+        }
+
+        /// The real seam: an unknown group is NotFound and the file's group
+        /// is unchanged.
+        #[test]
+        fn the_system_group_seam_refuses_an_unknown_group_with_not_found() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            std::fs::write(&path, INI).unwrap();
+            let before = std::fs::metadata(&path).unwrap().gid();
+            let e = SystemGroup
+                .set_group(&path, "pai-no-such-group-3f9a")
+                .expect_err("unknown group");
+            assert_eq!(e.kind(), ErrorKind::NotFound, "{e:?}");
+            assert_eq!(std::fs::metadata(&path).unwrap().gid(), before);
+        }
+
+        /// The real seam on a group this user belongs to (chown(2) lets an
+        /// owner give a file any group it is a member of, no root needed):
+        /// a supplementary group when there is one, so the change shows.
+        #[test]
+        fn the_system_group_seam_sets_a_group_of_this_user() {
+            let out = std::process::Command::new("id")
+                .arg("-Gn")
+                .output()
+                .expect("id -Gn");
+            let groups: Vec<String> = String::from_utf8(out.stdout)
+                .expect("utf-8")
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+            let group = groups.get(1).or(groups.first()).expect("a group").clone();
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("server@default.ini");
+            std::fs::write(&path, INI).unwrap();
+            let owner = std::fs::metadata(&path).unwrap().uid();
+            SystemGroup.set_group(&path, &group).expect("set_group");
+            let m = std::fs::metadata(&path).unwrap();
+            assert_eq!(m.gid(), gid_of(&group), "group {group}");
+            assert_eq!(m.uid(), owner, "the owner is unchanged");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), INI);
         }
     }
 
