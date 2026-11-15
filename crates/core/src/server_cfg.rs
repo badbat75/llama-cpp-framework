@@ -301,6 +301,14 @@ pub fn normalize_allreduce(v: &str) -> Option<&'static str> {
 /// nothing listens on. v0.7.0 moved it from 8080 to 9931 (#30159).
 pub const DEFAULT_PORT: i32 = 9931;
 
+/// llama-server's own `--models-max` default (4), what an unset `ModelsMax`
+/// yields: the default the configurator's form and the web UI show.
+pub const DEFAULT_MODELS_MAX: i32 = 4;
+
+/// llama-server's own `--models-memory-margin` default (0, off), what an unset
+/// `ModelsMemoryMargin` yields: the default the form and the web UI show.
+pub const DEFAULT_MODELS_MEMORY_MARGIN: i32 = 0;
+
 /// Default ModelsDir when server.ini leaves it unset. ModelsDir is the *root*
 /// the four fixed subfolders hang off (models\, mmprojs\, mtps\, dflashs\;
 /// see `model_scan`), so this is a bare `~\.llama.cpp`, not `…\models`.

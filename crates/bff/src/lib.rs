@@ -4,6 +4,7 @@
 pub mod bff;
 pub mod listen;
 pub mod serve;
+mod server;
 pub mod session;
 
 use pai_core::client::ClientError;
@@ -21,8 +22,8 @@ const ENGINE_LLAMA_CPP: &str = "llama.cpp";
 const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
-/// system's manager, `/api/session` through the system's authenticator, the
-/// web UI's page at `/` and its files under `/assets/`.
+/// system's manager, `/api/session` through the system's authenticator,
+/// `GET /api/instances/{id}/server`, the web UI's page at `/` and its files under `/assets/`.
 pub fn router() -> axum::Router {
     router_with_session(
         std::sync::Arc::new(system_connect),
@@ -56,14 +57,25 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 }
 
 /// The routes of [`router_with`] plus the session routes, signing in
-/// through `auth` and reading the time from `clock`.
+/// through `auth` and reading the time from `clock`, and those that need a
+/// session: `GET /api/instances/{id}/server`.
 pub fn router_with_session(
     connect: Connect,
     timeout: std::time::Duration,
     auth: std::sync::Arc<dyn session::Authenticator>,
     clock: session::Clock,
 ) -> axum::Router {
-    router_with(connect, timeout).merge(session::routes(auth, clock))
+    use axum::extract::Path;
+    let sessions = session::sessions(auth, clock);
+    let read = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
+            server::read(connect.clone(), timeout, sessions.clone(), id, headers)
+        }
+    };
+    router_with(connect, timeout)
+        .merge(session::routes(sessions))
+        .route("/api/instances/{id}/server", axum::routing::get(read))
 }
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on

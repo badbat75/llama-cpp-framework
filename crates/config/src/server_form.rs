@@ -122,10 +122,13 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         threads_batch_auto: cfg.threads_batch.is_none(),
         // Seed the disabled field with llama.cpp's own default (4) so the
         // "default" hint the user sees matches what omitting the flag yields.
-        models_max: itxt(cfg.models_max, 4),
+        models_max: itxt(cfg.models_max, server_cfg::DEFAULT_MODELS_MAX),
         models_max_default: cfg.models_max.is_none(),
         // Seeded with llama.cpp's default (0 = off), like models_max above.
-        models_memory_margin: itxt(cfg.models_memory_margin, 0),
+        models_memory_margin: itxt(
+            cfg.models_memory_margin,
+            server_cfg::DEFAULT_MODELS_MEMORY_MARGIN,
+        ),
         models_memory_margin_default: cfg.models_memory_margin.is_none(),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.

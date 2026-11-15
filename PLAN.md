@@ -740,9 +740,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (`settings.ini`, `bench.db`, HF token, `opencode.json`; it blocks the Downloads, Benchmarks and
    Settings pages). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
    `client-*` keys, together with the fe build that reads them.
-7. **Read the server file.** `GET /api/instances/{id}/server`: values by INI key (null = unset), the
-   defaults resolved server side (the instance's own ModelsDir and StateDir), limits (threads max =
-   the machine's CPU count), interfaces, an opaque revision.
+7. (Done: `GET /api/instances/{id}/server`, values by INI key, the instance's defaults, limits,
+   interfaces, an FNV-1a revision; the bff reads as itself. Left, before the real sign-in: the
+   `OpencodeApiKey` goes to every signed-in user, also one with `canConfigure` false, while the
+   manager keeps the file at mode 0640 because of that key; asked of the user. Optional: refuse an id
+   failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
 8. **Write it.** `PUT /api/instances/{id}/server` with the revision: step 13's checks (slices 1 and 2
    first), 422 `{key, args, field}`, 409 `server-changed-elsewhere` on a stale revision; ModelsDir
    created for the instance after a save.

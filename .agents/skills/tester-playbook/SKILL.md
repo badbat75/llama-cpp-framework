@@ -568,3 +568,9 @@ Lessons only: the rules are in `AGENTS.md`.
   `setTimeout(0)` inside `act` before asserting the route did not change; `HTMLDialogElement` has no
   `showModal`/`close`, and a stand-in that sets `open` makes dialogs findable by role. Mutation runs go
   in a scratch copy of `fe/` with `node_modules` symlinked.
+- A new bff route needs no stub: the router answers an unknown path with axum's empty 404, so its
+  tests compile and go red on the status (or on `content-type ""` for an expected JSON 404). Check the
+  red is not the sign-in helper failing first: the panics must point at the reply assertions.
+- The contract's words and the fe's code can disagree on a value's JSON type: read
+  `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning one; `RocblasUseHipblaslt` is
+  `"on"`/`"off"` there, not a bool.

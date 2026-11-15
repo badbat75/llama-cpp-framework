@@ -2,10 +2,11 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version and the manager's instances with their state, and has the session routes, whose
-check against the operating system is not wired yet: every sign-in answers 503 (`PLAN.md` step 10).
-The web UI already has a Server page, editable for an administrator, built against routes the bff
-does not serve yet ([below](#the-web-ui-fe)): a save on the shipped bff fails.
+framework version, the manager's instances with their state and, for a signed-in user, an
+instance's server file, and has the session routes, whose check against the operating system is not
+wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI already has a Server page,
+editable for an administrator, whose save goes to a route the bff does not serve yet
+([below](#the-web-ui-fe)): a save on the shipped bff fails.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -66,6 +67,7 @@ runtime (axum).
 | `POST /api/session` | Signs in: `{"user", "canConfigure"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user", "canConfigure"}` of the cookie's session |
 | `DELETE /api/session` | Signs out: 204, the cookie cleared |
+| `GET /api/instances/{id}/server` | The instance's `server@<id>.ini` with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -144,6 +146,41 @@ LogonUser (Windows) are wired; under `PRIVATE_AI_DATA_ROOT` it must never ask th
 - The time comes from a clock handed to `router_with_session` (`Instant::now` in the service), so
   the tests move it.
 
+## The server file of an instance
+
+`GET /api/instances/{id}/server` (`crates/bff/src/server.rs`) first needs a session: with no cookie,
+or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
+connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
+connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
+yet: the bff reads the file as itself, so the session is only checked to exist.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}` | The file was read |
+| 401 | `{"key": "session-required", "args": []}` | No session |
+| 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read |
+| 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail |
+
+- **`values`**: the 19 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
+  the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
+  `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
+  `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`.
+- **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
+  `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
+  the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file
+  overrides it, `ModelsDir` and `StateDir` the instance's (`paths::instance_models_dir`,
+  `paths::instance_state_dir`), never the bff account's.
+- **`limits`**: `[min, max]` of `Port`, `ModelsMax` and `ModelsMemoryMargin` as the manager checks
+  them (`checks::server_int_range`), and of `Threads` and `ThreadsBatch` 1 to this machine's logical
+  CPU count.
+- **`interfaces`**: `net_ifaces::interfaces()` as `[{"value", "label"}]`.
+- **`revision`**: the 64-bit FNV-1a hash of the file's text in hex (written in `server.rs`, no
+  dependency): the same for the same text across restarts and builds, another for any change, a
+  comment included.
+
 ## The web UI (`fe/`)
 
 React + Vite in TypeScript, exact versions in `fe/package.json` and a committed
@@ -174,10 +211,10 @@ opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **`/api/instances/{id}/server` is not served by the bff yet**, neither `GET` nor `PUT` (`PLAN.md`
-  step 10, slices 7 and 8): both are proposed in `fe/briefs/api-contract.md`, and the fe is
-  tested against them with mocked replies only, never against a real bff, so a save on the shipped
-  bff fails. The bff
+- **`PUT /api/instances/{id}/server` is not served by the bff yet** (`PLAN.md` step 10, slice 8);
+  `GET` is ([above](#the-server-file-of-an-instance)). Both are in `fe/briefs/api-contract.md`, and
+  the fe is tested against them with mocked replies only, never against a real bff, so a save on the
+  shipped bff fails. The bff
   serves `/api/session`, but until its authenticator is wired every sign-in answers 503
   `session-unavailable`, so the page stays signed out with the Overview whole and an instance page
   shows the sign-in form.
@@ -209,7 +246,8 @@ opens and never shows a reply's text.
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
 the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` against a fake
 manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/session` through
-`router_with_session` with a fake authenticator and a clock the test moves; `tests/pai_bff_binary.rs` runs the binary with
+`router_with_session` with a fake authenticator and a clock the test moves; `tests/server.rs` drives
+`GET /api/instances/{id}/server` the same way, over a fake manager; `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

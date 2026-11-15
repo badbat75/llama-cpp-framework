@@ -54,7 +54,7 @@ const MAX_USER_BYTES: usize = 256;
 
 /// The session routes' state: the signed-in sessions and the failed
 /// sign-ins, in memory only (a restart signs everyone out).
-struct Sessions {
+pub(crate) struct Sessions {
     auth: Arc<dyn Authenticator>,
     clock: Clock,
     state: Mutex<Store>,
@@ -119,7 +119,7 @@ impl Sessions {
 
     /// The identity of the session the request's cookie names, its idle
     /// deadline moved; an expired session is removed.
-    fn current(&self, headers: &HeaderMap) -> Option<(String, Identity)> {
+    pub(crate) fn current(&self, headers: &HeaderMap) -> Option<(String, Identity)> {
         let id = cookie_value(headers)?;
         let now = (self.clock)();
         let mut store = self.store();
@@ -134,14 +134,18 @@ impl Sessions {
     }
 }
 
-/// `POST`, `GET` and `DELETE /api/session`, signing in through `auth` and
-/// reading the time from `clock`.
-pub(crate) fn routes(auth: Arc<dyn Authenticator>, clock: Clock) -> axum::Router {
-    let state = Arc::new(Sessions {
+/// No session yet, signing in through `auth` and reading the time from
+/// `clock`.
+pub(crate) fn sessions(auth: Arc<dyn Authenticator>, clock: Clock) -> Arc<Sessions> {
+    Arc::new(Sessions {
         auth,
         clock,
         state: Mutex::new(Store::default()),
-    });
+    })
+}
+
+/// `POST`, `GET` and `DELETE /api/session` over `state`.
+pub(crate) fn routes(state: Arc<Sessions>) -> axum::Router {
     axum::Router::new()
         .route(
             "/api/session",
@@ -316,7 +320,7 @@ fn identity_json(identity: &Identity) -> axum::Json<serde_json::Value> {
 }
 
 /// `{"key": <strings key>, "args": [...]}` with `status`.
-fn error(status: StatusCode, key: &str, args: &[u64]) -> Response {
+pub(crate) fn error(status: StatusCode, key: &str, args: &[u64]) -> Response {
     (
         status,
         axum::Json(serde_json::json!({ "key": key, "args": args })),
