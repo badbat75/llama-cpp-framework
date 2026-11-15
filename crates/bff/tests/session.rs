@@ -150,10 +150,11 @@ fn non_member(typed_user: &'static str) -> Account {
     }
 }
 
-/// `alice` and `bob` (no `configure`) and `root-admin` (an administrator),
-/// all with right passwords; `carol`, a right password of a non-member
-/// (`NotAdministrator`); `dave`, whose check cannot answer (`Unavailable`);
-/// `sleepy`, whose check answers only after the sign-in bound (`HANG`).
+/// `alice`, `bob` and `root-admin` (all members of `pai`, the group sign-in
+/// admits: every session is an administrator's), all with right passwords;
+/// `carol`, a right password of a non-member (`NotAdministrator`); `dave`,
+/// whose check cannot answer (`Unavailable`); `sleepy`, whose check answers
+/// only after the sign-in bound (`HANG`).
 /// The struct literal pins every field of `Identity`: one more (a password
 /// kept with the session) would not compile.
 fn accounts() -> Vec<Account> {
@@ -163,17 +164,13 @@ fn accounts() -> Vec<Account> {
             password: "correct horse",
             answer: Ok(Identity {
                 user: "alice".into(),
-                can_configure: false,
             }),
             hang: Duration::ZERO,
         },
         Account {
             typed_user: "bob",
             password: "battery staple",
-            answer: Ok(Identity {
-                user: "bob".into(),
-                can_configure: false,
-            }),
+            answer: Ok(Identity { user: "bob".into() }),
             hang: Duration::ZERO,
         },
         Account {
@@ -181,7 +178,6 @@ fn accounts() -> Vec<Account> {
             password: "s3cret-Admin!",
             answer: Ok(Identity {
                 user: "root-admin".into(),
-                can_configure: true,
             }),
             hang: Duration::ZERO,
         },
@@ -195,11 +191,10 @@ fn accounts() -> Vec<Account> {
         Account {
             typed_user: "sleepy",
             password: "right sleepy",
-            // An administrator with the right password: the check reaches
-            // 200, it only never arrives in time.
+            // A member with the right password: the check reaches 200, it
+            // only never arrives in time.
             answer: Ok(Identity {
                 user: "sleepy".into(),
-                can_configure: true,
             }),
             hang: HANG,
         },
@@ -519,7 +514,6 @@ async fn an_empty_password_is_refused_without_asking() {
         password: "",
         answer: Ok(Identity {
             user: "nopass".into(),
-            can_configure: true,
         }),
         hang: Duration::ZERO,
     }]));
@@ -1384,7 +1378,6 @@ async fn the_user_is_the_authenticators_name_not_the_typed_one() {
         password: "correct horse",
         answer: Ok(Identity {
             user: "alice".into(),
-            can_configure: false,
         }),
         hang: Duration::ZERO,
     }]));

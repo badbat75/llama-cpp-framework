@@ -29,9 +29,12 @@
 //!   - `interfaces`: `net_ifaces::interfaces()` as `{value, label}`.
 //!   - `revision`: opaque text, the same for the same file text, another for
 //!     any other text (a comment included).
-//! - `OpencodeApiKey` goes to administrators only (decided with the user
-//!   2026-11-15): for a user whose session has `can_configure` false it is
-//!   `null`, and when the file sets it the document gains
+//! - `OpencodeApiKey`: the bff sends the key to every signed-in session,
+//!   since a session is a member of the administrators' group `pai` already
+//!   (sign-in refuses anyone else 403): the bff has no session to keep the
+//!   key from. `withheld` comes from the manager's `read_file` alone: when
+//!   it says the key was withheld (the value blanked in the text it sends),
+//!   `values.OpencodeApiKey` is `null` and the document gains
 //!   `"withheld": ["OpencodeApiKey"]`; with nothing withheld there is no
 //!   `withheld` member.
 //! - Errors `{"key", "args": []}`, never the manager's detail: 404
@@ -101,7 +104,7 @@ type Log = Arc<Mutex<Vec<String>>>;
 /// A manager whose `read_file` answers `file` (for any name) after `delay`,
 /// logging every call (`read <name>`, `status <id>`, ...).
 struct FakeManager {
-    file: Result<Option<String>, ClientError>,
+    file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
     log: Log,
 }
@@ -139,12 +142,7 @@ impl ManagerClient for FakeManager {
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         std::thread::sleep(self.delay);
-        self.file.clone().map(|file| {
-            file.map(|text| ManagerFile {
-                text,
-                withheld: false,
-            })
-        })
+        self.file.clone()
     }
     fn write_file(
         &self,
@@ -168,9 +166,9 @@ impl ManagerClient for FakeManager {
     }
 }
 
-/// `alice`, a signed-in user who is not an administrator (reading needs
-/// only `control`), and `root`, an administrator (`can_configure`); both
-/// with the password `correct horse`.
+/// `alice` and `root`, two signed-in sessions (both members of `pai`, the
+/// group sign-in admits: the bff keeps nothing from either), both with the
+/// password `correct horse`.
 struct FakeAuth;
 
 impl Authenticator for FakeAuth {
@@ -178,11 +176,9 @@ impl Authenticator for FakeAuth {
         match (user, password) {
             ("alice", "correct horse") => Ok(Identity {
                 user: "alice".into(),
-                can_configure: false,
             }),
             ("root", "correct horse") => Ok(Identity {
                 user: "root".into(),
-                can_configure: true,
             }),
             _ => Err(AuthError::BadCredentials),
         }
@@ -199,7 +195,7 @@ struct App {
 
 fn app_with(
     connect_result: Result<(), ClientError>,
-    file: Result<Option<String>, ClientError>,
+    file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
 ) -> App {
     let log = Log::default();
@@ -228,12 +224,34 @@ fn app_with(
     }
 }
 
-/// A manager holding `text` as every file.
-fn app_holding(text: &str) -> App {
-    app_with(Ok(()), Ok(Some(text.to_string())), Duration::ZERO)
+/// The manager's answer for a file it sends whole: nothing withheld.
+fn whole(text: &str) -> ManagerFile {
+    ManagerFile {
+        text: text.to_string(),
+        withheld: false,
+    }
 }
 
-fn app_reading(file: Result<Option<String>, ClientError>) -> App {
+/// The manager's answer for a file whose `OpencodeApiKey` it withheld by
+/// itself: the value blanked in the text it sends, the flag set.
+fn withheld(text: &str) -> ManagerFile {
+    ManagerFile {
+        text: text.to_string(),
+        withheld: true,
+    }
+}
+
+/// A manager holding `text` as every file, sent whole.
+fn app_holding(text: &str) -> App {
+    app_with(Ok(()), Ok(Some(whole(text))), Duration::ZERO)
+}
+
+/// A manager holding `text` as every file and reporting the key withheld.
+fn app_holding_withheld(text: &str) -> App {
+    app_with(Ok(()), Ok(Some(withheld(text))), Duration::ZERO)
+}
+
+fn app_reading(file: Result<Option<ManagerFile>, ClientError>) -> App {
     app_with(Ok(()), file, Duration::ZERO)
 }
 
@@ -317,10 +335,9 @@ impl App {
             .await
     }
 
-    /// Signed in as the administrator `root`,
-    /// `GET /api/instances/default/server`.
-    async fn read_default_as_admin(&self) -> Reply {
-        let cookie = self.sign_in_as("root").await;
+    /// Signed in as `user`, `GET /api/instances/default/server`.
+    async fn read_default_as(&self, user: &str) -> Reply {
+        let cookie = self.sign_in_as(user).await;
         self.get("/api/instances/default/server", Some(&cookie))
             .await
     }
@@ -403,7 +420,7 @@ async fn an_unknown_session_is_session_required() {
 async fn no_manager_is_unavailable() {
     let app = app_with(
         Err(ClientError::Unavailable),
-        Ok(Some(SHIPPED.into())),
+        Ok(Some(whole(SHIPPED))),
         Duration::ZERO,
     );
     app.read_default()
@@ -425,7 +442,7 @@ async fn a_manager_gone_during_the_read_is_unavailable() {
 /// deadline rather than waiting for it.
 #[tokio::test]
 async fn a_manager_too_slow_is_unavailable() {
-    let app = app_with(Ok(()), Ok(Some(SHIPPED.into())), Duration::from_secs(2));
+    let app = app_with(Ok(()), Ok(Some(whole(SHIPPED))), Duration::from_secs(2));
     let cookie = app.sign_in().await;
     let asked = Instant::now();
     let r = app
@@ -535,8 +552,7 @@ async fn the_document_has_exactly_the_contract_members() {
 }
 
 /// `values` holds every server key, no other, each as typed JSON from a
-/// file that sets them all, read by an administrator (who alone is sent
-/// the API key).
+/// file that sets them all (the API key included: every session is sent it).
 #[tokio::test]
 async fn values_are_typed_by_ini_key() {
     let text = "\
@@ -562,7 +578,7 @@ OpencodeBaseUrl = https://llm.example.com
 OpencodeApiKey = sk-test
 Unknown = 7
 ";
-    let doc = app_holding(text).read_default_as_admin().await.document();
+    let doc = app_holding(text).read_default().await.document();
     assert_eq!(
         doc["values"],
         json!({
@@ -778,42 +794,73 @@ async fn the_revision_follows_the_file_text() {
     assert_ne!(first["revision"], changed["revision"], "a value");
 }
 
-// ── The API key: administrators only ────────────────────────────────────
+// ── The API key ─────────────────────────────────────────────────────────
 
-/// A file that sets the API key, as an administrator would save it.
+/// A file that sets the API key, as the configurator saves it.
 const WITH_KEY: &str = "[Server]\nPort = 8580\nOpencodeApiKey = sk-test\n";
 
-/// A user who cannot configure is not sent the key: `null`, the document
-/// says it was withheld, and the secret is nowhere in the body.
+/// The same file as the manager sends it when it withheld the key: its own
+/// blanking of the value (`service.rs` writes `OpencodeApiKey =`).
+const KEY_BLANKED: &str = "[Server]\nPort = 8580\nOpencodeApiKey =\n";
+
+/// Every signed-in session is sent the key as saved, with nothing withheld:
+/// sign-in admits only members of `pai`, so the bff has no session to keep
+/// the key from.
 #[tokio::test]
-async fn the_api_key_is_withheld_from_a_user_who_cannot_configure() {
-    let r = app_holding(WITH_KEY).read_default().await;
+async fn a_file_the_manager_did_not_withhold_sends_the_key_to_every_session() {
+    for user in ["alice", "root"] {
+        let r = app_holding(WITH_KEY).read_default_as(user).await;
+        let doc = r.document();
+        assert_eq!(doc["values"]["OpencodeApiKey"], json!("sk-test"), "{user}");
+        assert!(doc.get("withheld").is_none(), "{user}: {doc}");
+    }
+}
+
+/// The manager's own flag reaches the reply: the key is `null`, the document
+/// says it was withheld, and the rest of the file is sent.
+#[tokio::test]
+async fn the_managers_withheld_flag_yields_a_null_key_and_the_withheld_member() {
+    let r = app_holding_withheld(KEY_BLANKED).read_default().await;
     let doc = r.document();
     assert_eq!(doc["values"]["OpencodeApiKey"], Value::Null, "{}", r.body);
     assert_eq!(doc["withheld"], json!(["OpencodeApiKey"]), "{}", r.body);
-    assert!(!r.body.contains("sk-test"), "{}", r.body);
     assert_eq!(doc["values"]["Port"], json!(8580), "the rest is sent");
+    assert!(!r.body.contains("sk-test"), "{}", r.body);
+}
+
+/// A withheld file never sends a key, for any session, even when the text
+/// the manager sent still carries a value: the flag, not the session,
+/// decides, and the secret stays out of the body.
+#[tokio::test]
+async fn a_withheld_file_never_sends_a_key_even_when_its_text_holds_one() {
+    for user in ["alice", "root"] {
+        let r = app_holding_withheld(WITH_KEY).read_default_as(user).await;
+        let doc = r.document();
+        assert_eq!(
+            doc["values"]["OpencodeApiKey"],
+            Value::Null,
+            "{user}: {}",
+            r.body
+        );
+        assert_eq!(
+            doc["withheld"],
+            json!(["OpencodeApiKey"]),
+            "{user}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-test"), "{user}: {}", r.body);
+    }
 }
 
 /// With no key in the file nothing is withheld: `null` and no `withheld`
-/// member.
+/// member, so the member comes from the manager's flag and never from an
+/// unset value.
 #[tokio::test]
-async fn nothing_is_withheld_from_a_user_when_the_file_has_no_key() {
+async fn nothing_is_withheld_when_the_file_has_no_key() {
     let doc = app_holding("[Server]\nPort = 8580\n")
         .read_default()
         .await
         .document();
     assert_eq!(doc["values"]["OpencodeApiKey"], Value::Null);
-    assert!(doc.get("withheld").is_none(), "{doc}");
-}
-
-/// An administrator is sent the key as saved, and nothing is withheld.
-#[tokio::test]
-async fn an_administrator_is_sent_the_api_key() {
-    let doc = app_holding(WITH_KEY)
-        .read_default_as_admin()
-        .await
-        .document();
-    assert_eq!(doc["values"]["OpencodeApiKey"], json!("sk-test"));
     assert!(doc.get("withheld").is_none(), "{doc}");
 }

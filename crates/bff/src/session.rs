@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Who signed in, as the authenticator names them: the account name it
-/// canonicalised and whether the manager would allow them `configure`.
+/// canonicalised. Every session is a member of the administrators' group,
+/// so there is nothing else to keep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     pub user: String,
-    pub can_configure: bool,
 }
 
 /// Why a sign-in was refused.
@@ -443,7 +443,6 @@ impl Authenticator for SystemAuthenticator {
         match (self.connect)().and_then(|client| client.authenticate(user, password)) {
             Ok((true, true)) => Ok(Identity {
                 user: user.to_string(),
-                can_configure: true,
             }),
             Ok((true, false)) => Err(AuthError::NotAdministrator),
             // A wrong password is never a sign-in: the group of an account

@@ -7,9 +7,9 @@
 //! `AuthError`.
 //!
 //! The mapping (fe/briefs/api-contract.md, crates/bff/README.md):
-//! - `Ok((true, true))`: signed in: the `Identity` of the typed name,
-//!   `can_configure` true (the session reply no longer carries a role:
-//!   fe/briefs/api-contract.md, the web UI no longer reads one).
+//! - `Ok((true, true))`: signed in: the `Identity` of the typed name (the
+//!   session reply carries no role and `Identity` keeps none: every session
+//!   is a member's, so the bff keeps nothing from it).
 //! - `Ok((true, false))`: `AuthError::NotAdministrator`, the route's 403
 //!   `session-not-administrator`.
 //! - `Ok((false, _))`: `AuthError::BadCredentials`, the route's 401,
@@ -115,7 +115,7 @@ fn pairs_of(h: &Harness) -> Vec<(String, String)> {
     h.pairs.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// `Ok((true, true))`: signed in as the typed account, an administrator.
+/// `Ok((true, true))`: signed in as the typed account, a member of `pai`.
 #[test]
 fn a_member_with_the_right_password_signs_in() {
     let h = harness(Ok((true, true)));
@@ -123,7 +123,6 @@ fn a_member_with_the_right_password_signs_in() {
         h.auth.authenticate("alice", "correct horse"),
         Ok(Identity {
             user: "alice".into(),
-            can_configure: true,
         })
     );
     // The manager is asked the typed pair, whole; the reply tests (in

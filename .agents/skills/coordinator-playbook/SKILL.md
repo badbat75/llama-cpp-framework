@@ -36,3 +36,7 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
 - The `reviewer` (added 2026-11-15, user) reads the coder's diff after the coder's green report, in
   parallel with the tester's rerun; a slice is committed only when its report has no open defect.
   Give it the slice's goal and the exact files; it edits nothing.
+- OpenCode agents (local model, `--auto`) can wander out of their brief when their context fills:
+  one rewrote two `fe/` tests on 2026-11-15 before dying at compaction. Every brief says "do not read
+  or write fe/" (and any other folder outside the slice), and after each run check `git status`
+  for paths outside the allowed list before reading the report.

@@ -19,6 +19,11 @@ Lessons only: the rules are in `AGENTS.md`.
   it prints `Compiling <pkg>`; a follow-up `cargo clippy -p <pkg> -v` printing `Fresh <pkg>` confirms the
   fingerprint (cargo's own `-v` changes no rustc fingerprint). Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
+  A clean rerun IS fast (0.4 s for every pai-bff target on 24 cores, deps cached): to prove it checked
+  them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff: 14, the
+  lib and bin each with a test twin, 11 integration binaries, the build script twice). To prove a green
+  `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
+  (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
   captured from the real system; a name-prefix match is tested with every real name sharing the prefix
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
@@ -342,9 +347,17 @@ Lessons only: the rules are in `AGENTS.md`.
 
 - Session reply shape: pin it with `Reply::assert_user_reply(user)` (`tests/session.rs`): the
   key-count assert (object has exactly one key, `user`) runs before the value assert, so a reply with
-  an extra key reds as "carries more than the user", never as a name typo. The fake accounts' `Identity`
-  struct literals keep `can_configure` (they build the authenticator's answer, not the reply): a coder
-  who drops the field edits those literals mechanically, the reply pins stay green.
+  an extra key reds as "carries more than the user", never as a name typo. Every fake `Identity`
+  literal is `Identity { user }` (no role since the pai-only sign-in slice): dropping a field is
+  pinned by E0063 at each literal. A `grep can_configure tests/` after such a slice must still hit
+  the manager's `(ok, can_configure)` tuple (`tests/authenticator.rs`) and the 403 non-member docs:
+  those are the manager's check, they stay.
+- Server file key withholding (`tests/server.rs`): the `FakeManager` answers
+  `Result<Option<ManagerFile>, ClientError>` via `whole(text)` / `withheld(text)` helpers. The flag
+  alone must null the key: `document()` nulled it only via its own `!can_configure` (kept_here), so
+  withheld=true with a key in the text reds `left: String("sk-test")` against `Value::Null`, an
+  assertion red past the compile red. Three failing integration binaries block every pai-bff test
+  target: bound the red with `cargo test -p pai-bff --no-fail-fast --test <the rest> --lib`.
 - Sign-in split for tests: the manager's `(ok, can_configure)` mapping belongs to `SystemAuthenticator`
   (fake `ManagerClient` over a `Connect`, plain `#[test]`s in `tests/authenticator.rs`); the HTTP
   mapping (403 `session-not-administrator` is no credential failure: refusals are a counter of their
@@ -438,3 +451,11 @@ Lessons only: the rules are in `AGENTS.md`.
   dedicated role-word test, so the session tests stay green when that wording changes.
 - Web UI: when a later slice adds a control or live region to a page, the earlier slice's tab-order
   and "no status" tests break by design; update them in place and cite both criteria.
+- Web UI: `input type="password"` is found by `getByLabelText(.., { selector: "input" })`, not by
+  `getByRole("textbox")` (dom-accessibility-api gives it no role here).
+- Web UI: to hand a handler a null `document.activeElement`, define an own getter on the `document`
+  instance (shadows the prototype), delete it in `finally`, and probe with your own `hashchange`
+  listener that the stub held when the handlers ran.
+- Web UI: a throw from a React click handler is swallowed at jsdom's listener boundary: fireEvent
+  returns, the test continues, and vitest reports the TypeError as Unhandled at the end, so the
+  assertion after it also reds.

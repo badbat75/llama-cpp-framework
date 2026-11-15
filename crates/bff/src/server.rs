@@ -22,15 +22,13 @@ pub(crate) async fn read(
     id: String,
     headers: HeaderMap,
 ) -> Response {
-    let Some((_, identity)) = sessions.current(&headers) else {
+    if sessions.current(&headers).is_none() {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
-    };
+    }
     let name = format!("server@{id}.ini");
     let ask = tokio::task::spawn_blocking(move || connect()?.read_file(&name));
     let (status, key) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(file)))) => {
-            return axum::Json(document(&file, identity.can_configure)).into_response()
-        }
+        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file)).into_response(),
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
             ClientError::NoInstance | ClientError::BadFileName | ClientError::InvalidId,
@@ -44,14 +42,17 @@ pub(crate) async fn read(
     error(status, key, &[])
 }
 
-/// The 200 document of the file; `OpencodeApiKey` only for an
-/// administrator (`can_configure`), anyone else told it was `withheld`, as
-/// is everyone the manager itself withheld it from.
-fn document(file: &ManagerFile, can_configure: bool) -> Value {
+/// The 200 document of the file. `values.OpencodeApiKey` is `null` and the
+/// document carries `"withheld": ["OpencodeApiKey"]` exactly when the
+/// manager's `withheld` flag is set, even when the text it sent still names
+/// a key: every signed-in session is a member of the administrators' group
+/// (sign-in refuses anyone else 403), so the bff keeps nothing on its own.
+fn document(file: &ManagerFile) -> Value {
     let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
-    let kept_here = !can_configure && cfg.opencode_api_key.take().is_some();
-    let withheld = kept_here || file.withheld;
+    if file.withheld {
+        cfg.opencode_api_key = None;
+    }
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     let range = |key: &str| checks::server_int_range(key).map(|r| json!([r.start(), r.end()]));
     let base_url = ServerConfig {
@@ -103,7 +104,7 @@ fn document(file: &ManagerFile, can_configure: bool) -> Value {
         },
         "interfaces": interfaces,
     });
-    if withheld {
+    if file.withheld {
         doc["withheld"] = json!(["OpencodeApiKey"]);
     }
     doc

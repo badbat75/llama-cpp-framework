@@ -167,7 +167,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `bff.rs` a CLI print path, so every message is a `cli.toml` key printed inside those two fns. Its
   `/api/version` body uses `serde_json`, a normal dependency (axum's `json` feature links it anyway).
   `pai_core::ini::parse_sections` does not strip a UTF-8 BOM (`trim` keeps U+FEFF): strip it first.
-- pai-bff's session reply (GET/POST `/api/session`) is exactly `{"user"}`; `Identity.can_configure` is NOT in it and stays only because `server.rs` `document` reads it to withhold `OpencodeApiKey` from non-administrators.
+- pai-bff's session reply (GET/POST `/api/session`) is exactly `{"user"}`: `Identity` holds the user
+  name alone (every session is a `pai` member, sign-in 403s anyone else). The server document's
+  `withheld` comes only from the manager's `ManagerFile.withheld` flag: set, the bff blanks
+  `OpencodeApiKey` (null) and adds `"withheld": ["OpencodeApiKey"]` even when the text still names
+  a key; unset, the key goes to every session and there is no `withheld` member.
 - pai-bff embeds the web UI through `crates/bff/build.rs` (`PRIVATE_AI_FE_DIST`, absolute only, else
   `fe/dist` with an `index.html`, else `fe-fixture`) into OUT_DIR's `fe_files.rs`. A missing
   `rerun-if-changed` path makes cargo rerun the script and rebuild the crate at EVERY build (cargo's
