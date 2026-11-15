@@ -153,7 +153,11 @@ or an unknown or expired one, it answers 401 `{"key": "session-required", "args"
 connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
 connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
 yet: the bff reads the file as itself, so the session is checked to exist and, for the API key
-alone, whether its user is an administrator (`canConfigure`).
+alone, whether its user is an administrator (`canConfigure`). The manager also withholds the key
+from a reader allowed `control` but not `configure` ("Through the manager" in
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)); a file it
+withheld is marked withheld for every user, an administrator included (`server.rs` `document`). The
+bff's own account gets no `control` today ([above](#the-instances-from-the-manager)), so the manager refuses its read (403).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -171,8 +175,8 @@ alone, whether its user is an administrator (`canConfigure`).
   `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` goes to administrators only:
   for a session whose user cannot configure it is `null`.
 - **`withheld`**: `["OpencodeApiKey"]` when the file sets the API key and the user cannot configure,
-  so the web UI can say a key is saved without showing it; absent otherwise, and never for an
-  administrator.
+  or when the manager withheld it from the bff, so the web UI can say a key is saved without
+  showing it; absent otherwise.
 - **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
   `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
   the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file

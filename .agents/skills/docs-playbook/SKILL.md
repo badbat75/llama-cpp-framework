@@ -167,3 +167,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - When a `PLAN.md` step closes, grep `step <N>` (not only `PLAN.md step <N>`) in every `.md` and in
   `.github/workflows/*.yml` comments: plan numbers are reused, so a bare `step 12` may mean an older
   step, and the installer test plan has its own numbered steps. Point to the file that now holds it.
+- A manager protocol change (a method's arguments or reply) is described once, in "Through the manager"
+  of `crates/config/README.md` (D-Bus signature and pipe JSON); `installer/AGENTS.md`'s pipe bullet and
+  `crates/bff/README.md` point there. Check per-call authorization in `manager/service.rs` itself:
+  the README said "reads need none" long after 7af81f4 made an instance file's read need `control`.
