@@ -156,6 +156,12 @@ jobs:
           $instances.Content
           $list = @($instances.Content | ConvertFrom-Json)
           if ($list.Count -ne 1 -or $list[0].id -ne 'default' -or $list[0].engine -ne 'llama.cpp' -or $list[0].state -ne 'inactive') { throw "/api/instances is not the one inactive llama.cpp instance 'default': $($instances.Content)" }
+          # The framework's MSI creates the local group pai (its util:Group),
+          # whose members the manager lets write the server and preset files.
+          # The runner's own account joins it for the repairs below, which run
+          # the group's custom action again on a group that already exists.
+          Get-LocalGroup -Name pai
+          Add-LocalGroupMember -Group pai -Member $env:USERNAME
 
       - name: Repair both (test plan step 7)
         timeout-minutes: 20
@@ -179,6 +185,8 @@ jobs:
           if (-not (Test-Path "$config\presets.ini")) { throw 'the repair did not restore the deleted presets.ini' }
           if (-not (Select-String -LiteralPath "$config\server@default.ini" -SimpleMatch $marker -Quiet)) { throw 'the repair overwrote the changed server@default.ini' }
           if (Test-Path "$env:ProgramData\llama.cpp\instances.running") { throw 'the repair left ProgramData\llama.cpp\instances.running' }
+          # The repairs leave the local group pai and the runner's membership in it.
+          Get-LocalGroupMember -Group pai -Member $env:USERNAME
 
       - name: Uninstall both and check what is left (test plan steps 12, 13, 14)
         timeout-minutes: 20
@@ -203,6 +211,10 @@ jobs:
           foreach ($file in 'server@default.ini', 'presets.ini') {
             if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "the framework uninstall removed ProgramData\llama.cpp\config\$file" }
           }
+          # The framework's uninstall leaves the local group pai and its
+          # members: RemoveOnUninstall="no", so the administrator's members
+          # outlive the product as the machine data does.
+          Get-LocalGroupMember -Group pai -Member $env:USERNAME
           $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/x `"$ll`" /qn /norestart /l*v `"$PWD\build\windows\ci-uninstall-llama.cpp.log`""
           if ($p.ExitCode -ne 0) { throw "the uninstall of llama.cpp exited $($p.ExitCode)" }
           foreach ($svc in 'private-ai-manager', 'private-ai-bff') {

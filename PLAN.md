@@ -784,9 +784,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `system-auth`: Fedora's `other` is `pam_deny`), the empty group `pai` (sysusers.d), and the polkit
    rule `50-private-ai.rules` (`configure`: `auth_self_keep` for `pai`, `no` otherwise; the action's
    own defaults `no`); root still configures (polkit always authorizes uid 0); a polkit without
-   JavaScript rules (0.105) leaves only root. Next, 6b part 2b, Windows: the MSI creates the local
-   group `pai` and the manager's `configure` on the pipe becomes membership of `pai` instead of
-   Administrators. 6b part
+   JavaScript rules (0.105) leaves only root. 6b part 2b, Windows, done: the framework MSI creates the
+   empty local group `pai` and never removes it (`util:Group RemoveOnUninstall="no"`: Util's default
+   deletes it at every uninstall, so a MajorUpgrade would empty it); the pipe's `configure` is `pai`
+   enabled in the client's token (looked up per connection as a local alias of this computer only,
+   never a domain group or user named `pai`) or LocalSystem; `control` adds `pai` members; the
+   installers workflow checks the group and that a member survives repair and uninstall (not yet run
+   on a Windows runner). Left from it: the configure-refusal strings (`manager.configure_denied`,
+   `manager.write_denied` in `en_US.toml`, `CliDeniedConfigure` in `cli.toml`), `installer/AGENTS.md`
+   and `crates/manager/README.md` still name Administrators; rename `ADMIN_GROUP` (it reads as
+   Administrators). 6b part
    2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
    `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`

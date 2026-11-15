@@ -259,6 +259,26 @@
       </CreateFolder>
     </Component>
     <!--
+      The local group pai: the members the manager lets write the server and
+      preset files (its ADMIN_GROUP), as the Linux packages' sysusers.d entry
+      creates it and polkit's configure rule asks for it. Created empty, and
+      an existing pai (the administrator's own, or an earlier install's) is
+      taken as it is: no FailIfExists, no UpdateIfExists. Never removed:
+      Util's default removes the group at every uninstall, members and
+      members' entries included (its RemoveGroup), and a MajorUpgrade
+      uninstalls the old package first, so every upgrade would empty the
+      group the administrator filled. Its key path is an HKLM value of the
+      product's key, as the optional features' (a folder key path needs a
+      fixed GUID and the MachineData components already key on those folders;
+      two components may not share a key path). In the required feature,
+      unconditional: without the group nobody can configure. Adding members
+      is the administrator's work, never the package's.
+    -->
+    <Component Id="PaiGroup" Directory="BINFOLDER">
+      <RegistryValue Root="HKLM" Key="Software\private-ai" Name="PaiGroup" Type="integer" Value="1" KeyPath="yes" />
+      <util:Group Name="pai" RemoveOnUninstall="no" />
+    </Component>
+    <!--
       Optional: bin\ appended to the MACHINE PATH, removed again on uninstall.
       Windows Installer broadcasts WM_SETTINGCHANGE itself after changing the
       environment, so new shells see it.
@@ -294,6 +314,7 @@
       <ComponentRef Id="BffService" />
       <ComponentRef Id="MachineDataRoot" />
       <ComponentRef Id="MachineDataConfig" />
+      <ComponentRef Id="PaiGroup" />
     </Feature>
     <Feature Id="SystemPathFeature" Title="Add to system PATH"
              Description="Add the Private AI Framework bin directory to the system PATH."

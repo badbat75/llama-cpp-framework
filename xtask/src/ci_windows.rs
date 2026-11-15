@@ -845,3 +845,57 @@ fn installers_windows_checks_the_fresh_instance_is_default_and_inactive() {
         );
     }
 }
+
+/// Step 10 slice 6b part 2b: the framework's MSI creates the local group
+/// `pai` and never removes it (`installer/private-ai-framework.wxs`, its
+/// `util:Group`), which only a real install shows. After `xtask install` the
+/// group exists; a member is added before the repairs (the runner's own
+/// account, `$env:USERNAME`) and is still in it after them and after the
+/// framework's uninstall, checked before the engine's uninstall. Between
+/// install and repair: the repair runs the group's custom action again on an
+/// existing group.
+#[test]
+fn installers_windows_checks_the_pai_group_and_its_members_outlive_repair_and_uninstall() {
+    let text = workflow();
+    let install = after(&text, 0, "xtask -- install", "xtask install");
+    let repair = *switches(&text, install, "/f")
+        .first()
+        .expect("no msiexec /f repair after the install");
+    let uninstalls = switches(&text, repair, "/x");
+    assert!(uninstalls.len() >= 2, "both products need an msiexec /x");
+    let before_repair = &text[install..repair];
+    let exists = after(
+        before_repair,
+        0,
+        "Get-LocalGroup -Name pai",
+        "the group pai checked after the install",
+    );
+    after(
+        before_repair,
+        exists,
+        "Add-LocalGroupMember -Group pai",
+        "a member added to pai before the repair",
+    );
+    let line = before_repair[before_repair
+        .find("Add-LocalGroupMember -Group pai")
+        .unwrap()..]
+        .lines()
+        .next()
+        .unwrap_or_default();
+    assert!(
+        line.contains("$env:USERNAME"),
+        "the member added is not the runner's account: {line}"
+    );
+    for (what, span) in [
+        ("after the repair", &text[repair..uninstalls[0]]),
+        (
+            "between the framework's and the engine's uninstall",
+            &text[uninstalls[0]..uninstalls[1]],
+        ),
+    ] {
+        assert!(
+            span.contains("Get-LocalGroupMember -Group pai") && span.contains("$env:USERNAME"),
+            "nothing {what} checks the runner's account is still in pai"
+        );
+    }
+}

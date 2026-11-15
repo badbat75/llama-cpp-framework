@@ -73,7 +73,7 @@ pub fn in_pai_group(groups: &[String]) -> bool {
 }
 
 /// The group whose members may configure, on Linux and Windows.
-const ADMIN_GROUP: &str = "pai";
+pub(crate) const ADMIN_GROUP: &str = "pai";
 
 /// The system's accounts: PAM and the user's groups on Linux
 /// (`accounts.rs`), `LogonUserW` and the local groups on Windows

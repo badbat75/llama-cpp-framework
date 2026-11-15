@@ -75,7 +75,11 @@ Lessons only: the rules are in `AGENTS.md`.
   value and shown later (`checks::Refusal::text`) gets one literal `fill` arm per key. A key that moves
   into a source the CLI reaches leaves `GUI_ONLY_KEYS` and goes in `cli.toml`.
 - Never `git stash` to compare against HEAD: other agents edit the same working tree at the same time.
-  Use `git worktree add` or `git show HEAD:<path>` instead.
+  Use `git worktree add` or `git show HEAD:<path>` instead. The tree really does move under you: one
+  session restored `installers-windows.yml` from HEAD while I was editing it, my two accepted edits to
+  it were gone, and the tests' red list had changed with it. Re-read a file right before editing it
+  (`git status --porcelain`, its mtime), and rerun the red list after each edit: the "red" the tester
+  reported is only true of the tree at that moment.
 - A helper generic over a zbus call's body needs serde's traits: `zbus::export::serde` re-exports
   serde, so no `serde` dependency is added for it (`pai-core` `client/dbus.rs`).
 - `binding_lint` reads `cli.rs` only up to the line `mod tests {`, so a `#[cfg(test)]` e2e phase with
@@ -339,3 +343,37 @@ Lessons only: the rules are in `AGENTS.md`.
   text differs per format (the core's PAM service) is written by each build (`write_deb_scripts`,
   `write_rpm_files`) and the `.deb` build removes its copy with `DEBIAN/`. The `cargo::unused_dependencies`
   manifest warnings on the Windows GNU target are older than this and do not fail `-D warnings`.
+- The tree is shared: a process can restore tracked files from git while an agent works (it happened
+  mid-task, a few minutes after the tests were green: the edits were gone). Re-read a file before
+  editing it, report the exact files changed, rerun the red list before trusting a green result, and
+  never "fix" it with `git stash`, use `git show HEAD:<path>` to read the base.
+- windows-sys: `PSID` is `*mut c_void`, so a `SID` buffer goes in as `sid.as_mut_ptr().cast::<c_void>()`,
+  not `as_ptr()` (that is a `*mut u8`, E0308). `SID_NAME_USE` is an `i32` newtype, so pass
+  `&mut use as *mut i32`. `LookupAccountNameW` is under `Win32::Security` and asks for the size with a
+  null buffer and 0 in the size argument: its first call returning `ERROR_INSUFFICIENT_BUFFER` is the
+  query, not a failure. The account name is UTF-16 without a trailing NUL. A windows-sys feature a
+  crate calls must be in THAT crate's manifest: `GetComputerNameW` and `MAX_COMPUTERNAME_LENGTH` are
+  `Win32_System_WindowsProgramming`, and the manager type-checked on windows-gnu without it only
+  because `if-addrs` (a pai-core dependency) enables that feature (a leak, not a licence).
+- The referenced domain `LookupAccountNameW` reports for a local account is the computer's NetBIOS
+  name (its doc: for a computer not joined to a domain the buffer receives the computer name), so
+  compare it with `GetComputerNameW`: buffer of `MAX_COMPUTERNAME_LENGTH + 1` u16 and `nSize` set to
+  that (15 characters plus the NUL the call writes, a 15 as input overflows). Its
+  `GetComputerNameExW` sibling `ComputerNameDnsHostname` is the DNS name, longer whenever the NetBIOS
+  name is a truncation of it, so it never matches. `SidTypeAlias` alone is not enough: a trusted
+  domain's local group reports the same type, so the domain must equal the computer's name
+  (case-insensitively; the call reports it upper-case).
+- `pipe_server.rs`'s text test slices `fn client_facts(` and `fn group_sid(` each to the first
+  `\n}\n` and wants `ADMIN_GROUP` and `local_alias_sid(` literally inside them, and forbids
+  `OnceLock`, `LazyLock` and `static PAI` anywhere in the file: the `pai` SID is looked up per
+  connection, never cached.
+- WiX: every `Component` needs a KeyPath of its own and no two may share one, and a `util:Group` is
+  neither a file, a folder nor a registry key, so it needs a registry value of its own as its key path
+  (the `SystemPath` pattern: `HKLM\Software\private-ai` + a marker value). A machine-wide object that
+  outlives the product is `RemoveOnUninstall="no"`: on a major upgrade (`MajorUpgrade` removes the
+  product first) anything removed with it is gone for a repair. The MSI text tests read the file as
+  text, so write the element the test pins in ONE line.
+- `ci_windows.rs`: every step is the byte span from its `name:` to the next, and a step with
+  `shell: powershell` runs with `$ErrorActionPreference = 'Stop'`, so a group check must not let
+  `Get-LocalGroup` throw when the group is missing: `Get-LocalGroup -Name x -ErrorAction SilentlyContinue
+  | Out-Null` and `if ($?)`. A needle written as `$env:USERNAME` fails if the file quotes it.

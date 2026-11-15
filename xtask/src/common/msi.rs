@@ -1202,6 +1202,110 @@ mod tests {
         );
     }
 
+    /// The group whose members may configure, as the manager names it
+    /// (`ADMIN_GROUP` in the manager's service module).
+    fn configure_group() -> String {
+        let src = read("crates/manager/src/manager/service.rs");
+        let line = src
+            .lines()
+            .find(|l| l.contains("const ADMIN_GROUP: &str = "))
+            .expect("ADMIN_GROUP in the manager's service module");
+        line.split('"').nth(1).expect("a quoted name").to_string()
+    }
+
+    /// The `util:Group` elements of a document.
+    fn util_groups<'a, 'i>(doc: &'a Document<'i>) -> Vec<Node<'a, 'i>> {
+        doc.descendants()
+            .filter(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "Group"
+                    && n.tag_name().namespace() == Some(UTIL_NS)
+            })
+            .collect()
+    }
+
+    /// The framework's MSI creates the empty local group `pai`, whose
+    /// members the manager lets configure (step 10 slice 6b part 2b, as the
+    /// Linux packages' sysusers.d group): Util's `Group` nested in a
+    /// component of the feature `Main` is created at install
+    /// (docs.firegiant.com/wix/schema/util/group/). Local (no `Domain`); an
+    /// existing `pai` (an earlier install's, or the administrator's own) is
+    /// taken as it is: no `FailIfExists`, no `UpdateIfExists`, created
+    /// (`CreateGroup` not "no") and vital (a failed creation fails the
+    /// install, else nobody could ever configure). Never removed:
+    /// `RemoveOnUninstall="no"`. Util's default removes the group whenever it
+    /// exists at uninstall, members or not (`scagroup.cpp`, `RemoveGroup`),
+    /// and a MajorUpgrade uninstalls the old package, so every upgrade would
+    /// empty the group the administrator filled. No members are added.
+    #[test]
+    fn the_framework_creates_the_local_group_pai_and_never_removes_it() {
+        let text = read(WXS);
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        let name = configure_group();
+        let groups = util_groups(&doc);
+        assert_eq!(
+            groups.len(),
+            1,
+            "one util:Group in {WXS}, found {}",
+            groups.len()
+        );
+        let g = groups[0];
+        assert_eq!(g.attribute("Name"), Some(name.as_str()), "Name");
+        for (attr, refused) in [
+            ("RemoveOnUninstall", None),
+            ("CreateGroup", Some("no")),
+            ("FailIfExists", Some("yes")),
+            ("UpdateIfExists", Some("yes")),
+            ("Vital", Some("no")),
+        ] {
+            match refused {
+                None => assert_eq!(g.attribute(attr), Some("no"), "{attr}"),
+                Some(bad) => assert_ne!(g.attribute(attr), Some(bad), "{attr}"),
+            }
+        }
+        assert_eq!(g.attribute("Domain"), None, "a local group has no Domain");
+        assert!(
+            g.children().all(|c| !c.is_element()),
+            "the group is created empty: {:?}",
+            g.children()
+                .filter(|c| c.is_element())
+                .map(|c| c.tag_name().name())
+                .collect::<Vec<_>>()
+        );
+        let parent = g.parent_element().expect("a parent");
+        assert_eq!(
+            parent.tag_name().name(),
+            "Component",
+            "nested in a Component, else it is only a reference"
+        );
+        let component = parent.attribute("Id").expect("component Id");
+        assert!(
+            in_main_feature(&doc, component),
+            "the component {component} is not installed by the feature Main"
+        );
+        assert!(
+            children(parent, "Condition").is_empty() && parent.attribute("Condition").is_none(),
+            "the group's component is conditioned"
+        );
+        assert!(
+            elements(&doc, "User")
+                .iter()
+                .all(|u| u.tag_name().namespace() != Some(UTIL_NS)),
+            "the MSI adds no user to any group"
+        );
+    }
+
+    /// The engine's MSI leaves accounts alone: `pai` is the framework's.
+    #[test]
+    fn the_engine_msi_creates_no_group() {
+        let text = read("installer/llama.cpp.wxs");
+        let doc = Document::parse(&text).expect("the .wxs is XML");
+        assert!(
+            util_groups(&doc).is_empty(),
+            "a util:Group in llama.cpp.wxs"
+        );
+    }
+
     /// Started at the end of the install, stopped before its files are
     /// replaced or removed, deleted on uninstall, by the SCM.
     #[test]

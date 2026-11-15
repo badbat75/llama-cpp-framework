@@ -3,9 +3,9 @@
 //! ([`TokenAuthority::with_caller`]). Only the Win32 calls live here.
 
 use super::scm::ScmService;
-use super::{TokenAuthority, TokenFacts, TokenGroup, PIPE_MODE, PIPE_SDDL};
+use super::{local_alias_sid, TokenAuthority, TokenFacts, TokenGroup, PIPE_MODE, PIPE_SDDL};
 use crate::manager::pipe::serve_stream;
-use crate::manager::service::{Manager, SystemResolver};
+use crate::manager::service::{Manager, SystemResolver, ADMIN_GROUP};
 use pai_core::client::pipe::PIPE_NAME;
 use std::ffi::{c_void, OsStr};
 use std::fs::File;
@@ -21,15 +21,16 @@ use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, RevertToSelf, TokenGroups, TokenUser, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
-    TOKEN_USER,
+    GetTokenInformation, LookupAccountNameW, RevertToSelf, TokenGroups, TokenUser,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, SID_NAME_USE,
+    TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_UNLIMITED_INSTANCES,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+use windows_sys::Win32::System::WindowsProgramming::{GetComputerNameW, MAX_COMPUTERNAME_LENGTH};
 
 /// The Windows manager.
 pub type WinManager = Manager<ScmService, TokenAuthority, SystemResolver>;
@@ -94,6 +95,7 @@ fn connection(manager: &WinManager, pipe: File) {
         sid: String::new(),
         interactive: false,
         admin_member: false,
+        pai_member: false,
     });
     let stream = Prefixed {
         head: std::io::Cursor::new(head),
@@ -173,7 +175,90 @@ fn client_facts(pipe: HANDLE) -> Option<TokenFacts> {
             })
         })
         .collect();
-    Some(TokenFacts::from_groups(&sid, &groups))
+    // The group's SID read from its name for this connection, never cached:
+    // a `pai` created after the manager's start, or created again with a new
+    // SID, counts at once. None when the machine has no such group.
+    let pai = group_sid(ADMIN_GROUP);
+    Some(TokenFacts::from_groups(&sid, &groups, pai.as_deref()))
+}
+
+/// The SID of the local group `name`, as its string: None when the name is no
+/// account on this machine, or is not this computer's local group.
+/// `LookupAccountNameW` twice: the call with no SID and no domain name, both
+/// lengths 0, answers the sizes. The account's type and the domain the name
+/// was found in decide, through [`local_alias_sid`].
+fn group_sid(name: &str) -> Option<String> {
+    let name: Vec<u16> = OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut sid_len = 0u32;
+    let mut domain_len = 0u32;
+    let mut use_for: SID_NAME_USE = 0;
+    // SAFETY: a NUL-terminated name; a size query, whose buffers are null and
+    // whose lengths are 0.
+    unsafe {
+        LookupAccountNameW(
+            null(),
+            name.as_ptr(),
+            null_mut(),
+            &mut sid_len,
+            null_mut(),
+            &mut domain_len,
+            &mut use_for,
+        )
+    };
+    if sid_len == 0 {
+        return None;
+    }
+    let mut sid = vec![0u8; sid_len as usize];
+    // The domain the account is in, whose length the call wants in.
+    let mut domain = vec![0u16; 256];
+    let mut domain_len = domain.len() as u32;
+    // SAFETY: a SID buffer of the size the query asked for, a NUL-terminated
+    // name still alive, a domain buffer of the length given.
+    let found = unsafe {
+        LookupAccountNameW(
+            null(),
+            name.as_ptr(),
+            sid.as_mut_ptr().cast::<c_void>(),
+            &mut sid_len,
+            domain.as_mut_ptr(),
+            &mut domain_len,
+            &mut use_for,
+        )
+    } != 0;
+    if !found {
+        return None;
+    }
+    // The domain the call wrote, up to the length it reports (the buffer is
+    // zeroed, so a trailing NUL is no part of the name).
+    let domain = String::from_utf16_lossy(&domain[..(domain_len as usize).min(domain.len())]);
+    let domain = domain.trim_end_matches('\0');
+    // SAFETY: the SID the call wrote, in the buffer alive here.
+    let sid = sid_string(sid.as_mut_ptr().cast::<c_void>())?;
+    local_alias_sid(use_for, domain, &computer_name()?, &sid).map(str::to_string)
+}
+
+/// This computer's name, as `GetComputerNameW` answers it: the NetBIOS name,
+/// which is the name `LookupAccountNameW` writes into its domain buffer for
+/// an account of this machine (its documentation: "for computers that are not
+/// joined to a domain, this buffer receives the computer name").
+/// `GetComputerNameExW` is not used: `ComputerNameDnsHostname` is the DNS host
+/// name, longer than the NetBIOS name whenever that one is a truncation of it,
+/// so the two would never match, and `ComputerNameNetBIOS` is the same name as
+/// here, asked with one more argument. None when the call fails: without this
+/// computer's name no looked-up account can be shown to be its own.
+fn computer_name() -> Option<String> {
+    // `MAX_COMPUTERNAME_LENGTH` characters, plus the NUL the call writes.
+    let mut name = vec![0u16; MAX_COMPUTERNAME_LENGTH as usize + 1];
+    let mut len = name.len() as u32;
+    // SAFETY: a buffer of the length given.
+    if unsafe { GetComputerNameW(name.as_mut_ptr(), &mut len) } == 0 {
+        return None;
+    }
+    let len = (len as usize).min(name.len());
+    Some(String::from_utf16_lossy(&name[..len]))
 }
 
 /// `GetTokenInformation` of `class` in a buffer aligned for its structure.

@@ -12,15 +12,23 @@ Lessons only: the rules are in `AGENTS.md`.
   report it apart from `Timeout`, or the red reads as a hang.
 - Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
   did not exist yet). Recheck such tests once the code exists.
+- An independent rerun of cargo commands that prints `Finished ... in 0.0xs` is cargo replaying a cached
+  pass (its fingerprint does match the current sources: `cargo check -v` prints `Fresh <pkg>`). To compile
+  the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
+  cross target with `cargo clean -p <pkg> --target <triple>`. Bare cargo commands here land in
+  `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
   captured from the real system; a name-prefix match is tested with every real name sharing the prefix
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
 - A fake holds whatever you write; the real system can answer differently. A green on a fake is no
   proof about the real thing.
 - Prefer `todo!("<fn>")` stubs to a compile error, which hides every other test in the binary, lints
-  included. A stub reached only from tests fails clippy with dead code until wired in: say so, add no
-  `allow`. A new parameter on a core method: a stub that takes it and keeps the old body gives assertion
-  reds in every phase, where a `todo!` stops the e2e at its first call.
+  included. A `todo!` body does NOT excuse the parameters: `-D warnings` fails `unused_variables`, so
+  underscore-prefix them and tell the coder to strip the prefixes. A stub reached only from tests fails
+  clippy with dead code until wired in: say so, add no `allow`; a `pub` stub in a lib crate is not dead
+  code, so there is no dead-code red to report. A new parameter on a core method: a stub that takes it
+  and keeps the old body gives assertion reds in every phase, where a `todo!` stops the e2e at its first
+  call.
 - To pin a field a variant lacks without breaking the build, match `Variant(p, ..)` / `Variant { .. }`
   and check the new field through `{:?}`; tell the coder the intended shape. Naming a stub after a local
   of the caller makes the call `E0618` (the local shadows the fn): rename one and say which.
@@ -238,10 +246,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - Windows decisions are OS-neutral pure functions in `manager/windows.rs` and `pai_core::client::pipe`;
   only Win32 glue is `cfg(windows)`. Numeric Win32 values come from the local windows-sys source
   (`~/.cargo/registry/src/*/windows-sys-*/src`), meanings from learn.microsoft.com, a crate's behaviour
-  from its `.crate` on static.crates.io. A registry test's guard restores every value in `Drop` (no
-  panic there). The SCM reports states on its own: never-started reads `SERVICE_STOPPED` with exit code
-  1077. A service SID (`NT SERVICE\<name>`) is computable per [MS-LSAT] 3.1.1.1.2 (SHA-1 of the
-  upper-case UTF-16LE name; `service_sid`).
+  from its `.crate` on static.crates.io. `SID_NAME_USE` (i32) counts `SidTypeDomain` (3), so
+  `SidTypeAlias` is 4, not 3. A registry test's guard restores every value in `Drop` (no panic there).
+  The SCM reports states on its own: never-started reads `SERVICE_STOPPED` with exit code 1077. A service
+  SID (`NT SERVICE\<name>`) is computable per [MS-LSAT] 3.1.1.1.2 (SHA-1 of the upper-case UTF-16LE name;
+  `service_sid`).
+- A token holds the local groups (aliases) its user was in at logon, as SIDs: a check by group name
+  looks the SID up (`LookupAccountNameW`) and compares it whole; a change of membership counts at the
+  next logon. Unverified (fetch failed): UAC sets only the admin groups deny-only, a custom group stays enabled.
 
 ## Packaging, installers, CI (xtask)
 
@@ -273,6 +285,10 @@ Lessons only: the rules are in `AGENTS.md`.
   attribute table past offset 100000; what the compiler accepts is in `Compiler.cs` at the pinned tag.
   Windows Installer removes empty folders it created: a "kept after uninstall" check writes a file there
   first. An msiexec exit code (1603) alone is any fatal error: pair it with the `/l*v` log message.
+- WiX Util `Group` under a `Component` creates a local group; by default it is REMOVED at every uninstall
+  where it exists (members or not, pre-existing or not; `src/ext/Util/ca/scagroup.cpp` at the tag), so a
+  MajorUpgrade empties it: keep one with `RemoveOnUninstall="no"`. Raw sources at
+  `raw.githubusercontent.com/wixtoolset/wix/v7.0.1/src/ext/Util/...` (`wixext/UtilCompiler.cs`, `ca/`).
 - Linux packages: `check_files` (`linux/package.rs`) checks a spec's `%files` against a temp tree as
   rpmbuild does; reuse it for every new path. ROCm libraries find kpack archives at `<lib>/../.kpack`.
   A shared-library fixture follows CMake's symlink chain (`.so -> .so.N -> .so.N.M.P`), compared after
@@ -360,5 +376,24 @@ Lessons only: the rules are in `AGENTS.md`.
   confirms it embeds the new `fe/dist`.
 - Web UI: the fake bff's `deferred()` ignores abort, so a GET held for 15 s or more of fake time
   must use `held()`, or a timeout test passes without a real browser's behaviour.
+- Web UI: a settings-group checkbox takes its accessible name from the row's `<label>`, not from the
+  group title, so `getByRole('checkbox', { name: <group title> })` finds nothing (the group itself
+  answers to that name). Query it as `box(main, fieldLabel(main, t.<key>))` and keep the group title
+  for the `role=group` query.
+- Web UI: a form control is `aria-disabled` only when it is really inactive (`{cond || undefined}`
+  writes no attribute), so `getAttribute('aria-disabled')` is null on a live control: use the file's
+  `inactive()` helper, and for a "nothing happens" click on a live control read the writes log, not the
+  attribute.
+- Web UI: a 401 on the file read renders the read-failed state with no form, so a test that waits for
+  a section heading (the form) of a withheld document fails on the setup. Pin "the secret is nowhere"
+  with the whole `document.documentElement.outerHTML` (the section heading alone lives in `main`), and
+  after a 27d-style read failure assert `status-error`, the group's absence and that no input is a
+  text box.
+- Web UI: a disabled control is skipped by Tab, so a tab-order test for a non-configuring session
+  reds while the page still disables it, and goes green when the slice makes it live: cite both the
+  tab criterion and the state criterion there.
+- Web UI: session-change tests should split the axes: same `user` with the other `canConfigure` (the
+  page must not move) and a different `user` (the page reloads). Keep the banner's role word in the
+  dedicated role-word test, so the session tests stay green when that wording changes.
 - Web UI: when a later slice adds a control or live region to a page, the earlier slice's tab-order
   and "no status" tests break by design; update them in place and cite both criteria.
