@@ -37,7 +37,7 @@ only an administrator can be (section 3).
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read); the rest `fe/briefs/02-models.md` section 0 |
+| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read), 2e (plain cards, read: `fe/briefs/02e-preset-cards.md`); the rest `fe/briefs/02-models.md` section 0 |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -206,7 +206,14 @@ and state shapes ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)).
 Each is one React component, reused by every page.
 
 - **Card**: a `section` with an `h3` heading (the GUI's `SectionCard`); optional intro paragraph in
-  `--muted`.
+  `--muted`. A note between fields (the GUI's muted text) is drawn as the intro, at its place. A
+  group inside a card is an `h4`; when fields in two groups share a label, each group is a
+  `<div role="group">` named by its `h4` (`fe/briefs/02e-preset-cards.md` 90).
+- **Read-only form**: a form shown before its slice can save (the preset page's plain cards, 2e):
+  the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
+  saving slice only enables them. Not `readonly` (text inputs only in HTML) and not `aria-disabled`
+  (dozens of inert tab stops). The About toggles stay operable.
+- **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
     hint and the error.
@@ -244,7 +251,9 @@ Each is one React component, reused by every page.
   would erase the secret (brief 01, 27d; the "withheld" view for a non-administrator was removed on
   2026-11-15). Never a mask string standing in for a value the page does not have (a mask would read
   as the secret's length).
-- **Select**: a native `<select>`.
+- **Select**: a native `<select>`. A value from a file that the select does not list is shown as
+  one extra, last option whose value and text are the value as written, selected, never silently
+  read as the default (as the "(not available)" engine of section 2.2).
 - **Switch**: an on/off state written at once and named by a thing rather than a sentence (a
   preset's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
   `aria-checked`, drawn and made inactive exactly as a checkbox
