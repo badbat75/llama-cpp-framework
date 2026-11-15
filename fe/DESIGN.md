@@ -30,20 +30,21 @@ order, defaults and checks, and says where it differs on purpose.
 ### 2.1 The map
 
 Every page of the finished web UI, in nav order. "Slice" says when it is built; a page with no slice
-is not in the nav yet.
+is not in the nav yet. "Who": "anyone" includes the signed out; "administrator" means signed in, which
+only an administrator can be (section 3).
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
-| Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | signed in | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | signed in; edit: administrator | later |
-| Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator (writes the models folder) | later, **open** (below) |
-| Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | signed in | later, **open** (below) |
+| Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
+| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | later |
+| Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
+| Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
-| Hardware | `#/hardware` | Devices, live GPU / CPU / memory / disk monitor of the server machine | HW Monitor | signed in | later |
-| Integrations | `#/integrations` | OpenCode and Claude Code snippets built from the server settings | Integrations tab | signed in | later, **open** (below) |
+| Hardware | `#/hardware` | Devices, live GPU / CPU / memory / disk monitor of the server machine | HW Monitor | administrator | later |
+| Integrations | `#/integrations` | OpenCode and Claude Code snippets built from the server settings | Integrations tab | administrator | later, **open** (below) |
 | Gateway | `#/gateway` | The OpenAI-compatible endpoint in front of the instances: keys, routing | (none) | administrator | later |
-| Settings | `#/settings` | The web user's own preferences | Settings tab | signed in | later, **open** (below) |
+| Settings | `#/settings` | The web user's own preferences | Settings tab | administrator | later, **open** (below) |
 
 Deliberate moves from the GUI:
 
@@ -104,27 +105,33 @@ Decided with the user on 2026-11-14.
 - Leaving a page with unsaved changes asks first (section 6, "Unsaved changes"); closing the tab
   triggers the browser's own `beforeunload` prompt.
 
-## 3. Who is acting: sign-in and roles
+## 3. Who is acting: sign-in
 
 The user signs in with their OS account; the bff forwards the identity to `private-ai-manager`,
 which applies its rules (user decision, 2026-11-14; `AGENTS.md` and `PLAN.md` step 10).
 
-| Role | How the fe knows | Sees | Can do |
+**Administrators only** (user, 2026-11-15): the web UI is run by administrators. An administrator is
+a member of the OS group `pai` on the server machine (created empty by the packages, on Linux and
+Windows; not `sudo`, `wheel` or Administrators). Sign-in succeeds only for a member; anyone else is
+refused at sign-in with a message (`fe/briefs/01-server.md` 14b).
+So there is one signed-in role, and no page has a read-only view for a lesser one.
+
+| State | How the fe knows | Sees | Can do |
 |---|---|---|---|
 | Signed out | `GET /api/session` answers 401 | Overview only; header shows **Sign in** | read version and instance states |
-| User | session with `canConfigure: false` | everything signed-in pages show, settings read-only with a notice | start, stop, restart (manager `control`) |
-| Administrator | session with `canConfigure: true` | the same, editable, with the save bar | also save files and set start at boot (`configure`) |
+| Signed in (an administrator) | `GET /api/session` answers 200 `{"user"}` | every page, editable, with the save bar | start, stop, restart, save files, set start at boot |
 
-- `canConfigure` only shapes the page. The manager decides each request; a refusal is shown as
-  `not-authorized` wherever it lands, even for an administrator.
+- The fe does not read a role from the session. The manager still decides each request; a refusal
+  is shown as `not-authorized` wherever it lands (for example an administrator removed from the
+  group after signing in).
 - A signed-out user who opens any page but the Overview sees the sign-in form in its place, and
   returns to that page after signing in.
 - The session can end while a page is open (any request answers 401). The page keeps what
   it shows and any unsaved edits, the header and nav stay as they were, and the page offers
-  **Sign in** in a dialog; after it, the user retries. The same user with the same role keeps the page
-  as it was, focus on the control whose request was refused. Any other session (another user, or the
-  role changed) makes the page read its data again for the new session; unsaved edits are dropped
-  (they belong to the session that made them) and an alert says so.
+  **Sign in** in a dialog; after it, the user retries. The same user keeps the page as it was, focus
+  on the control whose request was refused. Another user makes the page read its data again for the
+  new session; unsaved edits are dropped (they belong to the session that made them) and an alert
+  says so.
 - Sign out is in the user menu of the header; with unsaved changes it asks first.
 - The sign-in form lets password managers and paste work: `autocomplete="username"` and
   `"current-password"`, no paste blocking, no puzzle
@@ -218,7 +225,7 @@ Each is one React component, reused by every page.
     that enables the field ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
   - **Disabled controls stay readable**: a disabled control still shows a value, so its value is
     drawn in `--muted`, a checkbox included (its box border and its check mark in `--muted`, not the
-    browser's faint disabled grey; a read-only form is all disabled controls). WCAG exempts inactive
+    browser's faint disabled grey). WCAG exempts inactive
     controls from [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast); this rule is a
     **(preference)** so the value can be read.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
@@ -226,10 +233,11 @@ Each is one React component, reused by every page.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
   `1e3` and changes on the wheel **(preference)**). Paths and URLs in monospace.
 - **Secret input**: `type="password"`, `autocomplete="off"`, plus a **Show** toggle button
-  (`aria-pressed`), disabled while there is nothing to reveal (No key ticked). A secret the API withholds from this user
-  (`withheld` in the reply) has no input and no Show: the field says in a sentence that a value is set
-  and who can see it, never a mask string standing in for the value (a mask would read as the
-  secret's length).
+  (`aria-pressed`), disabled while there is nothing to reveal (No key ticked). A document that
+  withholds the secret (`withheld` in the reply) is not shown as a form: the read fails, since a save
+  would erase the secret (brief 01, 27d; the "withheld" view for a non-administrator was removed on
+  2026-11-15). Never a mask string standing in for a value the page does not have (a mask would read
+  as the secret's length).
 - **Select**: a native `<select>`.
 - **Switch**: an on/off state written at once and named by a thing rather than a sentence (a
   preset's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
@@ -259,7 +267,8 @@ Each is one React component, reused by every page.
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
   when it appears after a user action, otherwise a plain paragraph.
 - **Notice**: a bordered paragraph above a form, or above a table whose rows hold controls (e.g.
-  "read-only for your account").
+  the "engine not available" Notice of section 2.2). (The read-only Notice for a non-administrator
+  was removed on 2026-11-15.)
 - **Dialog**: native `<dialog>` opened with `showModal()`: focus moves into it, Escape closes it,
   focus returns to the control that opened it; title as `h2`, named by `aria-labelledby`. Every
   dialog has a visible button that does what Escape does (Keep editing, Cancel), so touch and
@@ -276,8 +285,9 @@ Each is one React component, reused by every page.
     inactive in a high-contrast theme. A checkbox inactive this way (Start at boot while its write
     runs) is drawn as a disabled checkbox (Field, "Disabled controls stay readable"), `GrayText`
     likewise under forced colours. Never by `opacity`: it dims the focus ring with the control,
-    below the 3:1 floor of 5.1. A control that is never enabled for the role (a user's
-    read-only form) keeps `disabled`.
+    below the 3:1 floor of 5.1. (Removed 2026-11-15: "a control never enabled for the role keeps
+    `disabled`"; there is one role.) `disabled` stays for a control that cannot turn active while it
+    has focus (a dependent field, a ticked default box).
     ([APG, focusability of disabled controls](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#focusabilityofdisabledcontrols),
     [MDN, `aria-disabled`](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-disabled);
     `GrayText` is MDN's suggestion there, **(preference)** to adopt it)
@@ -302,7 +312,6 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
 | Error by key | one Message per error key the route can answer (section 7, "Errors from the API"); a reply with no valid key, a malformed body or a network failure is `failed`. Never the reply's raw body | no on load; `role="alert"` after an action |
 | Signed out | the sign-in form in place of the page (section 3) | focus to its heading |
 | Not authorized | 403 (the manager refused): read, its Message in place of the content; write, the form-level error in the save bar | after an action |
-| Read-only (user) | the form with every control disabled, a Notice above it, no save bar | no |
 | Unsaved changes | save bar status "You have unsaved changes."; Save and Discard enabled; leaving asks in a Dialog | the status line |
 | Saving | Save shows "Saving…" and is `aria-disabled`; controls stay editable but a second Save is ignored | the status line |
 | Saved | status "Saved." or "Saved: restart llama-server to apply." while it runs | the status line |

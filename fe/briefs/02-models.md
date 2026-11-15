@@ -8,17 +8,43 @@ over `presets::load_listed` in `crates/app/src/presets.rs`), its fields and chec
 [configurator-inventory.md](configurator-inventory.md) 1.2 and 1.3, and its texts in
 `crates/core/strings/en_US.toml`. Engine decisions: D2.2.
 
+## Administrators only (user, 2026-11-15)
+
+The whole web UI is run by administrators: only an administrator can sign in (`fe/DESIGN.md`
+section 3, brief 01's 14b), so the Models page, which needs a session, has no user's view. The
+lines of 2c below are already fixed in place; 2a and 2b are built and change only in their wording.
+
+**Removed**: 43 (the read-only Notice) and the user half of 42; the string `presets-read-only`
+(2c.8); question U1 (answered: no user sees the page).
+
+**Changed** (one line each):
+
+- 13 (built): "Nothing in a row acts" holds until 2c; drop its note about a user's Notice.
+- 26 (built): the field, button, hint and status are the same for every session (there is one role);
+  no test change.
+- 42: every row's switch is enabled for every session. No special case for a row whose engine is not
+  available (2o revisits it).
+- 49: a sign-in compares `user` only (brief 01's 43b as changed): the same `user` keeps the page,
+  focus on the switch; a different `user` reads the list again, the filter emptied, focus on `h1`.
+- 53: the tab order without "(a user's Notice holds no control)" and "(administrator; a user's
+  disabled switches are not in the sequence)".
+- 54: drop "for a user, the same with the reader's dimmed or unavailable".
+- 55: 2c reads what 2b reads; not the session's `canConfigure`.
+- 0, the split: "R" only reads, "W" adds writing; no slice has a view for a non-administrator.
+
+No code on main to remove: 2a and 2b never read `canConfigure`.
+
 ## 0. The split
 
-In build order. Each line is one tester run and one coder run; each ships alone. "R" is read-only for
-every role, "W" adds writing for administrators. Every W slice reuses the save bar, the refusal
+In build order. Each line is one tester run and one coder run; each ships alone. "R" only reads, "W"
+adds writing (every signed-in session is an administrator's). Every W slice reuses the save bar, the refusal
 pattern and the session-ended dialog of slice 1b.
 
 | Slice | Holds |
 |---|---|
 | **2a** | R: nav entry, `#/models`, the one mixed preset list (name, engine, on or off), loading, empty, read errors. **This brief.** |
 | 2b | R: the list's filter field (the GUI's "Filter presets…": id or model path, case-insensitive; adds `model` to the list reply). |
-| 2c | W: the on/off switch of each row (moves the section between `presets.ini` and `presets.ini.disabled`); a user sees it disabled with a Notice. |
+| 2c | W: the on/off switch of each row (moves the section between `presets.ini` and `presets.ini.disabled`). |
 | 2d | R: the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field: the engine whose preset file holds the preset, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
 | 2e | R: the plain cards, each field as in the GUI: Hardware, Resource / context, KV cache, Chat / reasoning, Sampling, Embeddings, Advanced, Vision, Speculative (values and enable rules; no warnings). |
 | 2f | R: GPU distribution and Tensor placement tables (needs the server machine's device list from the bff). |
@@ -94,9 +120,7 @@ available) and not the instances (the presets are not per instance).
     "Off", so the state is never colour alone; `--muted` meets 4.5:1 on `--bg` and `--surface`
     (D5.1). ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color),
     [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum))
-13. **Nothing in a row acts**: no button, switch, checkbox or link, for either role. No Notice for a
-    user either: in 2a nobody can edit, so there is nothing to tell a user apart (the Notice
-    `presets-read-only` comes with 2c).
+13. **Nothing in a row acts**: no button, switch, checkbox or link (2c adds the switch).
 
 ### 2.4 States
 
@@ -396,15 +420,9 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
 
 ### 2c.3 Who can switch
 
-42. **Administrator** (`canConfigure` true): every row's switch is enabled. **User**
-    (`canConfigure` false): every switch has `disabled` (never enabled for the role, D5.2 Inactive),
-    drawn as a disabled checkbox (D5.2), its state still readable; a user never sends a write. No
-    special case for a row whose engine is not available (2o revisits it).
-43. **The read-only Notice.** For a user, the Notice `presets-read-only` (D5.2 Notice: a bordered
-    paragraph, not a live region) below `presets-intro`, above the filter's label. Shown exactly
-    when the filter is (criterion 33: with the table, or with the no-match text; not while loading,
-    on an error or for an empty list). Never for an administrator. It names who can switch, as the
-    Server page's `server-read-only` does. ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions))
+42. Every row's switch is enabled, for every session (only an administrator can sign in, 2026-11-15).
+    No special case for a row whose engine is not available (2o revisits it).
+43. (Removed 2026-11-15: the read-only Notice for a user.)
 
 ### 2c.4 The write
 
@@ -457,11 +475,11 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion))
 49. **401 and Sign in.** The Sign in button opens the sign-in dialog of 1c's 43a (`h2`
     `signin-title`, Cancel; Escape or Cancel closes it, focus returns to this button, the alert
-    stays, nothing is sent). A sign-in follows 1c's 43b: the same `user` and `canConfigure`: the
+    stays, nothing is sent). A sign-in follows 1c's 43b: the same `user`: the
     dialog closes, the alert and the button go, focus goes to the switch whose write got the 401
     (showing its value before the change); nothing is resent, the administrator switches again.
     Any other session: the banner shows it, the alert goes, the page reads `GET /api/presets` again
-    for the new role (criterion 18; the filter emptied, criterion 34; the Notice per criterion 43),
+    for the new session (criterion 18; the filter emptied, criterion 34),
     focus on the page's `h1`. ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry),
     [2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap))
 
@@ -489,22 +507,21 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
     success, the failure and the re-read (the row does not move, criterion 47, so no element holding
     focus is removed or reinserted). The one exception is criterion 49's sign-in.
     ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [3.2.2](https://www.w3.org/TR/WCAG22/#on-input))
-53. **Tab order**, replacing criteria 20 and 35: skip link, banner, nav, (a user's Notice holds no
-    control), the filter field, Clear filter (when shown), the switch region's Sign in (when shown),
-    then each row's switch in row order (administrator; a user's disabled switches are not in the
-    sequence). Focus on arrival stays on the `h1` (criterion 3). The focus ring is D5's on each
+53. **Tab order**, replacing criteria 20 and 35: skip link, banner, nav, the filter field, Clear
+    filter (when shown), the switch region's Sign in (when shown), then each row's switch in row
+    order. Focus on arrival stays on the `h1` (criterion 3). The focus ring is D5's on each
     switch, never under a sticky element ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
     ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
 54. **What a screen reader says**, replacing criterion 21 for the Status cell: on focus, "Qwen3-27B,
     switch, on" (the role and state words are the reader's); in table navigation, "Status,
-    Qwen3-27B, switch, on"; for a user, the same with the reader's "dimmed" or "unavailable". After a
+    Qwen3-27B, switch, on". After a
     switch, the status politely ("Switched Qwen3-27B off."), or the alert assertively. The hidden
     On/Off word is not read. ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value),
     [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 
 ### 2c.7 Data and the tests
 
-55. 2c reads what 2b reads, plus the session's `canConfigure` (slice 1) for criterion 42. It writes
+55. 2c reads what 2b reads. It writes
     only `PUT /api/presets/<id>/enabled`. The tests stub it with: a 200 of each `enabled` x
     `running` pair; 401; 403 `client-not-authorized`; 503 `client-unavailable`; 404
     `no-preset-named`; 422 `load-on-startup-over-max` with args `["3", "2"]`; 422 `preset-no-model`
@@ -515,7 +532,6 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
 
 | Key | English | Source |
 |---|---|---|
-| `presets-read-only` | You can view the presets. Switching them on or off needs an administrator account. | new, as `server-read-only` |
 | `presets-switched-on` | Switched {0} on. | GUI `preset-enabled` ("Enabled [{0}].") and CLI `preset-switched-on`, the web's "switched" wording of `presets-off-note` |
 | `presets-switched-off` | Switched {0} off. | GUI `preset-disabled`, without "llama-server will not offer it" (the off-note below the table says so; and a mixed list has more than one engine) |
 | `presets-switched-on-restart` | Switched {0} on: restart the running instances of {1} to apply. | GUI `preset-enabled-restart`; {1} the row's engine (data), since every instance of that engine serves the preset |
@@ -618,9 +634,7 @@ the preset files; the route still needs a session (the Models page is for signed
 
 ## 4. Questions only the user can answer
 
-- **U1. On/off visible to users.** In 2c, a user (not administrator) sees the switch disabled. Should
-  a user see switched-off presets at all, or only what the engine serves? The brief assumes they see
-  all, as in the GUI.
+- **U1.** (Answered 2026-11-15: only administrators sign in, so no user sees the page.)
 - **U2. Wording "Status, On / Off".** The GUI has a switch and no word for it. "Status" and "On" /
   "Off" are proposed; "Served" / "Not served" would say more but differ from the GUI's "switched off".
 - **U3. Delete's linked files.** The GUI offers to delete the model files a preset links. On the web

@@ -6,6 +6,77 @@ criterion the tester turns into a Vitest + Testing Library test. The reference i
 Server tab (`crates/config/ui/server_page.slint`, `crates/config/src/server_form.rs`) and its texts
 (`crates/core/strings/en_US.toml`).
 
+## Administrators only (user, 2026-11-15)
+
+The whole web UI is run by administrators (`fe/DESIGN.md` section 3). Sign-in succeeds only for an
+administrator, a member of the OS group `pai` on the server machine (created empty by the packages,
+on Linux and Windows); anyone else is refused at sign-in (new criterion 14b, in 2.2).
+The Overview stays visible without sign-in (19 unchanged). Everything built for a non-administrator
+goes: the read-only Server page, a user's views of the API key, the disabled Start at boot box,
+`canConfigure` as a switch between views, and the "same role" half of the sign-in rule. This section
+overrides the criteria below it; the code already on main is removed in the slices R1 to R4 (end of
+this section).
+
+**Removed** (their tests are deleted, not rewritten):
+
+- 27b, 27c (2.8): a user's two views of F4. The string `server-api-key-withheld` goes. `withheld`
+  stays in the reply shape and the fe keeps handling it (27a, 27d, 27e below).
+- 45b: a user's disabled Start at boot box.
+- The 2.6 bullet "Show (27)", second half ("Superseded by 27b and 27c").
+
+**Changed** (new text, one line each):
+
+- 1 (data), session: `GET` and `POST /api/session` 200 is `{"user": "<name>"}`; a `canConfigure` field,
+  if sent, is ignored. `POST` adds 403 `{"key":"session-not-administrator","args":[]}` (14b).
+- 4: signed in, the banner shows `session-signed-in-as` with the user's name, then **Sign out**; no
+  role word (`session-role-admin` and `session-role-user` go).
+- 9: `signin-intro` reads "Use the user name and password of your account on the computer that runs
+  Private AI Framework. Only members of its pai group can sign in." (it says up front who can sign in,
+  [3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions)).
+- 14b (new): see 2.2.
+- 25: loaded, the cards and fields of section 5, each control showing the file's value (5.2); no
+  Notice (`server-read-only` goes).
+- 27: the key shows masked; Show (`field-show`, `aria-pressed`) reveals it, under 5.3.
+- 27a: "withheld" keeps its definition (an array containing `"OpencodeApiKey"`; anything else is not
+  withheld); withheld picks 27d, not withheld the form of 5.2. No choice by `canConfigure`.
+- 27d: a document whose `withheld` names `OpencodeApiKey` fails the read (`server-load-failed` in
+  place of the form, no save bar), for every session. Kept because an administrator's document can
+  still arrive withheld until the bff acts for the signed-in user (the bff reads as itself until
+  step 10 slice 6b; the manager also withholds without a polkit authorization: `PLAN.md` step 10,
+  point 4), and a form showing No key would erase the key at the next save.
+- 27e: with a withheld document nothing in the page holds the key or a stand-in for it: no F4
+  `input`, no attribute carrying a key, no mask string. Tested with `"withheld": ["OpencodeApiKey"]`
+  and, as a contract breach, `values.OpencodeApiKey: "sk-test"`: the HTML holds neither `sk-test`
+  nor `•`, and `server-load-failed` shows.
+- 28: the controls are enabled under 5.3 and the save bar is rendered, for every signed-in session
+  (drop "A user keeps 1a's read-only form and no bar").
+- 36b: a sign-in in the dialog as a different `user` drops the edits, reads the file again and shows
+  it editable, clean, with `server-edits-dropped` above the first card; the same `user` is 36.
+- 43b: compare by `user` only. Same `user`: the dialog closes, alerts go, focus to the control whose
+  request got the 401, edits intact. Different `user`: as 43b's "otherwise", without "for the new
+  role" and without the Start at boot checkbox following a role.
+- 45c: "a change by an administrator" reads "a change".
+- 45g: drop "disabled for a user, where the GUI lets anyone click and the manager refuses".
+- 5.1 F4 row, 5.2 F4 and 5.3 F4: drop every clause about a user or a withheld key; F4 is the No key
+  box, the password input and Show, for every session.
+- 5.5: `session-role-admin`, `session-role-user`, `server-read-only` go; `signin-intro` changes (9).
+  2.8's table: `server-api-key-withheld` goes. 5.7: `boot-hint` unchanged (its "Changing it needs an
+  administrator." stays true).
+
+**Removal of the code on main**, in build order. Each line is one tester run and one coder run, with a
+test that fails first. Until R4, the session parser still requires `canConfigure`, so R2 and R3 tests
+stub `{"user", "canConfigure": false}` to show the field no longer changes anything; R4 drops the
+field from the stubs.
+
+| Slice | Criteria | Tester deletes | Tester asserts instead | Strings |
+|---|---|---|---|---|
+| **R1** sign-in refusal | 14b, 9 | the test of today's `signin-intro` text | a 403 `session-not-administrator` shows `api-session-not-administrator` in the alert above the fields, password cleared, user name kept, focus on the user name field; `signin-intro`'s new text | adds `api-session-not-administrator`; changes `signin-intro` |
+| **R2** Server page | 25, 27, 27a to 27e, 28, 5.1 to 5.3 F4 | the tests of the read-only form, the `server-read-only` Notice, the user's F4 views (27b, 27c, the user rows of 27a and 27e) and 1b's "a user keeps the read-only form" | a session with `canConfigure: false` gets the editable form, the save bar, the password input and Show; a withheld document fails the read for it too (27d) and renders no key (27e) | removes `server-read-only`, `server-api-key-withheld` |
+| **R3** instance header and dialogs | 45b, 45c, 45g, 36b, 43b | the tests of the disabled boot box (45b) and of 36b and 43b's "role changed" cases | with `canConfigure: false` the boot box is enabled and a change sends the `PUT`; a sign-in in any dialog as the same `user` with a different `canConfigure` keeps the page and its edits, focus on the refused control; a different `user` drops the edits | none |
+| **R4** session reply | 1, 4 | the role word tests (`session-role-admin`, `session-role-user`) | a 200 `{"user":"alice"}` without `canConfigure` signs in (today it reads as signed out); the banner shows "Signed in as alice" then Sign out, and no "Administrator" or "User" | removes `session-role-admin`, `session-role-user` |
+
+Models (brief 02) has no code to remove: 2a and 2b are the same for everyone, and 2c is not built.
+
 ## 0. The split
 
 The whole page is too big for one slice. Three slices, each shippable alone:
@@ -117,6 +188,34 @@ route, and returning to it after sign-in).
     (the alert does not ask for a retry and does not block one: the same key covers a server with no sign-in yet and a check that failed for a moment). Tested with the body
     `{"key":"session-unavailable","args":[]}`.
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+14b. **Not an administrator** (added 2026-11-15, administrators only). 403
+    `{"key":"session-not-administrator","args":[]}`: the password was right but the account is not a
+    member of the server machine's `pai` group. The same `role="alert"` paragraph above the fields, with
+    `api-session-not-administrator` ("Only members of the pai group can sign in, and this account is
+    not one. Ask whoever administers this computer to add it; you can still see the overview without
+    signing in.").
+    The password field is cleared, the user name kept, **focus on the user name field** (unlike 14
+    and 14a: what needs changing is the account, not the password). The form stays usable for another
+    try; nothing else changes: the app stays signed out, the banner keeps **Sign in**, the nav keeps
+    Overview, and the Overview link works (19). By key, not status: a 403 with another key or no key
+    is `signin-failed`, as 14. Never the reply's body. In the sign-in dialog of 36 and 43a the same:
+    the alert inside the dialog, the dialog stays open, its Cancel works.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages), [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
+
+    Telling it apart from `session-bad-credentials` is accepted (designer's recommendation, to confirm
+    with the user): the reply comes only after the password is verified, so it tells nothing to
+    someone who does not already hold the account's password; the 429 limit is checked first, as
+    today, and bounds guessing; a single message would leave a non-administrator retrying a correct
+    password into the 429 lockout with no hint of what to do (3.3.3). The cost: a guesser who hits a
+    non-administrator's password learns it is right, a credential that may work elsewhere on the
+    machine (SSH). The generic-message advice of the
+    [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html#authentication-and-error-messages)
+    is about not telling which of user name or password is wrong, which 401 still follows.
+
+    Strings: `api-session-not-administrator` | Only members of the pai group can sign in, and this
+    account is not one. Ask whoever administers this computer to add it; you can still see the
+    overview without signing in. (`pai` is the group's name as written on the machine, left literal
+    like the command in `boot-hint`.)
 15. **Sign out**: sends `DELETE /api/session`, then shows the signed-out shell on the Overview
     whatever the answer (the cookie may already be gone). In 1b, with unsaved changes, it first asks
     with the discard dialog (38).
@@ -217,6 +316,9 @@ Two observations from running 1a against the real bff. Both ride along with slic
     Unverified: which browsers ignore an SVG icon and still ask for `/favicon.ico`.
 
 ### 2.8 The API key reaches administrators only (user, 2026-11-15)
+
+**Changed on 2026-11-15**: 27b and 27c are removed; 27a, 27d and 27e change (one role; `withheld`
+still handled): see "Administrators only" at the top.
 
 The bff no longer sends `OpencodeApiKey` to a session whose `canConfigure` is false: its value is
 always `null`, and the document carries `"withheld": ["OpencodeApiKey"]` when the file has a key

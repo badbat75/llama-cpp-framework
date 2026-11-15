@@ -29,16 +29,16 @@ exist yet. Change this file first when a shape changes.
 | --- | --- | --- | --- |
 | `GET /api/version` | anyone | exists | `{"version"}` |
 | `GET /api/instances` | anyone | 1a, changed | `[{"id", "engine", "state"}]` |
-| `GET /api/session` | anyone | 1a, proposed | 200 `{"user", "canConfigure"}`, or 401 |
-| `POST /api/session` | anyone | 1a, proposed | 200 `{"user", "canConfigure"}` and the cookie |
+| `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
+| `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, proposed | 204 |
-| `GET /api/instances/{id}/server` | signed in (`control`) | 1a, proposed | the server document below |
+| `GET /api/instances/{id}/server` | administrator | 1a, proposed | the server document below |
 | `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, proposed | `{"revision", "running"}` |
-| `POST /api/instances/{id}/start`, `/stop`, `/restart` | signed in (`control`) | 1c, proposed | 204 |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, proposed | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, proposed | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, proposed | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
-| `GET /api/presets` | signed in | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
+| `GET /api/presets` | administrator | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
 
 ### `GET /api/instances`
@@ -52,10 +52,14 @@ manager's detail never reaches the body).
 
 - `GET /api/session` answers 404 until the bff has the route; the fe reads any reply but 200 as
   signed out.
-- `canConfigure` says whether the manager would allow `configure` for this user. It is a hint for
-  showing the page read-only; the manager still decides every request.
+- **Only administrators sign in** (user, 2026-11-15): an administrator is a member of the OS group
+  `pai` on the server machine. The session reply is `{"user"}`; it no longer carries
+  `canConfigure` (the fe ignores the field while a bff still sends it). The manager still decides
+  every request, and a refusal is 403 `client-not-authorized`.
 - `POST /api/session` takes `{"username", "password"}`. Failures:
   - 401 `session-bad-credentials`: the same reply for an unknown user and a wrong password.
+  - 403 `session-not-administrator`: the password was right, but the account is not in the `pai`
+    group. Answered only after the password check; the 429 limit is checked first.
   - 429 `session-too-many-attempts` with `args: [seconds left]`: after 5 failures for one user from
     one client address within 60 s.
   - 503 `session-unavailable`: the bff has no way to check a password (no authenticator, or it
@@ -90,11 +94,12 @@ manager's detail never reaches the body).
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
 - `interfaces` are the server machine's network interfaces (`net_ifaces::interfaces()`).
 - `revision` is opaque; the fe sends it back on a save.
-- **`OpencodeApiKey` goes to administrators only** (user, 2026-11-15). For a session whose
-  `canConfigure` is false, `values.OpencodeApiKey` is always `null`, and the document gains
-  `"withheld": ["OpencodeApiKey"]` when the file has a key; `withheld` is absent or `[]` when the
-  file has none. The read-only page shows that a key is set, never its value. An administrator
-  gets the value as before and no `withheld`. The bff decides from the session's `canConfigure`.
+- **`withheld`**: a document read without the right to see `OpencodeApiKey` has
+  `values.OpencodeApiKey` `null` and `"withheld": ["OpencodeApiKey"]` when the file has a key
+  (`withheld` absent or `[]` otherwise). Every web session is an administrator's, so the fe never
+  shows a withheld view: a document that withholds the key counts as a failed read
+  (`server-load-failed`), so that a save cannot erase the key. It can still arrive while the bff
+  reads as itself (until the bff acts for the signed-in user).
 
 ### `PUT /api/instances/{id}/server`
 
@@ -190,9 +195,8 @@ matched case-insensitively. Body `{"enabled": <bool>}`.
 ## Open on the bff side
 
 - **An administrator's save needs no second password** (user, 2026-11-15): the bff vouches for the
-  user it authenticated, and the manager grants `configure` to members of `sudo` or `wheel`
-  (Administrators on Windows), `control` to any signed-in user. No status asks for the password
-  again.
+  user it authenticated, and the manager grants `configure` to members of the `pai` group. No
+  status asks for the password again.
 - **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user).
 - **`ModelsMax` accepts negatives today** and the render drops them silently; the fe shows whatever
   `limits` says.
