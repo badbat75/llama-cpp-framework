@@ -743,7 +743,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 7. (Done: `GET /api/instances/{id}/server`, values by INI key, the instance's defaults, limits,
    interfaces, an FNV-1a revision; the bff reads as itself. Left, before the real sign-in: the
    `OpencodeApiKey` goes to every signed-in user, also one with `canConfigure` false, while the
-   manager keeps the file at mode 0640 because of that key; asked of the user. Optional: refuse an id
+   manager keeps the file at mode 0640 because of that key; decided with the user on 2026-11-15:
+   administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set. Optional: refuse an id
    failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
 8. **Write it.** `PUT /api/instances/{id}/server` with the revision: step 13's checks (slices 1 and 2
    first), 422 `{key, args, field}`, 409 `server-changed-elsewhere` on a stale revision; ModelsDir
