@@ -11,6 +11,8 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import strings from './strings/en_US.json'
@@ -286,6 +288,37 @@ test('1a.5: the link of the current page has aria-current="page"', async () => {
   ).toBeNull()
 })
 
+test('1b.5a (2.7): on #/sign-in the banner Sign in link is the current page; not while the form stands in for a protected page', async () => {
+  startAt('#/sign-in')
+  fakeBff({ session: 'signed-out' })
+  render(<App />)
+  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
+  const banner = screen.getByRole('banner')
+  const link = within(banner).getByRole('link', { name: en('session-sign-in') })
+  expect(link.getAttribute('aria-current')).toBe('page')
+  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+  expect(
+    within(nav)
+      .getByRole('link', { name: en('nav-overview') })
+      .getAttribute('aria-current'),
+  ).toBeNull()
+  // The form in place of a protected page: the route is that page's.
+  navigate('#/instances/default')
+  await screen.findByText(en('signin-required'))
+  expect(
+    within(banner)
+      .getByRole('link', { name: en('session-sign-in') })
+      .getAttribute('aria-current'),
+  ).toBeNull()
+  navigate('#/')
+  await screen.findByRole('heading', { level: 1, name: en('overview-title') })
+  expect(
+    within(banner)
+      .getByRole('link', { name: en('session-sign-in') })
+      .getAttribute('aria-current'),
+  ).toBeNull()
+})
+
 test('1a.6: the Menu button shows and hides the nav; Escape in the nav closes it and returns focus', async () => {
   fakeBff()
   render(<App />)
@@ -395,4 +428,30 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     .filter(([key, english]) => table[key] !== english)
     .map(([key]) => key)
   expect(wrong, 'keys missing or with other text').toEqual([])
+})
+
+// ── The page's own file ─────────────────────────────────────────────────
+
+/** The inline icon of brief criterion 8a, exactly as the brief gives it. */
+const ICON_HREF =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a5cc2'/%3E%3Cpath d='M4 12 8 4l4 8M5.5 9h5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+
+test('1b.8a (2.7): index.html declares one inline SVG icon in the head, after the viewport meta', () => {
+  const html = readFileSync(
+    join(import.meta.dirname, '..', 'index.html'),
+    'utf8',
+  )
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const icons = [...doc.querySelectorAll('link')].filter((l) =>
+    (l.getAttribute('rel') ?? '').toLowerCase().split(/\s+/).includes('icon'),
+  )
+  expect(icons, 'one link rel="icon"').toHaveLength(1)
+  const icon = icons[0]!
+  expect(icon.parentElement, 'in the head').toBe(doc.head)
+  expect(icon.getAttribute('rel')).toBe('icon')
+  expect(icon.getAttribute('type')).toBe('image/svg+xml')
+  expect(icon.getAttribute('href')).toBe(ICON_HREF)
+  const viewport = doc.head.querySelector('meta[name="viewport"]')
+  expect(viewport, 'the viewport meta').not.toBeNull()
+  expect(before(viewport!, icon), 'after the viewport meta').toBe(true)
 })

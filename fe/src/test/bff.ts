@@ -33,6 +33,7 @@ export const EN: Record<string, string> = {
   'signin-password': 'Password',
   'signin-submit': 'Sign in',
   'signin-busy': 'Signing in…',
+  'signin-cancel': 'Cancel',
   'signin-empty-username': 'Enter your user name.',
   'signin-empty-password': 'Enter your password.',
   'signin-failed':
@@ -134,6 +135,46 @@ export const EN: Record<string, string> = {
   'instance-state-deactivating': 'Stopping',
   'instance-state-failed': 'Failed',
   'instance-state-other': 'Unknown ({0})',
+  // Slice 1b (section 5.6): editing and saving.
+  'save-button': 'Save changes',
+  'save-discard': 'Discard',
+  'save-saving': 'Saving…',
+  'save-unsaved': 'You have unsaved changes.',
+  'save-saved': 'Saved.',
+  'save-saved-restart': 'Saved: restart llama-server to apply.',
+  'save-invalid': 'Not saved: correct the marked fields.',
+  'save-refused': 'Not saved: {0}',
+  'save-failed':
+    'Not saved: the service did not answer as expected. Your changes are kept; try again.',
+  'save-reload': 'Reload',
+  'session-ended':
+    'Your session has ended. Sign in again to save; your changes are kept.',
+  'discard-title': 'Discard unsaved changes?',
+  'discard-description':
+    'You have unsaved edits that will be lost if you continue.',
+  'discard-keep': 'Keep editing',
+  'discard-confirm': 'Discard changes',
+  'field-error-number': 'Enter a whole number from {0} to {1}.',
+  'field-error-number-min': 'Enter a whole number of at least {0}.',
+  'field-error-comment-markers':
+    'Remove the ; and # characters: the INI file would cut the value there.',
+  'api-not-whole-number-in-range':
+    '{0} = `{1}` is not a whole number from {2} to {3}',
+  'api-comment-markers':
+    "{0} contains ';' or '#', which the INI comment rule would truncate on reload; use a path without those characters",
+  'api-load-on-startup-over-max':
+    '{0} enabled presets would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another preset, or raise ModelsMax',
+  'api-load-on-startup-unlimited':
+    '{0} enabled preset(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off',
+  'api-client-address-in-use':
+    'Another instance, {0}, already uses that address and port.',
+  'api-client-unresolvable-host':
+    'The host name {0} does not resolve to an address.',
+  'api-server-changed-elsewhere':
+    'These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost.',
+  'api-other': 'The request was refused ({0}).',
+  'server-edits-dropped':
+    'Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -235,6 +276,11 @@ export type BffOptions = {
   instances?: Instance[] | Answer
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
   server?: (id: string) => Response | Promise<Response>
+  /**
+   * PUT /api/instances/{id}/server: the reply to the n-th save (from 1), given
+   * the parsed body. Default 200 {"revision": "r-2", "running": false}.
+   */
+  save?: (body: unknown, n: number) => Response | Promise<Response>
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -302,6 +348,14 @@ export function fakeBff(options: BffOptions = {}) {
         options.server ? options.server(id) : reply(200, serverDoc()),
       )
     }
+    if (/^PUT \/api\/instances\/[^/]+\/server$/.test(route)) {
+      const n = calls.filter((c) => c.method === 'PUT').length
+      return Promise.resolve(
+        options.save
+          ? options.save(body, n)
+          : reply(200, { revision: 'r-2', running: false }),
+      )
+    }
     return Promise.reject(new TypeError(`unexpected ${route}`))
   })
   vi.stubGlobal('fetch', fetch)
@@ -334,4 +388,55 @@ export function isHidden(el: Element | null): boolean {
 /** True when `a` comes before `b` in the document. */
 export function before(a: Node, b: Node): boolean {
   return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+}
+
+/**
+ * jsdom has no HTMLDialogElement.prototype.showModal or close. This stands in
+ * for the browser's: showModal sets `open` (so the dialog is in the
+ * accessibility tree and found by role) and marks it modal; close removes
+ * `open` and fires `close`; Escape inside a modal dialog fires a cancelable
+ * `cancel`, then closes it unless the cancel was prevented. It does NOT move
+ * the focus back on close (browsers do): the page must do it itself.
+ * Returns the restore function and the dialogs showModal opened.
+ */
+export function stubDialog(): {
+  restore: () => void
+  opened: HTMLDialogElement[]
+} {
+  const proto = HTMLDialogElement.prototype as unknown as Record<
+    string,
+    unknown
+  >
+  const saved = { showModal: proto.showModal, close: proto.close }
+  const opened: HTMLDialogElement[] = []
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return
+    const dialog = e.currentTarget as HTMLDialogElement
+    const cancel = new Event('cancel', { cancelable: true })
+    if (dialog.dispatchEvent(cancel)) dialog.close()
+  }
+  proto.showModal = function (this: HTMLDialogElement) {
+    if (this.hasAttribute('open')) {
+      throw new DOMException('already open', 'InvalidStateError')
+    }
+    this.setAttribute('open', '')
+    this.dataset.testModal = 'true'
+    this.addEventListener('keydown', onEscape)
+    opened.push(this)
+  }
+  proto.close = function (this: HTMLDialogElement, value?: string) {
+    if (!this.hasAttribute('open')) return
+    this.removeAttribute('open')
+    delete this.dataset.testModal
+    this.removeEventListener('keydown', onEscape)
+    if (value !== undefined) this.returnValue = value
+    this.dispatchEvent(new Event('close'))
+  }
+  return {
+    opened,
+    restore() {
+      proto.showModal = saved.showModal
+      proto.close = saved.close
+    },
+  }
 }

@@ -477,19 +477,6 @@ test('1a.25: the cards and their fields come in the order of section 5.1', async
   ).toBeTruthy()
 })
 
-test('1a.25: for an administrator every control is disabled, with no notice and no save bar', async () => {
-  const main = await loaded({ session: 'admin' })
-  const controls = [...main.querySelectorAll('input, select, textarea')]
-  expect(controls.length).toBeGreaterThan(20)
-  const enabled = controls.filter((c) => !(c as HTMLInputElement).disabled)
-  expect(enabled.map((c) => c.outerHTML)).toEqual([])
-  expect(within(main).queryByText(en('server-read-only'))).toBeNull()
-  expect(
-    within(main).queryByRole('button', { name: 'Save changes' }),
-  ).toBeNull()
-  expect(within(main).queryByRole('button', { name: 'Discard' })).toBeNull()
-})
-
 test('1a.25: a user sees every control disabled and the read-only notice above the first card', async () => {
   const main = await loaded({ session: 'user' })
   const controls = [...main.querySelectorAll('input, select, textarea')]
@@ -865,8 +852,9 @@ test('1a.26: the About toggle reveals the hint, one paragraph per line, and hide
   expect(isHidden(within(main).queryByText(lines[0]!))).toBe(true)
 })
 
-test('1a.27 (2.6): Show stays enabled while No key is ticked, for every role', async () => {
-  for (const session of ['admin', 'user'] as const) {
+// For an administrator, 1b's dependencies govern Show (5.3): ServerSave.test.tsx.
+test('1a.27 (2.6): Show stays enabled for a user while No key is ticked', async () => {
+  for (const session of ['user'] as const) {
     const main = await loaded({
       session,
       server: () => reply(200, serverDoc({ OpencodeApiKey: null })),

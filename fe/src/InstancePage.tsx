@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { errorText, readInstances, type Answer } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
+import type { Session } from './session.ts'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
 
@@ -12,10 +13,14 @@ export default function InstancePage({
   id,
   canConfigure,
   onSignedOut,
+  onRenewed,
+  onDirty,
 }: {
   id: string
   canConfigure: boolean
   onSignedOut: () => void
+  onRenewed: (session: Session) => boolean
+  onDirty: (dirty: boolean) => void
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -38,6 +43,8 @@ export default function InstancePage({
         answer={answer}
         canConfigure={canConfigure}
         onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        onDirty={onDirty}
       />
     </>
   )
@@ -48,11 +55,15 @@ function Body({
   answer,
   canConfigure,
   onSignedOut,
+  onRenewed,
+  onDirty,
 }: {
   id: string
   answer: Answer | undefined
   canConfigure: boolean
   onSignedOut: () => void
+  onRenewed: (session: Session) => boolean
+  onDirty: (dirty: boolean) => void
 }) {
   if (answer === undefined) {
     return <p role="status">{t('loading')}</p>
@@ -77,6 +88,8 @@ function Body({
         id={id}
         canConfigure={canConfigure}
         onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        onDirty={onDirty}
       />
     </>
   )

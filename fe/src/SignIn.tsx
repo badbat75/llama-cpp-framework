@@ -23,11 +23,17 @@ function failureText(error: ApiError | null): string {
 
 export default function SignIn({
   required,
+  inDialog = false,
   onSignedIn,
+  onCancel,
 }: {
   /** True in place of a protected page. */
   required: boolean
+  /** True inside a Dialog, which holds the title: no h1, no focus taken. */
+  inDialog?: boolean
   onSignedIn: (session: Session) => void
+  /** In a Dialog: its Cancel button, which does what Escape does. */
+  onCancel?: () => void
 }) {
   const id = useId()
   const [username, setUsername] = useState('')
@@ -74,7 +80,7 @@ export default function SignIn({
 
   return (
     <>
-      <PageHeading text={t('signin-title')} />
+      {!inDialog && <PageHeading text={t('signin-title')} />}
       <p>{t('signin-intro')}</p>
       {required && <p className="notice">{t('signin-required')}</p>}
       <form className="signin" onSubmit={submit} noValidate>
@@ -123,9 +129,16 @@ export default function SignIn({
             />
           )}
         </div>
-        <button type="submit" className="primary">
-          {busy ? t('signin-busy') : t('signin-submit')}
-        </button>
+        <div className="signin-actions">
+          <button type="submit" className="primary">
+            {busy ? t('signin-busy') : t('signin-submit')}
+          </button>
+          {inDialog && onCancel !== undefined && (
+            <button type="button" className="secondary" onClick={onCancel}>
+              {t('signin-cancel')}
+            </button>
+          )}
+        </div>
       </form>
     </>
   )

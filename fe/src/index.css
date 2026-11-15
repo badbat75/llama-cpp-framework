@@ -195,6 +195,12 @@ button {
   margin-left: auto;
 }
 
+/* Signed out: the Sign in link, padded like a nav link for its current-page bar. */
+a.session {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+}
+
 .role {
   color: var(--muted);
   font-size: 0.875rem;
@@ -225,7 +231,8 @@ button {
   text-decoration: underline;
 }
 
-.nav a[aria-current='page'] {
+.nav a[aria-current='page'],
+a.session[aria-current='page'] {
   color: var(--accent);
   font-weight: 600;
   box-shadow: inset 3px 0 0 var(--accent);
@@ -427,7 +434,8 @@ legend.field-label {
   }
 
   .field-control,
-  .field-hint {
+  .field-hint,
+  .field-error {
     grid-column: 2;
   }
 }
@@ -573,6 +581,12 @@ input[type='checkbox']:disabled::before {
   max-width: 24rem;
 }
 
+.signin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .stacked {
   display: flex;
   flex-direction: column;
@@ -586,4 +600,130 @@ input[type='checkbox']:disabled::before {
 
 .stacked input {
   flex: none;
+}
+
+/* A control a refusal or a check marked (DESIGN.md 5.2, Error). */
+input[aria-invalid='true'],
+select[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+input[type='checkbox'][aria-invalid='true'] {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+
+/* A Message announced after an action (role="alert"). */
+.alert {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+}
+
+/* ── Save bar (DESIGN.md 5.2) ─────────────────────────────────────────── */
+
+/* A field focused near the bottom is never hidden behind the sticky bar:
+   --save-bar-height is the bar's rendered height, kept by ServerForm. */
+html:has(.save-bar) {
+  scroll-padding-bottom: calc(var(--save-bar-height, 7rem) + var(--space-3));
+}
+
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-top: 1px solid var(--control);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+/* A short viewport (landscape phone, 400% zoom): the bar is not sticky. */
+@media (max-height: 31.98rem) {
+  html:has(.save-bar) {
+    scroll-padding-bottom: 0;
+  }
+
+  .save-bar {
+    position: static;
+  }
+}
+
+.save-messages {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.save-messages p {
+  margin: 0;
+}
+
+.save-status.saved {
+  color: var(--success);
+}
+
+.save-status.saved-restart {
+  color: var(--warning);
+}
+
+.save-alert {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.save-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* aria-disabled, not disabled, so focus stays; drawn inactive. */
+.primary[aria-disabled='true'],
+.secondary[aria-disabled='true'] {
+  background: var(--bg);
+  color: var(--muted);
+  border-color: var(--control);
+  cursor: default;
+}
+
+.secondary:disabled {
+  color: var(--muted);
+  border-color: var(--muted);
+  cursor: default;
+}
+
+/* ── Dialog (DESIGN.md 5.2) ───────────────────────────────────────────── */
+
+.dialog {
+  width: 28rem;
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-5);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.dialog h2 {
+  margin-top: 0;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }

@@ -1,6 +1,15 @@
 // The app shell (fe/briefs/01-server.md, section 2.1): skip link, banner,
-// nav and main; the session read once on start; the page of the hash route.
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
+// nav and main; the session read once on start; the page of the hash route;
+// leaving a page with unsaved changes asks first (38).
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react'
+import { flushSync } from 'react-dom'
+import { DiscardDialog } from './Dialog.tsx'
 import InstancePage from './InstancePage.tsx'
 import { readInstances, type Instance } from './Instances.tsx'
 import NotFound from './NotFound.tsx'
@@ -18,6 +27,13 @@ export default function App() {
   // Raised on every page change: the new page's h1 takes the focus.
   const [focus, setFocus] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The page holds unsaved changes.
+  const [dirty, setDirty] = useState(false)
+  // Leaving asked about: where to (none: Sign out) and the control that asked.
+  const [leaving, setLeaving] = useState<{
+    href?: string
+    opener: HTMLElement
+  } | null>(null)
   const route = parseRoute(hash)
 
   useEffect(() => {
@@ -46,6 +62,17 @@ export default function App() {
     if (route.page === 'sign-in') window.location.hash = '#/'
   }
 
+  /**
+   * A sign-in in a page's dialog: the edits stay only for the same user who
+   * can still configure; otherwise the page's h1 takes the focus.
+   */
+  const renewed = (s: Session) => {
+    const kept = session?.user === s.user && s.canConfigure
+    setSession(s)
+    if (!kept) setFocus((n) => n + 1)
+    return kept
+  }
+
   // Stable: the server section reads again when it changes.
   const signedOut = useCallback(() => {
     setSession(null)
@@ -66,6 +93,35 @@ export default function App() {
     window.location.hash = '#/'
   }
 
+  /** A click on `link` while dirty asks first; true when it was held back. */
+  const held = (e: MouseEvent, link: HTMLAnchorElement) => {
+    const href = link.getAttribute('href') ?? ''
+    if (!dirty || href === window.location.hash) return false
+    e.preventDefault()
+    setLeaving({ href, opener: link })
+    return true
+  }
+
+  const signOutClicked = (e: MouseEvent<HTMLButtonElement>) => {
+    if (dirty) setLeaving({ opener: e.currentTarget })
+    else void leave()
+  }
+
+  /** Keep editing: the dialog goes, the focus back on what opened it. */
+  const keep = () => {
+    const opener = leaving?.opener
+    flushSync(() => setLeaving(null))
+    opener?.focus()
+  }
+
+  /** Discard changes: on where the click led. */
+  const discard = () => {
+    const href = leaving?.href
+    setLeaving(null)
+    if (href === undefined) void leave()
+    else window.location.hash = href
+  }
+
   return (
     <FocusRequest.Provider value={focus}>
       <a
@@ -79,7 +135,11 @@ export default function App() {
         {t('skip-to-content')}
       </a>
       <header className="banner">
-        <a className="app-name" href="#/">
+        <a
+          className="app-name"
+          href="#/"
+          onClick={(e) => held(e, e.currentTarget)}
+        >
           {t('app-name')}
         </a>
         <button
@@ -93,7 +153,11 @@ export default function App() {
         >
           {t('nav-menu')}
         </button>
-        <SessionBar session={session} onSignOut={leave} />
+        <SessionBar
+          session={session}
+          current={route.page === 'sign-in'}
+          onSignOut={signOutClicked}
+        />
       </header>
       <div className="layout">
         <nav
@@ -101,7 +165,8 @@ export default function App() {
           className={menuOpen ? 'nav open' : 'nav'}
           aria-label={t('nav-label')}
           onClick={(e) => {
-            if ((e.target as Element).closest('a')) setMenuOpen(false)
+            const link = (e.target as Element).closest('a')
+            if (link && !held(e, link)) setMenuOpen(false)
           }}
           onKeyDown={closeOnEscape}
         >
@@ -124,9 +189,12 @@ export default function App() {
             session={session}
             onSignedIn={signedIn}
             onSignedOut={signedOut}
+            onRenewed={renewed}
+            onDirty={setDirty}
           />
         </main>
       </div>
+      {leaving !== null && <DiscardDialog onKeep={keep} onDiscard={discard} />}
     </FocusRequest.Provider>
   )
 }
@@ -134,17 +202,24 @@ export default function App() {
 /** The banner's end: Sign in, or the user, the role and Sign out. */
 function SessionBar({
   session,
+  current,
   onSignOut,
 }: {
   session: Session | null | undefined
-  onSignOut: () => void
+  /** On #/sign-in: the Sign in link is the current page. */
+  current: boolean
+  onSignOut: (e: MouseEvent<HTMLButtonElement>) => void
 }) {
   if (session === undefined) {
     return null
   }
   if (session === null) {
     return (
-      <a className="session" href="#/sign-in">
+      <a
+        className="session"
+        href="#/sign-in"
+        aria-current={current ? 'page' : undefined}
+      >
         {t('session-sign-in')}
       </a>
     )
@@ -210,11 +285,15 @@ function Page({
   session,
   onSignedIn,
   onSignedOut,
+  onRenewed,
+  onDirty,
 }: {
   route: Route
   session: Session | null | undefined
   onSignedIn: (session: Session) => void
   onSignedOut: () => void
+  onRenewed: (session: Session) => boolean
+  onDirty: (dirty: boolean) => void
 }) {
   if (session === undefined) {
     return <p role="status">{t('loading')}</p>
@@ -236,6 +315,8 @@ function Page({
       id={route.id}
       canConfigure={session.canConfigure}
       onSignedOut={onSignedOut}
+      onRenewed={onRenewed}
+      onDirty={onDirty}
     />
   )
 }

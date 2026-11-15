@@ -19,6 +19,10 @@ export async function call(path: string, init?: RequestInit): Promise<Reply> {
   return { status: reply.status, ok: reply.ok, body }
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 /** The key and args of an error body, or null when the body is not one. */
 export function apiError(body: unknown): ApiError | null {
   if (typeof body !== 'object' || body === null) return null

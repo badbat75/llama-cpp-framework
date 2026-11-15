@@ -115,7 +115,10 @@ which applies its rules (user decision, 2026-11-14; `AGENTS.md` and `PLAN.md` st
 - A signed-out user who opens any page but the Overview sees the sign-in form in its place, and
   returns to that page after signing in.
 - The session can end while a page is open (any request answers 401). The page keeps what
-  it shows and any unsaved edits, and offers **Sign in** in a dialog; after it, the user retries.
+  it shows and any unsaved edits, the header and nav stay as they were, and the page offers
+  **Sign in** in a dialog; after it, the user retries. Signing in there as a different user, or as one
+  without `canConfigure`, drops the edits (they belong to the session that made them): the page reads
+  its data again for the new session and says, in an alert, that the changes were dropped.
 - Sign out is in the user menu of the header; with unsaved changes it asks first.
 - The sign-in form lets password managers and paste work: `autocomplete="username"` and
   `"current-password"`, no paste blocking, no puzzle
@@ -135,9 +138,15 @@ which applies its rules (user decision, 2026-11-14; `AGENTS.md` and `PLAN.md` st
   code block ([1.4.10 Reflow](https://www.w3.org/TR/WCAG22/#reflow)); text resizable to 200%
   ([1.4.4](https://www.w3.org/TR/WCAG22/#resize-text)); nothing depends on orientation
   ([1.3.4](https://www.w3.org/TR/WCAG22/#orientation)).
-- **Sticky save bar**: the scroll container sets `scroll-padding-bottom` to the bar's height so a
-  focused field is never hidden behind it
-  ([2.4.11 Focus Not Obscured (Minimum)](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
+- **Sticky save bar**: the scroll container sets `scroll-padding-bottom` to the bar's rendered height
+  plus `--space-3`, kept current as the bar grows (an alert and its button can triple it at phone
+  width: 242 px measured at 375 px in the 1b review), so a focused field is never hidden behind it; a
+  fixed guess does not do. Below a viewport height of 32rem (a phone in landscape, 400% zoom) the bar
+  is not sticky and sits at the end of the form
+  ([2.4.11 Focus Not Obscured (Minimum)](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum),
+  [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
+- **Field grid**: from 720px up, everything of a field but its label sits in the control column:
+  the control, the hint and the error.
 - `<html lang="en">` ([3.1.1](https://www.w3.org/TR/WCAG22/#language-of-page)).
 
 ## 5. Visual system
@@ -187,8 +196,9 @@ Each is one React component, reused by every page.
     `getByRole('group', { name: 'Port' })` and inside it the checkbox `default`.
   - **Default box** (the GUI's `DefaultLineEdit`): a checkbox `default` (or `auto` for thread counts,
     `No key` for the API key) before the input. Ticked: the input is disabled and shows the default
-    value the API gave; unticked: the input is editable, starting from that value. The key is then
-    written; ticked, it is left unset.
+    value the API gave; unticked: the input is editable and shows again the text it held before it
+    was ticked (the default shown, for a field loaded on default), so ticking by mistake loses
+    nothing **(preference)**. The key is then written; ticked, it is left unset.
   - **Hint** (the GUI's hint tooltip): hidden behind a toggle button after the label, visible text
     "About", accessible name "About `<label>`" (the label in a visually hidden span), `aria-expanded`,
     `aria-controls` the hint. Each `\n` of the hint text starts a new paragraph. A tooltip is not used:
@@ -196,7 +206,10 @@ Each is one React component, reused by every page.
   - **Error**: a paragraph under the control in `--danger`, starting with an error icon that has no
     text of its own; the control gets `aria-invalid="true"` and `aria-describedby` the error
     ([3.3.1 Error Identification](https://www.w3.org/TR/WCAG22/#error-identification),
-    [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG22/#error-suggestion)).
+    [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG22/#error-suggestion)). Focus on an error
+    goes to the control; when it is disabled (a dependent field, or a default box ticked), the text and
+    `aria-invalid` stay on it and focus goes to the field's first enabled control, else to the switch
+    that enables the field ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
   - **Disabled controls stay readable**: a disabled control still shows a value, so its value is
     drawn in `--muted`, a checkbox included (its box border and its check mark in `--muted`, not the
     browser's faint disabled grey; a read-only form is all disabled controls). WCAG exempts inactive
@@ -209,11 +222,16 @@ Each is one React component, reused by every page.
 - **Secret input**: `type="password"`, `autocomplete="off"`, plus a **Show** toggle button
   (`aria-pressed`).
 - **Select**: a native `<select>`.
-- **Checkbox list**: a `<fieldset>` of native checkboxes (Bind to).
+- **Checkbox list**: a `<fieldset>` of native checkboxes (Bind to). Its error sits inside the
+  fieldset after the last row; the checked rows (the value) get `aria-invalid` and `aria-describedby`
+  the error, and focus goes to the first checked row.
 - **Save bar**: sticky at the bottom of a form, always rendered on an editable form. Left: a status
   line (`role="status"`); right: **Discard** and **Save changes**. Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
-  ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing.
+  ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save
+  runs both are `aria-disabled` (a save cannot be called back); the fields stay editable and what
+  is typed meanwhile is never overwritten by the answer. Focus moves to an invalid field only after
+  its error is rendered, so it is announced with it.
 - **State badge**: the instance state as text plus a shape: filled circle Running (`--success`),
   hollow circle Stopped (`--muted`), half circle Starting / Stopping (`--warning`), cross Failed
   (`--danger`), hollow circle for an unknown state. Never colour alone
@@ -225,7 +243,10 @@ Each is one React component, reused by every page.
   when it appears after a user action, otherwise a plain paragraph.
 - **Notice**: a bordered paragraph above a form (e.g. "read-only for your account").
 - **Dialog**: native `<dialog>` opened with `showModal()`: focus moves into it, Escape closes it,
-  focus returns to the control that opened it; title as `h2`, named by `aria-labelledby`.
+  focus returns to the control that opened it; title as `h2`, named by `aria-labelledby`. Every
+  dialog has a visible button that does what Escape does (Keep editing, Cancel), so touch and
+  pointer users can leave it too
+  ([APG modal dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)).
 - **Buttons**: primary (filled `--accent`) for the one main action of a view; secondary (outlined
   `--control`) otherwise; danger is not a style of its own **(preference)**: destructive actions ask in a
   dialog instead.
@@ -262,8 +283,10 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
 - **Errors from the API** arrive as `{"key": "<strings key>", "args": [...]}`, the key reusing the
   configurator's where a check exists (bff contract). The fe shows the text of `api-<key>` filled with
   `args` by position, its English copied from `crates/core/strings/en_US.toml` (or `cli.toml`) so the
-  web and the GUI say the same thing. A key the fe does not know shows `api-other` with the key as its
-  value: better a diagnostic than nothing. A reply with no valid key is `failed`.
+  web and the GUI say the same thing. The key picks the message, never the status, except 401
+  (sign in). A refusal (422, a check that failed) with a key the fe does not know shows `api-other`
+  with the key as its value: better a diagnostic than nothing. Any other reply with an unknown key or
+  no valid key, a malformed body or a network failure is `failed`.
 - Messages say what happened and what to do, in one or two sentences. Buttons are verbs ("Save
   changes", "Sign in"). Labels in sentence case, as in the GUI.
 

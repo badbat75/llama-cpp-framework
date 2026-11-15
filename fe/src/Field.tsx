@@ -1,10 +1,25 @@
 // The Field of fe/DESIGN.md, section 5.2: one setting, its label with an
-// About toggle that reveals the hint, the control, then the hint. The
-// controls are read-only here: every one is disabled.
-import { useId, useState, type ReactNode } from 'react'
+// About toggle that reveals the hint, the control, then the hint and the
+// error. The form owns the values; a field only shows them and reports
+// changes. Each field's elements take their ids from `id`: the main control
+// `<id>-control`, the default box `<id>-box`, the rows `<id>-row-<n>`.
+import { useState, type ReactNode } from 'react'
 import { t } from './strings.ts'
 
-type Common = { label: string; hint: string }
+type Common = {
+  id: string
+  label: string
+  hint: string
+  /** The error shown under the control, when there is one. */
+  error?: string
+}
+
+/** What marks a control invalid and names its error. */
+function invalid(id: string, error: string | undefined) {
+  return error === undefined
+    ? {}
+    : { 'aria-invalid': true, 'aria-describedby': `${id}-error` }
+}
 
 /** The About button after the label; its name carries the label. */
 function HintToggle({
@@ -42,13 +57,14 @@ function Hint({ id, text, open }: { id: string; text: string; open: boolean }) {
   )
 }
 
-/** A field of one control named by its label; `children` gets the control's id. */
+/** A field of one control named by its label, `<id>-control`. */
 function LabelField({
+  id,
   label,
   hint,
+  error,
   children,
-}: Common & { children: (id: string) => ReactNode }) {
-  const id = useId()
+}: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="field">
@@ -61,23 +77,24 @@ function LabelField({
           onToggle={() => setOpen((o) => !o)}
         />
       </div>
-      <div className="field-control">{children(`${id}-control`)}</div>
+      <div className="field-control">{children}</div>
       <Hint id={`${id}-hint`} text={hint} open={open} />
+      {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </div>
   )
 }
 
 /**
  * A field of several controls, or a checkbox with its own text: a group named
- * by the label; `children` gets the label's id, which also names the main
- * text input.
+ * by the label, `<id>-label`, which also names the main text input.
  */
 function GroupField({
+  id,
   label,
   hint,
+  error,
   children,
-}: Common & { children: (labelId: string) => ReactNode }) {
-  const id = useId()
+}: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
     <fieldset className="field" aria-labelledby={`${id}-label`}>
@@ -90,170 +107,280 @@ function GroupField({
           onToggle={() => setOpen((o) => !o)}
         />
       </legend>
-      <div className="field-control">{children(`${id}-label`)}</div>
+      <div className="field-control">{children}</div>
       <Hint id={`${id}-hint`} text={hint} open={open} />
+      {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </fieldset>
   )
 }
 
 /** A checkbox with its text. */
-function Check({ text, checked }: { text: string; checked: boolean }) {
+function Check({
+  id,
+  text,
+  checked,
+  disabled,
+  onChange,
+  aria,
+}: {
+  id: string
+  text: string
+  checked: boolean
+  disabled: boolean
+  onChange: (checked: boolean) => void
+  aria?: ReturnType<typeof invalid>
+}) {
   return (
     <label className="check">
-      <input type="checkbox" checked={checked} disabled />
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        {...aria}
+      />
       {text}
     </label>
   )
 }
 
 /**
- * A default box (`default`, `auto`) before a text input: ticked, the input
- * shows `text`, the default the API gave or nothing.
+ * A default box (`default`, `auto`) before a text input: ticked, the input is
+ * disabled and shows `text`, the default the API gave or nothing.
  */
 export function DefaultBoxField({
+  id,
   label,
   hint,
+  error,
   box,
   ticked,
   text,
   numeric = false,
   unit,
+  readOnly,
+  onTick,
+  onText,
 }: Common & {
   box: string
   ticked: boolean
   text: string
   numeric?: boolean
   unit?: string
+  readOnly: boolean
+  onTick: (ticked: boolean) => void
+  onText: (text: string) => void
 }) {
   return (
-    <GroupField label={label} hint={hint}>
-      {(labelId) => (
-        <>
-          <Check text={box} checked={ticked} />
-          <input
-            type="text"
-            className={numeric ? 'number' : 'mono'}
-            inputMode={numeric ? 'numeric' : undefined}
-            aria-labelledby={labelId}
-            value={text}
-            disabled
-          />
-          {unit !== undefined && <span className="unit">{unit}</span>}
-        </>
-      )}
+    <GroupField id={id} label={label} hint={hint} error={error}>
+      <Check
+        id={`${id}-box`}
+        text={box}
+        checked={ticked}
+        disabled={readOnly}
+        onChange={onTick}
+      />
+      <input
+        id={`${id}-control`}
+        type="text"
+        className={numeric ? 'number' : 'mono'}
+        inputMode={numeric ? 'numeric' : undefined}
+        aria-labelledby={`${id}-label`}
+        value={text}
+        disabled={readOnly || ticked}
+        onChange={(e) => onText(e.target.value)}
+        {...invalid(id, error)}
+      />
+      {unit !== undefined && <span className="unit">{unit}</span>}
     </GroupField>
   )
 }
 
-/** A secret: a `No key` box, the masked input and a Show toggle. */
+/**
+ * A secret: a `No key` box, the masked input and a Show toggle. Ticked, the
+ * input and, on an editable form, Show are disabled.
+ */
 export function SecretField({
+  id,
   label,
   hint,
+  error,
   box,
+  ticked,
   value,
-}: Common & { box: string; value: string }) {
+  readOnly,
+  onTick,
+  onText,
+}: Common & {
+  box: string
+  ticked: boolean
+  value: string
+  readOnly: boolean
+  onTick: (ticked: boolean) => void
+  onText: (text: string) => void
+}) {
   const [shown, setShown] = useState(false)
   return (
-    <GroupField label={label} hint={hint}>
-      {(labelId) => (
-        <>
-          <Check text={box} checked={value === ''} />
-          <input
-            type={shown ? 'text' : 'password'}
-            className="mono"
-            autoComplete="off"
-            aria-labelledby={labelId}
-            value={value}
-            disabled
-          />
-          <button
-            type="button"
-            className="secondary"
-            aria-pressed={shown}
-            onClick={() => setShown((s) => !s)}
-          >
-            {t('field-show')}
-          </button>
-        </>
-      )}
+    <GroupField id={id} label={label} hint={hint} error={error}>
+      <Check
+        id={`${id}-box`}
+        text={box}
+        checked={ticked}
+        disabled={readOnly}
+        onChange={onTick}
+      />
+      <input
+        id={`${id}-control`}
+        type={shown ? 'text' : 'password'}
+        className="mono"
+        autoComplete="off"
+        aria-labelledby={`${id}-label`}
+        value={value}
+        disabled={readOnly || ticked}
+        onChange={(e) => onText(e.target.value)}
+        {...invalid(id, error)}
+      />
+      <button
+        type="button"
+        className="secondary"
+        aria-pressed={shown}
+        disabled={!readOnly && ticked}
+        onClick={() => setShown((s) => !s)}
+      >
+        {t('field-show')}
+      </button>
     </GroupField>
   )
 }
 
 /** A switch: one checkbox with its own text. */
 export function CheckboxField({
+  id,
   label,
   hint,
+  error,
   toggle,
   checked,
-}: Common & { toggle: string; checked: boolean }) {
+  disabled,
+  onChange,
+}: Common & {
+  toggle: string
+  checked: boolean
+  disabled: boolean
+  onChange: (checked: boolean) => void
+}) {
   return (
-    <GroupField label={label} hint={hint}>
-      {() => <Check text={toggle} checked={checked} />}
+    <GroupField id={id} label={label} hint={hint} error={error}>
+      <Check
+        id={`${id}-control`}
+        text={toggle}
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+        aria={invalid(id, error)}
+      />
     </GroupField>
   )
 }
 
-/** A list of checkboxes, each with its own text. */
+/**
+ * A list of checkboxes, each with its own text; an error marks the checked
+ * rows, which are the value.
+ */
 export function CheckListField({
+  id,
   label,
   hint,
+  error,
   rows,
-}: Common & { rows: { value: string; text: string; checked: boolean }[] }) {
+  onToggle,
+}: Common & {
+  rows: { value: string; text: string; checked: boolean; disabled: boolean }[]
+  onToggle: (row: number) => void
+}) {
   return (
-    <GroupField label={label} hint={hint}>
-      {() => (
-        <div className="check-list">
-          {rows.map((r) => (
-            <Check key={r.value} text={r.text} checked={r.checked} />
-          ))}
-        </div>
-      )}
+    <GroupField id={id} label={label} hint={hint} error={error}>
+      <div className="check-list">
+        {rows.map((r, i) => (
+          <Check
+            key={r.value}
+            id={`${id}-row-${i}`}
+            text={r.text}
+            checked={r.checked}
+            disabled={r.disabled}
+            onChange={() => onToggle(i)}
+            aria={r.checked ? invalid(id, error) : undefined}
+          />
+        ))}
+      </div>
     </GroupField>
   )
 }
 
 /** A path: a text input, the placeholder saying what an empty one means. */
 export function TextField({
+  id,
   label,
   hint,
+  error,
   value,
   placeholder,
-}: Common & { value: string; placeholder: string }) {
+  disabled,
+  onChange,
+}: Common & {
+  value: string
+  placeholder: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
   return (
-    <LabelField label={label} hint={hint}>
-      {(id) => (
-        <input
-          id={id}
-          type="text"
-          className="mono"
-          value={value}
-          placeholder={placeholder}
-          disabled
-        />
-      )}
+    <LabelField id={id} label={label} hint={hint} error={error}>
+      <input
+        id={`${id}-control`}
+        type="text"
+        className="mono"
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        {...invalid(id, error)}
+      />
     </LabelField>
   )
 }
 
 /** A native select. */
 export function SelectField({
+  id,
   label,
   hint,
+  error,
   options,
   value,
-}: Common & { options: { value: string; text: string }[]; value: string }) {
+  disabled,
+  onChange,
+}: Common & {
+  options: { value: string; text: string }[]
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
   return (
-    <LabelField label={label} hint={hint}>
-      {(id) => (
-        <select id={id} value={value} disabled>
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.text}
-            </option>
-          ))}
-        </select>
-      )}
+    <LabelField id={id} label={label} hint={hint} error={error}>
+      <select
+        id={`${id}-control`}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        {...invalid(id, error)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.text}
+          </option>
+        ))}
+      </select>
     </LabelField>
   )
 }

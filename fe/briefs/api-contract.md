@@ -12,7 +12,8 @@ exist yet. Change this file first when a shape changes.
   configurator strings key where a check already exists (the refusals of `pai-app`
   `server_control` and `pai-core` `checks.rs`). The fe shows it as its own string `api-<key>`,
   filling `{N}` from `args`; a key it does not know, a malformed body or a network failure is shown
-  as one generic failure.
+  as one generic failure. The one exception: a 422 with a key the fe does not know is shown as a
+  refused value without its reason (`api-other`), since the status already says a check refused it.
 - **401** means not signed in (no session, or it ended), on any route that needs one.
 - **403** `client-not-authorized` means the manager refused the call for this user, on a route that
   acts for the signed-in user. On a route that needs no sign-in (`GET /api/instances`) the same key

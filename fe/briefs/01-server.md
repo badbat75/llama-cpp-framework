@@ -118,7 +118,7 @@ route, and returning to it after sign-in).
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 15. **Sign out**: sends `DELETE /api/session`, then shows the signed-out shell on the Overview
     whatever the answer (the cookie may already be gone). In 1b, with unsaved changes, it first asks
-    with the discard dialog (24).
+    with the discard dialog (38).
 
 ### 2.3 Overview (`#/`)
 
@@ -185,44 +185,219 @@ of the brief.
 - **Overview columns** (18): Instance, then Engine (when shown), then State: the order of the
   instance page's header (id, engine, state).
 
+### 2.7 Decided after the first run against the real bff (2026-11-15), built in slice 1b
+
+Two observations from running 1a against the real bff. Both ride along with slice 1b.
+
+5a. **Sign in on its own page.** The banner's **Sign in** link stays where it is on `#/sign-in` (the
+    banner keeps the same items in the same place on every page), and there it carries
+    `aria-current="page"` with the current-page style of the nav links, as criterion 5 says for every
+    link to the current page. It does not carry it while the form stands in for a protected page (the
+    route is that page's). The current-page style is the same rule as `.nav a[aria-current='page']`
+    (accent colour, weight 600, the 3px inset bar), applied to the banner link too. ([3.2.3](https://www.w3.org/TR/WCAG22/#consistent-navigation),
+    [1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships))
+8a. **Icon.** `fe/index.html` declares one icon, inline, so the browser stops asking the bff for
+    `/favicon.ico` (a 404 today; the bff serves only `/` and `/assets/*`, so the icon cannot be a file
+    of its own). The exact element, in the `head` after the viewport `meta`:
+
+    ```html
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a5cc2'/%3E%3Cpath d='M4 12 8 4l4 8M5.5 9h5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    ```
+
+    A letter A drawn in white strokes on a rounded square of `--accent` (light value; white on it is
+    6.3:1). Drawn with strokes, not a font, so it looks the same everywhere. It carries no text and
+    is not part of the page, so nothing for a screen reader. **(preference)**: an empty `href="data:,"`
+    would also stop the request; an icon is chosen so the tab can be told apart. Tested by reading
+    `fe/index.html` (one `link rel="icon"`, a `data:image/svg+xml` href) or checked in review.
+    Source: [MDN, `rel="icon"`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel#icon).
+    Unverified: which browsers ignore an SVG icon and still ask for `/favicon.ico`.
+
 ## 3. Slice 1b: editing and saving (administrators)
 
 28. With `canConfigure: true` the controls are enabled, under the dependencies of 5.3, and the save
     bar (D5.2) is rendered at the end of the form: status line (`role="status"`), **Discard**
     (`save-discard`), **Save changes** (`save-button`), both `aria-disabled="true"` while clean.
     A user keeps 1a's read-only form and no bar.
+28a. **Ticking and unticking a default box** (F1, F3, F7, F8; also auto on F5, F6 and No key on F4):
+    ticked, the textbox shows what 5.2 says (the default, or empty); unticked, it shows again the text
+    it held just before it was ticked. On a field loaded on default that text is the default shown
+    (5.2), on one loaded on auto or No key it is empty; on a field the user typed in, it is what they
+    typed, so ticking by mistake loses nothing. Discard and a successful save reset that memory to the
+    loaded values. Unticking moves focus only on F5 and F6 (5.2: their box comes back empty).
+    ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry), in its spirit: the user never types the
+    same value twice; the rule itself is a **(preference)**)
 29. **Dirty**: any value differing from the loaded one (after the same normalisation as the save,
     5.4) makes the form dirty: the status reads `save-unsaved`, both buttons enabled. Changing it back
     makes it clean again.
 30. **Discard**: puts every control back to the loaded values; focus stays on the button; status
     empty. No request.
+30a. **The bar's two lines.** The status line (`role="status"`) says what state the form is in, and
+    only that: empty while clean, `save-unsaved` while dirty, `save-saving` while the PUT runs,
+    `save-saved` or `save-saved-restart` after a successful save until the next edit. A save that
+    fails (client checks, a refusal, any error of 34 to 37) puts it back to `save-unsaved`: the edits
+    are still unsaved. The failure itself is the bar's alert, a separate element after the status line
+    and before the buttons (`role="alert"`, rendered only while it has text). Every Save click on a
+    dirty form replaces the previous alert: a click that fails the client checks shows `save-invalid`
+    in place of whatever alert was there (31); a click that passes them clears the alert at once, at
+    the click, not when the answer arrives, and the answer then shows its own (or none, on a 200).
+    Otherwise the alert stays until Discard, a confirmed Reload (35) or a successful sign-in in the
+    dialog (36); editing a field clears only that field's error (31), not the alert.
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 31. **Save**, client checks first (5.4). Any failure: no request; each failing field shows its error
     (`aria-invalid`, `aria-describedby`); focus moves to the first failing control in DOM order; the
     save bar shows `save-invalid` as `role="alert"`. Editing a field clears its error.
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion))
 32. Checks pass: `PUT` with the loaded `revision` and every value (unset ones as `null`). While it
-    runs the Save button reads `save-saving`, is `aria-disabled`, and a second click sends nothing.
+    runs the Save button reads `save-saving`, is `aria-disabled`, and a second click sends nothing;
+    the status line reads `save-saving` too (30a). **Discard is `aria-disabled` too while the PUT
+    runs** (decided at the 1b review): the save cannot be called back, so Discard must not look as
+    if it undid it; a click does nothing. The fields stay editable (D6, Saving).
 33. 200: the reply's revision and the sent values become the loaded ones (clean); status
     `save-saved`, or `save-saved-restart` when `running` is true. A save never restarts the server (as
     the GUI).
-34. 422 with `field`: `api-<key>` filled with `args` under that field (`aria-invalid`), focus on it,
-    the bar shows `save-refused` with the same text as `role="alert"`. Without `field`, or a field the
-    form lacks: only the bar. A key the fe does not know: `api-other` with the key. The keys and texts
-    of 5.6.
-35. 409 `server-changed-elsewhere`: the bar shows `api-server-changed-elsewhere` and a button
+33a. **After a 200 the controls show what was sent** (5.4), which is what the file now holds: Base URL
+    without its trailing `/` and `/v1`, texts trimmed, numbers as written by the save (`08581` shows
+    `8581`), a blank folder empty with its placeholder, an empty API key with No key ticked. Focus
+    stays on Save changes. `defaults` are not read again (the file is not re-read, 33): a default box
+    keeps showing the default read with the page until the next read (Reload, or opening the page
+    again); the Base URL hint already says its default is that of the saved settings.
+33b. **Edits made while the PUT runs are kept** (decided at the 1b review). The sent values become
+    the loaded ones as in 33, but if the user changed any control after the click, the controls keep
+    what the user has now (not the values sent), so the form is dirty again against the new loaded
+    values and the status reads `save-unsaved`. Only when nothing changed during the PUT do the
+    controls take the values sent (33a). Nothing typed is ever overwritten by an answer.
+    ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry), in its spirit)
+
+**Answers to the PUT: the key decides, never the status, except 401** (`fe/briefs/api-contract.md`,
+"Rules for every route"). The reply's status only says whether it is an error; the fe reads the body's
+`key` and picks the message by it, in this order: 401 whatever the body (36); `server-changed-elsewhere`
+(35); `client-not-authorized`, `client-unavailable`, `client-no-instance` (37, 37a); a check key of 5.6
+(34). A 422 is a refusal by definition (contract): its unknown key shows `api-other` (34). Any other
+reply, a body with no key, an unknown key outside a 422, a body that is not JSON, a network failure or
+a 2xx that is not `{"revision", "running"}`: `save-failed` (37). A 2xx is a save only when its body
+is an object whose `revision` is a string and whose `running` is a boolean; any other 2xx (no body,
+a missing or mistyped member) is `save-failed`, the form stays dirty. Never the body's text.
+
+34. **A refusal** (a check key of 5.6, normally with 422): `api-<key>` filled with `args` under the
+    field `field` names, or the field of the fallback table under 5.6 when `field` is absent
+    (`aria-invalid`, `aria-describedby`), focus on it, and the bar's alert shows `save-refused` with
+    the same text. A `field` the form lacks, or no field and no fallback: only the bar. A 422 whose key
+    the fe does not know: the bar's alert `save-refused` with `api-other` filled with the key, no field
+    marked.
+34a. **A refusal on Bind to** (`field` `Hostname`, or the fallback of `client-unresolvable-host`): Bind
+    to is a group of checkboxes, so the error paragraph sits inside its `fieldset`, after the last row
+    (D5.2 Checkbox list). Every checked row gets `aria-invalid="true"` and `aria-describedby` the error
+    (the checked rows are the value refused); focus goes to the first checked row in row order, which
+    is always enabled (5.3: a checked row is `0.0.0.0` or a row that `0.0.0.0` does not disable).
+    Checking or unchecking any row clears the error, as editing clears a field's error (31).
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value); `aria-invalid` is allowed on a checkbox:
+    [WAI-ARIA 1.2](https://www.w3.org/TR/wai-aria-1.2/#aria-invalid))
+34b. **A refusal on a disabled control** (Max models with default ticked, as `load-on-startup-*` can
+    be; Snapshot folder with Save on shutdown off, as `comment-markers` can be, since the server
+    checks a kept value the client check skips): the error paragraph sits under the field as usual and
+    its main control gets `aria-invalid` and `aria-describedby` (still exposed when disabled), but
+    focus cannot go to a disabled control: it goes to the field's first enabled input control (Max
+    models: its default box; never its About button), or, when the field has none, to the switch that
+    enables it (5.3: Save on shutdown for Snapshot folder; by the same rule Web UI for MCP proxy, though
+    no check key of 5.6 names MCP proxy today, so a test of it uses a made-up `field` and is optional).
+    The bar's alert already reads the text. Nothing is ticked or enabled for the user.
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
+35. `server-changed-elsewhere` (normally 409): the bar shows `api-server-changed-elsewhere` and a button
     **Reload** (`save-reload`); Reload asks the discard dialog, then reads the file again. The edits
     stay until then.
 36. 401: the bar shows `session-ended` and a button `session-sign-in`, which opens the sign-in form in
     a dialog (D5.2 Dialog, `h2` `signin-title`); after a successful sign-in the dialog closes, focus
     returns to Save changes, the edits are intact, nothing is resent by itself.
     ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry))
-37. 403: `api-client-not-authorized` in the bar. 503: `api-client-unavailable`. Anything else:
-    `save-failed`. Edits kept in every case.
+36a. **While the session has ended** (between the 401 and a sign-in) the banner and the nav stay as
+    they were (the user's name, role and Sign out; the instance links): the page does not switch to
+    signed out while the user still has edits on it. Sign out there works as 15 (with the discard
+    dialog when dirty). Escape, or the dialog's **Cancel** button (`signin-cancel`, secondary,
+    `type="button"`, after the Sign in button, shown only in the dialog): it closes, focus returns to
+    the bar's Sign in button, the alert and the edits stay, nothing is sent. Cancel exists so a touch
+    or pointer user, who has no Escape key, can leave the dialog without signing in (decided at the 1b
+    review; the
+    [APG modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) recommends a
+    visible button that closes the dialog in its tab sequence).
+36b. **A sign-in in the dialog as another account.** The fe compares the reply with the session the
+    edits were made in. Same `user` and `canConfigure` true: 36. A different `user`, or
+    `canConfigure` false: the edits belong to another session and are dropped. The dialog closes, the
+    banner shows the new session (4), the page reads the file again (one `GET`, its states as 24) and
+    shows it for the new role, clean: editable with the save bar for an administrator, read-only with
+    the Notice `server-read-only` for a user (25). Above the first card (above that Notice) a
+    `role="alert"` paragraph reads `server-edits-dropped`, until the page is left; focus goes to the
+    page's `h1`. Nothing is sent but the read.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+37. By key, in the bar's alert: `client-not-authorized` (normally 403) `api-client-not-authorized`;
+    `client-unavailable` (normally 503) `api-client-unavailable`; anything else of the rule above:
+    `save-failed`. Edits kept in every case, the form stays dirty, still signed in.
+37a. `client-no-instance` (normally 404: the instance was removed while the page was open): the bar's
+    alert shows `instance-not-found` with the id. The form and its edits stay on screen (the user can
+    still read what they entered) and the form stays dirty; a new Save asks again. The page is not
+    replaced (that is 21, for a read).
 38. **Leaving dirty**: following a nav link, the product link or Sign out opens a dialog `h2`
     `discard-title`, text `discard-description`, buttons **Keep editing** (`discard-keep`, focused
     first) and **Discard changes** (`discard-confirm`). Keep: stays, focus back on the link. Discard:
-    goes on. Closing or reloading the browser tab: `beforeunload` is armed only while dirty.
+    goes on. Closing or reloading the browser tab: `beforeunload` is armed only while dirty; its
+    handler calls `preventDefault()` and also sets `returnValue` to `true`, as MDN recommends for
+    browsers that predate `preventDefault()` there (Chrome and Edge before 119;
+    [MDN, `beforeunload`](https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event)).
+    A click on the link of the page already shown asks nothing (nothing would be left). **Known gap
+    of 1b:** the browser's Back and Forward buttons and an address typed in the bar change the hash
+    without a click, so they leave without asking; closing it is open (the question below, section 3.1).
+38a. **Escape in the discard dialog is Keep editing**: it closes the dialog (the native `cancel` of a
+    modal `<dialog>`), nothing is discarded, the route does not change, focus returns to the control
+    that opened it (the link, Sign out, or Reload of 35). The same for every dialog of the slice:
+    Escape is the choice that changes nothing.
+    ([2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap); D5.2 Dialog)
 39. No keyboard shortcut for Save (D8).
+
+### 3.1 Decided at the review of 1b (2026-11-15)
+
+Choices the coder made where the brief was silent, and the designer's ruling on each. The rulings
+that changed a criterion are written into it (30a, 32, 33b, 34b, 36a, 38, 5.4); the rest are recorded
+here and are part of the brief.
+
+- **Missing or malformed `limits` for a key**: the client check of that number is skipped; the bff
+  checks it (D1.2, the server decides). Accepted.
+- **A blank Base URL with default clear** is sent as `null` and, after the 200, shows default ticked
+  with the default read with the page (33a). Accepted: the GUI saves a blank URL as unset too
+  (`server_form.rs` `form_to_config`, `opt_nonblank`).
+- **API key**: sent as typed, not trimmed; a blank one (empty or only spaces) is `null` (5.4), as the
+  GUI's `opt_nonblank`. Accepted, with the spaces-only case added.
+- **Keep editing primary, Discard changes secondary** in the discard dialog. Accepted: the choice that
+  loses nothing is the main one and is focused first (38).
+- **Show uses `disabled`** while No key is ticked. Accepted: it is a dependent control (5.3), like a
+  default box's input; `aria-disabled` is the save bar's rule (D5.2), where focus sits on the button
+  when it turns inactive.
+- **Reload and the bar's Sign in** are buttons right after the alert paragraph, before Discard. Accepted:
+  the answer to the alert comes next in reading and tab order.
+- **The dropped-edits alert (36b) shows while the re-read loads.** Accepted: it says at once why the
+  form went away.
+- **Sticky save bar and focus** (D4): the 7rem padding is too small once the bar holds an alert
+  (measured at the review: 194 to 242 px at 375 px wide). The scroll padding follows the bar's
+  rendered height, and below a viewport height of 32rem the bar is not sticky (D4).
+  ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum))
+- **Focus after a failed Save** (31, 34) moves only after the field's error is rendered, so the focused
+  control is announced with `aria-invalid` and its error description.
+  ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
+- **Discard clears the field errors as well as the alert** (30): an error describes a value that
+  Discard has just thrown away. Decided at the second 1b review.
+- **A number with no `limits` for its key** is not checked by the fe and is sent as typed (an integer
+  when it is a whole number, else the trimmed text), with no new message: `limits` missing is a
+  breach of the contract (`api-contract.md`, `GET .../server`), and the bff runs every range check
+  again and answers `not-whole-number-in-range` on the field (34). Decided at the second 1b review.
+- **An edit made and undone while the PUT runs** counts as an edit (33b): the controls keep what the
+  user has; since it equals what was sent, the form ends clean and the status reads `save-saved` (or
+  `save-saved-restart`). The controls then show the text as the user left it, not 33a's normalised
+  form (`08581` stays `08581`); accepted, nothing typed is overwritten. Decided at the second 1b
+  review.
+- **The banner's Sign in link** has the nav links' padding and radius, so its current-page bar does
+  not touch the text. Accepted at the second 1b review; the link widens by about 3 px when bold on
+  `#/sign-in` (right-aligned, so its left edge moves), the banner's height does not change.
+- **Open, for the user**: guard Back, Forward and a typed address while dirty (38, known gap)? It
+  needs the app to undo the hash change and ask; it can ride along with 1c or wait.
 
 ## 4. Slice 1c: run controls and start at boot
 
@@ -284,7 +459,8 @@ Every field also has its hint toggle (`field-about`) and hint `<field key>-hint`
 ### 5.2 What each control shows from the file
 
 - **F1, F7, F8**: value `null` → box ticked, textbox disabled showing `defaults.<key>` (9931, 4, 0).
-  A number → box clear, textbox shows it. Unticking keeps the shown text as the starting value.
+  A number → box clear, textbox shows it. Unticking brings back the text held before ticking, the
+  default shown for a field loaded on default (28a).
 - **F3**: `null` → box ticked, textbox disabled showing `defaults.OpencodeBaseUrl` (computed by the
   bff from the saved file; it does not follow unsaved edits of Port or Bind to, said in the hint).
 - **F4**: `null` or empty → No key ticked, password box disabled and empty. Else No key clear, the key
@@ -328,9 +504,13 @@ Every field also has its hint toggle (`field-about`) and hint `<field key>-hint`
 | F5, F6 | same, `limits.Threads` / `limits.ThreadsBatch` | same |
 | F3, F4, F9, F14 | contains no `;` and no `#` (`checks::comment_markers`) | `field-error-comment-markers` |
 
+A number check is skipped when `limits` gives no `[min, max]` pair of numbers for its key (3.1).
+
 Sent values: default/auto/No key ticked → `null`; numbers as integers; F2 as the checked values joined
-by `,` in row order; F3 trimmed, with a trailing `/` and then a trailing `/v1` removed (as the GUI's
-`form_to_config`); F4 an empty text → `null`; F9, F14 trimmed, empty → `null`; F12 the level number;
+by `,` in row order; F3 trimmed, then every trailing `/` removed, then a trailing `/v1`, then every
+trailing `/` again (as the GUI's `form_to_config`: `https://gw.example.com/v1/` and `…//` both
+become `https://gw.example.com`), blank → `null`; F4 as typed (not trimmed), blank (empty or only
+spaces) → `null`; F9, F14 trimmed, empty → `null`; F12 the level number;
 F15, F17 `null` for `default`, else the value; checkboxes booleans. Dirty (29) compares these sent
 values with those of the loaded file.
 
@@ -447,6 +627,7 @@ The existing `version-*`, `instances-*` and `instance-state-*` keys stay as they
 | `save-failed` | Not saved: the service did not answer as expected. Your changes are kept; try again. |
 | `save-reload` | Reload |
 | `session-ended` | Your session has ended. Sign in again to save; your changes are kept. |
+| `signin-cancel` | Cancel (copy of `cancel`; the sign-in dialog's close button, 36a) |
 | `discard-title` | Discard unsaved changes? (copy) |
 | `discard-description` | You have unsaved edits that will be lost if you continue. (copy) |
 | `discard-keep` | Keep editing |
@@ -462,6 +643,7 @@ The existing `version-*`, `instances-*` and `instance-state-*` keys stay as they
 | `api-client-unresolvable-host` | The host name {0} does not resolve to an address. (copy) |
 | `api-server-changed-elsewhere` | These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost. |
 | `api-other` | The request was refused ({0}). |
+| `server-edits-dropped` | Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings. (36b) |
 
 Field of a refusal when the bff gives none (fallback the fe applies): `not-whole-number-in-range` and
 `comment-markers` → the field whose INI key is `args[0]`; `load-on-startup-*` → F7;
