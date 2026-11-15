@@ -236,11 +236,26 @@ export const EN: Record<string, string> = {
   'api-no-preset-named':
     'There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are.',
   // Slice 2d (fe/briefs/02-models.md, section 2d.10): the preset page, the
-  // keys the criteria of 2d.1 to 2d.4 use.
+  // keys the criteria of 2d.1 to 2d.4 use, and those of the content (2d.5 to 2d.8).
   'preset-back': 'All presets',
   'preset-loading': 'Loading the preset…',
   'preset-load-failed': 'The preset could not be read.',
   'preset-not-found': 'There is no preset named {0}.',
+  'preset-off':
+    'This preset is switched off: it is kept, but its engine does not serve it. Switch it on in the presets list.',
+  'preset-settings-title': 'Preset settings',
+  'preset-engine': 'Engine',
+  'preset-engine-hint':
+    'The engine whose preset files hold this preset. Every instance of that engine can serve it.',
+  'preset-engine-unavailable':
+    '{0} is not available on the server, so no instance can serve this preset until it is installed again.',
+  'preset-assets': 'Assets',
+  'preset-model-file': 'Model file',
+  'preset-project-url': 'Project URL',
+  'preset-draft-model': 'Draft model',
+  'preset-drafter': 'Drafter',
+  'preset-ngram-drafters': 'N-gram drafters',
+  'preset-value-none': '(none)',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */

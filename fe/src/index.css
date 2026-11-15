@@ -72,6 +72,8 @@ body {
 h1 {
   font-size: 1.5rem;
   margin: 0 0 var(--space-4);
+  /* A preset id has no spaces: it breaks anywhere inside the column (2d.7). */
+  overflow-wrap: anywhere;
 }
 
 h2 {
@@ -557,6 +559,39 @@ legend.field-label {
   .field-hint,
   .field-error {
     grid-column: 2;
+  }
+}
+
+/* Value list (DESIGN.md 5.2): settings shown as text, as a description list
+   (02-models.md 2d.7). The label sits in the fields' 200 px column from 720 px
+   up and above its value below. A value wraps anywhere: a server path has no
+   break point. An empty one is the page's "(none)" text, in --muted and the
+   body font, so it does not read as a file named "(none)". */
+.assets {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-3) 0 0;
+}
+
+.assets dt {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.assets dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+@media (min-width: 720px) {
+  .assets {
+    grid-template-columns: 200px minmax(0, 1fr);
   }
 }
 

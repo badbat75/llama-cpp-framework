@@ -891,7 +891,14 @@ test('2d.67: the preset is read once on open and once on each route change to it
   const { bff, main } = open()
   await flush()
   expect(presetReads(bff)).toBe(1)
-  expect(within(main).queryAllByRole('button')).toHaveLength(0)
+  // Criterion 67: no refresh button. Criterion 70: the loaded page's Engine
+  // field carries its About toggle, so that toggle is the only button here.
+  expect(
+    within(main)
+      .queryAllByRole('button')
+      .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
+    'the only button in main is the Engine About toggle',
+  ).toEqual([`${en('field-about')} ${en('preset-engine')}`])
   await advance(60_000)
   expect(presetReads(bff), 'no polling').toBe(1)
   navigate(OFF_HASH)
