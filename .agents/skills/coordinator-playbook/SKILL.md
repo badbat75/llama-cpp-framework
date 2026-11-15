@@ -30,3 +30,6 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   chat); two copies otherwise resume the same subagents and launch duplicate coders on one tree. A
   copy stopped mid-slice leaves its coder's half-written code: brief the next coder to tell the
   tests from the production code in `git diff` first.
+- Brief the `architect` (added 2026-11-15) before a step or slice that adds or changes a component, a
+  protocol, a trust boundary, an identity or permission rule, or a deployment or packaging shape; its
+  design (in `ARCHITECTURE.md`) comes before the tester's tests, and it reviews the coder's result.

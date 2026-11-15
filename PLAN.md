@@ -26,6 +26,7 @@ as the column says. A requirement still open must be covered by a step.
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
 | R12 | The framework is built and versioned apart from its engines: each engine (llama.cpp today, Strata later) is named explicitly and has its own package at the engine's version, the framework's packages carry only the framework's version and a minimum-version dependency on the engine (decided with the user on 2026-11-14) | Open: step 11 |
+| R13 | A super-manager: an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
 
 ### How we work
 
@@ -501,6 +502,20 @@ ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; de
 
 - Done when: each check above is enforced below the GUI, with a test through `pai-app` (and the
   manager where it applies), and the docs say what is checked where.
+
+### 14. A super-manager governing several managers
+
+Covers: R13. Asked by the user on 2026-11-15: a component above the managers, on a different server,
+that governs several of them; a bff connected to it is offered node management as well.
+
+1. **Design first** (the `architect`): the super-manager's role and boundaries against the manager
+   and the bff, how nodes join and are trusted (identity, transport across machines, what replaces
+   D-Bus and the named pipe off the machine), who may act on which node (the `pai` group and the
+   sessions), what the bff and the web UI change, failure modes (a node down, the super-manager down),
+   packaging, and the slices; the questions only the user can answer go to the user.
+
+- Done when: the design is in `ARCHITECTURE.md`, accepted by the user, and this step is rewritten into
+  its slices.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 

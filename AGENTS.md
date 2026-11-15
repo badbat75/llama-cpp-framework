@@ -108,7 +108,7 @@ The user runs the full suite, once, on the main branch after the merge and befor
 
 ## Skills
 
-Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.claude\skills` is a symlink to that directory. Beside the role playbooks (`coordinator-playbook`, `designer-playbook`, `tester-playbook`, `coder-playbook`, `docs-playbook`) are the task skills: `optimize-preset`, `bench-spec`, `write-docs` and `release`.
+Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.claude\skills` is a symlink to that directory. Beside the role playbooks (`coordinator-playbook`, `architect-playbook`, `designer-playbook`, `tester-playbook`, `coder-playbook`, `docs-playbook`) are the task skills: `optimize-preset`, `bench-spec`, `write-docs` and `release`.
 
 - A skill holds what its role has learned and is not obvious. Rules stay in this file.
 - An agent can update its own skill. The coordinator can update any of them.
@@ -119,13 +119,14 @@ Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.
 Role definitions live in `.opencode\agents\`; `.claude\agents` is a symlink to that directory, so OpenCode and Claude Code read the same files. Keep the frontmatter to the fields both accept (`name`, `description`, `mode`), and write role limits in the body rather than in harness-specific tool lists.
 
 - `coordinator`: plans, briefs, reads the reports, commits and keeps `PLAN.md`; it runs no tests, linter, formatter or other code tool (the one exception: at the end of each task it frees the workspace's own crate artifacts with `cargo clean`, `.opencode\agents\coordinator.md`), and reports a slice done only on the tester's green rerun plus the coder's lint and format report (and, for a web UI slice the designer briefed, the designer's review), never on a single agent's word. The default agent for a session, set in `.claude\settings.json` and `.opencode\opencode.json`.
+- `architect`: designs the architecture (components, protocols, trust boundaries, identities and permissions, deployment and packaging shape); before a step or slice that changes one of them it writes the design the coordinator plans from, after the coder it reviews the result against it; keeps `ARCHITECTURE.md` and edits no code, tests or other docs.
 - `designer`: designs the web UI (`fe\`) and its user experience; before a slice that changes what users see it writes the design brief the tester turns into tests, after the coder it reviews the result against it; keeps `fe\DESIGN.md` and edits no code, tests, styles or strings files.
 - `tester`: writes the failing tests (for a web UI slice, from the designer's brief) and shows them red; after the coder, reruns the slice's tests and reports them green (the independent check of the coder's work).
 - `coder`: makes them pass, then runs the linter and the format check and reports them.
 - `docs`: keeps the documentation true; for a guide in `docs\` it loads the `write-docs` skill.
 - `spec-reviewer`: reviews a benchmark spec change before it is committed, read-only, with the `bench-spec` skill.
 
-Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice, designer writes the brief (only for a slice that changes what users see in the web UI), tester writes tests and shows them red, coder turns them green and reports the linter and the format check, tester reruns the tests and reports them green, designer reviews the result against its brief (web UI slices only), coordinator reads the reports and commits, docs updates what changed.
+Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice, architect writes the design (only for a step or slice that changes the architecture), designer writes the brief (only for a slice that changes what users see in the web UI), tester writes tests and shows them red, coder turns them green and reports the linter and the format check, tester reruns the tests and reports them green, designer reviews the result against its brief (web UI slices only), architect reviews it against its design (architecture slices only), coordinator reads the reports and commits, docs updates what changed.
 
 ## Release process
 
