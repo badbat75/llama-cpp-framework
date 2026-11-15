@@ -39,6 +39,7 @@ exist yet. Change this file first when a shape changes.
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, proposed | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
 | `GET /api/presets` | signed in | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
+| `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
 
 ### `GET /api/instances`
 
@@ -161,6 +162,30 @@ user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`.
   receives it, as the manager already lets any caller read the preset files.
 - Errors, each with empty `args`: 401; 403 `client-not-authorized`; 503 `client-unavailable`; 502
   `client-other`.
+
+### `PUT /api/presets/{id}/enabled`
+
+Switches a preset on or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
+does: the section moves, unchanged, between `presets.ini` and `presets.ini.disabled` (the
+destination written first; a missing disabled file created with the GUI's header). The id is
+matched case-insensitively. Body `{"enabled": <bool>}`.
+
+- 200 `{"enabled", "running"}`: `enabled` is read back after the write; `running` is true when an
+  instance of the preset's engine is `active` or `activating` (the fe then says to restart it; the
+  bff restarts nothing). A preset already where it was asked to go answers 200 and nothing is
+  written.
+- Switching on runs the checks the GUI runs: the load-on-startup presets counted against the lowest
+  `ModelsMax` of the instances, and every preset check on the moved section.
+- The bff runs one preset-file write at a time: a move is two writes, and two moves at once would
+  lose one.
+- Errors: 401; 403 `client-not-authorized`; 404 `no-preset-named` with `args: [id]` when neither
+  file holds the id; 422 `load-on-startup-over-max` `[count, max]` or `load-on-startup-unlimited`
+  `[count]`; 422 with the key of a preset check failing on a hand-edited section (the fe shows a
+  key it does not know as `api-other`); 400 `presets-malformed` (proposed key) for a bad body; 503
+  `client-unavailable`; 502 `client-other`.
+- A preset id is unique across every engine (user, 2026-11-15), so the id alone names the preset.
+  The ids `.` and `..` cannot travel in a URL path (URL Standard, dot path segments); the user
+  decided (2026-11-15) that the common id check refuses them, for the GUI and the CLI too.
 
 ## Open on the bff side
 

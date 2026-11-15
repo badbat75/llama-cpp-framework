@@ -326,6 +326,258 @@ To `GET /api/presets` in [api-contract.md](api-contract.md), by its keeper:
 > errors and right as today: any signed-in user, since the manager's `ReadFile` needs no right for
 > the preset files. The fe treats a row without a string `model` as a malformed reply.
 
+## 2c. Slice 2c: switching a preset on or off
+
+Added on 2026-11-15. Criteria go on from 2b's numbers. Everything in 2a and 2b stays true unless a
+line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 35 (tab order) and
+21 (what is announced in a row), and adds to 12 and 19. The reference is the GUI's row switch
+(`crates/config/ui/models_page.slint` 103-115), its handler `on_toggle_preset_enabled`
+(`crates/config/src/gui/models_tab.rs` 384-416), `presets::set_enabled` and `move_between`
+(`crates/app/src/presets.rs` 1329-1394), the CLI's `set_preset_enabled` (`crates/cli/src/cli.rs`
+1547-1570) and the texts `preset-enabled`, `preset-disabled`, `preset-enabled-restart`,
+`preset-disabled-restart`, `preset-switch-failed` (`crates/core/strings/en_US.toml` 603-607).
+
+### 2c.1 What the GUI does (the behaviour 2c matches)
+
+- **The move.** Switching off moves the section, as raw text and unchanged, from `presets.ini` to
+  `presets.ini.disabled` (creating that file with a comment header when it is missing); switching
+  on moves it back. The destination is written first, then the section is removed from the source,
+  so an interruption leaves the preset in both files, listed once as on (`move_between`,
+  `listed_in`). A section already in the asked-for file is success, not a refusal.
+- **Refusals.** Switching on counts the presets that load on startup against `ModelsMax`
+  (`check_startup_for`: `load-on-startup-over-max`, `load-on-startup-unlimited`); through the
+  manager the moved section is a changed section of `presets.ini`, so every preset check runs on it
+  (`checks::presets_file`, inventory 2.1), against the lowest `ModelsMax` of all instances (inventory
+  3.4). Switching off is never refused by a check (`presets_disabled_file`, inventory 2.1). A preset
+  in neither file: `no-preset-named`. There is no duplicate-id refusal (a twin in the destination is
+  replaced, `replace_section`) and no "in use" refusal: a running llama-server keeps the set it was
+  started with.
+- **A running engine.** "The router reads presets.ini once, at launch" (`models_tab.rs` 397,
+  `presets.rs` 1329-1331): when the server runs, the GUI says "restart llama-server to apply"; it
+  restarts nothing.
+- **No confirmation.** The switch is not behind the discard guard (inventory 1.10) and asks nothing.
+- **After the switch** the GUI rebuilds the list from the files, so the row moves to the end of its
+  new group (`refresh_preset_list`). 2c differs on purpose: 2c.5, criterion 47.
+
+### 2c.2 The control
+
+37. **A switch, as a native checkbox.** In each row's Status cell, an
+    `<input type="checkbox" role="switch">`, checked when the preset is on. A switch, not a plain
+    checkbox: the value is on or off, never mixed, and it takes effect at once, which is the APG
+    switch pattern ("an input widget that allows users to choose one of two values: on or off",
+    [APG Switch](https://www.w3.org/WAI/ARIA/apg/patterns/switch/)); the column already says On and
+    Off (criterion 12) and the GUI draws a `Switch`. Built on the native checkbox, as APG's "Switch
+    Example Using HTML Checkbox Input": its state is the `checked` property, never `aria-checked`
+    (ARIA in HTML: authors must not use `aria-checked` on `input type=checkbox`, and `switch` is an
+    allowed role there, [ARIA in HTML](https://www.w3.org/TR/html-aria/)). Space toggles it (native;
+    APG: Space required, Enter optional, so Enter does nothing). `fe/DESIGN.md` 5.2 "Switch".
+    ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+38. **Its name is the preset's id**, from the row's name cell: `aria-labelledby` the id of the name
+    cell's content (one unique id per row, made by the fe, not the preset id itself), so
+    `getByRole('switch', { name: 'Qwen3-27B' })` finds it, and it stays so when 2d makes the name a
+    link. The name never holds the state (the state is the switch's `checked`); the column header
+    "Status" gives its purpose in table navigation. The visible label (the id in the same row) is the
+    whole name, so voice control finds it by what is seen.
+    ([2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name), [1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships))
+39. **The cell**: the switch, then the word `presets-status-on` / `presets-status-off` of criterion 12
+    (still shown, so a sighted reader does not have to read a tick under "Status"), the word
+    `aria-hidden="true"` (the switch already says on or off; read once, not twice). Gap
+    `--space-1`, the cell `nowrap`. The word follows the switch's state at every moment (criteria 44,
+    46, 48). The switch's hit area is at least 24 by 24 CSS px (D5.1 Targets).
+    ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum))
+40. **Muting.** A switched-off row's text stays in `--muted` (criterion 12), but an enabled switch in
+    it keeps its `--control` border and its tick in the text colour: an operable control's edge must
+    meet 3:1 ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)); only a disabled switch is
+    drawn muted (D5.2, "Disabled controls stay readable").
+41. **Width.** Criterion 19 holds with the switch: at 320 px the table fits with no horizontal scroll,
+    the Status column at most the width of the switch, the gap and "Off" (about the header's own
+    width), the name column measured in review at no less than 100 px (2a measured 112 px). Checked
+    in review, not in jsdom. ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow))
+
+### 2c.3 Who can switch
+
+42. **Administrator** (`canConfigure` true): every row's switch is enabled. **User**
+    (`canConfigure` false): every switch has `disabled` (never enabled for the role, D5.2 Inactive),
+    drawn as a disabled checkbox (D5.2), its state still readable; a user never sends a write. No
+    special case for a row whose engine is not available (2o revisits it).
+43. **The read-only Notice.** For a user, the Notice `presets-read-only` (D5.2 Notice: a bordered
+    paragraph, not a live region) below `presets-intro`, above the filter's label. Shown exactly
+    when the filter is (criterion 33: with the table, or with the no-match text; not while loading,
+    on an error or for an empty list). Never for an administrator. It names who can switch, as the
+    Server page's `server-read-only` does. ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions))
+
+### 2c.4 The write
+
+44. **At once.** An administrator's change shows the new value at once (switch, word, muting) and
+    sends `PUT /api/presets/<id>/enabled` with `{"enabled": <new value>}` (section 2c.10), the id
+    percent-encoded as a path segment. No confirmation, no Save (as the GUI). At the change the
+    page's switch status and alert (criterion 50) are emptied.
+45. **One write at a time.** While a write runs (from the change until it has settled, the re-read
+    of criterion 48 included), **every** row's switch is `aria-disabled="true"`: a click or Space
+    changes nothing and sends nothing (the native toggle prevented), focus stays where it is, and
+    the switches stay in the tab sequence. Drawn as a disabled checkbox, `GrayText` under
+    `@media (forced-colors: active)`, never by `opacity` (D5.2 Inactive; 1c's 45c). One at a time
+    because a switch is two file writes and the page has one message region **(preference)**. No
+    text while it runs (as Start at boot, 45c). The filter stays usable.
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible))
+46. **Success**: a 2xx whose body is `{"enabled": <boolean>, "running": <boolean>}`. The switch takes
+    the reply's `enabled`; the status (criterion 50) reads, filled with the row's id and its engine:
+    - `enabled` true, `running` false: `presets-switched-on`;
+    - `enabled` false, `running` false: `presets-switched-off`;
+    - `enabled` true, `running` true: `presets-switched-on-restart`;
+    - `enabled` false, `running` true: `presets-switched-off-restart`.
+    A 2xx of another shape is a failure (criterion 48, `request-failed`).
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+47. **The row stays where it is.** After a success the row keeps its place in the table; the other
+    rows do not move, nothing is read again. The bff's order (on first, then off) comes back the next
+    time the page opens (criterion 18). The filter is unchanged: it matches id and model only
+    (criterion 27), so the row stays shown and the count (criterion 30) does not change. Differs from
+    the GUI on purpose: a row that jumps to the end of the table while focused would carry focus
+    away from where the administrator was working down the list, and Tab would then leave the table
+    **(preference)**; an "Off" row among "On" rows states nothing false, its word and muting say
+    which it is.
+48. **Failure**, by key, in the page's alert (criterion 50); the status stays empty:
+    - 401, whatever the body: `session-ended-retry` and a **Sign in** button (criterion 49); the
+      switch shows the value before the change, nothing is read again;
+    - `client-not-authorized`: `api-client-not-authorized`;
+    - `client-unavailable`: `api-client-unavailable`;
+    - `no-preset-named`: `api-no-preset-named` with the id;
+    - `load-on-startup-over-max`, `load-on-startup-unlimited`: `api-load-on-startup-over-max`,
+      `api-load-on-startup-unlimited` with the reply's `args`;
+    - a 422 with any other key: `api-other` with the key (the contract's rule);
+    - anything else (another key, no key, a body that is not the error shape, a 2xx of another shape,
+      a network failure, the 120 s limit of a non-`GET` call running out, 1c's 47): `request-failed`.
+      Never the reply's body.
+    After every failure but the 401 the fe reads `GET /api/presets` once (15 s limit) and the switch
+    takes **that row's** `enabled` from it (matched by id), as Start at boot reads its state again
+    (1c's 45e): the write may have happened. Only that row's value is taken: the order, the other
+    rows and the filter stay as shown. When that read fails in any way (401 included: it changes
+    nothing else) or holds no row with that id, the switch shows the value it had before the change.
+    The switches stay `aria-disabled` until that read has answered or failed.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion))
+49. **401 and Sign in.** The Sign in button opens the sign-in dialog of 1c's 43a (`h2`
+    `signin-title`, Cancel; Escape or Cancel closes it, focus returns to this button, the alert
+    stays, nothing is sent). A sign-in follows 1c's 43b: the same `user` and `canConfigure`: the
+    dialog closes, the alert and the button go, focus goes to the switch whose write got the 401
+    (showing its value before the change); nothing is resent, the administrator switches again.
+    Any other session: the banner shows it, the alert goes, the page reads `GET /api/presets` again
+    for the new role (criterion 18; the filter emptied, criterion 34; the Notice per criterion 43),
+    focus on the page's `h1`. ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry),
+    [2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap))
+
+### 2c.5 Feedback: one region for the page
+
+50. **Where.** One D5.2 Action feedback region for the whole table, not one per row: after the
+    filter's status line (criterion 30) and before the table: the status `<p role="status">`
+    (always in the DOM while the table or the no-match text is), the alert `<p role="alert">`
+    (rendered only while it has text), then the Sign in button after a 401. Its messages name the
+    preset, so one region serves every row. Per row would put a paragraph inside a 3-column table
+    cell squeezed to about 60 px at 320 px (criterion 41), or add rows to the table that are not
+    presets **(preference)**. Both texts go at the next switch change or when the page is left; the
+    alert also at a sign-in (criterion 49). Typing in the filter does not clear them. Shown at the
+    body size (not the filter status's 0.875rem), the alert in `--danger` with D5.2's error icon.
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages), [1.3.2](https://www.w3.org/TR/WCAG22/#meaningful-sequence))
+51. **Not lost below a long list.** On a failure the switch itself shows the value read again (or the
+    one before), so the row a sighted administrator is looking at shows that the switch did not
+    hold, and the alert names the preset. Nothing scrolls the page and focus does not move to the
+    alert (focus stays on the switch, criterion 52). The review looks at 20 rows at 375 px and reports
+    whether the alert is out of sight; today's lists hold a handful of presets (assumption).
+
+### 2c.6 Keyboard and screen reader
+
+52. **Focus never moves** on a write: it stays on the switch through the change, the run, the
+    success, the failure and the re-read (the row does not move, criterion 47, so no element holding
+    focus is removed or reinserted). The one exception is criterion 49's sign-in.
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [3.2.2](https://www.w3.org/TR/WCAG22/#on-input))
+53. **Tab order**, replacing criteria 20 and 35: skip link, banner, nav, (a user's Notice holds no
+    control), the filter field, Clear filter (when shown), the switch region's Sign in (when shown),
+    then each row's switch in row order (administrator; a user's disabled switches are not in the
+    sequence). Focus on arrival stays on the `h1` (criterion 3). The focus ring is D5's on each
+    switch, never under a sticky element ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+54. **What a screen reader says**, replacing criterion 21 for the Status cell: on focus, "Qwen3-27B,
+    switch, on" (the role and state words are the reader's); in table navigation, "Status,
+    Qwen3-27B, switch, on"; for a user, the same with the reader's "dimmed" or "unavailable". After a
+    switch, the status politely ("Switched Qwen3-27B off."), or the alert assertively. The hidden
+    On/Off word is not read. ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value),
+    [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+
+### 2c.7 Data and the tests
+
+55. 2c reads what 2b reads, plus the session's `canConfigure` (slice 1) for criterion 42. It writes
+    only `PUT /api/presets/<id>/enabled`. The tests stub it with: a 200 of each `enabled` x
+    `running` pair; 401; 403 `client-not-authorized`; 503 `client-unavailable`; 404
+    `no-preset-named`; 422 `load-on-startup-over-max` with args `["3", "2"]`; 422 `preset-no-model`
+    (unknown to the fe: `api-other`); a 502 `client-other`; a 2xx `{}`; a network failure; a
+    timeout; each failure followed by a re-read that says on, says off, lacks the row, and fails.
+
+### 2c.8 Strings, slice 2c
+
+| Key | English | Source |
+|---|---|---|
+| `presets-read-only` | You can view the presets. Switching them on or off needs an administrator account. | new, as `server-read-only` |
+| `presets-switched-on` | Switched {0} on. | GUI `preset-enabled` ("Enabled [{0}].") and CLI `preset-switched-on`, the web's "switched" wording of `presets-off-note` |
+| `presets-switched-off` | Switched {0} off. | GUI `preset-disabled`, without "llama-server will not offer it" (the off-note below the table says so; and a mixed list has more than one engine) |
+| `presets-switched-on-restart` | Switched {0} on: restart the running instances of {1} to apply. | GUI `preset-enabled-restart`; {1} the row's engine (data), since every instance of that engine serves the preset |
+| `presets-switched-off-restart` | Switched {0} off: restart the running instances of {1} to apply. | GUI `preset-disabled-restart`, likewise |
+| `api-no-preset-named` | There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are. | core `no-preset-named`, with what to do ([3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)) |
+
+Reused, unchanged: `presets-status-on`, `presets-status-off`, `session-ended-retry`,
+`request-failed`, `api-client-not-authorized`, `api-client-unavailable`,
+`api-load-on-startup-over-max`, `api-load-on-startup-unlimited`, `api-other`, `signin-title` and
+the sign-in dialog's texts. The preset id and the engine are data, never strings (D7).
+
+### 2c.9 Out of 2c
+
+Confirmation before switching (the GUI has none), restarting an instance from the Models page,
+naming which instances run, moving the row or sorting after a switch, a bulk switch, switching from
+the preset page (2d on), any special case for an engine not available (2o), polling the list.
+
+### 2c.10 Proposed contract (for the bff's coordinator)
+
+To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top apply.
+
+| Route | Who | Slice | Success |
+| --- | --- | --- | --- |
+| `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
+
+> ### `PUT /api/presets/{id}/enabled`
+>
+> Switches one preset on or off, as `presets::set_enabled` does for the GUI and `pai preset
+> enable|disable` (`crates/app/src/presets.rs`): it moves the section, as raw text and unchanged,
+> between its engine's `presets.ini` (on) and `presets.ini.disabled` (off), through the manager's
+> `ReadFile` and `WriteFile` (so `configure`), the destination written first, then the source; a
+> `presets.ini.disabled` that does not exist is created with the GUI's comment header
+> (`DISABLED_FILE_HEADER`). `{id}` is the section name, matched case-insensitively as the GUI does;
+> today every preset is llama.cpp's.
+>
+> - Body `{"enabled": <bool>}`.
+> - 200 `{"enabled": <bool>, "running": <bool>}`: `enabled` read back after the write (true when the
+>   section is in `presets.ini`); `running` true when an instance of the preset's engine is `active`
+>   or `activating` (manager `Status`), since llama-server reads `presets.ini` only at launch: the fe
+>   then says to restart. The bff restarts nothing.
+> - Idempotent: a preset already where it is asked to go answers 200, nothing written (as
+>   `move_between`).
+> - Switching on counts the presets that load on startup against the lowest `ModelsMax` of all
+>   instances (the manager's rule), and the manager runs every preset check on the moved section;
+>   switching off is never refused by a check.
+> - The bff runs one preset-file write at a time: a move is two `WriteFile`s, and two moves at once
+>   would lose one.
+> - Errors: 401 not signed in; 403 `client-not-authorized`; 404 `no-preset-named` with
+>   `args: [id]` when neither file holds the id; 422 `{"key", "args"}` for a refusal of the manager's
+>   checks: `load-on-startup-over-max` (`args: [count, max]`), `load-on-startup-unlimited`
+>   (`args: [count]`), or a preset check on a hand-edited section (`preset-no-model`,
+>   `not-whole-number-in-range`, `comment-markers`, `invalid-preset-id`, `fit-target-format`,
+>   `override-no-pattern`, `override-no-device`, `moe-cache-with-tensor-split`,
+>   `preset-name-taken`); 400 `presets-malformed` for a body that is not `{"enabled": <bool>}`
+>   (the fe never sends one: it shows it as a generic failure); 503 `client-unavailable`; 502
+>   `client-other` for anything else, empty `args` (the detail stays in the bff's log).
+> - **Ids made only of dots.** The id rule `[A-Za-z0-9._-]+` (`checks::preset_id`) allows `.` and
+>   `..`, which no URL path can carry: the URL parser drops `.` and `%2e` segments and resolves `..`
+>   and `%2e%2e` against the parent, whatever the encoding
+>   ([URL Standard, single-dot and double-dot path segments](https://url.spec.whatwg.org/#single-dot-path-segment)).
+>   Such a preset cannot be switched from the web until that is settled (question U4).
+
 ## 3. Proposed contract: `GET /api/presets` (for the bff's coordinator)
 
 To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top apply.
@@ -374,3 +626,12 @@ the preset files; the route still needs a session (the Models page is for signed
 - **U3. Delete's linked files.** The GUI offers to delete the model files a preset links. On the web
   that means the bff writing the models folder (`/var/lib/private-ai/.llama.cpp`), which it cannot
   today. Keep Delete to the preset only on the web, or plan that write access?
+- **U4. Preset ids `.` and `..`.** The id rule allows them, but no URL path can carry them (2c.10).
+  Refuse ids made only of dots in `checks::preset_id` (a change to pai-core, which the GUI and CLI
+  would then also enforce), or address presets in the request body instead of the path?
+- **U5. The row stays in place after a switch** (criterion 47), where the GUI moves it to the end of
+  its group at once. Acceptable, or should the web match the GUI's order immediately (re-read and
+  move the row, focus kept on its switch)?
+- **U6. Preset ids across engines.** `PUT /api/presets/{id}/enabled` assumes an id names one preset
+  across every engine's files (as 2m's rename rule says for both files of one engine). Once a second
+  engine exists, may two engines hold the same id? If yes, the route needs the engine too.

@@ -231,6 +231,12 @@ Each is one React component, reused by every page.
   and who can see it, never a mask string standing in for the value (a mask would read as the
   secret's length).
 - **Select**: a native `<select>`.
+- **Switch**: an on/off state written at once and named by a thing rather than a sentence (a
+  preset's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
+  `aria-checked`, drawn and made inactive exactly as a checkbox
+  ([APG Switch](https://www.w3.org/WAI/ARIA/apg/patterns/switch/),
+  [ARIA in HTML](https://www.w3.org/TR/html-aria/)). A setting phrased as a statement ("start
+  llama-server when the system starts") stays a checkbox.
 - **Checkbox list**: a `<fieldset>` of native checkboxes (Bind to). Its error sits inside the
   fieldset after the last row; the checked rows (the value) get `aria-invalid` and `aria-describedby`
   the error, and focus goes to the first checked row.
@@ -252,7 +258,8 @@ Each is one React component, reused by every page.
   opens a page.
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
   when it appears after a user action, otherwise a plain paragraph.
-- **Notice**: a bordered paragraph above a form (e.g. "read-only for your account").
+- **Notice**: a bordered paragraph above a form, or above a table whose rows hold controls (e.g.
+  "read-only for your account").
 - **Dialog**: native `<dialog>` opened with `showModal()`: focus moves into it, Escape closes it,
   focus returns to the control that opened it; title as `h2`, named by `aria-labelledby`. Every
   dialog has a visible button that does what Escape does (Keep editing, Cancel), so touch and
@@ -280,7 +287,9 @@ Each is one React component, reused by every page.
   button that opens the sign-in Dialog. A new click on the control clears both. An action always
   ends in its status line or alert, with an outcome, an error or a timeout counted on its own timer
   whatever request is still pending, never a progress text without end. The save bar is the
-  same pattern for a form ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)).
+  same pattern for a form ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)). For a control
+  repeated in every row of a table, one region for the table, just above it, whose messages name the
+  row; one write at a time, every row's control `aria-disabled` while it runs.
 
 ## 6. States every page defines
 
