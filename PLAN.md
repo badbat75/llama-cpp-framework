@@ -762,8 +762,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    file, key included, sent to non-administrators too, so a short key can be guessed offline against
    it; key the hash with a secret (per process, a restart then reads as a stale revision: 409 and
    Reload) or leave the key's value out of it.
-9. **Control and boot.** `POST start|stop|restart` (a stop with `SaveStateOnShutdown` saves the slot
-   snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`.
+9. **Control and boot.** `POST start|stop|restart` (a stop or restart with `SaveStateOnShutdown` saves
+   the slot snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`, as the contract's
+   "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
+   session-free reads move no session). Optional: answer start and restart after systemd's
+   `JobRemoved`, so the first read after a restart is not stale.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 
 Later slices (not yet written): the presets page, the gateway, the benchmark portal, LAN access.
