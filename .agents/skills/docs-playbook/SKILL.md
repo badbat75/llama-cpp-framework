@@ -234,6 +234,18 @@ Lessons only: the rules are in `AGENTS.md`.
   `call(` paths in `fe/src/*.tsx`, and the served routes with `grep -rn '"/api' crates/bff/src`: the
   table lagged two fe slices once (run controls, start at boot). The overview sentences in `AGENTS.md`
   and the root README repeat the page list.
+- Sign-in's mechanics (who signs in, the status/key of each reply, the lockout) sit in the bff README
+  in five spots: intro, the `SystemAuthenticator` paragraph, the status table, the "In memory only"
+  lockout bullet and the web UI's "The bff does not serve yet" bullet, plus the sentence naming the
+  calls the bff makes to the manager. When sign-in changes, replace the forward-looking wording in
+  all five, and mark any dated hand-check whose replies no longer hold with the commit it predates.
+  Files outside the docs agent's scope repeat them and lag: `ARCHITECTURE.md`'s bff row,
+  `crates/config/README.md`'s source-map manager row ("the bff does not call it yet"),
+  `fe/briefs/api-contract.md` and `fe/briefs/01-server.md` ("answers this to every sign-in"),
+  `PLAN.md`'s step 10 6a note.
+- The Read tool shows `N: ` plus a space before each line, so a file's 2-space indent reads as 3:
+  an Edit `oldString` that starts with that leading whitespace never matches. Start `oldString`
+  mid-line.
 - When an authorization rule changes (polkit defaults, rules files, groups), grep `auth_admin`,
   `auth_self`, `administrator` and the action id across `AGENTS.md`, both READMEs of `crates/config`
   and `crates/bff`, the root README and `build-packaging.md`; `ARCHITECTURE.md` and `fe/briefs/` repeat

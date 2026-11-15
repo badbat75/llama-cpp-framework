@@ -3,13 +3,13 @@
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state and, for a signed-in user, an
-instance's server file, and has the session routes, whose check against the operating system is not
-wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI is for administrators only,
-members of the group `pai` (user, 2026-11-15): the Overview (version, instances) shows without
-sign-in, and once the bff calls the manager sign-in will refuse anyone else with 403
-`session-not-administrator` (`fe/briefs/api-contract.md`). Behind sign-in it already has an instance
-page (Start, Stop, Restart, start at boot and a Server page) and a Models page with an on/off switch
-per preset, whose routes the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
+instance's server file, and the manager checks its sign-in: the password and the group `pai`
+(`PLAN.md` step 10). The web UI is for administrators only, members of the group `pai` (user,
+2026-11-15): the Overview (version, instances) shows without sign-in, a right password of a `pai`
+member signs in, a right password of anyone else is 403 `session-not-administrator`
+(`fe/briefs/api-contract.md`). Behind sign-in it already has an instance page (Start, Stop, Restart,
+start at boot and a Server page) and a Models page with an on/off switch per preset, whose routes
+the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -92,12 +92,15 @@ password 401 `session-bad-credentials`, none with a `Set-Cookie`; `/api/instance
 `client-unavailable`. In headless Firefox the Overview showed the version and "The manager is not
 running or does not answer.", a sign-in attempt the session-unavailable message with the password
 cleared and focused, and `#/instances/default` the sign-in form with "Sign in to see this page.".
+That bff predates de07ddf: the manager checks sign-in now, so the 503 of a `POST` and the sign-in
+form of an instance page are what a page shows only where there is no manager to ask (a test
+redirect, or a machine with the manager down).
 
 ## The instances from the manager
 
 `GET /api/instances` asks `private-ai-manager` for `ListInstances`, then `Status` of each instance:
-the two calls the manager answers without authorization, and the only ones the bff makes
-(`crates/bff/src/lib.rs`).
+the two calls the manager answers without authorization; the bff's third call to it,
+`Authenticate`, is what sign-in makes ([below](#the-session)) (`crates/bff/src/lib.rs`).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -119,26 +122,36 @@ the two calls the manager answers without authorization, and the only ones the b
   `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
   `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive, nor an
   administrator's, nor a member of `pai`, so the manager refuses it `control` and `configure`
-  ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls the bff makes passed the pipe in
-  CI (run 43651545466); the refusals are type-checked only.
+  ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls of `/api/instances` passed the
+  pipe in CI (run 43651545466); `Authenticate`, sign-in's call, has not crossed it, and the refusals
+  are type-checked only.
 
 ## The session
 
 `POST /api/session` takes `{"username": <text>, "password": <text>}` as `application/json` and asks
 the authenticator (`session::Authenticator` in `crates/bff/src/session.rs`) on a blocking thread.
-The shipped one, `SystemAuthenticator`, answers unavailable to every sign-in until it calls the
-manager's `Authenticate` (PAM service `private-ai` on Linux, `LogonUserW` on Windows: "Through the
-manager" in [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)), which
-exists and answers only the bff's account but is not called yet; then a right password from a
-non-member of `pai` gets 403 `session-not-administrator` (the contract, not built); under `PRIVATE_AI_DATA_ROOT` it must never ask the real system.
+The shipped one, `SystemAuthenticator`, opens a client per check through the same `Connect` as the
+bff's other routes and calls the manager's `Authenticate` (PAM service `private-ai` on Linux,
+`LogonUserW` on Windows: "Through the manager" in
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)), which answers
+only the bff's account: on Linux the uid of `private-ai-bff`, on Windows its service SID, so on a
+shipped install the web service is the one that asks. The check has `SIGN_IN_TIMEOUT` (10 s) to
+answer: a manager that cannot be reached, or does not answer by the bound, is 503
+`session-unavailable` and records no lockout entry. A right password of a member of `pai` signs in,
+a right password of a non-member is 403 `session-not-administrator`, the contract as built: it
+confirms the password, so it is no credential failure and joins only the refusals' own lockout
+counter. Under `PRIVATE_AI_DATA_ROOT` `connect` dials nothing, so a test never asks the real system.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"user", "canConfigure"}`, both from the authenticator (its account name, not the one typed) | Signed in; `Set-Cookie: pai_session=<id>; HttpOnly; SameSite=Strict; Path=/` |
+| 200 | `{"user", "canConfigure"}`, the typed name and the authenticator's second answer | Signed in; `Set-Cookie: pai_session=<id>; HttpOnly; SameSite=Strict; Path=/` |
 | 400 | `{"key": "session-malformed", "args": []}` | Not JSON, another content type, `username` or `password` missing or not text, an empty `username` |
 | 401 | `{"key": "session-bad-credentials", "args": []}` | No such account or the wrong password (not told apart); an empty password, refused without asking |
-| 429 | `{"key": "session-too-many-attempts", "args": [<seconds left>]}` | 5 refusals for one typed user from one client address (any port) within 60 s lock that pair for 60 s from the 5th, the authenticator not asked |
-| 503 | `{"key": "session-unavailable", "args": []}` | The authenticator could not check at all, or no random id could be drawn |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The password was right, the account is not a member of `pai`. The refusal confirms the password, so it never joins the bad-password counter, only the refusals' own 5 |
+| 429 | `{"key": "session-too-many-attempts", "args": [<seconds left>]}` | 5 bad passwords, and separately 5 right-password refusals, for one (typed user in lowercase, client
+address) each lock that pair for 60 s from their 5th within a 60 s window; the lock is read before
+the manager is asked, so a locked pair never reaches it. A sign-in still being checked counts toward both, so guesses sent at once cannot overrun the limit |
+| 503 | `{"key": "session-unavailable", "args": []}` | No manager to reach, no answer within `SIGN_IN_TIMEOUT`, or no random id could be drawn; none of these records anything, and the check thread of a manager that is slow keeps running after the answer |
 
 - **The cookie** carries an opaque id: 32 bytes from the OS's random source (the `getrandom` crate,
   since std has no stable one) in hex. No `Secure` while the bff serves plain HTTP on loopback (a
@@ -150,7 +163,8 @@ non-member of `pai` gets 403 `session-not-administrator` (the contract, not buil
 - **In memory only**: a restart of the bff signs everyone out. The lockout reads the client's
   address from the connection (`serve.rs` serves `into_make_service_with_connect_info`).
 - The time comes from a clock handed to `router_with_session` (`Instant::now` in the service), so
-  the tests move it.
+  the tests move it; `SIGN_IN_TIMEOUT` reaches the same seam (`session::routes_with_sign_in_timeout`
+  takes a bound of its own).
 
 ## The server file of an instance
 
@@ -235,15 +249,18 @@ opens and never shows a reply's text.
   and the fe is tested against them with mocked replies only, never against a real bff, so on the
   shipped bff a save, a run control and start at boot fail and the Models page shows "The presets
   could not be read.". The bff
-  serves `/api/session`, but until its authenticator is wired every sign-in answers 503
-  `session-unavailable`, so the page stays signed out with the Overview whole and an instance page
-  shows the sign-in form.
+  serves `/api/session` and the manager checks the sign-in, so the pages behind it open: on a
+  shipped install an instance page's server read runs as the bff's own account and is refused (403
+  `client-not-authorized`, [above](#the-server-file-of-an-instance)), and its run controls and boot
+  switch sit on the routes above, not served; by the code that is what a signed-in `pai` member
+  sees, and no sign-in has been run against a real manager.
 - **Errors are `{"key", "args"}`** (`apiError` in `fe/src/api.ts`, the bff's shape since
   `GET /api/instances` moved to it); the message is picked by the key, never by the status, apart
   from 401. For the instances: `client-unavailable` (the manager is not running or does not
   answer), `client-not-authorized` (it refused the web service), anything else, a malformed reply
   or no answer included, as "could not be read". The server read adds `client-no-instance` (with a
-  link back to the Overview); the sign-in tells `session-bad-credentials` and
+  link back to the Overview); the sign-in tells `session-bad-credentials`,
+  `session-not-administrator` (the password right, the account not in `pai`) and
   `session-too-many-attempts` (its seconds from `args`) from a generic failure.
 - **Text goes in `fe/src/strings/en_US.json`**, linked by key through `t(key, ...args)`
   (`fe/src/strings.ts`), with `pai-core`'s rules: `{N}` placeholders filled by position, a missing
@@ -266,7 +283,10 @@ opens and never shows a reply's text.
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
 the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` against a fake
 manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/session` through
-`router_with_session` with a fake authenticator and a clock the test moves; `tests/server.rs` drives
+`router_with_session` with a fake authenticator and a clock the test moves;
+`tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`
+the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
+manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
 `GET /api/instances/{id}/server` the same way, over a fake manager; `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
