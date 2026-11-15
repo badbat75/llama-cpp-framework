@@ -123,6 +123,14 @@ impl ClientError {
     }
 }
 
+/// A file the manager read: its text, and whether the manager withheld
+/// `OpencodeApiKey` from it (the value blanked: the caller may not configure).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagerFile {
+    pub text: String,
+    pub withheld: bool,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;
@@ -130,9 +138,13 @@ pub trait ManagerClient {
     fn start(&self, id: &str) -> Result<(), ClientError>;
     fn stop(&self, id: &str) -> Result<(), ClientError>;
     fn restart(&self, id: &str) -> Result<(), ClientError>;
-    /// The file's text, or None when it does not exist.
-    fn read_file(&self, name: &str) -> Result<Option<String>, ClientError>;
-    fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError>;
+    /// The file, or None when it does not exist.
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError>;
+    /// Replace the file with `contents`. With `keep_api_key`, an instance
+    /// file keeps the `OpencodeApiKey` the manager holds, whatever `contents`
+    /// says of it: for a caller the key was withheld from.
+    fn write_file(&self, name: &str, contents: &str, keep_api_key: bool)
+        -> Result<(), ClientError>;
     /// Whether the instance starts when the system starts.
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError>;
     /// Make the instance start when the system starts, or not.

@@ -133,6 +133,11 @@ impl TokenAuthority {
 }
 
 impl Authority for TokenAuthority {
+    /// Windows never prompts: the same answer as [`Self::is_authorized`].
+    fn is_authorized_quietly(&self, caller: &Caller, action: Action) -> bool {
+        self.is_authorized(caller, action)
+    }
+
     fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
         CONNECTION.with(|c| {
             c.borrow()
@@ -760,6 +765,33 @@ mod tests {
             )
         });
         assert_eq!((control, configure), (true, false));
+    }
+
+    /// Windows never prompts: the quiet question answers as the plain one,
+    /// from the token (configure is a member of Administrators), and a
+    /// caller other than the connection's, or no connection, is nobody.
+    #[test]
+    fn the_quiet_question_answers_from_the_token_as_the_plain_one() {
+        for (interactive, admin) in [(true, false), (true, true), (false, true), (false, false)] {
+            let f = facts(interactive, admin);
+            let (quiet, plain) = TokenAuthority::with_caller(f.clone(), |caller| {
+                let q = [Action::Control, Action::Configure]
+                    .map(|a| TokenAuthority.is_authorized_quietly(caller, a));
+                let p = [Action::Control, Action::Configure]
+                    .map(|a| TokenAuthority.is_authorized(caller, a));
+                (q, p)
+            });
+            assert_eq!(quiet, plain, "{f:?}");
+        }
+        let other = Caller("S-1-5-21-1-2-3-500".into());
+        let refused = TokenAuthority::with_caller(facts(true, true), |_| {
+            !TokenAuthority.is_authorized_quietly(&other, Action::Configure)
+        });
+        assert!(refused, "another caller than the connection's");
+        assert!(
+            !TokenAuthority.is_authorized_quietly(&Caller(USER.into()), Action::Configure),
+            "no connection on this thread"
+        );
     }
 
     /// Another caller than the connection's (a stale or forged one) is

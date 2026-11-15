@@ -243,7 +243,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - A new parameter on a core method (the caller on `Manager::read_file`): a stub that takes it and keeps
   the old body gives assertion reds in every phase, where a `todo!` would stop the one e2e `#[test]` at
   its first read. To see each later phase red, run a copy of `src/tests/mod.rs` calling only that phase
-  (restore it after).
+  (restore it after): replace the other calls with `{}`, not delete them, or their `#[cfg(..)]` lines
+  dangle and nothing compiles.
+- The manager's `Authority` has two questions: `is_authorized` (may prompt) and `is_authorized_quietly`
+  (never prompts: polkit flags `None`, a challenge is no). `FakeAuthority::new(allow).quietly(q)` answers
+  them apart and logs the quiet ones in `asked_quietly`; pin "no prompt" as `asked` holding only what
+  was asked before. A changed D-Bus reply signature is pinned with
+  `r.body().deserialize::<OldShape>().is_err()`: an older client fails to read it.
 - A real chown(2) seam is testable without root: an owner may give its file any group it belongs to
   (`id -Gn`, the gid from `getent group <name>`); an unknown group name must come back `NotFound`.
 - `#[cfg(test)]` is off in a library compiled as a dependency: an item another crate's tests need
@@ -578,3 +584,24 @@ Lessons only: the rules are in `AGENTS.md`.
   tested with a second user in the fake authenticator (`root`, `can_configure: true`) and
   `sign_in_as(user)`; besides the `null`, assert the secret's text is nowhere in the body. The admin and
   nothing-withheld cases are green before the code: only the withheld case is the red.
+- A new argument on a method with many call sites (`write_file(.., keep_api_key)`: ~90 in tests) is
+  added by a small Python pass that finds each `.write_file(`, walks to its matching paren (skipping
+  string literals, and matches preceded by `"` or `fn `) and inserts `, false`; then `cargo fmt -p`.
+  A `[(..); N]` array of cases needs its length bumped by hand.
+- A throwaway candidate that edits production files (strings, `.slint`) can be refused by the
+  permission classifier even when restored after: then leave that layer unproven, order the test so
+  its earlier asserts (the load, the form) run before the one the missing code fails, and say so.
+- `server_cfg::render` writes an unset `OpencodeApiKey` as a commented hint only, no key line: a
+  manager rule that only rewrites an existing key line never sees one from a pai-app save.
+- To make a manager read fail while its write still succeeds, chmod the FILE `0o000` (the atomic
+  write renames over it in a writable directory); a directory in place of the file fails the rename
+  too, so the test goes green for the wrong reason. Probe the read really fails (root), restore the mode
+  before asserting.
+- The GUI's Server save re-reads the file right after writing (`refresh_server_snapshot`): a fake state
+  meant to change "after the first save" must change before that save, or its own re-read sees the old
+  state and the red never shows.
+- Web UI: for a shared read that deduplicates requests, test a held read still pending when the next
+  consumer's read is due, and resolve it before counting "no request after X".
+- pai-app's fake manager backend (`server_control::fake`, withheld key, refusals) is `#[cfg(test)]` in
+  pai-app: pai-config tests cannot install it, so a GUI path that depends on the manager's answer is
+  tested at the pai-app level, with the manager's state passed down as a parameter.

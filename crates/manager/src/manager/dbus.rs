@@ -170,15 +170,15 @@ where
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         name: String,
-    ) -> Result<(bool, String), Error> {
+    ) -> Result<(bool, String, bool), Error> {
         let caller = sender_of(&header).ok();
         Ok(
             match self
                 .core(move |m| m.read_file(caller.as_ref(), &name))
                 .await?
             {
-                Some(text) => (true, text),
-                None => (false, String::new()),
+                Some(file) => (true, file.text, file.withheld),
+                None => (false, String::new(), false),
             },
         )
     }
@@ -188,10 +188,11 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         name: String,
         contents: String,
+        keep_api_key: bool,
     ) -> Result<(), Error> {
         let caller = sender_of(&header)?;
         Ok(self
-            .core(move |m| m.write_file(&caller, &name, &contents))
+            .core(move |m| m.write_file(&caller, &name, &contents, keep_api_key))
             .await?)
     }
 }
@@ -306,7 +307,8 @@ impl ServiceControl for SystemdService {
 }
 
 /// [`Authority`] over polkit (`org.freedesktop.PolicyKit1.Authority.CheckAuthorization`,
-/// subject "system-bus-name" with the caller's name, AllowUserInteraction;
+/// subject "system-bus-name" with the caller's name, AllowUserInteraction or,
+/// for the quiet question, no flags;
 /// any failure answers not authorized). Checked in a real run, not by tests.
 /// Like [`SystemdService`], on a connection other than the served one.
 pub struct PolkitAuthority {
@@ -319,12 +321,18 @@ impl PolkitAuthority {
     }
 }
 
-impl Authority for PolkitAuthority {
-    fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
+/// The `CheckAuthorizationFlags` of a polkit check: `AllowUserInteraction`
+/// when the caller may be prompted, `None` otherwise.
+pub fn check_flags(allow_interaction: bool) -> u32 {
+    u32::from(allow_interaction)
+}
+
+impl PolkitAuthority {
+    /// polkit's answer for `caller` and `action` with `flags`; a challenge
+    /// (the caller would have to authenticate) and any failure are false.
+    fn check(&self, caller: &Caller, action: Action, flags: u32) -> bool {
         use std::collections::HashMap;
         use zbus::zvariant::Value;
-        /// `CheckAuthorizationFlags.AllowUserInteraction`.
-        const ALLOW_USER_INTERACTION: u32 = 1;
         let subject = (
             "system-bus-name",
             HashMap::from([("name", Value::from(caller.0.as_str()))]),
@@ -339,10 +347,20 @@ impl Authority for PolkitAuthority {
         .and_then(|authority| {
             authority.call::<_, _, (bool, bool, HashMap<String, String>)>(
                 "CheckAuthorization",
-                &(subject, action.id(), details, ALLOW_USER_INTERACTION, ""),
+                &(subject, action.id(), details, flags, ""),
             )
         });
         matches!(result, Ok((true, _, _)))
+    }
+}
+
+impl Authority for PolkitAuthority {
+    fn is_authorized_quietly(&self, caller: &Caller, action: Action) -> bool {
+        self.check(caller, action, check_flags(false))
+    }
+
+    fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
+        self.check(caller, action, check_flags(true))
     }
 }
 
@@ -472,7 +490,7 @@ pub(crate) fn manager_dbus_e2e() {
         let e = call(
             &client,
             "WriteFile",
-            &("presets.ini", "[x]\nmodel = /m/x.gguf\n"),
+            &("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
         )
         .expect_err("WriteFile");
         assert_eq!(e.0, err_name("NotAuthorized"), "WriteFile without a sender");
@@ -490,7 +508,10 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "Status", &("default",)).expect("Status");
         assert_eq!(body::<String>(&r), "active");
         let r = call(&client, "ReadFile", &("presets.ini",)).expect("ReadFile");
-        assert_eq!(body::<(bool, String)>(&r), (true, presets.to_string()));
+        assert_eq!(
+            body::<(bool, String, bool)>(&r),
+            (true, presets.to_string(), false)
+        );
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
 
         // Start at boot: the read needs no caller, the change one.
@@ -518,7 +539,7 @@ pub(crate) fn manager_dbus_e2e() {
         let (_server, client) = connect(&c, Some(":1.42"));
         let e = call(&client, "Start", &("default",)).expect_err("Start");
         assert_eq!(e.0, err_name("NotAuthorized"));
-        let e = call(&client, "WriteFile", &("presets.ini", "")).expect_err("WriteFile");
+        let e = call(&client, "WriteFile", &("presets.ini", "", false)).expect_err("WriteFile");
         assert_eq!(e.0, err_name("NotAuthorized"));
         let e = call(&client, "SetBootEnabled", &("default", true)).expect_err("SetBootEnabled");
         assert_eq!(e.0, err_name("NotAuthorized"));
@@ -641,14 +662,14 @@ pub(crate) fn manager_dbus_e2e() {
         ] {
             let e = call(&client, "ReadFile", &(bad,)).expect_err("ReadFile");
             assert_eq!(e.0, err_name("BadFileName"), "ReadFile {bad:?}");
-            let e = call(&client, "WriteFile", &(bad, "x")).expect_err("WriteFile");
+            let e = call(&client, "WriteFile", &(bad, "x", false)).expect_err("WriteFile");
             assert_eq!(e.0, err_name("BadFileName"), "WriteFile {bad:?}");
         }
         assert!(!dir.path().join("x").exists() && !sys.join("server.ini").exists());
         let r = call(&client, "ReadFile", &("presets.ini.disabled",)).expect("ReadFile");
         assert_eq!(
-            body::<(bool, String)>(&r),
-            (false, String::new()),
+            body::<(bool, String, bool)>(&r),
+            (false, String::new(), false),
             "a missing file"
         );
 
@@ -658,6 +679,7 @@ pub(crate) fn manager_dbus_e2e() {
             &(
                 "server@lan-2.ini",
                 "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+                false,
             ),
         )
         .expect_err("colliding WriteFile");
@@ -669,6 +691,7 @@ pub(crate) fn manager_dbus_e2e() {
             &(
                 "server@lan-2.ini",
                 "[Server]\nPort = 8081\nHostname = nowhere.invalid\n",
+                false,
             ),
         )
         .expect_err("unresolvable WriteFile");
@@ -680,7 +703,7 @@ pub(crate) fn manager_dbus_e2e() {
         );
 
         let lan2 = "[Server]\nPort = 8081\nHostname = gpu-box.lan\n";
-        call(&client, "WriteFile", &("server@lan-2.ini", lan2)).expect("WriteFile lan-2");
+        call(&client, "WriteFile", &("server@lan-2.ini", lan2, false)).expect("WriteFile lan-2");
         assert_eq!(
             std::fs::read_to_string(sys.join("server@lan-2.ini")).unwrap(),
             lan2
@@ -688,13 +711,66 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "ListInstances", &()).expect("ListInstances");
         assert_eq!(body::<Vec<String>>(&r), vec!["broken", "default", "lan-2"]);
         let r = call(&client, "ReadFile", &("server@lan-2.ini",)).expect("ReadFile");
-        assert_eq!(body::<(bool, String)>(&r), (true, lan2.to_string()));
+        assert_eq!(
+            body::<(bool, String, bool)>(&r),
+            (true, lan2.to_string(), false)
+        );
 
         // A read that fails for another reason than a missing file.
         std::fs::create_dir(sys.join("presets.ini.disabled")).expect("dir in the way");
         let e = call(&client, "ReadFile", &("presets.ini.disabled",)).expect_err("ReadFile dir");
         assert_eq!(e.0, err_name("Io"));
         std::fs::remove_dir(sys.join("presets.ini.disabled")).unwrap();
+    }
+
+    // ── ReadFile says when it withheld the API key ───────────────────────
+    // The reply is (exists, text, withheld): an older client expecting
+    // (exists, text) fails to read it instead of taking the blanked file
+    // for one with no key.
+    {
+        let keyed = "[Server]\nPort = 8082\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+        std::fs::write(sys.join("server@keyed.ini"), keyed).expect("write keyed");
+        let quiet = |configure: bool| {
+            Arc::new(
+                Manager::new(
+                    FakeService::new(),
+                    FakeAuthority::new(true).quietly(configure),
+                    FakeResolver::lan(),
+                )
+                .with_group(crate::manager::service::fakes::FakeGroup::new()),
+            )
+        };
+        let c = quiet(false);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let r = call(&client, "ReadFile", &("server@keyed.ini",)).expect("ReadFile");
+        assert_eq!(
+            body::<(bool, String, bool)>(&r),
+            (
+                true,
+                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nOpencodeApiKey =\n".to_string(),
+                true
+            ),
+            "a caller without configure: the key blanked and withheld said"
+        );
+        assert!(
+            r.body().deserialize::<(bool, String)>().is_err(),
+            "an older client cannot read the reply as (exists, text)"
+        );
+        assert_eq!(
+            *c.authority().asked_quietly.lock().unwrap(),
+            vec![(alice.clone(), Action::Configure)],
+            "configure asked of the sender, without a prompt"
+        );
+
+        let c = quiet(true);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let r = call(&client, "ReadFile", &("server@keyed.ini",)).expect("ReadFile");
+        assert_eq!(
+            body::<(bool, String, bool)>(&r),
+            (true, keyed.to_string(), false),
+            "an administrator: the file as saved"
+        );
+        std::fs::remove_file(sys.join("server@keyed.ini")).expect("remove keyed");
     }
 
     // ── Status names every unit state as systemd does ────────────────────
@@ -813,9 +889,13 @@ pub(crate) fn manager_dbus_waits_e2e() {
     let read = answer(
         &gate,
         "ReadFile",
-        call::<(bool, String), _>(&client, "ReadFile", ("presets.ini",)),
+        call::<(bool, String, bool), _>(&client, "ReadFile", ("presets.ini",)),
     );
-    assert_eq!(read, Ok((true, presets.to_string())), "ReadFile replies");
+    assert_eq!(
+        read,
+        Ok((true, presets.to_string(), false)),
+        "ReadFile replies"
+    );
 
     assert!(
         start.try_recv().is_err(),
@@ -888,7 +968,7 @@ pub(crate) fn manager_dbus_checks_e2e() {
                 OBJECT_PATH,
                 Some(INTERFACE),
                 "WriteFile",
-                &(name, contents),
+                &(name, contents, false),
             )
             .map(|_| ())
             .map_err(|e| match e {
@@ -970,6 +1050,17 @@ mod tests {
         assert_eq!(BUS_NAME, "org.privateai.Manager1");
         assert_eq!(OBJECT_PATH, "/org/privateai/Manager1");
         assert_eq!(INTERFACE, "org.privateai.Manager1");
+    }
+
+    /// polkit's `CheckAuthorizationFlags`: `None` (0) for the quiet question,
+    /// so a caller who would need to authenticate comes back a challenge
+    /// (not authorized) without a prompt; `AllowUserInteraction` (1) for
+    /// the question that may prompt. freedesktop.org polkit docs,
+    /// org.freedesktop.PolicyKit1.Authority.
+    #[test]
+    fn the_quiet_check_allows_no_interaction() {
+        assert_eq!(check_flags(false), 0);
+        assert_eq!(check_flags(true), 1);
     }
 
     #[test]

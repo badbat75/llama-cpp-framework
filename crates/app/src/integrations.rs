@@ -111,6 +111,19 @@ pub fn opencode_model_ids() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The API key server.ini gives the clients (opencode.json's provider, the
+/// Claude Code snippet).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ApiKey<'a> {
+    /// server.ini sets none.
+    Unset,
+    Key(&'a str),
+    /// The manager withheld it from this caller (no `configure`): the value
+    /// is unknown, so opencode.json's `apiKey` is left as the file has it and
+    /// the snippet shows a placeholder.
+    Withheld,
+}
+
 /// One field of an opencode.json entry that Save would change: its dotted path
 /// (`limit.context`), the value the file holds and the value Save writes, each
 /// `None` when absent. The preview masks the API key's values.
@@ -160,7 +173,7 @@ impl OpencodePlan {
 
 /// Compares opencode.json with what Save would write (see `OpencodePlan`).
 /// Read-only. `base_url` and `api_key` as for `save_opencode_models`.
-pub fn opencode_plan(base_url: &str, api_key: Option<&str>) -> Result<OpencodePlan> {
+pub fn opencode_plan(base_url: &str, api_key: ApiKey) -> Result<OpencodePlan> {
     let current = read_or_create_value(&paths::opencode_user_config())?;
     let mut target = current.clone();
     ensure_provider_section(&mut target, base_url, api_key)?;
@@ -224,7 +237,7 @@ pub fn opencode_plan(base_url: &str, api_key: Option<&str>) -> Result<OpencodePl
 ///
 /// A rebuild that comes out identical to the file is not written: opencode.json
 /// is the user's file, so it is touched only when its content has to change.
-pub fn save_opencode_models(base_url: &str, api_key: Option<&str>, keep: &[String]) -> Result<()> {
+pub fn save_opencode_models(base_url: &str, api_key: ApiKey, keep: &[String]) -> Result<()> {
     let path = paths::opencode_user_config();
     let mut v = read_or_create_value(&path)?;
     let current = current_models(&v);
@@ -390,7 +403,7 @@ pub fn detect_opencode_provider() -> bool {
 /// where the loaded figure can be read instead.
 pub fn claude_code_env_script(
     base_url: &str,
-    api_key: Option<&str>,
+    api_key: ApiKey,
     example: Option<(&str, Option<i64>)>,
 ) -> String {
     let shell = if cfg!(windows) {
@@ -427,7 +440,7 @@ impl Shell {
 fn env_script(
     shell: Shell,
     base_url: &str,
-    api_key: Option<&str>,
+    api_key: ApiKey,
     example: Option<(&str, Option<i64>)>,
 ) -> String {
     let (example_id, example_ctx) = match example {
@@ -440,7 +453,12 @@ fn env_script(
     let comment = |text: String| text.lines().map(|l| format!("# {l}")).collect::<Vec<_>>();
     let mut out = comment(crate::strings::t("claude-snippet-run").to_string());
     out.push(shell.set("ANTHROPIC_BASE_URL", base_url));
-    out.push(shell.set("ANTHROPIC_API_KEY", api_key.unwrap_or("not-needed")));
+    let key = match api_key {
+        ApiKey::Key(k) => k,
+        ApiKey::Unset => "not-needed",
+        ApiKey::Withheld => "<api-key>",
+    };
+    out.push(shell.set("ANTHROPIC_API_KEY", key));
     let model = format!(
         "# {}",
         shell.set("ANTHROPIC_DEFAULT_SONNET_MODEL", example_id)
@@ -525,7 +543,7 @@ fn read_or_create_value(path: &Path) -> Result<Value> {
     }
 }
 
-fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>) -> Result<()> {
+fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: ApiKey) -> Result<()> {
     let obj = v
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!(strings::t("top-level-not-an-object")))?;
@@ -564,10 +582,14 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: Option<&str>)
         .as_object_mut()
         .ok_or_else(|| not_an_object("options"))?;
     opts_obj.insert("baseURL".to_string(), json!(api_base));
-    if let Some(key) = api_key {
-        opts_obj.insert("apiKey".to_string(), json!(key));
-    } else {
-        opts_obj.remove("apiKey");
+    match api_key {
+        ApiKey::Key(key) => {
+            opts_obj.insert("apiKey".to_string(), json!(key));
+        }
+        ApiKey::Unset => {
+            opts_obj.remove("apiKey");
+        }
+        ApiKey::Withheld => {}
     }
 
     lp_obj
@@ -857,9 +879,125 @@ pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
         .join(" ")
 }
 
+/// The API key withheld by the manager (the caller may not configure): the
+/// Integrations tab's preview and Save leave opencode.json's `apiKey` exactly
+/// as the file has it, while an unset key still removes it. Runs in
+/// `data_root_e2e` (`src/tests/mod.rs`): it writes opencode.json under the
+/// redirected tree.
+#[cfg(test)]
+pub(crate) fn api_key_withheld_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let path = paths::opencode_user_config();
+    assert!(path.starts_with(dir.path()), "{}", path.display());
+    fs::create_dir_all(path.parent().unwrap()).expect("opencode dir");
+    let base = "http://127.0.0.1:8099";
+    let seed = || {
+        let v = json!({
+            "$schema": "https://opencode.ai/config.json",
+            "provider": {
+                PROVIDER_KEY: {
+                    "npm": PROVIDER_NPM,
+                    "name": PROVIDER_NAME,
+                    "options": { "baseURL": format!("{base}/v1"), "apiKey": "sk-user-0000" },
+                    "models": {}
+                }
+            }
+        });
+        let text = serde_json::to_string_pretty(&v).unwrap() + "\n";
+        fs::write(&path, &text).expect("seed opencode.json");
+        text
+    };
+    let api_key_of = || {
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        v["provider"][PROVIDER_KEY]["options"]
+            .get("apiKey")
+            .cloned()
+    };
+
+    // Withheld: the plan names no change to the key (nothing at all here).
+    let seeded = seed();
+    let plan = opencode_plan(base, ApiKey::Withheld).expect("plan");
+    assert!(
+        !plan.provider.iter().any(|d| d.path.contains("apiKey")),
+        "a withheld key is no change: {:?}",
+        plan.provider
+    );
+    assert!(plan.is_empty(), "{plan:?}");
+    // ...and Save keeps it, the file untouched.
+    save_opencode_models(base, ApiKey::Withheld, &[]).expect("save");
+    assert_eq!(
+        api_key_of(),
+        Some(json!("sk-user-0000")),
+        "Save kept the key"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        seeded,
+        "nothing to write"
+    );
+
+    // Not withheld and unset: today's behaviour, the plan removes the key and
+    // Save does.
+    seed();
+    let plan = opencode_plan(base, ApiKey::Unset).expect("plan");
+    assert_eq!(
+        plan.provider,
+        vec![FieldDiff {
+            path: "options.apiKey".into(),
+            old: Some("sk-user-0000".into()),
+            new: None,
+        }],
+    );
+    save_opencode_models(base, ApiKey::Unset, &[]).expect("save");
+    assert_eq!(api_key_of(), None, "an unset key is removed");
+
+    // A key of server.ini still replaces the file's.
+    seed();
+    save_opencode_models(base, ApiKey::Key("sk-server-1111"), &[]).expect("save");
+    assert_eq!(api_key_of(), Some(json!("sk-server-1111")));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ensure_provider_section_leaves_a_withheld_key_as_the_file_has_it() {
+        let mut v = json!({});
+        ensure_provider_section(&mut v, "http://h", ApiKey::Key("sk-user-0000")).unwrap();
+        ensure_provider_section(&mut v, "http://h2", ApiKey::Withheld).unwrap();
+        assert_eq!(
+            v["provider"][PROVIDER_KEY]["options"]["apiKey"], "sk-user-0000",
+            "withheld: neither removed nor changed"
+        );
+        assert_eq!(
+            v["provider"][PROVIDER_KEY]["options"]["baseURL"],
+            "http://h2/v1"
+        );
+        // A file without a key gets none.
+        let mut v = json!({});
+        ensure_provider_section(&mut v, "http://h", ApiKey::Withheld).unwrap();
+        assert!(v["provider"][PROVIDER_KEY]["options"]
+            .get("apiKey")
+            .is_none());
+    }
+
+    #[test]
+    fn claude_snippet_with_a_withheld_key_shows_a_placeholder() {
+        for shell in [Shell::Posix, Shell::PowerShell] {
+            let s = env_script(shell, "http://h", ApiKey::Withheld, None);
+            assert!(!s.contains("not-needed"), "{s}");
+            assert!(
+                s.contains("ANTHROPIC_API_KEY=\"<api-key>\"")
+                    || s.contains("ANTHROPIC_API_KEY = \"<api-key>\""),
+                "{s}"
+            );
+        }
+        // Unset stays as it was.
+        let s = env_script(Shell::Posix, "http://h", ApiKey::Unset, None);
+        assert!(s.contains("export ANTHROPIC_API_KEY=\"not-needed\""), "{s}");
+    }
 
     // The merge invariant that keeps hand-edited opencode.json safe: syncing the
     // provider section must not touch unrelated top-level keys or other providers.
@@ -873,7 +1011,7 @@ mod tests {
                 "other": { "npm": "@other/sdk", "models": { "x": {} } }
             }
         });
-        ensure_provider_section(&mut v, "http://localhost:8080", None).unwrap();
+        ensure_provider_section(&mut v, "http://localhost:8080", ApiKey::Unset).unwrap();
         assert_eq!(v["theme"], "dark");
         assert_eq!(v["provider"]["other"]["npm"], "@other/sdk");
         assert_eq!(v["provider"]["other"]["models"]["x"], json!({}));
@@ -888,8 +1026,8 @@ mod tests {
     #[test]
     fn ensure_provider_section_updates_base_url_in_place() {
         let mut v = json!({});
-        ensure_provider_section(&mut v, "http://localhost:8080", Some("sk-old")).unwrap();
-        ensure_provider_section(&mut v, "http://0.0.0.0:9090", None).unwrap();
+        ensure_provider_section(&mut v, "http://localhost:8080", ApiKey::Key("sk-old")).unwrap();
+        ensure_provider_section(&mut v, "http://0.0.0.0:9090", ApiKey::Unset).unwrap();
         assert_eq!(
             v["provider"][PROVIDER_KEY]["options"]["baseURL"],
             "http://0.0.0.0:9090/v1"
@@ -1120,7 +1258,7 @@ mod tests {
 
     #[test]
     fn claude_snippet_without_a_context_names_the_model_only() {
-        let script = |ex| env_script(Shell::Posix, "http://h", None, ex);
+        let script = |ex| env_script(Shell::Posix, "http://h", ApiKey::Unset, ex);
         let with = script(Some(("m", Some(262_144))));
         assert!(with.contains("export CLAUDE_CODE_MAX_CONTEXT_TOKENS=\"262144\""));
         assert!(with.contains("export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=\"81\""));
@@ -1136,13 +1274,13 @@ mod tests {
 
     #[test]
     fn claude_snippet_speaks_the_shell_of_its_os() {
-        let posix = env_script(Shell::Posix, "http://h", Some("k"), None);
+        let posix = env_script(Shell::Posix, "http://h", ApiKey::Key("k"), None);
         assert!(posix.contains("\nexport ANTHROPIC_BASE_URL=\"http://h\"\n"));
         assert!(posix.contains("\nexport ANTHROPIC_API_KEY=\"k\"\n"));
         assert!(!posix.contains("$env:") && !posix.contains('\r'));
         assert!(posix.ends_with("# Then launch: claude\n"));
 
-        let ps = env_script(Shell::PowerShell, "http://h", None, None);
+        let ps = env_script(Shell::PowerShell, "http://h", ApiKey::Unset, None);
         assert!(ps.contains("\r\n$env:ANTHROPIC_BASE_URL = \"http://h\"\r\n"));
         assert!(ps.contains("$env:ANTHROPIC_API_KEY = \"not-needed\"\r\n"));
         assert!(!ps.contains("export "));

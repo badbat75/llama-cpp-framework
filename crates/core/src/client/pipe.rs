@@ -10,7 +10,7 @@
 //! {"method":"ListInstances"}
 //! {"method":"Status","id":"default"}        (also Start, Stop, Restart)
 //! {"method":"ReadFile","name":"presets.ini"}
-//! {"method":"WriteFile","name":"presets.ini","contents":"..."}
+//! {"method":"WriteFile","name":"presets.ini","contents":"...","keep_api_key":false}
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! ```
@@ -21,14 +21,16 @@
 //! ```text
 //! {"ok":["broken","default"]}               ListInstances
 //! {"ok":"active"}                           Status
-//! {"ok":"<text>"} or {"ok":null}            ReadFile (null: no such file)
+//! {"ok":{"text":"<text>","withheld":false}} ReadFile (withheld: the
+//!                                           OpencodeApiKey value blanked)
+//! {"ok":null}                               ReadFile, no such file
 //! {"ok":true} or {"ok":false}              BootEnabled
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
 //!                                           SetBootEnabled
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
 //! ```
 
-use super::{ClientError, InstanceState, ManagerClient};
+use super::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
 use std::sync::Mutex;
@@ -111,15 +113,33 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
     fn restart(&self, id: &str) -> Result<(), ClientError> {
         self.call_unit(json!({"method": "Restart", "id": id}))
     }
-    fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
-        match self.call(json!({"method": "ReadFile", "name": name}))? {
-            Value::String(text) => Ok(Some(text)),
-            Value::Null => Ok(None),
-            v => Err(ClientError::Other(v.to_string())),
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
+        let v = self.call(json!({"method": "ReadFile", "name": name}))?;
+        if v.is_null() {
+            return Ok(None);
+        }
+        let text = v.get("text").and_then(Value::as_str);
+        let withheld = v.get("withheld").and_then(Value::as_bool);
+        match (text, withheld) {
+            (Some(text), Some(withheld)) => Ok(Some(ManagerFile {
+                text: text.to_string(),
+                withheld,
+            })),
+            _ => Err(ClientError::Other(v.to_string())),
         }
     }
-    fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
-        self.call_unit(json!({"method": "WriteFile", "name": name, "contents": contents}))
+    fn write_file(
+        &self,
+        name: &str,
+        contents: &str,
+        keep_api_key: bool,
+    ) -> Result<(), ClientError> {
+        self.call_unit(json!({
+            "method": "WriteFile",
+            "name": name,
+            "contents": contents,
+            "keep_api_key": keep_api_key,
+        }))
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         match self.call(json!({"method": "BootEnabled", "id": id}))? {
@@ -354,7 +374,9 @@ mod tests {
         ("stop", |c| c.stop("default").err()),
         ("restart", |c| c.restart("default").err()),
         ("read_file", |c| c.read_file("presets.ini").err()),
-        ("write_file", |c| c.write_file("presets.ini", "").err()),
+        ("write_file", |c| {
+            c.write_file("presets.ini", "", false).err()
+        }),
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
             c.set_boot_enabled("default", true).err()
@@ -451,7 +473,9 @@ mod tests {
             ),
             ("status", |c| c.status("default").err()),
             ("start", |c| c.start("default").err()),
-            ("write_file", |c| c.write_file("presets.ini", "x").err()),
+            ("write_file", |c| {
+                c.write_file("presets.ini", "x", false).err()
+            }),
         ] {
             let (server, client) = UnixStream::pair().expect("socket pair");
             client
@@ -471,7 +495,7 @@ mod tests {
     fn a_request_over_the_cap_is_other_and_sends_nothing() {
         let (client, sent) = client_on(input(&[json!({"ok": null})]));
         let huge = "x".repeat(MAX_FRAME as usize);
-        match client.write_file("presets.ini", &huge) {
+        match client.write_file("presets.ini", &huge, false) {
             Err(ClientError::Other(detail)) => assert!(!detail.is_empty()),
             other => panic!("a request over the cap: {other:?}"),
         }
@@ -667,7 +691,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 10] = [
+        let cases: [(Call, Value); 11] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -706,10 +730,21 @@ mod tests {
             ),
             (
                 |c| {
-                    c.write_file("presets.ini", "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n")
+                    c.write_file(
+                        "presets.ini",
+                        "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
+                        false,
+                    )
+                    .err()
+                },
+                json!({"method": "WriteFile", "name": "presets.ini", "contents": contents, "keep_api_key": false}),
+            ),
+            (
+                |c| {
+                    c.write_file("server@lan-2.ini", "[Server]\nOpencodeApiKey =\n", true)
                         .err()
                 },
-                json!({"method": "WriteFile", "name": "presets.ini", "contents": contents}),
+                json!({"method": "WriteFile", "name": "server@lan-2.ini", "contents": "[Server]\nOpencodeApiKey =\n", "keep_api_key": true}),
             ),
         ];
         for (f, request) in cases {
@@ -750,7 +785,7 @@ mod tests {
             ("stop", |c| c.stop("default")),
             ("restart", |c| c.restart("default")),
             ("write_file", |c| {
-                c.write_file("presets.ini", "[m]\nmodel = /m.gguf\n")
+                c.write_file("presets.ini", "[m]\nmodel = /m.gguf\n", false)
             }),
         ] {
             let (client, _) = client_on(input(&[json!({"ok": null})]));
@@ -765,20 +800,55 @@ mod tests {
         }
 
         let text = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
-        let (client, _) = client_on(input(&[json!({"ok": text})]));
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(text.to_string())));
+        let file = |text: &str, withheld: bool| ManagerFile {
+            text: text.into(),
+            withheld,
+        };
+        let (client, _) = client_on(input(&[json!({"ok": {"text": text, "withheld": false}})]));
+        assert_eq!(client.read_file("presets.ini"), Ok(Some(file(text, false))));
         let (client, _) = client_on(input(&[json!({"ok": null})]));
         assert_eq!(
             client.read_file("presets.ini.disabled"),
             Ok(None),
             "no such file"
         );
-        let (client, _) = client_on(input(&[json!({"ok": ""})]));
+        let (client, _) = client_on(input(&[json!({"ok": {"text": "", "withheld": false}})]));
         assert_eq!(
             client.read_file("presets.ini.disabled"),
-            Ok(Some(String::new())),
+            Ok(Some(file("", false))),
             "an empty file is not a missing one"
         );
+        let blanked = "[Server]\nPort = 8080\nOpencodeApiKey =\n";
+        let (client, _) = client_on(input(&[json!({"ok": {"text": blanked, "withheld": true}})]));
+        assert_eq!(
+            client.read_file("server@default.ini"),
+            Ok(Some(file(blanked, true))),
+            "the manager withheld the API key"
+        );
+    }
+
+    /// A ReadFile reply in another shape is no file: the bare text of an
+    /// older manager (which would not say whether it withheld the API key),
+    /// an object missing a member or with a member of the wrong type.
+    #[test]
+    fn a_read_file_reply_of_another_shape_is_other() {
+        for reply in [
+            json!({"ok": "[Server]\nPort = 8080\n"}),
+            json!({"ok": {"text": "[Server]\n"}}),
+            json!({"ok": {"withheld": false}}),
+            json!({"ok": {"text": "[Server]\n", "withheld": "no"}}),
+            json!({"ok": {"text": 7, "withheld": false}}),
+            json!({"ok": true}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            assert!(
+                matches!(
+                    client.read_file("server@default.ini"),
+                    Err(ClientError::Other(_))
+                ),
+                "{reply}"
+            );
+        }
     }
 
     /// Calls in a row each read their own reply, in order, on one stream.

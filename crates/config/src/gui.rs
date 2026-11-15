@@ -256,6 +256,13 @@ pub(crate) fn settings_tab_e2e() {
     settings_tab::e2e();
 }
 
+/// The Server tab's e2e phase (the note on a withheld API key), for the
+/// shared UI test to call.
+#[cfg(test)]
+pub(crate) fn server_tab_e2e() {
+    server_tab::e2e();
+}
+
 /// The Downloads window's e2e phase, for the shared UI test to call.
 #[cfg(test)]
 pub(crate) fn downloads_window_e2e() {
@@ -749,7 +756,9 @@ fn load_server_into_ui(app: &AppWindow) {
         models: paths::instance_models_dir(),
         state: paths::instance_state_dir(),
     });
-    let form = server_form::config_to_form_for(&server_cfg::load(), instance_dirs.as_ref());
+    let cfg = server_cfg::load();
+    s.set_api_key_withheld(crate::server_control::backend().api_key_withheld());
+    let form = server_form::config_to_form_for(&cfg, instance_dirs.as_ref());
     populate_bind_options(app, form.hostname.as_str());
     refresh_server_snapshot(app);
     // Set form + base together so `server_dirty` reads false right after load.
@@ -1926,6 +1935,18 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
 
 // ── Integrations helpers ──────────────────────────────────────────────
 
+/// The API key the Integrations tab gives the clients: server.ini's, else
+/// withheld when the manager kept it from this caller, else unset.
+fn opencode_api_key(cfg: &server_cfg::ServerConfig) -> integrations::ApiKey<'_> {
+    match cfg.opencode_api_key.as_deref() {
+        Some(key) => integrations::ApiKey::Key(key),
+        None if crate::server_control::backend().api_key_withheld() => {
+            integrations::ApiKey::Withheld
+        }
+        None => integrations::ApiKey::Unset,
+    }
+}
+
 /// Re-derive the Integrations tab from disk: the Claude Code env snippet
 /// (server.ini's base URL + API key, an enabled preset as the example id) and
 /// the OpenCode status line, which says whether opencode.json carries the
@@ -1937,7 +1958,7 @@ pub(super) fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
     let cfg = server_cfg::load();
     let base_url = cfg.opencode_base_url_or_default();
-    let api_key = cfg.opencode_api_key.as_deref();
+    let api_key = opencode_api_key(&cfg);
 
     let enabled = presets::load_all();
     let example = integrations::claude_code_example(&enabled);

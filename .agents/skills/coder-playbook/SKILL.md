@@ -309,3 +309,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: after an `await` in a save handler the closure's draft is stale; read the rendered DOM after
   `flushSync` or use a state updater. A sticky bar whose height changes needs its scroll padding
   measured at runtime (`ResizeObserver`, guarded: jsdom has none).
+- `ManagerClient` is implemented outside core in four places: `server_control::fake` (`FakeClient`,
+  `DiskClient`) in pai-app, and `FakeManager` in `crates/bff/tests/{server,instances}.rs`. A trait
+  signature change breaks all four; the bff ones are test files (a mechanical fix, say so).
+- The manager withholds `OpencodeApiKey` from readers without configure (`ManagerFile.withheld`); a
+  save of such a reader carries `keep_api_key` (D-Bus `WriteFile (ssb)`, pipe member), and
+  `Manager::write_file` merges the held key under its `writing` lock before the content checks.
+  pai-app's `ManagerBackend` remembers the last server-file read's flag (`api_key_withheld`).
+- Web UI: a poll's deadline is a timer of its own armed when the action starts, not a check when the
+  next poll fires; a store's "read after the in-flight one" needs a cancel hook.

@@ -6,7 +6,7 @@
 
 use crate::manager::pipe::serve_stream;
 use crate::manager::service::fakes::{Call, FakeAuthority, FakeResolver, FakeService};
-use crate::manager::service::{Action, Caller, Manager, UnitState};
+use crate::manager::service::{plain, withheld, Action, Caller, Manager, UnitState};
 use pai_core::checks::Refusal;
 use pai_core::client::pipe::PipeClient;
 use pai_core::client::{ClientError, InstanceState, ManagerClient};
@@ -102,7 +102,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert_eq!(client.stop("default"), Err(ClientError::NotAuthorized));
         assert_eq!(client.restart("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n"),
+            client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
             Err(ClientError::NotAuthorized)
         );
         // An instance file can hold a secret (OpencodeApiKey): its read
@@ -125,10 +125,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             Ok(vec!["broken".to_string(), "default".to_string()])
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
-        assert_eq!(
-            client.read_file("presets.ini"),
-            Ok(Some(presets.to_string()))
-        );
+        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
         assert_eq!(
             std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
             presets,
@@ -144,13 +141,79 @@ pub(crate) fn manager_pipe_client_e2e() {
         hang_up(server, client);
     }
 
+    // ── The API key withheld from a caller without configure ────────────
+    // The client hands back what the manager said: the key line blanked
+    // and `withheld`, or the file as saved for an administrator.
+    {
+        let keyed = "[Server]\nPort = 8082\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+        std::fs::write(sys.join("server@keyed.ini"), keyed).expect("write keyed");
+        for configure in [false, true] {
+            let c = Arc::new(
+                Manager::new(
+                    FakeService::new(),
+                    FakeAuthority::new(true).quietly(configure),
+                    FakeResolver::lan(),
+                )
+                .with_group(crate::manager::service::fakes::FakeGroup::new()),
+            );
+            let (server, client) = connect(&c, &alice);
+            let expected = if configure {
+                plain(keyed)
+            } else {
+                withheld("[Server]\nPort = 8082\nHostname = 127.0.0.1\nOpencodeApiKey =\n")
+            };
+            assert_eq!(
+                client.read_file("server@keyed.ini"),
+                Ok(Some(expected)),
+                "configure: {configure}"
+            );
+            assert_eq!(
+                client.read_file("presets.ini"),
+                Ok(Some(plain(presets))),
+                "a preset file is never withheld"
+            );
+            hang_up(server, client);
+        }
+        std::fs::remove_file(sys.join("server@keyed.ini")).expect("remove keyed");
+    }
+
+    // ── A write that keeps the API key the caller never saw ──────────────
+    // The client passes `keep_api_key` through: the blanked line saved back
+    // takes the manager's key; without it the key is dropped, as before.
+    {
+        let keyed = "[Server]\nPort = 8082\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+        let blanked = "[Server]\nPort = 8083\nHostname = 127.0.0.1\nOpencodeApiKey =\n";
+        for keep in [true, false] {
+            std::fs::write(sys.join("server@keyed.ini"), keyed).expect("write keyed");
+            let c = core(true, &[]);
+            let (server, client) = connect(&c, &alice);
+            assert_eq!(
+                client.write_file("server@keyed.ini", blanked, keep),
+                Ok(()),
+                "keep: {keep}"
+            );
+            let expected = if keep {
+                blanked.replace("OpencodeApiKey =\n", "OpencodeApiKey = sk-local-3f9a\n")
+            } else {
+                blanked.to_string()
+            };
+            assert_eq!(
+                std::fs::read_to_string(sys.join("server@keyed.ini")).expect("read keyed"),
+                expected,
+                "keep: {keep}"
+            );
+            hang_up(server, client);
+        }
+        std::fs::remove_file(sys.join("server@keyed.ini")).expect("remove keyed");
+    }
+
     // ── A caller the authority refuses: asked as the connection's caller ─
     {
         let c = core(false, &[]);
         let (server, client) = connect(&c, &alice);
         assert_eq!(client.start("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", ""),
+            client.write_file("presets.ini", "", false),
             Err(ClientError::NotAuthorized)
         );
         assert_eq!(
@@ -228,10 +291,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(asked(&c), vec![(alice.clone(), Action::Control); 3]);
 
-        assert_eq!(
-            client.read_file("presets.ini"),
-            Ok(Some(presets.to_string()))
-        );
+        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
         assert_eq!(
             client.read_file("presets.ini.disabled"),
             Ok(None),
@@ -241,12 +301,12 @@ pub(crate) fn manager_pipe_client_e2e() {
         std::fs::write(sys.join("presets.ini.disabled"), "").expect("empty file");
         assert_eq!(
             client.read_file("presets.ini.disabled"),
-            Ok(Some(String::new()))
+            Ok(Some(plain("")))
         );
         std::fs::remove_file(sys.join("presets.ini.disabled")).unwrap();
 
         let lan2 = "[Server]\nPort = 8081\nHostname = gpu-box.lan\n";
-        assert_eq!(client.write_file("server@lan-2.ini", lan2), Ok(()));
+        assert_eq!(client.write_file("server@lan-2.ini", lan2, false), Ok(()));
         assert_eq!(
             std::fs::read_to_string(sys.join("server@lan-2.ini")).unwrap(),
             lan2
@@ -259,10 +319,7 @@ pub(crate) fn manager_pipe_client_e2e() {
                 "lan-2".to_string()
             ])
         );
-        assert_eq!(
-            client.read_file("server@lan-2.ini"),
-            Ok(Some(lan2.to_string()))
-        );
+        assert_eq!(client.read_file("server@lan-2.ini"), Ok(Some(plain(lan2))));
 
         // Every refusal of the manager, as its own error, as over D-Bus.
         for bad in ["", "../x", "Default", "a_b"] {
@@ -293,7 +350,7 @@ pub(crate) fn manager_pipe_client_e2e() {
                 "{bad:?}"
             );
             assert_eq!(
-                client.write_file(bad, "x"),
+                client.write_file(bad, "x", false),
                 Err(ClientError::BadFileName),
                 "{bad:?}"
             );
@@ -301,21 +358,24 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert_eq!(
             client.write_file(
                 "server@lan-3.ini",
-                "[Server]\nPort = 8080\nHostname = 127.0.0.1\n"
+                "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+                false
             ),
             Err(ClientError::AddressInUse("default".into()))
         );
         assert_eq!(
             client.write_file(
                 "server@lan-3.ini",
-                "[Server]\nPort = 8082\nHostname = nowhere.invalid\n"
+                "[Server]\nPort = 8082\nHostname = nowhere.invalid\n",
+                false
             ),
             Err(ClientError::UnresolvableHost("nowhere.invalid".into()))
         );
         assert_eq!(
             client.write_file(
                 "server@default.ini",
-                "[Server]\nPort = 70000\nHostname = 127.0.0.1\n"
+                "[Server]\nPort = 70000\nHostname = 127.0.0.1\n",
+                false
             ),
             Err(ClientError::Invalid(Refusal {
                 key: "not-whole-number-in-range",
@@ -324,7 +384,11 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         // Values with spaces, a backslash and a non-ASCII letter come back whole.
         assert_eq!(
-            client.write_file("presets.ini", "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n"),
+            client.write_file(
+                "presets.ini",
+                "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
+                false
+            ),
             Err(ClientError::Invalid(Refusal {
                 key: "invalid-preset-id",
                 values: vec!["Qwen 3 (v2) é".into()],
@@ -335,7 +399,7 @@ pub(crate) fn manager_pipe_client_e2e() {
                 "presets.ini",
                 &format!(
                     "{presets}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"
-                )
+                ), false
             ),
             Err(ClientError::Invalid(Refusal {
                 key: "override-no-device",
@@ -392,7 +456,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         std::fs::write(sys.join("presets.ini.disabled"), tricky).expect("tricky file");
         assert_eq!(
             client.read_file("presets.ini.disabled"),
-            Ok(Some(tricky.to_string()))
+            Ok(Some(plain(tricky)))
         );
         std::fs::remove_file(sys.join("presets.ini.disabled")).unwrap();
         hang_up(server, client);

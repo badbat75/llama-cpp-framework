@@ -51,7 +51,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient};
+use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -136,12 +136,22 @@ impl ManagerClient for FakeManager {
         self.record(format!("restart {id}"));
         Ok(())
     }
-    fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         std::thread::sleep(self.delay);
-        self.file.clone()
+        self.file.clone().map(|file| {
+            file.map(|text| ManagerFile {
+                text,
+                withheld: false,
+            })
+        })
     }
-    fn write_file(&self, name: &str, _contents: &str) -> Result<(), ClientError> {
+    fn write_file(
+        &self,
+        name: &str,
+        _contents: &str,
+        _keep_api_key: bool,
+    ) -> Result<(), ClientError> {
         self.record(format!("write {name}"));
         Ok(())
     }

@@ -7,6 +7,7 @@ use crate::server_cfg::ServerConfig;
 use crate::strings;
 use pai_core::client::{ClientError, InstanceState, ManagerClient};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,6 +35,10 @@ pub struct ManagerBackend {
     /// call (a stop waiting for the exit) does not hold the lock other
     /// threads' probes need.
     client: Mutex<Option<Arc<Client>>>,
+    /// Whether the manager has withheld the API key from a read of the
+    /// server file in this process: sticky, so a later full read (polkit's
+    /// cached authorization) never clears it.
+    withheld: AtomicBool,
 }
 
 impl ManagerBackend {
@@ -42,6 +47,7 @@ impl ManagerBackend {
         ManagerBackend {
             connect,
             client: Mutex::new(None),
+            withheld: AtomicBool::new(false),
         }
     }
 
@@ -99,11 +105,23 @@ impl ManagerBackend {
     }
 
     fn read_config(&self, file: ConfigFile) -> Result<Option<String>, ClientError> {
-        self.client()?.read_file(&file.manager_name())
+        let read = self.client()?.read_file(&file.manager_name())?;
+        if file == ConfigFile::Server && read.as_ref().is_some_and(|f| f.withheld) {
+            self.withheld.store(true, Ordering::Relaxed);
+        }
+        Ok(read.map(|f| f.text))
     }
 
+    /// A server file written with no key after a withheld read asks the
+    /// manager to keep the key it holds.
     fn write_config(&self, file: ConfigFile, contents: &str) -> Result<(), ClientError> {
-        self.client()?.write_file(&file.manager_name(), contents)
+        let keep = file == ConfigFile::Server
+            && self.withheld.load(Ordering::Relaxed)
+            && crate::server_cfg::from_text(contents)
+                .opencode_api_key
+                .is_none();
+        self.client()?
+            .write_file(&file.manager_name(), contents, keep)
     }
 }
 
@@ -221,6 +239,17 @@ impl Backend {
                 crate::ini::atomic_write(&path, contents).map_err(|e| e.to_string())
             }
             Backend::Manager(m) => m.write_config(file, contents).map_err(|e| e.text()),
+        }
+    }
+
+    /// Whether the manager has once withheld `OpencodeApiKey` in this
+    /// process, from a read of the server file (the caller may not
+    /// configure); a server write with no key then asks the manager to keep
+    /// its own, even after a later full read.
+    pub fn api_key_withheld(&self) -> bool {
+        match self {
+            Backend::Direct => false,
+            Backend::Manager(m) => m.withheld.load(Ordering::Relaxed),
         }
     }
 
@@ -678,7 +707,7 @@ pub fn backend() -> &'static Backend {
 /// A recording [`ManagerClient`] for the tests of this seam and its callers.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
-    use pai_core::client::{ClientError, InstanceState, ManagerClient};
+    use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
     use std::sync::{Arc, Mutex};
 
     /// One log shared by the fake and whatever else a test records (the
@@ -704,7 +733,13 @@ pub mod fake {
             .collect()
     }
 
-    /// The writes the fake was asked for, `"write_file <name>"`, in order.
+    /// What a write that keeps the manager's API key is logged with, after
+    /// its name: `"write_file <name> keep_api_key"`.
+    pub const KEEP_API_KEY: &str = "keep_api_key";
+
+    /// The writes the fake was asked for, `"write_file <name>"` (with
+    /// [`KEEP_API_KEY`] after it when the write keeps the manager's API key),
+    /// in order.
     pub fn writes(log: &Log) -> Vec<String> {
         log.lock()
             .unwrap()
@@ -733,6 +768,12 @@ pub mod fake {
         pub files: Files,
         /// What read_file fails with.
         pub fail_read: Option<ClientError>,
+        /// Whether read_file says the API key was withheld from an instance
+        /// file (`server@<id>.ini`), as the manager does for a caller who may
+        /// not configure. The text is answered as held: a test holds the
+        /// blanked text the manager would send. Shared out so a test changes
+        /// it after the fake moved into a backend.
+        pub withhold: Arc<Mutex<bool>>,
         /// What write_file fails with (the file is then left as it was).
         pub fail_write: Option<ClientError>,
         /// What write_file fails with for one file name only, the others
@@ -756,6 +797,7 @@ pub mod fake {
                 fail_status: None,
                 files: Files::default(),
                 fail_read: None,
+                withhold: Arc::new(Mutex::new(false)),
                 fail_write: None,
                 fail_write_of: Default::default(),
                 boot: Arc::new(Mutex::new(false)),
@@ -817,15 +859,32 @@ pub mod fake {
         fn restart(&self, id: &str) -> Result<(), ClientError> {
             self.act("restart", id, vec![InstanceState::Active])
         }
-        fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
+        fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
             self.record("read_file", name);
             if let Some(e) = &self.fail_read {
                 return Err(e.clone());
             }
-            Ok(self.files.lock().unwrap().get(name).cloned())
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|text| ManagerFile {
+                    text: text.clone(),
+                    withheld: *self.withhold.lock().unwrap() && name.starts_with("server@"),
+                }))
         }
-        fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
-            self.record("write_file", name);
+        fn write_file(
+            &self,
+            name: &str,
+            contents: &str,
+            keep_api_key: bool,
+        ) -> Result<(), ClientError> {
+            if keep_api_key {
+                self.record("write_file", &format!("{name} {KEEP_API_KEY}"));
+            } else {
+                self.record("write_file", name);
+            }
             if let Some(e) = self.fail_write.as_ref().or(self.fail_write_of.get(name)) {
                 return Err(e.clone());
             }
@@ -888,14 +947,22 @@ pub mod fake {
         fn restart(&self, _id: &str) -> Result<(), ClientError> {
             Err(ClientError::Unavailable)
         }
-        fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
+        fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
             match std::fs::read_to_string(Self::path(name)?) {
-                Ok(text) => Ok(Some(text)),
+                Ok(text) => Ok(Some(ManagerFile {
+                    text,
+                    withheld: false,
+                })),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(e) => Err(ClientError::Io(format!("{:?}", e.kind()))),
             }
         }
-        fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
+        fn write_file(
+            &self,
+            name: &str,
+            contents: &str,
+            _keep_api_key: bool,
+        ) -> Result<(), ClientError> {
             let path = Self::path(name)?;
             let io = |e: std::io::Error| ClientError::Io(format!("{:?}", e.kind()));
             if let Some(parent) = path.parent() {
@@ -1016,6 +1083,74 @@ pub mod fake {
             Ok(Box::new(c) as super::Client)
         })))
     }
+}
+
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the save of
+/// a server config read with the API key withheld. `server_cfg::load` reads
+/// no key (the manager blanked it); saved untouched, the manager is asked to
+/// keep its own; saved with a key the user typed, that key is sent and
+/// nothing kept.
+#[cfg(test)]
+pub(crate) fn api_key_kept_e2e() {
+    use crate::server_cfg::{self, ServerConfig};
+    use fake::FakeClient;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive)
+        .with_file(
+            "server@default.ini",
+            "[Server]\nPort = 8099\nOpencodeApiKey =\n",
+        )
+        .with_file(
+            "presets.ini",
+            "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+        );
+    *c.withhold.lock().unwrap() = true;
+    let files = c.files.clone();
+    let file = || {
+        files
+            .lock()
+            .unwrap()
+            .get("server@default.ini")
+            .cloned()
+            .unwrap_or_default()
+    };
+    fake::scoped(fake::backend(c), || {
+        let cfg = server_cfg::load();
+        assert_eq!(cfg.port, Some(8099));
+        assert_eq!(cfg.opencode_api_key, None, "the manager blanked it");
+        assert!(backend().api_key_withheld(), "load read it withheld");
+
+        // Untouched (another field changed): the manager keeps its key.
+        log.lock().unwrap().clear();
+        server_cfg::save(&ServerConfig {
+            port: Some(8100),
+            ..cfg.clone()
+        })
+        .expect("server save");
+        assert_eq!(
+            fake::writes(&log),
+            [format!(
+                "write_file server@default.ini {}",
+                fake::KEEP_API_KEY
+            )]
+        );
+        assert_eq!(server_cfg::from_text(&file()).port, Some(8100));
+
+        // A key typed in: sent as typed, nothing kept.
+        log.lock().unwrap().clear();
+        server_cfg::save(&ServerConfig {
+            opencode_api_key: Some("sk-typed-0000".into()),
+            ..cfg.clone()
+        })
+        .expect("server save with a key");
+        assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
+        assert_eq!(
+            server_cfg::from_text(&file()).opencode_api_key,
+            Some("sk-typed-0000".into())
+        );
+    });
 }
 
 /// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
@@ -2044,6 +2179,156 @@ mod tests {
             assert_eq!(fake::writes(&log), [format!("write_file {name}")]);
             assert_eq!(files.lock().unwrap().get(&name), Some(&text), "{file:?}");
         }
+    }
+
+    /// A caller the manager withheld the API key from saves back what it
+    /// read: the backend remembers that the last read of the server file was
+    /// withheld, and a server write that holds no key (the key field left
+    /// unset: a blank `OpencodeApiKey =`, or only the commented hint a
+    /// rendering of an unset key writes) asks the manager to keep its own.
+    /// A key the user typed is sent as typed, nothing kept. A read of the
+    /// preset files in between (a save reads them first) changes nothing.
+    #[test]
+    fn a_server_write_after_a_withheld_read_keeps_the_managers_key() {
+        let blanked = "[Server]\nPort = 8080\nOpencodeApiKey =\n";
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_file("server@default.ini", blanked)
+            .with_file("presets.ini", "[Qwen3.8-27B]\nctx-size = 8192\n");
+        *c.withhold.lock().unwrap() = true;
+        let b = fake::backend(c);
+        assert!(!b.api_key_withheld(), "nothing read yet");
+        assert_eq!(
+            b.read_config(ConfigFile::Server),
+            Ok(Some(blanked.to_string()))
+        );
+        assert!(b.api_key_withheld(), "the last server read was withheld");
+        assert!(b.read_config(ConfigFile::Presets).is_ok());
+        assert!(b.api_key_withheld(), "a preset read changes nothing");
+        let kept = format!("write_file server@default.ini {}", fake::KEEP_API_KEY);
+        for text in [
+            "[Server]\nPort = 8090\nOpencodeApiKey =\n",
+            "[Server]\nPort = 8090\n; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication (opencode.json apiKey + Claude Code); blank = none\n",
+        ] {
+            log.lock().unwrap().clear();
+            assert_eq!(b.write_config(ConfigFile::Server, text), Ok(()), "{text}");
+            assert_eq!(fake::writes(&log), std::slice::from_ref(&kept), "{text}");
+        }
+        log.lock().unwrap().clear();
+        assert_eq!(
+            b.write_config(
+                ConfigFile::Server,
+                "[Server]\nPort = 8090\nOpencodeApiKey = sk-typed-0000\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@default.ini"],
+            "a typed key is sent, nothing kept"
+        );
+        log.lock().unwrap().clear();
+        assert_eq!(b.write_config(ConfigFile::Presets, "[m]\n"), Ok(()));
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file presets.ini"],
+            "a preset file never keeps a key"
+        );
+    }
+
+    /// Nothing withheld, nothing kept: a server write with no key replaces
+    /// the manager's (the key cleared, as before), when no read of the
+    /// server file in this process was withheld.
+    #[test]
+    fn a_server_write_after_a_full_read_keeps_nothing() {
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
+            "server@default.ini",
+            "[Server]\nPort = 8080\nOpencodeApiKey = sk-local-3f9a\n",
+        );
+        let b = fake::backend(c);
+        let no_key = "[Server]\nPort = 8090\nOpencodeApiKey =\n";
+
+        assert!(b.read_config(ConfigFile::Server).is_ok());
+        assert!(!b.api_key_withheld());
+        assert_eq!(b.write_config(ConfigFile::Server, no_key), Ok(()));
+        assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
+        assert!(b.read_config(ConfigFile::Server).is_ok());
+        assert!(!b.api_key_withheld(), "still nothing withheld");
+    }
+
+    /// Withheld once, withheld for the process: on Linux polkit's
+    /// `auth_admin_keep` lets a later quiet check pass, so the read after an
+    /// administrator's first save comes back in full while the form still
+    /// holds no key. The flag must not follow that read, or the second save
+    /// would erase the key. A process that saw the key withheld cannot clear
+    /// it; a new process can.
+    #[test]
+    fn a_withheld_read_keeps_the_key_after_a_later_full_read() {
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
+            "server@default.ini",
+            "[Server]\nPort = 8080\nOpencodeApiKey =\n",
+        );
+        let withhold = c.withhold.clone();
+        *withhold.lock().unwrap() = true;
+        let b = fake::backend(c);
+        let kept = format!("write_file server@default.ini {}", fake::KEEP_API_KEY);
+
+        assert!(b.read_config(ConfigFile::Server).is_ok());
+        assert!(b.api_key_withheld(), "withheld");
+        assert_eq!(
+            b.write_config(
+                ConfigFile::Server,
+                "[Server]\nPort = 8090\nOpencodeApiKey =\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            fake::writes(&log),
+            std::slice::from_ref(&kept),
+            "first save"
+        );
+
+        *withhold.lock().unwrap() = false;
+        assert!(b.read_config(ConfigFile::Server).is_ok());
+        assert!(
+            b.api_key_withheld(),
+            "a later full read does not clear the flag"
+        );
+        log.lock().unwrap().clear();
+        assert_eq!(
+            b.write_config(
+                ConfigFile::Server,
+                "[Server]\nPort = 8091\nOpencodeApiKey =\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            fake::writes(&log),
+            std::slice::from_ref(&kept),
+            "second save"
+        );
+
+        log.lock().unwrap().clear();
+        assert_eq!(
+            b.write_config(
+                ConfigFile::Server,
+                "[Server]\nPort = 8091\nOpencodeApiKey = sk-typed-0000\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@default.ini"],
+            "a typed key is still sent, nothing kept"
+        );
+    }
+
+    /// `Direct` reads the user's own file: nothing is ever withheld.
+    #[test]
+    fn direct_never_withholds() {
+        assert!(!Backend::Direct.api_key_withheld());
     }
 
     /// A write the manager refuses reaches the user as the refusal's own text

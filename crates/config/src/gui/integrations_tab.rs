@@ -29,7 +29,7 @@ pub(super) fn wire(app: &AppWindow) {
             let cfg = server_cfg::load();
             let plan = match integrations::opencode_plan(
                 &cfg.opencode_base_url_or_default(),
-                cfg.opencode_api_key.as_deref(),
+                opencode_api_key(&cfg),
             ) {
                 Ok(plan) => plan,
                 Err(e) => {
@@ -84,7 +84,7 @@ pub(super) fn wire(app: &AppWindow) {
             let cfg = server_cfg::load();
             match integrations::save_opencode_models(
                 &cfg.opencode_base_url_or_default(),
-                cfg.opencode_api_key.as_deref(),
+                opencode_api_key(&cfg),
                 &keep,
             ) {
                 Ok(()) => set_status(&app, strings::t("opencode-saved"), false),

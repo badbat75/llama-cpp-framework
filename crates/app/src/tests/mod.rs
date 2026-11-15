@@ -25,6 +25,9 @@ fn data_root_e2e() {
     // ── The configuration files through the seam (server_control.rs) ─────
     crate::server_control::config_seam_e2e();
 
+    // ── A save after the manager withheld the API key ───────────────────
+    crate::server_control::api_key_kept_e2e();
+
     // ── The sweep reads the value to restore through the seam ────────────
     crate::bench::sweep::sweep_config_e2e();
 
@@ -33,4 +36,7 @@ fn data_root_e2e() {
 
     // ── The restore reads the instance's state folder (slot_state.rs) ────
     crate::slot_state::restore_reads_the_instance_state_dir_e2e();
+
+    // ── opencode.json's apiKey when the manager withheld it (integrations.rs)
+    crate::integrations::api_key_withheld_e2e();
 }

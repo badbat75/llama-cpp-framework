@@ -624,6 +624,9 @@ fn editable_widgets_track_model_after_edit() {
     // ── Settings tab: log rotation per backend (src/gui/settings_tab.rs) ─
     crate::gui::settings_tab_e2e();
 
+    // ── Server tab: the note on a withheld API key (src/gui/server_tab.rs)
+    crate::gui::server_tab_e2e();
+
     // ── Downloads window (src/gui/downloads.rs) ──────────────────────────
     // Its own root window too; the wiring is driven in save_flow.
     crate::gui::downloads_window_e2e();

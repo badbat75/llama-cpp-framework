@@ -16,7 +16,7 @@ use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient};
+use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -88,11 +88,16 @@ impl ManagerClient for FakeManager {
         self.record(format!("restart {id}"));
         Ok(())
     }
-    fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         Ok(None)
     }
-    fn write_file(&self, name: &str, _contents: &str) -> Result<(), ClientError> {
+    fn write_file(
+        &self,
+        name: &str,
+        _contents: &str,
+        _keep_api_key: bool,
+    ) -> Result<(), ClientError> {
         self.record(format!("write {name}"));
         Ok(())
     }

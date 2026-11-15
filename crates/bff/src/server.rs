@@ -6,7 +6,7 @@ use crate::session::{error, Sessions};
 use crate::Connect;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::ClientError;
+use pai_core::client::{ClientError, ManagerFile};
 use pai_core::server_cfg::{self, ServerConfig};
 use pai_core::{checks, net_ifaces, paths};
 use serde_json::{json, Value};
@@ -28,8 +28,8 @@ pub(crate) async fn read(
     let name = format!("server@{id}.ini");
     let ask = tokio::task::spawn_blocking(move || connect()?.read_file(&name));
     let (status, key) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(text)))) => {
-            return axum::Json(document(&text, identity.can_configure)).into_response()
+        Ok(Ok(Ok(Some(file)))) => {
+            return axum::Json(document(&file, identity.can_configure)).into_response()
         }
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
@@ -44,11 +44,14 @@ pub(crate) async fn read(
     error(status, key, &[])
 }
 
-/// The 200 document of the file `text`; `OpencodeApiKey` only for an
-/// administrator (`can_configure`), anyone else told it was `withheld`.
-fn document(text: &str, can_configure: bool) -> Value {
+/// The 200 document of the file; `OpencodeApiKey` only for an
+/// administrator (`can_configure`), anyone else told it was `withheld`, as
+/// is everyone the manager itself withheld it from.
+fn document(file: &ManagerFile, can_configure: bool) -> Value {
+    let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
-    let withheld = !can_configure && cfg.opencode_api_key.take().is_some();
+    let kept_here = !can_configure && cfg.opencode_api_key.take().is_some();
+    let withheld = kept_here || file.withheld;
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     let range = |key: &str| checks::server_int_range(key).map(|r| json!([r.start(), r.end()]));
     let base_url = ServerConfig {

@@ -39,6 +39,9 @@ pub struct Caller(pub String);
 /// (polkit unreachable) answers false.
 pub trait Authority {
     fn is_authorized(&self, caller: &Caller, action: Action) -> bool;
+    /// The same question asked without any interaction: one that would need
+    /// a prompt (a polkit challenge) answers false.
+    fn is_authorized_quietly(&self, caller: &Caller, action: Action) -> bool;
 }
 
 /// The state of an instance's unit, systemd's `ActiveState` names.
@@ -385,36 +388,70 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// The contents of file `name`, None when it does not exist. An instance
     /// file needs the control authorization: `caller` None (a transport
     /// with no identity for the call) or refused is NotAuthorized, nothing
-    /// read; the preset files need none.
+    /// read; the preset files need none. A reader of an instance file who
+    /// may not configure (asked without a prompt) gets `OpencodeApiKey`
+    /// blanked ([`withhold_api_key`]).
     pub fn read_file(
         &self,
         caller: Option<&Caller>,
         name: &str,
-    ) -> Result<Option<String>, ManagerError> {
+    ) -> Result<Option<pai_core::client::ManagerFile>, ManagerError> {
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+        let mut may_configure = true;
         if let ConfigFile::Instance(_) = file {
-            self.authorize(caller.ok_or(ManagerError::NotAuthorized)?, Action::Control)?;
+            let caller = caller.ok_or(ManagerError::NotAuthorized)?;
+            self.authorize(caller, Action::Control)?;
+            may_configure = self
+                .authority
+                .is_authorized_quietly(caller, Action::Configure);
         }
         let path = file_path(name)?;
         match std::fs::read_to_string(path) {
-            Ok(text) => Ok(Some(text)),
+            Ok(text) if may_configure => Ok(Some(pai_core::client::ManagerFile {
+                text,
+                withheld: false,
+            })),
+            Ok(text) => Ok(Some(withhold_api_key(&text))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(ManagerError::Io(e.kind())),
         }
     }
 
     /// Replace file `name` atomically, creating the directory; a new
-    /// `server@<id>.ini` adds instance `id`.
+    /// `server@<id>.ini` adds instance `id`. With `keep_api_key`, an
+    /// instance file keeps the `OpencodeApiKey` its current file holds
+    /// ([`keep_held_api_key`]); the checks run on the text written.
     pub fn write_file(
         &self,
         caller: &Caller,
         name: &str,
         contents: &str,
+        keep_api_key: bool,
     ) -> Result<(), ManagerError> {
         self.authorize(caller, Action::Configure)?;
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
         // A poisoned lock is taken over: it guards no data of its own.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let kept;
+        let contents = match &file {
+            ConfigFile::Instance(_) if keep_api_key => {
+                // An unreadable file says nothing about the key: refused,
+                // since writing the text as sent could erase it.
+                let held = match std::fs::read_to_string(file_path(name)?) {
+                    Ok(t) => crate::server_cfg::from_text(&t).opencode_api_key,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => return Err(ManagerError::Io(e.kind())),
+                };
+                match held {
+                    Some(key) => {
+                        kept = keep_held_api_key(contents, &key);
+                        kept.as_str()
+                    }
+                    None => contents,
+                }
+            }
+            _ => contents,
+        };
         check_contents(&file, contents).map_err(ManagerError::Invalid)?;
         if let ConfigFile::Instance(id) = &file {
             self.check_address(id, contents)?;
@@ -530,6 +567,97 @@ fn existing_id(id: &str) -> Result<(), ManagerError> {
 fn file_path(name: &str) -> Result<std::path::PathBuf, ManagerError> {
     config_file(name).ok_or(ManagerError::BadFileName)?;
     Ok(crate::paths::engine_config_dir().join(name))
+}
+
+/// `text` with every `OpencodeApiKey` line that holds a value rewritten as
+/// `OpencodeApiKey =` (its inline comment dropped with it, the line end
+/// kept); comment lines and every other line as they were. `withheld` says
+/// whether a value was blanked. The value is read as `pai_core::ini` reads
+/// it: up to the first `;` or `#`, trimmed.
+fn withhold_api_key(text: &str) -> pai_core::client::ManagerFile {
+    const KEY: &str = "OpencodeApiKey";
+    let mut withheld = false;
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let t = body.trim();
+        let holds_value = !t.starts_with([';', '#'])
+            && t.split_once('=').is_some_and(|(k, v)| {
+                k.trim() == KEY && !v.split([';', '#']).next().unwrap_or("").trim().is_empty()
+            });
+        if holds_value {
+            withheld = true;
+            out.push_str(KEY);
+            out.push_str(" =");
+            out.push_str(&line[body.len()..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    pai_core::client::ManagerFile {
+        text: out,
+        withheld,
+    }
+}
+
+/// `contents` with every live `OpencodeApiKey` line (not a comment) set to
+/// `OpencodeApiKey = <key>`, its line end kept; with no such line, one is
+/// added inside `[Server]`, after its last key line (right after the header
+/// when it has none), in the file's line end style; appended when there is
+/// no `[Server]` (a client renders an unset key as a commented hint only).
+fn keep_held_api_key(contents: &str, key: &str) -> String {
+    const KEY: &str = "OpencodeApiKey";
+    let mut found = false;
+    let mut out = String::with_capacity(contents.len() + key.len());
+    // Byte offset in `out` just past [Server]'s last key line, or its header.
+    let mut insert_at = None;
+    let mut in_server = false;
+    for line in contents.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let t = body.trim();
+        let is_comment = t.starts_with([';', '#']);
+        let is_key = !is_comment && t.split_once('=').is_some_and(|(k, _)| k.trim() == KEY);
+        if is_key {
+            found = true;
+            out.push_str(&format!("{KEY} = {key}"));
+            out.push_str(&line[body.len()..]);
+        } else {
+            out.push_str(line);
+        }
+        if t.starts_with('[') {
+            in_server = t == "[Server]";
+            if in_server {
+                insert_at = Some(out.len());
+            }
+        } else if in_server && !is_comment && t.contains('=') {
+            insert_at = Some(out.len());
+        }
+    }
+    if !found {
+        let eol = if contents.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let new_line = format!("{KEY} = {key}{eol}");
+        match insert_at {
+            Some(at) => {
+                if !out[..at].ends_with('\n') {
+                    out.insert_str(at, eol);
+                    out.insert_str(at + eol.len(), &new_line);
+                } else {
+                    out.insert_str(at, &new_line);
+                }
+            }
+            None => {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push_str(eol);
+                }
+                out.push_str(&new_line);
+            }
+        }
+    }
+    out
 }
 
 /// Fakes of the two seams that record every call.
@@ -652,18 +780,31 @@ pub(crate) mod fakes {
         }
     }
 
-    /// An authority that answers `allow` and records every question.
+    /// An authority that answers `allow` and records every question; the
+    /// questions asked without interaction answer `quiet` (`allow` unless
+    /// set with [`FakeAuthority::quietly`]) and are recorded apart.
     pub struct FakeAuthority {
         pub allow: bool,
+        pub quiet: bool,
         pub asked: Mutex<Vec<(Caller, Action)>>,
+        pub asked_quietly: Mutex<Vec<(Caller, Action)>>,
     }
 
     impl FakeAuthority {
         pub fn new(allow: bool) -> Self {
             Self {
                 allow,
+                quiet: allow,
                 asked: Mutex::new(Vec::new()),
+                asked_quietly: Mutex::new(Vec::new()),
             }
+        }
+
+        /// This authority answering `quiet` to the questions asked without
+        /// interaction: false is a caller polkit would challenge.
+        pub fn quietly(mut self, quiet: bool) -> Self {
+            self.quiet = quiet;
+            self
         }
     }
 
@@ -671,6 +812,13 @@ pub(crate) mod fakes {
         fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
             self.asked.lock().unwrap().push((caller.clone(), action));
             self.allow
+        }
+        fn is_authorized_quietly(&self, caller: &Caller, action: Action) -> bool {
+            self.asked_quietly
+                .lock()
+                .unwrap()
+                .push((caller.clone(), action));
+            self.quiet
         }
     }
 
@@ -810,6 +958,10 @@ pub(crate) mod fakes {
             }
             self.answers.iter().any(|(c, allow)| c == caller && *allow)
         }
+        /// Never held: a quiet question prompts nobody. Not recorded.
+        fn is_authorized_quietly(&self, caller: &Caller, _action: Action) -> bool {
+            self.answers.iter().any(|(c, allow)| c == caller && *allow)
+        }
     }
 
     /// A [`FakeResolver`] that holds the first lookup of `host` at `gate`
@@ -840,6 +992,24 @@ pub(crate) mod fakes {
             }
             self.inner.resolve(host)
         }
+    }
+}
+
+/// A file as read by a caller nothing was withheld from.
+#[cfg(test)]
+pub(crate) fn plain(text: &str) -> pai_core::client::ManagerFile {
+    pai_core::client::ManagerFile {
+        text: text.into(),
+        withheld: false,
+    }
+}
+
+/// The file `text` as read by a caller the API key was withheld from.
+#[cfg(test)]
+pub(crate) fn withheld(text: &str) -> pai_core::client::ManagerFile {
+    pai_core::client::ManagerFile {
+        text: text.into(),
+        withheld: true,
     }
 }
 
@@ -910,12 +1080,17 @@ pub(crate) fn manager_e2e() {
         )
         .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 8081\n"),
+            m.write_file(
+                &alice,
+                "server@default.ini",
+                "[Server]\nPort = 8081\n",
+                false
+            ),
             Err(ManagerError::NotAuthorized),
             "refused write of an instance file"
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", "[m]\nmodel = /m/a.gguf\n"),
+            m.write_file(&alice, "presets.ini", "[m]\nmodel = /m/a.gguf\n", false),
             Err(ManagerError::NotAuthorized),
             "refused write of presets.ini"
         );
@@ -1002,15 +1177,16 @@ pub(crate) fn manager_e2e() {
         )
         .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", default_ini),
+            m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
         assert_eq!(
             m.write_file(
                 &alice,
                 "presets.ini.disabled",
-                "[Old]\nmodel = /m/old.gguf\n"
+                "[Old]\nmodel = /m/old.gguf\n",
+                false
             ),
             Ok(())
         );
@@ -1027,11 +1203,11 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
-            Ok(Some(default_ini.into()))
+            Ok(Some(plain(default_ini)))
         );
         assert_eq!(
             m.read_file(Some(&alice), "presets.ini"),
-            Ok(Some(presets.into()))
+            Ok(Some(plain(presets)))
         );
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -1053,7 +1229,7 @@ pub(crate) fn manager_e2e() {
         let before = files_in(&sys);
         for name in bad_names(&sys) {
             assert_eq!(
-                m.write_file(&alice, &name, "[Server]\n"),
+                m.write_file(&alice, &name, "[Server]\n", false),
                 Err(ManagerError::BadFileName),
                 "write {name:?}"
             );
@@ -1081,7 +1257,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
             m.read_file(Some(&alice), "presets.ini"),
-            Ok(Some(presets.into()))
+            Ok(Some(plain(presets)))
         );
         assert_eq!(m.status("default"), Ok(UnitState::Active));
         assert!(
@@ -1123,11 +1299,11 @@ pub(crate) fn manager_e2e() {
         assert!(m.service().calls.lock().unwrap().is_empty());
         // Nor can it change a file.
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 1\n"),
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 1\n", false),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
-            m.write_file(&alice, "server@new.ini", "[Server]\nPort = 1\n"),
+            m.write_file(&alice, "server@new.ini", "[Server]\nPort = 1\n", false),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
@@ -1199,7 +1375,7 @@ pub(crate) fn manager_e2e() {
         .with_group(crate::manager::service::fakes::FakeGroup::new());
         // The same address as `default` (127.0.0.1:8081): refused, naming it.
         assert_eq!(
-            m.write_file(&alice, "server@lan-2.ini", default_ini),
+            m.write_file(&alice, "server@lan-2.ini", default_ini, false),
             Err(ManagerError::AddressInUse("default".into()))
         );
         assert!(
@@ -1208,13 +1384,17 @@ pub(crate) fn manager_e2e() {
         );
         // The same port on another specific host: fine.
         let lan2 = "[Server]\nPort = 8081\nHostname = 192.168.1.5\n";
-        assert_eq!(m.write_file(&alice, "server@lan-2.ini", lan2), Ok(()));
+        assert_eq!(
+            m.write_file(&alice, "server@lan-2.ini", lan2, false),
+            Ok(())
+        );
         // Host names are resolved: localhost is default's 127.0.0.1.
         assert_eq!(
             m.write_file(
                 &alice,
                 "server@loop.ini",
-                "[Server]\nPort = 8081\nHostname = localhost\n"
+                "[Server]\nPort = 8081\nHostname = localhost\n",
+                false
             ),
             Err(ManagerError::AddressInUse("default".into()))
         );
@@ -1227,7 +1407,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@named.ini",
-                "[Server]\nPort = 8081\nHostname = gpu-box\n"
+                "[Server]\nPort = 8081\nHostname = gpu-box\n",
+                false
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
@@ -1236,7 +1417,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@multi-home.ini",
-                "[Server]\nPort = 8081\nHostname = multi-home\n"
+                "[Server]\nPort = 8081\nHostname = multi-home\n",
+                false
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
@@ -1245,7 +1427,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@nowhere.ini",
-                "[Server]\nPort = 8090\nHostname = nowhere.example\n"
+                "[Server]\nPort = 8090\nHostname = nowhere.example\n",
+                false
             ),
             Err(ManagerError::UnresolvableHost("nowhere.example".into()))
         );
@@ -1258,7 +1441,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@multi.ini",
-                "[Server]\nPort = 8081\nHostname = 10.0.0.1, 192.168.1.5\n"
+                "[Server]\nPort = 8081\nHostname = 10.0.0.1, 192.168.1.5\n",
+                false
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
@@ -1267,7 +1451,7 @@ pub(crate) fn manager_e2e() {
             let text = format!("[Server]\nPort = 8081\nHostname = {wild}\n");
             assert!(
                 matches!(
-                    m.write_file(&alice, "server@wild.ini", &text),
+                    m.write_file(&alice, "server@wild.ini", &text, false),
                     Err(ManagerError::AddressInUse(ref other)) if other == "default" || other == "lan-2"
                 ),
                 "wildcard {wild}"
@@ -1278,7 +1462,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@wild.ini",
-                "[Server]\nPort = 8082\nHostname = 0.0.0.0\n"
+                "[Server]\nPort = 8082\nHostname = 0.0.0.0\n",
+                false
             ),
             Ok(())
         );
@@ -1287,13 +1472,14 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@late.ini",
-                "[Server]\nPort = 8082\nHostname = 10.0.0.1\n"
+                "[Server]\nPort = 8082\nHostname = 10.0.0.1\n",
+                false
             ),
             Err(ManagerError::AddressInUse("wild".into()))
         );
         // Rewriting an instance with its own address is fine.
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", default_ini),
+            m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
         );
         // Moving it onto another instance's address is refused, the file kept.
@@ -1301,7 +1487,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@default.ini",
-                "[Server]\nPort = 8081\nHostname = 192.168.1.5\n"
+                "[Server]\nPort = 8081\nHostname = 192.168.1.5\n",
+                false
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
@@ -1313,11 +1500,11 @@ pub(crate) fn manager_e2e() {
         // default host, so two bare files collide, and an explicit default
         // collides with an implicit one.
         assert_eq!(
-            m.write_file(&alice, "server@bare.ini", "[Server]\n"),
+            m.write_file(&alice, "server@bare.ini", "[Server]\n", false),
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "server@bare-2.ini", "[Server]\n"),
+            m.write_file(&alice, "server@bare-2.ini", "[Server]\n", false),
             Err(ManagerError::AddressInUse("bare".into()))
         );
         let explicit = format!(
@@ -1325,7 +1512,7 @@ pub(crate) fn manager_e2e() {
             crate::server_cfg::DEFAULT_PORT
         );
         assert_eq!(
-            m.write_file(&alice, "server@explicit.ini", &explicit),
+            m.write_file(&alice, "server@explicit.ini", &explicit, false),
             Err(ManagerError::AddressInUse("bare".into()))
         );
         // Another instance whose host no longer resolves is skipped: it
@@ -1339,7 +1526,8 @@ pub(crate) fn manager_e2e() {
             m.write_file(
                 &alice,
                 "server@fresh.ini",
-                "[Server]\nPort = 8083\nHostname = 10.0.0.1\n"
+                "[Server]\nPort = 8083\nHostname = 10.0.0.1\n",
+                false
             ),
             Ok(()),
             "an unresolvable other instance is skipped"
@@ -1347,7 +1535,7 @@ pub(crate) fn manager_e2e() {
         std::fs::remove_file(sys.join("server@stale.ini")).expect("drop stale");
         std::fs::remove_file(sys.join("server@fresh.ini")).expect("drop fresh");
         // presets.ini has no address: never checked.
-        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
         assert_eq!(m.list_instances(), ["bare", "default", "lan-2", "wild"]);
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -1372,7 +1560,7 @@ pub(crate) fn manager_e2e() {
         let probe = sys.join("probe");
         let enforced = std::fs::write(&probe, "").is_err();
         let _ = std::fs::remove_file(&probe);
-        let result = m.write_file(&alice, "presets.ini", "[Other]\nmodel = /m/o.gguf\n");
+        let result = m.write_file(&alice, "presets.ini", "[Other]\nmodel = /m/o.gguf\n", false);
         std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
         if enforced {
             assert!(
@@ -1520,8 +1708,11 @@ pub(crate) fn manager_instance_files_e2e() {
             FakeResolver::lan(),
         )
         .with_group(group);
-        assert_eq!(m.write_file(&alice, "server@default.ini", ini), Ok(()));
-        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", ini, false),
+            Ok(())
+        );
+        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
         let c = group_calls.lock().unwrap().clone();
         assert_eq!(c.len(), 1, "one group change, the instance file's: {c:?}");
         assert_eq!(c[0].group, INSTANCE_GROUP);
@@ -1539,11 +1730,11 @@ pub(crate) fn manager_instance_files_e2e() {
         // ── An authorized read of an instance file: asked, then read ─────
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
-            Ok(Some(ini.into()))
+            Ok(Some(plain(ini)))
         );
         assert_eq!(m.read_file(Some(&alice), "server@nope.ini"), Ok(None));
         // ── The preset files need no caller at all ───────────────────────
-        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(presets.into())));
+        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
         assert_eq!(m.read_file(None, "presets.ini.disabled"), Ok(None));
         assert_eq!(
             *m.authority().asked.lock().unwrap(),
@@ -1567,7 +1758,12 @@ pub(crate) fn manager_instance_files_e2e() {
         .with_group(FakeGroup::failing(std::io::ErrorKind::NotFound));
         let before = names();
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 8090\n"),
+            m.write_file(
+                &alice,
+                "server@default.ini",
+                "[Server]\nPort = 8090\n",
+                false
+            ),
             Err(ManagerError::Io(std::io::ErrorKind::NotFound))
         );
         assert_eq!(
@@ -1581,10 +1777,415 @@ pub(crate) fn manager_instance_files_e2e() {
             m.write_file(
                 &alice,
                 "presets.ini.disabled",
-                "[Old]\nmodel = /m/old.gguf\n"
+                "[Old]\nmodel = /m/old.gguf\n",
+                false
             ),
             Ok(())
         );
+    }
+}
+
+/// E2E phase for the API key withheld from a reader who may not configure,
+/// for this crate's e2e test to call (it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). An instance file
+/// needs only control to read, so a caller without configure (asked without
+/// a prompt: a polkit challenge counts as no) gets the `OpencodeApiKey` line
+/// blanked to `OpencodeApiKey =`, every other line as it was, and is told
+/// the key was withheld; a caller with configure gets the file as saved.
+/// The preset files are never touched.
+#[cfg(test)]
+pub(crate) fn manager_withholds_api_key_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let put = |name: &str, text: &str| std::fs::write(sys.join(name), text).expect("write");
+    let alice = Caller(":1.42".into());
+    // `control` granted; `configure` asked quietly answers `configure`.
+    let manager = |configure: bool| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(configure),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+    };
+    let ini = "\
+; Written by pai-config.
+[Server]
+Port = 8080
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication
+OpencodeBaseUrl = http://127.0.0.1:8080/v1
+OpencodeApiKey = sk-local-3f9a
+ModelsMax = 2
+";
+    let blanked = "\
+; Written by pai-config.
+[Server]
+Port = 8080
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication
+OpencodeBaseUrl = http://127.0.0.1:8080/v1
+OpencodeApiKey =
+ModelsMax = 2
+";
+    put("server@default.ini", ini);
+
+    // ── No configure: the value blanked, the rest as saved, withheld said ─
+    {
+        let m = manager(false);
+        let read = m.read_file(Some(&alice), "server@default.ini");
+        assert_eq!(read, Ok(Some(withheld(blanked))));
+        let text = read.unwrap().unwrap().text;
+        assert!(!text.contains("sk-local-3f9a"), "{text}");
+        assert_eq!(
+            crate::server_cfg::from_text(&text).opencode_api_key,
+            None,
+            "read back, the blanked file holds no key"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(alice.clone(), Action::Control)],
+            "control asked as before; configure never asked with a prompt"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(alice.clone(), Action::Configure)],
+            "configure asked without a prompt"
+        );
+    }
+
+    // ── Configure: the file as saved, nothing withheld, still no prompt ───
+    {
+        let m = manager(true);
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Ok(Some(plain(ini)))
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(alice.clone(), Action::Control)],
+            "an administrator's read prompts for nothing more than control"
+        );
+    }
+
+    // ── Refused control: NotAuthorized, configure not even asked ──────────
+    {
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false).quietly(true),
+            FakeResolver::lan(),
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(*m.authority().asked_quietly.lock().unwrap(), vec![]);
+    }
+
+    // ── Nothing to withhold: no key, a blank key, only the commented hint ─
+    for text in [
+        "[Server]\nPort = 8080\n",
+        "[Server]\nPort = 8080\nOpencodeApiKey =\n",
+        "[Server]\nPort = 8080\nOpencodeApiKey =   \n",
+        "[Server]\nPort = 8080\n; OpencodeApiKey = sk-xxx  ; blank = none\n",
+        "",
+    ] {
+        put("server@lan-2.ini", text);
+        let m = manager(false);
+        assert_eq!(
+            m.read_file(Some(&alice), "server@lan-2.ini"),
+            Ok(Some(plain(text))),
+            "nothing withheld from {text:?}"
+        );
+    }
+
+    // ── Every key line blanked: a duplicate, an inline comment, CRLF ──────
+    {
+        let m = manager(false);
+        put(
+            "server@lan-2.ini",
+            "[Server]\r\nOpencodeApiKey = sk-old-1111 ; rotated\r\nPort = 8081\r\nOpencodeApiKey = sk-new-2222\r\n",
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "server@lan-2.ini"),
+            Ok(Some(withheld(
+                "[Server]\r\nOpencodeApiKey =\r\nPort = 8081\r\nOpencodeApiKey =\r\n"
+            ))),
+            "both key lines blanked, the inline comment with the value, the line ends kept"
+        );
+        // Spelled as the parser still reads it: spaces around, none at all.
+        put(
+            "server@lan-2.ini",
+            "[Server]\n  OpencodeApiKey=sk-tight-3333\nPort = 8081\n",
+        );
+        let read = m
+            .read_file(Some(&alice), "server@lan-2.ini")
+            .unwrap()
+            .unwrap();
+        assert!(read.withheld, "{read:?}");
+        assert!(!read.text.contains("sk-tight-3333"), "{read:?}");
+        assert!(read.text.contains("\nPort = 8081\n"), "{read:?}");
+        assert_eq!(
+            crate::server_cfg::from_text(&read.text).opencode_api_key,
+            None
+        );
+    }
+
+    // ── A missing instance file is still None ────────────────────────────
+    assert_eq!(
+        manager(false).read_file(Some(&alice), "server@nope.ini"),
+        Ok(None)
+    );
+
+    // ── The preset files are never blanked, nor is configure asked ───────
+    {
+        let m = manager(false);
+        let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nOpencodeApiKey = not-a-secret-here\n";
+        put("presets.ini", presets);
+        put("presets.ini.disabled", presets);
+        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            m.read_file(Some(&alice), "presets.ini.disabled"),
+            Ok(Some(plain(presets)))
+        );
+        assert_eq!(*m.authority().asked_quietly.lock().unwrap(), vec![]);
+    }
+}
+
+/// E2E phase for a write that keeps the API key, for this crate's e2e test
+/// to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
+/// `src/tests/mod.rs`). A caller the key was withheld from saves the file
+/// it read, its key line blanked or gone: with `keep_api_key`, once the write
+/// is authorized (configure, as every write), the manager puts the key it
+/// holds back. The incoming `OpencodeApiKey` line takes the current value,
+/// in place; with no such line, one is added (a client renders an unset key
+/// as a commented hint only, so adding none would drop the key all the
+/// same). With nothing held, or without `keep_api_key`, the text is written
+/// as sent. The preset files are never touched.
+#[cfg(test)]
+pub(crate) fn manager_keeps_api_key_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let put = |name: &str, text: &str| std::fs::write(sys.join(name), text).expect("write");
+    let get = |name: &str| std::fs::read_to_string(sys.join(name)).unwrap_or_default();
+    let alice = Caller(":1.42".into());
+    let manager = |allow: bool| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(false),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+    };
+    let key_of = |text: &str| crate::server_cfg::from_text(text).opencode_api_key;
+    let key_lines = |text: &str| {
+        text.lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.starts_with([';', '#'])
+                    && t.split_once('=')
+                        .is_some_and(|(k, _)| k.trim() == "OpencodeApiKey")
+            })
+            .count()
+    };
+    let saved = "\
+; Written by pai-config.
+[Server]
+Port = 8080
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication
+OpencodeBaseUrl = http://127.0.0.1:8080/v1
+OpencodeApiKey = sk-local-3f9a
+ModelsMax = 2
+";
+    // What a caller without configure read, then saved with Port changed.
+    let blanked = "\
+; Written by pai-config.
+[Server]
+Port = 8090
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication
+OpencodeBaseUrl = http://127.0.0.1:8080/v1
+OpencodeApiKey =
+ModelsMax = 2
+";
+    let kept = "\
+; Written by pai-config.
+[Server]
+Port = 8090
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication
+OpencodeBaseUrl = http://127.0.0.1:8080/v1
+OpencodeApiKey = sk-local-3f9a
+ModelsMax = 2
+";
+    // A client's rendering of a config with no key: the hint, no key line.
+    let no_line = "\
+[Server]
+Port = 8090
+Hostname = 127.0.0.1
+; OpencodeApiKey = sk-xxx  ; API key for proxy/gateway authentication (opencode.json apiKey + Claude Code); blank = none
+ModelsMax = 2
+";
+
+    // ── The blanked line takes the held value, in place ──────────────────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", blanked, true),
+            Ok(())
+        );
+        assert_eq!(get("server@default.ini"), kept);
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(alice.clone(), Action::Configure)],
+            "configure asked, as for every write"
+        );
+    }
+
+    // ── No key line at all: the held key is added, the rest as sent ──────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", no_line, true),
+            Ok(())
+        );
+        let written = get("server@default.ini");
+        assert!(
+            written.starts_with(no_line),
+            "the text as sent, first:\n{written}"
+        );
+        assert_eq!(key_of(&written), Some("sk-local-3f9a".into()), "{written}");
+        assert_eq!(key_lines(&written), 1, "{written}");
+        assert_eq!(crate::server_cfg::from_text(&written).port, Some(8090));
+    }
+
+    // ── keep_api_key wins over a value sent with it ──────────────────────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        let typed = blanked.replace("OpencodeApiKey =\n", "OpencodeApiKey = sk-typed-0000\n");
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", &typed, true),
+            Ok(())
+        );
+        assert_eq!(get("server@default.ini"), kept);
+    }
+
+    // ── Without keep_api_key: as sent, the key dropped (as before) ───────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", blanked, false),
+            Ok(())
+        );
+        assert_eq!(get("server@default.ini"), blanked);
+        assert_eq!(key_of(&get("server@default.ini")), None);
+    }
+
+    // ── Nothing held: as sent, no line invented ──────────────────────────
+    {
+        let m = manager(true);
+        for held in [
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey =\n",
+        ] {
+            put("server@default.ini", held);
+            for sent in [blanked, no_line] {
+                assert_eq!(
+                    m.write_file(&alice, "server@default.ini", sent, true),
+                    Ok(())
+                );
+                assert_eq!(get("server@default.ini"), sent, "held {held:?}");
+            }
+        }
+        // A new instance: no current file at all.
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "server@lan-2.ini",
+                no_line.replace("8090", "8091").as_str(),
+                true
+            ),
+            Ok(())
+        );
+        assert_eq!(get("server@lan-2.ini"), no_line.replace("8090", "8091"));
+        std::fs::remove_file(sys.join("server@lan-2.ini")).expect("remove lan-2");
+    }
+
+    // ── Refused: nothing written, the key still there ────────────────────
+    {
+        put("server@default.ini", saved);
+        let m = manager(false);
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", blanked, true),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(get("server@default.ini"), saved);
+    }
+
+    // ── The content checks still run, on what would be written ───────────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        let bad = blanked.replace("Port = 8090", "Port = 0");
+        assert!(
+            matches!(
+                m.write_file(&alice, "server@default.ini", &bad, true),
+                Err(ManagerError::Invalid(_))
+            ),
+            "a bad Port is refused with the key kept or not"
+        );
+        assert_eq!(get("server@default.ini"), saved);
+    }
+
+    // ── The held file cannot be read: refused, never written blanked ─────
+    // An I/O error other than not-found (here permission denied) says
+    // nothing about the key: writing the blanked text would erase it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = sys.join("server@default.ini");
+        put("server@default.ini", saved);
+        let mode = |m: u32| {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(m)).expect("chmod")
+        };
+        mode(0o000);
+        // Root ignores the mode: only a real read failure tests anything.
+        if std::fs::read_to_string(&path).is_ok() {
+            mode(0o644);
+            eprintln!("skipped: the unreadable-file case needs a non-root user");
+        } else {
+            let m = manager(true);
+            let got = m.write_file(&alice, "server@default.ini", blanked, true);
+            mode(0o644);
+            assert_eq!(
+                got,
+                Err(ManagerError::Io(std::io::ErrorKind::PermissionDenied)),
+                "refused on the read error"
+            );
+            assert_eq!(get("server@default.ini"), saved, "the file as it was");
+        }
+    }
+
+    // ── A preset file is written as sent ─────────────────────────────────
+    {
+        put("server@default.ini", saved);
+        let m = manager(true);
+        let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+        assert_eq!(m.write_file(&alice, "presets.ini", presets, true), Ok(()));
+        assert_eq!(get("presets.ini"), presets);
     }
 }
 
@@ -1650,10 +2251,13 @@ pub(crate) fn manager_engine_dir_e2e() {
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     let disabled = "[Old]\nmodel = /models/old.gguf\n";
-    assert_eq!(m.write_file(&alice, "server@default.ini", ini), Ok(()));
-    assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
     assert_eq!(
-        m.write_file(&alice, "presets.ini.disabled", disabled),
+        m.write_file(&alice, "server@default.ini", ini, false),
+        Ok(())
+    );
+    assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+    assert_eq!(
+        m.write_file(&alice, "presets.ini.disabled", disabled, false),
         Ok(())
     );
     for (name, text) in [
@@ -1695,10 +2299,10 @@ pub(crate) fn manager_engine_dir_e2e() {
 
     // ── Reads and the list come from the engine's directory ───────────────
     assert_eq!(m.list_instances(), ["default"]);
-    assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(presets.into())));
+    assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
     assert_eq!(
         m.read_file(Some(&alice), "server@default.ini"),
-        Ok(Some(ini.into()))
+        Ok(Some(plain(ini)))
     );
     assert_eq!(m.start(&alice, "default"), Ok(()));
 
@@ -1709,7 +2313,8 @@ pub(crate) fn manager_engine_dir_e2e() {
         m.write_file(
             &alice,
             "server@lan-2.ini",
-            "[Server]\nPort = 8090\nHostname = 127.0.0.1\n"
+            "[Server]\nPort = 8090\nHostname = 127.0.0.1\n",
+            false
         ),
         Ok(())
     );
@@ -1798,10 +2403,7 @@ pub(crate) fn manager_waits_e2e() {
             let m = m.clone();
             on_thread(move || m.read_file(None, "presets.ini"))
         };
-        assert_eq!(
-            answer(&gate, "read_file", read),
-            Ok(Some(presets.to_string()))
-        );
+        assert_eq!(answer(&gate, "read_file", read), Ok(Some(plain(presets))));
         let stop = {
             let (m, bob) = (m.clone(), bob.clone());
             on_thread(move || m.stop(&bob, "default"))
@@ -1813,7 +2415,9 @@ pub(crate) fn manager_waits_e2e() {
         );
         let refused = {
             let (m, carol) = (m.clone(), carol.clone());
-            on_thread(move || m.write_file(&carol, "presets.ini", "[x]\nmodel = /m/x.gguf\n"))
+            on_thread(move || {
+                m.write_file(&carol, "presets.ini", "[x]\nmodel = /m/x.gguf\n", false)
+            })
         };
         assert_eq!(
             answer(&gate, "carol's write", refused),
@@ -1823,7 +2427,7 @@ pub(crate) fn manager_waits_e2e() {
         let disabled = "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n";
         let write = {
             let (m, bob) = (m.clone(), bob.clone());
-            on_thread(move || m.write_file(&bob, "presets.ini.disabled", disabled))
+            on_thread(move || m.write_file(&bob, "presets.ini.disabled", disabled, false))
         };
         assert_eq!(answer(&gate, "bob's write", write), Ok(()));
 
@@ -1884,7 +2488,9 @@ pub(crate) fn manager_waits_e2e() {
         );
         let pending = {
             let (m, alice) = (m.clone(), alice.clone());
-            on_thread(move || m.write_file(&alice, "server@default.ini", "[Server]\nPort = 9\n"))
+            on_thread(move || {
+                m.write_file(&alice, "server@default.ini", "[Server]\nPort = 9\n", false)
+            })
         };
         assert!(gate.arrived(1), "alice's write reached polkit");
         let start = {
@@ -1939,7 +2545,7 @@ pub(crate) fn manager_waits_e2e() {
         let lan_b = "[Server]\nPort = 8081\nHostname = gpu-box\n";
         let first = {
             let (m, alice) = (m.clone(), alice.clone());
-            on_thread(move || m.write_file(&alice, "server@lan-a.ini", lan_a))
+            on_thread(move || m.write_file(&alice, "server@lan-a.ini", lan_a, false))
         };
         assert!(
             gate.arrived(1),
@@ -1947,7 +2553,7 @@ pub(crate) fn manager_waits_e2e() {
         );
         let second = {
             let (m, bob) = (m.clone(), bob.clone());
-            on_thread(move || m.write_file(&bob, "server@lan-b.ini", lan_b))
+            on_thread(move || m.write_file(&bob, "server@lan-b.ini", lan_b, false))
         };
         // Time for the second to run past the first, if it can.
         let early = second.recv_timeout(Duration::from_millis(500)).ok();
@@ -2030,11 +2636,11 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(false);
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n"),
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n", false),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", "[a b]\nmodel = /m/a.gguf\n"),
+            m.write_file(&alice, "presets.ini", "[a b]\nmodel = /m/a.gguf\n", false),
             Err(ManagerError::NotAuthorized)
         );
         assert!(!sys.exists(), "nothing created");
@@ -2044,7 +2650,7 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(true);
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n"),
+            m.write_file(&alice, "server@default.ini", "[Server]\nPort = 0\n", false),
             invalid("not-whole-number-in-range", &["Port", "0", "1", "65535"])
         );
         assert!(listing().is_empty(), "nothing written: {:?}", listing());
@@ -2052,7 +2658,8 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(
                 &alice,
                 "server@default.ini",
-                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsDir = /models #1\n"
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsDir = /models #1\n",
+                false
             ),
             invalid("comment-markers", &["ModelsDir"])
         );
@@ -2070,16 +2677,17 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(true);
         assert_eq!(
-            m.write_file(&alice, "server@default.ini", default_ini),
+            m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", presets), Ok(()));
+        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
 
         assert_eq!(
             m.write_file(
                 &alice,
                 "server@default.ini",
-                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMemoryMargin = -1\n"
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMemoryMargin = -1\n",
+                false
             ),
             invalid(
                 "not-whole-number-in-range",
@@ -2094,14 +2702,14 @@ pub(crate) fn manager_checks_e2e() {
 
         let bad = format!("{presets}[Other]\nmodel = C:\\Models #1\\o.gguf\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &bad),
+            m.write_file(&alice, "presets.ini", &bad, false),
             invalid("comment-markers", &["model"])
         );
         let bad = format!(
             "{presets}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &bad),
+            m.write_file(&alice, "presets.ini", &bad, false),
             invalid("moe-cache-with-tensor-split", &[])
         );
         assert_eq!(read("presets.ini").as_deref(), Some(presets), "old kept");
@@ -2121,12 +2729,12 @@ pub(crate) fn manager_checks_e2e() {
         let m = manager(true);
         // default's ModelsMax is 2.
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"])),
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
             invalid("load-on-startup-over-max", &["3", "2"])
         );
         assert_eq!(read("presets.ini").as_deref(), Some(presets));
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b"])),
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b"]), false),
             Ok(())
         );
         // Lowering ModelsMax under them is refused too.
@@ -2134,7 +2742,8 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(
                 &alice,
                 "server@default.ini",
-                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n"
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
+                false
             ),
             invalid("load-on-startup-over-max", &["2", "1"])
         );
@@ -2144,7 +2753,8 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(
                 &alice,
                 "server@lan-2.ini",
-                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 0\n"
+                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 0\n",
+                false
             ),
             invalid("load-on-startup-unlimited", &["2"])
         );
@@ -2154,12 +2764,13 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(
                 &alice,
                 "server@lan-2.ini",
-                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 3\n"
+                "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 3\n",
+                false
             ),
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"])),
+            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
             invalid("load-on-startup-over-max", &["3", "2"])
         );
         assert_eq!(read("presets.ini"), Some(flagged(&["a", "b"])));
@@ -2171,11 +2782,11 @@ pub(crate) fn manager_checks_e2e() {
         let m = manager(true);
         std::fs::write(sys.join("presets.ini"), broken).expect("hand-edited fixture");
         let added = format!("{broken}[new]\nmodel = /models/new.gguf\n");
-        assert_eq!(m.write_file(&alice, "presets.ini", &added), Ok(()));
+        assert_eq!(m.write_file(&alice, "presets.ini", &added, false), Ok(()));
         assert_eq!(read("presets.ini"), Some(added.clone()));
         let edited = format!("{broken}[new]\nmodel = /models/new.gguf\nparallel = 0\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &edited),
+            m.write_file(&alice, "presets.ini", &edited, false),
             invalid(
                 "not-whole-number-in-range",
                 &["parallel", "0", "1", "2147483647"]
@@ -2188,24 +2799,30 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(true);
         // The broken preset moves out of presets.ini unchanged: accepted.
-        assert_eq!(m.write_file(&alice, "presets.ini.disabled", broken), Ok(()));
+        assert_eq!(
+            m.write_file(&alice, "presets.ini.disabled", broken, false),
+            Ok(())
+        );
         assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
         // A disabled preset edited now gets the preset rules.
         let edited = format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", &edited),
+            m.write_file(&alice, "presets.ini.disabled", &edited, false),
             invalid("fit-target-format", &["2048MiB", "MiB"])
         );
         assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
         // No startup count: llama-server never reads this file.
         let many = format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"]));
-        assert_eq!(m.write_file(&alice, "presets.ini.disabled", &many), Ok(()));
+        assert_eq!(
+            m.write_file(&alice, "presets.ini.disabled", &many, false),
+            Ok(())
+        );
         // Switching the broken one back on: new in presets.ini, so checked.
         let enabled = "[new]\nmodel = /models/new.gguf\n";
         std::fs::write(sys.join("presets.ini"), enabled).expect("presets.ini fixture");
         let on = format!("{enabled}{broken}");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &on),
+            m.write_file(&alice, "presets.ini", &on, false),
             invalid(
                 "not-whole-number-in-range",
                 &["ctx-size", "abc", "1", "2147483647"]
@@ -2225,6 +2842,44 @@ mod tests {
             hostname: host.map(str::to_string),
             ..Default::default()
         }
+    }
+
+    /// With no live key line in the incoming text, the held key goes inside
+    /// `[Server]`, not at the end of the file: a hand-edited file with
+    /// another section after `[Server]` would otherwise put it in that
+    /// section, where nothing reads it, and the key is lost.
+    #[test]
+    fn a_kept_key_with_no_line_goes_into_the_server_section() {
+        let key = "sk-local-3f9a";
+        for sent in [
+            "[Server]\nPort = 8090\nModelsMax = 2\n\n[Extra]\nFoo = 1\n",
+            "; Hand-edited.\n[Server]\nPort = 8090\n; OpencodeApiKey = sk-xxx  ; hint\n[Extra]\nFoo = 1\n",
+            "[Server]\r\nPort = 8090\r\n\r\n[Extra]\r\nFoo = 1\r\n",
+        ] {
+            let out = keep_held_api_key(sent, key);
+            let cfg = crate::server_cfg::from_text(&out);
+            assert_eq!(cfg.opencode_api_key.as_deref(), Some(key), "{out:?}");
+            assert_eq!(cfg.port, Some(8090), "{out:?}");
+            let line = out.find("OpencodeApiKey = sk-local").expect("key line");
+            let extra = out.find("[Extra]").expect("[Extra] kept");
+            assert!(line < extra, "the key before [Extra]: {out:?}");
+            assert!(
+                out[extra..].trim_end().ends_with("Foo = 1"),
+                "[Extra] as sent: {out:?}"
+            );
+            assert_eq!(
+                out.lines()
+                    .filter(|l| l.trim_start().starts_with("OpencodeApiKey ="))
+                    .count(),
+                1,
+                "{out:?}"
+            );
+        }
+        // Only [Server]: the line follows its last key, as before.
+        assert_eq!(
+            keep_held_api_key("[Server]\nPort = 8090\n", key),
+            "[Server]\nPort = 8090\nOpencodeApiKey = sk-local-3f9a\n"
+        );
     }
 
     #[test]

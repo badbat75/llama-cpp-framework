@@ -23,6 +23,12 @@ fn data_root_e2e() {
     // ── Manager core: the instance files hold a secret ──────────────────
     crate::manager::service::manager_instance_files_e2e();
 
+    // ── Manager core: the API key withheld from a reader without configure
+    crate::manager::service::manager_withholds_api_key_e2e();
+
+    // ── Manager core: a write that keeps the API key ────────────────────
+    crate::manager::service::manager_keeps_api_key_e2e();
+
     // ── Manager core: the instance files are the engine's ───────────────
     crate::manager::service::manager_engine_dir_e2e();
 

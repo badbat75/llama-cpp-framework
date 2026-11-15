@@ -824,13 +824,15 @@ fn run_bench_query(q: BenchQuery) -> Result<()> {
 /// StateDir prints the folder the instance really uses with "(default)":
 /// under the manager on Linux and Windows the instance's defaults
 /// `instance_models` and `instance_state` (`paths::instance_models_dir`,
-/// `paths::instance_state_dir`), not the user's own.
+/// `paths::instance_state_dir`), not the user's own. A key the manager
+/// withheld (`api_key_withheld`) prints as "(set, withheld)".
 fn show_lines_for(
     cfg: &server_cfg::ServerConfig,
     kind: server_control::Kind,
     os: server_control::Os,
     instance_models: &std::path::Path,
     instance_state: &std::path::Path,
+    api_key_withheld: bool,
 ) -> String {
     let mut out = String::new();
     let mut row = |label: &str, value: String| {
@@ -928,9 +930,13 @@ fn show_lines_for(
     );
     row(
         "OpencodeApiKey:",
-        cfg.opencode_api_key
-            .clone()
-            .unwrap_or_else(|| "(none)".into()),
+        cfg.opencode_api_key.clone().unwrap_or_else(|| {
+            if api_key_withheld {
+                "(set, withheld)".into()
+            } else {
+                "(none)".into()
+            }
+        }),
     );
     out
 }
@@ -953,6 +959,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
                     server_control::Os::current(),
                     &crate::paths::instance_models_dir(),
                     &crate::paths::instance_state_dir(),
+                    server_control::backend().api_key_withheld(),
                 )
             );
             Ok(())
@@ -2451,6 +2458,7 @@ mod tests {
             server_control::Os::Linux,
             Path::new(LINUX_INSTANCE_MODELS),
             Path::new(LINUX_INSTANCE_STATE),
+            false,
         );
         for (label, value) in needles {
             // Label and value must share a LINE: two separate contains() could
@@ -2519,6 +2527,7 @@ mod tests {
                     os,
                     Path::new(models),
                     Path::new(state),
+                    false,
                 );
                 assert_eq!(
                     row(&out, "ModelsDir:"),
@@ -2555,6 +2564,7 @@ mod tests {
                     os,
                     Path::new(LINUX_INSTANCE_MODELS),
                     Path::new(LINUX_INSTANCE_STATE),
+                    false,
                 );
                 assert_eq!(row(&out, "ModelsDir:"), "/srv/llm", "{kind:?} {os:?}");
                 assert_eq!(
@@ -2584,6 +2594,7 @@ mod tests {
                     os,
                     Path::new(LINUX_INSTANCE_MODELS),
                     Path::new(LINUX_INSTANCE_STATE),
+                    false,
                 );
                 for label in ["ModelsDir:", "StateDir:"] {
                     let value = row(&out, label);
@@ -2600,6 +2611,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A key the manager withheld (the caller may not configure) is shown
+    /// as set and withheld, never as "(none)": the file holds one. The row
+    /// is what scripts read, so its value is literal, like "(none)".
+    #[test]
+    fn server_show_says_a_withheld_key_is_set() {
+        let withheld = ServerConfig::default();
+        let out = show_lines_for(
+            &withheld,
+            server_control::Kind::Manager,
+            server_control::Os::Linux,
+            Path::new(LINUX_INSTANCE_MODELS),
+            Path::new(LINUX_INSTANCE_STATE),
+            true,
+        );
+        assert_eq!(row(&out, "OpencodeApiKey:"), "(set, withheld)");
+        let out = show_lines_for(
+            &withheld,
+            server_control::Kind::Manager,
+            server_control::Os::Linux,
+            Path::new(LINUX_INSTANCE_MODELS),
+            Path::new(LINUX_INSTANCE_STATE),
+            false,
+        );
+        assert_eq!(row(&out, "OpencodeApiKey:"), "(none)", "nothing withheld");
     }
 
     /// `pai server show` prints through the pure rule above for the real
@@ -2625,6 +2662,7 @@ mod tests {
             "Os::current()",
             "instance_models_dir()",
             "instance_state_dir()",
+            "api_key_withheld()",
         ] {
             assert!(show.contains(want), "server show has no {want}:\n{show}");
         }
@@ -2884,6 +2922,58 @@ pub(crate) fn cli_config_e2e() {
         assert!(file("presets.ini.disabled").contains("[Qwen3.8-27B]"));
         nothing_per_user("preset disable");
     });
+
+    // The key withheld from this caller: `server set` saves back a file
+    // with no key, and asks the manager to keep its own; a key given with
+    // --opencode-api-key is sent as given, nothing kept.
+    {
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_file(
+                "server@default.ini",
+                "[Server]\nPort = 8080\nOpencodeApiKey =\n",
+            )
+            .with_file(
+                "presets.ini",
+                "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+            );
+        *c.withhold.lock().unwrap() = true;
+        let files = c.files.clone();
+        let file = || {
+            files
+                .lock()
+                .unwrap()
+                .get("server@default.ini")
+                .cloned()
+                .unwrap_or_default()
+        };
+        fake::scoped(fake::backend(c), || {
+            log.lock().unwrap().clear();
+            run(cli(&["x", "server", "set", "--port", "8099"])).expect("server set");
+            assert_eq!(
+                fake::writes(&log),
+                [format!(
+                    "write_file server@default.ini {}",
+                    fake::KEEP_API_KEY
+                )]
+            );
+            assert_eq!(crate::server_cfg::from_text(&file()).port, Some(8099));
+
+            log.lock().unwrap().clear();
+            run(cli(&[
+                "x",
+                "server",
+                "set",
+                "--opencode-api-key",
+                "sk-typed-0000",
+            ]))
+            .expect("server set with a key");
+            assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
+            assert_eq!(
+                crate::server_cfg::from_text(&file()).opencode_api_key,
+                Some("sk-typed-0000".into())
+            );
+        });
+    }
 
     // Refused: the command fails with the refusal's text, nothing written.
     let refusal = pai_core::checks::Refusal {

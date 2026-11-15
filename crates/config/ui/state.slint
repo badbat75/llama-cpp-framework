@@ -83,6 +83,9 @@ export global AppState {
     // defaults have ONE owner: server_form::config_to_form.
     in-out property <ServerForm> server_form;
     in-out property <ServerForm> server_form_base;
+    // The manager withheld the saved OpencodeApiKey (the user may not
+    // configure): the Server tab says a key is set; set by Rust at each load.
+    in-out property <bool> api_key_withheld: false;
     out property <bool> server_dirty: server_form != server_form_base;
     // Save gating shared by the Server tab's Save button and the Ctrl+S
     // shortcut (app.slint): single source so the two can't drift.

@@ -26,7 +26,7 @@ enum Request {
     Stop(String),
     Restart(String),
     ReadFile(String),
-    WriteFile(String, String),
+    WriteFile(String, String, bool),
     BootEnabled(String),
     SetBootEnabled(String, bool),
 }
@@ -43,7 +43,11 @@ impl Request {
             "Stop" => Request::Stop(arg("id")?),
             "Restart" => Request::Restart(arg("id")?),
             "ReadFile" => Request::ReadFile(arg("name")?),
-            "WriteFile" => Request::WriteFile(arg("name")?, arg("contents")?),
+            "WriteFile" => Request::WriteFile(
+                arg("name")?,
+                arg("contents")?,
+                v.get("keep_api_key")?.as_bool()?,
+            ),
             "BootEnabled" => Request::BootEnabled(arg("id")?),
             "SetBootEnabled" => Request::SetBootEnabled(arg("id")?, v.get("enabled")?.as_bool()?),
             _ => return None,
@@ -82,9 +86,9 @@ where
             .map(|()| Value::Null),
         Request::ReadFile(name) => manager
             .read_file(changer(caller).ok(), &name)
-            .map(|text| json!(text)),
-        Request::WriteFile(name, contents) => changer(caller)
-            .and_then(|c| manager.write_file(c, &name, &contents))
+            .map(|file| json!(file.map(|f| json!({"text": f.text, "withheld": f.withheld})))),
+        Request::WriteFile(name, contents, keep) => changer(caller)
+            .and_then(|c| manager.write_file(c, &name, &contents, keep))
             .map(|()| Value::Null),
         Request::BootEnabled(id) => manager.boot_enabled(&id).map(|on| json!(on)),
         Request::SetBootEnabled(id, enabled) => changer(caller)
@@ -320,7 +324,7 @@ mod tests {
     /// reached.
     #[test]
     fn a_malformed_request_is_answered_and_ends_the_connection() {
-        let bodies: [&[u8]; 12] = [
+        let bodies: [&[u8]; 14] = [
             b"",
             b"not json",
             b"{\"method\":",
@@ -333,6 +337,9 @@ mod tests {
             b"{\"method\":\"Start\"}",
             b"{\"method\":\"Start\",\"id\":5}",
             b"{\"method\":\"WriteFile\",\"name\":\"presets.ini\"}",
+            // `keep_api_key` is required, a bool, as SetBootEnabled's `enabled`.
+            b"{\"method\":\"WriteFile\",\"name\":\"presets.ini\",\"contents\":\"\"}",
+            b"{\"method\":\"WriteFile\",\"name\":\"presets.ini\",\"contents\":\"\",\"keep_api_key\":\"no\"}",
         ];
         for body in bodies {
             let c = core(true);
@@ -414,7 +421,7 @@ mod tests {
                 json!({"method": "Start", "id": "default"}),
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Restart", "id": "default"}),
-                json!({"method": "WriteFile", "name": "presets.ini", "contents": "[x]\nmodel = /m/x.gguf\n"}),
+                json!({"method": "WriteFile", "name": "presets.ini", "contents": "[x]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -466,7 +473,7 @@ mod tests {
                 json!({"method": "Start", "id": "default"}),
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Restart", "id": "default"}),
-                json!({"method": "WriteFile", "name": "presets.ini", "contents": ""}),
+                json!({"method": "WriteFile", "name": "presets.ini", "contents": "", "keep_api_key": false}),
                 json!({"method": "ReadFile", "name": "server@default.ini"}),
                 json!({"method": "Status", "id": "default"}),
             ]),
@@ -592,7 +599,7 @@ mod tests {
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Status", "id": "../x"}),
                 json!({"method": "ReadFile", "name": "/etc/passwd"}),
-                json!({"method": "WriteFile", "name": "server.ini", "contents": "x"}),
+                json!({"method": "WriteFile", "name": "server.ini", "contents": "x", "keep_api_key": false}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");

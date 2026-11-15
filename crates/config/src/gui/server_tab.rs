@@ -157,3 +157,106 @@ fn snapshot_server_base(app: &AppWindow) {
     let s = app.global::<AppState>();
     s.set_server_form_base(s.get_server_form());
 }
+
+/// E2E phase, for the shared UI test to call (`gui::server_tab_e2e`): the
+/// Server tab under a manager that withheld the API key (the user may not
+/// configure) says a key is set that only an administrator can see, and
+/// leaves the key field unset, so a save without a key typed keeps the
+/// manager's (`server_control`). With the key read in full, no such note.
+/// The note is pinned by whether a search finds it: it must be built only
+/// when withheld (an `if` in the page), since a `visible: false` element
+/// still answers a search.
+#[cfg(test)]
+pub(super) fn e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use i_slint_backend_testing::ElementHandle;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+
+    let app = AppWindow::new().expect("build AppWindow");
+    install_strings(app.global::<Strings>());
+    app.window().set_size(slint::PhysicalSize::new(1400, 3200));
+    app.show().expect("realize window");
+    let st = app.global::<AppState>();
+    st.set_current_tab(0); // Server
+    let note = strings::t("api-key-withheld");
+    let shown = |label: &str| {
+        ElementHandle::find_by_accessible_label(&app, label)
+            .next()
+            .is_some()
+    };
+
+    for withhold in [true, false] {
+        let log = fake::log();
+        let text = if withhold {
+            "[Server]\nPort = 8099\nOpencodeApiKey =\n"
+        } else {
+            "[Server]\nPort = 8099\nOpencodeApiKey = sk-local-3f9a\n"
+        };
+        let c = FakeClient::new(&log, pai_core::client::InstanceState::Inactive)
+            .with_file("server@default.ini", text);
+        *c.withhold.lock().unwrap() = withhold;
+        fake::scoped(fake::backend(c), || load_server_into_ui(&app));
+        let form = st.get_server_form();
+        assert_eq!(form.port.as_str(), "8099", "loaded: {withhold}");
+        if withhold {
+            assert!(form.api_key_nokey, "withheld: the key field left unset");
+            assert_eq!(form.opencode_api_key.as_str(), "");
+        } else {
+            assert!(!form.api_key_nokey);
+            assert_eq!(form.opencode_api_key.as_str(), "sk-local-3f9a");
+        }
+        assert_eq!(shown(&note), withhold, "the note when withheld: {withhold}");
+    }
+    assert_eq!(
+        note, "A key is set. Only an administrator can see it.",
+        "the note is in the strings file"
+    );
+
+    // An administrator's second save keeps the key too. On Linux polkit's
+    // auth_admin_keep lets the quiet check pass after the first save, so the
+    // read that follows it comes back in full while the form still holds no
+    // key: the second write must still ask the manager to keep its own.
+    {
+        let log = fake::log();
+        let c = FakeClient::new(&log, pai_core::client::InstanceState::Inactive).with_file(
+            "server@default.ini",
+            "[Server]\nPort = 8099\nOpencodeApiKey =\n",
+        );
+        let withhold = c.withhold.clone();
+        *withhold.lock().unwrap() = true;
+        let kept = format!("write_file server@default.ini {}", fake::KEEP_API_KEY);
+        // What the Save button does (`on_save_server`, wired only with a
+        // tray): the form to a config, the save, then the snapshot re-read.
+        let save = |app: &AppWindow| {
+            let cfg = server_form::form_to_config(&app.global::<AppState>().get_server_form());
+            server_cfg::save(&cfg).expect("save");
+            refresh_server_snapshot(app);
+        };
+        fake::scoped(fake::backend(c), || {
+            load_server_into_ui(&app);
+            assert!(st.get_server_form().api_key_nokey, "loaded withheld");
+            // The first save's configure check (auth_admin_keep) is what lets
+            // every quiet check pass from here on, the save's own re-read
+            // included.
+            *withhold.lock().unwrap() = false;
+            save(&app);
+            assert_eq!(
+                fake::writes(&log),
+                std::slice::from_ref(&kept),
+                "first save"
+            );
+
+            log.lock().unwrap().clear();
+            let mut form = st.get_server_form();
+            form.port = "8098".into();
+            st.set_server_form(form);
+            save(&app);
+            assert_eq!(
+                fake::writes(&log),
+                std::slice::from_ref(&kept),
+                "second save"
+            );
+        });
+    }
+}

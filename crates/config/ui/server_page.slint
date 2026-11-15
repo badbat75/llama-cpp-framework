@@ -88,16 +88,26 @@ export component ServerPage inherits ScrollView {
                 label_width <=> LabelColumn.server;
                 label: Strings.t("api-key");
                 hint: Strings.t("api-key-hint");
-                HorizontalLayout {
-                    spacing: 8px;
-                    CheckBox {
-                        text: Strings.t("no-key");
-                        checked <=> AppState.server_form.api_key_nokey;
+                VerticalLayout {
+                    spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        CheckBox {
+                            text: Strings.t("no-key");
+                            checked <=> AppState.server_form.api_key_nokey;
+                        }
+                        LineEdit {
+                            enabled: !AppState.server_form.api_key_nokey;
+                            text <=> AppState.server_form.opencode_api_key;
+                            horizontal-stretch: 1;
+                        }
                     }
-                    LineEdit {
-                        enabled: !AppState.server_form.api_key_nokey;
-                        text <=> AppState.server_form.opencode_api_key;
-                        horizontal-stretch: 1;
+                    // Built only when the manager withheld the key (an
+                    // `if`, so the note is absent, not hidden, otherwise).
+                    if AppState.api_key_withheld : WrapText {
+                        text: Strings.t("api-key-withheld");
+                        font_size: 12px;
+                        color: Palette.foreground.transparentize(Tokens.muted);
                     }
                 }
             }

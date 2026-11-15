@@ -407,6 +407,7 @@ base-url-hint = "The address integrations use (opencode.json and Claude Code).\n
 api-key = "API key"
 api-key-hint = "The key integrations send. Needed only behind a proxy or LLM gateway that requires one.\nNo key = none."
 no-key = "No key"
+api-key-withheld = "A key is set. Only an administrator can see it."
 resources = "Resources"
 cpu-threads = "CPU threads"
 cpu-threads-hint = "How many CPU threads generate tokens. More won't help once the GPU is the limit.\nDefault: llama.cpp uses the physical core count. Maximum = logical processors.\nFlag: --threads"

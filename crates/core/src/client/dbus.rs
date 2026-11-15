@@ -1,7 +1,7 @@
 //! [`ManagerClient`] over D-Bus: interface `org.privateai.Manager1` at
 //! `/org/privateai/Manager1`, on the system bus or on a given connection.
 
-use super::{ClientError, InstanceState, ManagerClient};
+use super::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
 use zbus::message::Message;
@@ -93,13 +93,21 @@ impl ManagerClient for DbusClient {
     fn restart(&self, id: &str) -> Result<(), ClientError> {
         self.on_instance("Restart", id)
     }
-    /// The manager answers (exists, text): a missing file is (false, "").
-    fn read_file(&self, name: &str) -> Result<Option<String>, ClientError> {
-        let (exists, text): (bool, String) = body(self.call("ReadFile", &(name,))?)?;
-        Ok(exists.then_some(text))
+    /// The manager answers (exists, text, withheld): a missing file is
+    /// (false, "", false).
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
+        let (exists, text, withheld): (bool, String, bool) =
+            body(self.call("ReadFile", &(name,))?)?;
+        Ok(exists.then_some(ManagerFile { text, withheld }))
     }
-    fn write_file(&self, name: &str, contents: &str) -> Result<(), ClientError> {
-        self.call("WriteFile", &(name, contents)).map(|_| ())
+    fn write_file(
+        &self,
+        name: &str,
+        contents: &str,
+        keep_api_key: bool,
+    ) -> Result<(), ClientError> {
+        self.call("WriteFile", &(name, contents, keep_api_key))
+            .map(|_| ())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         body(self.call("BootEnabled", &(id,))?)
