@@ -15,7 +15,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - An independent rerun of cargo commands that prints `Finished ... in 0.0xs` is cargo replaying a cached
   pass (its fingerprint does match the current sources: `cargo check -v` prints `Fresh <pkg>`). To compile
   the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
-  cross target with `cargo clean -p <pkg> --target <triple>`. Bare cargo commands here land in
+  cross target with `cargo clean -p <pkg> --target <triple>`. The rerun's own log proves the compile when
+  it prints `Compiling <pkg>`; a follow-up `cargo clippy -p <pkg> -v` printing `Fresh <pkg>` confirms the
+  fingerprint (cargo's own `-v` changes no rustc fingerprint). Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
   captured from the real system; a name-prefix match is tested with every real name sharing the prefix
@@ -338,6 +340,11 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## bff and web UI
 
+- Session reply shape: pin it with `Reply::assert_user_reply(user)` (`tests/session.rs`): the
+  key-count assert (object has exactly one key, `user`) runs before the value assert, so a reply with
+  an extra key reds as "carries more than the user", never as a name typo. The fake accounts' `Identity`
+  struct literals keep `can_configure` (they build the authenticator's answer, not the reply): a coder
+  who drops the field edits those literals mechanically, the reply pins stay green.
 - Sign-in split for tests: the manager's `(ok, can_configure)` mapping belongs to `SystemAuthenticator`
   (fake `ManagerClient` over a `Connect`, plain `#[test]`s in `tests/authenticator.rs`); the HTTP
   mapping (403 `session-not-administrator` is no credential failure: refusals are a counter of their

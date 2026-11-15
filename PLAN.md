@@ -799,7 +799,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    is 403 `session-not-administrator`, counted in its own refusals list per (lowercased user, IP),
    5 per window then 429, apart from the bad-password failures. Left from its review: after a
    timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
-   (the "bound concurrent checks" item above); next, the session reply drops `canConfigure`. Then 6b
+   (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); next, `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding go (every session is a `pai` member, the manager still withholds). Then 6b
    part 3: the bff calls the manager for the signed-in user. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read

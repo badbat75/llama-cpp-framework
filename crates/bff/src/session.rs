@@ -408,10 +408,7 @@ fn cookie_value(headers: &HeaderMap) -> Option<String> {
 }
 
 fn identity_json(identity: &Identity) -> axum::Json<serde_json::Value> {
-    axum::Json(serde_json::json!({
-        "user": identity.user,
-        "canConfigure": identity.can_configure,
-    }))
+    axum::Json(serde_json::json!({ "user": identity.user }))
 }
 
 /// `{"key": <strings key>, "args": [...]}` with `status`.

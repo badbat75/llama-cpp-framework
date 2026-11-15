@@ -10,8 +10,8 @@
 //!
 //! The contract (fe/briefs/api-contract.md) and the choices made here:
 //! - `POST /api/session` `{"username", "password"}`: 200
-//!   `{"user", "canConfigure"}` from the authenticator's identity and a
-//!   cookie that is HttpOnly, SameSite=Strict, Path=/, an opaque random id;
+//!   `{"user"}` (the whole reply: the web UI no longer reads a role from
+//!   it) and a cookie that is HttpOnly, SameSite=Strict, Path=/, an opaque random id;
 //!   no `Secure` while the bff serves plain HTTP on loopback only (a browser
 //!   would not send it back over http).
 //! - Wrong user or password: 401 `session-bad-credentials`, the two not told
@@ -294,6 +294,28 @@ impl Reply {
         assert_eq!(
             self.json(),
             json!({ "key": key, "args": args }),
+            "{}",
+            self.body
+        );
+    }
+
+    /// The success body of the session routes: exactly `{"user": <name>}`,
+    /// one key, no other (fe/briefs/api-contract.md: the session reply is
+    /// `{"user"}`, the web UI no longer reads a role from it).
+    fn assert_user_reply(&self, user: &str) {
+        let value = self.json();
+        let obj = value
+            .as_object()
+            .unwrap_or_else(|| panic!("not an object: {}", self.body));
+        assert_eq!(
+            obj.len(),
+            1,
+            "the reply must carry the user alone: {}",
+            self.body
+        );
+        assert_eq!(
+            obj.get("user").and_then(Value::as_str),
+            Some(user),
             "{}",
             self.body
         );
@@ -936,10 +958,7 @@ async fn refusals_for_one_name_do_not_lock_another() {
 
     let admin = sign_in(&a.router, "root-admin", "s3cret-Admin!").await;
     assert_eq!(admin.status, StatusCode::OK, "{}", admin.body);
-    assert_eq!(
-        admin.json(),
-        json!({ "user": "root-admin", "canConfigure": true })
-    );
+    admin.assert_user_reply("root-admin");
     let member = sign_in(&a.router, "alice", "correct horse").await;
     assert_eq!(member.status, StatusCode::OK, "{}", member.body);
 
@@ -1286,7 +1305,8 @@ async fn the_password_is_never_sent_back() {
 
 // ── Signing in ──────────────────────────────────────────────────────────
 
-/// The right password: 200 with exactly the user and `canConfigure`, and
+/// The right password: 200 with exactly `{"user": <name>}` (the reply
+/// carries the user alone, no role: fe/briefs/api-contract.md), and
 /// the session cookie with its attributes. No `Secure`: the bff serves plain
 /// HTTP on loopback, where a browser would not send a Secure cookie back
 /// (to add with TLS); no `Domain`, so it stays on this host.
@@ -1300,7 +1320,7 @@ async fn signing_in_answers_the_identity_and_sets_the_cookie() {
         "content-type {:?}",
         r.content_type
     );
-    assert_eq!(r.json(), json!({ "user": "alice", "canConfigure": false }));
+    r.assert_user_reply("alice");
 
     let c = r.cookie();
     assert!(c.attr("httponly").is_some(), "HttpOnly: {c:?}");
@@ -1339,23 +1359,20 @@ async fn the_cookie_is_an_opaque_random_id() {
     assert_ne!(first.value, second.value, "the same id twice");
 }
 
-/// `canConfigure` is the authenticator's answer: true for an
-/// administrator.
+/// A real administrator signs in, and the reply of both routes is the
+/// user alone: the web UI no longer reads a role from the session reply,
+/// so an administrator's sign-in and session read answer exactly
+/// `{"user"}`, with no key carrying the role.
 #[tokio::test]
-async fn can_configure_comes_from_the_authenticator() {
+async fn an_administrators_reply_is_the_user_alone() {
     let a = app();
     let r = sign_in(&a.router, "root-admin", "s3cret-Admin!").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(
-        r.json(),
-        json!({ "user": "root-admin", "canConfigure": true })
-    );
+    r.assert_user_reply("root-admin");
     let cookie = r.cookie().header();
     let read = get_session(&a.router, Some(&cookie)).await;
-    assert_eq!(
-        read.json(),
-        json!({ "user": "root-admin", "canConfigure": true })
-    );
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    read.assert_user_reply("root-admin");
 }
 
 /// The user shown is the account the authenticator names, not what was
@@ -1373,7 +1390,7 @@ async fn the_user_is_the_authenticators_name_not_the_typed_one() {
     }]));
     let r = sign_in(&a.router, "Alice", "correct horse").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!({ "user": "alice", "canConfigure": false }));
+    r.assert_user_reply("alice");
 }
 
 // ── Reading and ending the session ──────────────────────────────────────
@@ -1386,12 +1403,12 @@ async fn get_with_the_cookie_answers_the_identity() {
     let cookie = alice_cookie(&a.router).await;
     let r = get_session(&a.router, Some(&cookie)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!({ "user": "alice", "canConfigure": false }));
+    r.assert_user_reply("alice");
 
     let among = format!("theme=dark; {cookie}; lang=en");
     let r = get_session(&a.router, Some(&among)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!({ "user": "alice", "canConfigure": false }));
+    r.assert_user_reply("alice");
 }
 
 /// Signing out: 204, the cookie cleared in the browser (same name and path,

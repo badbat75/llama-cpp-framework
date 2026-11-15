@@ -8,8 +8,8 @@
 //!
 //! The mapping (fe/briefs/api-contract.md, crates/bff/README.md):
 //! - `Ok((true, true))`: signed in: the `Identity` of the typed name,
-//!   `can_configure` true (the session reply keeps `canConfigure` while
-//!   the web UI still reads it).
+//!   `can_configure` true (the session reply no longer carries a role:
+//!   fe/briefs/api-contract.md, the web UI no longer reads one).
 //! - `Ok((true, false))`: `AuthError::NotAdministrator`, the route's 403
 //!   `session-not-administrator`.
 //! - `Ok((false, _))`: `AuthError::BadCredentials`, the route's 401,
