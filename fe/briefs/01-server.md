@@ -60,8 +60,8 @@ this section).
 - 5.1 F4 row, 5.2 F4 and 5.3 F4: drop every clause about a user or a withheld key; F4 is the No key
   box, the password input and Show, for every session.
 - 5.5: `session-role-admin`, `session-role-user`, `server-read-only` go; `signin-intro` changes (9).
-  2.8's table: `server-api-key-withheld` goes. 5.7: `boot-hint` unchanged (its "Changing it needs an
-  administrator." stays true).
+  2.8's table: `server-api-key-withheld` goes. 5.7: `boot-hint` loses its second line, "Changing it needs an
+  administrator." (user, 2026-11-15): every signed-in user is one, so it says nothing; slice R1.
 
 **Removal of the code on main**, in build order. Each line is one tester run and one coder run, with a
 test that fails first. Until R4, the session parser still requires `canConfigure`, so R2 and R3 tests
@@ -202,8 +202,8 @@ route, and returning to it after sign-in).
     the alert inside the dialog, the dialog stays open, its Cancel works.
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages), [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
 
-    Telling it apart from `session-bad-credentials` is accepted (designer's recommendation, to confirm
-    with the user): the reply comes only after the password is verified, so it tells nothing to
+    Telling it apart from `session-bad-credentials` is decided (user, 2026-11-15, on the designer's
+    recommendation): the reply comes only after the password is verified, so it tells nothing to
     someone who does not already hold the account's password; the 429 limit is checked first, as
     today, and bounds guessing; a single message would leave a non-administrator retrying a correct
     password into the 429 lockout with no hint of what to do (3.3.3). The cost: a guesser who hits a
@@ -1138,8 +1138,8 @@ The existing `version-*`, `instances-*` and `instance-state-*` keys stay as they
 | `field-error-comment-markers` | Remove the ; and # characters: the INI file would cut the value there. |
 | `api-not-whole-number-in-range` | {0} = `{1}` is not a whole number from {2} to {3} (copy) |
 | `api-comment-markers` | copy of `comment-markers` |
-| `api-load-on-startup-over-max` | copy |
-| `api-load-on-startup-unlimited` | copy |
+| `api-load-on-startup-over-max` | {0} enabled presets would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another preset, or raise ModelsMax (copy of `load-on-startup-over-max`, verbatim: no closing full stop, like every copied server check text in this table and in the configurator) |
+| `api-load-on-startup-unlimited` | {0} enabled preset(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off (copy of `load-on-startup-unlimited`, verbatim: no closing full stop) |
 | `api-client-address-in-use` | Another instance, {0}, already uses that address and port. (copy) |
 | `api-client-unresolvable-host` | The host name {0} does not resolve to an address. (copy) |
 | `api-server-changed-elsewhere` | These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost. |
@@ -1179,7 +1179,7 @@ not added: `session-sign-in`, `signin-title`, `signin-cancel`, `instance-not-fou
 | `api-client-service-failed` | The service manager reported an error. The instance's log on the server says why. (adapted from `client-service-failed`: no `{0}`, the bff keeps the manager's detail out of the body) |
 | `boot-label` | Start at boot |
 | `boot-toggle` | start llama-server when the system starts (copy of `start-at-boot-toggle`) |
-| `boot-hint` | Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator. (adapted from `start-at-boot-hint`: the GUI's last sentence names its footer) |
+| `boot-hint` | Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic). (adapted from `start-at-boot-hint`: the GUI's last sentence names its footer; one line since the web UI is for administrators only, user, 2026-11-15) |
 | `boot-on` | llama-server will start when the system starts. (copy of `start-at-boot-on`) |
 | `boot-off` | llama-server will no longer start when the system starts. (copy of `start-at-boot-off`) |
 | `boot-load-failed` | Whether llama-server starts at boot could not be read. |

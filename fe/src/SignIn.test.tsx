@@ -13,7 +13,15 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import { before, deferred, en, fakeBff, reply, startAt } from './test/bff.ts'
+import {
+  before,
+  deferred,
+  en,
+  fakeBff,
+  reply,
+  startAt,
+  stubDialog,
+} from './test/bff.ts'
 
 beforeEach(() => startAt('#/sign-in'))
 
@@ -133,6 +141,9 @@ test('1a.14: any other failure shows signin-failed, never the body', async () =>
       () => reply(400, { key: 'session-malformed', args: [] }),
     ],
     ['401 other key', () => reply(401, { key: 'secret-detail', args: [] })],
+    // 14b: by key, not status.
+    ['403 other key', () => reply(403, { key: 'secret-detail', args: [] })],
+    ['403 no key', () => reply(403, {})],
     ['not json', () => reply(401, 'secret-detail')],
     ['200 malformed', () => reply(200, '{"user":42}')],
   ]
@@ -189,6 +200,136 @@ test('1a.14a: sign-in unavailable shows its own alert, clears the password, and 
     username: 'alice',
     password: 'hunter3',
   })
+})
+
+test('1a.14b: a non-administrator gets its own alert, the password cleared, the user name kept and focused; the app stays signed out', async () => {
+  const bff = fakeBff({
+    session: 'signed-out',
+    signIn: () => reply(403, { key: 'session-not-administrator', args: [] }),
+  })
+  render(<App />)
+  const { main, username, password, submit } = await form()
+  type(username, 'bob')
+  type(password, 'right-password')
+  fireEvent.click(submit)
+  const alert = await within(main).findByRole('alert')
+  expect(alert.tagName).toBe('P')
+  expect(alert.textContent).toBe(en('api-session-not-administrator'))
+  expect(alert.textContent).not.toBe(en('signin-failed'))
+  // Above the fields.
+  expect(
+    alert.compareDocumentPosition(username) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  expect(password.value).toBe('')
+  expect(username.value).toBe('bob')
+  // Unlike 14 and 14a: the account needs changing, not the password.
+  expect(document.activeElement).toBe(username)
+  // Still signed out: the banner keeps Sign in, no Sign out.
+  const banner = screen.getByRole('banner')
+  expect(
+    within(banner).queryByRole('button', { name: en('session-sign-out') }),
+  ).toBeNull()
+  expect(
+    within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
+      within(banner).queryByRole('link', { name: en('session-sign-in') }),
+  ).not.toBeNull()
+  expect(banner.textContent).not.toContain(en('session-signed-in-as', 'bob'))
+  // The form stays usable for another try.
+  expect(submit.textContent).toBe(en('signin-submit'))
+  type(username, 'alice')
+  type(password, 'hunter2')
+  fireEvent.click(submit)
+  await waitFor(() => expect(bff.to('POST', '/api/session')).toHaveLength(2))
+  expect(bff.to('POST', '/api/session')[1]!.body).toEqual({
+    username: 'alice',
+    password: 'hunter2',
+  })
+})
+
+test('1a.14b: after a non-administrator refusal the Overview link still works', async () => {
+  fakeBff({
+    session: 'signed-out',
+    signIn: () => reply(403, { key: 'session-not-administrator', args: [] }),
+  })
+  render(<App />)
+  const { main, username, password, submit } = await form()
+  type(username, 'bob')
+  type(password, 'right-password')
+  fireEvent.click(submit)
+  await within(main).findByText(en('api-session-not-administrator'))
+  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+  fireEvent.click(within(nav).getByRole('link', { name: en('nav-overview') }))
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+  })
+  expect(
+    await screen.findByRole('heading', {
+      level: 1,
+      name: en('overview-title'),
+    }),
+  ).toBeTruthy()
+  expect(
+    screen.queryByRole('button', { name: en('session-sign-out') }),
+  ).toBeNull()
+})
+
+test('1a.14b, 36: in the session-ended sign-in dialog the refusal shows inside it; the dialog stays open and its Cancel works', async () => {
+  const dialogs = stubDialog()
+  try {
+    startAt('#/instances/default')
+    const bff = fakeBff({
+      save: () => reply(401, { key: 'session-required', args: [] }),
+      signIn: () => reply(403, { key: 'session-not-administrator', args: [] }),
+    })
+    render(<App />)
+    const main = screen.getByRole('main')
+    await within(main).findByRole('heading', {
+      level: 3,
+      name: en('server-network'),
+    })
+    const port = within(
+      within(main).getByRole('group', { name: 'Port' }),
+    ).getByRole('textbox', { name: 'Port' }) as HTMLInputElement
+    type(port, '8581')
+    fireEvent.click(
+      within(main).getByRole('button', { name: en('save-button') }),
+    )
+    await waitFor(() =>
+      expect(bff.to('PUT', '/api/instances/default/server')).toHaveLength(1),
+    )
+    fireEvent.click(
+      await within(main).findByRole('button', { name: en('session-sign-in') }),
+    )
+    const d = screen.getByRole('dialog', { name: en('signin-title') })
+    expect(dialogs.opened).toContain(d)
+    const user = within(d).getByRole('textbox', {
+      name: en('signin-username'),
+    }) as HTMLInputElement
+    const pass = within(d).getByLabelText(en('signin-password'), {
+      selector: 'input',
+    }) as HTMLInputElement
+    type(user, 'bob')
+    type(pass, 'right-password')
+    fireEvent.click(
+      within(d).getByRole('button', { name: en('signin-submit') }),
+    )
+    const alert = await within(d).findByRole('alert')
+    expect(alert.textContent).toBe(en('api-session-not-administrator'))
+    expect(screen.getByRole('dialog', { name: en('signin-title') })).toBe(d)
+    expect(pass.value).toBe('')
+    expect(user.value).toBe('bob')
+    expect(document.activeElement).toBe(user)
+    // The page keeps its edit.
+    expect(port.value).toBe('8581')
+    // Cancel closes the dialog.
+    fireEvent.click(
+      within(d).getByRole('button', { name: en('signin-cancel') }),
+    )
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(bff.to('POST', '/api/session')).toHaveLength(1)
+  } finally {
+    dialogs.restore()
+  }
 })
 
 // ── The form ────────────────────────────────────────────────────────────

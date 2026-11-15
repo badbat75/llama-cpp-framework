@@ -27,7 +27,7 @@ export const EN: Record<string, string> = {
   'session-role-user': 'User',
   'signin-title': 'Sign in',
   'signin-intro':
-    'Use the user name and password of your account on the computer that runs Private AI Framework.',
+    'Use the user name and password of your account on the computer that runs Private AI Framework. Only members of its pai group can sign in.',
   'signin-required': 'Sign in to see this page.',
   'signin-username': 'User name',
   'signin-password': 'Password',
@@ -43,6 +43,8 @@ export const EN: Record<string, string> = {
     'Too many attempts. Try again in {0} seconds.',
   'api-session-unavailable':
     'Signing in is not available on this server right now. You can still see the overview without signing in.',
+  'api-session-not-administrator':
+    'Only members of the pai group can sign in, and this account is not one. Ask whoever administers this computer to add it; you can still see the overview without signing in.',
   'overview-title': 'Overview',
   'instances-column-engine': 'Engine',
   'instance-engine': '{0} instance',
@@ -198,7 +200,7 @@ export const EN: Record<string, string> = {
   'boot-label': 'Start at boot',
   'boot-toggle': 'start llama-server when the system starts',
   'boot-hint':
-    "Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator.",
+    "Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).",
   'boot-on': 'llama-server will start when the system starts.',
   'boot-off': 'llama-server will no longer start when the system starts.',
   'boot-load-failed': 'Whether llama-server starts at boot could not be read.',

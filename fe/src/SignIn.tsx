@@ -16,6 +16,8 @@ function failureText(error: ApiError | null): string {
       return t('api-session-too-many-attempts', ...error.args)
     case 'session-unavailable':
       return t('api-session-unavailable')
+    case 'session-not-administrator':
+      return t('api-session-not-administrator')
     default:
       return t('signin-failed')
   }
@@ -69,12 +71,15 @@ export default function SignIn({
       return
     }
     setFailure(failureText(result.error))
+    const key = result.error?.key
     if (
-      result.error?.key === 'session-bad-credentials' ||
-      result.error?.key === 'session-unavailable'
+      key === 'session-bad-credentials' ||
+      key === 'session-unavailable' ||
+      key === 'session-not-administrator'
     ) {
       setPassword('')
-      focusField('password')
+      // A non-administrator has to change the account, not the password.
+      focusField(key === 'session-not-administrator' ? 'username' : 'password')
     }
   }
 
