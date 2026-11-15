@@ -21,7 +21,8 @@ Lessons only: the rules are in `AGENTS.md`.
   paths follow it before any IO, so a broken redirect fails instead of writing the real tree), and call it at the end of `editable_widgets_track_model_after_edit` in
   `src/tests/ui_bindings.rs`; filter on that name to run it. A phase of a module in pai-app
   (`crates/app`: presets, bench, server_control, migration, startup...) goes in pai-app's own runner,
-  `data_root_e2e` in `crates/app/src/tests/mod.rs`, the same rule in that crate. Pure helpers stay plain unit tests. Nothing
+  `data_root_e2e` in `crates/app/src/tests/mod.rs`, the same rule in that crate. Put the phase fn ABOVE the module's
+  `mod tests`: after it, clippy fails `items_after_test_module`. Pure helpers stay plain unit tests. Nothing
   unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
 - Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
   which hides every other test in the binary.
@@ -614,3 +615,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - clap 4 refuses `--flag -1` ("unexpected argument '-1'") unless the arg has `allow_hyphen_values`
   (`--models-memory-margin` has it); `--flag=-1` parses either way. Build the CLI with
   `Cli::try_parse_from` and panic with clap's error so that red is not mistaken for a refusal.
+- A preset range test over `checks::PRESET_INT_KEYS` builds each Preset with `Preset::from_keys` (it
+  reads any i32) and checks `render_section` writes `key = v` back, so a key the reader does not fill
+  shows as "not read" instead of a vacuous pass. Changing a range in `PRESET_INT_KEYS` also needs
+  `form::form_to_preset`'s own `parse_int_in(.., &ini::INT_*)` literal changed (ctx-size had one):
+  pai-config's `invalid_numbers_match_what_the_conversion_drops` goes red until it is.
+- A manager e2e block (`manager_checks_e2e`) stops at its first failed assert: to show a later block
+  red, neutralise the earlier assert on a backup copy, run, restore.

@@ -534,13 +534,15 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
                         .unwrap_or(checks::LLAMA_MODELS_MAX_DEFAULT)
                 })
                 .min();
-            checks::presets_file(contents, &on_disk("presets.ini"), models_max)
+            let old = on_disk("presets.ini");
+            checks::presets_file(contents, &old, models_max)?;
+            checks::preset_ids_free(contents, &old, &on_disk("presets.ini.disabled"))
         }
-        ConfigFile::PresetsDisabled => checks::presets_disabled_file(
-            contents,
-            &on_disk("presets.ini.disabled"),
-            &on_disk("presets.ini"),
-        ),
+        ConfigFile::PresetsDisabled => {
+            let (old, enabled) = (on_disk("presets.ini.disabled"), on_disk("presets.ini"));
+            checks::presets_disabled_file(contents, &old, &enabled)?;
+            checks::preset_ids_free(contents, &old, &enabled)
+        }
     }
 }
 
@@ -2854,8 +2856,47 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(&alice, "presets.ini", &on, false),
             invalid(
                 "not-whole-number-in-range",
-                &["ctx-size", "abc", "1", "2147483647"]
+                &["ctx-size", "abc", "0", "2147483647"]
             )
+        );
+    }
+
+    // ── ctx-size = 0 (the context from the model) is writable ────────────
+    {
+        let m = manager(true);
+        let zero = "[new]\nmodel = /models/new.gguf\nctx-size = 0\n";
+        assert_eq!(m.write_file(&alice, "presets.ini", zero, false), Ok(()));
+        assert_eq!(read("presets.ini").as_deref(), Some(zero));
+    }
+
+    // ── One id across presets.ini and presets.ini.disabled ───────────────
+    {
+        let m = manager(true);
+        let enabled = "[new]\nmodel = /models/new.gguf\n";
+        let parked = "[Parked]\nmodel = /models/parked.gguf\nctx-size = 8192\n";
+        std::fs::write(sys.join("presets.ini"), enabled).expect("presets.ini fixture");
+        std::fs::write(sys.join("presets.ini.disabled"), parked).expect("disabled fixture");
+        // A new enabled preset named like a parked one, in another case.
+        let namesake = format!("{enabled}[parked]\nmodel = /models/other.gguf\n");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &namesake, false),
+            invalid("preset-name-taken", &["parked"])
+        );
+        assert_eq!(read("presets.ini").as_deref(), Some(enabled), "old kept");
+        // A new parked preset named like an enabled one.
+        let namesake = format!("{parked}[NEW]\nmodel = /models/other.gguf\n");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini.disabled", &namesake, false),
+            invalid("preset-name-taken", &["NEW"])
+        );
+        assert_eq!(read("presets.ini.disabled").as_deref(), Some(parked));
+        // Switching the parked one on writes presets.ini first: a move.
+        let on = format!("{enabled}{parked}");
+        assert_eq!(m.write_file(&alice, "presets.ini", &on, false), Ok(()));
+        assert_eq!(read("presets.ini"), Some(on));
+        assert_eq!(
+            m.write_file(&alice, "presets.ini.disabled", "", false),
+            Ok(())
         );
     }
 }

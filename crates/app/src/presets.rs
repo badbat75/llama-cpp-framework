@@ -1465,6 +1465,7 @@ pub fn valid_id(id: &str) -> bool {
 /// INI can, which is exactly why the check lives at the save boundary too.
 pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     checks::preset_id(&preset.id).map_err(refused)?;
+    checks::preset_model(&preset.id, &preset.model).map_err(refused)?;
     for (field, value) in [
         ("model", &preset.model),
         ("mmproj", &preset.mmproj),
@@ -1493,6 +1494,15 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     checks::fit_target(&preset.fit_target).map_err(refused)?;
     checks::override_tensor(&preset.override_tensor).map_err(refused)?;
     validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    // Every integer key in its range, read from the text the save writes so
+    // no field is left out of `checks::PRESET_INT_KEYS`.
+    if let Some(section) = ini::parse_sections(&render_section(preset)).first() {
+        for (key, range) in &checks::PRESET_INT_KEYS {
+            if let Some(v) = section.keys.get(*key) {
+                checks::whole_number(key, v, range).map_err(refused)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2141,6 +2151,72 @@ pub fn tri_bool(s: &str) -> Option<bool> {
         "off" => Some(false),
         _ => None,
     }
+}
+
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the save
+/// refuses what the Models tab refuses on every backend, `Direct` (macOS,
+/// no manager to check anything) and the manager (a fake that writes what
+/// it is given, as an old manager would), and writes nothing then.
+#[cfg(test)]
+pub(crate) fn preset_checks_every_backend_e2e() {
+    use crate::paths;
+    use crate::server_control::{fake, Backend};
+    use pai_core::client::InstanceState;
+    let dir = tempfile::tempdir().expect("tempdir");
+    paths::redirect_for_tests(dir.path());
+
+    let model = "/models/Qwen3.8-27B-Q8_0.gguf";
+    let no_model = Preset::new_default("Qwen3.8-27B".into(), String::new());
+    let negative_ctx = Preset {
+        ctx_size: Some(-1),
+        ..Preset::new_default("Qwen3.8-27B".into(), model.into())
+    };
+    let zero_ctx = Preset {
+        ctx_size: Some(0),
+        ..Preset::new_default("Qwen3.8-27B".into(), model.into())
+    };
+    let text = |key: &'static str, values: &[&str]| {
+        checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }
+        .text()
+    };
+    let log = fake::log();
+    let manager = fake::FakeClient::new(&log, InstanceState::Inactive);
+    let files = manager.files.clone();
+    for (name, backend) in [
+        ("Direct", Backend::Direct),
+        ("manager", fake::backend(manager)),
+    ] {
+        fake::scoped(backend, || {
+            let read = || server_control::backend().read_config(ConfigFile::Presets);
+            let err = save(&no_model).expect_err("no model");
+            assert_eq!(
+                err.to_string(),
+                text("preset-no-model", &["Qwen3.8-27B"]),
+                "{name}"
+            );
+            let err = save(&negative_ctx).expect_err("ctx-size -1");
+            assert_eq!(
+                err.to_string(),
+                text(
+                    "not-whole-number-in-range",
+                    &["ctx-size", "-1", "0", "2147483647"]
+                ),
+                "{name}"
+            );
+            assert_eq!(read(), Ok(None), "{name}: nothing written");
+            save(&zero_ctx).unwrap_or_else(|e| panic!("{name}: ctx-size 0: {e}"));
+            let written = read().expect("read").expect("written");
+            assert!(written.contains("ctx-size = 0"), "{name}: {written}");
+        });
+    }
+    assert!(
+        files.lock().unwrap().contains_key("presets.ini"),
+        "the manager's save went to the manager"
+    );
+    assert_eq!(fake::writes(&log), ["write_file presets.ini"]);
 }
 
 #[cfg(test)]
@@ -2860,6 +2936,14 @@ mod tests {
         for id in ["", "has space", "a;b", "sec]tion", "qwen3-coder.q8_0"] {
             cases.push(with(&|p| p.id = id.into()));
         }
+        // A preset needs a model; the integer keys hold their ranges, and
+        // ctx-size 0 (the context from the model) passes.
+        cases.push(with(&|p| p.model = String::new()));
+        cases.push(with(&|p| p.model = "   ".into()));
+        cases.push(with(&|p| p.ctx_size = Some(0)));
+        cases.push(with(&|p| p.ctx_size = Some(-1)));
+        cases.push(with(&|p| p.parallel = Some(0)));
+        cases.push(with(&|p| p.spec_ngram_map_k4v_min_hits = Some(65536)));
         for p in cases {
             let today = validate_for_save(&p);
             let manager = pai_core::checks::presets_file(&render_section(&p), "", None);
@@ -3266,5 +3350,99 @@ mod tests {
             listed_ids(&on, &off),
             [("A".into(), true), ("c".into(), false)]
         );
+    }
+
+    // ── The checks the Models tab ran alone, now at the save boundary ────
+
+    /// The refusal `pai_core::checks` gives, as the text a save returns.
+    fn refusal_text(key: &'static str, values: &[&str]) -> String {
+        checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }
+        .text()
+    }
+
+    /// The Models tab refuses a preset with no model file ("Pick a model
+    /// file before saving."); every other writer (pai, the bff, macOS with
+    /// no manager) gets the manager's refusal from the save itself.
+    #[test]
+    fn a_preset_needs_a_model_at_the_save() {
+        for model in ["", "   "] {
+            let p = Preset::new_default("Qwen3.8-27B".into(), model.into());
+            let err = validate_for_save(&p).expect_err("no model");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{model:?}");
+            assert_eq!(
+                err.to_string(),
+                refusal_text("preset-no-model", &["Qwen3.8-27B"]),
+                "{model:?}"
+            );
+        }
+        let p = Preset::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into());
+        assert!(validate_for_save(&p).is_ok());
+    }
+
+    /// Every integer key the Models tab's form holds to a range
+    /// (`checks::PRESET_INT_KEYS`, the one `form::int_fields` reads) is held
+    /// to it by the save: one past either end is refused with the key, the
+    /// value and the bounds; both ends pass. Built from the INI keys, so a
+    /// key the reader does not fill shows as "not read".
+    #[test]
+    fn the_save_holds_every_integer_key_to_its_range() {
+        for (key, r) in checks::PRESET_INT_KEYS.iter() {
+            let (lo, hi) = (*r.start(), *r.end());
+            let with = |v: i64| {
+                let mut k = BTreeMap::new();
+                k.insert("model".to_string(), "/models/m.gguf".to_string());
+                k.insert(key.to_string(), v.to_string());
+                let p = Preset::from_keys("m", &k);
+                assert!(
+                    render_section(&p).contains(&format!("{key} = {v}\r\n")),
+                    "{key} = {v}: not read"
+                );
+                p
+            };
+            let mut bad = Vec::new();
+            if lo > i32::MIN {
+                bad.push(lo as i64 - 1);
+            }
+            if hi < i32::MAX {
+                bad.push(hi as i64 + 1);
+            }
+            for v in bad {
+                let err = validate_for_save(&with(v)).expect_err(key);
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{key} = {v}");
+                assert_eq!(
+                    err.to_string(),
+                    refusal_text(
+                        "not-whole-number-in-range",
+                        &[key, &v.to_string(), &lo.to_string(), &hi.to_string()]
+                    ),
+                    "{key} = {v}"
+                );
+            }
+            for v in [lo as i64, hi as i64] {
+                let p = with(v);
+                // moe-cache-mib's own rule needs a split mode; none is set.
+                assert!(validate_for_save(&p).is_ok(), "{key} = {v}");
+            }
+        }
+    }
+
+    /// `ctx-size = 0` is llama.cpp's "the context the model was trained
+    /// with", the spelling the integrations read: the save writes it.
+    #[test]
+    fn ctx_size_zero_passes_the_save() {
+        let p = Preset {
+            ctx_size: Some(0),
+            ..Preset::new_default("m".into(), "/models/m.gguf".into())
+        };
+        assert!(validate_for_save(&p).is_ok());
+        assert!(render_section(&p).contains("ctx-size = 0\r\n"));
+        let negative = Preset {
+            ctx_size: Some(-1),
+            ..p
+        };
+        assert!(validate_for_save(&negative).is_err());
     }
 }

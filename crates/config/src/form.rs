@@ -438,7 +438,10 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         ctx_size: if f.ctx_size_default {
             None
         } else {
-            ini::parse_int_in(f.ctx_size.as_str(), &ini::INT_POSITIVE)
+            ini::parse_int_in(
+                f.ctx_size.as_str(),
+                &pai_core::checks::preset_int_range("ctx-size").expect("a preset integer key"),
+            )
         },
         n_gpu_layers: if f.n_gpu_layers_auto {
             None

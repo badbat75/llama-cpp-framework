@@ -25,6 +25,9 @@ fn data_root_e2e() {
     // ── The configuration files through the seam (server_control.rs) ─────
     crate::server_control::config_seam_e2e();
 
+    // ── The preset checks on every backend (presets.rs) ──────────────────
+    crate::presets::preset_checks_every_backend_e2e();
+
     // ── A save after the manager withheld the API key ───────────────────
     crate::server_control::api_key_kept_e2e();
 

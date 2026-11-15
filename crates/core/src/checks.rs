@@ -116,7 +116,8 @@ pub const PRESET_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
     ("spec-draft-n-min", INT_NON_NEGATIVE),
     ("spec-draft-n-ubatch", INT_NON_NEGATIVE),
     ("moe-cache-mib", INT_NON_NEGATIVE),
-    ("ctx-size", INT_POSITIVE),
+    // 0 is llama.cpp's "the context from the model".
+    ("ctx-size", INT_NON_NEGATIVE),
     ("parallel", INT_POSITIVE),
     ("kv-unified-per-slot", INT_POSITIVE),
     ("batch-size", INT_POSITIVE),
@@ -221,6 +222,15 @@ pub fn valid_preset_id(id: &str) -> bool {
 pub fn preset_id(id: &str) -> Result<(), Refusal> {
     if id.is_empty() || !valid_preset_id(id) {
         Err(Refusal::new("invalid-preset-id", &[&id]))
+    } else {
+        Ok(())
+    }
+}
+
+/// A preset names a model file: `model`, the value as read, not blank.
+pub fn preset_model(id: &str, model: &str) -> Result<(), Refusal> {
+    if model.trim().is_empty() {
+        Err(Refusal::new("preset-no-model", &[&id]))
     } else {
         Ok(())
     }
@@ -373,9 +383,7 @@ fn unchanged_in(s: &RawSection, sections: &[RawSection]) -> bool {
 /// The rules of one preset section, on its own.
 fn preset_section(s: &RawSection) -> Result<(), Refusal> {
     preset_id(&s.id)?;
-    if s.get("model").is_none_or(|m| m.is_empty()) {
-        return Err(Refusal::new("preset-no-model", &[&s.id]));
-    }
+    preset_model(&s.id, &s.get("model").unwrap_or_default())?;
     for (key, raw) in &s.keys {
         if PRESET_TEXT_KEYS.contains(&key.as_str()) {
             comment_markers(key, raw)?;
@@ -469,6 +477,24 @@ pub fn presets_disabled_file(new: &str, old: &str, enabled: &str) -> Result<(), 
         !unchanged_in(s, &old) && !unchanged_in(s, &enabled)
     })
     .map(|_| ())
+}
+
+/// Check the new text of one preset file (`new`, the file now `old`) against
+/// `other`, the other preset file now: a section whose id `old` does not
+/// hold (in any letter case) takes no id `other` holds, unless `other` holds
+/// that very section unchanged (a switch writes the destination first).
+/// Ids stay unique across `presets.ini` and `presets.ini.disabled`.
+pub fn preset_ids_free(new: &str, old: &str, other: &str) -> Result<(), Refusal> {
+    let old = raw_sections(old);
+    let other = raw_sections(other);
+    for s in raw_sections(new) {
+        let id_in =
+            |sections: &[RawSection]| sections.iter().any(|o| o.id.eq_ignore_ascii_case(&s.id));
+        if !id_in(&old) && id_in(&other) && !unchanged_in(&s, &other) {
+            return Err(Refusal::new("preset-name-taken", &[&s.id]));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1087,7 +1113,8 @@ top-p = 0.95\r\n";
             ("spec-draft-n-min", INT_NON_NEGATIVE),
             ("spec-draft-n-ubatch", INT_NON_NEGATIVE),
             ("moe-cache-mib", INT_NON_NEGATIVE),
-            ("ctx-size", INT_POSITIVE),
+            // 0 is llama.cpp's "the context from the model".
+            ("ctx-size", INT_NON_NEGATIVE),
             ("parallel", INT_POSITIVE),
             ("kv-unified-per-slot", INT_POSITIVE),
             ("batch-size", INT_POSITIVE),
@@ -1161,13 +1188,13 @@ top-p = 0.95\r\n";
         let edited = "[old]\nmodel = /models/old.gguf\nctx-size = abc\nparallel = 2\n";
         assert_eq!(
             presets_file(edited, broken, None),
-            Err(not_int("ctx-size", "abc", &crate::ini::INT_POSITIVE))
+            Err(not_int("ctx-size", "abc", &crate::ini::INT_NON_NEGATIVE))
         );
         // A new section with a problem: checked.
-        let bad_new = format!("{broken}{}", section("new", "ctx-size = 0\n"));
+        let bad_new = format!("{broken}{}", section("new", "parallel = 0\n"));
         assert_eq!(
             presets_file(&bad_new, broken, None),
-            Err(not_int("ctx-size", "0", &crate::ini::INT_POSITIVE))
+            Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
     }
 
@@ -1207,8 +1234,8 @@ top-p = 0.95\r\n";
             Err(refusal("comment-markers", &["model"]))
         );
         assert_eq!(
-            presets_disabled_file(&section("m", "ctx-size = 0\n"), "", ""),
-            Err(not_int("ctx-size", "0", &crate::ini::INT_POSITIVE))
+            presets_disabled_file(&section("m", "parallel = 0\n"), "", ""),
+            Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
         let header = "; Presets switched OFF in pai-config.\r\n";
         assert_eq!(
@@ -1236,7 +1263,91 @@ top-p = 0.95\r\n";
         let edited = "[old]\nmodel = /models/old.gguf\nctx-size = abc\nparallel = 2\n";
         assert_eq!(
             presets_disabled_file(edited, broken, broken),
-            Err(not_int("ctx-size", "abc", &crate::ini::INT_POSITIVE))
+            Err(not_int("ctx-size", "abc", &crate::ini::INT_NON_NEGATIVE))
         );
+    }
+
+    // ── ctx-size = 0: the context from the model ─────────────────────────
+
+    /// llama.cpp reads `ctx-size = 0` as "the context the model was trained
+    /// with" (common/arg.cpp), and the integrations treat it so: the checks
+    /// take it, in both preset files; a negative context is still refused.
+    #[test]
+    fn ctx_size_zero_is_the_context_from_the_model_and_writable() {
+        let r = preset_int_range("ctx-size").expect("ctx-size is an integer key");
+        assert!(r.contains(&0), "0 in {r:?}");
+        assert!(!r.contains(&-1), "-1 in {r:?}");
+        let zero = section("m", "ctx-size = 0\n");
+        assert_eq!(presets_file(&zero, "", None), Ok(()));
+        assert_eq!(presets_disabled_file(&zero, "", ""), Ok(()));
+        assert_eq!(
+            presets(&section("m", "ctx-size = -1\n")),
+            Err(not_int("ctx-size", "-1", &crate::ini::INT_NON_NEGATIVE))
+        );
+    }
+
+    // ── One id across presets.ini and presets.ini.disabled ───────────────
+
+    /// A preset written into one file under an id the other file holds, in
+    /// any letter case, is refused with the id as written: switching either
+    /// back would land on the namesake.
+    #[test]
+    fn a_new_preset_under_an_id_the_other_file_holds_is_refused() {
+        let parked = section("Qwen3.8-27B", "ctx-size = 8192\n");
+        let enabled = section("Qwen3.8-27B", "ctx-size = 16384\n");
+        assert_eq!(
+            preset_ids_free(&enabled, "", &parked),
+            Err(refusal("preset-name-taken", &["Qwen3.8-27B"]))
+        );
+        let other_case = section("qwen3.8-27b", "ctx-size = 16384\n");
+        assert_eq!(
+            preset_ids_free(&other_case, "", &parked),
+            Err(refusal("preset-name-taken", &["qwen3.8-27b"]))
+        );
+        // Beside the presets already in the file.
+        let kept = section("Qwen3.8-Flash-Next", "");
+        assert_eq!(
+            preset_ids_free(&format!("{kept}{enabled}"), &kept, &parked),
+            Err(refusal("preset-name-taken", &["Qwen3.8-27B"]))
+        );
+    }
+
+    /// A rename is a new id in its file: renaming onto a parked namesake is
+    /// refused too.
+    #[test]
+    fn a_rename_onto_an_id_the_other_file_holds_is_refused() {
+        let old = section("a", "");
+        let renamed = section("b", "");
+        let other = section("B", "ctx-size = 8192\n");
+        assert_eq!(
+            preset_ids_free(&renamed, &old, &other),
+            Err(refusal("preset-name-taken", &["b"]))
+        );
+    }
+
+    /// The switch writes the destination before it removes the source, so
+    /// for a moment both files hold the section: unchanged, it is a move.
+    #[test]
+    fn a_switch_moving_a_preset_unchanged_is_not_a_namesake() {
+        let moved = REAL_SECTION;
+        let kept = section("Qwen3.8-Flash-Next", "");
+        assert_eq!(preset_ids_free(moved, "", moved), Ok(()));
+        assert_eq!(
+            preset_ids_free(&format!("{kept}{moved}"), &kept, moved),
+            Ok(())
+        );
+    }
+
+    /// A preset in both files already (the twin an interrupted switch
+    /// leaves) can still be saved where it is, and blocks no other preset.
+    #[test]
+    fn a_preset_already_in_both_files_still_saves() {
+        let twin = section("m", "ctx-size = 8192\n");
+        let edited = section("m", "ctx-size = 16384\n");
+        assert_eq!(preset_ids_free(&edited, &twin, &twin), Ok(()));
+        let added = format!("{twin}{}", section("n", ""));
+        assert_eq!(preset_ids_free(&added, &twin, &twin), Ok(()));
+        // Nothing in the other file: nothing to collide with.
+        assert_eq!(preset_ids_free(&edited, "", ""), Ok(()));
     }
 }
