@@ -169,5 +169,19 @@
   "boot-hint": "Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator.",
   "boot-on": "llama-server will start when the system starts.",
   "boot-off": "llama-server will no longer start when the system starts.",
-  "boot-load-failed": "Whether llama-server starts at boot could not be read."
+  "boot-load-failed": "Whether llama-server starts at boot could not be read.",
+  "nav-models": "Models",
+  "models-title": "Models",
+  "presets-title": "Presets",
+  "presets-intro": "Each preset is one model with its settings. Every instance of the preset's engine can serve it.",
+  "presets-column-name": "Preset",
+  "presets-column-engine": "Engine",
+  "presets-column-status": "Status",
+  "presets-status-on": "On",
+  "presets-status-off": "Off",
+  "presets-engine-not-available": "{0} (not available)",
+  "presets-loading": "Loading the presets…",
+  "presets-empty": "No presets yet.",
+  "presets-load-failed": "The presets could not be read.",
+  "presets-off-note": "A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it."
 }

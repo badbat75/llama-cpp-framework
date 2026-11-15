@@ -122,9 +122,13 @@ available) and not the instances (the presets are not per instance).
 
 19. **At 375 px and down to 320 px** the table keeps its three columns and fits the main region with
     no horizontal scroll: the name cell wraps anywhere (`overflow-wrap: anywhere`, ids such as
-    `Qwen3.6-35B-A3B-UD-Q4_K_XL` have no spaces); the engine and status cells do not wrap; cell
-    padding `--space-2`. At 960 px and up, the table spans the main column (max 880 px). Checked in
-    review, not in jsdom. ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow),
+    `Qwen3.6-35B-A3B-UD-Q4_K_XL` have no spaces); the engine cell wraps only at spaces, never inside
+    a word (`white-space: normal; overflow-wrap: normal`: "Strata (not / available)", `llama.cpp`
+    whole); the status cells and the three header cells do not wrap at all (`nowrap`, and not the
+    global `overflow-wrap: anywhere` of `th`, which at 320 px breaks "Prese/t" and "Sta/tus"); cell
+    padding `--space-2`. Measured in review at 320 px: this keeps the table at 288 px with the name
+    column at 112 px, where a nowrap engine cell left the name 62 px and its id on 7 lines. At 960 px
+    and up, the table spans the main column (max 880 px). Checked in review, not in jsdom. ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow),
     [1.4.4](https://www.w3.org/TR/WCAG22/#resize-text))
 
 ### 2.6 Keyboard and screen reader

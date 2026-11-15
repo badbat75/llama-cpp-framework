@@ -4,12 +4,14 @@
 export type Route =
   | { page: 'overview' }
   | { page: 'sign-in' }
+  | { page: 'models' }
   | { page: 'instance'; id: string }
   | { page: 'not-found' }
 
 export function parseRoute(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/') return { page: 'overview' }
   if (hash === '#/sign-in') return { page: 'sign-in' }
+  if (hash === '#/models') return { page: 'models' }
   const instance = /^#\/instances\/([^/]+)$/.exec(hash)
   if (instance) {
     try {

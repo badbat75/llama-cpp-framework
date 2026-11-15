@@ -16,6 +16,7 @@ import {
   type Instance,
   type InstancesStore,
 } from './Instances.tsx'
+import Models from './Models.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
@@ -190,6 +191,18 @@ export default function App() {
           {session && (
             <NavInstances key={session.user} route={route} store={store} />
           )}
+          {session && (
+            <ul>
+              <li>
+                <a
+                  href="#/models"
+                  aria-current={route.page === 'models' ? 'page' : undefined}
+                >
+                  {t('nav-models')}
+                </a>
+              </li>
+            </ul>
+          )}
         </nav>
         <main id="main" tabIndex={-1}>
           <Page
@@ -328,6 +341,9 @@ function Page({
   }
   if (session === null) {
     return <SignIn required onSignedIn={onSignedIn} />
+  }
+  if (route.page === 'models') {
+    return <Models onSignedOut={onSignedOut} />
   }
   return (
     <InstancePage

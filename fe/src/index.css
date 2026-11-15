@@ -307,6 +307,37 @@ td {
   border-bottom: 1px solid var(--surface);
 }
 
+/* The presets keep three columns at 320 px: the name wraps anywhere, the engine
+   only at spaces, the headers and the status not at all. */
+.presets th,
+.presets td {
+  padding: var(--space-2);
+}
+
+.presets th {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.presets td:nth-child(2) {
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.presets td:last-child {
+  white-space: nowrap;
+}
+
+.presets tr.off {
+  color: var(--muted);
+}
+
+.presets-note {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .notice {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--control);

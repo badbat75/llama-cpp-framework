@@ -5,9 +5,9 @@ import { vi } from 'vitest'
 
 /**
  * The English of the strings keys the tests read, as the design brief gives
- * them (fe/briefs/01-server.md, section 5.5, and the keys that stay). The
- * tests assert these texts, so a test does not depend on en_US.json holding
- * the key yet.
+ * them (fe/briefs/01-server.md, section 5.5, and the keys that stay;
+ * fe/briefs/02-models.md, section 2.7). The tests assert these texts, so a
+ * test does not depend on en_US.json holding the key yet.
  */
 export const EN: Record<string, string> = {
   'app-name': 'Private AI Framework',
@@ -205,6 +205,23 @@ export const EN: Record<string, string> = {
   // Slice 1c (section 5.7, 4.8): a save that timed out.
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
+  // Slice 2a (fe/briefs/02-models.md, section 2.7): the preset list.
+  'nav-models': 'Models',
+  'models-title': 'Models',
+  'presets-title': 'Presets',
+  'presets-intro':
+    "Each preset is one model with its settings. Every instance of the preset's engine can serve it.",
+  'presets-column-name': 'Preset',
+  'presets-column-engine': 'Engine',
+  'presets-column-status': 'Status',
+  'presets-status-on': 'On',
+  'presets-status-off': 'Off',
+  'presets-engine-not-available': '{0} (not available)',
+  'presets-loading': 'Loading the presets…',
+  'presets-empty': 'No presets yet.',
+  'presets-load-failed': 'The presets could not be read.',
+  'presets-off-note':
+    'A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -282,6 +299,30 @@ export const INSTANCES: Instance[] = [
   { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
 ]
 
+/** One preset as GET /api/presets lists it (fe/briefs/api-contract.md). */
+export type Preset = {
+  id: string
+  engine: string
+  engineAvailable: boolean
+  enabled: boolean
+}
+
+/** The default preset list: one switched on, one switched off, one engine. */
+export const PRESETS: Preset[] = [
+  {
+    id: 'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    engine: 'llama.cpp',
+    engineAvailable: true,
+    enabled: true,
+  },
+  {
+    id: 'gemma-3-12b-it',
+    engine: 'llama.cpp',
+    engineAvailable: true,
+    enabled: false,
+  },
+]
+
 /**
  * A server document (GET /api/instances/{id}/server) with every kind of value.
  * `extra` adds or replaces top-level members, such as `withheld`.
@@ -347,6 +388,8 @@ export type BffOptions = {
   version?: Answer
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
+  /** GET /api/presets: the presets, or the reply. Default PRESETS. */
+  presets?: Preset[] | Answer
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
   server?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
@@ -450,6 +493,11 @@ export function fakeBff(options: BffOptions = {}) {
       const i = instances ?? INSTANCES
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))
       return answer(i, init)
+    }
+    if (route === 'GET /api/presets') {
+      const p = options.presets ?? PRESETS
+      if (Array.isArray(p)) return Promise.resolve(reply(200, p))
+      return answer(p, init)
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)
     if (server) {

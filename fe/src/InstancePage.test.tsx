@@ -1161,6 +1161,8 @@ test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run bu
     en('nav-overview'),
     'default',
     'coder',
+    // fe/briefs/02-models.md, 2a criterion 1.
+    en('nav-models'),
     // The header's run buttons, inactive ones included, then Start at
     // boot's About toggle; a user's checkbox is disabled (1c.45b, 46a).
     en('run-start'),
