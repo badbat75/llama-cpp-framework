@@ -70,13 +70,18 @@ Decided with the user on 2026-11-14.
   id (`#/instances/default`, as `/api/instances/{id}/...`). The page shows the id as the heading and
   "`<engine>` instance" under it: the engine is a fact about the instance, not a control.
 - The Overview's table gets an Engine column only when the instances span two or more engines.
-- **Presets** are one mixed list for every engine. Each preset declares its engine, chosen from the
-  **available engines** the bff lists (today only llama.cpp):
+- **Presets** are one mixed list for every engine. Each preset has an engine, chosen from the
+  **available engines** the bff lists (today only llama.cpp). A preset's engine is the engine whose
+  preset file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
+  `presets.ini.disabled`), never a key in the file: llama-server refuses a `--models-preset` file with
+  a key it does not know (llama.cpp v1.0.0 `common/preset.cpp`, "option not recognized in preset").
   - The preset editor's first field is **Engine**, a `<select>` over that list, never free text, shown
-    even with one entry (user decision: it is how a preset declares its engine).
-  - A preset that names no engine is a llama.cpp preset: the editor shows llama.cpp selected, no
-    migration prompt (every preset written before engines existed).
-  - **Engine not available**: a preset naming an engine the list lacks (e.g. Strata uninstalled). The
+    even with one entry (user decision: it is how a preset's engine is chosen). Choosing another engine
+    moves the preset to that engine's file; no key is written.
+  - Every preset today is in llama.cpp's files, so it is a llama.cpp preset: the editor shows llama.cpp
+    selected, no migration prompt.
+  - **Engine not available**: a preset in the file of an engine the list lacks (e.g. Strata
+    uninstalled); possible only once a second engine's preset file exists. The
     list row shows the engine name with the text "not available"; the editor shows the select with that
     name as an extra, selected option marked "(not available)" and a Notice that the preset cannot be
     started until the engine is installed or another engine is chosen. Its other fields stay readable;

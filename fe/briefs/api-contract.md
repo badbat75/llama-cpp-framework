@@ -136,16 +136,20 @@ Body `{"revision", "values"}`.
 
 The available engines, for the preset editor's engine field. A preset write naming an engine
 outside the list is refused with a key of its own (proposed: `unknown-engine`, `args: [name]`). A
-preset with no engine is a llama.cpp preset and the key is not written back for it.
+preset's engine is the engine whose preset file holds it, never a key in the file (see
+`GET /api/presets`).
 
 ### `GET /api/presets`
 
 The one preset list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
 user: `[{"id", "engine", "engineAvailable", "enabled"}]`.
 
-- `engine` is the engine id; `llama.cpp` for a preset that names no engine (the key is not written
-  back for it).
-- `engineAvailable` says whether that engine is in `GET /api/engines`.
+- `engine` is the id of the engine whose preset file holds the section. No key in the file names
+  it: llama-server refuses a `--models-preset` file with a key it does not know (llama.cpp v1.0.0:
+  `common/preset.cpp`, "option not recognized in preset"), so each engine keeps its own preset
+  files (llama.cpp's `presets.ini` and `presets.ini.disabled`).
+- `engineAvailable` says whether that engine is in `GET /api/engines`; true for every preset while
+  llama.cpp is the only engine.
 - `enabled` is true for a section of `presets.ini`, false for one of `presets.ini.disabled`.
 - The order is the GUI's (`presets::load_listed`): the switched-on presets, then the switched-off
   ones, each in file order; an id in both files is listed once, as on; a missing file is an empty

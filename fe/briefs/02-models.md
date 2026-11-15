@@ -19,7 +19,7 @@ pattern and the session-ended dialog of slice 1b.
 | **2a** | R: nav entry, `#/models`, the one mixed preset list (name, engine, on or off), loading, empty, read errors. **This brief.** |
 | 2b | R: the list's filter field (the GUI's "Filter presets…": id or model path, case-insensitive; adds `model` to the list reply). |
 | 2c | W: the on/off switch of each row (moves the section between `presets.ini` and `presets.ini.disabled`); a user sees it disabled with a Notice. |
-| 2d | R: the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
+| 2d | R: the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field: the engine whose preset file holds the preset, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
 | 2e | R: the plain cards, each field as in the GUI: Hardware, Resource / context, KV cache, Chat / reasoning, Sampling, Embeddings, Advanced, Vision, Speculative (values and enable rules; no warnings). |
 | 2f | R: GPU distribution and Tensor placement tables (needs the server machine's device list from the bff). |
 | 2g | R: Model info card (needs a GGUF read on the server: the bff links pai-core only today, inventory 4.1). |
@@ -30,7 +30,7 @@ pattern and the session-ended dialog of slice 1b.
 | 2l | W: New preset (dialog: id and engine; the GUI's new-preset values). |
 | 2m | W: Clone and Rename (id rules: `[A-Za-z0-9._-]+`, unique case-insensitively across both files). |
 | 2n | W: Delete with its confirmation dialog (the linked-file deletion of the GUI is out until the bff may write the models folder: question U3). |
-| 2o | R+W: a preset whose engine is not available: unknown engine's fields as raw `key = value` lines, kept on save (D2.2). |
+| 2o | R+W: a preset whose engine is not available (possible only once a second engine's preset file exists): unknown engine's fields as raw `key = value` lines, kept on save (D2.2). |
 
 Out of slice 2: Downloads (Hugging Face), Benchmarks, bench sweeps, the Integrations snippets, any
 second engine's own fields.
@@ -193,9 +193,12 @@ the preset files; the route still needs a session (the Models page is for signed
 ```
 
 - `id`: the section name.
-- `engine`: the engine id the preset names; `llama.cpp` for a preset that names none (every preset
-  today). The bff does not write the key back for such a preset (D2.2).
-- `engineAvailable`: whether `engine` is in `GET /api/engines`.
+- `engine`: the id of the engine whose preset file holds the section; no key in the file names it
+  (llama-server refuses a `--models-preset` file with a key it does not know: llama.cpp v1.0.0
+  `common/preset.cpp`, "option not recognized in preset"), so each engine keeps its own preset files
+  (llama.cpp's `presets.ini` and `presets.ini.disabled`; D2.2). `llama.cpp` for every preset today.
+- `engineAvailable`: whether `engine` is in `GET /api/engines`; true for every preset while llama.cpp
+  is the only engine.
 - `enabled`: `true` for a section in `presets.ini`, `false` for one in `presets.ini.disabled`.
 - **Order**: the enabled presets first, then the disabled ones, each group in file order. An id in
   both files (an interrupted on/off switch) is listed once, as enabled. Both are what
@@ -204,10 +207,6 @@ the preset files; the route still needs a session (the Models page is for signed
 - **Errors**: 401 not signed in; 403 `client-not-authorized`; 503 `client-unavailable`; 502
   `client-other` for any other failure, each with empty `args`.
 - Only the four fields 2a shows; 2b adds `model`.
-
-**Open on the bff side** (not the user's): where a preset names its engine (a key inside the
-section, and whether `llama-server --models-preset` accepts a key it does not know, or another
-place). Unverified: llama-server's handling of an unknown preset key.
 
 ## 4. Questions only the user can answer
 
