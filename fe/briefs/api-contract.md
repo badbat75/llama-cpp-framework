@@ -38,6 +38,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances/{id}/boot` | anyone | 1c, proposed | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, proposed | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
+| `GET /api/presets` | signed in | 2a, proposed | `[{"id", "engine", "engineAvailable", "enabled"}]` |
 
 ### `GET /api/instances`
 
@@ -136,6 +137,21 @@ Body `{"revision", "values"}`.
 The available engines, for the preset editor's engine field. A preset write naming an engine
 outside the list is refused with a key of its own (proposed: `unknown-engine`, `args: [name]`). A
 preset with no engine is a llama.cpp preset and the key is not written back for it.
+
+### `GET /api/presets`
+
+The one preset list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
+user: `[{"id", "engine", "engineAvailable", "enabled"}]`.
+
+- `engine` is the engine id; `llama.cpp` for a preset that names no engine (the key is not written
+  back for it).
+- `engineAvailable` says whether that engine is in `GET /api/engines`.
+- `enabled` is true for a section of `presets.ini`, false for one of `presets.ini.disabled`.
+- The order is the GUI's (`presets::load_listed`): the switched-on presets, then the switched-off
+  ones, each in file order; an id in both files is listed once, as on; a missing file is an empty
+  group. The fe does not sort.
+- Errors, each with empty `args`: 401; 403 `client-not-authorized`; 503 `client-unavailable`; 502
+  `client-other`.
 
 ## Open on the bff side
 
