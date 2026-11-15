@@ -790,10 +790,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    enabled in the client's token (looked up per connection as a local alias of this computer only,
    never a domain group or user named `pai`) or LocalSystem; `control` adds `pai` members; the
    installers workflow checks the group and that a member survives repair and uninstall (not yet run
-   on a Windows runner). Left from it: the configure-refusal strings (`manager.configure_denied`,
-   `manager.write_denied` in `en_US.toml`, `CliDeniedConfigure` in `cli.toml`) still name
-   Administrators; rename `ADMIN_GROUP` (it reads as
-   Administrators). 6b part
+   on a Windows runner). Left from it (no string names Administrators, checked):
+   `client-not-authorized` could say how to join `pai`; rename `ADMIN_GROUP` and
+   `PasswordChecker::is_admin` (they read as Administrators); the doc comments of `PIPE_SDDL` (manager
+   `windows.rs`) and `crates/bff/src/server.rs` near line 48 still describe the old rule. 6b part
    2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
    `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
