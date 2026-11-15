@@ -13,6 +13,7 @@ import {
   screen,
   within,
 } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
@@ -799,6 +800,26 @@ test('1c.45d: a 2xx {enabled} sets the box from the reply and the status reads b
     vi.useRealTimers()
     vi.unstubAllGlobals()
   }
+})
+
+test('1c.45d: under StrictMode a 2xx {enabled: true} still reads boot-on and the box is active again', async () => {
+  fakeClock()
+  startAt('#/instances/default')
+  const bff = fakeBff({
+    boot: boot(false, () => reply(200, { enabled: true })),
+  })
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+  await flush()
+  const main = screen.getByRole('main')
+  press(bootBox(main))
+  await flush()
+  expect(bootWrites(bff)).toEqual([{ enabled: true }])
+  expect(bootStatus(main).textContent).toBe(en('boot-on'))
+  expect(inactive(bootBox(main)), 'not aria-disabled').toBe(false)
 })
 
 // ── Where its messages are (45f, 40) ────────────────────────────────────

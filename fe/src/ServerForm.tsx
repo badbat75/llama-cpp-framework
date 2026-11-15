@@ -449,6 +449,11 @@ export default function ServerForm({
   // A second Save while one runs sends nothing.
   const saving = useRef(false)
   const bar = useRef<HTMLDivElement>(null)
+  // The sign-in count when a save's answer arrives (43b).
+  const renewalsNow = useRef(renewals)
+  useEffect(() => {
+    renewalsNow.current = renewals
+  }, [renewals])
 
   const values = toValues(draft, rows)
   const dirty =
@@ -592,7 +597,11 @@ export default function ServerForm({
     setPhase('idle')
     switch (answer.kind) {
       case 'signed-out':
-        setAlert({ text: t('session-ended'), action: 'sign-in', at: renewals })
+        setAlert({
+          text: t('session-ended'),
+          action: 'sign-in',
+          at: renewalsNow.current,
+        })
         return
       case 'changed-elsewhere':
         setAlert({ text: t('api-server-changed-elsewhere'), action: 'reload' })

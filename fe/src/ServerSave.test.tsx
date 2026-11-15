@@ -1012,6 +1012,51 @@ test('1b.36a: Escape in the sign-in dialog closes it, focus on the bar Sign in, 
   expect(bff.to(...PUT)).toHaveLength(1)
 })
 
+test('1b.36a, 1c.43b: a save 401 that answers after a sign-in from the run Sign in still shows session-ended and the bar Sign in, edits intact', async () => {
+  const gate = deferred()
+  const { bff, main } = await loaded({
+    run: () => reply(401, { key: 'session-required', args: [] }),
+    save: () => gate.promise,
+  })
+  editPort(main)
+  await save(main, bff)
+  // A run action gets a 401; the same administrator signs in again there.
+  fireEvent.click(within(main).getByRole('button', { name: en('run-stop') }))
+  fireEvent.click(
+    await within(main).findByRole('button', { name: en('session-sign-in') }),
+  )
+  const d = dialog(en('signin-title'))
+  type(within(d).getByRole('textbox', { name: en('signin-username') }), 'alice')
+  type(
+    within(d).getByLabelText(en('signin-password'), { selector: 'input' }),
+    'hunter2',
+  )
+  fireEvent.click(within(d).getByRole('button', { name: en('signin-submit') }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await waitFor(() =>
+    expect(
+      within(main).queryAllByRole('button', { name: en('session-sign-in') }),
+      'the run Sign in went with the sign-in',
+    ).toEqual([]),
+  )
+  expect(screen.getByRole('banner').textContent, 'the same user').toContain(
+    en('session-signed-in-as', 'alice'),
+  )
+  // Now the PUT answers 401: its alert is stamped when it arrives.
+  await act(async () => {
+    gate.resolve(reply(401, { key: 'session-required', args: [] }))
+  })
+  await waitFor(() => expect(status(main).textContent).toBe(en('save-unsaved')))
+  expectAlert(main, en('session-ended'))
+  const signIns = within(main).getAllByRole('button', {
+    name: en('session-sign-in'),
+  })
+  expect(signIns, "one Sign in: the bar's").toHaveLength(1)
+  expect(before(status(main), signIns[0]!), 'in the save bar').toBe(true)
+  expect(box(main, 'Port').value, 'the edits are intact').toBe('8581')
+  expect(bff.to(...PUT), 'nothing resent').toHaveLength(1)
+})
+
 /** Saves into a 401 and signs in, in the dialog, with the reply `session`. */
 async function signInAs(
   session: { user: string; canConfigure: boolean },
