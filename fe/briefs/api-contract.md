@@ -113,9 +113,23 @@ Body `{"revision", "values"}`.
 
 ### Start, stop, restart, boot
 
-- A stop with `SaveStateOnShutdown` on saves the slot snapshots first, on the server (the GUI does
-  this itself today, `slot_state::save_all`).
-- `PUT /api/instances/{id}/boot` takes `{"enabled"}`.
+- `POST /api/instances/{id}/start`, `/stop` and `/restart` take no body and answer 204 once the
+  service manager has accepted the job; the state read just after can still be the previous one, so
+  the fe polls `GET /api/instances` (any 2xx counts as accepted). Errors: 401; 403
+  `client-not-authorized`; 404 `client-no-instance`; 503 `client-unavailable`; 502
+  `client-service-failed` (proposed key) with empty `args` when the service manager refused or the
+  unit failed (its message stays in the bff's log); 502 `client-other` for anything else.
+- A stop or a restart with `SaveStateOnShutdown` on saves the slot snapshots first, on the server
+  (the GUI does this itself today, `slot_state::save_all`).
+- `GET /api/instances/{id}/boot` answers 200 `{"enabled": <bool>}`. Errors: 503
+  `client-unavailable`, 502 `client-not-authorized` (a route that needs no sign-in, like
+  `GET /api/instances`), 404 `client-no-instance`, 502 `client-other`.
+- `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
+  state read back after the write. Errors: 401, 403 `client-not-authorized`, 404, 503, 502
+  `client-service-failed` or `client-other`.
+- `GET /api/instances` and `GET /api/instances/{id}/boot` do not move a session's idle deadline:
+  the fe reads the instances every 5 s while an instance page is open, and an open tab must not
+  keep a session alive.
 
 ### `GET /api/engines`
 

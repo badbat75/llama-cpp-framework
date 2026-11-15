@@ -390,7 +390,7 @@ test('1a.20: the header shows the id as h1, the engine, then the state with its 
   expect(shape!.textContent ?? '').toBe('')
 })
 
-test('1a.20: the instance and its server file are read once on open, not polled', async () => {
+test('1a.20, 1c.41b: the server file and the session are read once on open; only the instances are polled', async () => {
   // Fake timers from the start, so an interval set at mount is caught too;
   // shouldAdvanceTime keeps the findBy* waits running.
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -402,12 +402,11 @@ test('1a.20: the instance and its server file are read once on open, not polled'
       level: 3,
       name: en('server-network'),
     })
-    const instances = bff.to('GET', '/api/instances').length
-    expect(instances).toBeGreaterThan(0)
+    expect(bff.to('GET', '/api/instances').length).toBeGreaterThan(0)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(65_000)
     })
-    expect(bff.to('GET', '/api/instances')).toHaveLength(instances)
+    // The instances are polled from 1c (RunControls.test.tsx); nothing else is.
     expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
     expect(bff.to('GET', '/api/session')).toHaveLength(1)
   } finally {
@@ -1138,7 +1137,7 @@ function nameOf(el: HTMLElement): string {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
-test('6: Tab goes skip link, product link, Menu, Sign out, nav links, then the fields in table order', async () => {
+test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, then the fields in table order', async () => {
   await loaded({ session: 'user' })
   const names = tabbable().map(nameOf)
   const tail = FIELDS.flatMap((f) =>
@@ -1152,6 +1151,11 @@ test('6: Tab goes skip link, product link, Menu, Sign out, nav links, then the f
     en('nav-overview'),
     'default',
     'coder',
+    // The header's run buttons, inactive ones included (1c.46a); Start at
+    // boot's About toggle will follow them.
+    en('run-start'),
+    en('run-stop'),
+    en('run-restart'),
     ...tail,
   ])
   // The h1 takes focus only from the page (tabindex -1).

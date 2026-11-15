@@ -176,6 +176,24 @@ export const EN: Record<string, string> = {
   'api-other': 'The request was refused ({0}).',
   'server-edits-dropped':
     'Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings.',
+  // Slice 1c (section 5.7): run controls and live state.
+  'run-start': 'Start',
+  'run-stop': 'Stop',
+  'run-restart': 'Restart',
+  'run-starting': 'Starting llama-server…',
+  'run-stopping': 'Stopping llama-server…',
+  'run-restarting': 'Restarting llama-server…',
+  'run-started': 'llama-server started.',
+  'run-stopped': 'llama-server stopped.',
+  'run-restarted': 'llama-server restarted.',
+  'run-ended-failed':
+    'llama-server is in the Failed state. Its log on the server says why.',
+  'run-timeout':
+    'llama-server did not reach the expected state within a minute. The state above keeps updating.',
+  'request-failed': 'The request did not go through. Try again.',
+  'session-ended-retry': 'Your session has ended. Sign in again, then retry.',
+  'api-client-service-failed':
+    "The service manager reported an error. The instance's log on the server says why.",
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -289,6 +307,15 @@ export type BffOptions = {
    * the parsed body. Default 200 {"revision": "r-2", "running": false}.
    */
   save?: (body: unknown, n: number) => Response | Promise<Response>
+  /**
+   * POST /api/instances/{id}/start, /stop or /restart: the reply to the n-th
+   * run action (from 1, all three counted together). Default 204.
+   */
+  run?: (
+    action: 'start' | 'stop' | 'restart',
+    id: string,
+    n: number,
+  ) => Response | Promise<Response>
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -300,6 +327,8 @@ function answer(a: Answer): Promise<Response> {
 /** Stubs fetch with a fake bff; returns the calls it saw. */
 export function fakeBff(options: BffOptions = {}) {
   const calls: Call[] = []
+  // What GET /api/instances answers from now on (setInstances changes it).
+  let instances = options.instances
   const fetch = vi.fn<typeof globalThis.fetch>((input, init) => {
     const url =
       input instanceof Request
@@ -345,7 +374,7 @@ export function fakeBff(options: BffOptions = {}) {
         options.version ?? (() => reply(200, { version: '2.99.0' })),
       )
     if (route === 'GET /api/instances') {
-      const i = options.instances ?? INSTANCES
+      const i = instances ?? INSTANCES
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))
       return answer(i)
     }
@@ -364,6 +393,20 @@ export function fakeBff(options: BffOptions = {}) {
           : reply(200, { revision: 'r-2', running: false }),
       )
     }
+    const run = /^POST \/api\/instances\/([^/]+)\/(start|stop|restart)$/.exec(
+      route,
+    )
+    if (run) {
+      const n = calls.filter((c) =>
+        /^\/api\/instances\/[^/]+\/(start|stop|restart)$/.test(c.path),
+      ).length
+      const action = run[2] as 'start' | 'stop' | 'restart'
+      return Promise.resolve(
+        options.run
+          ? options.run(action, decodeURIComponent(run[1]!), n)
+          : reply(204),
+      )
+    }
     return Promise.reject(new TypeError(`unexpected ${route}`))
   })
   vi.stubGlobal('fetch', fetch)
@@ -373,6 +416,10 @@ export function fakeBff(options: BffOptions = {}) {
     /** The calls to one route. */
     to(method: string, path: string): Call[] {
       return calls.filter((c) => c.method === method && c.path === path)
+    },
+    /** What GET /api/instances answers from the next read on. */
+    setInstances(i: Instance[] | Answer) {
+      instances = i
     },
   }
 }

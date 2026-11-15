@@ -39,7 +39,7 @@ function isInstance(value: unknown): value is Instance {
 }
 
 /** The instances from the reply, or the error key; never the reply's text. */
-export async function readInstances(): Promise<Answer> {
+async function readInstances(): Promise<Answer> {
   try {
     const reply = await call('/api/instances')
     if (!reply.ok) {
@@ -56,19 +56,62 @@ export async function readInstances(): Promise<Answer> {
   }
 }
 
-export default function Instances() {
+/**
+ * The app's one read of /api/instances (fe/briefs/01-server.md, 41): at most
+ * one request in flight, a read asked meanwhile gets its answer, and every
+ * answer reaches the watchers (the nav).
+ */
+export type InstancesStore = {
+  read: () => Promise<Answer>
+  /**
+   * A read whose request is sent from now on: it waits for the one in
+   * flight, if any, then reads (an action is settled only by such a read),
+   * unless `wanted` says false by then (its answer is then the waited one's).
+   */
+  fresh: (wanted?: () => boolean) => Promise<Answer>
+  /** Calls `listener` with every answer from now on; returns the unwatch. */
+  watch: (listener: (answer: Answer) => void) => () => void
+}
+
+export function instancesStore(): InstancesStore {
+  let inFlight: Promise<Answer> | null = null
+  const listeners = new Set<(answer: Answer) => void>()
+  const read = () => {
+    inFlight ??= readInstances().then((a) => {
+      inFlight = null
+      for (const listener of listeners) listener(a)
+      return a
+    })
+    return inFlight
+  }
+  return {
+    read,
+    fresh(wanted = () => true) {
+      if (inFlight === null) return read()
+      return inFlight.then((a) => (wanted() ? read() : a))
+    },
+    watch(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
+export default function Instances({ store }: { store: InstancesStore }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
 
   useEffect(() => {
     let live = true
-    readInstances().then((a) => {
+    store.read().then((a) => {
       if (live) setAnswer(a)
     })
     return () => {
       live = false
     }
-  }, [])
+  }, [store])
 
   return (
     <section>

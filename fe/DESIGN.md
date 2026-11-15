@@ -116,9 +116,10 @@ which applies its rules (user decision, 2026-11-14; `AGENTS.md` and `PLAN.md` st
   returns to that page after signing in.
 - The session can end while a page is open (any request answers 401). The page keeps what
   it shows and any unsaved edits, the header and nav stay as they were, and the page offers
-  **Sign in** in a dialog; after it, the user retries. Signing in there as a different user, or as one
-  without `canConfigure`, drops the edits (they belong to the session that made them): the page reads
-  its data again for the new session and says, in an alert, that the changes were dropped.
+  **Sign in** in a dialog; after it, the user retries. The same user with the same role keeps the page
+  as it was, focus on the control whose request was refused. Any other session (another user, or the
+  role changed) makes the page read its data again for the new session; unsaved edits are dropped
+  (they belong to the session that made them) and an alert says so.
 - Sign out is in the user menu of the header; with unsaved changes it asks first.
 - The sign-in form lets password managers and paste work: `autocomplete="username"` and
   `"current-password"`, no paste blocking, no puzzle
@@ -239,7 +240,9 @@ Each is one React component, reused by every page.
   hollow circle Stopped (`--muted`), half circle Starting / Stopping (`--warning`), cross Failed
   (`--danger`), hollow circle for an unknown state. Never colour alone
   ([1.4.1 Use of Color](https://www.w3.org/TR/WCAG22/#use-of-color)). The shape is `aria-hidden`; the
-  text is the state's label (`instance-state-*`).
+  text is the state's label (`instance-state-*`). A badge kept current by polling is not a live
+  region: changes nobody asked for are shown, not announced; the outcome of the user's own action
+  is announced by its status line (Action feedback) **(preference)**.
 - **Table**: a native `<table>` with `<th scope="col">` headers; a link in the first cell when the row
   opens a page.
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
@@ -253,6 +256,23 @@ Each is one React component, reused by every page.
 - **Buttons**: primary (filled `--accent`) for the one main action of a view; secondary (outlined
   `--control`) otherwise; danger is not a style of its own **(preference)**: destructive actions ask in a
   dialog instead.
+  - **Inactive**: a button that can turn inactive while it has focus (the save bar's, the run
+    controls) uses `aria-disabled="true"`, never `disabled`: it stays in the tab sequence, a click,
+    Enter or Space does nothing (the handler checks; the attribute blocks nothing by itself), and it
+    is drawn with `--bg` background, `--muted` text and `--control` border. Under
+    `@media (forced-colors: active)` its text and border are `GrayText`, so it still reads as
+    inactive in a high-contrast theme. A control that is never enabled for the role (a user's
+    read-only form) keeps `disabled`.
+    ([APG, focusability of disabled controls](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#focusabilityofdisabledcontrols),
+    [MDN, `aria-disabled`](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-disabled);
+    `GrayText` is MDN's suggestion there, **(preference)** to adopt it)
+- **Action feedback** (an action outside a form: run controls, start at boot): right after the
+  control, a status line (`role="status"`, always in the DOM) for progress and outcome, then an alert
+  (`role="alert"`, rendered only while it has text) for a failure, then, after a 401, a **Sign in**
+  button that opens the sign-in Dialog. A new click on the control clears both. An action always
+  ends in its status line or alert, with an outcome, an error or a timeout counted on its own timer
+  whatever request is still pending, never a progress text without end. The save bar is the
+  same pattern for a form ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)).
 
 ## 6. States every page defines
 
@@ -269,6 +289,8 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
 | Unsaved changes | save bar status "You have unsaved changes."; Save and Discard enabled; leaving asks in a Dialog | the status line |
 | Saving | Save shows "Saving…" and is `aria-disabled`; controls stay editable but a second Save is ignored | the status line |
 | Saved | status "Saved." or "Saved: restart llama-server to apply." while it runs | the status line |
+| Action running | the action's status line ("Starting llama-server…"), its buttons `aria-disabled` until the state settles or a minute passes | the status line |
+| Live state | the state badge re-read every 5 s while its page is open; a failed read keeps the last state silently | no (the badge is not a live region) |
 | Refused by a check | client check: each field's error, focus on the first invalid field, status "Not saved: correct the marked fields."; server refusal: its text beside the field it names, or in the save bar when it names none | `role="alert"` in the save bar |
 
 ## 7. Wording

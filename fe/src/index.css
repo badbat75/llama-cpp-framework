@@ -701,6 +701,15 @@ html:has(.save-bar) {
   cursor: default;
 }
 
+/* So it still reads as inactive in a high-contrast theme. */
+@media (forced-colors: active) {
+  .primary[aria-disabled='true'],
+  .secondary[aria-disabled='true'] {
+    color: GrayText;
+    border-color: GrayText;
+  }
+}
+
 .secondary:disabled {
   color: var(--muted);
   border-color: var(--muted);
@@ -732,4 +741,17 @@ html:has(.save-bar) {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+/* The header's Start, Stop and Restart: one row that wraps. */
+.run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.run-alert {
+  color: var(--danger);
+  font-weight: 600;
 }

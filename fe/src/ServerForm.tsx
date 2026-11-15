@@ -389,12 +389,25 @@ async function sendSave(
 }
 
 /** The bar's alert, with the button that answers it when there is one. */
-type Alert = { text: string; action?: 'reload' | 'sign-in' }
+type Alert = {
+  text: string
+  action?: 'reload' | 'sign-in'
+  /** A session-ended alert: the page's sign-ins kept when it was set. */
+  at?: number
+}
+
+/**
+ * The page's run actions: how many started, and the number (from 1) of the
+ * last one that settled, 0 for none.
+ */
+export type Runs = { started: number; settled: number }
 
 export default function ServerForm({
   id,
   doc,
   canConfigure,
+  renewals,
+  runs,
   onDirty,
   onReload,
   onRenewed,
@@ -402,6 +415,10 @@ export default function ServerForm({
   id: string
   doc: ServerDoc
   canConfigure: boolean
+  /** Raised by every sign-in that kept the page: a session-ended alert goes. */
+  renewals: number
+  /** A settled action started after a save-saved-restart ends it (44a). */
+  runs: Runs
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
   /** Reads the file again, the edits discarded. */
@@ -420,10 +437,14 @@ export default function ServerForm({
     fromValues(doc.values, doc.defaults, rows),
   )
   const [errors, setErrors] = useState<Partial<Record<Key, string>>>({})
-  const [alert, setAlert] = useState<Alert | null>(null)
+  const [stored, setAlert] = useState<Alert | null>(null)
+  const alert =
+    stored?.action === 'sign-in' && stored.at !== renewals ? null : stored
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
+  // The run actions started when the last save-saved-restart answered.
+  const [restartAt, setRestartAt] = useState(0)
   const [asking, setAsking] = useState<'reload' | 'sign-in' | null>(null)
   // A second Save while one runs sends nothing.
   const saving = useRef(false)
@@ -565,12 +586,13 @@ export default function ServerForm({
       // What the user typed while it ran is kept (33b).
       setDraft((d) => (d === sent ? fromValues(values, doc.defaults, rows) : d))
       setPhase(answer.running ? 'saved-restart' : 'saved')
+      setRestartAt(runs.started)
       return
     }
     setPhase('idle')
     switch (answer.kind) {
       case 'signed-out':
-        setAlert({ text: t('session-ended'), action: 'sign-in' })
+        setAlert({ text: t('session-ended'), action: 'sign-in', at: renewals })
         return
       case 'changed-elsewhere':
         setAlert({ text: t('api-server-changed-elsewhere'), action: 'reload' })
@@ -609,7 +631,9 @@ export default function ServerForm({
 
   const v = draft
   const d = doc.defaults
-  const status = phase === 'saving' ? phase : dirty ? 'unsaved' : phase
+  const ended = phase === 'saved-restart' && runs.settled > restartAt
+  const status =
+    phase === 'saving' ? phase : dirty ? 'unsaved' : ended ? 'idle' : phase
   const statusText = {
     idle: '',
     saving: t('save-saving'),

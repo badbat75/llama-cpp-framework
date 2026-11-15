@@ -3,7 +3,11 @@
 // the form, or the message saying why not.
 import { useEffect, useState } from 'react'
 import { apiError, call, isRecord } from './api.ts'
-import ServerForm, { type ServerDoc, withholdsKey } from './ServerForm.tsx'
+import ServerForm, {
+  type Runs,
+  type ServerDoc,
+  withholdsKey,
+} from './ServerForm.tsx'
 import type { Session } from './session.ts'
 import { t } from './strings.ts'
 
@@ -56,15 +60,27 @@ async function readServer(id: string): Promise<Answer> {
   }
 }
 
+/**
+ * The page remounts it (a new `key`) to read the file again after a sign-in
+ * as another session.
+ */
 export default function ServerSection({
   id,
   canConfigure,
+  dropped,
+  renewals,
+  runs,
   onSignedOut,
   onRenewed,
   onDirty,
 }: {
   id: string
   canConfigure: boolean
+  /** The edits were dropped by a sign-in as another session (36b). */
+  dropped: boolean
+  /** Raised by every sign-in that kept the page (43b). */
+  renewals: number
+  runs: Runs
   onSignedOut: () => void
   /** A sign-in in the save's dialog: true when the edits stay with it. */
   onRenewed: (session: Session) => boolean
@@ -74,21 +90,10 @@ export default function ServerSection({
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
   // Raised to read the file again.
   const [reads, setReads] = useState(0)
-  // The edits were dropped by a sign-in as another session (36b).
-  const [dropped, setDropped] = useState(false)
 
   const reload = () => {
     setAnswer(undefined)
     setReads((n) => n + 1)
-  }
-
-  const renewed = (session: Session) => {
-    const kept = onRenewed(session)
-    if (!kept) {
-      setDropped(true)
-      reload()
-    }
-    return kept
   }
 
   useEffect(() => {
@@ -116,9 +121,11 @@ export default function ServerSection({
         id={id}
         answer={answer}
         canConfigure={canConfigure}
+        renewals={renewals}
+        runs={runs}
         onDirty={onDirty}
         onReload={reload}
-        onRenewed={renewed}
+        onRenewed={onRenewed}
       />
     </section>
   )
@@ -128,6 +135,8 @@ function Body({
   id,
   answer,
   canConfigure,
+  renewals,
+  runs,
   onDirty,
   onReload,
   onRenewed,
@@ -135,6 +144,8 @@ function Body({
   id: string
   answer: Answer | undefined
   canConfigure: boolean
+  renewals: number
+  runs: Runs
   onDirty: (dirty: boolean) => void
   onReload: () => void
   onRenewed: (session: Session) => boolean
@@ -152,6 +163,8 @@ function Body({
         id={id}
         doc={answer.doc}
         canConfigure={canConfigure}
+        renewals={renewals}
+        runs={runs}
         onDirty={onDirty}
         onReload={onReload}
         onRenewed={onRenewed}

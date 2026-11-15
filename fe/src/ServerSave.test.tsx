@@ -132,11 +132,25 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** The save bar's status line: the one live status of a loaded form. */
+/**
+ * The save bar's status line: the one live status of the Server section (the
+ * header's run status comes before the section's h2, 1c.40).
+ */
 function status(main: HTMLElement): HTMLElement {
-  const all = within(main).getAllByRole('status')
+  const all = sectionStatuses(main)
   expect(all, 'one status line once the form is loaded').toHaveLength(1)
   return all[0]!
+}
+
+/** The role="status" elements after the Server section's h2. */
+function sectionStatuses(main: HTMLElement): HTMLElement[] {
+  const h2 = within(main).getByRole('heading', {
+    level: 2,
+    name: en('server-title'),
+  })
+  return within(main)
+    .queryAllByRole('status')
+    .filter((s) => before(h2, s))
 }
 
 /** True when the control cannot be used: disabled, or aria-disabled. */
@@ -1244,7 +1258,7 @@ test('1b.28: a user keeps the read-only form and no save bar', async () => {
   expect(
     within(main).queryByRole('button', { name: en('save-discard') }),
   ).toBeNull()
-  expect(within(main).queryAllByRole('status')).toHaveLength(0)
+  expect(sectionStatuses(main)).toHaveLength(0)
 })
 
 test('1b.28 (1a): a user is never dirty: no beforeunload, leaving asks nothing, Show still works', async () => {
@@ -2278,7 +2292,13 @@ test('1b 6: Tab reaches the enabled controls field by field, then Discard and Sa
   const about = (label: string) =>
     within(main).getByRole('button', { name: `${en('field-about')} ${label}` })
   const bind = group(main, 'Bind to').getAllByRole('checkbox')
+  const run = (key: string) =>
+    within(main).getByRole('button', { name: en(key) })
   const expected: [string, HTMLElement][] = [
+    // The header's run buttons come first (1c.46a); Start at boot will follow.
+    ['Start', run('run-start')],
+    ['Stop', run('run-stop')],
+    ['Restart', run('run-restart')],
     ['About Port', about('Port')],
     ['Port default', check(main, 'Port', en('field-default'))],
     ['Port', box(main, 'Port')],

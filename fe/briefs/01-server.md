@@ -54,8 +54,9 @@ the coordinator's contract; the brief assumes these:
 - 1b: `PUT /api/instances/{id}/server` `{"revision", "values"}`: 200 `{"revision", "running": <bool>}`;
   422 a check's `{"key", "args", "field"?}`; 409 `{"key":"server-changed-elsewhere"}`; 401; 403;
   503.
-- 1c: `POST /api/instances/{id}/start|stop|restart`: 202 or 204; 401, 403, 404, 503, other. Boot:
-  `GET|PUT /api/instances/{id}/boot` `{"enabled": <bool>}` (shape to be fixed by the contract).
+- 1c: `POST /api/instances/{id}/start|stop|restart` (signed in): 204; errors by key (43). Boot:
+  `GET /api/instances/{id}/boot` (anyone) and `PUT` (administrator) `{"enabled": <bool>}`, both
+  answering `{"enabled"}` (`fe/briefs/api-contract.md`; 45).
 
 ## 2. Slice 1a: shell, sign-in, Overview, read-only Server page
 
@@ -73,7 +74,7 @@ the coordinator's contract; the brief assumes these:
    **Sign out** (`session-sign-out`). The nav holds Overview, then a heading-like label **Instances**
    (`nav-instances`, a list labelled by it) with one link per instance from `GET /api/instances`, the
    link text being the id, in the reply's order. A failed instances read leaves the list out of the
-   nav (the Overview shows the error).
+   nav (the Overview shows the error); from 1c, only until a read succeeds (41a).
 5. The link of the current page has `aria-current="page"`.
 6. Below 960px a button **Menu** (`nav-menu`) with `aria-expanded` shows and hides the nav; Escape,
    pressed on the Menu button or anywhere inside the open nav, closes it and returns focus to the
@@ -97,7 +98,7 @@ route, and returning to it after sign-in).
 10a. A session that ended while idle (30 minutes without a request) is a 401 like any other: in 1a the
     next read signs the app out and shows this form with `signin-required` (2.6, "401 on the server
     read"); the wording fits, since 1a has no edits to lose. Nothing changes; 1b and 1c show
-    `session-ended` and `session-ended-run` where edits or an action are at stake (36, 43).
+    `session-ended` and `session-ended-retry` where edits or an action are at stake (36, 43).
 11. Empty user name or password: no request; the empty field shows `signin-empty-username` or
     `signin-empty-password` under it (`aria-invalid`, `aria-describedby`); focus moves to the first
     empty field.
@@ -183,8 +184,8 @@ of the brief.
   **Superseded by 27b and 27c (2.8)**: for a user, Show is not rendered when the key is withheld and
   is disabled when there is no key.
 - **Reads of `/api/instances`**: in 1a the nav, the Overview and the instance page each read it on
-  their own. 1c's polling (41, 42) must share one read across them, so the nav and the badge never
-  disagree.
+  their own. 1c's polling must share one read across them, so the nav and the badge never
+  disagree (41, 41a).
 - **Overview columns** (18): Instance, then Engine (when shown), then State: the order of the
   instance page's header (id, engine, state).
 
@@ -395,7 +396,7 @@ a missing or mistyped member) is `save-failed`, the form stays dirty. Never the 
     shows it for the new role, clean: editable with the save bar for an administrator, read-only with
     the Notice `server-read-only` for a user (25). Above the first card (above that Notice) a
     `role="alert"` paragraph reads `server-edits-dropped`, until the page is left; focus goes to the
-    page's `h1`. Nothing is sent but the read.
+    page's `h1`. Nothing is sent but the read. (1c states the rule for every dialog of the page: 43b.)
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 37. By key, in the bar's alert: `client-not-authorized` (normally 403) `api-client-not-authorized`;
     `client-unavailable` (normally 503) `api-client-unavailable`; anything else of the rule above:
@@ -467,31 +468,276 @@ here and are part of the brief.
 - **Open, for the user**: guard Back, Forward and a typed address while dirty (38, known gap)? It
   needs the app to undo the hash change and ask; it can ride along with 1c or wait.
 
-## 4. Slice 1c: run controls and start at boot
+## 4. Slice 1c: run controls, live state and start at boot
 
-40. Under the header's state, three buttons in this order: **Start** (`run-start`), **Stop**
-    (`run-stop`), **Restart** (`run-restart`), always rendered for a signed-in user (manager
-    `control`), `aria-disabled` when not applicable: `active` Start disabled; `inactive` and `failed`
-    Stop and Restart disabled; `activating`, `deactivating` or a request in flight: all disabled; an
-    unknown state: all enabled (the manager decides). Focus never drops.
-41. A click sends `POST /api/instances/<id>/<action>`; while it runs a status line (`role="status"`)
-    reads `run-starting`, `run-stopping` or `run-restarting`. The fe then reads the instances every
-    1 s until the state is neither `activating` nor `deactivating`, at most 60 s, updating the badge.
-    It ends with `run-started` / `run-stopped` / `run-restarted`, or `run-ended-failed` when the state
-    is `failed`, or `run-timeout` after 60 s.
-42. While the instance page is open and no action runs, the state is re-read every 5 s; a failed
-    read keeps the last state and shows nothing new.
-43. Errors of the action (`role="alert"`): 401 `session-ended-run` with `session-sign-in` (dialog as
-    36); 403 `api-client-not-authorized`; 404 `instance-not-found`; 503 `api-client-unavailable`;
-    other `run-failed`.
-44. Stop needs no confirmation (as the GUI). With Save on shutdown on, the bff saves the snapshots
-    before it stops (the GUI does it client side); the fe only shows `run-stopping`.
-45. **Start at boot**: a checkbox `boot-toggle` in a field labelled `boot-label` with hint
-    `boot-hint`, in the header area below the buttons. Read with the page; enabled only for an
-    administrator, disabled for a user. Changing it sends the write at once (it is not part of the save
-    bar: it is the service manager's state, as in the GUI's Settings tab); the box shows the new state
-    while waiting; on success the status reads `boot-on` or `boot-off`; on any error it goes back to
-    the state read again from the bff and shows the error as in 43.
+Rewritten by the designer on 2026-11-15 against the code on main (ee4cbe5: `InstancePage.tsx`,
+`App.tsx`, `ServerSection.tsx`, `ServerForm.tsx`) and `fe/briefs/api-contract.md`. Everything here
+applies to an instance page whose header is shown (2.4: the list read and the id in it). The GUI
+reference: the rail's Start and Stop (`crates/config/ui/app.slint`, one button at a time) and the
+Settings tab's start at boot (`crates/config/src/gui/settings_tab.rs`,
+`crates/app/src/server_control.rs` `toggle_boot`).
+
+### 4.1 The header's controls
+
+40. **Order.** Inside the header, after the state line, in DOM order: (1) three buttons, **Start**
+    (`run-start`), **Stop** (`run-stop`), **Restart** (`run-restart`), secondary style (the view's
+    one primary button is Save changes, D5.2); (2) the run status, `<p role="status">`, always in the
+    DOM, empty until an action; (3) the run alert, `<p role="alert">`, rendered only while it has
+    text; (4) after a 401 only, a button **Sign in** (`session-sign-in`, 43a); (5) the Start at boot
+    field (45). Then the Server section. The buttons are rendered for every signed-in user, both
+    roles (the manager's `control`, D3).
+40a. **Which buttons are inactive**, from the state the header shows:
+
+    | State | Start | Stop | Restart |
+    |---|---|---|---|
+    | `active` | inactive | | |
+    | `inactive`, `failed` | | inactive | inactive |
+    | `activating`, `deactivating` | inactive | inactive | inactive |
+    | any other string | | | |
+
+    While an action runs (from the click until it settles, times out or fails: 42, 43) all three are
+    inactive. For an unknown state the manager decides.
+40b. **Inactive means `aria-disabled="true"`, never `disabled`.** A click, Enter or Space on an
+    inactive button sends nothing and changes neither the status nor the alert. It stays in the tab
+    sequence, and focus stays on a button that turns inactive while focused (the one just clicked,
+    usually). Drawn as the save bar's inactive buttons (D5.2 Buttons). The APG recommends keeping a
+    disabled control focusable with `aria-disabled` when it must stay discoverable, and MDN names "a
+    button which is important to keep in the page's focus order, but its action is presently
+    unavailable"; MDN also says `aria-disabled` suppresses nothing by itself, so the click handler
+    must do nothing.
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value);
+    [APG, focusability of disabled controls](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#focusabilityofdisabledcontrols),
+    [MDN, `aria-disabled`](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-disabled))
+40c. Differs from the GUI on purpose: the GUI shows Start or Stop in one place and swaps them; the web
+    keeps all three in place, so nothing moves under the pointer and focus never sits on a control
+    that was removed. Restart exists on the web (D2.1).
+
+### 4.2 One read of the instances, and when it runs
+
+41. **One shared read** (asked by 2.6). The app keeps the last answer of `GET /api/instances`; the
+    nav, the Overview's table and the instance header all show from it. At most one request is in
+    flight: a read asked while one runs gets that read's answer, without a second request (one
+    exception, the action poll's reads: 41c). A read is
+    asked when the Overview opens, when an instance page opens, when a signed-in session starts (for
+    the nav), and by the polls of 41b and 41c. Testable: signed in, opening `#/instances/default`
+    sends exactly one `GET /api/instances` before the first poll (1a and 1b send two: the nav's and
+    the page's).
+41a. **What each shows.** The Overview and an instance page, when they open, show the answer of the
+    read asked at opening (loading until then, as 16 and 2.6). The nav shows the latest successful
+    list since the session started: none before the first one, and a later failed read keeps it
+    (this refines 4: "a failed read leaves the list out" now holds only until a read succeeds). On
+    the instance page, after the header is shown, every successful read that lists the id updates
+    the state line and the buttons (40a); a failed read, or a list without the id, changes nothing
+    on the page and shows nothing (the last state stays; a later save or action answers
+    `client-no-instance` if the instance is really gone: 37a, 43). A successful list without the id
+    is still a successful list for the nav, which takes it, so the nav can drop this page's link
+    while the header keeps the last state (decided by the coordinator at the review of 1c, part 1).
+41b. **Idle poll.** Starts when the header is first shown: one read 5 s after the previous read of
+    this page answered (a chain of timeouts, not `setInterval`, so reads never overlap). It does not
+    start when the page shows a message or `instance-not-found` in place of the header. It stops
+    when the page is left (any route change) and when the app signs out (the page is replaced:
+    2.6, "401 on the server read"). It pauses while an action runs (41c). It goes on while the
+    session has ended but the page stays (36a, 43a): `GET /api/instances` needs no session and does
+    not move a session's idle deadline (`crates/bff/src/lib.rs`, `router_with`: no session lookup on
+    that route), so an open tab never keeps a session alive. It also goes on while the browser tab is
+    hidden **(preference)**: the read is cheap and a pause adds a state for no user benefit. The
+    Overview is not polled.
+41c. **An action's poll replaces the idle one.** At a click on an active run button the pending idle
+    timer is cancelled, and an idle read still in flight is ignored by the page (its answer updates
+    neither the header nor the action; the nav may take it). While the `POST` runs, nothing is read.
+    After the `POST` answers 2xx: one read 1 s later, then one 1 s after each answer, until the
+    action settles (42a) or its deadline comes. Every read
+    of this poll is a request sent after the `POST` answered: when its time comes while a read asked
+    before that answer is still in flight (the ignored idle read, or the nav's), it waits for that
+    read to answer and then sends its own; it never takes the older read's answer, which can show
+    the state from before the action (a `failed` instance clicked Start would read
+    `run-ended-failed` at once, a Restart `run-restarted`). A failed read in this poll keeps the
+    last state and the poll goes on.
+    **The deadline** is 60 s after the `POST`'s 2xx, whatever is pending then (an action read in
+    flight, or one waiting behind an older read): it runs on its own timer, not when the next read
+    is due, since `call()` has no fetch timeout and a read stuck on the bff would otherwise leave
+    the status and the inactive buttons for good (decided by the coordinator after the tester's
+    rerun of 1c, part 1). At that moment the status reads `run-timeout` and the buttons follow 40a
+    for the state the header shows; an answer arriving later for that action settles nothing (the
+    status stays `run-timeout`). No action read is sent at or after the deadline, nor after the
+    page is left, even one that was waiting behind an older read. A click on an active button right
+    after the timeout starts a new action at once, even while the old read is still pending (that
+    read is then an older read for the new action, as above).
+    When the action ends, the idle chain resumes with its next read
+    5 s after the action ended (decided by the coordinator at the review of 1c, part 1): 5 s after
+    the `POST`'s failing answer (43), 5 s after the answer of the read that settled it (42a), or, on
+    a timeout, 5 s after the 60 s mark; if a request is still in flight then, that idle read shares
+    it (41) rather than sending a second one.
+41d. **For the tests (fake timers, `fetch` stubbed).** With instant answers: after the opening read,
+    advancing 4999 ms sends nothing and 5000 ms sends one `GET`. A route change, then 10 s: no `GET`.
+    A click on Stop: one `POST`, and while it is pending 10 s send no `GET`; after its 204, 999 ms
+    send nothing, 1000 ms one `GET`; answered `deactivating`, the state line reads Stopping and the
+    status still `run-stopping`; the next `GET` 1000 ms later, answered `inactive`, gives
+    `run-stopped`, Stop and Restart `aria-disabled`, Start not; the next `GET` comes 5000 ms later,
+    not 1000. Every action read answering `activating`: 59 `GET`s after the 2xx, `run-timeout` at
+    60 000 ms, the next `GET` 5000 ms after that. An idle read held pending across a click and then
+    answered `inactive` leaves the state line unchanged. State `failed`, an idle read held pending,
+    a click on Start, its 204, 1000 ms: no second `GET` yet; the held read answers `failed`: the
+    status still reads `run-starting`, and a new `GET` is sent at once; answered `active`, it gives
+    `run-started`. A successful list without this page's id: the nav loses the link, the state line
+    and buttons stay. A click on an inactive button sends no request at all.
+    The deadline (times from the 2xx): (a) state `failed`, an idle read held pending, a click on
+    Start, its 204: no `GET` up to 60 000 ms; at 60 000 ms the status reads `run-timeout` and Start
+    is not `aria-disabled` (Stop and Restart are: 40a for `failed`); the held read answers `active`
+    at 60 500 ms: the status still reads `run-timeout`, the state line is unchanged, no `GET` is
+    sent then, and the next `GET` is sent at 65 000 ms. (b) The first action read (at 1000 ms) never
+    answers: no second `GET`; at 60 000 ms `run-timeout`, the buttons per 40a for the state shown;
+    at 65 000 ms no new `GET` (the idle read shares the pending one); a click on Start right after
+    60 000 ms sends one `POST` and the status reads `run-starting`. (c) An idle read held pending, a
+    click on Stop, its 204, 1000 ms (the action read waits behind the held read), a route change,
+    the held read answers: then 10 s send no `GET`.
+
+### 4.3 What an action shows
+
+42. A click on an active button sends `POST /api/instances/<id>/start` (or `/stop`, `/restart`), no
+    body. At the click: the run alert and its Sign in button go, and the status reads `run-starting`,
+    `run-stopping` or `run-restarting`, kept through the poll. Any 2xx is accepted, whatever its body
+    (the contract answers 204).
+42a. **When an action settles**, from the state a read gives:
+
+    | Action | Settles on | Status |
+    |---|---|---|
+    | Start | `active` | `run-started` |
+    | Restart | `active` | `run-restarted` |
+    | Stop | `inactive` | `run-stopped` |
+    | any | `failed` | `run-ended-failed` |
+
+    Any other state keeps the poll going, including the state the instance had before the click: the
+    service manager may not have run the job when the `POST` answers (systemd's `StartUnit` queues a
+    job: `crates/manager/src/manager/dbus.rs`, `SystemdService`). No settled state by the deadline,
+    60 s after the `POST`'s 2xx whatever is pending (41c): `run-timeout`, and an answer arriving
+    later for that action changes it no more. Focus stays on the clicked button throughout.
+42b. **What is announced.** The outcome stays in the status until the next click on a run button or
+    until the page is left. Only the run status is a live region; the state line is not, so state
+    changes seen by the idle poll (another user, a crash) show without being announced
+    **(preference)**: a poll every 5 s would otherwise speak over the user's work.
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+42c. **Known limit of Restart on Linux**: a read 1 s after the 204 can still see the old process
+    `active`, and the status then reads `run-restarted` before the restart happened. On Windows the
+    manager's restart waits for the stop before it answers (`crates/manager/src/manager/windows/scm.rs`,
+    `restart`). Removing it needs the bff to answer after the job ran (a question in the report, not a
+    criterion).
+
+### 4.4 Errors of an action
+
+43. **By key, never by status, except 401** (contract, "Rules for every route"). The message goes in
+    the run alert, the status is emptied, the buttons follow 40a for the last state, focus stays on
+    the clicked button, and the idle poll resumes (41c):
+    - 401, whatever the body: `session-ended-retry` and the Sign in button (43a);
+    - `client-not-authorized`: `api-client-not-authorized`;
+    - `client-no-instance`: `instance-not-found` with the id;
+    - `client-unavailable`: `api-client-unavailable`;
+    - `client-service-failed`: `api-client-service-failed` (proposed for the contract, see the
+      report);
+    - anything else (another key, no key, a body that is not JSON, a network failure):
+      `request-failed`. Never the body's text, and no `api-other` (that is for a 422 only).
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+43a. **401** is 36a's state: the banner, the nav and the page stay, the Server form and its edits are
+    untouched. Sign in opens the same sign-in dialog as 36 (`h2` `signin-title`, Cancel). Escape or
+    Cancel: it closes, focus returns to this Sign in button, the alert stays, nothing is sent.
+    Nothing is resent after a sign-in: the user clicks again.
+    ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry), [2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap))
+43b. **A sign-in in any of the page's dialogs** (the save bar's, 36; the run alert's, 43a; Start at
+    boot's, 45e) follows one rule, comparing the reply with the session the page had:
+    - same `user` and same `canConfigure`: the dialog closes; every session-ended alert of the page
+      (save bar, run, boot) goes with its Sign in button; focus goes to the control whose request got
+      the 401: Save changes (36), the run button clicked (43a), the Start at boot checkbox (45e). The
+      edits are intact.
+    - otherwise: the banner shows the new session (4); every session-ended alert goes; the Server
+      section reads the file again for the new role (24, 25), with `server-edits-dropped` above it
+      only when the form was dirty (36b); the Start at boot checkbox follows the new role (45b)
+      without a new read; focus goes to the page's `h1`.
+
+    For an administrator this is 36 and 36b unchanged (edits exist only with `canConfigure` true, so
+    "same `canConfigure`" is 36b's "`canConfigure` true"). The one new case: a user who signs in
+    again as themself keeps the page, focus on the button they clicked.
+
+### 4.5 With the Server form
+
+44. **Run actions never touch the form**: the draft, the dirty state, the field errors and the save
+    bar's alert stay as they are, and no discard dialog asks (nothing is left). Stop and Restart with
+    unsaved edits are allowed: the save bar's `save-unsaved` already says the running server does not
+    have them **(preference)**.
+44a. **"Saved: restart llama-server to apply." ends with an action.** When an action started after
+    that save settles (any row of 42a, `failed` included), the save bar's remembered
+    `save-saved-restart` ends: the status shows what a clean form shows, empty (30a), not
+    `save-saved`, and a later undo of an edit does not bring it back. Empty rather than "Saved." so a
+    screen reader hears only the run's outcome: a live region announces additions and text changes,
+    not removals, by default (`aria-relevant` default `additions text`,
+    [WAI-ARIA 1.2](https://www.w3.org/TR/wai-aria-1.2/#aria-relevant)). On a timeout or an error it
+    stays.
+44b. **No confirmation** for Stop or Restart, as the GUI's Stop. With Save on shutdown on, the bff
+    saves the snapshots before it stops (contract); the fe shows only `run-stopping`. Pending
+    question for the user (report).
+
+### 4.6 Start at boot
+
+45. **The field**: D5.2 Field with a checkbox (the `CheckboxField` of `Field.tsx`): group named
+    `boot-label`, the hint toggle "About Start at boot" with `boot-hint`, the checkbox `boot-toggle`.
+    It is not part of the Server form: it never makes the form dirty, Discard and Save ignore it,
+    `beforeunload` ignores it (it is the service manager's state, written at once, as the GUI's
+    Settings tab).
+45a. **Read**: `GET /api/instances/<id>/boot` once, when the header is first shown (beside the Server
+    read); not polled. Until it answers the field is not rendered: a checkbox showing a state not yet
+    known would state a false value ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). A 2xx
+    whose body is `{"enabled": <boolean>}`: the checkbox, checked when `enabled` is true. Anything
+    else: the group with its legend and hint toggle and, in place of the checkbox, a plain paragraph
+    (not an alert: it comes with the page) by key: `client-unavailable` `api-client-unavailable`;
+    `client-not-authorized` `api-client-not-authorized`; anything else (a 2xx of another shape,
+    `client-no-instance`, a network failure) `boot-load-failed`. No retry button: opening the page
+    again reads again.
+45b. **Who can change it**: an administrator (`canConfigure` true) gets the checkbox enabled; a user
+    gets it with `disabled` (it never turns on for them, so focus is not at stake), its state readable
+    in `--muted` (D5.2, "Disabled controls stay readable"). A user never sends a write.
+45c. **Write**: a change by an administrator shows the new value at once and sends
+    `PUT /api/instances/<id>/boot` `{"enabled": <new value>}`. At the change the field's status and
+    alert are emptied. While the `PUT` runs the checkbox is `aria-disabled="true"`: a click or Space
+    changes nothing and sends nothing (the native toggle is prevented), focus stays on it. No text
+    while it runs **(preference)**: one quick call, and the box already shows the value asked for.
+45d. **Success**: a 2xx whose body is `{"enabled": <boolean>}`: the checkbox takes the reply's value;
+    the field's status reads `boot-on` or `boot-off` by that value. A 2xx of another shape is a
+    failure (45e, `request-failed`).
+45e. **Failure**, by key, in the field's alert: 401 `session-ended-retry` and a Sign in button
+    (the dialog of 43a; Cancel or Escape returns focus to this button; a sign-in follows 43b);
+    `client-not-authorized` `api-client-not-authorized`; `client-unavailable`
+    `api-client-unavailable`; `client-no-instance` `instance-not-found` with the id;
+    `client-service-failed` `api-client-service-failed`; anything else `request-failed`. The
+    checkbox then shows the state read again with `GET .../boot` (still `aria-disabled` until that
+    answers), or, when that read fails, the value it had before the change; the status stays empty.
+    As the GUI, which shows `boot_enabled()` read again after a failed toggle (`toggle_boot`).
+45f. **Where its messages are**: inside the group, after the checkbox: the status `<p role="status">`
+    (always in the DOM), the alert `<p role="alert">` (only while it has text), then the Sign in
+    button after a 401. Both texts go at the next change of the box or when the page is left; the
+    alert also at a sign-in (43b).
+45g. Differs from the GUI on purpose: on the instance header, not in Settings (D2.1); disabled for a
+    user, where the GUI lets anyone click and the manager refuses (the hint says it needs an
+    administrator either way); a failed read says so, where the GUI shows the box off
+    (`settings_tab.rs`: `boot_enabled().unwrap_or(false)`), which would state a false value.
+
+### 4.7 Narrow width and keyboard
+
+46. **Layout** (checked in review): the three buttons in one row that wraps, gap `--space-2`, each at
+    least 24 by 24 CSS px ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)); at 375 px they
+    fit on one line, at 320 px they may wrap, with no horizontal scroll
+    ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). The run messages take the full width under them,
+    the status starting `--space-2` below the buttons (as the save bar's gap), so a one-line status
+    does not touch them.
+    The boot field follows D4's form layout (label above the control below 720 px). A focused header
+    control is never under the sticky save bar (D4 scroll padding,
+    [2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
+46a. **Tab order**: `h1` (programmatic focus only), Start, Stop, Restart (inactive ones included),
+    the run alert's Sign in when shown, About Start at boot, the Start at boot checkbox, its Sign in
+    when shown, then the Server section (section 6). Inactive buttons and the boot checkbox while its
+    write runs stay in the sequence (40b, 45c).
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+
+**Out of 1c**: logs, per-action progress, "Open chat UI", polling the Overview or start at boot, a
+retry button for a failed boot read, guarding Back and Forward (3.1, still open).
 
 ## 5. The Server form
 
@@ -731,36 +977,46 @@ GUI's words.
 
 ### 5.7 Strings, slice 1c
 
+Checked against `fe/src/strings/en_US.json` on main (ee4cbe5): none of these keys exists yet. Reused,
+not added: `session-sign-in`, `signin-title`, `signin-cancel`, `instance-not-found`,
+`api-client-not-authorized`, `api-client-unavailable`.
+
 | Key | English |
 |---|---|
 | `run-start` | Start (copy of `start`) |
-| `run-stop` | Stop (copy) |
+| `run-stop` | Stop (copy of `stop`) |
 | `run-restart` | Restart |
 | `run-starting` | Starting llama-server… (copy of `server-starting`) |
-| `run-stopping` | Stopping llama-server… |
+| `run-stopping` | Stopping llama-server… (copy of `server-stopping`) |
 | `run-restarting` | Restarting llama-server… |
-| `run-started` | llama-server started. (copy) |
-| `run-stopped` | llama-server stopped. (copy) |
+| `run-started` | llama-server started. (copy of `server-started`) |
+| `run-stopped` | llama-server stopped. (copy of `server-stopped`) |
 | `run-restarted` | llama-server restarted. |
-| `run-ended-failed` | llama-server did not keep running: its state is Failed. Its log on the server says why. |
-| `run-timeout` | llama-server is still changing state after a minute. The state above updates when it settles. |
-| `run-failed` | The request did not go through. Try again. |
-| `session-ended-run` | Your session has ended. Sign in again, then retry. |
+| `run-ended-failed` | llama-server is in the Failed state. Its log on the server says why. |
+| `run-timeout` | llama-server did not reach the expected state within a minute. The state above keeps updating. |
+| `request-failed` | The request did not go through. Try again. (run actions and the boot write) |
+| `session-ended-retry` | Your session has ended. Sign in again, then retry. (run actions and the boot write) |
+| `api-client-service-failed` | The service manager reported an error. The instance's log on the server says why. (adapted from `client-service-failed`: no `{0}`, the bff keeps the manager's detail out of the body) |
 | `boot-label` | Start at boot |
 | `boot-toggle` | start llama-server when the system starts (copy of `start-at-boot-toggle`) |
-| `boot-hint` | Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator. (adapted: the GUI's names its footer) |
+| `boot-hint` | Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator. (adapted from `start-at-boot-hint`: the GUI's last sentence names its footer) |
 | `boot-on` | llama-server will start when the system starts. (copy of `start-at-boot-on`) |
-| `boot-off` | llama-server will no longer start when the system starts. (copy) |
+| `boot-off` | llama-server will no longer start when the system starts. (copy of `start-at-boot-off`) |
+| `boot-load-failed` | Whether llama-server starts at boot could not be read. |
+
+Renamed from the first draft of this brief, before any code used them: `run-failed` is
+`request-failed` and `session-ended-run` is `session-ended-retry` (both serve the boot write too).
 
 ## 6. Keyboard, focus and screen reader
 
 - Tab order follows the DOM: skip link, product link, Menu (narrow), Sign in or Sign out, nav links,
-  then main: h1 (programmatic focus only), run buttons and boot (1c), Notice, the fields card by card
+  then main: h1 (programmatic focus only), run buttons, their Sign in, boot hint toggle and checkbox,
+  its Sign in (1c, 46a), Notice, the fields card by card
   in table order (default box before its textbox; hint toggle after the label), the save bar.
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
 - Checkboxes toggle with Space, selects open with the keyboard (native controls); no custom widget.
 - Live regions, each present in the DOM before its text changes: the save bar status, the run
-  status. The loading paragraphs are the exception: they appear with their page as
+  status, the Start at boot status (1c). The state line is not one (42b). The loading paragraphs are the exception: they appear with their page as
   `<p role="status">` (the focus on the page's `h1` already announces the page). Errors after an
   action use `role="alert"`.
   ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
@@ -770,6 +1026,7 @@ GUI's words.
   "default" and textbox "Port"; group "Bind to" with checkbox "localhost (only the computer running
   the server)"; combobox "Log level"; button "About Port" (`aria-expanded`); group "API key" with
   description "A key is set. Only an administrator can see it." (27b); button "Show" (`aria-pressed`);
-  buttons "Save changes", "Discard", "Start", "Stop", "Restart"; checkbox "start llama-server when
-  the system starts"; dialog "Discard unsaved changes?".
+  buttons "Save changes", "Discard", "Start", "Stop", "Restart"; group "Start at boot" with button
+  "About Start at boot" and checkbox "start llama-server when the system starts"; dialog "Discard
+  unsaved changes?"; dialog "Sign in".
 - Every requirement of D8 applies; contrast, targets and reflow are checked in review.

@@ -11,7 +11,11 @@ import {
 import { flushSync } from 'react-dom'
 import { DiscardDialog } from './Dialog.tsx'
 import InstancePage from './InstancePage.tsx'
-import { readInstances, type Instance } from './Instances.tsx'
+import {
+  instancesStore,
+  type Instance,
+  type InstancesStore,
+} from './Instances.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
@@ -34,6 +38,8 @@ export default function App() {
     href?: string
     opener: HTMLElement
   } | null>(null)
+  // The one read of /api/instances the nav and the pages share.
+  const [store] = useState(instancesStore)
   const route = parseRoute(hash)
 
   useEffect(() => {
@@ -63,11 +69,12 @@ export default function App() {
   }
 
   /**
-   * A sign-in in a page's dialog: the edits stay only for the same user who
-   * can still configure; otherwise the page's h1 takes the focus.
+   * A sign-in in a page's dialog: the page stays only for the same user with
+   * the same role; otherwise the page's h1 takes the focus.
    */
   const renewed = (s: Session) => {
-    const kept = session?.user === s.user && s.canConfigure
+    const kept =
+      session?.user === s.user && session.canConfigure === s.canConfigure
     setSession(s)
     if (!kept) setFocus((n) => n + 1)
     return kept
@@ -180,12 +187,15 @@ export default function App() {
               </a>
             </li>
           </ul>
-          {session && <NavInstances key={session.user} route={route} />}
+          {session && (
+            <NavInstances key={session.user} route={route} store={store} />
+          )}
         </nav>
         <main id="main" tabIndex={-1}>
           <Page
             key={hash}
             route={route}
+            store={store}
             session={session}
             onSignedIn={signedIn}
             onSignedOut={signedOut}
@@ -239,19 +249,26 @@ function SessionBar({
   )
 }
 
-/** One nav link per instance, under the Instances label; none when the read fails. */
-function NavInstances({ route }: { route: Route }) {
+/**
+ * One nav link per instance, under the Instances label: the latest list a
+ * read gave since the session started; none until one succeeds.
+ */
+function NavInstances({
+  route,
+  store,
+}: {
+  route: Route
+  store: InstancesStore
+}) {
   const [instances, setInstances] = useState<Instance[]>([])
 
   useEffect(() => {
-    let live = true
-    readInstances().then((a) => {
-      if (live && Array.isArray(a)) setInstances(a)
+    const unwatch = store.watch((a) => {
+      if (Array.isArray(a)) setInstances(a)
     })
-    return () => {
-      live = false
-    }
-  }, [])
+    void store.read()
+    return unwatch
+  }, [store])
 
   if (instances.length === 0) return null
   return (
@@ -282,6 +299,7 @@ function NavInstances({ route }: { route: Route }) {
 /** The page of the route, the sign-in form in place of a protected one. */
 function Page({
   route,
+  store,
   session,
   onSignedIn,
   onSignedOut,
@@ -289,6 +307,7 @@ function Page({
   onDirty,
 }: {
   route: Route
+  store: InstancesStore
   session: Session | null | undefined
   onSignedIn: (session: Session) => void
   onSignedOut: () => void
@@ -299,7 +318,7 @@ function Page({
     return <p role="status">{t('loading')}</p>
   }
   if (route.page === 'overview') {
-    return <Overview />
+    return <Overview store={store} />
   }
   if (route.page === 'sign-in') {
     return <SignIn required={false} onSignedIn={onSignedIn} />
@@ -313,6 +332,7 @@ function Page({
   return (
     <InstancePage
       id={route.id}
+      store={store}
       canConfigure={session.canConfigure}
       onSignedOut={onSignedOut}
       onRenewed={onRenewed}

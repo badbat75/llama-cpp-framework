@@ -148,5 +148,19 @@
   "api-client-unresolvable-host": "The host name {0} does not resolve to an address.",
   "api-server-changed-elsewhere": "These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost.",
   "api-other": "The request was refused ({0}).",
-  "server-edits-dropped": "Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings."
+  "server-edits-dropped": "Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings.",
+  "run-start": "Start",
+  "run-stop": "Stop",
+  "run-restart": "Restart",
+  "run-starting": "Starting llama-server…",
+  "run-stopping": "Stopping llama-server…",
+  "run-restarting": "Restarting llama-server…",
+  "run-started": "llama-server started.",
+  "run-stopped": "llama-server stopped.",
+  "run-restarted": "llama-server restarted.",
+  "run-ended-failed": "llama-server is in the Failed state. Its log on the server says why.",
+  "run-timeout": "llama-server did not reach the expected state within a minute. The state above keeps updating.",
+  "request-failed": "The request did not go through. Try again.",
+  "session-ended-retry": "Your session has ended. Sign in again, then retry.",
+  "api-client-service-failed": "The service manager reported an error. The instance's log on the server says why."
 }
