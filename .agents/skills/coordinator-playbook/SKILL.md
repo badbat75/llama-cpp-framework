@@ -25,3 +25,8 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   change outside `fe/` (bff routes, plan entries, other skills) to the coordinator. A user decision it
   relays is recorded with "(relayed by the web UI session)"; when it changes a requirement, confirm it
   with the user here first.
+- After a crash, a resume or a compaction, run `ListAgents` for a second copy of your own session
+  before resuming agents, and settle with the user which one coordinates (one active session per
+  chat); two copies otherwise resume the same subagents and launch duplicate coders on one tree. A
+  copy stopped mid-slice leaves its coder's half-written code: brief the next coder to tell the
+  tests from the production code in `git diff` first.
