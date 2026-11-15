@@ -785,7 +785,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `JobRemoved`, so the first read after a restart is not stale.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
-   enabled}]`, engine from the file holding the section, in `presets::load_listed`'s order (on
+   enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
+   the bff), engine from the file holding the section, in `presets::load_listed`'s order (on
    first, then off, file order; an id in both files once, as on); errors `{key, args: []}`: 401, 403
    `client-not-authorized`, 503 `client-unavailable`, 502 `client-other` (the web UI's Models page,
    `fe/briefs/02-models.md`).
