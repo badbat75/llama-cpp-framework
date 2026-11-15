@@ -764,10 +764,21 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    Linux, `LogonUser` on Windows); the manager learns who acts. Decided with the user on 2026-11-15: the
    bff vouches for the user it authenticated: a polkit rule lets `private-ai-bff` call the manager, the
    bff passes the user name, and the manager allows `configure` only when that user is in `sudo` or
-   `wheel` (Windows: Administrators), `control` for any signed-in user; no password is kept. Open, for
-   the user: where a web user's own state lives
-   (`settings.ini`, `bench.db`, HF token, `opencode.json`; it blocks the Downloads, Benchmarks and
-   Settings pages). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
+   `wheel` (Windows: Administrators), `control` for any signed-in user; no password is kept.
+   **Replaced on 2026-11-15 (user):** the web UI is for administrators only, and an administrator is
+   a member of the group `pai` (created empty by the packages: sysusers.d on Linux, the MSI on
+   Windows), on every client: the manager grants `configure` to `pai` members only (sudo/wheel and
+   Administrators no longer suffice), on Linux asking the member's own password and keeping it
+   (polkit `auth_self_keep`), on Windows from the token's membership. Sign-in succeeds only for a
+   `pai` member (403 `session-not-administrator` after a right password otherwise); the session reply
+   drops `canConfigure`; every route acting on an instance or file needs `configure`; the Overview
+   (`/api/version`, `/api/instances`, GET boot) stays session-free; the web UI drops its read-only
+   views. Web users' state (user, 2026-11-15, relayed and confirmed): one machine-wide state
+   (preferences, `bench.db`, HF token, `opencode.json`) shared by the administrators, not per user; it
+   unblocks the Downloads, Benchmarks, Integrations and Settings pages, where it lives is to plan.
+   Presets (user, 2026-11-15, relayed and confirmed): `checks::preset_id` refuses `.` and `..` for
+   every client; a preset id is unique across engines; deleting a preset from the web offers to
+   delete its model files, as the GUI does (fe slice 2n). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
    `client-*` keys, together with the fe build that reads them.
 7. (Done: `GET /api/instances/{id}/server`, values by INI key, the instance's defaults, limits,
    interfaces, an FNV-1a revision; the bff reads as itself. Left, before the real sign-in: the
