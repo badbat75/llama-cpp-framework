@@ -592,8 +592,11 @@ test('2a.3: a route change to #/models sets the h1, the page title and the focus
   expect(document.title).toBe(en('page-title', en('models-title')))
 })
 
-test('2a.5: #/models/<anything> is the not-found page', async () => {
-  for (const hash of ['#/models/Qwen3.6-35B-A3B-UD-Q4_K_XL', '#/models/a/b']) {
+test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found page; a real id is the preset page, not the list', async () => {
+  // 2d replaces 2a.5: the id segment is the preset page now (56), so what is
+  // not-found is what 57 lists as malformed: an empty id, more than one
+  // segment, a segment that does not decode.
+  for (const hash of ['#/models/', '#/models/a/b', '#/models/%E0%A4%A']) {
     startAt(hash)
     const { main } = open()
     expect(
@@ -607,6 +610,18 @@ test('2a.5: #/models/<anything> is the not-found page', async () => {
     cleanup()
     vi.unstubAllGlobals()
   }
+  // A real id is not the not-found page, and it is not the list: the list's
+  // table is gone (the preset page is the preset page's own test, 2d.56).
+  const id = 'Qwen3.6-35B-A3B-UD-Q4_K_XL'
+  startAt(`#/models/${id}`)
+  const { main } = open()
+  expect(
+    await within(main).findByRole('heading', { level: 1, name: id }),
+  ).toBeTruthy()
+  expect(
+    within(main).queryByRole('heading', { level: 1, name: en('not-found') }),
+  ).toBeNull()
+  expect(within(main).queryByRole('table'), 'the list is not shown').toBeNull()
 })
 
 // ── Page structure and states (6, 14, 15) ───────────────────────────────
@@ -709,14 +724,22 @@ test('2a.9: one row per preset in the order received; the fe does not sort', asy
   ])
 })
 
-test('2a.10, 2a.12: each row is the id as plain text, the engine, then On or Off', async () => {
+test('2a.10, 2a.12, 2d.60: each row is the id as a link to the preset page, the engine, then On or Off', async () => {
   const { main } = open()
   const t = await table(main)
   expect(rows(t)).toEqual([
     ['Qwen3.6-35B-A3B-UD-Q4_K_XL', 'llama.cpp', en('presets-status-on')],
     ['gemma-3-12b-it', 'llama.cpp', en('presets-status-off')],
   ])
-  expect(within(t).queryAllByRole('link')).toHaveLength(0)
+  // 2d.60 replaces 2a.10's plain text: the id is an <a> to the preset page.
+  expect(
+    within(t)
+      .getAllByRole('link')
+      .map((a) => [(a.textContent ?? '').trim(), a.getAttribute('href')]),
+  ).toEqual([
+    ['Qwen3.6-35B-A3B-UD-Q4_K_XL', '#/models/Qwen3.6-35B-A3B-UD-Q4_K_XL'],
+    ['gemma-3-12b-it', '#/models/gemma-3-12b-it'],
+  ])
 })
 
 test('2a.11: the engine is shown as data, and an engine not available reads "<engine> (not available)"', async () => {
@@ -744,17 +767,28 @@ test('2a.11: the engine is shown as data, and an engine not available reads "<en
   ])
 })
 
-test('2a.13, 2c.37: the one control in a row is its switch; nothing else in the table acts', async () => {
+test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing else in the table acts', async () => {
   // 2c replaces 2a.13: each row gains its on/off switch (administrator only:
-  // only administrators sign in, user 2026-11-15).
+  // only administrators sign in, user 2026-11-15). 2d.60 replaces the plain
+  // name with a link, so a row has two controls: the link, then the switch.
   const { main } = open()
   const t = await table(main)
-  for (const role of ['button', 'link', 'checkbox'] as const) {
+  for (const role of ['button', 'checkbox'] as const) {
     expect(within(t).queryAllByRole(role), role).toHaveLength(0)
   }
   expect(within(t).queryAllByRole('switch')).toHaveLength(2)
+  expect(within(t).queryAllByRole('link')).toHaveLength(2)
   expect(t.querySelectorAll('input')).toHaveLength(2)
   expect(t.querySelectorAll('select, textarea, [tabindex]')).toHaveLength(0)
+  for (const row of within(t)
+    .getAllByRole('row')
+    .filter((r) => within(r).queryAllByRole('columnheader').length === 0)) {
+    const acts = row.querySelectorAll('a, input, button, select, textarea')
+    expect(
+      [...acts].map((el) => el.tagName),
+      'the name link first, then the switch',
+    ).toEqual(['A', 'INPUT'])
+  }
 })
 
 // ── When it reads (18) ──────────────────────────────────────────────────
@@ -786,8 +820,9 @@ test('2a.18: leaving #/models and coming back reads the presets again, once', as
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35, 2c.53: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, then each row switch', async () => {
+test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, then each row link and switch', async () => {
   // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
+  // 2d.60 puts each row's link before its switch.
   const { main } = open()
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-instances') })
@@ -802,6 +837,8 @@ test('2a.20, 2b.35, 2c.53: Tab goes skip link, banner, nav (Overview, instances,
     en('nav-models'),
     en('presets-filter-label'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    'gemma-3-12b-it',
     'gemma-3-12b-it',
   ])
 })

@@ -463,7 +463,7 @@ test('2b.32: Escape in the field with text clears it as the button does, focus s
 
 // ── Not kept (34) ───────────────────────────────────────────────────────
 
-test('2b.34: the text is not kept: not in the URL or storage, and empty again when the page reopens', async () => {
+test('2b.34, 2d.62: the text is in no URL and no storage, and the page reopens with the kept text', async () => {
   const { main } = open({ presets: EXAMPLE })
   const input = await field(main)
   type(input, 'zqwxv')
@@ -477,16 +477,19 @@ test('2b.34: the text is not kept: not in the URL or storage, and empty again wh
   navigate('#/')
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
   navigate('#/models')
-  const again = await field(main)
-  expect(again.value).toBe('')
-  expect(shownIds(main)).toEqual(['Qwen3-27B', 'Old-Coder'])
-  expect(status(main).textContent).toBe('')
-  expect(clearButton(main)).toBeNull()
+  const again = (await within(main).findByRole('searchbox', {
+    name: en('presets-filter-label'),
+  })) as HTMLInputElement
+  // 2d.62: the text lives in the app's memory, so it outlives the page.
+  expect(again.value).toBe('zqwxv')
+  expect(shownIds(main)).toEqual([])
+  expect(status(main).textContent).toBe(en('presets-no-match'))
+  expect(clearButton(main)).not.toBeNull()
 })
 
 // ── Keyboard and screen reader (35, 36) ─────────────────────────────────
 
-test('2b.35, 2c.53: with text, Tab reaches the field, Clear filter, then the shown row switches; focus on arrival stays on the h1', async () => {
+test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then the shown row link and switch; focus on arrival stays on the h1', async () => {
   // 2c.53 replaces 2b.35: the administrator's switches follow Clear filter.
   // Focus moves to the h1 only after a route change, never on a first load.
   startAt('#/')
@@ -500,17 +503,20 @@ test('2b.35, 2c.53: with text, Tab reaches the field, Clear filter, then the sho
   const input = await field(main)
   await waitFor(() => expect(document.activeElement).toBe(h1))
   type(input, 'q')
+  // 2d.60: each shown row's name is a link; it precedes the row's switch.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-4)).toEqual([
+  expect(order.slice(-5)).toEqual([
     en('nav-models'),
     en('presets-filter-label'),
     en('presets-filter-clear'),
     'Qwen3-27B',
+    'Qwen3-27B',
   ])
   const t = await table(main)
-  expect(tabbable().filter((el) => t.contains(el))).toEqual(
-    within(t).queryAllByRole('switch'),
-  )
+  expect(tabbable().filter((el) => t.contains(el))).toEqual([
+    ...within(t).getAllByRole('link'),
+    ...within(t).getAllByRole('switch'),
+  ])
 })
 
 test("2b.36: the field's accessible name is the label, its role searchbox, its description the hint", async () => {

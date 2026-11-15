@@ -25,7 +25,7 @@ lines of 2c below are already fixed in place; 2a and 2b are built and change onl
 - 42: every row's switch is enabled for every session. No special case for a row whose engine is not
   available (2o revisits it).
 - 49: a sign-in compares `user` only (brief 01's 43b as changed): the same `user` keeps the page,
-  focus on the switch; a different `user` reads the list again, the filter emptied, focus on `h1`.
+  focus on the switch; a different `user` reads the list again, the filter emptied (62a), focus on `h1`.
 - 53: the tab order without "(a user's Notice holds no control)" and "(administrator; a user's
   disabled switches are not in the sequence)".
 - 54: drop "for a user, the same with the reader's dimmed or unavailable".
@@ -296,10 +296,9 @@ the list (`crates/config/ui/models_page.slint` 76-81), the rule `preset_matches`
 33. **Not shown** while loading, on any error (criteria 14, 16, 17) and for an empty list (200 with
     `[]`, criterion 15: nothing to filter, D1.4). In those states neither the label, the field, the
     hint, the button nor the status paragraph is in the DOM. They appear with the table.
-34. **Not kept.** Each time the page opens (criterion 18: route change to `#/models`, a sign-in
-    that returns to it) the field is empty and every row shows. The text is not in the URL, in
-    storage, or kept across a page change **(preference: keep it simple; the GUI keeps it only
-    because its tab never closes)**.
+34. **Kept for the tab's life** (changed by 2d, user 2026-11-15): the text survives leaving the
+    page and coming back, as criteria 62 and 62a say; it is not in the URL or in storage, so a
+    reload empties it, and so does Sign out. (2b first had it emptied at each opening.)
 
 ### 2b.7 Keyboard and screen reader
 
@@ -333,7 +332,7 @@ says the filter also matches the model file, so a row matched by its path alone 
 ### 2b.10 Out of 2b
 
 Showing the model path, highlighting the matched text, matching by words or any other field (engine,
-on or off), sorting, keeping the filter across pages or in the URL, a keyboard shortcut to the
+on or off), sorting, keeping the filter in the URL or across a reload (2d keeps it across pages: 62), a keyboard shortcut to the
 field.
 
 ### 2b.11 Proposed contract change (for the bff's coordinator)
@@ -479,7 +478,7 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
     dialog closes, the alert and the button go, focus goes to the switch whose write got the 401
     (showing its value before the change); nothing is resent, the administrator switches again.
     Any other session: the banner shows it, the alert goes, the page reads `GET /api/presets` again
-    for the new session (criterion 18; the filter emptied, criterion 34),
+    for the new session (criterion 18; the filter emptied, criterion 62a),
     focus on the page's `h1`. ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry),
     [2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap))
 
@@ -625,10 +624,20 @@ for the Engine field.
 59. **Unknown id**: a 404 `no-preset-named` from the read shows the Message `preset-not-found`
     filled with the id from the address ("There is no preset named Qwen3-28B."), a plain paragraph
     in place of the content; the back link (criterion 61) stays, so the way out is in the page.
-    The ids `.` and `..` are not handled apart: the common id check refuses them (user, 2026-11-15),
-    and a hand-written one reaches the bff as another path (the URL parser resolves dot segments,
-    [URL Standard](https://url.spec.whatwg.org/#single-dot-path-segment)), whose reply falls under
-    criterion 66. (The fragment itself keeps them: the parser does not resolve dots after `#`.)
+59a. **The ids `.` and `..`** (changed 2026-11-15, after the code review): the fe sends no read
+    for them and shows `preset-not-found` with the id at once ("There is no preset named ..."), as
+    a 404 would, with no loading status in between; the back link and the `h1` (the id) as in 59.
+    Why: no request can name them. `encodeURIComponent` leaves `.` and `..` as they are, and the URL
+    parser removes a path segment that is `.` or `%2e` and resolves `..`, `.%2e`, `%2e.` or `%2e%2e`
+    against its parent, in any case ([URL Standard, single-dot and double-dot path
+    segments](https://url.spec.whatwg.org/#single-dot-path-segment)), so `/api/presets/..` would
+    reach `/api/` and `/api/presets/.` the list route. The bff's common id check refuses both ids
+    anyway (user, 2026-11-15), so "no preset" is true of every preset the web can serve. The
+    address keeps them: the parser does not resolve dots in the fragment. Only exactly `.` and `..`
+    (after decoding, so `#/models/%2E%2E` too); `...` or `a.b` read as usual. In the list, a row
+    whose id is `.` or `..` (a hand-edited file) shows its id as plain text, not a link (as 2a's
+    criterion 10), still inside the element that names its switch: a link would lead to a page
+    saying the preset the row shows does not exist.
 
 ### 2d.2 From the list and back
 
@@ -637,8 +646,10 @@ for the Engine field.
     switch (criterion 38), so the switch's name is still the id. The link keeps `--accent` and an
     underline in every row, a switched-off row included (the row's other text stays `--muted`,
     criterion 12): a link drawn muted would differ from text only by its underline. Its target is
-    the cell's text line, 24 px high at 1rem and line height 1.5 (D5.1 Targets). Replaces criterion
-    10. ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context),
+    the link's inline box, about 22 to 23 px high at 1rem (rendered in Chromium, WebKit and
+    Firefox, 2026-11-15), so it meets 2.5.8 through its spacing exception, not its size: a 24 px
+    circle on it meets no other target, the rows being about 42 px apart and the switch at the
+    row's other end (D5.1 Targets). Replaces criterion 10 (except for the ids of 59a). ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context),
     [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum),
     [1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color))
 61. **The way back.** The first thing in the main region, before the `h1`, is a link
@@ -646,17 +657,29 @@ for the Engine field.
     error, not found, loaded). The browser's Back works too (hash routes). Before the `h1` so it sits
     where a reader looks for the way up (preference); focus lands on the `h1` (criterion 63), so the
     link is one Shift+Tab away and not in the way of the fields.
-62. **Coming back to the list** is opening it (criterion 18): the list is read again, the filter
-    field is empty and every row shows (criterion 34 holds), focus is on the list's `h1` (criterion
-    3), and the page starts at the top. Nothing of the list (filter text, scroll, the switch
-    region's messages) is kept across the visit **(preference: the simplest; question U7)**.
+62. **Coming back to the list keeps its filter** (user, 2026-11-15, U7). The filter text lives in
+    the app's memory, not in the Models page, so it outlives the page. Whenever the list opens again
+    in the same tab (by `preset-back`, by the browser's Back, by the nav's Models link, or after any
+    other page), it is read again (criterion 18) and, once the table shows, the field holds the
+    text last typed, the rows are filtered by it (criterion 27), the Clear filter button is shown
+    (criterion 31) and the status line holds its count or `presets-no-match` (criterion 30), already
+    there when the table appears (it need not be announced: nobody typed). Focus is on the list's
+    `h1` (criterion 3), not in the field; the page starts at the top. While the list loads or fails
+    the field is not shown (criterion 33) and the text is kept for when it does. Clear and Escape
+    empty it as in 2b (criteria 31, 32), and the empty text is then what is kept. Nothing else of
+    the list is kept: not the scroll, not the switch region's status or alert (criterion 50).
+62a. **What ends it.** A reload of the tab (or a new tab) starts empty: the text is in no storage
+    and not in the address. **Sign out** empties it (simplest: it was typed in that session, and the
+    next sign-in may be someone else's); a sign-in after a 401 keeps it for the same `user` and
+    empties it for another (criterion 49, as changed).
 
 ### 2d.3 Heading, title, nav, focus
 
 63. **Heading and title.** The `h1` is the preset's id, through `PageHeading` as on the instance
     page: `document.title` is `page-title` filled with the id ("Qwen3-27B | Private AI
-    Framework"), focus on the `h1` (`tabindex="-1"`) on arrival, whether from a row's link, the
-    address bar, Back or Forward, or a sign-in returning to the page. While loading and on an error
+    Framework"), focus on the `h1` (`tabindex="-1"`) on arrival, whether from a row's link, a
+    hash typed in the address bar, Back or Forward, or a sign-in returning to the page (a full page load moves no focus,
+    `fe/DESIGN.md` 2.3). While loading and on an error
     the `h1` is the id from the address; once read, the reply's `id` (the file's spelling, since the
     bff matches ids case-insensitively). No subtitle: the engine is a field of the preset, not a fact
     under its name (D2.2). ([2.4.2](https://www.w3.org/TR/WCAG22/#page-titled),
@@ -674,14 +697,15 @@ for the Engine field.
 65. **Loading**: `<p role="status">` `preset-loading` below the `h1`, in place of the content.
     ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 66. **Read errors**, a plain paragraph in place of the content (no alert: nobody acted), the back
-    link and `h1` kept:
+    link and `h1` kept. Chosen by the reply's key, whatever its status, as the instance page and
+    the list do (the statuses below are the ones the contract pairs with each key):
     - 401, whatever the body: the whole app becomes signed out, as criterion 16 (the sign-in form
       with `signin-required` in place of the page, the banner's **Sign in**, the nav without
       Instances and Models); after sign-in the page reads again (criterion 58);
     - 403 `client-not-authorized`: `api-client-not-authorized`;
     - 503 `client-unavailable`: `api-client-unavailable`;
     - 404 `no-preset-named`: criterion 59;
-    - any other status or key (a 404 with another key or none included), a body that is not the
+    - any other key, or none (a 404 with another key or no body included), a body that is not the
       error shape, a 200 not of the shape of criterion 81, a network failure, or the 15 s `GET` limit
       of `call()` running out: `preset-load-failed`. Never the reply's body.
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
@@ -799,7 +823,8 @@ for the Engine field.
     403 `client-not-authorized`; 503 `client-unavailable`; 404 `no-preset-named`; 404 with no body;
     a 502 `client-other`; a 200 `[]`; a 200 whose `values` holds a number; a network failure; a
     timeout. Routes: an id with a space and one with `%`; `#/models/`; `#/models/a/b`; a segment
-    that does not decode.
+    that does not decode; `#/models/.`, `#/models/..` and `#/models/%2E%2E` (no request sent,
+    59a); a list row whose id is `..` (no link, 59a).
 
 ### 2d.10 Strings, slice 2d
 
@@ -832,7 +857,7 @@ Editing anything (2h, 2i), the file pickers and the models-folder scan (2i), the
 Assets fields (with the pickers), the Project URL's Open, the other cards (2e to 2g), the engine
 list and changing the engine (2h, 2l), the raw lines of an unknown engine (2o), switching the preset
 on or off from this page, New, Clone, Rename, Delete (2l to 2n), keeping the list's filter across
-the visit (question U7), a "next / previous preset" control, polling.
+a reload or in the address (62a), a "next / previous preset" control, polling.
 
 ### 2d.12 Proposed contract (for the bff's coordinator)
 
@@ -958,7 +983,5 @@ the preset files; the route still needs a session (the Models page is for signed
 - **U6. Preset ids across engines.** `PUT /api/presets/{id}/enabled` assumes an id names one preset
   across every engine's files (as 2m's rename rule says for both files of one engine). Once a second
   engine exists, may two engines hold the same id? If yes, the route needs the engine too.
-- **U7. The list's filter after a visit to a preset page** (criterion 62). Options: (a) emptied on
-  return, as every opening of the list today (recommended: the simplest, nothing to keep in step);
-  (b) kept for the tab's life, in memory, so Back from a preset shows the same filtered rows;
-  (c) kept in the address (`#/models?filter=...`), so it also survives a reload and can be shared.
+- **U7.** (Answered 2026-11-15: the list's filter is kept in memory for the tab's life; criteria
+  62, 62a.)

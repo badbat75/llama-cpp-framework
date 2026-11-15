@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, type ApiError } from './api.ts'
 import Dialog from './Dialog.tsx'
 import PageHeading from './PageHeading.tsx'
+import { presetHref, presetIdUnreadable } from './route.ts'
 import type { Session } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { t } from './strings.ts'
@@ -125,9 +126,14 @@ function switchedText(p: Preset, running: boolean): string {
 }
 
 export default function Models({
+  filterText,
+  onFilterText,
   onSignedOut,
   onRenewed,
 }: {
+  /** The text kept by the shell, for the tab's life (02-models.md, 62). */
+  filterText: string
+  onFilterText: (text: string) => void
   onSignedOut: () => void
   onRenewed: (session: Session) => boolean
 }) {
@@ -159,7 +165,13 @@ export default function Models({
       <section>
         <h2 id="presets-title">{t('presets-title')}</h2>
         <p className="intro">{t('presets-intro')}</p>
-        <Body answer={answer} onRenewed={onRenewed} onReread={reread} />
+        <Body
+          answer={answer}
+          filter={filterText}
+          onFilter={onFilterText}
+          onRenewed={onRenewed}
+          onReread={reread}
+        />
         {answer !== undefined && (
           <p className="presets-note">{t('presets-off-note')}</p>
         )}
@@ -171,10 +183,14 @@ export default function Models({
 /** The presets as a table, or the message in their place. */
 function Body({
   answer,
+  filter,
+  onFilter,
   onRenewed,
   onReread,
 }: {
   answer: Answer | undefined
+  filter: string
+  onFilter: (text: string) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
@@ -193,7 +209,15 @@ function Body({
   if (answer.length === 0) {
     return <p>{t('presets-empty')}</p>
   }
-  return <Filtered read={answer} onRenewed={onRenewed} onReread={onReread} />
+  return (
+    <Filtered
+      read={answer}
+      filter={filter}
+      onFilter={onFilter}
+      onRenewed={onRenewed}
+      onReread={onReread}
+    />
+  )
 }
 
 /** The GUI's rule: the whole text, lowercased, in the id or the model. */
@@ -206,21 +230,25 @@ function matches(p: Preset, filter: string): boolean {
 
 /**
  * The filter field, its status line, the switches' feedback and the rows the
- * filter lets through, each with its switch (2c).
+ * filter lets through, each with its switch (2c). The text is the shell's
+ * (62), never this component's: it outlives the page.
  */
 function Filtered({
   read,
+  filter,
+  onFilter,
   onRenewed,
   onReread,
 }: {
   read: Preset[]
+  filter: string
+  onFilter: (text: string) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
   const uid = useId()
   // The rows as read, each switch's value kept up to date in place (2c.47).
   const [presets, setPresets] = useState(read)
-  const [filter, setFilter] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
@@ -297,7 +325,7 @@ function Filtered({
   }
 
   function clear() {
-    setFilter('')
+    onFilter('')
     field.current?.focus()
   }
 
@@ -326,11 +354,11 @@ function Filtered({
             spellCheck={false}
             aria-describedby="presets-filter-hint"
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => onFilter(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape' && filter !== '') {
                 e.preventDefault()
-                setFilter('')
+                onFilter('')
               }
             }}
           />
@@ -416,7 +444,13 @@ function Table({
         {rows.map(({ p, i }) => (
           <tr key={p.id} className={p.enabled ? undefined : 'off'}>
             <td>
-              <span id={`${uid}-name-${i}`}>{p.id}</span>
+              <span id={`${uid}-name-${i}`}>
+                {presetIdUnreadable(p.id) ? (
+                  p.id
+                ) : (
+                  <a href={presetHref(p.id)}>{p.id}</a>
+                )}
+              </span>
             </td>
             <td>
               {p.engineAvailable

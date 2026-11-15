@@ -190,5 +190,9 @@
   "presets-switched-off": "Switched {0} off.",
   "presets-switched-on-restart": "Switched {0} on: restart the running instances of {1} to apply.",
   "presets-switched-off-restart": "Switched {0} off: restart the running instances of {1} to apply.",
-  "api-no-preset-named": "There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are."
+  "api-no-preset-named": "There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are.",
+  "preset-back": "All presets",
+  "preset-loading": "Loading the preset…",
+  "preset-load-failed": "The preset could not be read.",
+  "preset-not-found": "There is no preset named {0}."
 }

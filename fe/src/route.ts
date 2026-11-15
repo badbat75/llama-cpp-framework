@@ -5,6 +5,7 @@ export type Route =
   | { page: 'overview' }
   | { page: 'sign-in' }
   | { page: 'models' }
+  | { page: 'preset'; id: string }
   | { page: 'instance'; id: string }
   | { page: 'not-found' }
 
@@ -12,6 +13,14 @@ export function parseRoute(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/') return { page: 'overview' }
   if (hash === '#/sign-in') return { page: 'sign-in' }
   if (hash === '#/models') return { page: 'models' }
+  const preset = /^#\/models\/([^/]+)$/.exec(hash)
+  if (preset) {
+    try {
+      return { page: 'preset', id: decodeURIComponent(preset[1]!) }
+    } catch {
+      return { page: 'not-found' }
+    }
+  }
   const instance = /^#\/instances\/([^/]+)$/.exec(hash)
   if (instance) {
     try {
@@ -26,4 +35,19 @@ export function parseRoute(hash: string): Route {
 /** The link to an instance's page. */
 export function instanceHref(id: string): string {
   return `#/instances/${encodeURIComponent(id)}`
+}
+
+/** The link to a preset's page. */
+export function presetHref(id: string): string {
+  return `#/models/${encodeURIComponent(id)}`
+}
+
+/**
+ * True of an id no read can name: the URL parser drops a `.` path segment and
+ * resolves `..` against the parent, so `/api/presets/<id>` would reach another
+ * route (fe/briefs/02-models.md, 59a). The bff refuses both ids, so "there is
+ * no such preset" is true of every preset the web can serve.
+ */
+export function presetIdUnreadable(id: string): boolean {
+  return id === '.' || id === '..'
 }

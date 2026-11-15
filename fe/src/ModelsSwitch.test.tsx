@@ -635,7 +635,7 @@ test('2c.49: another administrator signs in: the banner shows it, the alert goes
 
 // ── The control (37, 38, 39, 42) ────────────────────────────────────────
 
-test('2c.37, 2c.12: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked', async () => {
+test('2c.37, 2c.12, 2d.60: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked; its only other control is the name link', async () => {
   const { main } = await open()
   const rs = dataRows(main)
   expect(switches(main)).toHaveLength(3)
@@ -648,11 +648,16 @@ test('2c.37, 2c.12: each row has a native checkbox with role="switch" in its Sta
     expect(input.getAttribute('role'), IDS[i]).toBe('switch')
     expect(input.hasAttribute('aria-checked'), IDS[i]).toBe(false)
     expect(input.checked, IDS[i]).toBe(LIST[i]!.enabled)
-    // Nothing else in the row acts.
+    // 2d.60 replaces the plain name with a link: the row's two controls are
+    // that link, in the name cell, then the switch. Nothing else acts.
+    const acts = [...row.querySelectorAll('a, input, button, select, textarea')]
+    expect(acts, IDS[i]).toHaveLength(2)
+    expect(acts[0]!.tagName, IDS[i]).toBe('A')
     expect(
-      row.querySelectorAll('a, button, select, textarea'),
-      IDS[i],
-    ).toHaveLength(0)
+      acts[0]!.closest('td, th'),
+      `${IDS[i]}: the link is in the name cell`,
+    ).toBe(cells[0])
+    expect(acts[1], IDS[i]).toBe(input)
     expect(cells[0]!.querySelectorAll('input'), IDS[i]).toHaveLength(0)
     expect(cells[1]!.querySelectorAll('input'), IDS[i]).toHaveLength(0)
   })
@@ -946,7 +951,8 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
 
 // ── Keyboard (52, 53) ───────────────────────────────────────────────────
 
-test('2c.53: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign in after a 401, then each switch in row order', async () => {
+test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign in after a 401, then each row link and switch in row order', async () => {
+  // 2d.60 puts each row's link before its switch.
   const { main } = await open({ presetSwitch: SESSION_ENDED })
   const head = [
     en('skip-to-content'),
@@ -959,13 +965,14 @@ test('2c.53: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign
     en('nav-models'),
     en('presets-filter-label'),
   ]
-  expect(tabbable().map(nameOf)).toEqual([...head, ...IDS])
+  const rowsTwice = IDS.flatMap((id) => [id, id])
+  expect(tabbable().map(nameOf)).toEqual([...head, ...rowsTwice])
   // "e" is in every id, so the filter shows Clear and keeps every row.
   type(filterField(main), 'e')
   expect(tabbable().map(nameOf)).toEqual([
     ...head,
     en('presets-filter-clear'),
-    ...IDS,
+    ...rowsTwice,
   ])
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
@@ -973,7 +980,7 @@ test('2c.53: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign
     ...head,
     en('presets-filter-clear'),
     en('session-sign-in'),
-    ...IDS,
+    ...rowsTwice,
   ])
 })
 

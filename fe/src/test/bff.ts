@@ -235,6 +235,12 @@ export const EN: Record<string, string> = {
     'Switched {0} off: restart the running instances of {1} to apply.',
   'api-no-preset-named':
     'There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are.',
+  // Slice 2d (fe/briefs/02-models.md, section 2d.10): the preset page, the
+  // keys the criteria of 2d.1 to 2d.4 use.
+  'preset-back': 'All presets',
+  'preset-loading': 'Loading the preset…',
+  'preset-load-failed': 'The preset could not be read.',
+  'preset-not-found': 'There is no preset named {0}.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -345,6 +351,34 @@ export const PRESETS: Preset[] = [
 ]
 
 /**
+ * One preset as GET /api/presets/{id} reads it (fe/briefs/api-contract.md,
+ * the proposed section, the shape of criterion 81). `values` adds to or
+ * replaces the keys of the section; `extra` adds, replaces, and with
+ * `undefined` drops top-level members (of `revision`, of `id`, of anything:
+ * the tests of 2d.66 need to answer without a key of the shape).
+ */
+export function presetDoc(
+  values: Record<string, string> = {},
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    id: 'Qwen3-27B',
+    engine: 'llama.cpp',
+    engineAvailable: true,
+    enabled: true,
+    values: {
+      model: '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf',
+      'spec-type': 'ngram-mod,draft-mtp',
+      'ctx-size': '172032',
+      ...values,
+    },
+    projectUrl: 'https://huggingface.co/org/repo',
+    revision: 'r-1731628800-42',
+    ...extra,
+  }
+}
+
+/**
  * A server document (GET /api/instances/{id}/server) with every kind of value.
  * `extra` adds or replaces top-level members, such as `withheld`.
  */
@@ -411,6 +445,11 @@ export type BffOptions = {
   instances?: Instance[] | Answer
   /** GET /api/presets: the presets, or the reply. Default PRESETS. */
   presets?: Preset[] | Answer
+  /**
+   * GET /api/presets/{id}: the reply per decoded id. Default 200 presetDoc
+   * with the `id` of the request (the file spells it as asked).
+   */
+  preset?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
    * PUT /api/presets/{id}/enabled: the reply to the n-th switch (from 1),
    * given the parsed body and the decoded id. Default 200 with the body's
@@ -538,6 +577,15 @@ export function fakeBff(options: BffOptions = {}) {
         options.presetSwitch
           ? options.presetSwitch(body, id, n, init)
           : reply(200, { enabled, running: false }),
+      )
+    }
+    const presetRead = /^GET \/api\/presets\/([^/]+)$/.exec(route)
+    if (presetRead) {
+      const id = decodeURIComponent(presetRead[1]!)
+      return Promise.resolve(
+        options.preset
+          ? options.preset(id, init)
+          : reply(200, presetDoc({}, { id })),
       )
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)

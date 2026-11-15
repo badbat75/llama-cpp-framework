@@ -22,6 +22,7 @@ import Models from './Models.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
+import PresetPage from './PresetPage.tsx'
 import { instanceHref, parseRoute, type Route } from './route.ts'
 import { readSession, signOut, type Session } from './session.ts'
 import SignIn from './SignIn.tsx'
@@ -31,6 +32,11 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash)
   // undefined while the session is read, null when signed out.
   const [session, setSession] = useState<Session | null | undefined>(undefined)
+  // The Models list's filter text, kept for the tab's life by the owner who
+  // typed it, so it outlives the page (02-models.md, 62 and 62a).
+  const [filter, setFilter] = useState<{ owner: string; text: string } | null>(
+    null,
+  )
   // Raised on every page change: the new page's h1 takes the focus.
   const [focus, setFocus] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -110,6 +116,9 @@ export default function App() {
 
   const signedIn = (s: Session) => {
     setSession(s)
+    // The kept filter belongs to the one who typed it: another user starts
+    // empty (62a).
+    if (filter !== null && filter.owner !== s.user) setFilter(null)
     setFocus((n) => n + 1)
     if (route.page === 'sign-in') go('#/')
   }
@@ -121,7 +130,10 @@ export default function App() {
   const renewed = (s: Session) => {
     const kept = session?.user === s.user
     setSession(s)
-    if (!kept) setFocus((n) => n + 1)
+    if (!kept) {
+      setFilter(null)
+      setFocus((n) => n + 1)
+    }
     return kept
   }
 
@@ -141,9 +153,15 @@ export default function App() {
 
   const leave = async () => {
     await signOut()
+    // Sign out empties the kept filter: the next sign-in may be someone else.
+    setFilter(null)
     signedOut()
     go('#/')
   }
+
+  /** The list's filter field typed: the text belongs to the signed-in user. */
+  const typedFilter = (text: string) =>
+    setFilter({ owner: session?.user ?? '', text })
 
   /** A click on `link` while dirty asks first; true when it was held back. */
   const held = (e: MouseEvent, link: HTMLAnchorElement) => {
@@ -245,9 +263,18 @@ export default function App() {
           {session && (
             <ul>
               <li>
+                {/* The preset page belongs to the list without being it, so the
+                    list is its current item, not its current page
+                    (02-models.md, 2d.64). */}
                 <a
                   href="#/models"
-                  aria-current={route.page === 'models' ? 'page' : undefined}
+                  aria-current={
+                    route.page === 'models'
+                      ? 'page'
+                      : route.page === 'preset'
+                        ? 'true'
+                        : undefined
+                  }
                 >
                   {t('nav-models')}
                 </a>
@@ -261,6 +288,8 @@ export default function App() {
             route={route}
             store={store}
             session={session}
+            filterText={filter?.text ?? ''}
+            onFilterText={typedFilter}
             onSignedIn={signedIn}
             onSignedOut={signedOut}
             onRenewed={renewed}
@@ -360,6 +389,8 @@ function Page({
   route,
   store,
   session,
+  filterText,
+  onFilterText,
   onSignedIn,
   onSignedOut,
   onRenewed,
@@ -368,6 +399,8 @@ function Page({
   route: Route
   store: InstancesStore
   session: Session | null | undefined
+  filterText: string
+  onFilterText: (text: string) => void
   onSignedIn: (session: Session) => void
   onSignedOut: () => void
   onRenewed: (session: Session) => boolean
@@ -389,7 +422,17 @@ function Page({
     return <SignIn required onSignedIn={onSignedIn} />
   }
   if (route.page === 'models') {
-    return <Models onSignedOut={onSignedOut} onRenewed={onRenewed} />
+    return (
+      <Models
+        filterText={filterText}
+        onFilterText={onFilterText}
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+      />
+    )
+  }
+  if (route.page === 'preset') {
+    return <PresetPage id={route.id} onSignedOut={onSignedOut} />
   }
   return (
     <InstancePage
