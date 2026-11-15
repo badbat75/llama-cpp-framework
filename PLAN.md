@@ -847,8 +847,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 11b. **A preset's on/off.** `PUT /api/presets/{id}/enabled` (administrator), as worded in
    `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,
-   `checks::preset_id` refuses `.` and `..` (pai-core). The session reply keeps `canConfigure` until
-   the web UI session says its slice R4 is on main.
+   `checks::preset_id` refuses `.` and `..` (pai-core). The fe no longer reads `canConfigure` (fe slice
+   R4, 1827023): the bff drops it from the session reply (`{user}`) after 6b part 2c.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
    enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
    the bff), engine from the file holding the section, in `presets::load_listed`'s order (on
