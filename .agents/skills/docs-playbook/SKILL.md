@@ -182,3 +182,7 @@ Lessons only: the rules are in `AGENTS.md`.
   bullet too; the MoE cache floor (`presets::validate_moe_cache_floor`, save only, needs the GGUF) is
   named there, in the Hardware config bullet and the `moe_cache.rs` source-map row; a sweep's
   up-front check in "The key is typed" bullet and the `sweep.rs` row.
+- After an fe slice, check the bff README's web UI route table against `fe/src/route.ts` and the
+  `call(` paths in `fe/src/*.tsx`, and the served routes with `grep -rn '"/api' crates/bff/src`: the
+  table lagged two fe slices once (run controls, start at boot). The overview sentences in `AGENTS.md`
+  and the root README repeat the page list.

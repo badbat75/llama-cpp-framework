@@ -4,9 +4,9 @@
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state and, for a signed-in user, an
 instance's server file, and has the session routes, whose check against the operating system is not
-wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI already has a Server page,
-editable for an administrator, whose save goes to a route the bff does not serve yet
-([below](#the-web-ui-fe)): a save on the shipped bff fails.
+wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI already has an instance page
+(Start, Stop, Restart, start at boot and a Server page editable for an administrator) and a Models
+page whose routes the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -207,7 +207,8 @@ opens and never shows a reply's text.
 | --- | --- | --- |
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
-| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: for an administrator (`canConfigure`) editable, with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`); for anyone else every control disabled and a notice | signed in; otherwise the sign-in form in its place |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: for an administrator (`canConfigure`) editable, with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`); for anyone else every control disabled and a notice | signed in; otherwise the sign-in form in its place |
+| `#/models` | The presets of every engine (`GET /api/presets`) as a read-only table of preset, engine (with "(not available)" when its engine is not) and status On or Off (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
@@ -220,10 +221,12 @@ opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **`PUT /api/instances/{id}/server` is not served by the bff yet** (`PLAN.md` step 10, slice 8);
-  `GET` is ([above](#the-server-file-of-an-instance)). Both are in `fe/briefs/api-contract.md`, and
-  the fe is tested against them with mocked replies only, never against a real bff, so a save on the
-  shipped bff fails. The bff
+- **The bff does not serve yet** `PUT /api/instances/{id}/server` (`PLAN.md` step 10, slice 8),
+  the start, stop, restart and boot routes (slice 9), nor `GET /api/presets` (slice 11); `GET` of the server
+  file is served ([above](#the-server-file-of-an-instance)). All are in `fe/briefs/api-contract.md`,
+  and the fe is tested against them with mocked replies only, never against a real bff, so on the
+  shipped bff a save, a run control and start at boot fail and the Models page shows "The presets
+  could not be read.". The bff
   serves `/api/session`, but until its authenticator is wired every sign-in answers 503
   `session-unavailable`, so the page stays signed out with the Overview whole and an instance page
   shows the sign-in form.
