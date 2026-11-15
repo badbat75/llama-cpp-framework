@@ -117,8 +117,8 @@ the two calls the manager answers without authorization, and the only ones the b
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
   send to the manager; neither call asks polkit, and with no session the bff's user `private-ai-bff` gets no
   `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
-  `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive nor an
-  administrator's, so the manager refuses it `control` and `configure`
+  `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive, nor an
+  administrator's, nor a member of `pai`, so the manager refuses it `control` and `configure`
   ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls the bff makes passed the pipe in
   CI (run 43651545466); the refusals are type-checked only.
 
@@ -159,11 +159,13 @@ or an unknown or expired one, it answers 401 `{"key": "session-required", "args"
 connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
 connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
 yet: the bff reads the file as itself, so the session is checked to exist and, for the API key
-alone, whether its user is an administrator (`canConfigure`). The manager also withholds the key
-from a reader allowed `control` but not `configure` ("Through the manager" in
+alone, whether its user is an administrator: a member of the group `pai` (`canConfigure`, the second
+answer of the manager's `Authenticate`). The manager also withholds the key from a reader allowed
+`control` but not `configure` ("Through the manager" in
 [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)); a file it
-withheld is marked withheld for every user, an administrator included (`server.rs` `document`). The
-bff's own account gets no `control` today ([above](#the-instances-from-the-manager)), so the manager refuses its read (403).
+withheld is marked withheld for every user, an administrator included (`server.rs` `document`).
+The bff's own account gets no `control` today ([above](#the-instances-from-the-manager)), so the
+manager refuses its read (403).
 
 | Status | Body | When |
 | --- | --- | --- |

@@ -198,8 +198,8 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    Windows-only parts (the pipe server and client with the security descriptor, the caller from the
    client token, the Authority over it, the SCM `ServiceControl`, `serve` and `run-instance` as
    services), type-checked here and tried on the user's Windows build; on Windows `control` is any
-   interactive user and `configure` a member of the local Administrators group, elevated or not
-   (user, 2026-11-13: no prompt can cross the pipe); each instance's service and virtual account are named
+   interactive user and `configure` a member of the local group `pai` (user, 2026-11-15; Administrators
+   until 1e4094a), elevated or not (user, 2026-11-13: no prompt can cross the pipe); each instance's service and virtual account are named
    `llama.cpp_<id>` (`NT SERVICE\llama.cpp_<id>`: `_`, not systemd's `@`; user, 2026-11-14), the files keep
    `server@<id>.ini` and `llama-server@<id>.log` on both OSes; the manager service and its pipe are named `private-ai-manager`
    (`\\.\pipe\private-ai-manager`), as the Linux unit; Stop kills llama-server outright (user, 2026-11-14); **6c** (done; its Windows arm compiled first by the user's build) the configurator's

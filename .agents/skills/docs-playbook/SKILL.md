@@ -21,6 +21,16 @@ Lessons only: the rules are in `AGENTS.md`.
   `cargo test -p pai-manager -- an_admin_member_controls_but_configures_only_in_pai` (the Windows
   decisions compile and run on Linux: `manager.rs` keeps `mod windows` unconditional, the Win32 glue
   is `cfg(windows)`).
+- For the `pai` rule the sources to read before writing: `allowed` and `TokenFacts` in
+  `crates/manager/src/manager/windows.rs` (control: interactive, Administrators or `pai`; configure:
+  `pai` enabled and not deny-only, or LocalSystem), `ADMIN_GROUP = "pai"` in
+  `crates/manager/src/manager/service.rs`, and the polkit rule in `xtask/src/linux/system_files.rs`.
+  `installer/AGENTS.md`'s pipe bullet is the full Windows wording, so the READMEs carry one line each
+  and point there. In the web docs "administrator" means a `pai` member: `canConfigure` is the second
+  bool of the manager's `Authenticate` (`PasswordChecker::is_admin` answers `pai` membership on both
+  OSes), so define it where `canConfigure` first appears and let the later uses inherit. Code doc
+  comments and names lag the rule (the `PIPE_SDDL` doc says "neither interactive nor an
+  administrator's", `is_admin` is named for the old one): code's to fix, report them.
 - The Windows manager reads the client's TOKEN, so a group membership added after a logon counts at the
   **next logon**; the web sign-in's `Authenticate` reads the group database (`NetUserGetLocalGroups`,
   `logon::in_local_group`) and sees it at once. Two answers, no run has settled the first: say so.
