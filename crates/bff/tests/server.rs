@@ -29,6 +29,11 @@
 //!   - `interfaces`: `net_ifaces::interfaces()` as `{value, label}`.
 //!   - `revision`: opaque text, the same for the same file text, another for
 //!     any other text (a comment included).
+//! - `OpencodeApiKey` goes to administrators only (decided with the user
+//!   2026-11-15): for a user whose session has `can_configure` false it is
+//!   `null`, and when the file sets it the document gains
+//!   `"withheld": ["OpencodeApiKey"]`; with nothing withheld there is no
+//!   `withheld` member.
 //! - Errors `{"key", "args": []}`, never the manager's detail: 404
 //!   `client-no-instance` (no such file, or the manager says no such
 //!   instance or refuses the id), 503 `client-unavailable` (no manager, or
@@ -150,19 +155,23 @@ impl ManagerClient for FakeManager {
     }
 }
 
-/// `alice`, a signed-in user who is not an administrator: reading needs
-/// only `control`.
+/// `alice`, a signed-in user who is not an administrator (reading needs
+/// only `control`), and `root`, an administrator (`can_configure`); both
+/// with the password `correct horse`.
 struct FakeAuth;
 
 impl Authenticator for FakeAuth {
     fn authenticate(&self, user: &str, password: &str) -> Result<Identity, AuthError> {
-        if user == "alice" && password == "correct horse" {
-            Ok(Identity {
+        match (user, password) {
+            ("alice", "correct horse") => Ok(Identity {
                 user: "alice".into(),
                 can_configure: false,
-            })
-        } else {
-            Err(AuthError::BadCredentials)
+            }),
+            ("root", "correct horse") => Ok(Identity {
+                user: "root".into(),
+                can_configure: true,
+            }),
+            _ => Err(AuthError::BadCredentials),
         }
     }
 }
@@ -222,12 +231,17 @@ impl App {
 
     /// Sign `alice` in and return the cookie the browser sends back.
     async fn sign_in(&self) -> String {
+        self.sign_in_as("alice").await
+    }
+
+    /// Sign `user` in and return the cookie the browser sends back.
+    async fn sign_in_as(&self, user: &str) -> String {
         let mut request = Request::builder()
             .method(Method::POST)
             .uri("/api/session")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({ "username": "alice", "password": "correct horse" }).to_string(),
+                json!({ "username": user, "password": "correct horse" }).to_string(),
             ))
             .expect("request");
         request
@@ -286,6 +300,14 @@ impl App {
     /// Signed in, `GET /api/instances/default/server`.
     async fn read_default(&self) -> Reply {
         let cookie = self.sign_in().await;
+        self.get("/api/instances/default/server", Some(&cookie))
+            .await
+    }
+
+    /// Signed in as the administrator `root`,
+    /// `GET /api/instances/default/server`.
+    async fn read_default_as_admin(&self) -> Reply {
+        let cookie = self.sign_in_as("root").await;
         self.get("/api/instances/default/server", Some(&cookie))
             .await
     }
@@ -425,6 +447,18 @@ async fn an_unknown_id_is_no_instance() {
     assert_eq!(app.calls(), ["read server@nope.ini"], "asked for its file");
 }
 
+/// An id that tries to leave the config folder (`..%2Fx`, `../x` once
+/// decoded) is no instance: 404 `client-no-instance`, the same as any id
+/// the manager refuses.
+#[tokio::test]
+async fn a_traversal_id_is_no_instance() {
+    let app = app_reading(Ok(None));
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/..%2Fx/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+}
+
 /// The manager's own "no such instance", and its refusal of an id that
 /// cannot name a file (`BadFileName`, `InvalidId`), are 404 too: in each
 /// case the instance does not exist.
@@ -488,7 +522,8 @@ async fn the_document_has_exactly_the_contract_members() {
 }
 
 /// `values` holds every server key, no other, each as typed JSON from a
-/// file that sets them all.
+/// file that sets them all, read by an administrator (who alone is sent
+/// the API key).
 #[tokio::test]
 async fn values_are_typed_by_ini_key() {
     let text = "\
@@ -514,7 +549,7 @@ OpencodeBaseUrl = https://llm.example.com
 OpencodeApiKey = sk-test
 Unknown = 7
 ";
-    let doc = app_holding(text).read_default().await.document();
+    let doc = app_holding(text).read_default_as_admin().await.document();
     assert_eq!(
         doc["values"],
         json!({
@@ -728,4 +763,44 @@ async fn the_revision_follows_the_file_text() {
     assert_eq!(first["revision"], again["revision"], "same text");
     assert_ne!(first["revision"], with_comment["revision"], "a comment");
     assert_ne!(first["revision"], changed["revision"], "a value");
+}
+
+// ── The API key: administrators only ────────────────────────────────────
+
+/// A file that sets the API key, as an administrator would save it.
+const WITH_KEY: &str = "[Server]\nPort = 8580\nOpencodeApiKey = sk-test\n";
+
+/// A user who cannot configure is not sent the key: `null`, the document
+/// says it was withheld, and the secret is nowhere in the body.
+#[tokio::test]
+async fn the_api_key_is_withheld_from_a_user_who_cannot_configure() {
+    let r = app_holding(WITH_KEY).read_default().await;
+    let doc = r.document();
+    assert_eq!(doc["values"]["OpencodeApiKey"], Value::Null, "{}", r.body);
+    assert_eq!(doc["withheld"], json!(["OpencodeApiKey"]), "{}", r.body);
+    assert!(!r.body.contains("sk-test"), "{}", r.body);
+    assert_eq!(doc["values"]["Port"], json!(8580), "the rest is sent");
+}
+
+/// With no key in the file nothing is withheld: `null` and no `withheld`
+/// member.
+#[tokio::test]
+async fn nothing_is_withheld_from_a_user_when_the_file_has_no_key() {
+    let doc = app_holding("[Server]\nPort = 8580\n")
+        .read_default()
+        .await
+        .document();
+    assert_eq!(doc["values"]["OpencodeApiKey"], Value::Null);
+    assert!(doc.get("withheld").is_none(), "{doc}");
+}
+
+/// An administrator is sent the key as saved, and nothing is withheld.
+#[tokio::test]
+async fn an_administrator_is_sent_the_api_key() {
+    let doc = app_holding(WITH_KEY)
+        .read_default_as_admin()
+        .await
+        .document();
+    assert_eq!(doc["values"]["OpencodeApiKey"], json!("sk-test"));
+    assert!(doc.get("withheld").is_none(), "{doc}");
 }

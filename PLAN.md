@@ -744,11 +744,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    interfaces, an FNV-1a revision; the bff reads as itself. Left, before the real sign-in: the
    `OpencodeApiKey` goes to every signed-in user, also one with `canConfigure` false, while the
    manager keeps the file at mode 0640 because of that key; decided with the user on 2026-11-15:
-   administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set. Optional: refuse an id
+   administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set
+   (done). Optional: refuse an id
    failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
 8. **Write it.** `PUT /api/instances/{id}/server` with the revision: step 13's checks (slices 1 and 2
    first), 422 `{key, args, field}`, 409 `server-changed-elsewhere` on a stale revision; ModelsDir
    created for the instance after a save.
+   First, the revision must stop being a key oracle: today it is an unsalted FNV-1a of the whole
+   file, key included, sent to non-administrators too, so a short key can be guessed offline against
+   it; key the hash with a secret (per process, a restart then reads as a stale revision: 409 and
+   Reload) or leave the key's value out of it.
 9. **Control and boot.** `POST start|stop|restart` (a stop with `SaveStateOnShutdown` saves the slot
    snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.

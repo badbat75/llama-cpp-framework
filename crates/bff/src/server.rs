@@ -22,13 +22,15 @@ pub(crate) async fn read(
     id: String,
     headers: HeaderMap,
 ) -> Response {
-    if sessions.current(&headers).is_none() {
+    let Some((_, identity)) = sessions.current(&headers) else {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
-    }
+    };
     let name = format!("server@{id}.ini");
     let ask = tokio::task::spawn_blocking(move || connect()?.read_file(&name));
     let (status, key) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(text)))) => return axum::Json(document(&text)).into_response(),
+        Ok(Ok(Ok(Some(text)))) => {
+            return axum::Json(document(&text, identity.can_configure)).into_response()
+        }
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
             ClientError::NoInstance | ClientError::BadFileName | ClientError::InvalidId,
@@ -42,9 +44,11 @@ pub(crate) async fn read(
     error(status, key, &[])
 }
 
-/// The 200 document of the file `text`.
-fn document(text: &str) -> Value {
-    let cfg = server_cfg::from_text(text);
+/// The 200 document of the file `text`; `OpencodeApiKey` only for an
+/// administrator (`can_configure`), anyone else told it was `withheld`.
+fn document(text: &str, can_configure: bool) -> Value {
+    let mut cfg = server_cfg::from_text(text);
+    let withheld = !can_configure && cfg.opencode_api_key.take().is_some();
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     let range = |key: &str| checks::server_int_range(key).map(|r| json!([r.start(), r.end()]));
     let base_url = ServerConfig {
@@ -56,7 +60,7 @@ fn document(text: &str) -> Value {
         .into_iter()
         .map(|i| json!({ "value": i.value, "label": i.label }))
         .collect();
-    json!({
+    let mut doc = json!({
         "revision": revision(text),
         "values": {
             "Port": cfg.port,
@@ -95,7 +99,11 @@ fn document(text: &str) -> Value {
             "ThreadsBatch": [1, cpus],
         },
         "interfaces": interfaces,
-    })
+    });
+    if withheld {
+        doc["withheld"] = json!(["OpencodeApiKey"]);
+    }
+    doc
 }
 
 /// The file's revision: the 64-bit FNV-1a hash of its text in hex, the same

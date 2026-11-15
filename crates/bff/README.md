@@ -152,11 +152,12 @@ LogonUser (Windows) are wired; under `PRIVATE_AI_DATA_ROOT` it must never ask th
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
 connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
 connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
-yet: the bff reads the file as itself, so the session is only checked to exist.
+yet: the bff reads the file as itself, so the session is checked to exist and, for the API key
+alone, whether its user is an administrator (`canConfigure`).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}` | The file was read |
+| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when a value was kept from the user | The file was read |
 | 401 | `{"key": "session-required", "args": []}` | No session |
 | 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
@@ -167,7 +168,11 @@ yet: the bff reads the file as itself, so the session is only checked to exist.
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
   `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
   `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
-  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`.
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` goes to administrators only:
+  for a session whose user cannot configure it is `null`.
+- **`withheld`**: `["OpencodeApiKey"]` when the file sets the API key and the user cannot configure,
+  so the web UI can say a key is saved without showing it; absent otherwise, and never for an
+  administrator.
 - **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
   `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
   the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file

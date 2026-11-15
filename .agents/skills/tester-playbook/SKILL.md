@@ -574,3 +574,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - The contract's words and the fe's code can disagree on a value's JSON type: read
   `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning one; `RocblasUseHipblaslt` is
   `"on"`/`"off"` there, not a bool.
+- A bff value sent by role (`OpencodeApiKey` to `can_configure` sessions only, `tests/server.rs`) is
+  tested with a second user in the fake authenticator (`root`, `can_configure: true`) and
+  `sign_in_as(user)`; besides the `null`, assert the secret's text is nowhere in the body. The admin and
+  nothing-withheld cases are green before the code: only the withheld case is the red.
