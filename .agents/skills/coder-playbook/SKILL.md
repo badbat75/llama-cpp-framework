@@ -321,3 +321,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: an async handler that needs "still mounted" or a prop's newest value after an `await` keeps
   it in a ref written only by effects, with mounted set true in the effect's setup (StrictMode mounts
   twice). Opacity on a focusable control dims its focus ring too.
+- A server.ini rule lives once in `pai_core::checks` (a `pub fn` per rule, run on the file text by
+  `server_file`); `pai_app::server_cfg::check` runs the same fns on the `ServerConfig` values, since
+  `render` writes an out-of-range value as the commented hint and the text check would pass it.
+  `save` calls `check` on both backends, so `pai server set` and the GUI refuse alike.

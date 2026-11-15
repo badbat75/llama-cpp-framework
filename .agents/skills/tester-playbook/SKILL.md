@@ -608,3 +608,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: a control added to the instance header breaks whole-main queries in other test files; scope
   them to their section. After an interrupted session, run the test file before adding tests: the
   interrupted run's work may already be on disk.
+- `server_cfg::render` silently writes an out-of-range `Port` (<= 0), `ModelsMax` (< 0) or thread count
+  (<= 0) as the commented hint, i.e. unset: a check run on the rendered text passes them. Pin a server
+  check on the `ServerConfig` values (`pai_app::server_cfg::check`), not on `render`'s output.
+- clap 4 refuses `--flag -1` ("unexpected argument '-1'") unless the arg has `allow_hyphen_values`
+  (`--models-memory-margin` has it); `--flag=-1` parses either way. Build the CLI with
+  `Cli::try_parse_from` and panic with clap's error so that red is not mistaken for a refusal.

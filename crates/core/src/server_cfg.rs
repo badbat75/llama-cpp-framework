@@ -502,6 +502,15 @@ pub fn opt_nonblank(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
 }
 
+/// The OpenCode base URL as stored: without its trailing `/`s, then `/v1`,
+/// then `/`s again (the convention "store without suffix", so a typed `/v1`
+/// is never appended twice); blank is unset.
+pub fn normalize_base_url(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    let cleaned = url.strip_suffix("/v1").unwrap_or(url).trim_end_matches('/');
+    opt_nonblank(Some(cleaned.to_string()))
+}
+
 // ── Save & render (INI write) ────────────────────────────────────────────
 
 /// Save-boundary validation, pure so the unit test never touches `paths::`,

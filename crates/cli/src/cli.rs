@@ -326,7 +326,7 @@ pub struct ServerSet {
     #[arg(long)]
     pub threads_batch: Option<i32>,
     /// Models kept resident at once. Stored as-is (0 = unlimited); NOT cleared by 0.
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub models_max: Option<i32>,
     /// MiB kept free per device; the router unloads its least recently used
     /// models until a new one fits. 0 = off; negative clears the key (llama.cpp
@@ -3001,6 +3001,188 @@ pub(crate) fn cli_config_e2e() {
             assert_eq!(*files.lock().unwrap(), before, "{label}: nothing changed");
             nothing_per_user(&label);
         }
+    }
+}
+
+/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): `server
+/// set` refuses what the Server tab refuses, before anything is written, on
+/// the manager backend (which would refuse some of it too) and on the direct
+/// one (macOS, no manager), with the refusal's text; and stores the base URL
+/// without its trailing `/` and `/v1`, the GUI's rule, so a stored `/v1` is
+/// never appended twice.
+#[cfg(test)]
+pub(crate) fn cli_server_checks_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use crate::server_control::Backend;
+    use clap::Parser;
+    use pai_core::checks::Refusal;
+    use pai_core::client::InstanceState;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let parse = |args: &[&str]| {
+        Cli::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?} does not parse: {e}"))
+    };
+    let cpus = std::thread::available_parallelism()
+        .expect("the CPU count")
+        .get();
+    let over = (cpus + 1).to_string();
+    let all = cpus.to_string();
+    let not_int = |key: &str, text: &str, lo: &str, hi: &str| Refusal {
+        key: "not-whole-number-in-range",
+        values: [key, text, lo, hi].map(String::from).to_vec(),
+    };
+    let max = i32::MAX.to_string();
+    let refused: Vec<(Vec<&str>, Refusal)> = vec![
+        (
+            vec!["--models-max", "-1"],
+            not_int("ModelsMax", "-1", "0", &max),
+        ),
+        (vec!["--port", "0"], not_int("Port", "0", "1", "65535")),
+        (
+            vec!["--log-verbosity", "7"],
+            not_int("LogVerbosity", "7", "0", "5"),
+        ),
+        (
+            vec!["--hostname", "0.0.0.0,127.0.0.1"],
+            Refusal {
+                key: "bind-all-with-others",
+                values: vec![],
+            },
+        ),
+        (
+            vec!["--threads", &over],
+            not_int("Threads", &over, "1", &all),
+        ),
+        (
+            vec!["--threads-batch", &over],
+            not_int("ThreadsBatch", &over, "1", &all),
+        ),
+    ];
+    let urls = [
+        ("http://h:1/v1/", "http://h:1"),
+        ("http://h:1/v1", "http://h:1"),
+        ("http://h:1/v1//", "http://h:1"),
+        ("http://h:1/", "http://h:1"),
+        ("https://gw.example.com/llm", "https://gw.example.com/llm"),
+    ];
+    let seed = "[Server]\nPort = 8080\n";
+
+    // ── The manager backend: refused before the manager is asked ─────────
+    let log = fake::log();
+    for (flags, want) in &refused {
+        let c =
+            FakeClient::new(&log, InstanceState::Inactive).with_file("server@default.ini", seed);
+        let files = c.files.clone();
+        let args: Vec<&str> = ["x", "server", "set"]
+            .iter()
+            .copied()
+            .chain(flags.iter().copied())
+            .collect();
+        let cli = parse(&args);
+        log.lock().unwrap().clear();
+        match fake::scoped(fake::backend(c), || run(cli)) {
+            Ok(()) => panic!("manager {flags:?}: written"),
+            Err(err) => assert!(
+                format!("{err:#}").contains(&want.text()),
+                "manager {flags:?}: {err:#} does not carry {:?}",
+                want.text()
+            ),
+        }
+        assert!(
+            fake::writes(&log).is_empty(),
+            "manager {flags:?}: {:?}",
+            fake::writes(&log)
+        );
+        assert_eq!(
+            files
+                .lock()
+                .unwrap()
+                .get("server@default.ini")
+                .map(String::as_str),
+            Some(seed),
+            "manager {flags:?}: the file changed"
+        );
+    }
+    for (typed, stored) in urls {
+        let c =
+            FakeClient::new(&log, InstanceState::Inactive).with_file("server@default.ini", seed);
+        let files = c.files.clone();
+        let cli = parse(&["x", "server", "set", "--opencode-base-url", typed]);
+        fake::scoped(fake::backend(c), || run(cli)).expect("server set");
+        let text = files
+            .lock()
+            .unwrap()
+            .get("server@default.ini")
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            crate::server_cfg::from_text(&text)
+                .opencode_base_url
+                .as_deref(),
+            Some(stored),
+            "manager {typed:?}"
+        );
+    }
+    // The CPU count itself is a thread count the sliders reach.
+    let c = FakeClient::new(&log, InstanceState::Inactive).with_file("server@default.ini", seed);
+    let files = c.files.clone();
+    let cli = parse(&[
+        "x",
+        "server",
+        "set",
+        "--threads",
+        &all,
+        "--threads-batch",
+        &all,
+    ]);
+    fake::scoped(fake::backend(c), || run(cli)).expect("server set --threads <cpus>");
+    let text = files
+        .lock()
+        .unwrap()
+        .get("server@default.ini")
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        crate::server_cfg::from_text(&text).threads,
+        Some(cpus as i32)
+    );
+
+    // ── The direct backend (macOS): the per-user server.ini ─────────────
+    let ini = crate::paths::server_ini();
+    std::fs::create_dir_all(ini.parent().expect("a parent")).expect("config dir");
+    for (flags, want) in &refused {
+        std::fs::write(&ini, seed).expect("seed server.ini");
+        let args: Vec<&str> = ["x", "server", "set"]
+            .iter()
+            .copied()
+            .chain(flags.iter().copied())
+            .collect();
+        let cli = parse(&args);
+        match fake::scoped(Backend::Direct, || run(cli)) {
+            Ok(()) => panic!("direct {flags:?}: written"),
+            Err(err) => assert!(
+                format!("{err:#}").contains(&want.text()),
+                "direct {flags:?}: {err:#} does not carry {:?}",
+                want.text()
+            ),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&ini).ok().as_deref(),
+            Some(seed),
+            "direct {flags:?}: server.ini changed"
+        );
+    }
+    for (typed, stored) in urls {
+        std::fs::write(&ini, seed).expect("seed server.ini");
+        let cli = parse(&["x", "server", "set", "--opencode-base-url", typed]);
+        fake::scoped(Backend::Direct, || run(cli)).expect("server set");
+        assert_eq!(
+            crate::server_cfg::load_from(&ini)
+                .opencode_base_url
+                .as_deref(),
+            Some(stored),
+            "direct {typed:?}"
+        );
     }
 }
 

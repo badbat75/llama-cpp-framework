@@ -19,6 +19,7 @@ pub struct Refusal {
 /// Every key a check refuses with: `Refusal::decode` takes no other.
 pub const KEYS: &[&str] = &[
     "not-whole-number-in-range",
+    "bind-all-with-others",
     "comment-markers",
     "load-on-startup-over-max",
     "load-on-startup-unlimited",
@@ -76,6 +77,7 @@ impl Refusal {
             "not-whole-number-in-range" => {
                 strings::fill("not-whole-number-in-range", &[&v(0), &v(1), &v(2), &v(3)])
             }
+            "bind-all-with-others" => strings::t("bind-all-with-others"),
             "comment-markers" => strings::fill("comment-markers", &[&v(0)]),
             "load-on-startup-over-max" => {
                 strings::fill("load-on-startup-over-max", &[&v(0), &v(1)])
@@ -144,12 +146,17 @@ pub const PORT: RangeInclusive<i32> = 1..=65535;
 
 /// The integer keys of server.ini the Server tab's form refuses a mistyped
 /// value for (`server_form::int_fields`), with the values each takes: a port a
-/// listener can bind, any `ModelsMax` (0 = unlimited), a margin of 0 or more.
-pub const SERVER_INT_KEYS: [(&str, RangeInclusive<i32>); 3] = [
+/// listener can bind, a `ModelsMax` of 0 or more (0 = unlimited), a margin of
+/// 0 or more, one of llama.cpp's log levels.
+pub const SERVER_INT_KEYS: [(&str, RangeInclusive<i32>); 4] = [
     ("Port", PORT),
-    ("ModelsMax", INT_ANY),
+    ("ModelsMax", INT_NON_NEGATIVE),
     ("ModelsMemoryMargin", INT_NON_NEGATIVE),
+    ("LogVerbosity", LOG_VERBOSITY),
 ];
+
+/// llama.cpp's log levels (`-lv`), as the Server tab's dropdown offers them.
+pub const LOG_VERBOSITY: RangeInclusive<i32> = 0..=5;
 
 /// The range of the server.ini integer key `key` in [`SERVER_INT_KEYS`].
 pub fn server_int_range(key: &str) -> Option<RangeInclusive<i32>> {
@@ -259,6 +266,22 @@ pub fn override_tensor(s: &str) -> Result<(), Refusal> {
 pub fn moe_cache_split(moe_cache_mib: Option<i32>, split_mode: &str) -> Result<(), Refusal> {
     if moe_cache_mib.is_some_and(|v| v > 0) && split_mode.trim() == "tensor" {
         Err(Refusal::new("moe-cache-with-tensor-split", &[]))
+    } else {
+        Ok(())
+    }
+}
+
+/// A bind list (`Hostname`, comma-separated) holds `0.0.0.0` alone: it covers
+/// every IPv4 address, and llama.cpp's `--host` help calls overlapping
+/// addresses undefined behaviour. Empty entries are ignored.
+pub fn bind_list(hostname: &str) -> Result<(), Refusal> {
+    let entries: Vec<&str> = hostname
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .collect();
+    if entries.len() > 1 && entries.contains(&"0.0.0.0") {
+        Err(Refusal::new("bind-all-with-others", &[]))
     } else {
         Ok(())
     }
@@ -416,6 +439,7 @@ pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
             comment_markers(key, raw)?;
         }
     }
+    bind_list(&s.get("Hostname").unwrap_or_default())?;
     let models_max = s.get("ModelsMax").and_then(|v| ini::parse_int(&v));
     startup_count(startup_flagged(&raw_sections(presets)), models_max)
 }
@@ -453,8 +477,9 @@ mod tests {
     use crate::server_cfg::{self, ServerConfig};
 
     /// The keys the checks refuse with, by rule.
-    const EXPECTED_KEYS: [&str; 10] = [
+    const EXPECTED_KEYS: [&str; 11] = [
         "not-whole-number-in-range",
+        "bind-all-with-others",
         "comment-markers",
         "load-on-startup-over-max",
         "load-on-startup-unlimited",
@@ -679,17 +704,18 @@ top-p = 0.95\r\n";
         );
     }
 
+    /// A whole number of 0 or more: 0 is unlimited, and llama.cpp has no
+    /// meaning for a negative cap (the GUI's field refuses one).
     #[test]
-    fn server_models_max_must_be_a_whole_number() {
-        for bad in ["", "x", "1.5", "99999999999"] {
+    fn server_models_max_must_be_a_whole_number_not_negative() {
+        for bad in ["", "x", "1.5", "99999999999", "-1", "-4"] {
             assert_eq!(
                 server_file(&server(&format!("ModelsMax = {bad}\n")), ""),
-                Err(not_int("ModelsMax", bad, &crate::ini::INT_ANY)),
+                Err(not_int("ModelsMax", bad, &crate::ini::INT_NON_NEGATIVE)),
                 "ModelsMax = {bad:?}"
             );
         }
-        // 0 is unlimited, and any i32 reads as itself.
-        for good in ["0", "-1", "8"] {
+        for good in ["0", "1", "8"] {
             assert_eq!(
                 server_file(&server(&format!("ModelsMax = {good}\n")), ""),
                 Ok(()),
@@ -719,12 +745,71 @@ top-p = 0.95\r\n";
         }
     }
 
-    /// The fields the Server tab does not refuse today stay lenient: a slider
-    /// value, the clamped log level, a bool the reader drops.
+    /// The fields with no check of the file's text stay lenient: the thread
+    /// counts (their bound is the machine's CPU count, checked by the
+    /// configurator, `pai_app::server_cfg::check`; the reader drops what is
+    /// not a positive number), a bool the reader drops.
     #[test]
     fn server_keys_with_no_check_today_pass() {
-        let text = server("Threads = x\nThreadsBatch = -3\nLogVerbosity = 7\nWebui = maybe\n");
+        let text = server("Threads = x\nThreadsBatch = -3\nWebui = maybe\n");
         assert_eq!(server_file(&text, ""), Ok(()));
+    }
+
+    /// `LogVerbosity` is one of llama.cpp's six levels, 0 to 5 (the Server
+    /// tab's dropdown); `-lv 7` would be taken as given.
+    #[test]
+    fn server_log_verbosity_is_a_level_from_0_to_5() {
+        for bad in ["7", "6", "-1", "x", ""] {
+            assert_eq!(
+                server_file(&server(&format!("LogVerbosity = {bad}\n")), ""),
+                Err(not_int("LogVerbosity", bad, &(0..=5))),
+                "LogVerbosity = {bad:?}"
+            );
+        }
+        for good in ["0", "3", "5", " 4 "] {
+            assert_eq!(
+                server_file(&server(&format!("LogVerbosity = {good}\n")), ""),
+                Ok(()),
+                "LogVerbosity = {good:?}"
+            );
+        }
+    }
+
+    /// `0.0.0.0` covers every IPv4 address, and llama.cpp's `--host` help says
+    /// overlapping addresses are undefined behaviour: the bind list holds it
+    /// alone (the GUI's checkboxes never combine it, `net_ifaces::toggle`).
+    #[test]
+    fn server_bind_list_never_mixes_all_interfaces_with_others() {
+        for bad in [
+            "0.0.0.0,127.0.0.1",
+            "127.0.0.1, 0.0.0.0",
+            "localhost,0.0.0.0,192.168.1.10",
+        ] {
+            assert_eq!(
+                server_file(&server(&format!("Hostname = {bad}\n")), ""),
+                Err(refusal("bind-all-with-others", &[])),
+                "Hostname = {bad:?}"
+            );
+        }
+        for good in [
+            "0.0.0.0",
+            " 0.0.0.0 ",
+            "0.0.0.0,",
+            "127.0.0.1,192.168.1.10",
+            "localhost",
+            "",
+        ] {
+            assert_eq!(
+                server_file(&server(&format!("Hostname = {good}\n")), ""),
+                Ok(()),
+                "Hostname = {good:?}"
+            );
+        }
+        // A commented hint is no key.
+        assert_eq!(
+            server_file(&server("; Hostname = 0.0.0.0,127.0.0.1\n"), ""),
+            Ok(())
+        );
     }
 
     #[test]

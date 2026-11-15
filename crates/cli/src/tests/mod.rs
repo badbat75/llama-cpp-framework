@@ -20,6 +20,9 @@ fn data_root_e2e() {
     // ── `server set` and `preset enable` through the seam (cli.rs) ───────
     crate::cli::cli_config_e2e();
 
+    // ── `server set` refuses what the Server tab refuses (cli.rs) ────────
+    crate::cli::cli_server_checks_e2e();
+
     // ── The per-user config handed to the manager (cli.rs) ───────────────
     crate::cli::cli_import_e2e();
 

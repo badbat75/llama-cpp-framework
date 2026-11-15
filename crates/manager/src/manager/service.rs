@@ -2664,6 +2664,35 @@ pub(crate) fn manager_checks_e2e() {
             invalid("comment-markers", &["ModelsDir"])
         );
         assert!(listing().is_empty(), "nothing written: {:?}", listing());
+        // The Server checks below the GUI: a bind list mixing 0.0.0.0 with
+        // another address, a negative ModelsMax, a log level past 5.
+        for (text, want) in [
+            (
+                "[Server]\nPort = 8081\nHostname = 0.0.0.0,127.0.0.1\n",
+                invalid("bind-all-with-others", &[]),
+            ),
+            (
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = -1\n",
+                invalid(
+                    "not-whole-number-in-range",
+                    &["ModelsMax", "-1", "0", "2147483647"],
+                ),
+            ),
+            (
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\nLogVerbosity = 7\n",
+                invalid(
+                    "not-whole-number-in-range",
+                    &["LogVerbosity", "7", "0", "5"],
+                ),
+            ),
+        ] {
+            assert_eq!(
+                m.write_file(&alice, "server@default.ini", text, false),
+                want,
+                "{text:?}"
+            );
+            assert!(listing().is_empty(), "nothing written: {:?}", listing());
+        }
         assert_eq!(
             m.list_instances(),
             Vec::<String>::new(),

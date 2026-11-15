@@ -468,11 +468,12 @@ Slices, each test first, in order:
    Windows, an unset ModelsDir or StateDir is not written and means the instance folders; the shared
    `/var/lib/llama.cpp/models` decided with the user on 2026-11-15, created by the engine's tmpfiles.d
    entry; `pai server show` and the restore read the instance folders.)
-2. **The Server checks move below the GUI**: Port, ModelsMax (no negatives) and ModelsMemoryMargin
-   ranges, log level 0..5, the base URL's trailing `/` and `/v1` stripped (`pai server set` can store
-   `/v1` and get `/v1/v1`), threads at most the CPU count, a bind list mixing `0.0.0.0` with other
-   addresses refused; in `pai-app` (shared by GUI, `pai`, bff) and, where the manager can check it
-   alone, in `pai-core` `checks.rs`.
+2. (Done: Port, ModelsMax not negative, ModelsMemoryMargin, LogVerbosity 0..5 and the bind list
+   (`bind-all-with-others`) in `pai-core` `checks.rs`, which the manager runs on a write; threads at most
+   the CPU count in `pai-app` `server_cfg::check`, run by every save; the base URL normalised in one
+   helper shared by the GUI and the save. Left, small: a hand-edited file with `ModelsMax = -1` makes
+   every unrelated `pai server set` fail, and `pai` has no way back to unset; a negative
+   `--models-max` could clear it, as `--models-memory-margin` does.)
 3. **The preset checks move below the GUI**: `validate_for_save` gains model-required and the integer
    ranges (macOS today has no check at all); a duplicate id across `presets.ini` and
    `presets.ini.disabled` refused by the manager too; `ctx-size = 0` either writable (as the README and

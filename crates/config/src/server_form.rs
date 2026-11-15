@@ -258,7 +258,7 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         models_max: if f.models_max_default {
             None
         } else {
-            ini::parse_int_in(f.models_max.as_str(), &ini::INT_ANY)
+            ini::parse_int_in(f.models_max.as_str(), &ini::INT_NON_NEGATIVE)
         },
         models_memory_margin: if f.models_memory_margin_default {
             None
@@ -289,15 +289,12 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // Blank ⇒ None (fall back to the default dir), the same rule ModelsDir
         // and hostname follow.
         state_dir: server_cfg::opt_nonblank(Some(f.state_dir.to_string())),
-        // Default checked = None (auto-derived); unchecked = save the value.
-        // Strip trailing slashes then /v1 so the convention "store without
-        // suffix" holds even if the user typed it (e.g. https://gw.example.com/v1/).
+        // Default checked = None (auto-derived); unchecked = save the value,
+        // stored without a trailing /v1 even if the user typed it.
         opencode_base_url: if f.base_url_default {
             None
         } else {
-            let url = f.opencode_base_url.trim().trim_end_matches('/');
-            let cleaned = url.strip_suffix("/v1").unwrap_or(url).trim_end_matches('/');
-            server_cfg::opt_nonblank(Some(cleaned.to_string()))
+            server_cfg::normalize_base_url(f.opencode_base_url.as_str())
         },
         // No key checked = None; unchecked = save the value.
         opencode_api_key: if f.api_key_nokey {
