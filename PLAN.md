@@ -752,7 +752,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    until the real backend; left for the backend part: an abandoned request's check keeps running
    unrecorded (bound concurrent checks), LogonUser spellings of one account (`.\user`, `HOST\user`,
    `user@host`) need one lock key, a per-address cap across user names (spraying), `Secure` and
-   `__Host-` on the cookie once the bff leaves loopback) **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
+   `__Host-` on the cookie once the bff leaves loopback). Next, 6b part 2, decided by the coordinator
+   on 2026-11-15: the MANAGER checks the password, not the bff, because the bff runs as the
+   unprivileged `private-ai-bff` and pam_unix's helper `unix_chkpwd` checks only the calling user's
+   own password (unix_chkpwd(8)); a manager method `Authenticate(user, password) -> (ok,
+   can_configure)` answers only the bff's account (Linux: its uid; Windows: `NT SERVICE\private-ai-bff`),
+   through PAM service `private-ai` on Linux and `LogonUser` on Windows, `can_configure` from
+   `sudo`/`wheel` or Administrators membership; the bff's `SystemAuthenticator` calls it. Then 6b part
+   3: the bff calls the manager for the signed-in user. **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
    `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
    Linux, `LogonUser` on Windows); the manager learns who acts. Decided with the user on 2026-11-15: the
    bff vouches for the user it authenticated: a polkit rule lets `private-ai-bff` call the manager, the
