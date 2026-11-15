@@ -6,7 +6,11 @@
 //! [`Authority`] decides whether a caller may do an action (polkit `CheckAuthorization`
 //! with the caller's bus name as subject on Linux). Reads, the instance list
 //! and status need no authorization; everything that changes something does,
-//! and a refused caller changes nothing.
+//! and a refused caller changes nothing. A guarded call may name a
+//! [`Principal`] a trusted caller vouches for (the bff's signed-in user): the
+//! manager checks the caller, the name and that account's membership of `pai`
+//! itself, and runs the action without asking polkit, whose subject is the
+//! caller and not the user.
 
 use crate::server_cfg::ServerConfig;
 use std::net::IpAddr;
@@ -34,6 +38,49 @@ impl Action {
 /// Who asks: the caller's unique bus name on Linux (`:1.42`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller(pub String);
+
+/// A user name a trusted caller vouches for: the signed-in user a guarded
+/// call acts for. Never folded into [`Caller`], which stays the transport's
+/// identity; the manager checks the name and the account behind it itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Principal(pub String);
+
+/// The longest principal name the manager accepts: the bound of the caller
+/// that vouches for one, the bff's own `MAX_USER_BYTES`
+/// (`crates/bff/src/session.rs`).
+const MAX_PRINCIPAL_BYTES: usize = 256;
+
+/// Who asks for a guarded call: the transport's identity, and the principal
+/// the caller vouches for. `principal` None is the caller's own call, exactly
+/// as a desktop client makes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Requester {
+    pub caller: Caller,
+    pub principal: Option<Principal>,
+}
+
+/// What a guarded core method takes: a [`Requester`], or a bare [`Caller`]
+/// for a call with no principal. The transport faces send `&Requester`
+/// (`Requester { caller, principal: None }` for the caller's own call); the
+/// [`Caller`] bound is a request with no principal to send.
+pub trait AsRequester {
+    fn as_requester(&self) -> Requester;
+}
+
+impl AsRequester for Caller {
+    fn as_requester(&self) -> Requester {
+        Requester {
+            caller: self.clone(),
+            principal: None,
+        }
+    }
+}
+
+impl AsRequester for Requester {
+    fn as_requester(&self) -> Requester {
+        self.clone()
+    }
+}
 
 /// Whether a caller may do an action. A failure of the check itself
 /// (polkit unreachable) answers false.
@@ -446,43 +493,58 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         self.service.status(id).map_err(ManagerError::Service)
     }
 
-    pub fn start(&self, caller: &Caller, id: &str) -> Result<(), ManagerError> {
-        self.authorize(caller, Action::Control)?;
+    pub fn start<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
+        self.authorize_as(&who.as_requester(), Action::Control)?;
         existing_id(id)?;
         self.service.start(id).map_err(ManagerError::Service)
     }
 
-    pub fn stop(&self, caller: &Caller, id: &str) -> Result<(), ManagerError> {
-        self.authorize(caller, Action::Control)?;
+    pub fn stop<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
+        self.authorize_as(&who.as_requester(), Action::Control)?;
         valid_id(id)?;
         self.service.stop(id).map_err(ManagerError::Service)
     }
 
-    pub fn restart(&self, caller: &Caller, id: &str) -> Result<(), ManagerError> {
-        self.authorize(caller, Action::Control)?;
+    pub fn restart<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
+        self.authorize_as(&who.as_requester(), Action::Control)?;
         existing_id(id)?;
         self.service.restart(id).map_err(ManagerError::Service)
     }
 
     /// The contents of file `name`, None when it does not exist. An instance
-    /// file needs the control authorization: `caller` None (a transport
-    /// with no identity for the call) or refused is NotAuthorized, nothing
+    /// file needs the control authorization: no requester (a transport with
+    /// no identity for the call) or a refused one is NotAuthorized, nothing
     /// read; the preset files need none. A reader of an instance file who
     /// may not configure (asked without a prompt) gets `OpencodeApiKey`
-    /// blanked ([`withhold_api_key`]).
-    pub fn read_file(
+    /// blanked ([`withhold_api_key`]). A request naming a principal is gated
+    /// on that principal alone, whatever the file, and its read is never
+    /// withheld: a member of `pai` may configure.
+    pub fn read_file<W: AsRequester>(
         &self,
-        caller: Option<&Caller>,
+        who: Option<&W>,
         name: &str,
     ) -> Result<Option<pai_core::client::ManagerFile>, ManagerError> {
+        let who = who.map(AsRequester::as_requester);
+        // A request naming a principal is gated first, whatever the file: the
+        // pair (the bff's account, a current member) is its only right.
+        if let Some(who) = &who {
+            self.gate_principal(who)?;
+        }
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
         let mut may_configure = true;
         if let ConfigFile::Instance(_) = file {
-            let caller = caller.ok_or(ManagerError::NotAuthorized)?;
-            self.authorize(caller, Action::Control)?;
-            may_configure = self
-                .authority
-                .is_authorized_quietly(caller, Action::Configure);
+            match &who {
+                // Gated above: polkit is asked for neither action, and a
+                // member of `pai` may configure, so nothing is withheld.
+                Some(who) if who.principal.is_some() => {}
+                Some(who) => {
+                    self.authorize(&who.caller, Action::Control)?;
+                    may_configure = self
+                        .authority
+                        .is_authorized_quietly(&who.caller, Action::Configure);
+                }
+                None => return Err(ManagerError::NotAuthorized),
+            }
         }
         let path = file_path(name)?;
         match std::fs::read_to_string(path) {
@@ -500,14 +562,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// `server@<id>.ini` adds instance `id`. With `keep_api_key`, an
     /// instance file keeps the `OpencodeApiKey` its current file holds
     /// ([`keep_held_api_key`]); the checks run on the text written.
-    pub fn write_file(
+    pub fn write_file<W: AsRequester>(
         &self,
-        caller: &Caller,
+        who: &W,
         name: &str,
         contents: &str,
         keep_api_key: bool,
     ) -> Result<(), ManagerError> {
-        self.authorize(caller, Action::Configure)?;
+        self.authorize_as(&who.as_requester(), Action::Configure)?;
         let file = config_file(name).ok_or(ManagerError::BadFileName)?;
         // A poisoned lock is taken over: it guards no data of its own.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -551,13 +613,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// Make instance `id` start when the system starts, or not: the
     /// configure authorization, asked first (systemd's own enabling asks for
     /// an administrator); a refused caller changes nothing.
-    pub fn set_boot_enabled(
+    pub fn set_boot_enabled<W: AsRequester>(
         &self,
-        caller: &Caller,
+        who: &W,
         id: &str,
         enabled: bool,
     ) -> Result<(), ManagerError> {
-        self.authorize(caller, Action::Configure)?;
+        self.authorize_as(&who.as_requester(), Action::Configure)?;
         existing_id(id)?;
         self.service
             .set_boot_enabled(id, enabled)
@@ -594,6 +656,59 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         } else {
             Err(ManagerError::NotAuthorized)
         }
+    }
+
+    /// The gate of a guarded call: the principal gate first, then, for the
+    /// caller's own call (`principal` None), polkit, exactly as today. A call
+    /// naming a principal needs no right of the caller's at all (the bff keeps
+    /// none: the right is the pair), so polkit is asked for nothing, not even
+    /// about the action: polkit's subject is the caller, never the user the
+    /// caller vouches for. Either refusal is [`ManagerError::NotAuthorized`]
+    /// before any path is resolved, so a refused call reads and writes nothing.
+    fn authorize_as(&self, who: &Requester, action: Action) -> Result<(), ManagerError> {
+        self.gate_principal(who)?;
+        if who.principal.is_none() {
+            return self.authorize(&who.caller, action);
+        }
+        Ok(())
+    }
+
+    /// [`Self::check_principal`] when `who` vouches for a user, nothing when
+    /// the call is the caller's own. A request naming a principal is gated
+    /// before its action, whatever that action needs: the preset files are
+    /// open to every caller, and a call naming a user the manager refuses is
+    /// refused whole, never answered as the caller's own.
+    fn gate_principal(&self, who: &Requester) -> Result<(), ManagerError> {
+        match &who.principal {
+            Some(principal) => self.check_principal(&who.caller, principal),
+            None => Ok(()),
+        }
+    }
+
+    /// The checks a call that names a principal passes before its action
+    /// runs, in this order, each failure [`ManagerError::NotAuthorized`] with
+    /// nothing done and the later check not asked:
+    ///
+    /// 1. the caller is the bff's account ([`Authority::is_bff`]), the only
+    ///    one vouching for a user; a refusal is never downgraded to a call as
+    ///    the caller's own,
+    /// 2. the name is well formed ([`principal_name_is_well_formed`]),
+    /// 3. the account behind the name is a member of `pai` at this call
+    ///    ([`PasswordChecker::is_admin`], the same lookup `authenticate`
+    ///    uses): asked every call, never cached here, never taken from the
+    ///    caller, so a member removed between two calls is refused at the
+    ///    next one.
+    fn check_principal(&self, caller: &Caller, principal: &Principal) -> Result<(), ManagerError> {
+        if !self.authority.is_bff(caller) {
+            return Err(ManagerError::NotAuthorized);
+        }
+        if !principal_name_is_well_formed(&principal.0) {
+            return Err(ManagerError::NotAuthorized);
+        }
+        if !self.passwords.is_admin(&principal.0) {
+            return Err(ManagerError::NotAuthorized);
+        }
+        Ok(())
     }
 
     /// Refuse `contents` for instance `id` when its address collides with
@@ -666,6 +781,14 @@ fn existing_id(id: &str) -> Result<(), ManagerError> {
     } else {
         Err(ManagerError::NoInstance)
     }
+}
+
+/// Whether `name` is a user name the manager takes for a principal: 1 to
+/// [`MAX_PRINCIPAL_BYTES`] bytes, with no control character. The name is
+/// written whole where the manager records who acted, so it carries no NUL
+/// and no line break that would read as a second record.
+fn principal_name_is_well_formed(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_PRINCIPAL_BYTES && !name.chars().any(char::is_control)
 }
 
 /// The path of served file `name` in the engine's config directory.
@@ -952,6 +1075,11 @@ pub(crate) mod fakes {
 
     pub struct FakePasswords {
         pub accounts: Vec<(&'static str, &'static str, bool)>,
+        /// The accounts [`is_admin`](PasswordChecker::is_admin) answers true
+        /// for, seeded from `accounts` and shared so a test can remove a
+        /// member between two calls of one manager (the manager must not
+        /// cache membership).
+        pub admins: std::sync::Arc<Mutex<std::collections::BTreeSet<String>>>,
         pub fail: Option<String>,
         pub checked: Checked,
         pub asked_admin: std::sync::Arc<Mutex<Vec<String>>>,
@@ -960,8 +1088,15 @@ pub(crate) mod fakes {
     impl FakePasswords {
         /// alice (an administrator) and bob (not one).
         pub fn new() -> Self {
+            let accounts = vec![("alice", "s3cret-Pw", true), ("bob", "hunter2!", false)];
+            let admins = accounts
+                .iter()
+                .filter(|(_, _, admin)| *admin)
+                .map(|(u, _, _)| (*u).to_string())
+                .collect();
             Self {
-                accounts: vec![("alice", "s3cret-Pw", true), ("bob", "hunter2!", false)],
+                accounts,
+                admins: std::sync::Arc::new(Mutex::new(admins)),
                 fail: None,
                 checked: Default::default(),
                 asked_admin: Default::default(),
@@ -992,9 +1127,7 @@ pub(crate) mod fakes {
         }
         fn is_admin(&self, user: &str) -> bool {
             self.asked_admin.lock().unwrap().push(user.to_string());
-            self.accounts
-                .iter()
-                .any(|(u, _, admin)| *u == user && *admin)
+            self.admins.lock().unwrap().contains(user)
         }
     }
 
@@ -1914,8 +2047,14 @@ pub(crate) fn manager_instance_files_e2e() {
         );
         assert_eq!(m.read_file(Some(&alice), "server@nope.ini"), Ok(None));
         // ── The preset files need no caller at all ───────────────────────
-        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
-        assert_eq!(m.read_file(None, "presets.ini.disabled"), Ok(None));
+        assert_eq!(
+            m.read_file(None::<&Caller>, "presets.ini"),
+            Ok(Some(plain(presets)))
+        );
+        assert_eq!(
+            m.read_file(None::<&Caller>, "presets.ini.disabled"),
+            Ok(None)
+        );
         assert_eq!(
             *m.authority().asked.lock().unwrap(),
             vec![
@@ -2127,7 +2266,10 @@ ModelsMax = 2
         let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nOpencodeApiKey = not-a-secret-here\n";
         put("presets.ini", presets);
         put("presets.ini.disabled", presets);
-        assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            m.read_file(None::<&Caller>, "presets.ini"),
+            Ok(Some(plain(presets)))
+        );
         assert_eq!(
             m.read_file(Some(&alice), "presets.ini.disabled"),
             Ok(Some(plain(presets)))
@@ -2418,7 +2560,7 @@ pub(crate) fn manager_engine_dir_e2e() {
 
     // ── Nothing of the framework's directory counts ───────────────────────
     assert_eq!(m.list_instances(), Vec::<String>::new(), "no instance yet");
-    assert_eq!(m.read_file(None, "presets.ini"), Ok(None));
+    assert_eq!(m.read_file(None::<&Caller>, "presets.ini"), Ok(None));
     assert_eq!(m.read_file(Some(&alice), "server@default.ini"), Ok(None));
     assert_eq!(
         m.start(&alice, "stray"),
@@ -2479,7 +2621,10 @@ pub(crate) fn manager_engine_dir_e2e() {
 
     // ── Reads and the list come from the engine's directory ───────────────
     assert_eq!(m.list_instances(), ["default"]);
-    assert_eq!(m.read_file(None, "presets.ini"), Ok(Some(plain(presets))));
+    assert_eq!(
+        m.read_file(None::<&Caller>, "presets.ini"),
+        Ok(Some(plain(presets)))
+    );
     assert_eq!(
         m.read_file(Some(&alice), "server@default.ini"),
         Ok(Some(plain(ini)))
@@ -2581,7 +2726,7 @@ pub(crate) fn manager_waits_e2e() {
         assert_eq!(answer(&gate, "list_instances", list), vec!["default"]);
         let read = {
             let m = m.clone();
-            on_thread(move || m.read_file(None, "presets.ini"))
+            on_thread(move || m.read_file(None::<&Caller>, "presets.ini"))
         };
         assert_eq!(answer(&gate, "read_file", read), Ok(Some(plain(presets))));
         let stop = {
@@ -3134,6 +3279,375 @@ pub(crate) fn manager_checks_e2e() {
     }
 }
 
+/// E2E phase for acting for a signed-in user in the core: a trusted caller
+/// (the bff's account) naming a `pai` member, over the files a guarded call
+/// touches, so it redirects the data root (`src/tests/mod.rs`). Every seam is
+/// a fake: no polkit, no systemd, no real account is asked.
+#[cfg(test)]
+pub(crate) fn manager_principal_e2e() {
+    use fakes::{Call, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
+    let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
+    // A preset text no block of this phase writes on purpose: a refused write
+    // of it is visible as the file on disk staying as `other`.
+    let third = "[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n";
+    std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
+    std::fs::write(sys.join("presets.ini"), presets).expect("presets file");
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+
+    // The bff's account (a bus name here, the service SID on Windows) and its
+    // request for alice, a member of `pai` in [`FakePasswords`].
+    let bff = Caller(":1.9".into());
+    let alice = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let bob = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let core = |allow: bool, quiet: bool, passwords: FakePasswords| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(quiet).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+    };
+    let log = |m: &Manager<FakeService, FakeAuthority, FakeResolver>| {
+        m.service().calls.lock().unwrap().clone()
+    };
+    let polkit = |m: &Manager<FakeService, FakeAuthority, FakeResolver>| {
+        m.authority().asked.lock().unwrap().clone()
+    };
+    let polkit_quiet = |m: &Manager<FakeService, FakeAuthority, FakeResolver>| {
+        m.authority().asked_quietly.lock().unwrap().clone()
+    };
+
+    // ── The bff acting for a member: the right is the pair ──────────────
+    // The bff's own polkit rights are allowed here and irrelevant: the pair
+    // (the bff's account, a current `pai` member) is what grants the call, so
+    // polkit is never asked, not even about the action the call needs.
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        assert_eq!(
+            m.start(&alice, "default"),
+            Ok(()),
+            "the bff starts an instance for a member"
+        );
+        assert_eq!(
+            m.stop(&alice, "default"),
+            Ok(()),
+            "the bff stops an instance for a member"
+        );
+        assert_eq!(
+            m.restart(&alice, "default"),
+            Ok(()),
+            "the bff restarts an instance for a member"
+        );
+        assert_eq!(
+            m.set_boot_enabled(&alice, "default", true),
+            Ok(()),
+            "the bff sets start at boot for a member"
+        );
+        assert_eq!(
+            log(&m),
+            vec![
+                Call::Start("default".into()),
+                Call::Stop("default".into()),
+                Call::Restart("default".into()),
+                Call::SetBootEnabled("default".into(), true)
+            ],
+            "every call reaches the service manager"
+        );
+        assert_eq!(
+            polkit(&m),
+            vec![],
+            "polkit is never asked for a principal: its subject is the bff"
+        );
+        assert_eq!(
+            polkit_quiet(&m),
+            vec![],
+            "not even the question asked without a prompt"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            vec![bff.clone(); 4],
+            "the caller is checked first, at every call"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string(); 4],
+            "the membership of the principal, never of the caller"
+        );
+    }
+
+    // ── A principal's read is never withheld ─────────────────────────────
+    // Here the bff is one polkit would challenge for `configure` (quiet
+    // false): the member's read of an instance file still carries the key.
+    {
+        let m = core(true, false, FakePasswords::new());
+        let read = m.read_file(Some(&alice), "server@default.ini");
+        assert_eq!(
+            read,
+            Ok(Some(plain(ini))),
+            "a principal's read of an instance file holds its key"
+        );
+        let file = read.unwrap().expect("read");
+        assert!(!file.withheld, "nothing withheld from a member's read");
+        assert!(
+            file.text.contains("sk-local-3f9a"),
+            "the key blanked: {file:?}"
+        );
+        assert_eq!(
+            polkit_quiet(&m),
+            vec![],
+            "configure is not asked to decide a principal's read"
+        );
+        assert_eq!(polkit(&m), vec![], "control is not asked either");
+    }
+
+    // ── A principal call needs no right of the bff's own ───────────────
+    // This bff has no polkit right at all: a member principal writes.
+    {
+        let m = core(false, false, FakePasswords::new());
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", other, false),
+            Ok(()),
+            "granting the bff `configure` for this is what the pair replaces"
+        );
+        assert_eq!(text_of("presets.ini"), other, "the write landed");
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Ok(Some(plain(ini))),
+            "the write is not the only call a member's principal opens"
+        );
+        assert_eq!(polkit(&m), vec![], "no polkit right of the bff is asked");
+    }
+
+    // ── The bff naming a non-member: refused, nothing done ─────────────
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        assert_eq!(
+            m.start(&bob, "default"),
+            Err(ManagerError::NotAuthorized),
+            "bob is no `pai` member"
+        );
+        assert_eq!(
+            m.write_file(&bob, "presets.ini", presets, false),
+            Err(ManagerError::NotAuthorized),
+            "writing needs the same membership"
+        );
+        assert_eq!(
+            m.read_file(Some(&bob), "server@default.ini"),
+            Err(ManagerError::NotAuthorized),
+            "a non-member reads nothing, not even a blanked file"
+        );
+        assert_eq!(
+            log(&m),
+            vec![],
+            "the refused start reached no service manager"
+        );
+        assert_eq!(
+            text_of("presets.ini"),
+            other,
+            "the refused write changed no file"
+        );
+        assert_eq!(polkit(&m), vec![], "polkit decides nothing here");
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["bob".to_string(); 3],
+            "the membership is asked once per call"
+        );
+    }
+
+    // ── Fail closed: a member removed between two calls ────────────────
+    {
+        let p = FakePasswords::new();
+        let admins = p.admins.clone();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        assert_eq!(
+            m.start(&alice, "default"),
+            Ok(()),
+            "a member's first call works"
+        );
+        admins.lock().unwrap().remove("alice");
+        assert_eq!(
+            m.start(&alice, "default"),
+            Err(ManagerError::NotAuthorized),
+            "the next call is refused: the manager caches no membership"
+        );
+        assert_eq!(
+            log(&m),
+            vec![Call::Start("default".into())],
+            "the refused call started nothing"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string(); 2],
+            "membership looked up again at the second call"
+        );
+    }
+
+    // ── A caller that is not the bff naming a member: refused, unwritten ──
+    // The three real transports' identities that are not the bff's account: a
+    // D-Bus bus name, the LocalSystem SID, and the pipe's caller with no
+    // identity. The pair is the only right a principal call has, so naming a
+    // member grants these nothing, and the refusal answers before the account
+    // behind the name is looked up.
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        let outsiders = [
+            Caller(":1.42".into()),
+            Caller("S-1-5-18".into()),
+            Caller(String::new()),
+        ];
+        for caller in outsiders.clone() {
+            let who = Requester {
+                caller,
+                principal: Some(Principal("alice".into())),
+            };
+            assert_eq!(
+                m.write_file(&who, "presets.ini", third, false),
+                Err(ManagerError::NotAuthorized),
+                "{who:?}: only the bff vouches for a user"
+            );
+        }
+        assert_eq!(
+            text_of("presets.ini"),
+            other,
+            "no caller outside the bff wrote the preset file"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            Vec::<String>::new(),
+            "the caller is refused before the account behind the name is looked up"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            outsiders.to_vec(),
+            "the caller is the question asked, once per call"
+        );
+        assert_eq!(
+            polkit(&m),
+            vec![],
+            "the gate, not polkit, is what refused these writes"
+        );
+    }
+
+    // ── The bff naming an illegible name: refused, unwritten ─────────────
+    // No name at all, and a name carrying a NUL, the character that would
+    // split one record into two wherever the manager writes who acted. The
+    // shape of the name answers, so the accounts are never asked: a name that
+    // is no name is never answered from them.
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        for name in ["", "ali\u{0}ce"] {
+            assert_eq!(
+                m.write_file(
+                    &Requester {
+                        caller: bff.clone(),
+                        principal: Some(Principal(name.into())),
+                    },
+                    "presets.ini",
+                    third,
+                    false
+                ),
+                Err(ManagerError::NotAuthorized),
+                "{name:?}: an illegible name is refused"
+            );
+        }
+        assert_eq!(
+            text_of("presets.ini"),
+            other,
+            "an illegible name wrote nothing"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            Vec::<String>::new(),
+            "the name is checked for shape before the account behind it is looked up"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            vec![bff.clone(); 2],
+            "the caller is the bff here: the name is what fails"
+        );
+        assert_eq!(polkit(&m), vec![], "polkit is not asked for a refused name");
+    }
+
+    // ── A preset file read is gated too ──────────────────────────────────
+    // The preset files need no authorization of the caller, so the principal
+    // gate is all that stands between these requests and the file: a
+    // non-member's read and a caller outside the bff's read answer nothing.
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        assert_eq!(
+            m.read_file(Some(&bob), "presets.ini"),
+            Err(ManagerError::NotAuthorized),
+            "a non-member reads no preset file, not even a blanked one"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["bob".to_string()],
+            "the membership is what refused this read"
+        );
+        assert_eq!(
+            polkit(&m),
+            vec![],
+            "polkit decides nothing about a preset file"
+        );
+    }
+    {
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let m = core(true, true, p);
+        assert_eq!(
+            m.read_file(
+                Some(&Requester {
+                    caller: Caller(":1.42".into()),
+                    principal: Some(Principal("alice".into())),
+                }),
+                "presets.ini"
+            ),
+            Err(ManagerError::NotAuthorized),
+            "a caller outside the bff reads nothing as alice"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            Vec::<String>::new(),
+            "a caller outside the bff never reaches the membership lookup"
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "presets.ini"),
+            Ok(Some(plain(other))),
+            "the member the bff names does read it: the gate refuses these calls, not all of them"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string()],
+            "the read that is answered is the one that looked the membership up"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::fakes::FakeResolver;
@@ -3282,7 +3796,7 @@ mod tests {
     fn reading_an_instance_file_with_no_caller_is_refused_unasked() {
         let m = core(true);
         assert_eq!(
-            m.read_file(None, "server@default.ini"),
+            m.read_file(None::<&Caller>, "server@default.ini"),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(asked(&m), vec![]);
@@ -3301,7 +3815,7 @@ mod tests {
                 "{name}"
             );
             assert_eq!(
-                m.read_file(None, name),
+                m.read_file(None::<&Caller>, name),
                 Err(ManagerError::BadFileName),
                 "{name}"
             );
@@ -4047,5 +4561,217 @@ mod tests {
         ] {
             assert!(!in_pai_group(&groups(no)), "{no:?}");
         }
+    }
+
+    // ── Acting for a signed-in user: the caller, the name, the membership ─
+    // Every call here is refused before a path is resolved and no file is
+    // written, so these never reach `paths::`. The e2e phase
+    // `manager_principal_e2e` pins the calls that run, with the files.
+
+    /// A request from `caller` vouching for `principal`.
+    fn request(caller: &Caller, principal: &str) -> Requester {
+        Requester {
+            caller: caller.clone(),
+            principal: Some(Principal(principal.to_string())),
+        }
+    }
+
+    /// Every guarded call of `m` for `who`, in the order (start, stop,
+    /// restart, start at boot, read an instance file). Writing a file needs
+    /// the data root redirect, so the e2e phase pins that one.
+    fn guarded_calls(m: &AuthCore, who: &Requester) -> Vec<Result<(), ManagerError>> {
+        vec![
+            m.start(who, "default"),
+            m.stop(who, "default"),
+            m.restart(who, "default"),
+            m.set_boot_enabled(who, "default", true),
+            m.read_file(Some(who), "server@default.ini").map(|_| ()),
+        ]
+    }
+
+    /// A request with no principal is the caller's own call, exactly as
+    /// today: the same polkit questions in the same order, with the caller,
+    /// no account lookup, and no question about whose account the bff's is.
+    #[test]
+    fn a_request_with_no_principal_is_the_callers_own() {
+        let alice = Caller(":1.42".into());
+        let who = Requester {
+            caller: alice.clone(),
+            principal: None,
+        };
+        let (p, logs) = passwords();
+        let m = auth_core(true, p);
+        let _ = guarded_calls(&m, &who);
+        assert_eq!(
+            asked(&m),
+            vec![
+                (alice.clone(), Action::Control),
+                (alice.clone(), Action::Control),
+                (alice.clone(), Action::Control),
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Control),
+            ],
+            "the calls for the action, with the caller, as today"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(alice, Action::Configure)],
+            "the read asks configure without a prompt, as today"
+        );
+        assert_eq!(
+            asked_admin(&logs),
+            Vec::<String>::new(),
+            "no account is looked up for a caller's own call"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            Vec::<Caller>::new(),
+            "a call with no principal is never checked against the bff"
+        );
+    }
+
+    /// Only the bff's account may name a principal. A caller polkit would
+    /// allow everything, and the empty caller of a pipe connection with no
+    /// token, are refused the principal: NotAuthorized, the membership of the
+    /// name not looked up, nothing asked beyond the caller, and the call
+    /// refused rather than run as the caller's own.
+    #[test]
+    fn a_principal_named_by_a_caller_that_is_not_the_bff_is_refused_unasked() {
+        for caller in [
+            Caller(":1.42".into()),
+            Caller(String::new()),
+            Caller("S-1-5-18".into()),
+        ] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            let who = request(&caller, "alice");
+            assert_eq!(
+                guarded_calls(&m, &who),
+                vec![Err(ManagerError::NotAuthorized); 5],
+                "{caller:?} naming alice"
+            );
+            assert_eq!(
+                asked(&m),
+                vec![],
+                "{caller:?}: polkit asked, so the call ran as the caller"
+            );
+            assert_eq!(
+                *m.authority().asked_quietly.lock().unwrap(),
+                vec![],
+                "{caller:?}"
+            );
+            assert_eq!(
+                asked_admin(&logs),
+                Vec::<String>::new(),
+                "{caller:?}: a membership looked up for a caller that is not the bff"
+            );
+            assert_eq!(
+                *m.service().calls.lock().unwrap(),
+                vec![],
+                "{caller:?}: something reached the service manager"
+            );
+            assert_eq!(
+                *m.authority().asked_bff.lock().unwrap(),
+                vec![caller.clone(); 5],
+                "the caller is checked first, once per call"
+            );
+        }
+    }
+
+    /// The bff naming an account that is no member of `pai` (bob, an ordinary
+    /// account), an unknown account, or root: refused, with the membership of
+    /// the name asked once per call and nothing else done. A failed lookup is
+    /// no membership, and being the machine's superuser is not one either.
+    #[test]
+    fn a_principal_who_is_not_a_member_is_refused_and_nothing_is_done() {
+        for user in ["bob", "mallory", "root"] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            let who = request(&bff(), user);
+            assert_eq!(
+                guarded_calls(&m, &who),
+                vec![Err(ManagerError::NotAuthorized); 5],
+                "{user}"
+            );
+            assert_eq!(
+                asked_admin(&logs),
+                vec![user.to_string(); 5],
+                "{user}: the membership is asked once per call"
+            );
+            assert_eq!(asked(&m), vec![], "{user}: polkit asked");
+            assert_eq!(
+                *m.authority().asked_quietly.lock().unwrap(),
+                vec![],
+                "{user}"
+            );
+            assert_eq!(
+                *m.service().calls.lock().unwrap(),
+                vec![],
+                "{user}: a call reached the service manager"
+            );
+        }
+    }
+
+    /// A name the manager will not put in a record: no account is looked up,
+    /// nothing is asked beyond the caller, nothing runs. The length bound is
+    /// the bff's own, `MAX_USER_BYTES` in `crates/bff/src/session.rs`.
+    #[test]
+    fn an_illegible_principal_name_is_refused_with_nothing_asked() {
+        let long = "a".repeat(257);
+        for name in [
+            "",
+            "a\0b",
+            "ali\nce",
+            "alice\n",
+            "alice\r\n",
+            "ali\tce",
+            "ali\u{7f}ce",
+            &long,
+        ] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            let who = request(&bff(), name);
+            assert_eq!(
+                guarded_calls(&m, &who),
+                vec![Err(ManagerError::NotAuthorized); 5],
+                "{name:?}"
+            );
+            assert_eq!(
+                asked_admin(&logs),
+                Vec::<String>::new(),
+                "{name:?}: the name reached the account lookup"
+            );
+            assert_eq!(asked(&m), vec![], "{name:?}: polkit asked");
+            assert_eq!(
+                *m.service().calls.lock().unwrap(),
+                vec![],
+                "{name:?}: a call reached the service manager"
+            );
+            assert_eq!(
+                *m.authority().asked_bff.lock().unwrap(),
+                vec![bff(); 5],
+                "{name:?}: the caller is checked first, once per call"
+            );
+        }
+    }
+
+    /// 256 bytes, the longest the bff sends, is well formed: what refuses it
+    /// is the membership, asked for exactly that name, not the name.
+    #[test]
+    fn a_256_byte_principal_name_is_well_formed() {
+        let name = "a".repeat(256);
+        let (p, logs) = passwords();
+        let m = auth_core(true, p);
+        let who = request(&bff(), &name);
+        assert_eq!(
+            guarded_calls(&m, &who),
+            vec![Err(ManagerError::NotAuthorized); 5]
+        );
+        assert_eq!(
+            asked_admin(&logs),
+            vec![name.clone(); 5],
+            "asked as a name, and unknown as an account"
+        );
+        assert_eq!(asked(&m), vec![]);
     }
 }

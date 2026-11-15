@@ -400,3 +400,14 @@ Lessons only: the rules are in `AGENTS.md`.
   `shell: powershell` runs with `$ErrorActionPreference = 'Stop'`, so a group check must not let
   `Get-LocalGroup` throw when the group is missing: `Get-LocalGroup -Name x -ErrorAction SilentlyContinue
   | Out-Null` and `if ($?)`. A needle written as `$env:USERNAME` fails if the file quotes it.
+- A principal gate (a call acting for a user a trusted caller vouches for) goes at ONE choke point at the
+  head of the method, before `config_file`/`file_path`, so every refusal reads and writes nothing; polkit
+  is not asked at all for such a call (its subject is the caller, never the user). The bff's name bound is
+  the bff's `MAX_USER_BYTES` in `crates/bff/src/session.rs`, mirrored as `MAX_PRINCIPAL_BYTES` in
+  `service.rs`: change both together.
+- When the tester leaves a shim trait (`AsRequester`) so existing call sites compile, the production faces
+  send the concrete type (`&Requester`) and the shim's doc says so; do not fold the seam away: a test that
+  passes `None::<&Caller>` to a generic method fixes the type parameter, and the faces' signature
+  (`serve_stream(&App, &Caller)`) is pinned by `tests/manager.rs` (a unix socket peer, not a bff).
+- The `edit` tool here returns no output: re-read or grep after EVERY edit before the next one. One
+  duplicated free function slipped in that way (rustc catches it, not the tool).

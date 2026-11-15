@@ -61,4 +61,7 @@ fn data_root_e2e() {
     // Unix socket pair (the named pipe's OS-neutral protocol).
     #[cfg(unix)]
     pipe_client::manager_pipe_client_e2e();
+
+    // ── Manager core: acting for a signed-in user (the bff names a member)
+    crate::manager::service::manager_principal_e2e();
 }

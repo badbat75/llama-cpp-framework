@@ -7,7 +7,7 @@
 
 pub use super::service::error_reply;
 use super::service::{
-    state_name, Authority, Caller, Manager, ManagerError, Resolver, ServiceControl,
+    state_name, Authority, Caller, Manager, ManagerError, Requester, Resolver, ServiceControl,
 };
 use pai_core::client::pipe::{read_frame, write_frame, FrameError};
 use serde_json::{json, Value};
@@ -57,13 +57,17 @@ impl Request {
     }
 }
 
-/// The caller of a change: one with no identity is refused before anybody
-/// is asked, as a D-Bus call without a sender is (`dbus::caller`).
-fn changer(caller: &Caller) -> Result<&Caller, ManagerError> {
+/// The requester of a change: the caller with no principal (the face carries
+/// none yet), and one with no identity is refused before anybody is asked,
+/// as a D-Bus call without a sender is (`dbus::caller`).
+fn changer(caller: &Caller) -> Result<Requester, ManagerError> {
     if caller.0.is_empty() {
         Err(ManagerError::NotAuthorized)
     } else {
-        Ok(caller)
+        Ok(Requester {
+            caller: caller.clone(),
+            principal: None,
+        })
     }
 }
 
@@ -78,23 +82,23 @@ where
         Request::ListInstances => Ok(json!(manager.list_instances())),
         Request::Status(id) => manager.status(&id).map(|s| json!(state_name(s))),
         Request::Start(id) => changer(caller)
-            .and_then(|c| manager.start(c, &id))
+            .and_then(|who| manager.start(&who, &id))
             .map(|()| Value::Null),
         Request::Stop(id) => changer(caller)
-            .and_then(|c| manager.stop(c, &id))
+            .and_then(|who| manager.stop(&who, &id))
             .map(|()| Value::Null),
         Request::Restart(id) => changer(caller)
-            .and_then(|c| manager.restart(c, &id))
+            .and_then(|who| manager.restart(&who, &id))
             .map(|()| Value::Null),
         Request::ReadFile(name) => manager
-            .read_file(changer(caller).ok(), &name)
+            .read_file(changer(caller).ok().as_ref(), &name)
             .map(|file| json!(file.map(|f| json!({"text": f.text, "withheld": f.withheld})))),
         Request::WriteFile(name, contents, keep) => changer(caller)
-            .and_then(|c| manager.write_file(c, &name, &contents, keep))
+            .and_then(|who| manager.write_file(&who, &name, &contents, keep))
             .map(|()| Value::Null),
         Request::BootEnabled(id) => manager.boot_enabled(&id).map(|on| json!(on)),
         Request::SetBootEnabled(id, enabled) => changer(caller)
-            .and_then(|c| manager.set_boot_enabled(c, &id, enabled))
+            .and_then(|who| manager.set_boot_enabled(&who, &id, enabled))
             .map(|()| Value::Null),
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager

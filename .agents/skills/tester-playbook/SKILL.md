@@ -17,7 +17,9 @@ Lessons only: the rules are in `AGENTS.md`.
   the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
   cross target with `cargo clean -p <pkg> --target <triple>`. The rerun's own log proves the compile when
   it prints `Compiling <pkg>`; a follow-up `cargo clippy -p <pkg> -v` printing `Fresh <pkg>` confirms the
-  fingerprint (cargo's own `-v` changes no rustc fingerprint). Bare cargo commands here land in
+  fingerprint (cargo's own `-v` changes no rustc fingerprint). Write the `-v` log to a file and grep
+  that file: piped through `head`/`grep -c` the pipe closes early (SIGPIPE), the log truncates, and the
+  `Fresh <own pkg>` line (late in the dep list) reads as missing. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
   A clean rerun IS fast (0.4 s for every pai-bff target on 24 cores, deps cached): to prove it checked
   them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff: 14, the
@@ -54,6 +56,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
   (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
   compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`).
+- `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
+  `Vec::<String>::new()`, the pattern this repo already uses.
 - Comments never cite PLAN.md step or slice numbers; name the feature.
 - `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
 - A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
@@ -210,6 +214,34 @@ Lessons only: the rules are in `AGENTS.md`.
 
 - A seam called through `&self` gets a fake with `Mutex` logs (seams must be `Sync`), read through an
   accessor; pin "nothing happened" on a refusal by empty logs plus the error kind.
+- A core method signature change when the transport faces (`dbus.rs`, `pipe.rs`) are off-limits: a local
+  bound (`trait AsRequester { fn as_requester(&self) -> Requester }`, implemented for the old bare
+  `Caller` and the new `Requester`) keeps every face call site compiling; the stub keeps the old body, so
+  the no-principal tests stay green and only the new calls red on assertions. Say in the report that the
+  bound goes away when the faces send the new type. An `Option<&Caller>` parameter goes generic the same
+  way: `foo(None, ..)` stops inferring → `None::<&Caller>` at each test site.
+- A stub that ignores a new rule runs the OLD path, so in a plain unit test a principal `write_file` with
+  an allowing authority writes the real `paths::engine_config_dir()` (Linux `/etc/llama.cpp`, where a
+  `read_file` shows as `Err(Io(PermissionDenied))`: a harmless read, the red names a real path). Keep
+  every call that can succeed (writes, starting an existing instance) in a data-root phase; plain tests
+  only pin refusals the implementation reaches before any path.
+- "A member removed between two calls of ONE manager" (no cache) needs shared mutable state in the fake:
+  seed an `Arc<Mutex<BTreeSet<String>>>` from its fixture list and answer `is_admin` from it (existing
+  tests keep passing, the answers are the same); two managers over different fixtures pin nothing.
+- Proof that every block of a long e2e phase greens: a throwaway candidate implementation, run, then
+  restore. It catches a wrong expectation in a later block (there: an earlier block had rewritten the
+  file the later block compared against). Restore the backup, then re-apply the test fixes you found.
+- Teeth of a refusal block, shown by probing production: script the probe (python: exact anchors, patch,
+  run, `shutil.copy` the snapshot back) and keep the snapshot taken AFTER your test edits and BEFORE the
+  first probe, to prove the restore with `cmp`/`sha256sum`. A red in an EARLIER block of the phase (the
+  coder's own) panics first: disable that block with `if false {` on its opening brace to reach yours.
+  In a loop, the first refusal red hides the block's file-on-disk check: temporarily turn the loop's
+  `assert_eq!` into an outcome `eprintln!` so the block runs on to that assertion. Pick the written
+  content so the content checks ACCEPT it: an ungated write then really lands, and the red reads
+  `left: "<new text>"`, not a check refusal.
+- A "seam X was never asked" assertion stays green under a probe that removes the whole gate (nothing is
+  asked at all): it needs its own probe that REORDERS the production checks, leaving the refusal itself
+  in place.
 - `Authority` has `is_authorized` (may prompt) and `is_authorized_quietly` (never: a challenge is no);
   `FakeAuthority::new(allow).quietly(q)` logs the quiet ones in `asked_quietly`. A changed D-Bus reply
   signature is pinned with `r.body().deserialize::<OldShape>().is_err()`.

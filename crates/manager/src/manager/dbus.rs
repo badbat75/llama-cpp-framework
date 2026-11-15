@@ -1,13 +1,15 @@
 //! The D-Bus face of `pai-manager` on Linux: interface
 //! `org.privateai.Manager1` at `/org/privateai/Manager1` on the system bus,
 //! over the core [`Manager`]. The caller of a method is its sender (the
-//! unique bus name the bus stamps), handed to the core as [`Caller`]; every
-//! [`ManagerError`] replies as a D-Bus error `org.privateai.Manager1.Error.<Kind>`.
+//! unique bus name the bus stamps), handed to the core as a [`Requester`]
+//! with no principal (the sender alone: the `As` methods that carry a user
+//! come with the client that sends one); every [`ManagerError`] replies as a
+//! D-Bus error `org.privateai.Manager1.Error.<Kind>`.
 
 pub use super::service::state_name;
 use super::service::{
-    Action, Authority, Caller, Manager, ManagerError, Resolver, ServiceControl, ServiceError,
-    SystemResolver, UnitState,
+    Action, Authority, Caller, Manager, ManagerError, Requester, Resolver, ServiceControl,
+    ServiceError, SystemResolver, UnitState,
 };
 use std::sync::Arc;
 use zbus::blocking::{Connection, Proxy};
@@ -107,6 +109,16 @@ fn sender_of(header: &zbus::message::Header<'_>) -> Result<Caller, ManagerError>
     caller(header.sender().map(|s| s.as_str()))
 }
 
+/// The requester of a call from its header: its sender, with no principal
+/// (the D-Bus face carries none: the `As` methods come with the client that
+/// sends one).
+fn requester_of(header: &zbus::message::Header<'_>) -> Result<Requester, ManagerError> {
+    sender_of(header).map(|caller| Requester {
+        caller,
+        principal: None,
+    })
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -128,8 +140,8 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         id: String,
     ) -> Result<(), Error> {
-        let caller = sender_of(&header)?;
-        Ok(self.core(move |m| m.start(&caller, &id)).await?)
+        let who = requester_of(&header)?;
+        Ok(self.core(move |m| m.start(&who, &id)).await?)
     }
 
     async fn stop(
@@ -137,8 +149,8 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         id: String,
     ) -> Result<(), Error> {
-        let caller = sender_of(&header)?;
-        Ok(self.core(move |m| m.stop(&caller, &id)).await?)
+        let who = requester_of(&header)?;
+        Ok(self.core(move |m| m.stop(&who, &id)).await?)
     }
 
     async fn restart(
@@ -146,8 +158,8 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         id: String,
     ) -> Result<(), Error> {
-        let caller = sender_of(&header)?;
-        Ok(self.core(move |m| m.restart(&caller, &id)).await?)
+        let who = requester_of(&header)?;
+        Ok(self.core(move |m| m.restart(&who, &id)).await?)
     }
 
     async fn boot_enabled(&self, id: String) -> Result<bool, Error> {
@@ -160,9 +172,9 @@ where
         id: String,
         enabled: bool,
     ) -> Result<(), Error> {
-        let caller = sender_of(&header)?;
+        let who = requester_of(&header)?;
         Ok(self
-            .core(move |m| m.set_boot_enabled(&caller, &id, enabled))
+            .core(move |m| m.set_boot_enabled(&who, &id, enabled))
             .await?)
     }
 
@@ -171,12 +183,9 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         name: String,
     ) -> Result<(bool, String, bool), Error> {
-        let caller = sender_of(&header).ok();
+        let who = requester_of(&header).ok();
         Ok(
-            match self
-                .core(move |m| m.read_file(caller.as_ref(), &name))
-                .await?
-            {
+            match self.core(move |m| m.read_file(who.as_ref(), &name)).await? {
                 Some(file) => (true, file.text, file.withheld),
                 None => (false, String::new(), false),
             },
@@ -203,9 +212,9 @@ where
         contents: String,
         keep_api_key: bool,
     ) -> Result<(), Error> {
-        let caller = sender_of(&header)?;
+        let who = requester_of(&header)?;
         Ok(self
-            .core(move |m| m.write_file(&caller, &name, &contents, keep_api_key))
+            .core(move |m| m.write_file(&who, &name, &contents, keep_api_key))
             .await?)
     }
 }
