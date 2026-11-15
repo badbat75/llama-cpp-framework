@@ -1,7 +1,22 @@
 //! [`ManagerClient`] over D-Bus: interface `org.privateai.Manager1` at
 //! `/org/privateai/Manager1`, on the system bus or on a given connection.
+//!
+//! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
+//! `Stop`, `Restart`, `ReadFile`, `WriteFile` and `SetBootEnabled` go as the
+//! `As` form of the same method, with the user's name as its first argument
+//! (the manager answers a principal for the bff's account alone) and answers
+//! the plain method's shape. The methods that need no right are unchanged: the
+//! name the caller vouches for is no credential.
+//!
+//! ```text
+//! StartAs(s principal, s id)          ReadFileAs(s principal, s name)
+//! StopAs(s principal, s id)           RestartAs(s principal, s id)
+//! SetBootEnabledAs(s principal, s id, b enabled)
+//! WriteFileAs(s principal, s name, s contents, b keep_api_key)
+//! Version() -> (s version, u protocol)
+//! ```
 
-use super::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use super::{ClientError, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
 use zbus::message::Message;
@@ -14,15 +29,26 @@ pub const OBJECT_PATH: &str = "/org/privateai/Manager1";
 /// The interface name.
 pub const INTERFACE: &str = "org.privateai.Manager1";
 
+/// The D-Bus error for a method the served object does not have: a manager
+/// built before `Version` answers [`DbusClient::version`] with it.
+const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
+
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
     conn: Connection,
+    /// The signed-in user this client vouches for, None when it acts as its
+    /// own caller: a guarded method then names the `As` form of the method,
+    /// with the name as its first argument.
+    principal: Option<String>,
 }
 
 impl DbusClient {
     /// A client over `conn` (a bus or a peer-to-peer connection).
     pub fn new(conn: Connection) -> DbusClient {
-        DbusClient { conn }
+        DbusClient {
+            conn,
+            principal: None,
+        }
     }
 
     /// A client on the system bus; no bus is [`ClientError::Unavailable`].
@@ -32,20 +58,70 @@ impl DbusClient {
             .map_err(|_| ClientError::Unavailable)
     }
 
+    /// A client of the same connection whose guarded calls act for
+    /// `principal`, the signed-in user this caller vouches for.
+    ///
+    /// The connection is the same, because it is the caller: the manager
+    /// checks the account a call comes from before it looks at the name.
+    pub fn acting_for(&self, principal: &str) -> Self {
+        Self {
+            conn: self.conn.clone(),
+            principal: Some(principal.to_string()),
+        }
+    }
+
+    /// The manager's framework version, beside the protocol number of the
+    /// `As` methods.
+    ///
+    /// A manager that answers no `Version` (one built before the method) is
+    /// `Ok(None)`: the version is a question, never a call that must be
+    /// allowed.
+    pub fn version(&self) -> Result<Option<ManagerVersion>, ClientError> {
+        match self.call_raw("Version", &()) {
+            Ok(reply) => {
+                let (version, protocol) = body(reply)?;
+                Ok(Some(ManagerVersion { version, protocol }))
+            }
+            // The one transport error that is an answer: the served object has
+            // no such method, so the manager predates it. Nothing else is: a
+            // refused, timed out or missing call stays an error.
+            Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == UNKNOWN_METHOD => {
+                Ok(None)
+            }
+            Err(e) => Err(error(e)),
+        }
+    }
+
     /// The reply to `method` with `body`.
     fn call<B: Serialize + DynamicType>(
         &self,
         method: &str,
         body: &B,
     ) -> Result<Message, ClientError> {
-        self.conn
-            .call_method(Some(BUS_NAME), OBJECT_PATH, Some(INTERFACE), method, body)
-            .map_err(error)
+        self.call_raw(method, body).map_err(error)
     }
 
-    /// `method` on an instance id, with no reply value.
+    /// The reply to `method` with `body`, with the transport's own error:
+    /// [`DbusClient::version`] reads an error *name* out of it, as the pipe's
+    /// `version` reads the reply header.
+    fn call_raw<B: Serialize + DynamicType>(
+        &self,
+        method: &str,
+        body: &B,
+    ) -> Result<Message, zbus::Error> {
+        self.conn
+            .call_method(Some(BUS_NAME), OBJECT_PATH, Some(INTERFACE), method, body)
+    }
+
+    /// `method` on an instance id, with no reply value, as the client's own
+    /// caller.
     fn on_instance(&self, method: &str, id: &str) -> Result<(), ClientError> {
         self.call(method, &(id,)).map(|_| ())
+    }
+
+    /// The acting name, when this client vouches for a principal.
+    fn acting(&self) -> Option<&str> {
+        self.principal.as_deref()
     }
 }
 
@@ -85,19 +161,31 @@ impl ManagerClient for DbusClient {
         Ok(InstanceState::from_name(&name))
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {
-        self.on_instance("Start", id)
+        match self.acting() {
+            Some(principal) => self.call("StartAs", &(principal, id)).map(|_| ()),
+            None => self.on_instance("Start", id),
+        }
     }
     fn stop(&self, id: &str) -> Result<(), ClientError> {
-        self.on_instance("Stop", id)
+        match self.acting() {
+            Some(principal) => self.call("StopAs", &(principal, id)).map(|_| ()),
+            None => self.on_instance("Stop", id),
+        }
     }
     fn restart(&self, id: &str) -> Result<(), ClientError> {
-        self.on_instance("Restart", id)
+        match self.acting() {
+            Some(principal) => self.call("RestartAs", &(principal, id)).map(|_| ()),
+            None => self.on_instance("Restart", id),
+        }
     }
     /// The manager answers (exists, text, withheld): a missing file is
     /// (false, "", false).
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
-        let (exists, text, withheld): (bool, String, bool) =
-            body(self.call("ReadFile", &(name,))?)?;
+        let reply = match self.acting() {
+            Some(principal) => self.call("ReadFileAs", &(principal, name))?,
+            None => self.call("ReadFile", &(name,))?,
+        };
+        let (exists, text, withheld): (bool, String, bool) = body(reply)?;
         Ok(exists.then_some(ManagerFile { text, withheld }))
     }
     fn write_file(
@@ -106,14 +194,21 @@ impl ManagerClient for DbusClient {
         contents: &str,
         keep_api_key: bool,
     ) -> Result<(), ClientError> {
-        self.call("WriteFile", &(name, contents, keep_api_key))
-            .map(|_| ())
+        match self.acting() {
+            Some(principal) => self.call("WriteFileAs", &(principal, name, contents, keep_api_key)),
+            None => self.call("WriteFile", &(name, contents, keep_api_key)),
+        }
+        .map(|_| ())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         body(self.call("BootEnabled", &(id,))?)
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
-        self.call("SetBootEnabled", &(id, enabled)).map(|_| ())
+        match self.acting() {
+            Some(principal) => self.call("SetBootEnabledAs", &(principal, id, enabled)),
+            None => self.call("SetBootEnabled", &(id, enabled)),
+        }
+        .map(|_| ())
     }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         body(self.call("Authenticate", &(user, password))?)

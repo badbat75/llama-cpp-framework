@@ -547,3 +547,379 @@ fn the_dbus_client_reads_authenticate_refusals() {
     });
     assert_eq!(got, Err(ClientError::Service(failure.into())));
 }
+
+// ── Acting for a signed-in user: `acting_for` and `version` ──────────────
+
+/// A client method call, on its own thread, within the deadline: the stub
+/// that panics fails the test, it does not hang.
+fn on<T: Send + 'static>(
+    what: &str,
+    client: &Arc<DbusClient>,
+    f: impl FnOnce(&DbusClient) -> T + Send + 'static,
+) -> T {
+    let client = client.clone();
+    bounded(what, move || f(&client))
+}
+
+/// The manager's interface as a manager of an older protocol has it: the
+/// methods it knows, no `Version`. Served at the manager's path and name.
+struct NoVersion;
+
+#[zbus::interface(name = "org.privateai.Manager1")]
+impl NoVersion {
+    async fn list_instances(&self) -> Vec<String> {
+        vec!["default".to_string()]
+    }
+}
+
+/// [`NoVersion`] served on a socket pair (never a bus), pai-core's client on
+/// the other end, stamping `sender` as the bus would.
+fn serve_no_version(sender: Option<&str>) -> (Connection, DbusClient) {
+    let (s0, s1) = UnixStream::pair().expect("socket pair");
+    let server = std::thread::spawn(move || {
+        Builder::async_io_unix_stream(s0)
+            .server(zbus::Guid::generate())
+            .expect("server guid")
+            .p2p()
+            .serve_at(OBJECT_PATH, NoVersion)
+            .expect("serve_at")
+            .build()
+            .expect("server connection")
+    });
+    let client = Builder::async_io_unix_stream(s1)
+        .p2p()
+        .method_timeout(DEADLINE)
+        .build()
+        .expect("client connection");
+    if let Some(name) = sender {
+        client.inner().set_unique_name(name).expect("unique name");
+    }
+    (
+        server.join().expect("server thread"),
+        DbusClient::new(client),
+    )
+}
+
+/// `version` reads the `(s version, u protocol)` reply: the framework version
+/// the manager answers with and the protocol beside it. No file is read, so a
+/// plain test.
+#[test]
+fn the_dbus_client_reads_the_managers_version() {
+    use pai_core::client::ManagerVersion;
+    let c = core(true, &[]);
+    let (_server, client) = connect(&c, Some(":1.42"));
+    let client = Arc::new(client);
+    let got = bounded("version", move || client.version());
+    assert_eq!(
+        got,
+        Ok(Some(ManagerVersion {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol: 1,
+        })),
+        "the version this manager answers"
+    );
+}
+
+/// A manager with no `Version` method: that is no version (None), not a
+/// failure. The peer is checked to answer its own method first, so the None
+/// cannot be read as no manager at all.
+#[test]
+fn the_dbus_client_has_no_version_against_an_object_without_the_method() {
+    let (_server, client) = serve_no_version(Some(":1.42"));
+    let client = Arc::new(client);
+    let peer = client.clone();
+    assert_eq!(
+        bounded("list_instances", move || peer.list_instances()),
+        Ok(vec!["default".to_string()]),
+        "the peer answers the methods it has"
+    );
+    let got = bounded("version", move || client.version());
+    assert_eq!(got, Ok(None), "a manager older than the method");
+}
+
+/// E2E phase for pai-core's D-Bus client acting for a signed-in user:
+/// [`DbusClient::acting_for`], the bff's account vouching for a `pai` member,
+/// against the real interface over a socket pair (never a bus), over the files
+/// a guarded call touches: it sets the process-wide `PRIVATE_AI_DATA_ROOT`
+/// redirect (`src/tests/mod.rs`).
+pub(crate) fn manager_dbus_client_principal_e2e() {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    use std::sync::Mutex;
+
+    /// The bff's bus name in this phase.
+    const BFF: &str = ":1.9";
+    /// Another account's bus name: a caller that is not the bff's.
+    const OTHER: &str = ":1.42";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let more = format!("{presets}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
+    std::fs::write(sys.join("server@default.ini"), ini).expect("write default");
+    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+
+    // polkit refuses this caller everything, and would challenge it for
+    // `configure`: the right of a call for a member is the pair (the bff's
+    // account, a current member), so a call that ran as the bff's own is
+    // refused here.
+    let passwords = FakePasswords::new();
+    let admins = passwords.asked_admin.clone();
+    let c = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false)
+                .quietly(false)
+                .bff(&Caller(BFF.into())),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords),
+    );
+    let polkit_quiet = |c: &Arc<Core>| c.authority().asked_quietly.lock().unwrap().clone();
+    let bff_checks = |c: &Arc<Core>| c.authority().asked_bff.lock().unwrap().clone();
+    let asked_admin = |a: &Arc<Mutex<Vec<String>>>| a.lock().unwrap().clone();
+    let bff_asks = |n: usize| vec![Caller(BFF.into()); n];
+    let other_asks = |n: usize| vec![Caller(OTHER.into()); n];
+    let member_asks = |n: usize| vec!["alice".to_string(); n];
+
+    let (_server, client) = connect(&c, Some(BFF));
+    let client = Arc::new(client);
+
+    // ── A client bound to a member: the guarded calls carry the principal ──
+    {
+        let bound = Arc::new(client.acting_for("alice"));
+        assert_eq!(
+            on("start", &bound, |c| c.start("default")),
+            Ok(()),
+            "a member starts the instance"
+        );
+        assert_eq!(
+            on("stop", &bound, |c| c.stop("default")),
+            Ok(()),
+            "a member stops it"
+        );
+        assert_eq!(
+            on("restart", &bound, |c| c.restart("default")),
+            Ok(()),
+            "a member restarts it"
+        );
+        assert_eq!(
+            on("set_boot_enabled", &bound, |c| c
+                .set_boot_enabled("default", true)),
+            Ok(()),
+            "a member switches the start at boot on"
+        );
+        let text = more.clone();
+        assert_eq!(
+            on("write_file", &bound, move |c| c.write_file(
+                "presets.ini",
+                &text,
+                false
+            )),
+            Ok(()),
+            "a member writes the presets"
+        );
+        assert_eq!(text_of("presets.ini"), more, "the member's write landed");
+        assert_eq!(
+            on("read_file", &bound, |c| c.read_file("server@default.ini")),
+            Ok(Some(plain(ini))),
+            "a member's read of an instance file keeps the key"
+        );
+        // The unguarded methods are the caller's own: `BootEnabled`, `Status`
+        // and `ListInstances` have no `As` form.
+        assert_eq!(
+            on("boot_enabled", &bound, |c| c.boot_enabled("default")),
+            Ok(true),
+            "the start at boot reads back on"
+        );
+        assert_eq!(
+            on("status", &bound, |c| c.status("default")),
+            Ok(InstanceState::Active),
+            "the state of a bound client"
+        );
+        assert_eq!(
+            on("list_instances", &bound, |c| c.list_instances()),
+            Ok(vec!["default".to_string()]),
+            "the instance list of a bound client"
+        );
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Start("default".into()),
+                Call::Stop("default".into()),
+                Call::Restart("default".into()),
+                Call::SetBootEnabled("default".into(), true),
+                Call::BootEnabled("default".into()),
+                Call::Status("default".into()),
+            ],
+            "every guarded call reached the service manager, the unguarded status its own probe"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so a guarded call ran as the bff's own, not for the member"
+        );
+        assert_eq!(
+            polkit_quiet(&c),
+            vec![],
+            "configure asked to decide the read: the key is kept on the member's right, not the bff's"
+        );
+        assert_eq!(
+            bff_checks(&c),
+            bff_asks(6),
+            "the caller is checked first, once per guarded call"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            member_asks(6),
+            "the membership of the member, at every guarded call"
+        );
+    }
+
+    // ── The client `acting_for` was made from is unchanged ───────────────
+    // Its guarded calls are the caller's own, so polkit decides: refused here,
+    // with polkit asked for the caller.
+    assert_eq!(
+        on("start", &client, |c| c.start("default")),
+        Err(ClientError::NotAuthorized),
+        "the unbound client's own call, refused by polkit"
+    );
+    assert_eq!(
+        asked(&c),
+        vec![(Caller(BFF.into()), Action::Control)],
+        "the unbound client sends the plain method: polkit is asked for the caller"
+    );
+
+    // ── A bound client whose principal is no member ──────────────────────
+    // The membership questions expected, kept across the blocks: 6 for alice
+    // (above), 3 for bob, none for a caller that is not the bff.
+    let mut expect_admin = member_asks(6);
+    {
+        let bob = Arc::new(client.acting_for("bob"));
+        assert_eq!(
+            on("start", &bob, |c| c.start("default")),
+            Err(ClientError::NotAuthorized),
+            "a non-member starts nothing"
+        );
+        assert_eq!(
+            on("write_file", &bob, |c| c.write_file(
+                "presets.ini",
+                "junk\n",
+                false
+            )),
+            Err(ClientError::NotAuthorized),
+            "a non-member writes nothing"
+        );
+        assert_eq!(
+            text_of("presets.ini"),
+            more,
+            "a refused write leaves the file"
+        );
+        assert_eq!(
+            on("read_file", &bob, |c| c.read_file("server@default.ini")),
+            Err(ClientError::NotAuthorized),
+            "a non-member reads no key"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            6,
+            "a refused principal reached no service manager"
+        );
+        expect_admin.extend(["bob", "bob", "bob"].map(String::from));
+        assert_eq!(
+            asked_admin(&admins),
+            expect_admin,
+            "the membership of the name each call vouches for"
+        );
+        assert_eq!(
+            bff_checks(&c),
+            bff_asks(9),
+            "one check of the caller per guarded call"
+        );
+    }
+
+    // ── A caller that is not the bff, bound to a member ──────────────────
+    {
+        let (_server, other) = connect(&c, Some(OTHER));
+        let bound = Arc::new(other.acting_for("alice"));
+        assert_eq!(
+            on("start", &bound, |c| c.start("default")),
+            Err(ClientError::NotAuthorized),
+            "start from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("stop", &bound, |c| c.stop("default")),
+            Err(ClientError::NotAuthorized),
+            "stop from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("restart", &bound, |c| c.restart("default")),
+            Err(ClientError::NotAuthorized),
+            "restart from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("set_boot_enabled", &bound, |c| {
+                c.set_boot_enabled("default", false)
+            }),
+            Err(ClientError::NotAuthorized),
+            "the start at boot from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("write_file", &bound, |c| {
+                c.write_file("presets.ini", "junk\n", false)
+            }),
+            Err(ClientError::NotAuthorized),
+            "a write from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("read_file", &bound, |c| c.read_file("server@default.ini")),
+            Err(ClientError::NotAuthorized),
+            "a read from a caller that is not the bff"
+        );
+        assert_eq!(
+            on("status", &bound, |c| c.status("default")),
+            Ok(InstanceState::Active),
+            "an unguarded method of a bound client of another caller still answers"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            7,
+            "a caller that is not the bff started nothing (only the status probe)"
+        );
+        assert_eq!(
+            on("boot_enabled", &client, |c| c.boot_enabled("default")),
+            Ok(true),
+            "the refused change left the start at boot as the member set it"
+        );
+        assert_eq!(text_of("presets.ini"), more, "the file kept");
+        assert_eq!(
+            asked(&c),
+            vec![(Caller(BFF.into()), Action::Control)],
+            "the refusals are the principal gate's: no polkit question for the other caller"
+        );
+        assert_eq!(
+            polkit_quiet(&c),
+            vec![],
+            "a refused read asks nothing to decide it"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            expect_admin,
+            "no membership looked up for a caller that is not the bff"
+        );
+        // The principal gate asks `is_bff` of the caller of the call, so the
+        // log carries the bff for the principal calls above and this caller
+        // for its own: a caller that is not the bff is checked as itself.
+        let mut expect_bff = bff_asks(9);
+        expect_bff.extend(other_asks(6));
+        assert_eq!(
+            bff_checks(&c),
+            expect_bff,
+            "the caller of every guarded call is checked, and the other caller as itself"
+        );
+    }
+}

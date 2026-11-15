@@ -520,8 +520,6 @@ until its administrator enables it; join by a one-time code; every `pai` member 
 machine administers every joined node; Linux super-manager first, Linux and Windows nodes). The
 slices, each test first, with the outcome each shows, are in `ARCHITECTURE.md` "Slices":
 
-0. The `Version` method on D-Bus (the acting user as `Requester.principal` and `Version` on the
-   pipe are in, step 10 slice 6b part 3 slices 1 and 2).
 1. Node identity (`pai node show|enable`). 2. The TLS listener with pinned fingerprints. 3. The join
    (code, `Join`, `leave`). 4. Delegated rights and per-change logging of who acted. 5. The
    super-manager: its key, the node list, adding a node. 6. Its local socket, open only to the bff's
@@ -807,7 +805,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
    (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding are gone (every session is a `pai` member; the manager's flag alone withholds the key); the bff README still names `canConfigure` in five places. Then 6b
    part 3: the bff calls the manager for the signed-in user, designed in `ARCHITECTURE.md` "Acting for
-   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first (slices 1, the manager's core, and 2, the pipe's `As` methods and `Version`, done):
+   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first (slices 1 to 3 done: the manager's core, then the `As` methods and `Version` on the pipe and on D-Bus):
    the manager's `As` methods carry a principal only from the bff's account, re-check the user's `pai`
    membership at each call, never ask polkit for it; `Version`; a log of who acted; the bff connects
    as the session's user. Decided by the user (2026-11-15): when the manager refuses a signed-in user
@@ -816,7 +814,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    spent, for every `acting_for` sibling too (a timed-out read can leave a stale reply on the shared
    stream), so the bff opens a new one; say so in `PipeClient::version`'s doc. A bound call against an
    old manager is a plain `Other`; `BAD_REQUEST` is defined in both `client/pipe.rs` and
-   `manager/pipe.rs`. From
+   `manager/pipe.rs`. From the review of slice 3: `DbusClient::version` matches only
+   `zbus::Error::MethodError` for `UnknownMethod`, which zbus 6 reports as `Error::FDO`: match both
+   before a zbus bump; the doc comment of `requester_of` (`manager/dbus.rs`) still says the D-Bus face
+   carries no principal. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

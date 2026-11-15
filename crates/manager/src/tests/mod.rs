@@ -64,4 +64,12 @@ fn data_root_e2e() {
 
     // ── Manager core: acting for a signed-in user (the bff names a member)
     crate::manager::service::manager_principal_e2e();
+
+    // ── Manager over D-Bus: acting for a signed-in user (the `As` methods)
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_principal_e2e();
+
+    // ── pai-core's D-Bus client, acting for a signed-in user ─────────────
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_principal_e2e();
 }

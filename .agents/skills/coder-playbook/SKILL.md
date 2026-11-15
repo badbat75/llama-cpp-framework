@@ -434,4 +434,20 @@ Lessons only: the rules are in `AGENTS.md`.
   array: it fails `clippy --all-targets -D warnings`, so run plain `cargo clippy -p <crate> -- -D
   warnings` to show production is clean and send the test hits to the tester.
 - The `edit` tool here returns no output: re-read or grep after EVERY edit before the next one. One
-  duplicated free function slipped in that way (rustc catches it, not the tool).
+  duplicated free function slipped in that way (rustc catches it, not the tool). It can also answer
+  "successfully updated" while writing nothing: the next edit then failed on its own oldString, and the
+  file was still the old text. A scripted replace (python, exact old text, print of the result) plus
+  `git diff --stat <path>` is the only proof an edit landed.
+- zbus builds a call's body by zipping the `Proxy::call` body with the method's signature, ONE value per
+  argument: a body of `&("alice", &(id,))` serializes as `(s(s))` and fails `(s,s)`, so a generic
+  `fn guarded(&self, method: &str, body: impl Serialize)` cannot type the arguments of every method and
+  each guarded method writes its own FLAT tuple (`&(principal, id)`, `&(principal, name, text, keep)`).
+  `write_file` already did.
+- The manager's D-Bus client tests are NOT in `crates/core`: they are phases of `data_root_e2e` in
+  `crates/manager/src/tests/dbus_client.rs`, where the real manager, polkit fake and BFF fake run in one
+  process. Each `StreamTransport` opened there is a NEW connection, so a client built on its own one gets
+  a new sender name (`:1.9` for the test's first, `:1.42` for a later phase's). A phase that adds calls
+  from a second connection makes a `asked_bff == N x Caller(":1.9")` assertion red: the manager records
+  the sender it saw, the test expectation is the stale part; report it.
+- `crates/core/src/client/dbus.rs` is `cfg(target_os = "linux")` (`client.rs`), so the windows-gnu
+  clippy of `pai-core` does not compile it; say so in the report.

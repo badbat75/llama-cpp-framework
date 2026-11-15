@@ -1,15 +1,18 @@
 //! The D-Bus face of `pai-manager` on Linux: interface
 //! `org.privateai.Manager1` at `/org/privateai/Manager1` on the system bus,
 //! over the core [`Manager`]. The caller of a method is its sender (the
-//! unique bus name the bus stamps), handed to the core as a [`Requester`]
-//! with no principal (the sender alone: the `As` methods that carry a user
-//! come with the client that sends one); every [`ManagerError`] replies as a
+//! unique bus name the bus stamps), handed to the core as a [`Requester`].
+//! The guarded methods are served in their `As` form too, with the principal
+//! the caller vouches for as their first argument (the manager answers a
+//! principal for the bff's account alone); `Version` answers the framework
+//! version and [`PROTOCOL`] to anybody. Every [`ManagerError`] replies as a
 //! D-Bus error `org.privateai.Manager1.Error.<Kind>`.
 
+use super::pipe::PROTOCOL;
 pub use super::service::state_name;
 use super::service::{
-    Action, Authority, Caller, Manager, ManagerError, Requester, Resolver, ServiceControl,
-    ServiceError, SystemResolver, UnitState,
+    Action, Authority, Caller, Manager, ManagerError, Principal, Requester, Resolver,
+    ServiceControl, ServiceError, SystemResolver, UnitState,
 };
 use std::sync::Arc;
 use zbus::blocking::{Connection, Proxy};
@@ -119,6 +122,20 @@ fn requester_of(header: &zbus::message::Header<'_>) -> Result<Requester, Manager
     })
 }
 
+/// The requester of an `As` call: its sender and the principal the caller
+/// vouches for. A call with no sender is refused like the plain methods: the
+/// core checks the caller's own account is the bff's before it trusts a
+/// principal.
+fn requester_as(
+    header: &zbus::message::Header<'_>,
+    principal: String,
+) -> Result<Requester, ManagerError> {
+    sender_of(header).map(|caller| Requester {
+        caller,
+        principal: Some(Principal(principal)),
+    })
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -216,6 +233,93 @@ where
         Ok(self
             .core(move |m| m.write_file(&who, &name, &contents, keep_api_key))
             .await?)
+    }
+
+    /// `Start` for `principal`, the signed-in user the caller vouches for;
+    /// the principal comes first, as the design's `StartAs(s principal, s id)`.
+    async fn start_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        id: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self.core(move |m| m.start(&who, &id)).await?)
+    }
+
+    /// `Stop` for `principal`.
+    async fn stop_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        id: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self.core(move |m| m.stop(&who, &id)).await?)
+    }
+
+    /// `Restart` for `principal`.
+    async fn restart_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        id: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self.core(move |m| m.restart(&who, &id)).await?)
+    }
+
+    /// `SetBootEnabled` for `principal`.
+    async fn set_boot_enabled_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        id: String,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_boot_enabled(&who, &id, enabled))
+            .await?)
+    }
+
+    /// `ReadFile` for `principal`. The reply has the plain method's shape;
+    /// a member of `pai` may configure, so a member's read is never withheld.
+    async fn read_file_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        name: String,
+    ) -> Result<(bool, String, bool), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(
+            match self.core(move |m| m.read_file(Some(&who), &name)).await? {
+                Some(file) => (true, file.text, file.withheld),
+                None => (false, String::new(), false),
+            },
+        )
+    }
+
+    /// `WriteFile` for `principal`.
+    async fn write_file_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        name: String,
+        contents: String,
+        keep_api_key: bool,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.write_file(&who, &name, &contents, keep_api_key))
+            .await?)
+    }
+
+    /// The framework version this manager was built with, beside the protocol
+    /// number of the `As` methods. It asks nothing of anybody: every caller
+    /// gets it, a call with no sender included.
+    async fn version(&self) -> (String, u32) {
+        (env!("CARGO_PKG_VERSION").to_string(), PROTOCOL)
     }
 }
 
@@ -1082,6 +1186,319 @@ pub(crate) fn manager_dbus_checks_e2e() {
     assert_eq!(write("presets.ini", &more), Ok(()));
 }
 
+/// E2E phase for the D-Bus face acting for a signed-in user: the bff's
+/// account naming a `pai` member through the `As` methods, over the instance
+/// files a guarded call touches, so it redirects the data root
+/// (`src/tests/mod.rs`). Served peer to peer on a socket pair, never a bus;
+/// every seam is a fake: no polkit, no systemd, no real account is asked.
+#[cfg(test)]
+pub(crate) fn manager_dbus_principal_e2e() {
+    use super::service::fakes::{
+        Call, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use std::os::unix::net::UnixStream;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+    use zbus::blocking::Connection;
+
+    type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
+    /// The membership questions a core over [`FakePasswords`] asks.
+    type Admins = Arc<Mutex<Vec<String>>>;
+
+    /// The bff's bus name in this phase.
+    const BFF: &str = ":1.9";
+    const PREFIX: &str = "org.privateai.Manager1.Error.";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
+    let more = format!("{presets}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n");
+    std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
+    std::fs::write(sys.join("presets.ini"), presets).expect("presets file");
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+
+    // `core` served on one end of a socket pair (the server built on its own
+    // thread: both ends handshake at once), a client on the other stamping
+    // `sender` as the bus would. Every call has a deadline: a stub that
+    // panics in the server fails the test, not hangs it.
+    fn connect(core: &Arc<Core>, sender: Option<&str>) -> (Connection, Connection) {
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    }
+    // A method call: Ok(reply), or Err((error name, message)).
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+    fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
+        m.body().deserialize().expect("reply body")
+    }
+
+    let bff = Caller(BFF.into());
+    // The accounts: alice a member of `pai`, bob not. The membership log is
+    // taken before the fake moves into the core.
+    let passwords = FakePasswords::new();
+    let admins = passwords.asked_admin.clone();
+    // polkit refuses this caller everything, and would challenge it for
+    // `configure`: a call for a member needs no right of the bff's own, so a
+    // call that ran as the bff's own is refused here.
+    let c = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false).quietly(false).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords),
+    );
+    let calls = |c: &Arc<Core>| c.service().calls.lock().unwrap().clone();
+    let polkit = |c: &Arc<Core>| c.authority().asked.lock().unwrap().clone();
+    let polkit_quiet = |c: &Arc<Core>| c.authority().asked_quietly.lock().unwrap().clone();
+    let bff_checks = |c: &Arc<Core>| c.authority().asked_bff.lock().unwrap().clone();
+    let asked_admin = |a: &Admins| a.lock().unwrap().clone();
+
+    let (_server, client) = connect(&c, Some(BFF));
+
+    // ── The bff acting for a member: the control calls run ───────────────
+    // The principal is the first argument, as in the design's
+    // `StartAs(s principal, s id)`: an implementation taking them the other
+    // way fails here, naming an instance "alice".
+    call(&client, "StartAs", &("alice", "default")).expect("StartAs for a member");
+    call(&client, "StopAs", &("alice", "default")).expect("StopAs for a member");
+    call(&client, "RestartAs", &("alice", "default")).expect("RestartAs for a member");
+    call(&client, "SetBootEnabledAs", &("alice", "default", true))
+        .expect("SetBootEnabledAs for a member");
+    let r = call(&client, "BootEnabled", &("default",)).expect("BootEnabled");
+    assert!(
+        body::<bool>(&r),
+        "the member's change of the start at boot landed"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![
+            Call::Start("default".into()),
+            Call::Stop("default".into()),
+            Call::Restart("default".into()),
+            Call::SetBootEnabled("default".into(), true),
+            Call::BootEnabled("default".into()),
+        ],
+        "every call reaches the service manager"
+    );
+    assert_eq!(
+        polkit(&c),
+        vec![],
+        "polkit asked, so the call ran as the bff's own, not for the principal"
+    );
+    assert_eq!(
+        bff_checks(&c),
+        vec![bff.clone(); 4],
+        "the caller is checked first, at every call"
+    );
+    assert_eq!(
+        asked_admin(&admins),
+        vec!["alice".to_string(); 4],
+        "the membership of the principal, never of the caller"
+    );
+
+    // ── A member's write lands, and their read is never withheld ─────────
+    // The bff is a caller polkit would challenge for `configure` here: the
+    // key stays because the member may configure, so a read that fell back to
+    // the caller's own would blank it and log the quiet question.
+    call(
+        &client,
+        "WriteFileAs",
+        &("alice", "presets.ini", more.as_str(), false),
+    )
+    .expect("WriteFileAs for a member");
+    assert_eq!(text_of("presets.ini"), more, "the member's write landed");
+    let read = call(&client, "ReadFileAs", &("alice", "server@default.ini"))
+        .expect("ReadFileAs for a member");
+    assert_eq!(
+        body::<(bool, String, bool)>(&read),
+        (true, ini.to_string(), false),
+        "the key kept and nothing withheld from a member's read"
+    );
+    let preset = call(&client, "ReadFileAs", &("alice", "presets.ini"))
+        .expect("ReadFileAs of a preset file");
+    let plain = call(&client, "ReadFile", &("presets.ini",)).expect("ReadFile of a preset file");
+    assert_eq!(
+        preset.body().signature(),
+        plain.body().signature(),
+        "the As reply has the plain method's shape"
+    );
+    assert_eq!(
+        polkit_quiet(&c),
+        vec![],
+        "configure asked to decide the read: the read ran as the bff's own"
+    );
+    assert_eq!(polkit(&c), vec![], "control is not asked either");
+    assert_eq!(
+        calls(&c),
+        vec![
+            Call::Start("default".into()),
+            Call::Stop("default".into()),
+            Call::Restart("default".into()),
+            Call::SetBootEnabled("default".into(), true),
+            Call::BootEnabled("default".into()),
+        ],
+        "a file call reaches no service"
+    );
+    assert_eq!(
+        bff_checks(&c),
+        vec![bff.clone(); 7],
+        "one check per As call"
+    );
+    assert_eq!(
+        asked_admin(&admins),
+        vec!["alice".to_string(); 7],
+        "the membership asked at every call, never cached"
+    );
+
+    // ── A principal who is no member: refused, nothing done ──────────────
+    let refused = |e: (String, String), method: &str| {
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{method} for bob");
+    };
+    refused(
+        call(&client, "StartAs", &("bob", "default")).expect_err("StartAs for a non-member"),
+        "StartAs",
+    );
+    refused(
+        call(
+            &client,
+            "WriteFileAs",
+            &("bob", "presets.ini", "junk\n", false),
+        )
+        .expect_err("WriteFileAs for a non-member"),
+        "WriteFileAs",
+    );
+    refused(
+        call(&client, "ReadFileAs", &("bob", "server@default.ini"))
+            .expect_err("ReadFileAs for a non-member"),
+        "ReadFileAs",
+    );
+    assert_eq!(
+        text_of("presets.ini"),
+        more,
+        "a refused write leaves the file"
+    );
+    assert_eq!(
+        text_of("server@default.ini"),
+        ini,
+        "a refused read changes nothing"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![
+            Call::Start("default".into()),
+            Call::Stop("default".into()),
+            Call::Restart("default".into()),
+            Call::SetBootEnabled("default".into(), true),
+            Call::BootEnabled("default".into()),
+        ],
+        "a non-member's refused calls started nothing"
+    );
+    assert_eq!(polkit(&c), vec![], "a refused principal asks nobody");
+    let mut asked = vec!["alice".to_string(); 7];
+    asked.extend(["bob", "bob", "bob"].map(String::from));
+    assert_eq!(
+        asked_admin(&admins),
+        asked,
+        "the membership of the name the caller vouches for"
+    );
+
+    // ── A caller that is not the bff naming a member: refused, nothing started ──
+    {
+        let (_server, other) = connect(&c, Some(":1.42"));
+        for (method, args) in [
+            ("StartAs", ("alice", "default")),
+            ("StopAs", ("alice", "default")),
+            ("RestartAs", ("alice", "default")),
+        ] {
+            let e = call(&other, method, &args)
+                .expect_err(&format!("{method} from a caller that is not the bff"));
+            assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{method}");
+        }
+        let e = call(
+            &other,
+            "WriteFileAs",
+            &("alice", "presets.ini", "junk\n", false),
+        )
+        .expect_err("WriteFileAs from a caller that is not the bff");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"));
+        let e = call(&other, "ReadFileAs", &("alice", "server@default.ini"))
+            .expect_err("ReadFileAs from a caller that is not the bff");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"));
+        assert_eq!(
+            text_of("presets.ini"),
+            more,
+            "a refused write leaves the file"
+        );
+        assert!(
+            text_of("server@default.ini").contains("sk-local-3f9a"),
+            "a refused read answered the file to a caller with no right"
+        );
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Start("default".into()),
+                Call::Stop("default".into()),
+                Call::Restart("default".into()),
+                Call::SetBootEnabled("default".into(), true),
+                Call::BootEnabled("default".into()),
+            ],
+            "a caller that is not the bff started nothing"
+        );
+        assert_eq!(
+            polkit(&c),
+            vec![],
+            "the refusal is the principal gate's: not a polkit refusal, and never the caller's own call"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            asked,
+            "no membership looked up for a caller that is not the bff"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1557,5 +1974,280 @@ mod tests {
         assert!(!is_bff_uid(Some(0), None));
         assert!(!is_bff_uid(Some(990), None));
         assert!(!is_bff_uid(None, None));
+    }
+
+    // ── Acting for a signed-in user: the `As` methods ────────────────────
+    // Every call here is refused before a path is resolved, or asks a fake
+    // only, so these never reach `paths::`. The bff's calls that can succeed
+    // are in `manager_dbus_principal_e2e`.
+
+    use super::super::service::fakes;
+
+    /// The membership questions [`principal_core`]'s accounts are asked.
+    type Admins = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+    /// One `As` method, called with `principal` as its first argument (the
+    /// order the design pins: `StartAs(s principal, s id)`).
+    type AsCall = fn(&Connection, &str) -> Result<zbus::Message, (String, String)>;
+
+    /// A method call on the interface: Ok(reply), or Err((name, message)).
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+
+    fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
+        m.body().deserialize().expect("reply body")
+    }
+
+    /// The six `As` methods, each with its own arguments after the principal.
+    fn as_methods() -> [(&'static str, AsCall); 6] {
+        [
+            ("StartAs", |c, p| call(c, "StartAs", &(p, "default"))),
+            ("StopAs", |c, p| call(c, "StopAs", &(p, "default"))),
+            ("RestartAs", |c, p| call(c, "RestartAs", &(p, "default"))),
+            ("ReadFileAs", |c, p| {
+                call(c, "ReadFileAs", &(p, "presets.ini"))
+            }),
+            ("WriteFileAs", |c, p| {
+                call(c, "WriteFileAs", &(p, "presets.ini", "", false))
+            }),
+            ("SetBootEnabledAs", |c, p| {
+                call(c, "SetBootEnabledAs", &(p, "default", true))
+            }),
+        ]
+    }
+
+    /// [`auth_core`] (polkit would allow the caller everything, `alice` is a
+    /// member of `pai`, `bob` is not), with the log of the membership
+    /// questions its accounts are asked.
+    fn principal_core(passwords: fakes::FakePasswords) -> (Arc<AuthCore>, Admins) {
+        let admins = passwords.asked_admin.clone();
+        let (core, _checked) = auth_core(passwords);
+        (core, admins)
+    }
+
+    fn asked_admin(admins: &Admins) -> Vec<String> {
+        admins.lock().unwrap().clone()
+    }
+    fn asked_bff(c: &AuthCore) -> Vec<Caller> {
+        c.authority().asked_bff.lock().unwrap().clone()
+    }
+    fn polkit(c: &AuthCore) -> Vec<(Caller, Action)> {
+        c.authority().asked.lock().unwrap().clone()
+    }
+    fn polkit_quiet(c: &AuthCore) -> Vec<(Caller, Action)> {
+        c.authority().asked_quietly.lock().unwrap().clone()
+    }
+    fn service_calls(c: &AuthCore) -> Vec<fakes::Call> {
+        c.service().calls.lock().unwrap().clone()
+    }
+    fn no_calls() -> Vec<fakes::Call> {
+        Vec::new()
+    }
+
+    /// A caller that is not the bff naming a principal: NotAuthorized for
+    /// every `As` method, the membership never looked up, polkit never asked,
+    /// nothing done. The caller is one polkit would allow everything, so a
+    /// call downgraded to the caller's own would have gone through.
+    #[test]
+    fn an_as_method_from_a_caller_that_is_not_the_bff_is_refused_over_dbus() {
+        for sender in [Some(":1.42"), Some(":1.7"), None] {
+            let (c, admins) = principal_core(fakes::FakePasswords::new());
+            let (_server, client) = auth_connect(&c, sender);
+            for (method, f) in as_methods() {
+                let e = f(&client, "alice")
+                    .expect_err(&format!("{method} from a caller that is not the bff"));
+                assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{method}");
+            }
+            assert_eq!(
+                asked_admin(&admins),
+                Vec::<String>::new(),
+                "a membership looked up for a caller that is not the bff"
+            );
+            assert_eq!(
+                polkit(&c),
+                vec![],
+                "polkit asked, so the call ran as the caller's own"
+            );
+            assert_eq!(polkit_quiet(&c), vec![], "not even the quiet question");
+            assert_eq!(
+                service_calls(&c),
+                no_calls(),
+                "a caller that is not the bff started nothing"
+            );
+            if let Some(name) = sender {
+                assert_eq!(
+                    asked_bff(&c),
+                    vec![Caller(name.to_string()); 6],
+                    "{sender:?}: the caller is checked first, once per call"
+                );
+            }
+        }
+    }
+
+    /// The bff naming a member reaches the core as that principal's request:
+    /// the stop runs, the membership is asked once per call and polkit never.
+    /// The gate runs before the method's own check: the id and the file name
+    /// are refused after the membership question, and nothing reaches the
+    /// service manager.
+    #[test]
+    fn an_as_method_from_the_bff_reaches_the_core_with_the_principal_over_dbus() {
+        let (c, admins) = principal_core(fakes::FakePasswords::new());
+        let (_server, client) = auth_connect(&c, Some(BFF));
+        call(&client, "StopAs", &("alice", "default")).expect("StopAs for a member");
+        let e = call(&client, "SetBootEnabledAs", &("alice", "../x", true))
+            .expect_err("SetBootEnabledAs of an invalid id");
+        assert_eq!(e.0, format!("{PREFIX}InvalidId"), "the id, after the gate");
+        let e = call(&client, "ReadFileAs", &("alice", "server.ini"))
+            .expect_err("ReadFileAs of a bad name");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}BadFileName"),
+            "the name, after the gate"
+        );
+        let e = call(&client, "WriteFileAs", &("alice", "server.ini", "x", false))
+            .expect_err("WriteFileAs of a bad name");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}BadFileName"),
+            "the name, after the gate"
+        );
+        assert_eq!(
+            service_calls(&c),
+            vec![fakes::Call::Stop("default".into())],
+            "the member's stop ran, nothing else"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec!["alice".to_string(); 4],
+            "the membership of the name the caller vouches for, once per call"
+        );
+        assert_eq!(
+            asked_bff(&c),
+            vec![Caller(BFF.into()); 4],
+            "the caller is checked first, at every call"
+        );
+        assert_eq!(
+            polkit(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(
+            polkit_quiet(&c),
+            vec![],
+            "not even the quiet question, the one that decides a read"
+        );
+    }
+
+    /// The bff naming an account that is no member of `pai` (bob) or is
+    /// unknown (mallory): NotAuthorized, the membership asked for that name,
+    /// polkit never, nothing done.
+    #[test]
+    fn an_as_method_for_a_principal_who_is_no_member_is_refused_over_dbus() {
+        for user in ["bob", "mallory"] {
+            let (c, admins) = principal_core(fakes::FakePasswords::new());
+            let (_server, client) = auth_connect(&c, Some(BFF));
+            for (method, f) in as_methods() {
+                let e = f(&client, user).expect_err(&format!("{method} for {user}"));
+                assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{method} for {user}");
+            }
+            assert_eq!(
+                asked_admin(&admins),
+                vec![user.to_string(); 6],
+                "the membership of {user}: asked, and it says no"
+            );
+            assert_eq!(
+                polkit(&c),
+                vec![],
+                "polkit asked for a principal it refuses: the call ran as the bff's own"
+            );
+            assert_eq!(
+                service_calls(&c),
+                no_calls(),
+                "{user}: a refused principal started nothing"
+            );
+        }
+    }
+
+    /// A principal name the manager will not take is refused before the
+    /// account behind it is looked up: empty, one with a control character,
+    /// one over the 256 bytes the bff itself bounds. A name with spaces is
+    /// well formed, so it is asked about whole: the face may not trim it.
+    #[test]
+    fn an_ill_formed_principal_is_refused_before_the_account_is_asked_over_dbus() {
+        let long = "x".repeat(257);
+        for name in ["", "a\nb", long.as_str()] {
+            let (c, admins) = principal_core(fakes::FakePasswords::new());
+            let (_server, client) = auth_connect(&c, Some(BFF));
+            let e = call(&client, "StopAs", &(name, "default"))
+                .expect_err("StopAs for an ill-formed name");
+            assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{name:?}");
+            assert_eq!(
+                asked_admin(&admins),
+                Vec::<String>::new(),
+                "the account of {name:?} was looked up"
+            );
+            assert_eq!(service_calls(&c), no_calls(), "{name:?}");
+        }
+        let (c, admins) = principal_core(fakes::FakePasswords::new());
+        let (_server, client) = auth_connect(&c, Some(BFF));
+        let e = call(&client, "StopAs", &(" Alice ", "default"))
+            .expect_err("StopAs for a name with spaces");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"));
+        assert_eq!(
+            asked_admin(&admins),
+            vec![" Alice ".to_string()],
+            "the name travelled whole: no trim, no folding"
+        );
+    }
+
+    /// `Version() -> (su)`: the framework version this crate was built with,
+    /// beside the protocol number of the `As` methods. It needs no right: a
+    /// named caller, another caller and no sender at all all get it, and it
+    /// asks nobody anything.
+    #[test]
+    fn version_answers_the_framework_version_and_the_protocol_over_dbus() {
+        for sender in [Some(BFF), Some(":1.42"), None] {
+            let (c, admins) = principal_core(fakes::FakePasswords::new());
+            let (_server, client) = auth_connect(&c, sender);
+            let reply = call(&client, "Version", &()).expect("Version");
+            assert_eq!(
+                reply.body().signature().to_string(),
+                "(su)",
+                "{sender:?}: the reply is a string and a uint32"
+            );
+            assert_eq!(
+                body::<(String, u32)>(&reply),
+                (env!("CARGO_PKG_VERSION").to_string(), 1),
+                "{sender:?}: the framework version and the protocol"
+            );
+            assert!(
+                polkit(&c).is_empty() && polkit_quiet(&c).is_empty(),
+                "{sender:?}: Version asks polkit nothing"
+            );
+            assert!(
+                asked_bff(&c).is_empty() && asked_admin(&admins).is_empty(),
+                "{sender:?}: Version checks no account"
+            );
+            assert!(
+                service_calls(&c).is_empty(),
+                "{sender:?}: Version touches nothing"
+            );
+        }
     }
 }

@@ -303,6 +303,32 @@ Lessons only: the rules are in `AGENTS.md`.
   action's own check (`SetBootEnabledAs` of `../x` asks the membership, then answers InvalidId); an
   empty polkit `asked` shows the `Requester` carried the principal, since a call that fell back to the
   caller's own would ask.
+- `asked_bff` records the caller of every `is_bff` question (the face sends the header's sender), so a
+  phase spanning two stamped connections expects that log by caller, not as one total: `bff_asks(9)`
+  extended with `other_asks(6)`. Only the `As` methods ask it (a plain guarded call asks polkit, not
+  `is_bff`), so the count is the principal calls, not every guarded call.
+- The D-Bus face is pinned with arguments as a tuple in the declared order (`&("alice", "default")`),
+  since zbus maps the members positionally: a reversed implementation answers for the instance named
+  "alice", a red no client test catches (the trait hides the wire). Over p2p a missing method replies
+  `org.freedesktop.DBus.Error.UnknownMethod` (`FDO`), so every new method reds there first; the pipe's
+  red for the same is `BadRequest`. A stub's `todo!` in the core client panics with its own name
+  (`not yet implemented: DbusClient::acting_for`): in the one `data_root_e2e` test that red stops the
+  phase, so the face's red and the client's red are seen in two runs, not one.
+- `set_unique_name` works on the client connection of a p2p pair too, so the bff caller rule (`:1.9`) is
+  pinned from the server face (`Builder::..caller(..)`) and from the client (`the_bff_caller_runs_as_the_principal`)
+  without inventing a seam. Stamp each test's own name; the manager's `Caller` of a p2p server is what was
+  stamped, `None` when nothing was.
+- A new read like `Version()`: at the face pin the body as `(Vec<String>, Vec<String>, u64)` through a
+  tuple `match` (an array pattern of three `String` is E0282, `["x".to_string(); 3]` is E0277: write
+  `["a", "b", "c"].map(String::from)`; `vec![x.clone(); N]` is fine), and pin it against
+  `env!("CARGO_PKG_VERSION")` of the serving crate, not a literal version. The client side pins
+  `Some(..)` and, for a missing method, `Ok(None)`: serve a peer object at the manager's path exposing
+  only a `Ping`, and say in the report that `Ok(None)` on UnknownMethod is the assumed shape (the pipe
+  does that, the bus face's answer is the coder's).
+- The object path `/org/privateai/Manager1` is private to `crates/core/src/client/dbus.rs`, so a fake-peer
+  interface repeats the literal with a comment that it follows the client. The core client's own tests
+  (`crates/core/src/client/dbus.rs::tests`) use `#[tokio::test]` + `zbus::connection::Builder` + a local
+  `#[zbus::interface]` peer; the manager's D-Bus tests use `zbus::blocking` on a thread.
 - A bound client's own type is the coder's: pin the frame it sends through a helper taking
   `fn(&dyn ManagerClient) -> Option<ClientError>`, so an owned or a borrowed bound client both compile;
   keep the bound client in a block when the test uses the unbound one after it.
