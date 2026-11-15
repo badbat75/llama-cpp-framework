@@ -93,16 +93,11 @@ export function GroupField({
   label,
   hint,
   error,
-  describedBy,
   children,
-}: Common & { describedBy?: string; children: ReactNode }) {
+}: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
-    <fieldset
-      className="field"
-      aria-labelledby={`${id}-label`}
-      aria-describedby={describedBy}
-    >
+    <fieldset className="field" aria-labelledby={`${id}-label`}>
       <legend className="field-label">
         <span id={`${id}-label`}>{label}</span>
         <HintToggle
@@ -132,7 +127,8 @@ function Check({
   id: string
   text: string
   checked: boolean
-  disabled: boolean
+  /** Omitted: the control is enabled. */
+  disabled?: boolean
   /** aria-disabled: focusable, the caller ignores changes. */
   inactive?: boolean
   onChange: (checked: boolean) => void
@@ -168,7 +164,6 @@ export function DefaultBoxField({
   text,
   numeric = false,
   unit,
-  readOnly,
   onTick,
   onText,
 }: Common & {
@@ -177,19 +172,12 @@ export function DefaultBoxField({
   text: string
   numeric?: boolean
   unit?: string
-  readOnly: boolean
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
   return (
     <GroupField id={id} label={label} hint={hint} error={error}>
-      <Check
-        id={`${id}-box`}
-        text={box}
-        checked={ticked}
-        disabled={readOnly}
-        onChange={onTick}
-      />
+      <Check id={`${id}-box`} text={box} checked={ticked} onChange={onTick} />
       <input
         id={`${id}-control`}
         type="text"
@@ -197,7 +185,7 @@ export function DefaultBoxField({
         inputMode={numeric ? 'numeric' : undefined}
         aria-labelledby={`${id}-label`}
         value={text}
-        disabled={readOnly || ticked}
+        disabled={ticked}
         onChange={(e) => onText(e.target.value)}
         {...invalid(id, error)}
       />
@@ -208,8 +196,7 @@ export function DefaultBoxField({
 
 /**
  * A secret: a `No key` box, the masked input and a Show toggle. Ticked, the
- * input and Show are disabled. Withheld (2.8, 27b), the box is clear and a
- * sentence says a value is set, with no input and no Show.
+ * input and Show are disabled (5.3), since there is nothing to show.
  */
 export function SecretField({
   id,
@@ -219,52 +206,19 @@ export function SecretField({
   box,
   ticked,
   value,
-  readOnly,
-  withheld,
   onTick,
   onText,
 }: Common & {
   box: string
   ticked: boolean
   value: string
-  readOnly: boolean
-  /** The bff did not send the value to this session. */
-  withheld: boolean
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
   const [shown, setShown] = useState(false)
-  if (withheld) {
-    return (
-      <GroupField
-        id={id}
-        label={label}
-        hint={hint}
-        error={error}
-        describedBy={`${id}-withheld`}
-      >
-        <Check
-          id={`${id}-box`}
-          text={box}
-          checked={false}
-          disabled
-          onChange={onTick}
-        />
-        <p id={`${id}-withheld`} className="withheld">
-          {t('server-api-key-withheld')}
-        </p>
-      </GroupField>
-    )
-  }
   return (
     <GroupField id={id} label={label} hint={hint} error={error}>
-      <Check
-        id={`${id}-box`}
-        text={box}
-        checked={ticked}
-        disabled={readOnly}
-        onChange={onTick}
-      />
+      <Check id={`${id}-box`} text={box} checked={ticked} onChange={onTick} />
       <input
         id={`${id}-control`}
         type={shown ? 'text' : 'password'}
@@ -272,7 +226,7 @@ export function SecretField({
         autoComplete="off"
         aria-labelledby={`${id}-label`}
         value={value}
-        disabled={readOnly || ticked}
+        disabled={ticked}
         onChange={(e) => onText(e.target.value)}
         {...invalid(id, error)}
       />
@@ -304,7 +258,8 @@ export function CheckboxField({
 }: Common & {
   toggle: string
   checked: boolean
-  disabled: boolean
+  /** Omitted: the switch is enabled. */
+  disabled?: boolean
   inactive?: boolean
   onChange: (checked: boolean) => void
   children?: ReactNode
@@ -372,7 +327,8 @@ export function TextField({
 }: Common & {
   value: string
   placeholder: string
-  disabled: boolean
+  /** Omitted: the input is enabled. */
+  disabled?: boolean
   onChange: (value: string) => void
 }) {
   return (
@@ -404,7 +360,8 @@ export function SelectField({
 }: Common & {
   options: { value: string; text: string }[]
   value: string
-  disabled: boolean
+  /** Omitted: the select is enabled. */
+  disabled?: boolean
   onChange: (value: string) => void
 }) {
   return (

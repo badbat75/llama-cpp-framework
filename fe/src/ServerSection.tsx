@@ -66,7 +66,6 @@ async function readServer(id: string): Promise<Answer> {
  */
 export default function ServerSection({
   id,
-  canConfigure,
   dropped,
   renewals,
   runs,
@@ -75,7 +74,6 @@ export default function ServerSection({
   onDirty,
 }: {
   id: string
-  canConfigure: boolean
   /** The edits were dropped by a sign-in as another session (36b). */
   dropped: boolean
   /** Raised by every sign-in that kept the page (43b). */
@@ -120,7 +118,6 @@ export default function ServerSection({
       <Body
         id={id}
         answer={answer}
-        canConfigure={canConfigure}
         renewals={renewals}
         runs={runs}
         onDirty={onDirty}
@@ -134,7 +131,6 @@ export default function ServerSection({
 function Body({
   id,
   answer,
-  canConfigure,
   renewals,
   runs,
   onDirty,
@@ -143,7 +139,6 @@ function Body({
 }: {
   id: string
   answer: Answer | undefined
-  canConfigure: boolean
   renewals: number
   runs: Runs
   onDirty: (dirty: boolean) => void
@@ -154,15 +149,15 @@ function Body({
     return <p role="status">{t('server-loading')}</p>
   }
   if ('doc' in answer) {
-    // An administrator is never sent a withheld key (27d): a save would erase it.
-    if (canConfigure && withholdsKey(answer.doc)) {
+    // A withheld key (27d): the form would show No key, and a save would
+    // erase the key, so the whole read counts as failed.
+    if (withholdsKey(answer.doc)) {
       return <p>{t('server-load-failed')}</p>
     }
     return (
       <ServerForm
         id={id}
         doc={answer.doc}
-        canConfigure={canConfigure}
         renewals={renewals}
         runs={runs}
         onDirty={onDirty}

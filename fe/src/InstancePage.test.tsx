@@ -1,7 +1,9 @@
 // The instance page (fe/briefs/01-server.md, slice 1a, sections 2.4 and
-// 2.5, with the form of section 5): its header, and the Server section shown
-// read-only for every role. The whole app renders at #/instances/<id>
-// against a fake bff (mocked fetch); "1a.25" is the brief's criterion 25.
+// 2.5, with the form of section 5): its header, and the Server section: the
+// form, which every signed-in session edits (the web UI is run by
+// administrators only, "Administrators only"). The whole app renders at
+// #/instances/<id> against a fake bff (mocked fetch); "1a.25" is the brief's
+// criterion 25.
 import {
   act,
   cleanup,
@@ -60,6 +62,9 @@ const CARDS: [string, string[]][] = [
 ]
 
 const FIELDS = CARDS.flatMap(([, fields]) => fields)
+
+/** The two signed-in sessions: the administrator, and a user who cannot configure. */
+const SESSIONS = ['admin', 'user'] as const
 
 /** The page with the server form loaded; returns main. */
 async function loaded(options: BffOptions = {}): Promise<HTMLElement> {
@@ -449,7 +454,7 @@ test('1a.22: no tab list; the Server section follows the header', async () => {
   ])
 })
 
-// ── The Server section, read-only ───────────────────────────────────────
+// ── The Server section ──────────────────────────────────────────────────
 
 test('1a.23: the section has its h2 and the intro naming server@<id>.ini', async () => {
   const main = await loaded()
@@ -485,20 +490,46 @@ test('1a.25: the cards and their fields come in the order of section 5.1', async
   ).toBeTruthy()
 })
 
-test('1a.25: a user sees every control disabled and the read-only notice above the first card', async () => {
+// The read-only form and its Notice are gone with the non-administrator role
+// (brief 01, "Administrators only", criterion 25 and 28): 1a.25 above shows
+// the form for every session, and 1b.28 in ServerSave.test.tsx asserts the
+// enabled controls and the save bar for both.
+
+test('1a.25 (administrators only): every signed-in session gets the form with no read-only Notice', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    const main = await loaded({ session })
+    const section = serverSection(main)
+    // 25: the Notice server-read-only is gone, so nothing of its own stands
+    // between the intro and the first card.
+    expect(section.querySelector('.notice'), session).toBeNull()
+    // 28: the form is the editable one: a box that is clear leaves its
+    // textbox enabled (5.3).
+    const port = within(main).getByRole('textbox', { name: 'Port' })
+    expect(
+      port.getAttribute('disabled'),
+      `${session}: Port is editable`,
+    ).toBeNull()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+// 5.1 and 28: the page is not read-only for anyone any more. The signed-in session that
+// cannot configure has the editable form (the save bar is 1b.28, the key field is 1a.27).
+// The run buttons and the Start at boot box are R3's (Boot.test.tsx, RunControls.test.tsx).
+test('1a.5.1 (administrators only): the user who cannot configure has the editable form', async () => {
   const main = await loaded({ session: 'user' })
-  const controls = [...main.querySelectorAll('input, select, textarea')]
-  const enabled = controls.filter((c) => !(c as HTMLInputElement).disabled)
-  expect(enabled.map((c) => c.outerHTML)).toEqual([])
-  const notice = within(main).getByText(en('server-read-only'))
-  const first = within(main).getByRole('heading', {
-    level: 3,
-    name: en('server-network'),
-  })
-  expect(before(notice, first)).toBe(true)
-  expect(
-    within(main).queryByRole('button', { name: 'Save changes' }),
-  ).toBeNull()
+  for (const control of [
+    within(main).getByRole('textbox', { name: 'Port' }),
+    within(main).getByRole('combobox', { name: 'Log level' }),
+    group(main, 'Web UI').getByRole('checkbox', {
+      name: en('server-web-ui-toggle'),
+    }),
+    apiKey(main),
+    noKey(main),
+  ])
+    expect((control as HTMLInputElement).disabled, nameOf(control)).toBe(false)
+  expect(serverSection(main).querySelector('.notice')).toBeNull()
 })
 
 test('1a.25: each control shows the value of the file (Network and Resources)', async () => {
@@ -922,10 +953,11 @@ test('1a.26: the About toggle reveals the hint, one paragraph per line, and hide
   expect(isHidden(within(main).queryByText(lines[0]!))).toBe(true)
 })
 
-// For an administrator, 1b's dependencies govern Show (5.3): ServerSave.test.tsx.
-// The API key reaches administrators only (2.8, criteria 27a to 27e).
+// Show's dependencies for the editable form are 1b's (5.3): ServerSave.test.tsx.
+// The API key (2.8, criteria 27a to 27e): one role, so `withheld` is handled
+// the same for every session (27a picks 27d, never a view of its own).
 
-/** A user's document whose key the bff withheld (the contract's shape). */
+/** A document whose key the bff withheld (the contract's shape). */
 function withheldDoc(
   key: unknown = null,
   withheld: unknown = ['OpencodeApiKey'],
@@ -943,188 +975,161 @@ function apiKeyGroup(main: HTMLElement): HTMLElement {
   return within(main).getByRole('group', { name: en('server-api-key') })
 }
 
-test('1a.27d (2.8): an administrator whose document withholds the key gets server-load-failed, no form, no save bar', async () => {
-  for (const [what, doc] of [
-    ['withheld, key null', withheldDoc(null)],
-    ['withheld, key sent', withheldDoc('sk-local-123')],
-    [
-      'withheld among other names',
-      withheldDoc(null, ['Other', 'OpencodeApiKey']),
-    ],
-  ] as const) {
-    fakeBff({ session: 'admin', server: () => reply(200, doc) })
+function show(main: HTMLElement): HTMLButtonElement {
+  return group(main, 'API key').getByRole('button', {
+    name: en('field-show'),
+  }) as HTMLButtonElement
+}
+
+/** The paragraph of the removed withheld view (27b), if the page holds one. */
+function withheldLine(main: HTMLElement): Element | null {
+  return apiKeyGroup(main).querySelector('[id$="-withheld"]')
+}
+
+test('1a.27 (2.8, administrators only): every session gets the key masked in an editable box, Show reveals it', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    const main = await loaded({ session })
+    const input = apiKey(main)
+    expect(input.type, session).toBe('password')
+    expect(input.value, session).toBe('sk-local-123')
+    // 5.3: No key is clear, so its box and Show are enabled (28).
+    expect(input.disabled, `${session}: the key box is editable`).toBe(false)
+    expect(noKey(main).disabled, `${session}: No key is editable`).toBe(false)
+    const button = show(main)
+    expect(button.disabled, `${session}: Show is enabled`).toBe(false)
+    expect(button.getAttribute('aria-pressed'), session).toBe('false')
+    fireEvent.click(button)
+    expect(show(main).getAttribute('aria-pressed'), session).toBe('true')
+    expect(apiKey(main).type, session).toBe('text')
+    fireEvent.click(show(main))
+    expect(show(main).getAttribute('aria-pressed'), session).toBe('false')
+    expect(apiKey(main).type, session).toBe('password')
+    expect(withheldLine(main), session).toBeNull()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('1a.27d (2.8): a session whose document withholds the key gets server-load-failed, no form, no save bar', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    for (const [what, doc] of [
+      ['withheld, key null', withheldDoc(null)],
+      ['withheld, key sent', withheldDoc('sk-local-123')],
+      [
+        'withheld among other names',
+        withheldDoc(null, ['Other', 'OpencodeApiKey']),
+      ],
+    ] as const) {
+      fakeBff({ session, server: () => reply(200, doc) })
+      render(<App />)
+      const main = screen.getByRole('main')
+      expect(
+        await within(main).findByText(en('server-load-failed')),
+        `${session} ${what}`,
+      ).toBeTruthy()
+      expect(
+        within(serverSection(main)).queryByRole('group'),
+        `${session} ${what}`,
+      ).toBeNull()
+      expect(
+        within(main).queryByRole('button', { name: en('save-button') }),
+        `${session} ${what}`,
+      ).toBeNull()
+      expect(document.body.innerHTML, `${session} ${what}`).not.toContain(
+        'sk-local-123',
+      )
+      expect(
+        within(main).getByRole('heading', {
+          level: 2,
+          name: en('server-title'),
+        }),
+        `${session} ${what}`,
+      ).toBeTruthy()
+      cleanup()
+      vi.unstubAllGlobals()
+    }
+  }
+})
+
+test('1a.27a (2.8): a withheld that does not name the key picks the form of 5.2, for every session', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    for (const withheld of [[], ['Other'], null]) {
+      const main = await loaded({
+        session,
+        server: () => reply(200, serverDoc({}, { withheld })),
+      })
+      const what = `${session} ${JSON.stringify(withheld)}`
+      expect(noKey(main).checked, what).toBe(false)
+      expect(apiKey(main).value, what).toBe('sk-local-123')
+      expect(apiKey(main).disabled, `${what}: editable`).toBe(false)
+      expect(
+        within(main).queryByText(en('server-load-failed')),
+        what,
+      ).toBeNull()
+      expect(withheldLine(main), what).toBeNull()
+      cleanup()
+      vi.unstubAllGlobals()
+    }
+  }
+})
+
+// 27e with 27d: a withheld document fails the read, so the form (and with it F4)
+// is not rendered at all, for every session.
+test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends it anyway', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    fakeBff({
+      session,
+      server: () => reply(200, withheldDoc('sk-test')),
+    })
     render(<App />)
     const main = screen.getByRole('main')
     expect(
       await within(main).findByText(en('server-load-failed')),
-      what,
+      session,
     ).toBeTruthy()
-    expect(within(serverSection(main)).queryByRole('group'), what).toBeNull()
+    const html = document.documentElement.outerHTML
+    expect(html, session).not.toContain('sk-test')
+    expect(html, session).not.toContain('•')
+    // Nothing holds the key: no F4 group, no input that could show it, no
+    // paragraph standing in for it.
     expect(
-      within(main).queryByRole('button', { name: en('save-button') }),
-      what,
+      within(main).queryByRole('group', { name: en('server-api-key') }),
+      session,
     ).toBeNull()
-    expect(document.body.innerHTML, what).not.toContain('sk-local-123')
+    expect(document.querySelector('[id$="-withheld"]'), session).toBeNull()
     expect(
-      within(main).getByRole('heading', { level: 2, name: en('server-title') }),
-      what,
-    ).toBeTruthy()
+      [...main.querySelectorAll('input')].map((i) => i.type),
+      `${session}: no key box`,
+    ).toEqual(['checkbox'])
     cleanup()
     vi.unstubAllGlobals()
   }
 })
 
-test('1a.27d (2.8): an administrator whose withheld does not name the key reads the form as before', async () => {
-  for (const withheld of [[], ['Other'], null]) {
-    const main = await loaded({
-      session: 'admin',
-      server: () => reply(200, serverDoc({}, { withheld })),
-    })
-    const what = JSON.stringify(withheld)
-    expect(noKey(main).checked, what).toBe(false)
-    expect(apiKey(main).value, what).toBe('sk-local-123')
-    expect(within(main).queryByText(en('server-load-failed')), what).toBeNull()
-    cleanup()
-    vi.unstubAllGlobals()
+// 27c rewritten by "Administrators only" (R2): the read-only shape of the field is
+// gone, so with no key every session gets the editable shape, and Show stays disabled
+// while there is nothing to show (5.4).
+test('1a.27c (2.8): with no key every session gets No key ticked and editable, the box empty and enabled, Show disabled', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    for (const key of [null, '']) {
+      const main = await loaded({
+        session,
+        server: () => reply(200, serverDoc({ OpencodeApiKey: key })),
+      })
+      const what = `${session} ${JSON.stringify(key)}`
+      // 5.2: No key ticked; 5.3: with No key ticked the box and Show are disabled.
+      expect(noKey(main).checked, what).toBe(true)
+      expect(noKey(main).disabled, `${what}: No key is editable`).toBe(false)
+      expect(apiKey(main).value, what).toBe('')
+      expect(apiKey(main).disabled, `${what}: No key is ticked`).toBe(true)
+      const button = show(main)
+      expect(button.disabled, `${what}: Show has nothing to show`).toBe(true)
+      expect(button.getAttribute('aria-pressed'), what).toBe('false')
+      expect(withheldLine(main), what).toBeNull()
+      cleanup()
+      vi.unstubAllGlobals()
+    }
   }
-})
-
-test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends it anyway', async () => {
-  const main = await loaded({
-    session: 'user',
-    server: () => reply(200, withheldDoc('sk-test')),
-  })
-  const html = document.documentElement.outerHTML
-  expect(html).not.toContain('sk-test')
-  expect(html).not.toContain('•')
-  const box = apiKeyGroup(main)
-  const inputs = [...box.querySelectorAll('input')]
-  expect(inputs).toHaveLength(1)
-  expect(inputs[0]!.type).toBe('checkbox')
-  expect(inputs[0]).toBe(noKey(main))
-  expect(box.textContent ?? '').not.toMatch(/[•*●]{2,}/)
-})
-
-test('1a.27b (2.8): a user whose key is withheld sees No key clear and disabled, then the withheld paragraph; no password box, no Show', async () => {
-  for (const withheld of [
-    ['OpencodeApiKey'],
-    ['SomethingNew', 'OpencodeApiKey'],
-  ]) {
-    const what = JSON.stringify(withheld)
-    const main = await loaded({
-      session: 'user',
-      server: () => reply(200, withheldDoc(null, withheld)),
-    })
-    const box = apiKeyGroup(main)
-    const g = within(box)
-    const checkbox = noKey(main)
-    expect(checkbox.checked, what).toBe(false)
-    expect(checkbox.disabled, what).toBe(true)
-    const paragraph = g.getByText(en('server-api-key-withheld'))
-    expect(paragraph.tagName, what).toBe('P')
-    expect(before(checkbox, paragraph), what).toBe(true)
-    // Plain text: not a live region, not an alert.
-    expect(paragraph.getAttribute('role'), what).toBeNull()
-    expect(paragraph.getAttribute('aria-live'), what).toBeNull()
-    expect(
-      within(main).queryByLabelText(en('server-api-key'), {
-        selector: 'input',
-      }),
-      what,
-    ).toBeNull()
-    expect(g.queryByRole('button', { name: en('field-show') }), what).toBeNull()
-    // The hint toggle is as on every field (26).
-    expect(g.getByRole('button', { name: about('API key') }), what).toBeTruthy()
-    // The group is described by the paragraph.
-    expect(paragraph.id, what).not.toBe('')
-    const described = (box.getAttribute('aria-describedby') ?? '').split(/\s+/)
-    expect(described, what).toContain(paragraph.id)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-test('1a.27b (2.8, 6): with the key withheld Tab reaches only the About toggle in the API key group', async () => {
-  await loaded({ session: 'user', server: () => reply(200, withheldDoc()) })
-  const names = tabbable().map(nameOf)
-  expect(names.slice(-FIELDS.length)).toEqual(FIELDS.map(about))
-})
-
-test('1a.27c (2.8): a user with no key sees No key ticked, the password box disabled and empty, Show rendered but disabled', async () => {
-  for (const key of [null, '']) {
-    const what = JSON.stringify(key)
-    const main = await loaded({
-      session: 'user',
-      server: () => reply(200, serverDoc({ OpencodeApiKey: key })),
-    })
-    expect(noKey(main).checked, what).toBe(true)
-    expect(noKey(main).disabled, what).toBe(true)
-    expect(apiKey(main).disabled, what).toBe(true)
-    expect(apiKey(main).value, what).toBe('')
-    const show = group(main, 'API key').getByRole('button', {
-      name: en('field-show'),
-    }) as HTMLButtonElement
-    expect(show.disabled, what).toBe(true)
-    expect(show.getAttribute('aria-pressed'), what).toBe('false')
-    expect(
-      within(main).queryByText(en('server-api-key-withheld')),
-      what,
-    ).toBeNull()
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-test('1a.27a (2.8): withheld absent, empty, naming other keys, null or not an array is not withheld', async () => {
-  for (const withheld of [
-    undefined,
-    [],
-    ['Other'],
-    null,
-    'OpencodeApiKey',
-    { OpencodeApiKey: true },
-  ]) {
-    const what = JSON.stringify(withheld) ?? 'absent'
-    const extra = withheld === undefined ? {} : { withheld }
-    const main = await loaded({
-      session: 'user',
-      server: () => reply(200, serverDoc({ OpencodeApiKey: null }, extra)),
-    })
-    expect(within(main).queryByText(en('server-load-failed')), what).toBeNull()
-    // 27c, not 27b.
-    expect(noKey(main).checked, what).toBe(true)
-    expect(apiKey(main).disabled, what).toBe(true)
-    const show = group(main, 'API key').getByRole('button', {
-      name: en('field-show'),
-    }) as HTMLButtonElement
-    expect(show.disabled, what).toBe(true)
-    expect(
-      within(main).queryByText(en('server-api-key-withheld')),
-      what,
-    ).toBeNull()
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-// 27c's aside: a user given a value with no withheld (a contract breach) sees
-// it masked with Show enabled; the bff decides who reads the key, not the fe.
-test('1a.27c (2.8): a user given a key without withheld sees it masked; Show reveals it', async () => {
-  const main = await loaded({ session: 'user' })
-  const input = apiKey(main)
-  expect(input.type).toBe('password')
-  const show = group(main, 'API key').getByRole('button', {
-    name: en('field-show'),
-  })
-  expect((show as HTMLButtonElement).disabled).toBe(false)
-  expect(show.getAttribute('aria-pressed')).toBe('false')
-  fireEvent.click(show)
-  expect(show.getAttribute('aria-pressed')).toBe('true')
-  expect(apiKey(main).type).toBe('text')
-  expect(apiKey(main).value).toBe('sk-local-123')
-  fireEvent.click(show)
-  expect(show.getAttribute('aria-pressed')).toBe('false')
-  expect(apiKey(main).type).toBe('password')
 })
 
 // ── Keyboard (section 6) ────────────────────────────────────────────────
@@ -1143,41 +1148,104 @@ function tabbable(): HTMLElement[] {
   )
 }
 
+/**
+ * The name Tab shows for a control: its text (a link, a button), or for an input the
+ * label that names it: `aria-label`, `aria-labelledby`, a `<label for>`, a wrapping
+ * `<label>`.
+ */
 function nameOf(el: HTMLElement): string {
-  return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
+    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // An input has no text of its own: its name is the label that points at it.
+  const labelled = el.getAttribute('aria-labelledby')
+  if (labelled)
+    return labelled
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const aria = el.getAttribute('aria-label')
+  if (aria) return aria
+  const id = el.getAttribute('id')
+  const label = id ? document.querySelector(`label[for="${id}"]`) : null
+  const wrap = el.closest('label')
+  return (label?.textContent ?? wrap?.textContent ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, About Start at boot, then the fields in table order', async () => {
-  await loaded({ session: 'user' })
-  const names = tabbable().map(nameOf)
-  const tail = FIELDS.flatMap((f) =>
-    f === 'API key' ? [about(f), en('field-show')] : [about(f)],
-  )
-  expect(names).toEqual([
-    en('skip-to-content'),
-    en('app-name'),
-    en('nav-menu'),
-    en('session-sign-out'),
-    en('nav-overview'),
-    'default',
-    'coder',
-    // fe/briefs/02-models.md, 2a criterion 1.
-    en('nav-models'),
-    // The header's run buttons, inactive ones included, then Start at
-    // boot's About toggle; a user's checkbox is disabled (1c.45b, 46a).
-    en('run-start'),
-    en('run-stop'),
-    en('run-restart'),
-    about(en('boot-label')),
-    ...tail,
-  ])
-  // The h1 takes focus only from the page (tabindex -1).
-  expect(
-    screen
-      .getByRole('heading', { level: 1, name: 'default' })
-      .getAttribute('tabindex'),
-  ).toBe('-1')
-})
+// "Administrators only" (section 6): the tab path is the editable form's, for every
+// signed-in session. The shell, then per field its About toggle and the controls the
+// form leaves enabled: a textbox on default or auto is disabled (Port, Base URL, CPU
+// threads, Max models and Memory margin show only their box), the Bind to boxes all
+// ticked are disabled (5.2), so only the absent interface and the wildcard are.
+const TAB_PATH = [
+  en('skip-to-content'),
+  en('app-name'),
+  en('nav-menu'),
+  en('session-sign-out'),
+  en('nav-overview'),
+  'default',
+  'coder',
+  // fe/briefs/02-models.md, 2a criterion 1.
+  en('nav-models'),
+  // The header's run buttons, inactive ones included, then Start at boot's
+  // About toggle and its box (1c.45b, 46a: the box is enabled for every session).
+  en('run-start'),
+  en('run-stop'),
+  en('run-restart'),
+  about(en('boot-label')),
+  en('boot-toggle'),
+  ...[
+    [about('Port'), en('option-default'), 'Port'],
+    [
+      about('Bind to'),
+      en('server-bind-localhost'),
+      en('server-bind-all'),
+      en('server-bind-gone', '10.0.0.9'),
+      'enp5s0 (192.168.1.20)',
+    ],
+    [about('Base URL'), en('option-default')],
+    [
+      about('API key'),
+      en('field-no-key'),
+      en('server-api-key'),
+      en('field-show'),
+    ],
+    [about('CPU threads'), en('field-auto')],
+    [about('Batch threads'), en('field-auto'), 'Batch threads'],
+    [about('Max models'), en('option-default')],
+    [about('Memory margin'), en('option-default'), 'Memory margin'],
+    [about('Models folder'), 'Models folder'],
+    [about('Web UI'), en('server-web-ui-toggle')],
+    [about('Web UI MCP proxy'), en('server-mcp-proxy-toggle')],
+    [about('Log level'), 'Log level'],
+    [about('Save on shutdown'), en('server-save-on-shutdown-toggle')],
+    [about('Snapshot folder'), 'Snapshot folder'],
+    [about('hipBLASLt'), 'hipBLASLt'],
+    [about('Profiler attach'), en('server-profiler-attach-toggle')],
+    [about('Tensor-split AllReduce'), 'Tensor-split AllReduce'],
+    [about('Disable GPU graphs'), en('server-gpu-graphs-toggle')],
+    [about('KV rotation'), en('server-kv-rotation-toggle')],
+  ].flat(),
+  en('save-discard'),
+  en('save-button'),
+]
+
+test.each(SESSIONS)(
+  '6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, Start at boot, then every control of the editable form in table order, for the %s session',
+  async (session) => {
+    await loaded({ session })
+    expect(tabbable().map(nameOf)).toEqual(TAB_PATH)
+    // The h1 takes focus only from the page (tabindex -1).
+    expect(
+      screen
+        .getByRole('heading', { level: 1, name: 'default' })
+        .getAttribute('tabindex'),
+    ).toBe('-1')
+  },
+)
 
 test('6: in a field the default box comes before its textbox, the About toggle after the label', async () => {
   const main = await loaded()

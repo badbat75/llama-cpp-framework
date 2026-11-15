@@ -55,8 +55,6 @@ export const EN: Record<string, string> = {
     'llama-server settings of this instance, shared by every model it serves ({0}). Per-model settings belong to the presets.',
   'server-loading': 'Loading the server settings…',
   'server-load-failed': 'The server settings could not be read.',
-  'server-read-only':
-    'You can view these settings. Saving them needs an administrator account.',
   'api-client-not-authorized':
     'Not authorized: the system refused this request.',
   'api-client-unavailable':
@@ -88,7 +86,6 @@ export const EN: Record<string, string> = {
   'server-base-url-hint':
     'The address integrations use (opencode.json and Claude Code).\nDefault: built from host and port, with /v1 added for opencode.json; the default shown is that of the saved settings. Untick default to enter your own, for a proxy or gateway.',
   'server-api-key': 'API key',
-  'server-api-key-withheld': 'A key is set. Only an administrator can see it.',
   'server-cpu-threads': 'CPU threads',
   'server-cpu-threads-hint':
     "How many CPU threads generate tokens. More won't help once the GPU is the limit.\nDefault: llama.cpp uses the physical core count. Maximum = the logical processors of the computer running the server.\nFlag: --threads",

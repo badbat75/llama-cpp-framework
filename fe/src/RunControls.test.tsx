@@ -467,45 +467,45 @@ test('1c.43b: a user who signs in again as themself keeps the page, focus on the
     'the file is not read again',
   ).toHaveLength(1)
   expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
-  expect(within(main).getByText(en('server-read-only'))).toBeTruthy()
+  // "Administrators only" (R2): signing in again as the same user changes no role, so
+  // the page is not read again, and the form is the editable one it had before.
   expect(posts(bff)).toHaveLength(1)
 })
 
-test('1c.43b: another session after a run 401 re-reads the file for the new role; edits-dropped only when the form was dirty; focus on the h1', async () => {
+// "Administrators only" (R3): 43b compares by `user` only, so every case here
+// changes user, and the form it brings is the editable one (28).
+test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits-dropped only when the form was dirty; focus on the h1', async () => {
   const cases: {
     what: string
     session: 'admin' | 'user'
     signIn: { user: string; canConfigure: boolean }
     dirty: boolean
-    editable: boolean
   }[] = [
     {
       what: 'admin, dirty, signs in as carol',
       session: 'admin',
       signIn: { user: 'carol', canConfigure: true },
       dirty: true,
-      editable: true,
     },
     {
       what: 'admin, clean, signs in as carol',
       session: 'admin',
       signIn: { user: 'carol', canConfigure: true },
       dirty: false,
-      editable: true,
     },
     {
-      what: 'admin, clean, signs in as a user',
-      session: 'admin',
-      signIn: { user: 'alice', canConfigure: false },
-      dirty: false,
-      editable: false,
-    },
-    {
-      what: 'user signs in as an administrator',
+      what: 'user signs in as alice',
       session: 'user',
       signIn: { user: 'alice', canConfigure: true },
       dirty: false,
-      editable: true,
+    },
+    {
+      // The field says the other role; the user is a different one, so the
+      // edits are dropped like anywhere else (the role plays no part).
+      what: 'admin signs in as bob, who cannot configure',
+      session: 'admin',
+      signIn: { user: 'bob', canConfigure: false },
+      dirty: true,
     },
   ]
   for (const c of cases) {
@@ -535,11 +535,58 @@ test('1c.43b: another session after a run 401 re-reads the file for the new role
       `${c.what}: edits-dropped only when dirty`,
     ).toBe(c.dirty)
     expect(portBox(main).value, c.what).toBe('8580')
-    expect(portBox(main).disabled, `${c.what}: the form for the new role`).toBe(
-      !c.editable,
+    expect(portBox(main).disabled, `${c.what}: the form is editable`).toBe(
+      false,
     )
     expect(document.activeElement, `${c.what}: focus on the h1`).toBe(h1(main))
     expect(posts(bff), c.what).toHaveLength(1)
+    cleanup()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+// 43b's first row, with the field saying the other role (until R4 the stubs
+// keep sending it): the same `user` keeps the page, its edits, and the focus
+// on the control whose request got the 401.
+test('1c.43b: the same user signing in with the other canConfigure keeps the page and its edits, focus on the run button', async () => {
+  for (const session of ['admin', 'user'] as const) {
+    // The signed-in session is alice/true (admin) or bob/false (user); the
+    // sign-in answers the same user with the other value of the field.
+    const signIn =
+      session === 'admin'
+        ? { user: 'alice', canConfigure: false }
+        : { user: 'bob', canConfigure: true }
+    const { bff, main } = await loaded({
+      session,
+      run: SESSION_ENDED,
+      signIn: () => reply(200, signIn),
+    })
+    type(portBox(main), '8581')
+    press(button(main, 'run-stop'))
+    await flush()
+    press(runSignIns(main)[0]!)
+    await flush()
+    await signInInDialog(signIn.user)
+    expect(screen.getByRole('banner').textContent, session).toContain(
+      en('session-signed-in-as', signIn.user),
+    )
+    expect(document.activeElement, `${session}: focus on Stop`).toBe(
+      button(main, 'run-stop'),
+    )
+    expect(runAlerts(main), session).toEqual([])
+    expect(runSignIns(main), session).toEqual([])
+    expect(portBox(main).value, `${session}: the edits are intact`).toBe('8581')
+    expect(saveStatus(main).textContent, session).toBe(en('save-unsaved'))
+    expect(
+      within(main).queryByText(en('server-edits-dropped')),
+      session,
+    ).toBeNull()
+    expect(
+      bff.to('GET', '/api/instances/default/server'),
+      `${session}: the file is not read again`,
+    ).toHaveLength(1)
+    expect(posts(bff), `${session}: nothing resent`).toHaveLength(1)
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()

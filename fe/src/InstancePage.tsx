@@ -136,14 +136,12 @@ type Next = {
 export default function InstancePage({
   id,
   store,
-  canConfigure,
   onSignedOut,
   onRenewed,
   onDirty,
 }: {
   id: string
   store: InstancesStore
-  canConfigure: boolean
   onSignedOut: () => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
@@ -351,7 +349,6 @@ export default function InstancePage({
               <Boot
                 id={id}
                 fieldId={`${uid}-boot`}
-                canConfigure={canConfigure}
                 renewals={signIns.rereads + signIns.kept}
                 onSignIn={() => setAsking('boot')}
               />
@@ -359,7 +356,6 @@ export default function InstancePage({
             <ServerSection
               key={signIns.rereads}
               id={id}
-              canConfigure={canConfigure}
               dropped={signIns.dropped}
               renewals={signIns.kept}
               runs={runs}
@@ -456,20 +452,18 @@ function bootReadText(key: string): string {
 }
 
 /**
- * Start at boot (45): read once at mounting, written at once by an
- * administrator; not part of the Server form. Its checkbox is
- * `<fieldId>-control` and its Sign in `<fieldId>-sign-in`.
+ * Start at boot (45): read once at mounting, written at once by a change;
+ * not part of the Server form. Its checkbox is `<fieldId>-control` and its
+ * Sign in `<fieldId>-sign-in`.
  */
 function Boot({
   id,
   fieldId,
-  canConfigure,
   renewals,
   onSignIn,
 }: {
   id: string
   fieldId: string
-  canConfigure: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
   renewals: number
   onSignIn: () => void
@@ -519,7 +513,7 @@ function Boot({
   }
 
   async function change(enabled: boolean) {
-    if (busy || !canConfigure || typeof value !== 'boolean') return
+    if (busy || typeof value !== 'boolean') return
     const previous = value
     setValue(enabled)
     setBusy(true)
@@ -551,7 +545,6 @@ function Boot({
       hint={t('boot-hint')}
       toggle={t('boot-toggle')}
       checked={value}
-      disabled={!canConfigure}
       inactive={busy}
       onChange={(enabled) => void change(enabled)}
     >

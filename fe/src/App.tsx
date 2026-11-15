@@ -70,12 +70,11 @@ export default function App() {
   }
 
   /**
-   * A sign-in in a page's dialog: the page stays only for the same user with
-   * the same role; otherwise the page's h1 takes the focus.
+   * A sign-in in a page's dialog: the page stays only for the same user;
+   * otherwise the page's h1 takes the focus.
    */
   const renewed = (s: Session) => {
-    const kept =
-      session?.user === s.user && session.canConfigure === s.canConfigure
+    const kept = session?.user === s.user
     setSession(s)
     if (!kept) setFocus((n) => n + 1)
     return kept
@@ -349,7 +348,6 @@ function Page({
     <InstancePage
       id={route.id}
       store={store}
-      canConfigure={session.canConfigure}
       onSignedOut={onSignedOut}
       onRenewed={onRenewed}
       onDirty={onDirty}

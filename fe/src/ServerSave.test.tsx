@@ -1131,41 +1131,59 @@ test('1b.36b: a sign-in as another administrator drops the edits, reads the file
   expect(bff.to(...PUT)[1]!.body).toMatchObject({ revision: 'r-9' })
 })
 
-test('1b.36b: a sign-in that cannot configure drops the edits and shows the read-only form, the alert above the Notice', async () => {
-  for (const user of ['alice', 'bob']) {
-    const { bff, main } = await signInAs({ user, canConfigure: false })
-    await waitFor(() =>
-      expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
-    )
-    const notice = await within(main).findByText(en('server-read-only'))
-    await waitFor(() => expect(box(main, 'Port').value, user).toBe('8580'))
-    expect(
-      screen.getByRole('banner').textContent,
-      `${user}: the banner shows the User role`,
-    ).toContain(en('session-role-user'))
-    const controls = [
-      ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
-    ]
-    expect(
-      controls.filter((c) => !c.disabled).map((c) => c.outerHTML),
-      `${user}: read-only`,
-    ).toEqual([])
-    expect(
-      within(main).queryByRole('button', { name: en('save-button') }),
-      user,
-    ).toBeNull()
-    expectDropped(main)
-    expect(
-      before(within(main).getByText(en('server-edits-dropped')), notice),
-      `${user}: above the Notice`,
-    ).toBe(true)
-    expect(document.activeElement, user).toBe(
-      within(main).getByRole('heading', { level: 1, name: 'default' }),
-    )
-    expect(bff.to(...PUT), user).toHaveLength(1)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+// "Administrators only" (R3): 43b compares by `user` only, so the sign-in that
+// drops the edits is one as another user, and the file it brings shows in the
+// editable form, clean, with the save bar (28). The alert is 36b's: above the
+// first card, focus on the h1.
+test('1b.36b: a sign-in as another user drops the edits and shows the editable form, the alert above the first card', async () => {
+  const { bff, main } = await signInAs({ user: 'bob', canConfigure: false })
+  await waitFor(() =>
+    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+  )
+  await waitFor(() => expect(box(main, 'Port').value).toBe('8580'))
+  const controls = [
+    ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
+  ]
+  // The editable form: only the boxes on default or auto are disabled (5.3).
+  expect(
+    controls.filter((c) => c.disabled),
+    'editable',
+  ).toEqual([
+    box(main, 'Base URL'),
+    box(main, 'CPU threads'),
+    box(main, 'Max models'),
+  ])
+  expect(
+    within(main).getByRole('button', { name: en('save-button') }),
+  ).toBeTruthy()
+  expect(main.querySelector('.notice'), 'no read-only Notice').toBeNull()
+  expectDropped(main)
+  expect(document.activeElement).toBe(
+    within(main).getByRole('heading', { level: 1, name: 'default' }),
+  )
+  expect(bff.to(...PUT)).toHaveLength(1)
+})
+
+// 43b's first row, with the field saying the other role (until R4 the stubs
+// keep sending it): the same `user` keeps the page, its edits, and the focus on
+// the control whose request got the 401 (Save changes, 36).
+test('1b.36b, 36: the same user signing in with the other canConfigure keeps the page and its edits, focus on Save changes', async () => {
+  const { bff, main } = await signInAs({ user: 'alice', canConfigure: false })
+  expect(screen.getByRole('banner').textContent).toContain(
+    en('session-signed-in-as', 'alice'),
+  )
+  expect(
+    bff.to('GET', '/api/instances/default/server'),
+    'not read again',
+  ).toHaveLength(1)
+  expect(box(main, 'Port').value, 'the edits are intact').toBe('8581')
+  expect(check(main, 'Web UI', en('server-web-ui-toggle')).checked).toBe(false)
+  expect(status(main).textContent).toBe(en('save-unsaved'))
+  expect(inactive(saveButton(main)), 'Save is live').toBe(false)
+  expect(document.activeElement).toBe(saveButton(main))
+  expectNoAlert(main, 'after the sign-in')
+  expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
+  expect(bff.to(...PUT), 'nothing resent').toHaveLength(1)
 })
 
 test('1b.36b: the edits-dropped alert stays until the page is left', async () => {
@@ -1251,79 +1269,97 @@ test('1b.36a: Cancel is shown only in the dialog, not on the sign-in page', asyn
 
 // ── The save bar (1b.28 to 1b.30) ───────────────────────────────────────
 
-test('1b.28: an administrator gets enabled controls (under 5.3) and the save bar at the end, clean', async () => {
-  const { bff, main } = await loaded()
-  const controls = [
-    ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
-  ]
-  expect(controls.length).toBeGreaterThan(20)
-  // On load only the boxes on default or auto are disabled (5.3).
-  expect(controls.filter((c) => c.disabled)).toEqual([
-    box(main, 'Base URL'),
-    box(main, 'CPU threads'),
-    box(main, 'Max models'),
-  ])
-  expect(inactive(show(main))).toBe(false)
-  expect(within(main).queryByText(en('server-read-only'))).toBeNull()
+// "Administrators only" (R2): the save bar and the editable form are every signed-in
+// session's, not the administrator's alone: the same clean form, the same save bar.
+test.each(['admin', 'user'] as const)(
+  '1b.28: %s gets enabled controls (under 5.3) and the save bar at the end, clean',
+  async (session) => {
+    const { bff, main } = await loaded({ session })
+    const controls = [
+      ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
+    ]
+    expect(controls.length).toBeGreaterThan(20)
+    // On load only the boxes on default or auto are disabled (5.3).
+    expect(controls.filter((c) => c.disabled)).toEqual([
+      box(main, 'Base URL'),
+      box(main, 'CPU threads'),
+      box(main, 'Max models'),
+    ])
+    expect(inactive(show(main))).toBe(false)
+    // "Administrators only" (5.5): the read-only Notice is gone with its string, so
+    // the form holds no Notice of any kind.
+    expect(main.querySelector('.notice'), `${session}: no Notice`).toBeNull()
 
-  const save = saveButton(main)
-  const discard = discardButton(main)
+    const save = saveButton(main)
+    const discard = discardButton(main)
+    const line = status(main)
+    // At the end of the form: status, then Discard, then Save changes.
+    const lastField = group(main, 'KV rotation').getByRole('checkbox')
+    expect(before(lastField, line)).toBe(true)
+    expect(before(line, discard)).toBe(true)
+    expect(before(discard, save)).toBe(true)
+    expect(line.textContent).toBe('')
+    for (const b of [save, discard]) {
+      expect(b.getAttribute('aria-disabled'), b.textContent ?? '').toBe('true')
+      // aria-disabled, not disabled: focus never drops (D5.2).
+      expect((b as HTMLButtonElement).disabled, b.textContent ?? '').toBe(false)
+    }
+    // While clean a click does nothing.
+    fireEvent.click(save)
+    fireEvent.click(discard)
+    await act(async () => {})
+    expect(bff.to(...PUT)).toHaveLength(0)
+    expect(line.textContent).toBe('')
+  },
+)
+
+// The read-only form is gone, so a signed-in session that cannot configure edits and
+// saves like an administrator (5.1, 5.3). 1b.33 pins what a 200 does; this pins that it
+// happens for the user too, and that the form stays editable: no read-only Notice, the
+// fields still take an edit, the bar comes back.
+test('1b.5.3: the user who cannot configure saves, and the form stays editable after the 200', async () => {
+  const { bff, main } = await loaded({
+    session: 'user',
+    save: () => reply(200, { revision: 'r-2', running: false }),
+  })
   const line = status(main)
-  // At the end of the form: status, then Discard, then Save changes.
-  const lastField = group(main, 'KV rotation').getByRole('checkbox')
-  expect(before(lastField, line)).toBe(true)
-  expect(before(line, discard)).toBe(true)
-  expect(before(discard, save)).toBe(true)
-  expect(line.textContent).toBe('')
-  for (const b of [save, discard]) {
-    expect(b.getAttribute('aria-disabled'), b.textContent ?? '').toBe('true')
-    // aria-disabled, not disabled: focus never drops (D5.2).
-    expect((b as HTMLButtonElement).disabled, b.textContent ?? '').toBe(false)
-  }
-  // While clean a click does nothing.
-  fireEvent.click(save)
-  fireEvent.click(discard)
-  await act(async () => {})
-  expect(bff.to(...PUT)).toHaveLength(0)
-  expect(line.textContent).toBe('')
+  editPort(main)
+  await save(main, bff)
+  await waitFor(() => expect(line.textContent).toBe(en('save-saved')))
+  expect(main.querySelector('.notice'), 'no read-only Notice').toBeNull()
+  // The saved value shows, and the form is still editable: a new edit is dirty again.
+  expect(box(main, 'Port').value).toBe('8581')
+  expect(box(main, 'Port').disabled).toBe(false)
+  fireEvent.click(check(main, 'Web UI', en('server-web-ui-toggle')))
+  expect(line.textContent).toBe(en('save-unsaved'))
+  // The save bar renders aria-disabled only when it is inactive (5.3).
+  expect(inactive(saveButton(main))).toBe(false)
+  expect(bff.to(...PUT)).toHaveLength(1)
 })
 
-test('1b.28: a user keeps the read-only form and no save bar', async () => {
-  const { main } = await loaded({ session: 'user' })
-  const controls = [
-    ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
-  ]
-  expect(controls.filter((c) => !c.disabled).map((c) => c.outerHTML)).toEqual(
-    [],
-  )
-  expect(within(main).getByText(en('server-read-only'))).toBeTruthy()
-  expect(
-    within(main).queryByRole('button', { name: en('save-button') }),
-  ).toBeNull()
-  expect(
-    within(main).queryByRole('button', { name: en('save-discard') }),
-  ).toBeNull()
-  expect(sectionStatuses(main)).toHaveLength(0)
-})
-
-test('1b.28 (1a): a user is never dirty: no beforeunload, leaving asks nothing, Show still works', async () => {
-  const { main } = await loaded({ session: 'user' })
-  const e = new Event('beforeunload', { cancelable: true })
-  window.dispatchEvent(e)
-  expect(e.defaultPrevented, 'beforeunload not armed').toBe(false)
-  fireEvent.click(show(main))
-  expect(show(main).getAttribute('aria-pressed')).toBe('true')
-  expect(apiKey(main).type).toBe('text')
-  const link = await within(
-    screen.getByRole('navigation', { name: en('nav-label') }),
-  ).findByRole('link', { name: 'coder' })
-  fireEvent.click(link)
-  expect(screen.queryByRole('dialog')).toBeNull()
-  expect(
-    await within(main).findByRole('heading', { level: 1, name: 'coder' }),
-  ).toBeTruthy()
-  expect(dialogs.opened, 'no dialog opened').toEqual([])
-})
+// Show is not an edit (5.4), for every session: it arms no beforeunload, and leaving
+// the page after it asks nothing.
+test.each(['admin', 'user'] as const)(
+  '1b.28 (1a, 5.4): %s: Show is not an edit: no beforeunload, leaving asks nothing',
+  async (session) => {
+    const { main } = await loaded({ session })
+    const e = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(e)
+    expect(e.defaultPrevented, 'beforeunload not armed').toBe(false)
+    fireEvent.click(show(main))
+    expect(show(main).getAttribute('aria-pressed')).toBe('true')
+    expect(apiKey(main).type).toBe('text')
+    const link = await within(
+      screen.getByRole('navigation', { name: en('nav-label') }),
+    ).findByRole('link', { name: 'coder' })
+    fireEvent.click(link)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      await within(main).findByRole('heading', { level: 1, name: 'coder' }),
+    ).toBeTruthy()
+    expect(dialogs.opened, 'no dialog opened').toEqual([])
+  },
+)
 
 test('1b.29: a changed value makes the form dirty; changing it back makes it clean', async () => {
   const { main } = await loaded()

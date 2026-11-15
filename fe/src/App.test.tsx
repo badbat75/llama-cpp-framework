@@ -431,6 +431,15 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     .filter(([key, english]) => table[key] !== english)
     .map(([key]) => key)
   expect(wrong, 'keys missing or with other text').toEqual([])
+  // The web UI is run by administrators only, so the English of the
+  // non-administrator views goes with them (fe/briefs/01-server.md,
+  // "Administrators only", 5.5 and 2.8): the Server page has no read-only
+  // Notice and the API key has no withheld sentence.
+  const removed = ['server-read-only', 'server-api-key-withheld']
+  expect(
+    Object.keys(table).filter((key) => removed.includes(key)),
+    'strings the brief removed',
+  ).toEqual([])
 })
 
 // ── The page's own file ─────────────────────────────────────────────────

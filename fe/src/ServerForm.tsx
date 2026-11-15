@@ -1,8 +1,8 @@
 // The Server form of an instance (fe/briefs/01-server.md, sections 3 and 5):
 // the cards and fields of pai-config's Server tab, in its order, each control
-// showing the file's value. Read-only for a user; for an administrator the
-// controls follow their dependencies (5.3) and the save bar checks the values,
-// sends them typed (5.4) and shows the answer by its key.
+// showing the file's value. Every signed-in session edits it: the controls
+// follow their dependencies (5.3) and the save bar checks the values, sends
+// them typed (5.4) and shows the answer by its key.
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord } from './api.ts'
@@ -407,7 +407,6 @@ export type Runs = { started: number; settled: number }
 export default function ServerForm({
   id,
   doc,
-  canConfigure,
   renewals,
   runs,
   onDirty,
@@ -416,7 +415,6 @@ export default function ServerForm({
 }: {
   id: string
   doc: ServerDoc
-  canConfigure: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
   renewals: number
   /** A settled action started after a save-saved-restart ends it (44a). */
@@ -429,7 +427,6 @@ export default function ServerForm({
   onRenewed: (session: Session) => boolean
 }) {
   const fid = useId()
-  const readOnly = !canConfigure
   const [rows] = useState(() => bindRows(doc.values.Hostname, doc.interfaces))
   const [loaded, setLoaded] = useState({
     revision: doc.revision,
@@ -494,7 +491,7 @@ export default function ServerForm({
       observer.disconnect()
       root.removeProperty('--save-bar-height')
     }
-  }, [readOnly])
+  }, [])
 
   const element = (suffix: string) =>
     document.getElementById(`${fid}-${suffix}`) as HTMLInputElement | null
@@ -658,7 +655,6 @@ export default function ServerForm({
 
   return (
     <>
-      {readOnly && <p className="notice">{t('server-read-only')}</p>}
       <Card title={t('server-network')}>
         <DefaultBoxField
           id={`${fid}-Port`}
@@ -669,7 +665,6 @@ export default function ServerForm({
           numeric
           ticked={v.Port.ticked}
           text={shownBox(v.Port, d.Port)}
-          readOnly={readOnly}
           onTick={tick('Port')}
           onText={text('Port')}
         />
@@ -681,7 +676,7 @@ export default function ServerForm({
           rows={rows.map((r, i) => ({
             ...r,
             checked: v.Hostname[i] === true,
-            disabled: readOnly || (v.Hostname[ALL] === true && i !== ALL),
+            disabled: v.Hostname[ALL] === true && i !== ALL,
           }))}
           onToggle={toggleRow}
         />
@@ -693,7 +688,6 @@ export default function ServerForm({
           box={t('field-default')}
           ticked={v.OpencodeBaseUrl.ticked}
           text={shownBox(v.OpencodeBaseUrl, d.OpencodeBaseUrl)}
-          readOnly={readOnly}
           onTick={tick('OpencodeBaseUrl')}
           onText={text('OpencodeBaseUrl')}
         />
@@ -705,8 +699,6 @@ export default function ServerForm({
           box={t('field-no-key')}
           ticked={v.OpencodeApiKey.ticked}
           value={autoBox(v.OpencodeApiKey)}
-          readOnly={readOnly}
-          withheld={withholdsKey(doc)}
           onTick={tick('OpencodeApiKey')}
           onText={text('OpencodeApiKey')}
         />
@@ -721,7 +713,6 @@ export default function ServerForm({
           numeric
           ticked={v.Threads.ticked}
           text={autoBox(v.Threads)}
-          readOnly={readOnly}
           onTick={tickAuto('Threads')}
           onText={text('Threads')}
         />
@@ -734,7 +725,6 @@ export default function ServerForm({
           numeric
           ticked={v.ThreadsBatch.ticked}
           text={autoBox(v.ThreadsBatch)}
-          readOnly={readOnly}
           onTick={tickAuto('ThreadsBatch')}
           onText={text('ThreadsBatch')}
         />
@@ -747,7 +737,6 @@ export default function ServerForm({
           numeric
           ticked={v.ModelsMax.ticked}
           text={shownBox(v.ModelsMax, d.ModelsMax)}
-          readOnly={readOnly}
           onTick={tick('ModelsMax')}
           onText={text('ModelsMax')}
         />
@@ -761,7 +750,6 @@ export default function ServerForm({
           unit="MiB"
           ticked={v.ModelsMemoryMargin.ticked}
           text={shownBox(v.ModelsMemoryMargin, d.ModelsMemoryMargin)}
-          readOnly={readOnly}
           onTick={tick('ModelsMemoryMargin')}
           onText={text('ModelsMemoryMargin')}
         />
@@ -772,7 +760,6 @@ export default function ServerForm({
           error={errors.ModelsDir}
           value={v.ModelsDir}
           placeholder={t('server-folder-instance-default', shown(d.ModelsDir))}
-          disabled={readOnly}
           onChange={(s) => edit('ModelsDir', s)}
         />
       </Card>
@@ -784,7 +771,6 @@ export default function ServerForm({
           error={errors.Webui}
           toggle={t('server-web-ui-toggle')}
           checked={v.Webui}
-          disabled={readOnly}
           onChange={(c) => edit('Webui', c)}
         />
         <CheckboxField
@@ -794,7 +780,7 @@ export default function ServerForm({
           error={errors.WebuiMcpProxy}
           toggle={t('server-mcp-proxy-toggle')}
           checked={v.WebuiMcpProxy}
-          disabled={readOnly || !v.Webui}
+          disabled={!v.Webui}
           onChange={(c) => edit('WebuiMcpProxy', c)}
         />
         <SelectField
@@ -804,7 +790,6 @@ export default function ServerForm({
           hint={t('server-log-level-hint')}
           options={LOG_LEVELS.map((text, i) => ({ value: String(i), text }))}
           value={v.LogVerbosity}
-          disabled={readOnly}
           onChange={(s) => edit('LogVerbosity', s)}
         />
       </Card>
@@ -816,7 +801,6 @@ export default function ServerForm({
           error={errors.SaveStateOnShutdown}
           toggle={t('server-save-on-shutdown-toggle')}
           checked={v.SaveStateOnShutdown}
-          disabled={readOnly}
           onChange={(c) => edit('SaveStateOnShutdown', c)}
         />
         <TextField
@@ -826,7 +810,7 @@ export default function ServerForm({
           error={errors.StateDir}
           value={v.StateDir}
           placeholder={t('server-folder-instance-default', shown(d.StateDir))}
-          disabled={readOnly || !v.SaveStateOnShutdown}
+          disabled={!v.SaveStateOnShutdown}
           onChange={(s) => edit('StateDir', s)}
         />
       </Card>
@@ -848,7 +832,6 @@ export default function ServerForm({
               { value: 'off', text: t('option-off') },
             ]}
             value={v.RocblasUseHipblaslt}
-            disabled={readOnly}
             onChange={(s) => edit('RocblasUseHipblaslt', s)}
           />
           <CheckboxField
@@ -858,7 +841,6 @@ export default function ServerForm({
             error={errors.RocprofAttach}
             toggle={t('server-profiler-attach-toggle')}
             checked={v.RocprofAttach}
-            disabled={readOnly}
             onChange={(c) => edit('RocprofAttach', c)}
           />
         </div>
@@ -876,7 +858,6 @@ export default function ServerForm({
               { value: 'none', text: t('option-none') },
             ]}
             value={v.CudaAllreduce}
-            disabled={readOnly}
             onChange={(s) => edit('CudaAllreduce', s)}
           />
           <CheckboxField
@@ -886,7 +867,6 @@ export default function ServerForm({
             error={errors.CudaDisableGraphs}
             toggle={t('server-gpu-graphs-toggle')}
             checked={v.CudaDisableGraphs}
-            disabled={readOnly}
             onChange={(c) => edit('CudaDisableGraphs', c)}
           />
         </div>
@@ -899,71 +879,68 @@ export default function ServerForm({
             error={errors.AttnRotDisable}
             toggle={t('server-kv-rotation-toggle')}
             checked={v.AttnRotDisable}
-            disabled={readOnly}
             onChange={(c) => edit('AttnRotDisable', c)}
           />
         </div>
       </Card>
-      {!readOnly && (
-        <div className="save-bar" ref={bar}>
-          <div className="save-messages">
-            <p
-              role="status"
-              className={
-                status === 'saved' || status === 'saved-restart'
-                  ? `save-status ${status}`
-                  : 'save-status'
-              }
-            >
-              {statusText}
+      <div className="save-bar" ref={bar}>
+        <div className="save-messages">
+          <p
+            role="status"
+            className={
+              status === 'saved' || status === 'saved-restart'
+                ? `save-status ${status}`
+                : 'save-status'
+            }
+          >
+            {statusText}
+          </p>
+          {alert !== null && (
+            <p role="alert" className="save-alert">
+              {alert.text}
             </p>
-            {alert !== null && (
-              <p role="alert" className="save-alert">
-                {alert.text}
-              </p>
-            )}
-            {alert?.action === 'reload' && (
-              <button
-                id={`${fid}-reload`}
-                type="button"
-                className="secondary"
-                onClick={() => setAsking('reload')}
-              >
-                {t('save-reload')}
-              </button>
-            )}
-            {alert?.action === 'sign-in' && (
-              <button
-                id={`${fid}-sign-in`}
-                type="button"
-                className="secondary"
-                onClick={() => setAsking('sign-in')}
-              >
-                {t('session-sign-in')}
-              </button>
-            )}
-          </div>
-          <div className="save-actions">
+          )}
+          {alert?.action === 'reload' && (
             <button
+              id={`${fid}-reload`}
               type="button"
               className="secondary"
-              aria-disabled={!dirty || phase === 'saving' || undefined}
-              onClick={discard}
+              onClick={() => setAsking('reload')}
             >
-              {t('save-discard')}
+              {t('save-reload')}
             </button>
+          )}
+          {alert?.action === 'sign-in' && (
             <button
-              id={`${fid}-save`}
+              id={`${fid}-sign-in`}
               type="button"
-              className="primary"
-              aria-disabled={!dirty || phase === 'saving' || undefined}
-              onClick={save}
+              className="secondary"
+              onClick={() => setAsking('sign-in')}
             >
-              {phase === 'saving' ? t('save-saving') : t('save-button')}
+              {t('session-sign-in')}
             </button>
-          </div>
+          )}
         </div>
-      )}
+        <div className="save-actions">
+          <button
+            type="button"
+            className="secondary"
+            aria-disabled={!dirty || phase === 'saving' || undefined}
+            onClick={discard}
+          >
+            {t('save-discard')}
+          </button>
+          <button
+            id={`${fid}-save`}
+            type="button"
+            className="primary"
+            aria-disabled={!dirty || phase === 'saving' || undefined}
+            onClick={save}
+          >
+            {phase === 'saving' ? t('save-saving') : t('save-button')}
+          </button>
+        </div>
+      </div>
       {asking === 'reload' && (
         <DiscardDialog
           onKeep={() => closeAsking('reload')}

@@ -1,7 +1,7 @@
 // Start at boot on the instance page (fe/briefs/01-server.md, slice 1c,
 // section 4.6, criteria 45 to 45g, with 40, 43 to 43b, 46a and section 6):
 // the checkbox field below the run controls, read once with the header,
-// written at once by an administrator, disabled for a user, its errors and a
+// written at once by the signed-in session, its errors and a
 // sign-in after a 401. The whole app renders against a fake bff (mocked
 // fetch) on fake timers, as RunControls.test.tsx, so the idle poll is
 // counted exactly; "1c.45a" is the brief's criterion 45a.
@@ -365,24 +365,26 @@ test('1c.45a: read once when the header is shown, not polled; not read without a
 
 // ── Who can change it (45b) ─────────────────────────────────────────────
 
-test('1c.45b: a user gets the checkbox disabled, showing the state read; a click sends nothing', async () => {
-  for (const enabled of [true, false]) {
-    const { bff, main } = await loaded({
-      session: 'user',
-      boot: boot(enabled),
-    })
+// "Administrators only" (R3): 45b's user half went with the disabled box, so
+// every signed-in session gets the same enabled box and writes with the same PUT.
+test.each(['admin', 'user'] as const)(
+  '1c.45b: %s gets the checkbox enabled, and a change shows the new value and sends PUT {enabled}',
+  async (session) => {
+    const { bff, main } = await loaded({ session, boot: boot(false) })
     const box = bootBox(main)
-    expect(box.disabled, String(enabled)).toBe(true)
-    expect(box.checked, String(enabled)).toBe(enabled)
-    fireEvent.click(box)
+    expect(box.disabled, `${session}: enabled`).toBe(false)
+    expect(inactive(box), `${session}: not aria-disabled`).toBe(false)
+    press(bootBox(main))
     await flush()
-    expect(bootWrites(bff), `${enabled}: no write`).toEqual([])
-    expect(bootBox(main).checked, String(enabled)).toBe(enabled)
+    expect(bootBox(main).checked, `${session}: the new value at once`).toBe(
+      true,
+    )
+    expect(bootWrites(bff), session).toEqual([{ enabled: true }])
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.45b: an administrator gets the checkbox enabled', async () => {
   const { main } = await loaded()
@@ -578,51 +580,74 @@ test('1c.43b, 45e: the same administrator signs in again: the alert and Sign in 
   expect(bootWrites(bff), 'nothing resent').toHaveLength(1)
 })
 
-test('1c.43b, 45b: another session after a boot 401: the box follows the new role without a new read; focus on the h1', async () => {
-  for (const c of [
-    { user: 'carol', canConfigure: true },
-    { user: 'alice', canConfigure: false },
-  ]) {
-    const what = `${c.user} ${c.canConfigure}`
-    const { bff, main } = await loaded({
-      boot: boot(false, SESSION_ENDED),
-      signIn: () => reply(200, c),
-    })
-    press(bootBox(main))
-    await flush()
-    press(bootSignIns(main)[0]!)
-    await flush()
-    await signInInDialog(c.user)
-    expect(screen.getByRole('banner').textContent, what).toContain(
-      en('session-signed-in-as', c.user),
-    )
-    expect(bootAlerts(main), what).toEqual([])
-    expect(bootSignIns(main), what).toEqual([])
-    expect(bootBox(main).disabled, `${what}: the box for the new role`).toBe(
-      !c.canConfigure,
-    )
-    expect(bootReads(bff), `${what}: no new boot read`).toBe(2)
-    expect(document.activeElement, `${what}: focus on the h1`).toBe(h1(main))
-    expect(bootWrites(bff), what).toHaveLength(1)
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
+// "Administrators only" (R3): 43b compares by `user` only, so the boot box
+// follows no role: a sign-in as another user leaves it as it is, enabled, with
+// no new read.
+test('1c.43b: a sign-in as another user after a boot 401 leaves the box enabled, with no new read; focus on the h1', async () => {
+  const { bff, main } = await loaded({
+    boot: boot(false, SESSION_ENDED),
+    signIn: () => reply(200, { user: 'carol', canConfigure: true }),
+  })
+  press(bootBox(main))
+  await flush()
+  press(bootSignIns(main)[0]!)
+  await flush()
+  await signInInDialog('carol')
+  expect(screen.getByRole('banner').textContent).toContain(
+    en('session-signed-in-as', 'carol'),
+  )
+  expect(bootAlerts(main)).toEqual([])
+  expect(bootSignIns(main)).toEqual([])
+  expect(bootBox(main).disabled, 'enabled, as before the sign-in').toBe(false)
+  expect(bootReads(bff), 'no new boot read').toBe(2)
+  expect(document.activeElement).toBe(h1(main))
+  expect(bootWrites(bff)).toHaveLength(1)
 })
 
-test('1c.43b, 45b: a user who signs in as an administrator after a run 401 gets the box enabled, without a new read', async () => {
+// 43b's first row, with the field saying the other role (until R4 the stubs
+// keep sending it): the same `user` keeps the page, its edits, and the focus
+// on the control whose request got the 401.
+test('1c.43b: the same user signing in with the other canConfigure keeps the page and its edits, focus on the checkbox', async () => {
+  const { bff, main } = await loaded({
+    boot: boot(false, SESSION_ENDED),
+    signIn: () => reply(200, { user: 'alice', canConfigure: false }),
+  })
+  type(portBox(main), '8581')
+  press(bootBox(main))
+  await flush()
+  press(bootSignIns(main)[0]!)
+  await flush()
+  await signInInDialog('alice')
+  expect(screen.getByRole('banner').textContent).toContain(
+    en('session-signed-in-as', 'alice'),
+  )
+  expect(bootAlerts(main)).toEqual([])
+  expect(bootSignIns(main)).toEqual([])
+  expect(document.activeElement, 'focus on the refused control').toBe(
+    bootBox(main),
+  )
+  expect(portBox(main).value, 'the edits are intact').toBe('8581')
+  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
+  expect(bff.to('GET', SERVER), 'the file is not read again').toHaveLength(1)
+  expect(bootReads(bff), 'no new boot read').toBe(2)
+  expect(bootWrites(bff), 'nothing resent').toHaveLength(1)
+  expect(bootBox(main).disabled, 'the box stays enabled').toBe(false)
+})
+
+test('1c.43b: a sign-in as another user after a run 401 leaves the box enabled, without a new read; focus on the h1', async () => {
   const { bff, main } = await loaded({
     session: 'user',
     run: SESSION_ENDED,
     signIn: () => reply(200, { user: 'alice', canConfigure: true }),
   })
-  expect(bootBox(main).disabled).toBe(true)
+  expect(bootBox(main).disabled, 'enabled before the sign-in').toBe(false)
   press(button(main, 'run-stop'))
   await flush()
   press(runSignIn(main))
   await flush()
   await signInInDialog('alice')
-  expect(bootBox(main).disabled, 'enabled for the administrator').toBe(false)
+  expect(bootBox(main).disabled, 'enabled after the sign-in').toBe(false)
   expect(bootReads(bff), 'no new boot read').toBe(1)
   expect(document.activeElement).toBe(h1(main))
 })
@@ -1056,13 +1081,5 @@ test('1c.46a, 45c: the checkbox stays in the Tab sequence while its write runs',
   expect(tabbable(main)).toContain(bootBox(main))
 })
 
-test('1c.46a, 45b: for a user Tab goes Restart, About Start at boot, then the Server section (the checkbox is disabled)', async () => {
-  const { main } = await loaded({ session: 'user' })
-  const reached = tabbable(main)
-  const i = reached.indexOf(button(main, 'run-restart'))
-  expect(i).toBeGreaterThanOrEqual(0)
-  expect(reached[i + 1]).toBe(aboutBoot(main))
-  expect(reached[i + 2]).toBe(
-    within(main).getByRole('button', { name: `${en('field-about')} Port` }),
-  )
-})
+// The user's tab path (the box in it, not out of it) is "6: Tab goes ..." in
+// InstancePage.test.tsx, which runs for every signed-in session.
