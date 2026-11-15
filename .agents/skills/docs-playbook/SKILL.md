@@ -199,6 +199,16 @@ Lessons only: the rules are in `AGENTS.md`.
   `crates/bff/README.md`, `installer/AGENTS.md` (the manager bullet too), the `release` skill (step 4)
   and `PLAN.md` R3. The Windows test plan opens with "What CI covers": update it with the workflow.
   A JSON body quoted in a brief may be shortened: check the route's fields in the code before quoting.
+- A run's date and duration are NOT in the report commit: cite the run id with the commit it ran on
+  and the commit reporting it, never a date inferred from that commit's date. One run's Windows
+  coverage sits in six sentences: `installer/AGENTS.md`'s Status ("the latest green run"), the manager
+  bullet ("only CI has run it"), the group bullet ("Text-checked only"), "What CI covers" (the run
+  list, its "no green run has executed them"), the Open checks' `PaiGroup` item ("have never run") and
+  `AGENTS.md`'s Map bullet (the id beside "what that leaves unchecked"): grep "latest green run",
+  "no green run", "have never run", "no Windows run has" beside the ids. Settle only what the run's
+  steps ran: CI's install, repair and uninstall are silent, so a green run says nothing about a
+  full-UI install (step 4, the empty group), an upgrade (step 9), the full-UI uninstall (step 12), a
+  `configure` as a member (step 18) or the token's next-logon rule (step 18 stays "unverified").
 - A commit message's reason can be wrong in a detail: check it in the code before repeating it
   (dbc43cb blamed the instance unit's `ProtectHome`, which only `private-ai-bff.service` sets:
   `xtask/src/linux/system_files.rs`).
