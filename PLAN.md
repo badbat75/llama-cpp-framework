@@ -489,7 +489,9 @@ Slices, each test first, in order:
    opencode.json's `apiKey` as it is. Accepted: a process that saw the key withheld cannot clear it; an
    administrator sees it only while polkit keeps an authorization (no read prompts). The bff reads as
    itself until step 10 slice 6b, so a web administrator gets the withheld document too.)
-5. **Docs and strings**: the README's stale draft pin, Model info and `DefaultSpinBox` mentions; the
+5. **Docs and strings**: the "Adding a per-model preset field" checklist (doc comment atop
+   `crates/app/src/presets.rs`) to name `checks::PRESET_FLOAT_KEYS`, `PRESET_ENUM_KEYS` and
+   `PRESET_MIN_MAX_KEYS`, or a new key goes unchecked; the README's stale draft pin, Model info and `DefaultSpinBox` mentions; the
    literals that break "no text in code" (`model_scan.rs`, `gpu_split.rs`, `bench/exec.rs`,
    `bench.rs`); GUI keys a non-GUI client needs copied to `cli.toml` when that client shows them.
 

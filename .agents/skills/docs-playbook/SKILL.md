@@ -178,3 +178,7 @@ Lessons only: the rules are in `AGENTS.md`.
   The preset rules (`checks::presets_file`, `presets_disabled_file`, `preset_ids_free`) and the save
   side (`presets::validate_for_save`, its callers `presets::save` and `hf::save_preset`) sit in the same
   bullet; the "Ids are unique across both files" bullet of the Models tab points there.
+  The value rules (`checks::preset_values`: float, enum, `spec-type`, JSON, min <= max) are in that
+  bullet too; the MoE cache floor (`presets::validate_moe_cache_floor`, save only, needs the GGUF) is
+  named there, in the Hardware config bullet and the `moe_cache.rs` source-map row; a sweep's
+  up-front check in "The key is typed" bullet and the `sweep.rs` row.
