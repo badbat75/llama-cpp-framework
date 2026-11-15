@@ -30,6 +30,10 @@ pub const KEYS: &[&str] = &[
     "override-no-pattern",
     "override-no-device",
     "moe-cache-with-tensor-split",
+    "not-a-number",
+    "not-one-of",
+    "not-json-object",
+    "min-above-max",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -90,6 +94,10 @@ impl Refusal {
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
             "moe-cache-with-tensor-split" => strings::t("moe-cache-with-tensor-split"),
+            "not-a-number" => strings::fill("not-a-number", &[&v(0), &v(1)]),
+            "not-one-of" => strings::fill("not-one-of", &[&v(0), &v(1), &v(2)]),
+            "not-json-object" => strings::fill("not-json-object", &[&v(0)]),
+            "min-above-max" => strings::fill("min-above-max", &[&v(0), &v(1), &v(2), &v(3)]),
             other => other.to_string(),
         }
     }
@@ -140,6 +148,70 @@ pub const PRESET_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
     ("spec-ngram-map-k4v-size-n", NGRAM_SIZE),
     ("spec-ngram-map-k4v-size-m", NGRAM_SIZE),
     ("spec-ngram-map-k4v-min-hits", NGRAM_HITS),
+];
+
+/// The float keys of a preset: llama.cpp reads each with `std::stof`.
+pub const PRESET_FLOAT_KEYS: [&str; 6] = [
+    "temp",
+    "top-p",
+    "min-p",
+    "repeat-penalty",
+    "presence-penalty",
+    "spec-draft-p-min",
+];
+
+/// Every type llama.cpp accepts for the KV cache, highest precision first
+/// (`kv_cache_types` in common/arg.cpp).
+pub const KV_CACHE_TYPES: &[&str] = &[
+    "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl",
+];
+
+/// The values of `reasoning` llama.cpp takes (`is_truthy`, `is_falsey`,
+/// `is_autoy` in common/arg.cpp).
+const REASONING: &[&str] = &[
+    "on", "enabled", "true", "1", "off", "disabled", "false", "0", "auto", "-1",
+];
+
+/// The enum keys of a preset with every value llama.cpp takes for each: it
+/// throws on any other and the model never loads (common/arg.cpp,
+/// `common_reasoning_format_from_name` in common/chat.cpp).
+pub const PRESET_ENUM_KEYS: [(&str, &[&str]); 10] = [
+    ("split-mode", &["none", "layer", "row", "tensor"]),
+    ("pooling", &["none", "mean", "cls", "last", "rank"]),
+    ("cache-type-k", KV_CACHE_TYPES),
+    ("cache-type-v", KV_CACHE_TYPES),
+    ("spec-draft-type-k", KV_CACHE_TYPES),
+    ("spec-draft-type-v", KV_CACHE_TYPES),
+    ("reasoning", REASONING),
+    (
+        "reasoning-format",
+        &["auto", "none", "deepseek", "deepseek-legacy"],
+    ),
+    ("lazy-mode", &["on", "auto", "off"]),
+    ("load-mode", &crate::server_cfg::LOAD_MODES),
+];
+
+/// The entries of the comma-separated `spec-type` llama.cpp takes
+/// (`common_speculative_type_from_name_map` in common/speculative.cpp).
+pub const SPEC_TYPES: &[&str] = &[
+    "none",
+    "draft-simple",
+    "draft-eagle3",
+    "draft-mtp",
+    "draft-dflash",
+    "draft-dspark",
+    "ngram-simple",
+    "ngram-map-k",
+    "ngram-map-k4v",
+    "ngram-mod",
+    "ngram-cache",
+];
+
+/// The preset keys that bound a value from both sides: (minimum, maximum).
+pub const PRESET_MIN_MAX_KEYS: [(&str, &str); 3] = [
+    ("image-min-tokens", "image-max-tokens"),
+    ("spec-draft-n-min", "spec-draft-n-max"),
+    ("spec-ngram-mod-n-min", "spec-ngram-mod-n-max"),
 ];
 
 /// The ports a listener can bind.
@@ -312,6 +384,78 @@ pub fn startup_count(count: usize, models_max: Option<i32>) -> Result<(), Refusa
     }
 }
 
+/// `text`, the value of `key`, as a finite number: `inf` and `NaN` parse as
+/// floats but give a sampler that never works.
+pub fn finite_number(key: &str, text: &str) -> Result<(), Refusal> {
+    if ini::parse_float(text).is_some_and(f64::is_finite) {
+        return Ok(());
+    }
+    Err(Refusal::new("not-a-number", &[&key, &text.trim()]))
+}
+
+/// `value` of `key` as one of `allowed`, exactly as llama.cpp compares it.
+pub fn one_of(key: &str, value: &str, allowed: &[&str]) -> Result<(), Refusal> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+    Err(Refusal::new(
+        "not-one-of",
+        &[&key, &value, &allowed.join(", ")],
+    ))
+}
+
+/// Every entry of the comma-separated `spec-type` as one of [`SPEC_TYPES`].
+pub fn spec_type(value: &str) -> Result<(), Refusal> {
+    value
+        .split(',')
+        .try_for_each(|entry| one_of("spec-type", entry, SPEC_TYPES))
+}
+
+/// `value` of `key` as one JSON object, which llama.cpp merges key by key.
+pub fn json_object(key: &str, value: &str) -> Result<(), Refusal> {
+    match serde_json::from_str::<serde_json::Value>(value) {
+        Ok(v) if v.is_object() => Ok(()),
+        _ => Err(Refusal::new("not-json-object", &[&key])),
+    }
+}
+
+/// The value rules of one preset with no GUI field of their own: the float,
+/// enum and JSON keys and the min <= max pairs. `get` is the section's value
+/// of a key; an empty enum or JSON value is the omitted key.
+pub fn preset_values(get: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
+    let set = |key: &str| get(key).filter(|v| !v.is_empty());
+    for key in PRESET_FLOAT_KEYS {
+        if let Some(v) = get(key) {
+            finite_number(key, &v)?;
+        }
+    }
+    for (key, allowed) in &PRESET_ENUM_KEYS {
+        if let Some(v) = set(key) {
+            one_of(key, &v, allowed)?;
+        }
+    }
+    if let Some(v) = set("spec-type") {
+        spec_type(&v)?;
+    }
+    if let Some(v) = set("chat-template-kwargs") {
+        json_object("chat-template-kwargs", &v)?;
+    }
+    for (min_key, max_key) in PRESET_MIN_MAX_KEYS {
+        let (Some(min), Some(max)) = (get(min_key), get(max_key)) else {
+            continue;
+        };
+        if let (Some(lo), Some(hi)) = (ini::parse_int(&min), ini::parse_int(&max)) {
+            if lo > hi {
+                return Err(Refusal::new(
+                    "min-above-max",
+                    &[&min_key, &min.trim(), &max_key, &max.trim()],
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── Sections read raw ───────────────────────────────────────────────────
 
 /// One section of an INI text: its id, its key lines (key, raw value: the
@@ -396,6 +540,7 @@ fn preset_section(s: &RawSection) -> Result<(), Refusal> {
             whole_number(key, &v, range)?;
         }
     }
+    preset_values(|key| s.get(key))?;
     let moe = s.get("moe-cache-mib").and_then(|v| ini::parse_int(&v));
     moe_cache_split(moe, &s.get("split-mode").unwrap_or_default())
 }
@@ -1164,14 +1309,11 @@ top-p = 0.95\r\n";
         }
     }
 
-    /// Keys the Models tab does not refuse today stay lenient: a float the
-    /// reader drops, a bool, a word llama.cpp checks itself.
+    /// Keys the Models tab does not refuse stay lenient: a bool, and the
+    /// reasoning level llama.cpp hands to the template as is.
     #[test]
     fn preset_keys_with_no_check_today_pass() {
-        let text = section(
-            "m",
-            "temp = warm\nload-on-startup = yes\ncache-type-k = q9\nsplit-mode = diagonal\n",
-        );
+        let text = section("m", "load-on-startup = yes\nreasoning-effort = thorough\n");
         assert_eq!(presets(&text), Ok(()));
     }
 
@@ -1349,5 +1491,279 @@ top-p = 0.95\r\n";
         assert_eq!(preset_ids_free(&added, &twin, &twin), Ok(()));
         // Nothing in the other file: nothing to collide with.
         assert_eq!(preset_ids_free(&edited, "", ""), Ok(()));
+    }
+
+    // ── Second cut: floats, enums, JSON, min <= max ──────────────────────
+
+    /// The refusal keys the second cut adds: each in `KEYS` (so the manager's
+    /// refusal crosses the wire), in both strings files, and with a text arm
+    /// that fills in its values instead of printing the key.
+    #[test]
+    fn the_second_cut_refusal_keys_are_known_and_worded() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        for (key, values, n) in [
+            ("not-a-number", vec!["temp", "NaN"], 2),
+            (
+                "not-one-of",
+                vec!["split-mode", "banana", "none, layer, row, tensor"],
+                3,
+            ),
+            ("not-json-object", vec!["chat-template-kwargs"], 1),
+            (
+                "min-above-max",
+                vec!["image-min-tokens", "2048", "image-max-tokens", "1024"],
+                4,
+            ),
+        ] {
+            assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+            for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                let text = table
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{key} missing from {name}"));
+                assert_eq!(placeholders(text), n, "{name} {key}: {text:?}");
+            }
+            let r = refusal(key, &values);
+            let text = r.text();
+            assert!(!text.starts_with(key), "{key} has no text arm: {text:?}");
+            for v in &values {
+                assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
+            }
+            assert_eq!(Refusal::decode(&r.encode()), Some(r.clone()), "{key}");
+        }
+    }
+
+    /// The float keys of a preset (the Models tab's sampling fields and the
+    /// draft confidence floor). `ini::parse_float` takes `inf` and `NaN`, which
+    /// llama.cpp's `std::stof` reads as a sampler that never works; a word is
+    /// no number at all. Refused in either preset file, with the key and the
+    /// value as written; a plain number of any sign passes (no GUI range).
+    #[test]
+    fn float_keys_refuse_infinities_nan_and_words() {
+        let keys = [
+            "temp",
+            "top-p",
+            "min-p",
+            "repeat-penalty",
+            "presence-penalty",
+            "spec-draft-p-min",
+        ];
+        for key in keys {
+            for bad in [
+                "inf",
+                "-inf",
+                "INF",
+                "Infinity",
+                "+infinity",
+                "NaN",
+                "nan",
+                "-NaN",
+                "abc",
+                "0.5x",
+            ] {
+                let text = section("m", &format!("{key} = {bad}\n"));
+                let want = Err(refusal("not-a-number", &[key, bad]));
+                assert_eq!(presets(&text), want, "{key} = {bad}");
+                assert_eq!(presets_disabled_file(&text, "", ""), want, "{key} = {bad}");
+            }
+            for good in ["0", "0.95", "1", "1.1", "-1", "2.0"] {
+                let text = section("m", &format!("{key} = {good}\n"));
+                assert_eq!(presets(&text), Ok(()), "{key} = {good}");
+            }
+        }
+    }
+
+    /// The enum keys: the values the Models tab's combo boxes and segmented
+    /// controls offer all pass (an empty value is the omitted key and never
+    /// reaches the file), and a word outside llama.cpp's own set, which
+    /// `common/arg.cpp` throws on so the model never loads, is refused with the
+    /// key, the value and a list of what it takes. Where llama.cpp takes more
+    /// than the GUI offers (`reasoning`'s `enabled`/`true`/`1`,
+    /// `reasoning-format`'s `deepseek-legacy`, `spec-type`'s `draft-eagle3` and
+    /// `ngram-cache`), nothing is pinned either way.
+    #[test]
+    fn enum_keys_refuse_a_value_outside_their_set() {
+        let cache_types = [
+            "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl",
+        ];
+        let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
+            // The GUI's three entries plus `layer`, the default llama.cpp takes.
+            (
+                "split-mode",
+                vec!["none", "layer", "row", "tensor"],
+                vec!["banana", "rows", "layer,row"],
+            ),
+            (
+                "pooling",
+                vec!["none", "mean", "cls", "last", "rank"],
+                vec!["max", "banana"],
+            ),
+            (
+                "cache-type-k",
+                cache_types.to_vec(),
+                vec!["q6_k", "q4_k", "banana"],
+            ),
+            ("cache-type-v", cache_types.to_vec(), vec!["q6_k", "banana"]),
+            (
+                "spec-draft-type-k",
+                cache_types.to_vec(),
+                vec!["q6_k", "banana"],
+            ),
+            (
+                "spec-draft-type-v",
+                cache_types.to_vec(),
+                vec!["q6_k", "banana"],
+            ),
+            (
+                "reasoning",
+                vec!["auto", "on", "off"],
+                vec!["maybe", "banana"],
+            ),
+            (
+                "reasoning-format",
+                vec!["auto", "none", "deepseek"],
+                vec!["qwen", "banana"],
+            ),
+            (
+                "lazy-mode",
+                vec!["on", "auto", "off"],
+                vec!["lazy", "banana"],
+            ),
+            (
+                "load-mode",
+                vec!["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"],
+                vec!["no-mmap", "mmap+dio", "banana"],
+            ),
+        ];
+        for (key, good, bad) in &cases {
+            for v in good {
+                let text = section("m", &format!("{key} = {v}\n"));
+                assert_eq!(presets(&text), Ok(()), "{key} = {v}");
+            }
+            for v in bad {
+                let text = section("m", &format!("{key} = {v}\n"));
+                for (file, got) in [
+                    ("presets.ini", presets(&text)),
+                    ("presets.ini.disabled", presets_disabled_file(&text, "", "")),
+                ] {
+                    let r = got.expect_err(&format!("{file}: {key} = {v}"));
+                    assert_eq!(r.key, "not-one-of", "{file}: {key} = {v}: {r:?}");
+                    assert_eq!(r.values.first().map(String::as_str), Some(*key), "{r:?}");
+                    assert_eq!(r.values.get(1).map(String::as_str), Some(*v), "{r:?}");
+                    let allowed = r.values.get(2).cloned().unwrap_or_default();
+                    for g in good {
+                        assert!(allowed.contains(g), "{key}: {g} not listed in {allowed:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// `reasoning-effort` is handed to the chat template as is: llama.cpp takes
+    /// any level, so only the GUI's own entries are pinned, as passing.
+    #[test]
+    fn reasoning_effort_takes_every_level_the_gui_offers() {
+        for v in ["minimal", "low", "medium", "high", "xhigh", "max"] {
+            let text = section("m", &format!("reasoning-effort = {v}\n"));
+            assert_eq!(presets(&text), Ok(()), "reasoning-effort = {v}");
+        }
+    }
+
+    /// `spec-type` is a comma-separated list (`common_speculative_types_from_names`
+    /// throws on an unknown entry): every entry the Models tab writes passes,
+    /// alone and in the ngram + draft pairs it composes; an unknown entry is
+    /// refused, named on its own.
+    #[test]
+    fn spec_type_refuses_an_unknown_entry_of_its_list() {
+        for v in [
+            "draft-mtp",
+            "draft-dflash",
+            "draft-dspark",
+            "draft-simple",
+            "ngram-simple",
+            "ngram-map-k",
+            "ngram-map-k4v",
+            "ngram-mod",
+            "ngram-map-k4v,draft-dflash",
+            "ngram-mod,draft-mtp",
+        ] {
+            let text = section("m", &format!("spec-type = {v}\n"));
+            assert_eq!(presets(&text), Ok(()), "spec-type = {v}");
+        }
+        for (v, entry) in [
+            ("draft-banana", "draft-banana"),
+            ("mtp", "mtp"),
+            ("ngram-map-k4v,draft-bogus", "draft-bogus"),
+        ] {
+            let text = section("m", &format!("spec-type = {v}\n"));
+            let r = presets(&text).expect_err(v);
+            assert_eq!(r.key, "not-one-of", "{v}: {r:?}");
+            assert_eq!(r.values.first().map(String::as_str), Some("spec-type"));
+            assert_eq!(r.values.get(1).map(String::as_str), Some(entry), "{r:?}");
+            let allowed = r.values.get(2).cloned().unwrap_or_default();
+            assert!(allowed.contains("draft-mtp"), "{allowed:?}");
+        }
+    }
+
+    /// `chat-template-kwargs` is parsed by llama.cpp as a JSON object
+    /// (`json::parse`, then merged key by key): anything else stops the load.
+    #[test]
+    fn chat_template_kwargs_must_be_a_json_object() {
+        for good in [
+            r#"{"enable_thinking":true}"#,
+            r#"{ "enable_thinking" : false, "reasoning_effort": "high" }"#,
+            "{}",
+        ] {
+            let text = section("m", &format!("chat-template-kwargs = {good}\n"));
+            assert_eq!(presets(&text), Ok(()), "{good}");
+        }
+        for bad in [
+            "[1,2]",
+            r#""enable_thinking""#,
+            "true",
+            "{bad",
+            "enable_thinking=true",
+            r#"{"a":1} {"b":2}"#,
+        ] {
+            let text = section("m", &format!("chat-template-kwargs = {bad}\n"));
+            let want = Err(refusal("not-json-object", &["chat-template-kwargs"]));
+            assert_eq!(presets(&text), want, "{bad}");
+            assert_eq!(presets_disabled_file(&text, "", ""), want, "{bad}");
+        }
+    }
+
+    /// The bounds that come in pairs: both set with the minimum above the
+    /// maximum is refused, naming both keys and values; equal, ordered, or
+    /// only one of the two set passes (the other is llama.cpp's own).
+    #[test]
+    fn min_above_max_pairs_are_refused() {
+        for (min, max) in [
+            ("image-min-tokens", "image-max-tokens"),
+            ("spec-draft-n-min", "spec-draft-n-max"),
+            ("spec-ngram-mod-n-min", "spec-ngram-mod-n-max"),
+        ] {
+            let both = |lo: &str, hi: &str| section("m", &format!("{min} = {lo}\n{max} = {hi}\n"));
+            assert_eq!(
+                presets(&both("5", "4")),
+                Err(refusal("min-above-max", &[min, "5", max, "4"])),
+                "{min} > {max}"
+            );
+            // The order of the lines does not matter.
+            let reversed = section("m", &format!("{max} = 4\n{min} = 5\n"));
+            assert_eq!(
+                presets(&reversed),
+                Err(refusal("min-above-max", &[min, "5", max, "4"])),
+                "{max} first"
+            );
+            assert_eq!(
+                presets_disabled_file(&both("5", "4"), "", ""),
+                Err(refusal("min-above-max", &[min, "5", max, "4"])),
+                "disabled {min} > {max}"
+            );
+            assert_eq!(presets(&both("4", "4")), Ok(()), "{min} = {max}");
+            assert_eq!(presets(&both("3", "4")), Ok(()), "{min} < {max}");
+            assert_eq!(presets(&section("m", &format!("{min} = 5\n"))), Ok(()));
+            assert_eq!(presets(&section("m", &format!("{max} = 4\n"))), Ok(()));
+        }
     }
 }

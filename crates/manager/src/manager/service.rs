@@ -2899,6 +2899,61 @@ pub(crate) fn manager_checks_e2e() {
             Ok(())
         );
     }
+
+    // ── Floats, enums, JSON and min <= max: refused, the file kept ───────
+    {
+        let m = manager(true);
+        let kept = "[kept]\nmodel = /models/kept.gguf\n";
+        std::fs::write(sys.join("presets.ini"), kept).expect("presets.ini fixture");
+        std::fs::write(sys.join("presets.ini.disabled"), "").expect("disabled fixture");
+        let with = |lines: &str| format!("{kept}[new]\nmodel = /models/new.gguf\n{lines}");
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &with("temp = NaN\n"), false),
+            invalid("not-a-number", &["temp", "NaN"])
+        );
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "presets.ini",
+                &with("chat-template-kwargs = [1]\n"),
+                false
+            ),
+            invalid("not-json-object", &["chat-template-kwargs"])
+        );
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "presets.ini",
+                &with("spec-draft-n-min = 5\nspec-draft-n-max = 4\n"),
+                false
+            ),
+            invalid(
+                "min-above-max",
+                &["spec-draft-n-min", "5", "spec-draft-n-max", "4"]
+            )
+        );
+        let enum_refused =
+            m.write_file(&alice, "presets.ini", &with("split-mode = banana\n"), false);
+        assert!(
+            matches!(&enum_refused, Err(ManagerError::Invalid(r)) if r.key == "not-one-of"),
+            "{enum_refused:?}"
+        );
+        assert_eq!(
+            m.write_file(
+                &alice,
+                "presets.ini.disabled",
+                &with("top-p = inf\n"),
+                false
+            ),
+            invalid("not-a-number", &["top-p", "inf"])
+        );
+        assert_eq!(read("presets.ini").as_deref(), Some(kept), "old kept");
+        assert_eq!(
+            read("presets.ini.disabled").as_deref(),
+            Some(""),
+            "old kept"
+        );
+    }
 }
 
 #[cfg(test)]

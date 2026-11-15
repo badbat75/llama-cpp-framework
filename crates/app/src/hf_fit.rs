@@ -563,15 +563,7 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         ctx: 0,
     };
     for (h, file_size) in shards {
-        let mut offsets: Vec<(u64, &str)> =
-            h.tensors.iter().map(|(n, o)| (*o, n.as_str())).collect();
-        offsets.sort();
-        let data = file_size
-            .checked_sub(h.data_start)
-            .ok_or_else(|| strings::fill("gguf-shard-too-small", &[&file_size, &h.data_start]))?;
-        for (i, (off, name)) in offsets.iter().enumerate() {
-            let end = offsets.get(i + 1).map_or(data, |n| n.0);
-            let bytes = end.saturating_sub(*off);
+        for (name, bytes) in tensor_bytes(h, *file_size)? {
             s.total += bytes;
             if is_input_embedding(name) {
                 s.token_embd += bytes;
@@ -600,6 +592,24 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         .map_or(REF_CTX, |c| c.min(REF_CTX));
     s.kv = kv_per_token(&key, s.layers.len() as u64).map_or(FALLBACK_KV, |b| b * s.ctx);
     Ok(s)
+}
+
+/// Each tensor of one shard with its bytes, in data order: from its offset to
+/// the next tensor's, the last one to the end of the file.
+fn tensor_bytes(h: &Header, file_size: u64) -> Result<Vec<(&str, u64)>, String> {
+    let mut offsets: Vec<(u64, &str)> = h.tensors.iter().map(|(n, o)| (*o, n.as_str())).collect();
+    offsets.sort();
+    let data = file_size
+        .checked_sub(h.data_start)
+        .ok_or_else(|| strings::fill("gguf-shard-too-small", &[&file_size, &h.data_start]))?;
+    Ok(offsets
+        .iter()
+        .enumerate()
+        .map(|(i, (off, name))| {
+            let end = offsets.get(i + 1).map_or(data, |n| n.0);
+            (*name, end.saturating_sub(*off))
+        })
+        .collect())
 }
 
 /// KV bytes per token (f16, all attention layers), from the attention keys;
@@ -814,6 +824,43 @@ pub fn local_shape(first: &Path) -> Result<Shape, String> {
         headers.push((read_local_header(&p, size)?, size));
     }
     shape_of(&headers)
+}
+
+/// What `moe_cache::floor` needs of a model on disk, every shard's header read
+/// locally (no llama.cpp library): each tensor with its bytes and the header's
+/// `<arch>.expert_count`, `<arch>.expert_used_count` and `<arch>.block_count`
+/// (0 when missing).
+pub fn local_experts(first: &Path) -> Result<(Vec<crate::gguf::TensorInfo>, [u32; 3]), String> {
+    let mut tensors = Vec::new();
+    let mut counts = None;
+    for p in crate::linked_files::shard_set(first) {
+        let size = std::fs::metadata(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?
+            .len();
+        let h = read_local_header(&p, size)?;
+        if let Some(Kv::Str(arch)) = h.kvs.get("general.architecture") {
+            let int = |k: &str| {
+                h.kvs
+                    .get(&format!("{arch}.{k}"))
+                    .and_then(Kv::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0)
+            };
+            counts = Some([
+                int("expert_count"),
+                int("expert_used_count"),
+                int("block_count"),
+            ]);
+        }
+        tensors.extend(tensor_bytes(&h, size)?.into_iter().map(|(name, bytes)| {
+            crate::gguf::TensorInfo {
+                name: name.to_string(),
+                bytes,
+            }
+        }));
+    }
+    let counts = counts.ok_or_else(|| strings::t("gguf-no-arch"))?;
+    Ok((tensors, counts))
 }
 
 // ── The machine ──────────────────────────────────────────────────────────

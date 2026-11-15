@@ -42,4 +42,7 @@ fn data_root_e2e() {
 
     // ── opencode.json's apiKey when the manager withheld it (integrations.rs)
     crate::integrations::api_key_withheld_e2e();
+
+    // ── The sweep's up-front check runs the save's checks (bench/sweep.rs)
+    crate::bench::sweep::sweep_checks_values_with_the_save_e2e();
 }

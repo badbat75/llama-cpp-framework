@@ -88,6 +88,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `CLI_PRINT_PATHS`; `cli_print_paths_hold_no_language` reads only those files. The scans see a key only
   as `strings::t(` / `strings::fill(` (a bare imported `fill(` is missed; `env!` inside `println!` is
   flagged as a literal).
+- `binding_lint` (`rust_fns`) skips only what follows a `mod tests {` line: an e2e phase (a top-level
+  `#[cfg(test)] pub(crate) fn ..._e2e`) counts as production, so calling a `CLI_ONLY_FNS` fn there
+  (`sweep::run`) fails `cli_only_code_is_not_called_from_elsewhere`. Call it from a `#[test]` in the
+  file's `mod tests` under `fake::scoped`, when it reaches no `paths::` (a plan it refuses, `reps: 0`,
+  stops it before anything real).
 - `strings::t`/`fill` return the KEY when missing: assert the message's content and
   `!text.starts_with("<key>")`, never only equality with `strings::fill("<key>", ..)`.
 - The names lints (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flag old names in

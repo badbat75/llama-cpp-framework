@@ -475,12 +475,13 @@ Slices, each test first, in order:
    every unrelated `pai server set` fail, and `pai` has no way back to unset; a negative
    `--models-max` could clear it, as `--models-memory-margin` does; its `--help` still says "Stored
    as-is".)
-3. **The preset checks move below the GUI** (first cut done: `validate_for_save` requires a model and
-   holds every integer key to its range on every backend; the manager refuses an id the other preset
-   file holds; `ctx-size = 0` writable). Left: the MoE cache floor (GUI only today); floats (no
-   `inf`/`NaN`: no check anywhere); enums (GUI combo boxes only); `chat-template-kwargs` JSON (only the
-   comment-marker check); min <= max pairs (no check); the bench sweep's up-front value check
-   (`check_values`) to run `validate_for_save` on its probe, so a bad value fails before the GPU time.
+3. (Done: `validate_for_save` requires a model, holds integer keys to their range, refuses non-finite
+   floats, values outside the enums, `spec-type` lists llama.cpp would not split, non-object
+   `chat-template-kwargs` and min > max pairs, and the MoE cache floor from the model's header; the
+   manager's file check runs the same `checks::preset_values` (not the floor, which needs the GGUF);
+   a bench sweep runs the save's check on every probe before any GPU time. Optional: the GUI's floor
+   hint and the save measure tensor bytes differently, which can differ by 1 MiB only for a made-up
+   GGUF.)
 4. (Done, user 2026-11-15: the manager blanks `OpencodeApiKey` for a caller without `configure`,
    asked without a prompt, and says so (`ManagerFile.withheld`); a write with `keep_api_key` puts the
    stored key back, which pai-app asks for once a read in the process was withheld and the text has no

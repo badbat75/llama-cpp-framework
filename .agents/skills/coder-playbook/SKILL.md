@@ -325,3 +325,7 @@ Lessons only: the rules are in `AGENTS.md`.
   `server_file`); `pai_app::server_cfg::check` runs the same fns on the `ServerConfig` values, since
   `render` writes an out-of-range value as the commented hint and the text check would pass it.
   `save` calls `check` on both backends, so `pai server set` and the GUI refuse alike.
+- `gguf::read_model_info`/`read_tensors` go through `gguf::ffi`, which loads llama.cpp's ggml library
+  at run time: under `cargo test` it finds none and returns `None`, so a check that must work on the
+  tests' fixture GGUFs (`hf_fit::tests::gguf` + `write_sparse`) reads with the pure-Rust
+  `hf_fit` reader instead (`hf_fit::local_experts`, used by the save's MoE cache floor).

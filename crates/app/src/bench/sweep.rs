@@ -343,6 +343,8 @@ pub fn check_values(preset: &str, key: &str, values: &[String]) -> Result<(), St
     for v in values {
         let mut probe = base.clone();
         set(&mut probe, v).map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
+        crate::presets::validate_for_save(&probe)
+            .map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
     }
     Ok(())
 }
@@ -851,6 +853,8 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         for v in &opts.values {
             let mut probe = base.clone();
             set(&mut probe, v).map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
+            crate::presets::validate_for_save(&probe)
+                .map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
         }
     }
     if let Some(problem) = super::validate(&leg_plan(opts, &opts.preset)) {
@@ -1436,9 +1440,93 @@ pub(crate) fn sweep_config_e2e() {
     );
 }
 
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): a value
+/// the setter takes but the save refuses (`parallel = 0`) fails the
+/// Benchmark tab's A/B check with the save's own refusal: nothing is written,
+/// no marker made. The sweep's own up-front check (`run`, which only the CLI
+/// may call) is pinned by `run_refuses_a_value_the_save_refuses_before_any_leg`
+/// in `mod tests`.
+#[cfg(test)]
+pub(crate) fn sweep_checks_values_with_the_save_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use pai_core::client::InstanceState;
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
+        "presets.ini",
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nparallel = 2\n",
+    );
+    let refused = pai_core::checks::Refusal {
+        key: "not-whole-number-in-range",
+        values: ["parallel", "0", "1", "2147483647"]
+            .iter()
+            .map(|v| v.to_string())
+            .collect(),
+    }
+    .text();
+    fake::scoped(fake::backend(c), || {
+        assert_eq!(
+            check_values("Qwen3.8-27B", "parallel", &["1".into(), "4".into()]),
+            Ok(())
+        );
+        let err = check_values("Qwen3.8-27B", "parallel", &["2".into(), "0".into()])
+            .expect_err("parallel 0 refused by the A/B check");
+        assert!(err.contains(&refused), "A/B check: {err}");
+    });
+    assert_eq!(fake::writes(&log), Vec::<String>::new(), "nothing written");
+    assert!(
+        !super::bench_dir().exists(),
+        "no bench folder, no pending marker"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sweep's up-front check runs the save's checks: a value the setter
+    /// takes but the save refuses (`parallel = 0`) stops `run` with the save's
+    /// own refusal before any leg. A unit test, not in the e2e phase, because
+    /// `run` is CLI-only code (`binding_lint`'s `CLI_ONLY_FNS`), which only the
+    /// tests of `mod tests` may call. It touches no `paths::`: everything is
+    /// read through the fake seam, and `reps: 0` is a plan `run` refuses right
+    /// after the value check, before the server, the marker or bench.db.
+    #[test]
+    fn run_refuses_a_value_the_save_refuses_before_any_leg() {
+        use crate::server_control::fake::{self, FakeClient};
+        use pai_core::client::InstanceState;
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
+            "presets.ini",
+            "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nparallel = 2\n",
+        );
+        let refused = pai_core::checks::Refusal {
+            key: "not-whole-number-in-range",
+            values: ["parallel", "0", "1", "2147483647"]
+                .iter()
+                .map(|v| v.to_string())
+                .collect(),
+        }
+        .text();
+        let opts = Opts {
+            preset: "Qwen3.8-27B".into(),
+            key: Some("parallel".into()),
+            values: vec!["2".into(), "0".into()],
+            plan: Plan {
+                reps: 0,
+                ..Plan::default()
+            },
+            apply: Apply::Original,
+            restore_to: None,
+            campaign: String::new(),
+            question: String::new(),
+        };
+        let err = fake::scoped(fake::backend(c), || run(&opts))
+            .expect_err("parallel 0 refused before any leg");
+        assert!(err.contains(&refused), "sweep: {err}");
+        assert_eq!(fake::writes(&log), Vec::<String>::new(), "nothing written");
+    }
 
     fn leg(value: &str, decode: f64, note: &str) -> Leg {
         Leg {

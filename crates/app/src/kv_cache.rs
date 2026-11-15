@@ -41,9 +41,7 @@ use crate::strings;
 /// Every type llama.cpp accepts for the KV cache, highest precision first (the
 /// order the Models tab lists them in, after its own "default" entry). Equal
 /// to `Options.cache_types` minus "default": asserted by the e2e test.
-pub const TYPES: &[&str] = &[
-    "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl",
-];
+pub const TYPES: &[&str] = pai_core::checks::KV_CACHE_TYPES;
 
 /// K-V pairs with a compiled FlashAttention vector kernel on CUDA and HIP in
 /// this framework's build: `GGML_CUDA_FA_QUANTS` in `xtask/cmake/common.toml`, plus

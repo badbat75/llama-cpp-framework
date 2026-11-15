@@ -66,7 +66,6 @@ use crate::strings;
 #[cfg(test)]
 use std::fs;
 use std::io;
-#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -1494,14 +1493,16 @@ pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
     checks::fit_target(&preset.fit_target).map_err(refused)?;
     checks::override_tensor(&preset.override_tensor).map_err(refused)?;
     validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    // Every integer key in its range, read from the text the save writes so
-    // no field is left out of `checks::PRESET_INT_KEYS`.
+    validate_moe_cache_floor(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    // Every integer key in its range and the other value rules, read from the
+    // text the save writes so no field is left out of the checks' key lists.
     if let Some(section) = ini::parse_sections(&render_section(preset)).first() {
         for (key, range) in &checks::PRESET_INT_KEYS {
             if let Some(v) = section.keys.get(*key) {
                 checks::whole_number(key, v, range).map_err(refused)?;
             }
         }
+        checks::preset_values(|key| section.keys.get(key).cloned()).map_err(refused)?;
     }
     Ok(())
 }
@@ -1551,6 +1552,34 @@ fn check_startup_for(preset: &Preset) -> io::Result<()> {
 /// at the save boundary every writer goes through. 0 is "no cache" and passes.
 pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
     checks::moe_cache_split(p.moe_cache_mib, &p.split_mode).map_err(|r| r.text())
+}
+
+/// A positive `moe-cache-mib` below the floor of one token's experts in every
+/// group of layers (`moe_cache::floor`, read from the model's header) is a
+/// model that never loads: the context throws. The load floor is a true lower
+/// bound, so no value that could have worked is refused. 0 is "no cache", and
+/// a model whose header cannot be read (nothing known) passes.
+pub fn validate_moe_cache_floor(p: &Preset) -> Result<(), String> {
+    let Some(v) = p.moe_cache_mib.filter(|&v| v > 0) else {
+        return Ok(());
+    };
+    let Ok((tensors, [expert_count, expert_used, n_layer])) =
+        crate::hf_fit::local_experts(Path::new(&p.model))
+    else {
+        return Ok(());
+    };
+    let model = crate::moe_cache::Model {
+        tensors: &tensors,
+        expert_count,
+        expert_used,
+        n_layer,
+    };
+    let floor =
+        crate::moe_cache::floor(&model, p).map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
+    if (v as u64) < floor {
+        return Err(strings::fill("moe-cache-below-floor", &[&v, &floor]));
+    }
+    Ok(())
 }
 
 /// `fit-target` as llama.cpp takes it: MiB as whole numbers, one for every
@@ -3444,5 +3473,205 @@ mod tests {
             ..p
         };
         assert!(validate_for_save(&negative).is_err());
+    }
+
+    // ── Second cut: floats, enums, JSON, min <= max, the MoE cache floor ──
+
+    /// A preset that passes every check, to break one field of.
+    fn valid() -> Preset {
+        Preset::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into())
+    }
+
+    /// A float field set to an infinity or NaN (the GUI's `ini::parse_float`
+    /// takes `inf` and `NaN` as typed) is refused at the save, with the key and
+    /// the value as the file would hold it; a finite value passes.
+    #[test]
+    fn the_save_refuses_non_finite_floats() {
+        type Set = fn(&mut Preset, Option<f64>);
+        let fields: [(&str, Set); 6] = [
+            ("temp", |p, v| p.temp = v),
+            ("top-p", |p, v| p.top_p = v),
+            ("min-p", |p, v| p.min_p = v),
+            ("repeat-penalty", |p, v| p.repeat_penalty = v),
+            ("presence-penalty", |p, v| p.presence_penalty = v),
+            ("spec-draft-p-min", |p, v| p.spec_draft_p_min = v),
+        ];
+        for (key, set) in fields {
+            for v in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+                let mut p = valid();
+                set(&mut p, Some(v));
+                let err = validate_for_save(&p).expect_err(key);
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{key} = {v}");
+                assert_eq!(
+                    err.to_string(),
+                    refusal_text("not-a-number", &[key, &v.to_string()]),
+                    "{key} = {v}"
+                );
+            }
+            let mut p = valid();
+            set(&mut p, Some(0.5));
+            assert!(validate_for_save(&p).is_ok(), "{key} = 0.5");
+        }
+    }
+
+    /// Every enum field holding a word llama.cpp does not take is refused at
+    /// the save, naming the key and the word; `full_preset`'s values (one of
+    /// each combo's entries) pass.
+    #[test]
+    fn the_save_refuses_enum_values_outside_their_set() {
+        type Set = fn(&mut Preset, &str);
+        let fields: [(&str, Set); 11] = [
+            ("split-mode", |p, v| p.split_mode = v.into()),
+            ("pooling", |p, v| p.pooling = v.into()),
+            ("cache-type-k", |p, v| p.cache_type_k = v.into()),
+            ("cache-type-v", |p, v| p.cache_type_v = v.into()),
+            ("spec-draft-type-k", |p, v| p.spec_draft_type_k = v.into()),
+            ("spec-draft-type-v", |p, v| p.spec_draft_type_v = v.into()),
+            ("reasoning", |p, v| p.reasoning = v.into()),
+            ("reasoning-format", |p, v| p.reasoning_format = v.into()),
+            ("lazy-mode", |p, v| p.lazy_mode = v.into()),
+            ("load-mode", |p, v| p.load_mode = v.into()),
+            ("spec-type", |p, v| p.spec_type = v.into()),
+        ];
+        for (key, set) in fields {
+            let mut p = valid();
+            set(&mut p, "banana");
+            let err = validate_for_save(&p).expect_err(key);
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{key}");
+            let text = err.to_string();
+            assert!(!text.starts_with("not-one-of"), "{key}: no text: {text}");
+            assert!(
+                text.contains(key) && text.contains("banana"),
+                "{key}: {text}"
+            );
+        }
+        assert!(validate_for_save(&full_preset()).is_ok());
+    }
+
+    /// `chat-template-kwargs` must be a JSON object at the save, as at the
+    /// manager; blank (the key omitted) passes.
+    #[test]
+    fn the_save_refuses_chat_template_kwargs_that_are_not_a_json_object() {
+        for bad in ["[1,2]", "true", "{bad", "enable_thinking=true"] {
+            let p = Preset {
+                chat_template_kwargs: bad.into(),
+                ..valid()
+            };
+            let err = validate_for_save(&p).expect_err(bad);
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{bad}");
+            assert_eq!(
+                err.to_string(),
+                refusal_text("not-json-object", &["chat-template-kwargs"]),
+                "{bad}"
+            );
+        }
+        for good in ["", r#"{"enable_thinking":false}"#] {
+            let p = Preset {
+                chat_template_kwargs: good.into(),
+                ..valid()
+            };
+            assert!(validate_for_save(&p).is_ok(), "{good:?}");
+        }
+    }
+
+    /// The paired bounds: both set with the minimum above the maximum is
+    /// refused at the save; equal, or only one set, passes.
+    #[test]
+    fn the_save_refuses_a_minimum_above_its_maximum() {
+        type Set = fn(&mut Preset, Option<i32>, Option<i32>);
+        let pairs: [(&str, &str, Set); 3] = [
+            ("image-min-tokens", "image-max-tokens", |p, lo, hi| {
+                p.image_min_tokens = lo;
+                p.image_max_tokens = hi;
+            }),
+            ("spec-draft-n-min", "spec-draft-n-max", |p, lo, hi| {
+                p.spec_draft_n_min = lo;
+                p.spec_draft_n_max = hi;
+            }),
+            (
+                "spec-ngram-mod-n-min",
+                "spec-ngram-mod-n-max",
+                |p, lo, hi| {
+                    p.spec_ngram_mod_n_min = lo;
+                    p.spec_ngram_mod_n_max = hi;
+                },
+            ),
+        ];
+        for (min, max, set) in pairs {
+            let mut p = valid();
+            set(&mut p, Some(5), Some(4));
+            let err = validate_for_save(&p).expect_err(min);
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{min}");
+            assert_eq!(
+                err.to_string(),
+                refusal_text("min-above-max", &[min, "5", max, "4"]),
+                "{min} > {max}"
+            );
+            for (lo, hi) in [(Some(4), Some(4)), (Some(5), None), (None, Some(4))] {
+                let mut p = valid();
+                set(&mut p, lo, hi);
+                assert!(validate_for_save(&p).is_ok(), "{min} {lo:?}, {max} {hi:?}");
+            }
+        }
+    }
+
+    /// A MoE model on disk as its GGUF header says (the pure-Rust reader's
+    /// fixture writer): 8 expert layers of 128 experts, 1 MiB per expert in
+    /// each of three tensors, behind one dense block; 8 experts used. One GPU
+    /// with every expert in RAM needs 9 slots of 3 MiB: a 27 MiB floor
+    /// (`moe_cache`'s own `one_gpu_floor_is_one_tokens_experts_plus_the_spare_slot`).
+    fn moe_gguf(dir: &Path) -> PathBuf {
+        use crate::hf_fit::tests::{gguf, write_sparse, W};
+        const MIB: u64 = 1 << 20;
+        let mut names = vec![("blk.0.ffn_up.weight".to_string(), 512 * MIB)];
+        for il in 1..=8 {
+            for k in ["ffn_gate_exps", "ffn_up_exps", "ffn_down_exps"] {
+                names.push((format!("blk.{il}.{k}.weight"), 128 * MIB));
+            }
+            names.push((format!("blk.{il}.ffn_up_shexp.weight"), 64 * MIB));
+        }
+        let tensors: Vec<(&str, u64)> = names.iter().map(|(n, b)| (n.as_str(), *b)).collect();
+        let (header, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(9)),
+                ("qwen3moe.expert_count", W::U32(128)),
+                ("qwen3moe.expert_used_count", W::U32(8)),
+            ],
+            &tensors,
+        );
+        let path = dir.join("Qwen3-MoE-lookalike-Q4_K_M.gguf");
+        write_sparse(&path, &header, size);
+        path
+    }
+
+    /// The Models tab refused a MoE cache below the floor of one token's
+    /// experts (llama.cpp then throws and the model never loads), but only
+    /// there: the save now reads the model's header and refuses it for every
+    /// writer, with the GUI's text. At the floor, 0 (no cache) and a model
+    /// whose header cannot be read (nothing known) pass.
+    #[test]
+    fn the_save_refuses_a_moe_cache_below_the_floor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model = moe_gguf(dir.path());
+        let with = |mib: i32, model: &Path| Preset {
+            device: "ROCm0".into(),
+            n_cpu_moe: Some(99),
+            moe_cache_mib: Some(mib),
+            ..Preset::new_default("Qwen3-MoE".into(), model.display().to_string())
+        };
+        let err = validate_for_save(&with(26, &model)).expect_err("26 MiB < 27 MiB");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        let text = err.to_string();
+        assert!(!text.starts_with("moe-cache-below-floor"), "{text}");
+        assert_eq!(text, strings::fill("moe-cache-below-floor", &[&26, &27]));
+        for ok in [27, 4096, 0] {
+            assert!(validate_for_save(&with(ok, &model)).is_ok(), "{ok} MiB");
+        }
+        let missing = dir.path().join("missing.gguf");
+        assert!(
+            validate_for_save(&with(26, &missing)).is_ok(),
+            "unread model"
+        );
     }
 }
