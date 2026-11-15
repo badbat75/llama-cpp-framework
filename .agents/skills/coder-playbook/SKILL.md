@@ -409,5 +409,29 @@ Lessons only: the rules are in `AGENTS.md`.
   send the concrete type (`&Requester`) and the shim's doc says so; do not fold the seam away: a test that
   passes `None::<&Caller>` to a generic method fixes the type parameter, and the faces' signature
   (`serve_stream(&App, &Caller)`) is pinned by `tests/manager.rs` (a unix socket peer, not a bff).
+- A client bound to a principal (`PipeClient::acting_for(&self, p) -> Self`) shares ONE connection:
+  the stream is `Arc<Mutex<S>>`, and the bound clone carries `principal: Option<String>` beside it, so
+  the client stays `Send + Sync` (the bff/app box it as `Box<dyn ManagerClient>`). A `Self` returned
+  from `&self` cannot own the stream, hence the `Arc`.
+- To read a manager error by its raw NAME (so `version()` turns a `BadRequest` reply into `Ok(None)`
+  for an old manager), split the call into `call_value() -> Result<Value, Failure>` with
+  `enum Failure { Reply(name, message), Client(ClientError) }` and an `into_client_error()`. Every
+  other caller keeps the `ClientError::from_reply` mapping; `from_reply` must NOT change, because a
+  test pins `BadRequest -> ClientError::Other`.
+- Parsing the `As` request forms: the arm site needs the `?`, not a helper closure.
+  `let principal = || Some(Principal(v.get("principal")?.as_str()?.to_string()));` then
+  `Request::Start(arg("id")?, principal().map(Some)?)`. A `?` inside a `bound` closure returns None
+  from the CLOSURE, so the request is built with a None principal and the `As` call answers
+  NotAuthorized, not BadRequest. Gate agreement once, before the match:
+  `if v.get("principal").is_some() != method.ends_with("As") { return None }` (a principal on a plain
+  method, or none on an `As`, is BadRequest); then list BOTH spellings as separate arms ("Start" and
+  "StartAs"), a single arm keyed on an `as_form` flag does not fire.
+- A tester's `calls` assertion can contradict its own reply assertion in the same test: three
+  `manager::pipe` tests pin the `{"ok":"active"}` reply of a `Status` probe (so the fake records a
+  `Call::Status`, pinned by sibling green tests) AND assert `calls == vec![]`, forgetting their own
+  probe. No implementation satisfies both: report the exact diff (one extra `Call::Status`), do not
+  edit the test. Same for a test-module `type_complexity` on a `[(&str, fn(&dyn Trait) -> .., Value); N]`
+  array: it fails `clippy --all-targets -D warnings`, so run plain `cargo clippy -p <crate> -- -D
+  warnings` to show production is clean and send the test hits to the tester.
 - The `edit` tool here returns no output: re-read or grep after EVERY edit before the next one. One
   duplicated free function slipped in that way (rustc catches it, not the tool).

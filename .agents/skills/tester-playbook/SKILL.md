@@ -31,6 +31,9 @@ Lessons only: the rules are in `AGENTS.md`.
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
 - A fake holds whatever you write; the real system can answer differently. A green on a fake is no
   proof about the real thing.
+- A `cases: [(&str, fn(&dyn ManagerClient) -> Option<ClientError>, Value); N]` table trips
+  `clippy::type_complexity`: alias it (`type Case<'a> = (...)`), and rustfmt wants that alias written
+  multi-line.
 - Prefer `todo!("<fn>")` stubs to a compile error, which hides every other test in the binary, lints
   included. A `todo!` body does NOT excuse the parameters: `-D warnings` fails `unused_variables`, so
   underscore-prefix them and tell the coder to strip the prefixes. A stub reached only from tests fails
@@ -214,6 +217,9 @@ Lessons only: the rules are in `AGENTS.md`.
 
 - A seam called through `&self` gets a fake with `Mutex` logs (seams must be `Sync`), read through an
   accessor; pin "nothing happened" on a refusal by empty logs plus the error kind.
+- The manager's `FakeService` records every `ServiceControl` call, `status` (the probe) included: a
+  batch that ends with a successful `Status` pins `vec![Call::Status(..)]` in the calls log, never an
+  empty one; write the refusal tests' expectation as "nothing beside the Status probe".
 - A core method signature change when the transport faces (`dbus.rs`, `pipe.rs`) are off-limits: a local
   bound (`trait AsRequester { fn as_requester(&self) -> Requester }`, implemented for the old bare
   `Caller` and the new `Requester`) keeps every face call site compiling; the stub keeps the old body, so
@@ -282,6 +288,26 @@ Lessons only: the rules are in `AGENTS.md`.
   `Arc<Mutex<Vec<u8>>>` for writes, an optional failing `ErrorKind`; compare JSON as `serde_json::Value`.
   A real duplex: `UnixStream::pair()` with `set_read_timeout` (`manager/pipe.rs`,
   `crates/manager/src/tests/pipe_client.rs`). A frame cap needs a test in both directions on each side.
+  The fakes log in `Arc<Mutex<..>>`, so `Arc<Manager<..>>` is `Send + Sync`: one side of a socket-pair
+  round trip is `thread::spawn(move || serve_stream(&core, caller, server_end))`, and `drop(client)` is
+  what ends it (EOF reads `Ok(None)`), so no channel is needed to stop it.
+- The manager's principal refusals are all `ManagerError::NotAuthorized`, whichever check failed (not
+  the bff, ill-formed name, no member): pipe tests pin `error("NotAuthorized", ..)`, the client's
+  `NotAdministrator` is its own reading of that name.
+- In a plain `#[test]` of `manager/pipe.rs` (no data root) `Stop` is the only verb that may succeed:
+  `start`, `restart` and `set_boot_enabled` ask `existing_id`, a file on disk. A refusal by a pure check
+  carries any verb (id `../x` is InvalidId, name `server.ini` is BadFileName). A success that needs a
+  real file belongs in `src/tests/pipe_client.rs`.
+- Gate order is pinned by the fakes' logs, never by an echo shape invented for the reply:
+    `FakePasswords::asked_admin` shows the principal reached the core, and that the gate runs before the
+  action's own check (`SetBootEnabledAs` of `../x` asks the membership, then answers InvalidId); an
+  empty polkit `asked` shows the `Requester` carried the principal, since a call that fell back to the
+  caller's own would ask.
+- A bound client's own type is the coder's: pin the frame it sends through a helper taking
+  `fn(&dyn ManagerClient) -> Option<ClientError>`, so an owned or a borrowed bound client both compile;
+  keep the bound client in a block when the test uses the unbound one after it.
+- `unused_must_use` under `-D warnings` in a threaded test: `join().expect(..)` on a thread returning an
+  `io::Result` yields that result, and so does `recv_timeout(..).expect(..)`: bind each and assert it.
 - Windows decisions are OS-neutral pure functions in `manager/windows.rs` and `pai_core::client::pipe`;
   only Win32 glue is `cfg(windows)`. Numeric Win32 values come from the local windows-sys source
   (`~/.cargo/registry/src/*/windows-sys-*/src`), meanings from learn.microsoft.com, a crate's behaviour

@@ -131,6 +131,15 @@ pub struct ManagerFile {
     pub withheld: bool,
 }
 
+/// What the manager's `Version` answers: the framework version it runs, and
+/// the version of the protocol it speaks, which grows with each additive
+/// change to the manager's methods.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagerVersion {
+    pub version: String,
+    pub protocol: u32,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;

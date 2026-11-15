@@ -14,6 +14,21 @@
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! {"method":"Authenticate","user":"alice","password":"..."}
+//! {"method":"Version"}
+//! ```
+//!
+//! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
+//! `Stop`, `Restart`, `ReadFile`, `WriteFile` and `SetBootEnabled` go as the
+//! `As` form of the same request, with the user's name in a `principal` field
+//! (the manager answers a principal for the bff's account alone). The methods
+//! that need no right are unchanged.
+//!
+//! ```text
+//! {"method":"StartAs","principal":"alice","id":"default"}
+//! {"method":"ReadFileAs","principal":"alice","name":"presets.ini"}
+//! {"method":"SetBootEnabledAs","principal":"alice","id":"default","enabled":true}
+//! {"method":"WriteFileAs","principal":"alice","name":"presets.ini",
+//!                              "contents":"...","keep_api_key":false}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -30,61 +45,109 @@
 //!                                           Authenticate
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
 //!                                           SetBootEnabled
+//! {"ok":{"version":"1.2.3","protocol":1}}   Version (protocol: the methods
+//!                                           this manager speaks)
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
 //! ```
 
-use super::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use super::{ClientError, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The largest body a frame may carry, either way.
 pub const MAX_FRAME: u32 = 1 << 20;
+
+/// The name a manager of this protocol answers a frame it cannot read with
+/// (a method it does not know among them), and the stream ends after it.
+const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 
 /// The manager's client over one stream. A stream that breaks (closed,
 /// timed out, any I/O error) is [`ClientError::Unavailable`]; a reply that is
 /// not one (bad JSON, the wrong value, over [`MAX_FRAME`]) is
 /// [`ClientError::Other`].
 pub struct PipeClient<S: Read + Write> {
-    stream: Mutex<S>,
+    /// The connection, shared with every client [`PipeClient::acting_for`]
+    /// made from this one: one request, one reply, in order.
+    stream: Arc<Mutex<S>>,
+    /// The signed-in user this client vouches for, None when it acts as its
+    /// own caller.
+    principal: Option<String>,
 }
 
 impl<S: Read + Write> PipeClient<S> {
     pub fn new(stream: S) -> Self {
         Self {
-            stream: Mutex::new(stream),
+            stream: Arc::new(Mutex::new(stream)),
+            principal: None,
+        }
+    }
+}
+
+/// Why a call did not answer with a value.
+enum Failure {
+    /// The manager's error reply, with its (name, message) as they came: a
+    /// caller that knows a name answers it apart (`Version` and
+    /// `BadRequest`).
+    Reply(String, String),
+    /// The client's own failure: the stream, the reply's shape.
+    Client(ClientError),
+}
+
+impl Failure {
+    /// The error this is: the manager's (name, message) read as over D-Bus.
+    fn into_client_error(self) -> ClientError {
+        match self {
+            Failure::Reply(name, message) => ClientError::from_reply(&name, &message),
+            Failure::Client(error) => error,
         }
     }
 }
 
 impl<S: Read + Write> PipeClient<S> {
-    /// Send `request`, read its reply: the value of an `ok`, or the error.
-    fn call(&self, request: Value) -> Result<Value, ClientError> {
+    /// Send `request`, read its reply: the value of an `ok`, the manager's
+    /// error as it came, or the client's own failure.
+    fn call_value(&self, request: Value) -> Result<Value, Failure> {
         let body = request.to_string();
         if body.len() > MAX_FRAME as usize {
-            return Err(ClientError::Other(format!("{} > {MAX_FRAME}", body.len())));
+            return Err(Failure::Client(ClientError::Other(format!(
+                "{} > {MAX_FRAME}",
+                body.len()
+            ))));
         }
         let mut stream = self.stream.lock().unwrap_or_else(|e| e.into_inner());
-        write_frame(&mut *stream, body.as_bytes()).map_err(|_| ClientError::Unavailable)?;
+        write_frame(&mut *stream, body.as_bytes())
+            .map_err(|_| Failure::Client(ClientError::Unavailable))?;
         let body = match read_frame(&mut *stream) {
             Ok(Some(body)) => body,
-            Ok(None) | Err(FrameError::Io(_)) => return Err(ClientError::Unavailable),
+            Ok(None) | Err(FrameError::Io(_)) => {
+                return Err(Failure::Client(ClientError::Unavailable))
+            }
             Err(FrameError::TooLong(len)) => {
-                return Err(ClientError::Other(format!("{len} > {MAX_FRAME}")))
+                return Err(Failure::Client(ClientError::Other(format!(
+                    "{len} > {MAX_FRAME}"
+                ))))
             }
         };
-        let reply: Value =
-            serde_json::from_slice(&body).map_err(|e| ClientError::Other(e.to_string()))?;
-        let other = || ClientError::Other(reply.to_string());
+        let reply: Value = serde_json::from_slice(&body)
+            .map_err(|e| Failure::Client(ClientError::Other(e.to_string())))?;
+        let other = || Failure::Client(ClientError::Other(reply.to_string()));
         if let Some(error) = reply.get("error") {
             let name = error.get("name").and_then(Value::as_str);
             let message = error.get("message").and_then(Value::as_str);
             return match (name, message) {
-                (Some(name), Some(message)) => Err(ClientError::from_reply(name, message)),
+                (Some(name), Some(message)) => {
+                    Err(Failure::Reply(name.to_string(), message.to_string()))
+                }
                 _ => Err(other()),
             };
         }
         reply.get("ok").cloned().ok_or_else(other)
+    }
+
+    /// Send `request`, read its reply: the value of an `ok`, or the error.
+    fn call(&self, request: Value) -> Result<Value, ClientError> {
+        self.call_value(request).map_err(Failure::into_client_error)
     }
 
     /// A call whose reply carries no value.
@@ -92,6 +155,54 @@ impl<S: Read + Write> PipeClient<S> {
         match self.call(request)? {
             Value::Null => Ok(()),
             v => Err(ClientError::Other(v.to_string())),
+        }
+    }
+
+    /// The request of a guarded method: its `As` form with the principal this
+    /// client vouches for, the plain form for a client acting as its own
+    /// caller. `args` are the method's own fields.
+    fn guarded(&self, method: &str, args: &[(&str, Value)]) -> Value {
+        let mut request = match &self.principal {
+            Some(principal) => {
+                json!({"method": format!("{method}As"), "principal": principal})
+            }
+            None => json!({"method": method}),
+        };
+        let fields = request.as_object_mut().expect("a JSON object");
+        for (key, value) in args {
+            fields.insert((*key).to_string(), value.clone());
+        }
+        request
+    }
+
+    /// A client of the same connection whose guarded calls act for
+    /// `principal`, the signed-in user this caller vouches for.
+    pub fn acting_for(&self, principal: &str) -> Self {
+        Self {
+            stream: self.stream.clone(),
+            principal: Some(principal.to_string()),
+        }
+    }
+
+    /// The manager's version, None for a manager that has no `Version`
+    /// method.
+    pub fn version(&self) -> Result<Option<ManagerVersion>, ClientError> {
+        match self.call_value(json!({"method": "Version"})) {
+            Ok(v) => {
+                let version = v.get("version").and_then(Value::as_str);
+                let protocol = v.get("protocol").and_then(Value::as_u64);
+                match (version, protocol) {
+                    (Some(version), Some(protocol)) => Ok(Some(ManagerVersion {
+                        version: version.to_string(),
+                        protocol: u32::try_from(protocol)
+                            .map_err(|_| ClientError::Other(v.to_string()))?,
+                    })),
+                    _ => Err(ClientError::Other(v.to_string())),
+                }
+            }
+            // A manager without the method answers it like any unknown method.
+            Err(Failure::Reply(name, _)) if name == BAD_REQUEST => Ok(None),
+            Err(failure) => Err(failure.into_client_error()),
         }
     }
 }
@@ -108,16 +219,16 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         }
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {
-        self.call_unit(json!({"method": "Start", "id": id}))
+        self.call_unit(self.guarded("Start", &[("id", json!(id))]))
     }
     fn stop(&self, id: &str) -> Result<(), ClientError> {
-        self.call_unit(json!({"method": "Stop", "id": id}))
+        self.call_unit(self.guarded("Stop", &[("id", json!(id))]))
     }
     fn restart(&self, id: &str) -> Result<(), ClientError> {
-        self.call_unit(json!({"method": "Restart", "id": id}))
+        self.call_unit(self.guarded("Restart", &[("id", json!(id))]))
     }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
-        let v = self.call(json!({"method": "ReadFile", "name": name}))?;
+        let v = self.call(self.guarded("ReadFile", &[("name", json!(name))]))?;
         if v.is_null() {
             return Ok(None);
         }
@@ -137,12 +248,14 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         contents: &str,
         keep_api_key: bool,
     ) -> Result<(), ClientError> {
-        self.call_unit(json!({
-            "method": "WriteFile",
-            "name": name,
-            "contents": contents,
-            "keep_api_key": keep_api_key,
-        }))
+        self.call_unit(self.guarded(
+            "WriteFile",
+            &[
+                ("name", json!(name)),
+                ("contents", json!(contents)),
+                ("keep_api_key", json!(keep_api_key)),
+            ],
+        ))
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         match self.call(json!({"method": "BootEnabled", "id": id}))? {
@@ -151,7 +264,10 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         }
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
-        self.call_unit(json!({"method": "SetBootEnabled", "id": id, "enabled": enabled}))
+        self.call_unit(self.guarded(
+            "SetBootEnabled",
+            &[("id", json!(id)), ("enabled", json!(enabled))],
+        ))
     }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
@@ -379,7 +495,7 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 10] = [
+    const EVERY_METHOD: [(&str, Call); 11] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -396,6 +512,7 @@ mod tests {
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
         }),
+        ("version", |c| c.version().err()),
     ];
 
     // ── Failures first ──────────────────────────────────────────────────
@@ -1026,5 +1143,255 @@ mod tests {
             assert!(!format!("{e:?}").contains("s3cret-Pw"), "{e:?}");
             assert!(!e.text().contains("s3cret-Pw"), "{e:?}");
         }
+    }
+
+    // ── Acting for a signed-in user: the `As` forms ─────────────────────
+
+    /// The one frame a client bound to `principal` sends for `act`, on a
+    /// stream answering `reply`. `act` takes `&dyn ManagerClient`, so the
+    /// bound client's own type stays the implementation's.
+    fn frame_sent_for(
+        principal: &str,
+        reply: Value,
+        act: fn(&dyn ManagerClient) -> Option<ClientError>,
+    ) -> Value {
+        let (client, sent) = client_on(input(&[reply]));
+        let bound = client.acting_for(principal);
+        act(&bound);
+        let frames = sent_frames(&sent);
+        assert_eq!(frames.len(), 1, "one request per call");
+        frames[0].clone()
+    }
+
+    /// One row of the frame tables below: the method's name (to name a
+    /// failure), the call to make on the bound client, the frame it must
+    /// send. Named: the bare tuple trips clippy::type_complexity.
+    type Case<'a> = (
+        &'a str,
+        fn(&dyn ManagerClient) -> Option<ClientError>,
+        Value,
+    );
+
+    /// A client acting for `alice` sends the `As` form of every guarded
+    /// method: the principal is one named field of the request, beside the
+    /// method's own arguments, and the method's name says it carries one.
+    #[test]
+    fn an_acting_client_sends_the_as_forms() {
+        let refused = error_reply("InvalidId", "InvalidId");
+        let cases: [Case; 6] = [
+            (
+                "start",
+                |c| c.start("default").err(),
+                json!({"method": "StartAs", "principal": "alice", "id": "default"}),
+            ),
+            (
+                "stop",
+                |c| c.stop("lan-2").err(),
+                json!({"method": "StopAs", "principal": "alice", "id": "lan-2"}),
+            ),
+            (
+                "restart",
+                |c| c.restart("lan-2").err(),
+                json!({"method": "RestartAs", "principal": "alice", "id": "lan-2"}),
+            ),
+            (
+                "read_file",
+                |c| c.read_file("server@lan-2.ini").err(),
+                json!({"method": "ReadFileAs", "principal": "alice", "name": "server@lan-2.ini"}),
+            ),
+            (
+                "write_file",
+                |c| {
+                    c.write_file("presets.ini", "[m]\nmodel = /m/x.gguf\n", false)
+                        .err()
+                },
+                json!({"method": "WriteFileAs", "principal": "alice", "name": "presets.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
+            ),
+            (
+                "set_boot_enabled",
+                |c| c.set_boot_enabled("lan-2", true).err(),
+                json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "lan-2", "enabled": true}),
+            ),
+        ];
+        for (method, act, request) in cases {
+            assert_eq!(
+                frame_sent_for("alice", refused.clone(), act),
+                request,
+                "{method}"
+            );
+        }
+    }
+
+    /// The methods that need no right are unchanged by acting for a
+    /// principal: no principal in the request, the same frame as the
+    /// unbound client's.
+    #[test]
+    fn an_acting_client_sends_the_unguarded_methods_unchanged() {
+        let cases: [Case; 4] = [
+            (
+                "list_instances",
+                |c| c.list_instances().err(),
+                json!({"method": "ListInstances"}),
+            ),
+            (
+                "status",
+                |c| c.status("lan-2").err(),
+                json!({"method": "Status", "id": "lan-2"}),
+            ),
+            (
+                "boot_enabled",
+                |c| c.boot_enabled("lan-2").err(),
+                json!({"method": "BootEnabled", "id": "lan-2"}),
+            ),
+            (
+                "authenticate",
+                |c| c.authenticate("alice", "s3cret-Pw").err(),
+                json!({"method": "Authenticate", "user": "alice", "password": "s3cret-Pw"}),
+            ),
+        ];
+        for (method, act, request) in cases {
+            assert_eq!(
+                frame_sent_for("alice", error_reply("InvalidId", "InvalidId"), act),
+                request,
+                "{method}"
+            );
+        }
+    }
+
+    /// The principal travels exactly as given: nothing trimmed, folded,
+    /// shortened or dropped, the empty name and the longest one included (the
+    /// manager is the one that refuses a name).
+    #[test]
+    fn an_acting_client_sends_the_principal_as_given() {
+        let long = "a".repeat(256);
+        for principal in ["alice", " Alice ", "root", "pässwörd é", "", "a\nb", &long] {
+            assert_eq!(
+                frame_sent_for(principal, error_reply("InvalidId", "InvalidId"), |c| c
+                    .start("default")
+                    .err()),
+                json!({"method": "StartAs", "principal": principal, "id": "default"}),
+                "{principal:?}"
+            );
+        }
+    }
+
+    /// A bound client is a `ManagerClient` a service can hand to its handler
+    /// threads, and it shares the connection of the client it was made from:
+    /// every call of either, in order, has its own reply.
+    #[test]
+    fn a_bound_client_shares_the_connection() {
+        fn shared<C: ManagerClient + Send + Sync>(c: C) -> C {
+            c
+        }
+        let (client, sent) = client_on(input(&[
+            json!({"ok": null}),
+            json!({"ok": null}),
+            json!({"ok": "inactive"}),
+        ]));
+        assert_eq!(client.stop("default"), Ok(()), "the client's own call");
+        let bound = shared(client.acting_for("alice"));
+        assert_eq!(bound.stop("default"), Ok(()), "the bound client's call");
+        assert_eq!(
+            bound.status("default"),
+            Ok(InstanceState::Inactive),
+            "an unguarded method of the bound client"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![
+                json!({"method": "Stop", "id": "default"}),
+                json!({"method": "StopAs", "principal": "alice", "id": "default"}),
+                json!({"method": "Status", "id": "default"}),
+            ]
+        );
+    }
+
+    // ── Version ─────────────────────────────────────────────────────────
+
+    /// The reply of a manager that has no method it is asked for: after it
+    /// the server closes the connection.
+    const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
+
+    /// `version` sends `{"method":"Version"}` and reads
+    /// `{"ok":{"version","protocol"}}`. A protocol this client does not know
+    /// (a newer manager) and a reply field it does not know are read through,
+    /// not refused: the protocol grows with each additive change.
+    #[test]
+    fn version_sends_its_request_and_reads_its_reply() {
+        for (version, protocol) in [("2.99.1", 1), ("3.0.0", 2), ("", 0)] {
+            let (client, sent) = client_on(input(&[json!({
+                "ok": {"version": version, "protocol": protocol, "extra": "a newer manager"},
+            })]));
+            assert_eq!(
+                client.version(),
+                Ok(Some(ManagerVersion {
+                    version: version.to_string(),
+                    protocol,
+                })),
+                "{version} {protocol}"
+            );
+            assert_eq!(
+                sent_frames(&sent),
+                vec![json!({"method": "Version"})],
+                "{version}"
+            );
+        }
+    }
+
+    /// A manager with no `Version` method answers `BadRequest`: that is no
+    /// version (None), not a failure.
+    #[test]
+    fn version_is_none_against_a_manager_without_the_method() {
+        let (client, sent) = client_on(input(&[json!({
+            "error": {"name": BAD_REQUEST, "message": "not a request"},
+        })]));
+        assert_eq!(client.version(), Ok(None));
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "Version"})],
+            "one request"
+        );
+    }
+
+    /// Only `BadRequest` is "no such method": every other failure is the
+    /// failure it is, and a reply of another shape is Other.
+    #[test]
+    fn a_version_reply_of_another_shape_is_not_none() {
+        for reply in [
+            json!({"ok": null}),
+            json!({"ok": "2.99.1"}),
+            json!({"ok": [1]}),
+            json!({"ok": {"version": "2.99.1"}}),
+            json!({"ok": {"protocol": 1}}),
+            json!({"ok": {"version": 1, "protocol": 1}}),
+            json!({"ok": {"version": "2.99.1", "protocol": "1"}}),
+            json!({"ok": {"version": "2.99.1", "protocol": -1}}),
+            json!({"ok": {"version": "2.99.1", "protocol": 4294967296u64}}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            assert!(
+                matches!(client.version(), Err(ClientError::Other(_))),
+                "{reply}"
+            );
+        }
+        for (reply, expected) in [
+            (
+                error_reply("NotAuthorized", "NotAuthorized"),
+                ClientError::NotAuthorized,
+            ),
+            (
+                error_reply("Service", "boom"),
+                ClientError::Service("boom".into()),
+            ),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            assert_eq!(client.version(), Err(expected), "{reply}");
+        }
+        let (client, _) = client_on(Vec::new());
+        assert_eq!(
+            client.version(),
+            Err(ClientError::Unavailable),
+            "no manager"
+        );
     }
 }
