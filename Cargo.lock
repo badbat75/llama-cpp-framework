@@ -3594,6 +3594,7 @@ name = "pai-manager"
 version = "2.99.1"
 dependencies = [
  "blocking",
+ "nix",
  "pai-core",
  "serde",
  "serde_json",

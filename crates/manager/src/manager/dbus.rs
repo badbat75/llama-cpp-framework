@@ -183,6 +183,19 @@ where
         )
     }
 
+    /// The bff's sign-in: (ok, can_configure); only the bff may ask.
+    async fn authenticate(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        user: String,
+        password: String,
+    ) -> Result<(bool, bool), Error> {
+        let caller = sender_of(&header)?;
+        Ok(self
+            .core(move |m| m.authenticate(&caller, &user, &password))
+            .await?)
+    }
+
     async fn write_file(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
@@ -362,6 +375,28 @@ impl Authority for PolkitAuthority {
     fn is_authorized(&self, caller: &Caller, action: Action) -> bool {
         self.check(caller, action, check_flags(true))
     }
+
+    /// The caller's uid from the bus (`GetConnectionUnixUser`) against the
+    /// uid of the user `private-ai-bff`, both looked up at each call.
+    fn is_bff(&self, caller: &Caller) -> bool {
+        let caller_uid = zbus::blocking::fdo::DBusProxy::new(&self.conn)
+            .ok()
+            .and_then(|bus| {
+                let name = zbus::names::BusName::try_from(caller.0.as_str()).ok()?;
+                bus.get_connection_unix_user(name).ok()
+            });
+        is_bff_uid(caller_uid, super::accounts::uid_of(BFF_USER))
+    }
+}
+
+/// The bff's system user (its sysusers.d entry).
+const BFF_USER: &str = "private-ai-bff";
+
+/// Whether a caller whose uid is `caller_uid` (the bus's
+/// `GetConnectionUnixUser`) is the bff, whose account `private-ai-bff` has
+/// `bff_uid`; either unknown (a failed lookup, no such user) is false.
+pub fn is_bff_uid(caller_uid: Option<u32>, bff_uid: Option<u32>) -> bool {
+    caller_uid.is_some() && caller_uid == bff_uid
 }
 
 /// The system-bus service: [`ManagerInterface`] over systemd and polkit
@@ -1358,5 +1393,160 @@ mod tests {
         assert_eq!(state_name(UnitState::Failed), "failed");
         assert_eq!(state_name(UnitState::Activating), "activating");
         assert_eq!(state_name(UnitState::Deactivating), "deactivating");
+    }
+
+    // ── Authenticate over D-Bus ─────────────────────────────────────────
+
+    type AuthCore = Manager<
+        super::super::service::fakes::FakeService,
+        super::super::service::fakes::FakeAuthority,
+        super::super::service::fakes::FakeResolver,
+    >;
+
+    /// The bff's bus name in these tests.
+    const BFF: &str = ":1.9";
+
+    /// A core taking [`BFF`] for the bff's account, over the fake accounts
+    /// (alice an administrator, bob not), and its checker's log.
+    fn auth_core(
+        passwords: super::super::service::fakes::FakePasswords,
+    ) -> (Arc<AuthCore>, crate::manager::service::fakes::Checked) {
+        use super::super::service::fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+        let checked = passwords.checked.clone();
+        let core = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).bff(&Caller(BFF.into())),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords);
+        (Arc::new(core), checked)
+    }
+
+    /// `core` served peer to peer on a socket pair (never a bus), a client
+    /// stamping `sender` as the bus would; the server connection to keep.
+    fn auth_connect(core: &Arc<AuthCore>, sender: Option<&str>) -> (Connection, Connection) {
+        use std::os::unix::net::UnixStream;
+        use zbus::blocking::connection::Builder;
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    }
+
+    /// `Authenticate(ss)`: the reply body, or the error (name, message).
+    fn authenticate(
+        client: &Connection,
+        user: &str,
+        password: &str,
+    ) -> Result<zbus::Message, (String, String)> {
+        client
+            .call_method(
+                None::<&str>,
+                OBJECT_PATH,
+                Some(INTERFACE),
+                "Authenticate",
+                &(user, password),
+            )
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("Authenticate: not a method error reply: {other:?}"),
+            })
+    }
+
+    /// From the bff: `Authenticate(ss) -> (bb)`, (ok, can_configure).
+    #[test]
+    fn the_bff_authenticates_over_dbus() {
+        let (core, checked) = auth_core(super::super::service::fakes::FakePasswords::new());
+        let (_server, client) = auth_connect(&core, Some(BFF));
+        for (user, password, expected) in [
+            ("alice", "s3cret-Pw", (true, true)),
+            ("bob", "hunter2!", (true, false)),
+            ("alice", "wrong", (false, false)),
+            ("mallory", "s3cret-Pw", (false, false)),
+            ("", "s3cret-Pw", (false, false)),
+            ("alice", "", (false, false)),
+        ] {
+            let reply =
+                authenticate(&client, user, password).unwrap_or_else(|e| panic!("{user:?}: {e:?}"));
+            assert_eq!(
+                reply.body().signature().to_string(),
+                "(bb)",
+                "{user:?}: the reply is two booleans"
+            );
+            let got: (bool, bool) = reply.body().deserialize().expect("(bb)");
+            assert_eq!(got, expected, "{user:?} / {password:?}");
+        }
+        assert_eq!(
+            checked.lock().unwrap().len(),
+            4,
+            "the empty user and password are never checked"
+        );
+    }
+
+    /// Any other sender, or none, is NotAuthorized and no password is checked.
+    #[test]
+    fn only_the_bff_may_authenticate_over_dbus() {
+        for sender in [Some(":1.42"), None] {
+            let (core, checked) = auth_core(super::super::service::fakes::FakePasswords::new());
+            let (_server, client) = auth_connect(&core, sender);
+            let err = authenticate(&client, "alice", "s3cret-Pw").expect_err("refused");
+            assert_eq!(err.0, format!("{PREFIX}NotAuthorized"), "{sender:?}");
+            assert!(!err.1.contains("s3cret-Pw"), "{err:?}");
+            assert_eq!(*checked.lock().unwrap(), vec![], "{sender:?}");
+        }
+    }
+
+    /// A failing checker replies Service with its message, never the
+    /// password.
+    #[test]
+    fn a_failing_checker_replies_service_without_the_password() {
+        let failure = "pam_start: Critical error - immediate abort";
+        let (core, _) = auth_core(super::super::service::fakes::FakePasswords::failing(
+            failure,
+        ));
+        let (_server, client) = auth_connect(&core, Some(BFF));
+        let err = authenticate(&client, "alice", "s3cret-Pw").expect_err("a failure");
+        assert_eq!(err, (format!("{PREFIX}Service"), failure.to_string()));
+    }
+
+    /// The bff is recognised by its uid alone: the caller's uid must equal
+    /// the `private-ai-bff` user's, and either unknown is no (no such user
+    /// installed is nobody, root included).
+    #[test]
+    fn the_bff_is_the_caller_with_the_bff_users_uid() {
+        assert!(is_bff_uid(Some(990), Some(990)));
+        assert!(!is_bff_uid(Some(1000), Some(990)));
+        assert!(!is_bff_uid(Some(0), Some(990)), "root is not the bff");
+        assert!(!is_bff_uid(None, Some(990)));
+        assert!(!is_bff_uid(Some(0), None));
+        assert!(!is_bff_uid(Some(990), None));
+        assert!(!is_bff_uid(None, None));
     }
 }

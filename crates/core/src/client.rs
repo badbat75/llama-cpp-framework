@@ -149,6 +149,10 @@ pub trait ManagerClient {
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError>;
     /// Make the instance start when the system starts, or not.
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError>;
+    /// Whether `password` is `user`'s OS password, and whether that user may
+    /// configure: (ok, can_configure). The manager answers only the bff's
+    /// account; anyone else is [`ClientError::NotAuthorized`].
+    fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError>;
 }
 
 #[cfg(test)]

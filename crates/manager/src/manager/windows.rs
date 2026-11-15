@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 pub mod entry;
 #[cfg(windows)]
+pub mod logon;
+#[cfg(windows)]
 mod pipe_server;
 #[cfg(windows)]
 pub mod scm;
@@ -28,6 +30,10 @@ pub const MANAGER_SERVICE: &str = "private-ai-manager";
 /// interactive nor an administrator's, so it may only ask the read-only calls.
 pub const PIPE_SDDL: &str = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12008b;;;IU)\
     (A;;0x12008b;;;S-1-5-80-4088784262-1422927641-1363593751-33154763-2531830098)";
+
+/// The service SID of `NT SERVICE\private-ai-bff`, the one [`PIPE_SDDL`]'s
+/// last ACE names: the only caller `Authenticate` answers.
+const BFF_SID: &str = "S-1-5-80-4088784262-1422927641-1363593751-33154763-2531830098";
 
 /// `CreateNamedPipeW`'s pipe mode: a byte stream, blocking, remote clients
 /// rejected.
@@ -143,6 +149,15 @@ impl Authority for TokenAuthority {
             c.borrow()
                 .as_ref()
                 .is_some_and(|facts| facts.sid == caller.0 && allowed(facts, action))
+        })
+    }
+
+    /// The connection's own caller, whose SID is the bff's service SID.
+    fn is_bff(&self, caller: &Caller) -> bool {
+        CONNECTION.with(|c| {
+            c.borrow()
+                .as_ref()
+                .is_some_and(|facts| facts.sid == caller.0 && facts.sid == BFF_SID)
         })
     }
 }
@@ -608,6 +623,55 @@ mod tests {
             });
             assert!(!authorized, "{action:?} through the authority");
         }
+    }
+
+    /// The bff's token as the pipe sees it: its service SID, SERVICE and
+    /// ALL SERVICES, no INTERACTIVE, no Administrators.
+    fn bff_facts() -> TokenFacts {
+        let mut groups = common();
+        groups.push(group("S-1-5-6", 0x7));
+        groups.push(group("S-1-5-80-0", 0x7));
+        TokenFacts::from_groups(&service_sid(BFF_SERVICE), &groups)
+    }
+
+    /// The connection of `NT SERVICE\private-ai-bff` is the bff, by its
+    /// service SID, the only caller `Authenticate` answers.
+    #[test]
+    fn the_bff_s_connection_is_the_bff() {
+        let is_bff = TokenAuthority::with_caller(bff_facts(), |c| TokenAuthority.is_bff(c));
+        assert!(is_bff);
+    }
+
+    /// Any other connection is not: a user, an administrator, SYSTEM, another
+    /// service's account; nor a caller other than the connection's (the
+    /// bff's SID named by another connection), nor any caller outside a
+    /// connection or on another thread.
+    #[test]
+    fn no_other_connection_is_the_bff() {
+        let bff = Caller(service_sid(BFF_SERVICE));
+        for f in [
+            facts(true, false),
+            facts(true, true),
+            TokenFacts::from_groups("S-1-5-18", &common()),
+            TokenFacts::from_groups(&service_sid("private-ai-manager"), &common()),
+            TokenFacts::from_groups(&service_sid("llama.cpp_default"), &common()),
+        ] {
+            let sid = f.sid.clone();
+            let (own, forged) = TokenAuthority::with_caller(f, |c| {
+                (TokenAuthority.is_bff(c), TokenAuthority.is_bff(&bff))
+            });
+            assert!(!own, "{sid} taken for the bff");
+            assert!(!forged, "{sid}'s connection naming the bff's SID");
+        }
+        assert!(!TokenAuthority.is_bff(&bff), "outside any connection");
+        TokenAuthority::with_caller(bff_facts(), |caller| {
+            let caller = caller.clone();
+            let seen = std::thread::spawn(move || TokenAuthority.is_bff(&caller))
+                .join()
+                .expect("thread");
+            assert!(!seen, "another thread has no connection");
+            assert!(!TokenAuthority.is_bff(&Caller(String::new())));
+        });
     }
 
     #[test]

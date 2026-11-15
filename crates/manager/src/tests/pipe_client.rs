@@ -475,3 +475,61 @@ pub(crate) fn manager_pipe_client_e2e() {
         hang_up(server, client);
     }
 }
+
+/// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its
+/// service SID.
+const BFF_SID: &str = "S-1-5-80-4088784262-1422927641-1363593751-33154763-2531830098";
+
+/// A core taking the bff's SID for the bff's account over the fake
+/// accounts (alice an administrator, bob not), and its checker's log.
+fn auth_core(
+    passwords: crate::manager::service::fakes::FakePasswords,
+) -> (Arc<Core>, crate::manager::service::fakes::Checked) {
+    let checked = passwords.checked.clone();
+    let core = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true).bff(&Caller(BFF_SID.into())),
+        FakeResolver::lan(),
+    )
+    .with_group(crate::manager::service::fakes::FakeGroup::new())
+    .with_passwords(passwords);
+    (Arc::new(core), checked)
+}
+
+/// pai-core's `authenticate` against the stream server, as the bff, then as
+/// another user and over a failing checker; no file is read, so a plain test.
+#[test]
+fn the_pipe_client_authenticates_as_the_bff() {
+    use crate::manager::service::fakes::FakePasswords;
+    let (c, checked) = auth_core(FakePasswords::new());
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    assert_eq!(client.authenticate("alice", "s3cret-Pw"), Ok((true, true)));
+    assert_eq!(client.authenticate("bob", "hunter2!"), Ok((true, false)));
+    assert_eq!(client.authenticate("alice", "wrong"), Ok((false, false)));
+    assert_eq!(
+        client.authenticate("mallory", "s3cret-Pw"),
+        Ok((false, false))
+    );
+    assert_eq!(client.authenticate("alice", ""), Ok((false, false)));
+    assert_eq!(checked.lock().unwrap().len(), 4);
+    hang_up(server, client);
+
+    let (c, checked) = auth_core(FakePasswords::new());
+    let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+    let (server, client) = connect(&c, &alice);
+    assert_eq!(
+        client.authenticate("alice", "s3cret-Pw"),
+        Err(ClientError::NotAuthorized)
+    );
+    assert_eq!(*checked.lock().unwrap(), vec![]);
+    hang_up(server, client);
+
+    let failure = "LogonUserW: ERROR_NO_LOGON_SERVERS (1311)";
+    let (c, _) = auth_core(FakePasswords::failing(failure));
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    assert_eq!(
+        client.authenticate("alice", "s3cret-Pw"),
+        Err(ClientError::Service(failure.into()))
+    );
+    hang_up(server, client);
+}

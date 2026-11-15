@@ -13,6 +13,7 @@
 //! {"method":"WriteFile","name":"presets.ini","contents":"...","keep_api_key":false}
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
+//! {"method":"Authenticate","user":"alice","password":"..."}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -25,6 +26,8 @@
 //!                                           OpencodeApiKey value blanked)
 //! {"ok":null}                               ReadFile, no such file
 //! {"ok":true} or {"ok":false}              BootEnabled
+//! {"ok":{"authenticated":true,"can_configure":false}}
+//!                                           Authenticate
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
 //!                                           SetBootEnabled
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
@@ -149,6 +152,15 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
         self.call_unit(json!({"method": "SetBootEnabled", "id": id, "enabled": enabled}))
+    }
+    fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
+        let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
+        let ok = v.get("authenticated").and_then(Value::as_bool);
+        let can_configure = v.get("can_configure").and_then(Value::as_bool);
+        match (ok, can_configure) {
+            (Some(ok), Some(can_configure)) => Ok((ok, can_configure)),
+            _ => Err(ClientError::Other(v.to_string())),
+        }
     }
 }
 
@@ -367,7 +379,7 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 9] = [
+    const EVERY_METHOD: [(&str, Call); 10] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -380,6 +392,9 @@ mod tests {
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
             c.set_boot_enabled("default", true).err()
+        }),
+        ("authenticate", |c| {
+            c.authenticate("alice", "s3cret-Pw").err()
         }),
     ];
 
@@ -929,6 +944,87 @@ mod tests {
                 open_error(code),
                 OpenError::Fail(ClientError::Other(format!("Win32 error {code}")))
             );
+        }
+    }
+
+    // ── Authenticate ────────────────────────────────────────────────────
+
+    /// `authenticate` sends `{"method":"Authenticate","user","password"}`,
+    /// both exactly as given (nothing trimmed), one frame.
+    #[test]
+    fn authenticate_sends_its_request() {
+        for (user, password) in [
+            ("alice", "s3cret-Pw"),
+            (" Alice ", " pässwörd \u{1f511}\"\\\n"),
+            ("", ""),
+        ] {
+            let (client, sent) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+            assert_eq!(
+                client.authenticate(user, password),
+                Err(ClientError::NotAuthorized)
+            );
+            assert_eq!(
+                sent_frames(&sent),
+                vec![json!({"method": "Authenticate", "user": user, "password": password})],
+                "{user:?}"
+            );
+        }
+    }
+
+    /// The reply `{"ok":{"authenticated":bool,"can_configure":bool}}` is
+    /// (ok, can_configure).
+    #[test]
+    fn authenticate_reads_its_reply() {
+        for (ok, admin) in [(true, true), (true, false), (false, false), (false, true)] {
+            let (client, _) = client_on(input(&[
+                json!({"ok": {"authenticated": ok, "can_configure": admin}}),
+            ]));
+            assert_eq!(client.authenticate("alice", "s3cret-Pw"), Ok((ok, admin)));
+        }
+    }
+
+    /// A reply of another shape is Other, never a sign-in: a bare boolean,
+    /// a member missing or of the wrong type, null, the D-Bus pair as an
+    /// array, the camelCase spelling.
+    #[test]
+    fn an_authenticate_reply_of_another_shape_is_other() {
+        for reply in [
+            json!({"ok": true}),
+            json!({"ok": null}),
+            json!({"ok": [true, true]}),
+            json!({"ok": {"authenticated": true}}),
+            json!({"ok": {"can_configure": true}}),
+            json!({"ok": {"authenticated": "yes", "can_configure": false}}),
+            json!({"ok": {"authenticated": true, "can_configure": 1}}),
+            json!({"ok": {"ok": true, "canConfigure": true}}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            assert!(
+                matches!(
+                    client.authenticate("alice", "s3cret-Pw"),
+                    Err(ClientError::Other(_))
+                ),
+                "{reply}"
+            );
+        }
+    }
+
+    /// No error the client gives back holds the password: an error reply
+    /// that does not echo it, a broken stream, a reply of the wrong shape.
+    #[test]
+    fn an_authenticate_error_never_holds_the_password() {
+        for bytes in [
+            input(&[error_reply("Service", "pam_start failed")]),
+            input(&[json!({"ok": "nope"})]),
+            Vec::new(),
+            frame(b"not json"),
+        ] {
+            let (client, _) = client_on(bytes);
+            let e = client
+                .authenticate("alice", "s3cret-Pw")
+                .expect_err("an error");
+            assert!(!format!("{e:?}").contains("s3cret-Pw"), "{e:?}");
+            assert!(!e.text().contains("s3cret-Pw"), "{e:?}");
         }
     }
 }

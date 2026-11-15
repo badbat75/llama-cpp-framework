@@ -115,4 +115,7 @@ impl ManagerClient for DbusClient {
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
         self.call("SetBootEnabled", &(id, enabled)).map(|_| ())
     }
+    fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
+        body(self.call("Authenticate", &(user, password))?)
+    }
 }

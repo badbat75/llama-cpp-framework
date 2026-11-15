@@ -767,14 +767,22 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    until the real backend; left for the backend part: an abandoned request's check keeps running
    unrecorded (bound concurrent checks), LogonUser spellings of one account (`.\user`, `HOST\user`,
    `user@host`) need one lock key, a per-address cap across user names (spraying), `Secure` and
-   `__Host-` on the cookie once the bff leaves loopback). Next, 6b part 2, decided by the coordinator
-   on 2026-11-15: the MANAGER checks the password, not the bff, because the bff runs as the
-   unprivileged `private-ai-bff` and pam_unix's helper `unix_chkpwd` checks only the calling user's
-   own password (unix_chkpwd(8)); a manager method `Authenticate(user, password) -> (ok,
-   can_configure)` answers only the bff's account (Linux: its uid; Windows: `NT SERVICE\private-ai-bff`),
-   through PAM service `private-ai` on Linux and `LogonUser` on Windows, `can_configure` from
-   `sudo`/`wheel` or Administrators membership; the bff's `SystemAuthenticator` calls it. Then 6b part
-   3: the bff calls the manager for the signed-in user. **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
+   `__Host-` on the cookie once the bff leaves loopback). 6b part 2a done: the manager's `Authenticate(user, password) -> (authenticated, can_configure)`
+   (D-Bus `(ss)->(bb)`, pipe `Authenticate`), answering only the bff's account (Linux: the uid of
+   `private-ai-bff`; Windows: its service SID), through PAM service `private-ai` (Linux, root manager:
+   `unix_chkpwd(8)` checks only the caller's own password, so the bff cannot) and `LogonUserW` network
+   logon (Windows), `can_configure` = member of `pai`. Next, 6b part 2b: the packages ship
+   `/etc/pam.d/private-ai` (`.deb`: `common-auth` + `common-account`; `.rpm`: `system-auth`; without
+   it PAM falls back to `other`, which may deny) and create the group `pai` (sysusers.d; the MSI);
+   polkit `configure` becomes `auth_self_keep` for `pai` members (2026-11-15 decision below). 6b part
+   2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
+   `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From
+   the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
+   may not find it (fails closed: refused as not a member; fix with the spellings item above); read
+   back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`
+   is an error, arguably a refusal; the password is not zeroed after use (Microsoft asks for it on
+   `LogonUserW`); a network logon needs "Access this computer from the network", which hardened
+   baselines deny to local accounts. **Sign-in.** `GET`/`POST`/`DELETE /api/session` (`{user, canConfigure}`, an HttpOnly cookie,
    `session-bad-credentials` 401, `session-too-many-attempts` 429), against the OS accounts (PAM on
    Linux, `LogonUser` on Windows); the manager learns who acts. Decided with the user on 2026-11-15: the
    bff vouches for the user it authenticated: a polkit rule lets `private-ai-bff` call the manager, the

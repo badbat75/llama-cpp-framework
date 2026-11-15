@@ -5,6 +5,8 @@
 //! D-Bus interface on the system bus (`manager::dbus`, Linux only).
 
 #[cfg(target_os = "linux")]
+mod accounts;
+#[cfg(target_os = "linux")]
 pub mod dbus;
 pub mod pipe;
 pub mod service;

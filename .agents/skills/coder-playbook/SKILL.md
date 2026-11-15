@@ -331,3 +331,7 @@ Lessons only: the rules are in `AGENTS.md`.
   `hf_fit` reader instead (`hf_fit::local_experts`, used by the save's MoE cache floor).
 - Web UI: `strings.test.ts` counts only literal `t('key')` calls, so write `cond ? t('a') : t('b')`,
   never `t(cond ? 'a' : 'b')`.
+- The manager links libpam by its run-time name (`#[link(name = "libpam.so.0", kind = "dylib",
+  modifiers = "+verbatim")]`, `manager/accounts.rs`): no `libpam.so` symlink or `pam_appl.h` (libpam0g-dev)
+  is installed here, and none is needed to build. Users and groups by name go through `nix` (`user`
+  feature, already in the lock); `nix::libc` gives PAM's conversation its `calloc`/`strdup`.

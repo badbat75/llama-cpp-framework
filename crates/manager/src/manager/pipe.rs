@@ -29,6 +29,7 @@ enum Request {
     WriteFile(String, String, bool),
     BootEnabled(String),
     SetBootEnabled(String, bool),
+    Authenticate(String, String),
 }
 
 impl Request {
@@ -50,6 +51,7 @@ impl Request {
             ),
             "BootEnabled" => Request::BootEnabled(arg("id")?),
             "SetBootEnabled" => Request::SetBootEnabled(arg("id")?, v.get("enabled")?.as_bool()?),
+            "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
     }
@@ -94,6 +96,10 @@ where
         Request::SetBootEnabled(id, enabled) => changer(caller)
             .and_then(|c| manager.set_boot_enabled(c, &id, enabled))
             .map(|()| Value::Null),
+        // The empty caller too goes to the core, which answers only the bff.
+        Request::Authenticate(user, password) => manager
+            .authenticate(caller, &user, &password)
+            .map(|(ok, admin)| json!({"authenticated": ok, "can_configure": admin})),
     };
     match result {
         Ok(value) => json!({"ok": value}),
@@ -731,5 +737,134 @@ mod tests {
                 "{e:?}"
             );
         }
+    }
+
+    // ── Authenticate ────────────────────────────────────────────────────
+
+    /// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its
+    /// service SID (the one `windows::PIPE_SDDL` grants).
+    fn bff() -> Caller {
+        Caller("S-1-5-80-4088784262-1422927641-1363593751-33154763-2531830098".into())
+    }
+
+    /// A core taking [`bff`] for the bff's account over the fake accounts
+    /// (alice an administrator, bob not), and its checker's log.
+    fn auth_core(
+        passwords: super::super::service::fakes::FakePasswords,
+    ) -> (Core, crate::manager::service::fakes::Checked) {
+        let checked = passwords.checked.clone();
+        let core = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).bff(&bff()),
+            FakeResolver::lan(),
+        )
+        .with_group(crate::manager::service::fakes::FakeGroup::new())
+        .with_passwords(passwords);
+        (core, checked)
+    }
+
+    fn auth(user: &str, password: &str) -> Value {
+        json!({"method": "Authenticate", "user": user, "password": password})
+    }
+
+    /// `{"method":"Authenticate","user","password"}` from the bff:
+    /// `{"ok":{"authenticated":bool,"can_configure":bool}}`, in the
+    /// snake_case of `keep_api_key`.
+    #[test]
+    fn the_bff_authenticates_over_the_pipe() {
+        let (c, checked) = auth_core(super::super::service::fakes::FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                auth("alice", "s3cret-Pw"),
+                auth("bob", "hunter2!"),
+                auth("alice", "wrong"),
+                auth("mallory", "s3cret-Pw"),
+                auth("", "s3cret-Pw"),
+                auth("alice", ""),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        let answer =
+            |ok: bool, admin: bool| json!({"ok": {"authenticated": ok, "can_configure": admin}});
+        assert_eq!(
+            replies,
+            vec![
+                answer(true, true),
+                answer(true, false),
+                answer(false, false),
+                answer(false, false),
+                answer(false, false),
+                answer(false, false),
+            ]
+        );
+        assert_eq!(checked.lock().unwrap().len(), 4, "empty ones never checked");
+        assert_eq!(calls(&c), vec![]);
+        assert_eq!(asked(&c), vec![], "polkit-like rights are not asked");
+    }
+
+    /// Any other caller, a Windows user or an administrator, or none:
+    /// NotAuthorized, no password checked, the connection kept.
+    #[test]
+    fn only_the_bff_may_authenticate_over_the_pipe() {
+        for caller in [alice(), Caller("S-1-5-18".into()), Caller(String::new())] {
+            let (c, checked) = auth_core(super::super::service::fakes::FakePasswords::new());
+            let (result, replies) = serve(
+                &c,
+                caller.clone(),
+                requests(&[
+                    auth("alice", "s3cret-Pw"),
+                    json!({"method": "Status", "id": "default"}),
+                ]),
+            );
+            assert!(result.is_ok(), "{caller:?}: {result:?}");
+            assert_eq!(
+                replies,
+                vec![
+                    error("NotAuthorized", "NotAuthorized"),
+                    json!({"ok": "active"})
+                ],
+                "{caller:?}"
+            );
+            assert_eq!(*checked.lock().unwrap(), vec![], "{caller:?}");
+        }
+    }
+
+    /// A request missing its user or password, or with one not a string,
+    /// is BadRequest: the connection ends and no password is checked. The
+    /// reply never echoes the password.
+    #[test]
+    fn a_malformed_authenticate_is_a_bad_request() {
+        for request in [
+            json!({"method": "Authenticate", "user": "alice"}),
+            json!({"method": "Authenticate", "password": "s3cret-Pw"}),
+            json!({"method": "Authenticate"}),
+            json!({"method": "Authenticate", "user": "alice", "password": 7}),
+            json!({"method": "Authenticate", "user": null, "password": "s3cret-Pw"}),
+            json!({"method": "Authenticate", "user": ["alice"], "password": "s3cret-Pw"}),
+        ] {
+            let (c, checked) = auth_core(super::super::service::fakes::FakePasswords::new());
+            let (result, replies) = serve(&c, bff(), requests(std::slice::from_ref(&request)));
+            assert!(result.is_err(), "{request}");
+            assert_eq!(replies.len(), 1, "{request}");
+            assert_bad_request(&replies[0], &request.to_string());
+            assert!(!replies[0].to_string().contains("s3cret-Pw"), "{request}");
+            assert_eq!(*checked.lock().unwrap(), vec![], "{request}");
+        }
+    }
+
+    /// A failing checker: the Service error with its message, never the
+    /// password, and the connection kept.
+    #[test]
+    fn a_failing_checker_answers_service_over_the_pipe() {
+        let failure = "LogonUserW: ERROR_NO_LOGON_SERVERS (1311)";
+        let (c, _) = auth_core(super::super::service::fakes::FakePasswords::failing(
+            failure,
+        ));
+        let (result, replies) = serve(&c, bff(), requests(&[auth("alice", "s3cret-Pw")]));
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("Service", failure)]);
+        assert!(!replies[0].to_string().contains("s3cret-Pw"));
     }
 }

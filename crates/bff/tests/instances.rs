@@ -109,6 +109,9 @@ impl ManagerClient for FakeManager {
         self.record(format!("set_boot_enabled {id} {enabled}"));
         Ok(())
     }
+    fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
+        Err(ClientError::Unavailable)
+    }
 }
 
 /// A connect that hands out `make()` each time and counts the calls.

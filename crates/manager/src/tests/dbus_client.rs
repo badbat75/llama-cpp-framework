@@ -102,7 +102,10 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 9] = [
+    let each: [(&str, ClientCall); 10] = [
+        ("authenticate", |c| {
+            c.authenticate("alice", "s3cret-Pw").err()
+        }),
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -482,4 +485,65 @@ pub(crate) fn manager_dbus_client_e2e() {
         let (_server, client) = connect(&c, None);
         assert_eq!(client.status("default"), Ok(expected), "{state:?}");
     }
+}
+
+/// A core taking `bff` for the bff's account over the fake accounts (alice
+/// an administrator, bob not), and its checker's log.
+fn auth_core(
+    bff: &str,
+    passwords: crate::manager::service::fakes::FakePasswords,
+) -> (Arc<Core>, crate::manager::service::fakes::Checked) {
+    let checked = passwords.checked.clone();
+    let core = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true).bff(&Caller(bff.into())),
+        FakeResolver::lan(),
+    )
+    .with_group(crate::manager::service::fakes::FakeGroup::new())
+    .with_passwords(passwords);
+    (Arc::new(core), checked)
+}
+
+/// pai-core's `authenticate` against the interface, as the bff: (ok,
+/// can_configure) for each outcome; no file is read, so a plain test.
+#[test]
+fn the_dbus_client_authenticates_as_the_bff() {
+    use crate::manager::service::fakes::FakePasswords;
+    let (c, checked) = auth_core(":1.9", FakePasswords::new());
+    let (_server, client) = connect(&c, Some(":1.9"));
+    let client = Arc::new(client);
+    for (user, password, expected) in [
+        ("alice", "s3cret-Pw", (true, true)),
+        ("bob", "hunter2!", (true, false)),
+        ("alice", "wrong", (false, false)),
+        ("mallory", "s3cret-Pw", (false, false)),
+        ("", "", (false, false)),
+    ] {
+        let client = client.clone();
+        let got = bounded("authenticate", move || client.authenticate(user, password));
+        assert_eq!(got, Ok(expected), "{user:?} / {password:?}");
+    }
+    assert_eq!(checked.lock().unwrap().len(), 4);
+}
+
+/// Another sender is NotAuthorized, nothing checked; a failing checker is
+/// Service with its message, never the password.
+#[test]
+fn the_dbus_client_reads_authenticate_refusals() {
+    use crate::manager::service::fakes::FakePasswords;
+    let (c, checked) = auth_core(":1.9", FakePasswords::new());
+    let (_server, client) = connect(&c, Some(":1.42"));
+    let got = bounded("authenticate", move || {
+        client.authenticate("alice", "s3cret-Pw")
+    });
+    assert_eq!(got, Err(ClientError::NotAuthorized));
+    assert_eq!(*checked.lock().unwrap(), vec![]);
+
+    let failure = "pam_authenticate: Authentication service cannot retrieve authentication info";
+    let (c, _) = auth_core(":1.9", FakePasswords::failing(failure));
+    let (_server, client) = connect(&c, Some(":1.9"));
+    let got = bounded("authenticate", move || {
+        client.authenticate("alice", "s3cret-Pw")
+    });
+    assert_eq!(got, Err(ClientError::Service(failure.into())));
 }

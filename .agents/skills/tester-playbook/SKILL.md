@@ -223,7 +223,14 @@ Lessons only: the rules are in `AGENTS.md`.
   methods become `GetUnitFileState`...). Signatures: local `man 5 org.freedesktop.systemd1`; `is-enabled`
   states: `man 1 systemctl`.
 - A new `ManagerClient` method needs an impl in `DbusClient`, `PipeClient`, pai-app's `FakeClient` and
-  `DiskClient`, and pai-bff's `tests/instances.rs` `FakeManager` (implement the test ones yourself).
+  `DiskClient`, and pai-bff's `tests/instances.rs` and `tests/server.rs` `FakeManager` (implement the
+  test ones yourself). A new `Authority` method: `FakeAuthority`, `GateAuthority` (test), `PolkitAuthority`,
+  `TokenAuthority` (`todo!` stubs).
+- The Linux `Caller` is a bus name, not a uid: "who is this account" needs the bus
+  (`GetConnectionUnixUser`), so it sits on `Authority` (`is_bff`), the uid rule a pure fn; on Windows the
+  thread-local `TokenFacts` of `TokenAuthority`. A pipe test for a missing argument of a NEW method is
+  green before it exists (an unknown method is BadRequest too): recheck it after the coder.
+- A fake's shared log in a returned tuple trips `type_complexity`: alias it in `fakes` (`Checked`).
 - A server or client over `impl Read + Write`: a `Cursor` of peer frames for reads, an
   `Arc<Mutex<Vec<u8>>>` for writes, an optional failing `ErrorKind`; compare JSON as `serde_json::Value`.
   A real duplex: `UnixStream::pair()` with `set_read_timeout` (`manager/pipe.rs`,

@@ -42,6 +42,72 @@ pub trait Authority {
     /// The same question asked without any interaction: one that would need
     /// a prompt (a polkit challenge) answers false.
     fn is_authorized_quietly(&self, caller: &Caller, action: Action) -> bool;
+    /// Whether `caller` is the bff's own account (`private-ai-bff`), the
+    /// only one [`Manager::authenticate`] answers. A failed lookup is false.
+    fn is_bff(&self, caller: &Caller) -> bool;
+}
+
+/// A failure of the password check itself (PAM or `LogonUser` unusable), its
+/// own message, which never holds the password. A wrong password or an
+/// unknown user is no failure: `Ok(false)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordError(pub String);
+
+/// The OS accounts: checks a user's password (PAM service `private-ai` on
+/// Linux, `LogonUser` on Windows) and whether the user is an administrator.
+/// A seam, so tests check no real password.
+pub trait PasswordChecker {
+    /// Whether `password` is `user`'s; an unknown user is `Ok(false)`.
+    fn check(&self, user: &str, password: &str) -> Result<bool, PasswordError>;
+    /// Whether `user` may configure: a member of the group `pai`, which the
+    /// packages create (Linux: [`in_pai_group`] over the user's group names;
+    /// Windows: the local group `pai`, looked up by name since its SID
+    /// differs per machine).
+    fn is_admin(&self, user: &str) -> bool;
+}
+
+/// Whether a user in `groups` (their group names) may configure on Linux:
+/// a member of `pai`.
+pub fn in_pai_group(groups: &[String]) -> bool {
+    groups.iter().any(|g| g == ADMIN_GROUP)
+}
+
+/// The group whose members may configure, on Linux and Windows.
+const ADMIN_GROUP: &str = "pai";
+
+/// The system's accounts: PAM and the user's groups on Linux
+/// (`accounts.rs`), `LogonUserW` and the local groups on Windows
+/// (`windows/logon.rs`). Checked in a real run, never by tests.
+pub struct SystemPasswords;
+
+impl PasswordChecker for SystemPasswords {
+    #[cfg(target_os = "linux")]
+    fn check(&self, user: &str, password: &str) -> Result<bool, PasswordError> {
+        super::accounts::check_password(user, password)
+    }
+    #[cfg(target_os = "linux")]
+    fn is_admin(&self, user: &str) -> bool {
+        in_pai_group(&super::accounts::group_names(user))
+    }
+
+    #[cfg(windows)]
+    fn check(&self, user: &str, password: &str) -> Result<bool, PasswordError> {
+        super::windows::logon::check_password(user, password)
+    }
+    #[cfg(windows)]
+    fn is_admin(&self, user: &str) -> bool {
+        super::windows::logon::in_local_group(user, ADMIN_GROUP)
+    }
+
+    /// No sign-in where the manager does not run (macOS).
+    #[cfg(not(any(target_os = "linux", windows)))]
+    fn check(&self, _user: &str, _password: &str) -> Result<bool, PasswordError> {
+        Err(PasswordError("no password check on this OS".to_string()))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    fn is_admin(&self, _user: &str) -> bool {
+        false
+    }
 }
 
 /// The state of an instance's unit, systemd's `ActiveState` names.
@@ -318,6 +384,8 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     resolver: R,
     /// Sets the group of a written instance file.
     group: Box<dyn FileGroup + Send + Sync>,
+    /// Checks the passwords [`Manager::authenticate`] is given.
+    passwords: Box<dyn PasswordChecker + Send + Sync>,
     /// Held by a write from its address check to its rename, so a check
     /// sees every write before it (and `write_served_file`'s one temp
     /// name per file is never shared). Taken only after the authorization:
@@ -332,6 +400,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             authority,
             resolver,
             group: Box::new(SystemGroup),
+            passwords: Box::new(SystemPasswords),
             writing: std::sync::Mutex::new(()),
         }
     }
@@ -340,6 +409,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// writes, in place of [`SystemGroup`].
     pub fn with_group(mut self, group: impl FileGroup + Send + Sync + 'static) -> Self {
         self.group = Box::new(group);
+        self
+    }
+
+    /// This manager with `passwords` checking the passwords, in place of
+    /// [`SystemPasswords`].
+    pub fn with_passwords(
+        mut self,
+        passwords: impl PasswordChecker + Send + Sync + 'static,
+    ) -> Self {
+        self.passwords = Box::new(passwords);
         self
     }
 
@@ -483,6 +562,30 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         self.service
             .set_boot_enabled(id, enabled)
             .map_err(ManagerError::Service)
+    }
+
+    /// Whether `password` is `user`'s, and whether that user may configure:
+    /// (ok, can_configure). Answers only the bff's account
+    /// ([`Authority::is_bff`]), anyone else NotAuthorized with nothing
+    /// checked. An empty user or password, a wrong password and an unknown
+    /// user are all (false, false).
+    pub fn authenticate(
+        &self,
+        caller: &Caller,
+        user: &str,
+        password: &str,
+    ) -> Result<(bool, bool), ManagerError> {
+        if !self.authority.is_bff(caller) {
+            return Err(ManagerError::NotAuthorized);
+        }
+        if user.is_empty() || password.is_empty() {
+            return Ok((false, false));
+        }
+        match self.passwords.check(user, password) {
+            Ok(true) => Ok((true, self.passwords.is_admin(user))),
+            Ok(false) => Ok((false, false)),
+            Err(PasswordError(message)) => Err(ManagerError::Service(ServiceError(message))),
+        }
     }
 
     fn authorize(&self, caller: &Caller, action: Action) -> Result<(), ManagerError> {
@@ -785,11 +888,15 @@ pub(crate) mod fakes {
     /// An authority that answers `allow` and records every question; the
     /// questions asked without interaction answer `quiet` (`allow` unless
     /// set with [`FakeAuthority::quietly`]) and are recorded apart.
+    /// Only the caller set with [`FakeAuthority::bff`] is the bff's account
+    /// (nobody, unless set); those questions are recorded in `asked_bff`.
     pub struct FakeAuthority {
         pub allow: bool,
         pub quiet: bool,
+        pub bff: Option<Caller>,
         pub asked: Mutex<Vec<(Caller, Action)>>,
         pub asked_quietly: Mutex<Vec<(Caller, Action)>>,
+        pub asked_bff: Mutex<Vec<Caller>>,
     }
 
     impl FakeAuthority {
@@ -797,9 +904,17 @@ pub(crate) mod fakes {
             Self {
                 allow,
                 quiet: allow,
+                bff: None,
                 asked: Mutex::new(Vec::new()),
                 asked_quietly: Mutex::new(Vec::new()),
+                asked_bff: Mutex::new(Vec::new()),
             }
+        }
+
+        /// This authority taking `caller` for the bff's account.
+        pub fn bff(mut self, caller: &Caller) -> Self {
+            self.bff = Some(caller.clone());
+            self
         }
 
         /// This authority answering `quiet` to the questions asked without
@@ -821,6 +936,65 @@ pub(crate) mod fakes {
                 .unwrap()
                 .push((caller.clone(), action));
             self.quiet
+        }
+        fn is_bff(&self, caller: &Caller) -> bool {
+            self.asked_bff.lock().unwrap().push(caller.clone());
+            self.bff.as_ref() == Some(caller)
+        }
+    }
+
+    /// The accounts of the authentication tests: each `(user, password,
+    /// admin)`; any other user is unknown. `fail` makes every check fail
+    /// with that message. Records each check (user and password, to pin that
+    /// they arrive unchanged) and each admin question.
+    /// The (user, password) pairs a [`FakePasswords`] was asked to check.
+    pub type Checked = std::sync::Arc<Mutex<Vec<(String, String)>>>;
+
+    pub struct FakePasswords {
+        pub accounts: Vec<(&'static str, &'static str, bool)>,
+        pub fail: Option<String>,
+        pub checked: Checked,
+        pub asked_admin: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakePasswords {
+        /// alice (an administrator) and bob (not one).
+        pub fn new() -> Self {
+            Self {
+                accounts: vec![("alice", "s3cret-Pw", true), ("bob", "hunter2!", false)],
+                fail: None,
+                checked: Default::default(),
+                asked_admin: Default::default(),
+            }
+        }
+
+        pub fn failing(message: &str) -> Self {
+            Self {
+                fail: Some(message.to_string()),
+                ..Self::new()
+            }
+        }
+    }
+
+    impl PasswordChecker for FakePasswords {
+        fn check(&self, user: &str, password: &str) -> Result<bool, PasswordError> {
+            self.checked
+                .lock()
+                .unwrap()
+                .push((user.to_string(), password.to_string()));
+            if let Some(message) = &self.fail {
+                return Err(PasswordError(message.clone()));
+            }
+            Ok(self
+                .accounts
+                .iter()
+                .any(|(u, p, _)| *u == user && *p == password))
+        }
+        fn is_admin(&self, user: &str) -> bool {
+            self.asked_admin.lock().unwrap().push(user.to_string());
+            self.accounts
+                .iter()
+                .any(|(u, _, admin)| *u == user && *admin)
         }
     }
 
@@ -963,6 +1137,10 @@ pub(crate) mod fakes {
         /// Never held: a quiet question prompts nobody. Not recorded.
         fn is_authorized_quietly(&self, caller: &Caller, _action: Action) -> bool {
             self.answers.iter().any(|(c, allow)| c == caller && *allow)
+        }
+        /// Nobody is the bff here.
+        fn is_bff(&self, _caller: &Caller) -> bool {
+            false
         }
     }
 
@@ -3621,5 +3799,253 @@ mod tests {
         ));
         assert!(!collide((None, None), (Some(8081), None)));
         assert!(!collide((None, None), (None, Some("192.168.1.5"))));
+    }
+
+    // ── Authenticate: the bff's sign-in, checked by the manager ────────
+    // No file is read, so these never reach `paths::`.
+
+    type AuthCore = Manager<super::fakes::FakeService, super::fakes::FakeAuthority, FakeResolver>;
+
+    /// The bff's account as the core sees it (a bus name here; on Windows the
+    /// service SID of `NT SERVICE\private-ai-bff`).
+    fn bff() -> Caller {
+        Caller(":1.9".into())
+    }
+
+    /// A manager whose authority takes [`bff`] for the bff's account, answering
+    /// `allow` to every polkit question, over `passwords`.
+    fn auth_core(allow: bool, passwords: super::fakes::FakePasswords) -> AuthCore {
+        Manager::new(
+            super::fakes::FakeService::new(),
+            super::fakes::FakeAuthority::new(allow).bff(&bff()),
+            FakeResolver::lan(),
+        )
+        .with_group(super::fakes::FakeGroup::new())
+        .with_passwords(passwords)
+    }
+
+    /// The password checker's logs: (checked, asked_admin).
+    type AuthLogs = (
+        std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    );
+
+    fn passwords() -> (super::fakes::FakePasswords, AuthLogs) {
+        let p = super::fakes::FakePasswords::new();
+        let logs = (p.checked.clone(), p.asked_admin.clone());
+        (p, logs)
+    }
+
+    fn checked(logs: &AuthLogs) -> Vec<(String, String)> {
+        logs.0.lock().unwrap().clone()
+    }
+
+    fn asked_admin(logs: &AuthLogs) -> Vec<String> {
+        logs.1.lock().unwrap().clone()
+    }
+
+    /// Only the bff's account may ask: any other caller, one polkit would
+    /// allow everything included, is NotAuthorized and no password is
+    /// checked; nor is the empty caller (a pipe connection with no token).
+    #[test]
+    fn authenticate_answers_only_the_bff() {
+        for caller in [
+            Caller(":1.42".into()),
+            Caller(String::new()),
+            Caller("S-1-5-18".into()),
+        ] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            assert_eq!(
+                m.authenticate(&caller, "alice", "s3cret-Pw"),
+                Err(ManagerError::NotAuthorized),
+                "{caller:?}"
+            );
+            assert_eq!(checked(&logs), vec![], "{caller:?}: a password checked");
+            assert_eq!(asked_admin(&logs), Vec::<String>::new(), "{caller:?}");
+            assert_eq!(
+                *m.authority().asked_bff.lock().unwrap(),
+                vec![caller.clone()],
+                "the authority is asked whether {caller:?} is the bff"
+            );
+        }
+    }
+
+    /// The bff's own polkit rights do not matter: it is answered for being
+    /// the bff, and nothing asks polkit about it.
+    #[test]
+    fn authenticate_asks_polkit_nothing() {
+        let (p, logs) = passwords();
+        let m = auth_core(false, p);
+        assert_eq!(
+            m.authenticate(&bff(), "alice", "s3cret-Pw"),
+            Ok((true, true))
+        );
+        assert_eq!(asked(&m), vec![]);
+        assert_eq!(*m.authority().asked_quietly.lock().unwrap(), vec![]);
+        assert_eq!(checked(&logs).len(), 1);
+    }
+
+    /// An empty user or password is no: (false, false), the checker never
+    /// asked (PAM would take an empty password for some accounts).
+    #[test]
+    fn an_empty_user_or_password_is_no_and_asks_no_checker() {
+        for (user, password) in [("", "s3cret-Pw"), ("alice", ""), ("", "")] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            assert_eq!(
+                m.authenticate(&bff(), user, password),
+                Ok((false, false)),
+                "{user:?}"
+            );
+            assert_eq!(checked(&logs), vec![], "{user:?}");
+            assert_eq!(asked_admin(&logs), Vec::<String>::new(), "{user:?}");
+        }
+    }
+
+    /// A wrong password and an unknown user get the same answer, and the
+    /// group membership of nobody is looked up.
+    #[test]
+    fn a_wrong_password_and_an_unknown_user_are_the_same_no() {
+        for (user, password) in [
+            ("alice", "wrong"),
+            ("alice", "S3CRET-PW"),
+            ("bob", "s3cret-Pw"),
+            ("mallory", "s3cret-Pw"),
+            ("mallory", "anything"),
+        ] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            assert_eq!(
+                m.authenticate(&bff(), user, password),
+                Ok((false, false)),
+                "{user:?} / {password:?}"
+            );
+            assert_eq!(
+                checked(&logs),
+                vec![(user.to_string(), password.to_string())]
+            );
+            assert_eq!(
+                asked_admin(&logs),
+                Vec::<String>::new(),
+                "{user:?}: membership looked up after a failed check"
+            );
+        }
+    }
+
+    /// The right password: ok, and whether the user may configure, asked
+    /// for that user only after the check.
+    #[test]
+    fn a_right_password_says_whether_the_user_may_configure() {
+        for (user, password, admin) in [("alice", "s3cret-Pw", true), ("bob", "hunter2!", false)] {
+            let (p, logs) = passwords();
+            let m = auth_core(true, p);
+            assert_eq!(
+                m.authenticate(&bff(), user, password),
+                Ok((true, admin)),
+                "{user}"
+            );
+            assert_eq!(
+                checked(&logs),
+                vec![(user.to_string(), password.to_string())]
+            );
+            assert_eq!(asked_admin(&logs), vec![user.to_string()]);
+        }
+    }
+
+    /// The user and password reach the checker exactly as sent: nothing
+    /// trimmed or folded (a password may start or end with a space).
+    #[test]
+    fn the_user_and_password_reach_the_checker_unchanged() {
+        let (p, logs) = passwords();
+        let m = auth_core(true, p);
+        let _ = m.authenticate(&bff(), " alice", " s3cret-Pw ");
+        let _ = m.authenticate(&bff(), "Alice", "pässwörd\u{1f511}");
+        assert_eq!(
+            checked(&logs),
+            vec![
+                (" alice".to_string(), " s3cret-Pw ".to_string()),
+                ("Alice".to_string(), "pässwörd\u{1f511}".to_string()),
+            ]
+        );
+    }
+
+    /// A checker that fails (PAM unusable) is a Service error with its own
+    /// message, not a no: the bff can tell "try again later" from "wrong
+    /// password". The password is in neither the error nor its reply.
+    #[test]
+    fn a_failing_checker_is_a_service_error_without_the_password() {
+        let failure =
+            "pam_authenticate: Authentication service cannot retrieve authentication info";
+        let p = super::fakes::FakePasswords::failing(failure);
+        let logs = p.asked_admin.clone();
+        let m = auth_core(true, p);
+        let result = m.authenticate(&bff(), "alice", "s3cret-Pw");
+        assert_eq!(
+            result,
+            Err(ManagerError::Service(ServiceError(failure.into())))
+        );
+        let (name, message) = error_reply(&result.clone().unwrap_err());
+        for text in [format!("{result:?}"), name, message] {
+            assert!(!text.contains("s3cret-Pw"), "the password in {text:?}");
+        }
+        assert_eq!(*logs.lock().unwrap(), Vec::<String>::new());
+    }
+
+    /// No answer carries the password, whatever the outcome.
+    #[test]
+    fn no_answer_carries_the_password() {
+        for (caller, user, password) in [
+            (bff(), "alice", "s3cret-Pw"),
+            (bff(), "alice", "wrong-Pw-xyz"),
+            (bff(), "mallory", "wrong-Pw-xyz"),
+            (Caller(":1.42".into()), "alice", "s3cret-Pw"),
+        ] {
+            let (p, _) = passwords();
+            let m = auth_core(true, p);
+            let result = m.authenticate(&caller, user, password);
+            let mut texts = vec![format!("{result:?}")];
+            if let Err(e) = &result {
+                let (name, message) = error_reply(e);
+                texts.extend([name, message]);
+            }
+            for text in texts {
+                assert!(!text.contains(password), "{password:?} in {text:?}");
+            }
+        }
+    }
+
+    /// Linux: only a member of `pai`, the group the packages create, may
+    /// configure; `sudo` and `wheel` give nothing here. Group names are
+    /// case-sensitive and matched whole.
+    #[test]
+    fn only_a_pai_member_may_configure() {
+        let groups = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        for yes in [
+            &["pai"][..],
+            &["alice", "adm", "pai", "plugdev"],
+            &["sudo", "wheel", "pai"],
+        ] {
+            assert!(in_pai_group(&groups(yes)), "{yes:?}");
+        }
+        for no in [
+            &[][..],
+            &["alice", "users", "adm", "plugdev"],
+            &["sudo"],
+            &["wheel"],
+            &["sudo", "wheel", "root"],
+            &["Pai"],
+            &["PAI"],
+            &["pai2"],
+            &["pai-users"],
+            &[" pai"],
+            &["pai "],
+            &["admin"],
+            &["Administrators"],
+            &["private-ai"],
+            &[""],
+        ] {
+            assert!(!in_pai_group(&groups(no)), "{no:?}");
+        }
     }
 }

@@ -910,6 +910,9 @@ pub mod fake {
             *self.boot.lock().unwrap() = enabled;
             Ok(())
         }
+        fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
+            Err(ClientError::Unavailable)
+        }
     }
 
     /// The manager a test binary's `backend()` has by default: no instance to
@@ -974,6 +977,9 @@ pub mod fake {
             Err(ClientError::Unavailable)
         }
         fn set_boot_enabled(&self, _id: &str, _enabled: bool) -> Result<(), ClientError> {
+            Err(ClientError::Unavailable)
+        }
+        fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
             Err(ClientError::Unavailable)
         }
     }
