@@ -605,3 +605,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - pai-app's fake manager backend (`server_control::fake`, withheld key, refusals) is `#[cfg(test)]` in
   pai-app: pai-config tests cannot install it, so a GUI path that depends on the manager's answer is
   tested at the pai-app level, with the manager's state passed down as a parameter.
+- Web UI: a control added to the instance header breaks whole-main queries in other test files; scope
+  them to their section. After an interrupted session, run the test file before adding tests: the
+  interrupted run's work may already be on disk.

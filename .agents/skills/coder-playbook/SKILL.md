@@ -318,3 +318,6 @@ Lessons only: the rules are in `AGENTS.md`.
   pai-app's `ManagerBackend` remembers the last server-file read's flag (`api_key_withheld`).
 - Web UI: a poll's deadline is a timer of its own armed when the action starts, not a check when the
   next poll fires; a store's "read after the in-flight one" needs a cancel hook.
+- Web UI: an async handler that needs "still mounted" or a prop's newest value after an `await` keeps
+  it in a ref written only by effects, with mounted set true in the effect's setup (StrictMode mounts
+  twice). Opacity on a focusable control dims its focus ring too.
