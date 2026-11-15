@@ -5,620 +5,337 @@ description: What the tester has learned about writing reliable tests. Use when 
 
 Lessons only: the rules are in `AGENTS.md`.
 
-- Never wait without a deadline. A test polling for a value hung forever on a stub in another thread: a
-  test must fail, not hang.
-- Check why a test is red, or why it is already green. A validation test once passed for the wrong reason,
-  because the field did not exist yet. Recheck such tests once the code exists.
-- Keep one fixture per test. An id taken from one temporary fixture will not match another, and the test
-  fails with the wrong error.
-- Use real names and values in fixtures, captured from the real system. They find what invented data hides.
-- A fake holds whatever you write, while the real system can answer differently. Do not treat a passing
-  test on a fake as proof about the real thing.
-- In the configurator (package `pai-config` in `crates/config/`; filter with
-  `cargo test -p pai-config <name>`), a test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is not
-  a `#[test]` of its own: write a `#[cfg(test)] pub(crate) fn <name>_e2e()` that calls
-  `crate::paths::redirect_for_tests(dir.path())` on its own tempdir (it sets the variable and asserts the
-  paths follow it before any IO, so a broken redirect fails instead of writing the real tree), and call it at the end of `editable_widgets_track_model_after_edit` in
-  `src/tests/ui_bindings.rs`; filter on that name to run it. A phase of a module in pai-app
-  (`crates/app`: presets, bench, server_control, migration, startup...) goes in pai-app's own runner,
-  `data_root_e2e` in `crates/app/src/tests/mod.rs`, the same rule in that crate. Put the phase fn ABOVE the module's
-  `mod tests`: after it, clippy fails `items_after_test_module`. Pure helpers stay plain unit tests. Nothing
-  unsets the variable safely, so the real-path branches (`/etc`, `%ProgramData%`) go untested.
-- Stubs with `todo!("<fn>")` give a red that names the missing function; prefer them to a compile error,
-  which hides every other test in the binary.
-- To pin a launch, build a `std::process::Command` and read it back with `get_program`, `get_args`,
-  `get_envs` and `get_current_dir`; take the exe as a parameter, because `paths::llama_server_exe()` finds
-  nothing from the test binary's directory. Compute the expected args with the existing `server_args()`
-  instead of hard-coding the list.
-- A single file can be formatted with `rustfmt --edition 2021 <file>`; `cargo fmt -p <crate> --check` then
-  shows whether anything else is left.
-- To pin a field a variant does not have yet without breaking the build, match with `Variant(p, ..)` (it
-  compiles for one field or more) and check the new field through `{:?}`; tell the coder the intended
-  shape. A compile error would hide every other test in the binary, the lints included.
-- Since `src/lib.rs` exists, the binary roots (`main.rs`, `bin/*.rs`) are separate crates no module can
-  call, while `lib.rs` is reachable from every module: a lint may exempt the former, never the latter.
-- To make a write fail without a fake filesystem, chmod the directory `0o555` (Unix), probe that a write
-  really fails (root ignores the mode) and put the mode back before asserting. Then check the old content
-  and that the directory listing is unchanged, which also proves no temp file was left.
-- A seam the code calls through `&self` (a service manager, polkit) gets a fake with `Mutex` logs (not
-  `RefCell`: the manager is shared across threads, so its seams must be `Sync`) read
-  back through an accessor on the struct under test; assert the recorded calls are empty to pin "nothing
-  happened" on a refusal, as well as the returned error kind.
-- Comments never cite PLAN.md step or slice numbers: steps are renumbered and removed when done. Name
-  the feature instead ("running llama-server as a service").
-- To test a zbus interface without a bus (zbus 5, `zbus::blocking`): `UnixStream::pair()`, the server end
-  `Builder::async_io_unix_stream(s0).server(Guid::generate())?.p2p().serve_at(..)?.build()` on its own
-  thread (both ends handshake at once; plain `unix_stream` is deprecated), the client end
-  `.p2p().method_timeout(..)` (the deadline: a panicking method otherwise hangs the call). A p2p call
-  carries no sender; to stamp one as the bus would, `client.inner().set_unique_name(":1.42")` after the
-  build (dev feature `bus-impl`). Error replies named under `org.freedesktop.DBus.Error` come back as
-  `zbus::Error::FDO`, any other name as `MethodError`.
-- `git grep` searches only tracked files: after a move that is not yet `git add`ed (a new `crates/`), it
-  finds nothing there. Use plain `grep -rn` on the new directory.
-- Most xtask path code (`version::framework`, `strings_share`, the font licence in `licenses::stage_in`)
-  has no test: after a path change, check the targets exist by hand and say so.
-- To list or run the tests of an older commit: `git worktree add --detach build/<name> <rev>`, copy the
-  gitignored `resources/llama.ico` (and `llama-brand-logo.svg`) into it, set
-  `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` (`LLAMA_FW_LLAMA_CPP_DIR` before commit
-  7bddcff; build.rs reads the clone's `llama-arch.cpp`)
-  and a separate `CARGO_TARGET_DIR`, since the repo's `.cargo/config.toml` would point the worktree at
-  the main target dir. Compare `-- --list` names with `LC_ALL=C sort`, else `comm` complains.
-- To check that a lint still bites after a refactor, plant a violation in a scratch copy (rsync the
-  working tree into that worktree), never in the real tree. In binding_lint only the keys rules
-  (`strings_t_keys_...`, `cli_only_code_...`) walk every crate's `src/`; `cli_print_paths_hold_no_language`
-  reads only the files named in `CLI_PRINT_PATHS`, so a literal `println!` elsewhere is not caught.
-- Several filters go in one run: `cargo test -p <crate> -- a b c` (libtest takes many). A loop of one
-  `cargo test` per filter took minutes each on pai-config; one run with every filter took one.
-- A names lint (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flags old names in
-  code lines; a test that must spell an old name (a negative assertion, the old-variable-is-ignored check)
-  splits it with `concat!("llama-cpp", "-config")` so the lint stays clean. It also refuses the repo's
-  own directory name in a sample path copied from the real machine: write `/home/dev/src/pai/...`.
-- The names lints also flag `join("llama.cpp")`: a test building an old tree spells the directory
-  `concat!("llama", ".cpp")`. Only `crates/core/src/migrate.rs` may name the old tree and login entry
-  (`MIGRATION_MODULE` / `MIGRATION_NAMES` in the pai-config names lint); a fixture under a temp
-  `core/src/migrate.rs` exercises the exemption, since `hits` matches the path by its tail.
-- A stub reached only from tests fails `cargo clippy -D warnings` with dead code until the coder wires
-  it in: say so in the report instead of adding `allow`s.
-- To force a copy fallback without a second filesystem, inject the rename (`&dyn Fn(&Path, &Path)`)
-  and fail it for one source path only, so the final temp-to-new rename still runs for real.
-- `#[cfg(windows)]` test code cannot be type-checked from Linux: `cargo check --target
-  x86_64-pc-windows-msvc` stops in libsqlite3-sys's build script (no MSVC compiler). Review it by
-  reading, and give a registry test a guard whose `Drop` restores every value it touches (no panic in
-  the `Drop`).
-- docs.fedoraproject.org blocks scripted fetches (Anubis): read the packaging guidelines through
-  `https://web.archive.org/web/2026/https://docs.fedoraproject.org/en-US/packaging-guidelines/` and say
-  it is an archive copy. Check an rpm version bound with `rpm --eval '%{lua:
-  print(rpm.vercmp("2.4.0+llama.cpp.v0.9.0", "2.4.1"))}'` (-1, 0, 1): `2.4.0+x` sorts above `2.4.0`.
-- A text-pin test on a file the coder will rename or rewrite (the `.wxs`): also check it goes green on a
-  candidate edit in a temporary copy, then delete the copy, so the red is not a broken helper.
-- `benchmarks/schema.sql` is not pinned by digest: pai-config `include_str!`s it and
-  `the_repo_database_matches_the_schema` compares only the columns with the committed bench.db. SQLite
-  keeps each statement's text from `CREATE` on in `sqlite_master`, so a comment line between statements
-  changes nothing recorded (check with `sqlite3 -readonly benchmarks/bench.db "select sql from
-  sqlite_master"`); a comment inside a `CREATE` would.
-- To pin "a slow seam holds up nobody else" (polkit waiting for a password), use `fakes::Gate` in
-  `crates/manager/src/manager/service.rs` (`GateAuthority`, `GateResolver`): the test waits with
-  `gate.arrived(n)`, runs the other calls through `on_thread(..)` + `recv_timeout`, opens the gate
-  before panicking on a timeout, and checks `try_recv()` is still empty to prove the held call never
-  finished early. A race is pinned deterministically by holding one call at a seam *inside* the
-  critical section (the address check's lookup of another instance's host) and accepting either
-  serialization as green.
-- zbus 5 (async-io backend, the one this workspace builds) runs every task of a connection, the
-  method dispatchers included, on one `zbus::Connection executor` thread
-  (`zbus-5.19.0/src/connection/builder.rs` `start_internal_executor`); `spawn` is on by default
-  (`object_server/mod.rs` `dispatch_message`), but a sync `fn` method runs inline in its task and
-  blocks that thread for every other call on the connection.
-- To skip one e2e phase for a red check, remove the `#[cfg(..)]` line with the call (a lone attribute
-  does not compile), on a backup of the file restored after.
-- `server_cfg::render` writes ModelsDir and StateDir RESOLVED, so an unset one goes through `paths::`
-  (home dir, data root): a unit test that renders a `ServerConfig` sets both explicitly.
-- Before handing over a large set of red tests, implement a throwaway candidate in place (copy the
-  stub, the strings files and any wired file to /tmp, write the candidate, run, `cp` them all back,
-  check `git status`): it shows the fixtures can go green, so the red is the missing code and not a
-  wrong expectation.
-- "No manager" over zbus 5 without a real bus: serve the interface at another path (the call gets
-  `org.freedesktop.DBus.Error.UnknownObject` as `zbus::Error::FDO`), or drop the server connection (the
-  next call fails at once with `zbus::Error::InputOutput`, no timeout); a call with destination
-  `Some(BUS_NAME)` is accepted on p2p. No system bus at all: `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<tempdir>/none`
-  (zbus reads it in `Address::system`), in the one test of the binary that touches it.
-- `recv_timeout` on `on_thread`'s receiver returns `Disconnected` at once when the thread panicked
-  (a `todo!` stub): report that apart from `Timeout`, or the red reads as a hang.
-- To pin the order of a call to llama-server against a call to a fake (the snapshot before the
-  manager's stop), share one log: `server_control::fake::http_stub(&log)` answers `/models`, `/health`
-  and a slot restore on a free loopback port and records `"<METHOD> <path>"` beside the
-  `FakeClient`'s `"<method> <id>"`; point server.ini's `Port` at it in an e2e phase.
+## General
+
+- Never wait without a deadline (`recv_timeout`, `try_wait` loop, `method_timeout`): a test must fail,
+  not hang. `recv_timeout` returns `Disconnected` at once when the thread panicked (a `todo!` stub):
+  report it apart from `Timeout`, or the red reads as a hang.
+- Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
+  did not exist yet). Recheck such tests once the code exists.
+- One fixture per test: an id from one temp fixture will not match another. Use real names and values
+  captured from the real system; a name-prefix match is tested with every real name sharing the prefix
+  (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
+- A fake holds whatever you write; the real system can answer differently. A green on a fake is no
+  proof about the real thing.
+- Prefer `todo!("<fn>")` stubs to a compile error, which hides every other test in the binary, lints
+  included. A stub reached only from tests fails clippy with dead code until wired in: say so, add no
+  `allow`. A new parameter on a core method: a stub that takes it and keeps the old body gives assertion
+  reds in every phase, where a `todo!` stops the e2e at its first call.
+- To pin a field a variant lacks without breaking the build, match `Variant(p, ..)` / `Variant { .. }`
+  and check the new field through `{:?}`; tell the coder the intended shape. Naming a stub after a local
+  of the caller makes the call `E0618` (the local shadows the fn): rename one and say which.
+- Before handing over a large set of reds, prove they can go green with a throwaway candidate: back up
+  every file it touches (stub, strings, wired files) to the scratchpad, write the candidate, run, copy
+  back, `touch` the restored sources (a `tar` restore keeps old mtimes and cargo runs the stale
+  candidate build), check `git status`. If the permission classifier refuses editing production files,
+  leave that layer unproven, order the asserts so the earlier ones run first, and say so. A data file
+  pinned by a test is the coder's: check by reading that all assertions can hold at once.
+- Never `git stash` or `git checkout --` to compare: other sessions edit the same tree. Run one test on
+  its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
+  the real tree.
+- Several filters go in one run: `cargo test -p <crate> -- a b c`; a loop of runs costs minutes each.
+  `cargo test --test a --test b` stops at the first failing binary: add `--no-fail-fast`.
+- Format one file with `rustfmt --edition 2021 <file>`, then `cargo fmt -p <crate> --check`.
+- Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
+  (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
+  compile error as the red).
+- Comments never cite PLAN.md step or slice numbers; name the feature.
+- `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
+- A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
+  `include_str!` would stop the crate compiling.
+- A staleness or "not written again" rule is tested with `File::set_modified(UNIX_EPOCH + secs)`: no
+  sleeps, both orders. Expected text can come from the code itself on a sibling temp path (`startup.rs`
+  `fresh_entry`), keeping the test free of the machine's binaries.
+- To make a write fail: chmod the directory `0o555`; to make a read fail while the atomic write still
+  succeeds: chmod the FILE `0o000` (a directory in its place fails the rename too: green for the wrong
+  reason). Probe that it really fails (root ignores modes; a passing run hides the skip's `eprintln!`,
+  check with `--nocapture`), restore the mode before asserting; check old content and an unchanged
+  listing (no temp file left).
+- Force a copy fallback by injecting the rename (`&dyn Fn(&Path, &Path)`) and failing it for one path.
+- A real chown(2) seam works without root: an owner may give a file any group it is in (`id -Gn`).
+- A fake one-shot runner's `ExitStatus` on Unix: `ExitStatusExt::from_raw(code << 8)`, under
+  `#[cfg(unix)]` (the user's Windows `cargo test --workspace` compiles these tests too).
+- A fake child for an injected spawner: `sh -c '<printf ...>; exec sleep 30'` (`exec`, so your pid is the
+  one killed); "killed and reaped" is `/proc/<pid>` gone, polled with a deadline; `'` is `'"'"'`.
+- A shell snippet is checked with `sh -n` on stdin; an `at(text, needle)` position helper pins presence
+  and order.
+- A throwaway git repo in a test: `-c user.name=.. -c user.email=.. -c commit.gpgsign=false -c
+  tag.gpgsign=false`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`.
+- Review of a check: one that re-observes what was already true before the action proves nothing;
+  mutate first, then check the action undid or kept it.
+
+## Text pins and source lints
+
+- A text pin on a file the coder will rewrite: prove it greens on a candidate edit in a temp copy, so
+  the red is not a broken helper. A "no old text left" pin must be narrow (pin the code shape, e.g.
+  `"+llama.cpp.{"`): doc comments legitimately describe the old format.
+- A pin on a file that also holds the test reads only the code before `#[cfg(test)]\nmod tests` (in
+  xtask `main.rs`: before `#[cfg(test)]\nmod cli_tests {`, since `mod names_lint;` sits under an earlier
+  `#[cfg(test)]`). A needle the test counts or forbids is split with `concat!` and kept out of the
+  comment and assertion message. A top-level fn's body is found by `"\npub fn <name>("` (test fns are
+  indented; presets.rs has test items before production fns).
+- A build script, a GitHub workflow or a `.wxs` cannot run in a test: pin its text with comment lines
+  dropped first. When a workflow step checks reply fields, confirm names and values against the producer
+  by hand (`/api/instances` in `crates/bff/src/lib.rs`, states in `crates/core/src/client.rs`).
+- A source lint that ignores test code uses `production_lines` (`tests/control_lint.rs`): it drops
+  `#[cfg(test)]` / `#[cfg(all(test ..` items by brace counting (not `any(test, ..)`, compiled in
+  production). "Only the seam may name X" is one more scan there with a `*_hits(line)` helper and its
+  own test (model: `only_the_seam_reads_the_instances_log`).
+- The configurator's lints (`control_lint`, `binding_lint`, `names_lint`) read files by path
+  (`src_dirs`): a new crate holding configurator or printing code (pai-bff) must be added to each, or
+  they pass while scanning less. If its keys are in `cli.toml` alone, its printing fns go in
+  `CLI_ONLY_FNS` (by a file name no other crate has, never `lib.rs`/`main.rs`) and the file in
+  `CLI_PRINT_PATHS`; `cli_print_paths_hold_no_language` reads only those files. The scans see a key only
+  as `strings::t(` / `strings::fill(` (a bare imported `fill(` is missed; `env!` inside `println!` is
+  flagged as a literal).
+- `strings::t`/`fill` return the KEY when missing: assert the message's content and
+  `!text.starts_with("<key>")`, never only equality with `strings::fill("<key>", ..)`.
+- The names lints (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flag old names in
+  code lines (doc comments skipped). In tests split them with `concat!`: `concat!("llama-cpp",
+  "-config")`, `concat!("llama", ".cpp")` for `join("llama.cpp")`, `concat!(r"C:\ProgramData\llama",
+  r".cpp\models")`, `concat!("/opt/llama", ".cpp/...")` (xtask, even in a workflow needle), or a const
+  (`const ENGINE: &str = "llama.cpp"`). Sample paths must not contain the repo's directory name: write
+  `/home/dev/src/pai/...`. Exemptions: only `crates/core/src/migrate.rs` names the old tree
+  (`MIGRATION_NAMES`; `hits` matches the path by its tail); a bare `private-ai-manager` only in
+  `MANAGER_SERVICE_NAMES` and `WINDOWS_SERVICE_MODULE` (use the constant elsewhere); `/opt/llama.cpp`
+  only in `ENGINE_DIR_SOURCE`. Run the whole crate's tests, not just your filter.
+- Since `src/lib.rs` exists, binary roots (`main.rs`, `bin/*.rs`) are separate crates; a lint may exempt
+  them, never `lib.rs`.
+- Cargo.lock lists dev and build deps of every target, one per line: a walk over it over-reports, never
+  misses (`crates/app/src/tests/deps_lint.rs`). A helper two crates need goes in a test-free file
+  included with `#[path = "..."] mod` (`tests/lock_walk.rs`).
+- A clap doc comment is pinned on what the user reads: `Cli::command().find_subcommand(..)`,
+  `.get_arguments().find(..)`, `.get_help()` (derive joins doc lines with spaces).
+- `benchmarks/schema.sql` is `include_str!`ed by pai-app (`bench/db.rs`) and
+  `the_repo_database_matches_the_schema` compares only columns: a comment between statements changes
+  nothing SQLite records (`sqlite3 -readonly benchmarks/bench.db "select sql from sqlite_master"`), one
+  inside a `CREATE` does.
+
+## Data-root e2e and the configurator
+
+- A test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is a phase fn, not a `#[test]`:
+  `#[cfg(test)] pub(crate) fn <name>_e2e()` calling `crate::paths::redirect_for_tests(dir.path())` on its
+  own tempdir, called from pai-config's `editable_widgets_track_model_after_edit`
+  (`src/tests/ui_bindings.rs`) or pai-app's `data_root_e2e` (`crates/app/src/tests/mod.rs`). Put the
+  phase ABOVE the module's `mod tests` (`items_after_test_module`). Append a new phase LAST: a red phase
+  hides every later one. To see later phases or blocks red, on a backup copy replace the other calls with
+  `{}` (deleting leaves `#[cfg(..)]` lines dangling) or turn the red block into `if false {`, then
+  restore. The same holds for `manager_checks_e2e`.
+- Functions that take the directory as a parameter, manager calls refused at authorization or asking
+  only `Status`, and pure helpers are plain `#[test]`s.
+- A unit test whose expectation is a `paths::` default races the e2e redirect on another thread: assert
+  the shape (`ends_with("state")`) and pin the exact value in an e2e phase. Reproduce such a race by
+  looping `cargo test -p <crate> -- <unit> data_root_e2e`.
+- Needing the variable UNSET: re-run one ignored test in a child (`current_exe() --exact <path>
+  --include-ignored --test-threads 1`, a marker env var, `env_remove` the redirect, a deadline, `"1
+  passed"` in stdout; `system_connect_never_dials_from_a_test_binary`).
+- An e2e expectation that differs per OS branches on `cfg!(..)`, never on the pure function under test.
+  ModelsDir seeding is pinned in pai-app's `config_seam_e2e`, the instance's unset dirs in pai-core's
+  `instance_launch_e2e`.
+- `server_cfg::render` (pai-core) writes ModelsDir, StateDir and Hostname RESOLVED through `paths::`
+  (`render_for(.., leave_dirs_unset)` does not): a unit test rendering a `ServerConfig` sets both, a
+  shipped starting file names the service user's paths. pai-config's `server_form::config_to_form` also
+  seeds the field with `models_dir_or_default()`, so "unset stays unset" at render covers `pai`, not the
+  GUI's Save. `render` also writes an unset `OpencodeApiKey`, and an out-of-range `Port`, `ModelsMax` or
+  thread count, as a commented hint: pin checks on `ServerConfig` values (`server_cfg::check`), not on
+  rendered text.
+- `#[cfg(test)]` is off in a library compiled as a dependency: items another crate's tests need go
+  behind a `test-support` feature, or the dependent silently takes the real backend. pai-app's fake
+  manager is `#[cfg(test)]`: a GUI path depending on the manager's answer is tested in pai-app with that
+  state passed down as a parameter.
 - In a test build `server_control::backend()` is `fake::current()`: the backend `fake::scoped(b, || ..)`
-  set on this thread (not on threads it spawns), else `fake::default_backend()`, a manager over
-  `DiskClient` (every action and probe `Unavailable`, so no test spawns or kills a llama-server; the
-  config files at the per-user paths, so the e2e phases that read `paths::presets_ini()` keep working).
-  Pin where the manager's bytes go with `FakeClient` (`with_file`, the shared `files`, `fail_write`,
-  `fake::writes(&log)`); `fake::actions` leaves out status probes and file reads. `os_backend()` is the
-  real OS choice.
-- To prove a test run never dials the real system bus, start a Unix listener that logs each accept
-  (a 10-line `python3 -I` script outside the repo), run `cargo test` with
-  `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<that socket>` and check the log is empty. The callers of
-  `server_control::backend()` are in cli.rs, gui.rs, slot_state.rs and bench/; filtering on
-  `bench:: cli:: slot_state gui::` plus the e2e covers every path that can reach it.
-- To pin something that needs `PRIVATE_AI_DATA_ROOT` UNSET in pai-config (the e2e sets it on another
-  thread), re-run one ignored test of the same binary in a child: `current_exe() --exact <path>
-  --include-ignored --test-threads 1`, a marker env var, `env_remove` the redirect, a deadline on the
-  child (`try_wait` loop, kill on timeout) and `"1 passed"` in its stdout
-  (`system_connect_never_dials_from_a_test_binary`, `real_paths_follow_the_new_names` in pai-core).
-- A source lint that must ignore test code uses `production_lines` in `tests/control_lint.rs`: it drops
-  every `#[cfg(test)]` / `#[cfg(all(test ..` item by counting braces per line (not `any(test, ..)`,
-  which is compiled in production too). Test code sits mid-file in gui.rs, presets.rs and
-  integrations.rs, so "everything after the first `#[cfg(test)]`" is wrong.
-- A fast throwaway candidate for "route this path-based IO through the seam": copy the seam's files
-  into a temp dir, run the existing path-based function there, write back the files that changed, in
-  the order the test expects. It showed the whole e2e can go green without writing the real refactor.
-- A fake child process for an injected spawner: `sh -c '<printf ...>; exec sleep 30'` piped like the real
-  one (`exec`, so the pid you hold is the one killed). "Killed and reaped" is `/proc/<pid>` gone (a zombie
-  keeps it), polled with a deadline. Pass `'` inside the script as `'"'"'`.
-- slint's `ElementHandle` has no visibility query: a `visible: false` element still answers
-  `find_by_accessible_label`. Pin a note that shows only sometimes by asking for an `if` in the page and
-  checking whether the search finds it. A `Text`'s accessible label is its text.
-- journalctl's access-refusal texts are in systemd's `src/shared/journal-util.c`
-  (`access_check_var_log_journal`, `journal_access_check_and_warn`); `strings $(which journalctl)
-  /usr/lib/x86_64-linux-gnu/systemd/libsystemd-shared*.so` shows the installed version's wording.
-- `FakeClient::fail_write_of` (name -> error) refuses one manager file and writes the others: the way
-  to pin "a refusal in the middle of several writes stops there". A second fake over the same
-  `files` (`c.files = files.clone()`) continues from what the first one wrote.
-- A function over per-user files that takes the directory as a parameter (`migration::import_*`,
-  `user_dir: &Path`) is tested by plain `#[test]`s on a tempdir, each with its own red, instead of one
-  more e2e phase. Keep in the e2e only what reads `paths::` (a `config_path` under the redirect: the
-  e2e changes `PRIVATE_AI_DATA_ROOT` on another thread, so a unit test comparing system paths races).
-- The Linux package tests (`xtask/src/linux/package.rs`) check a spec's `%files` against a temp tree
-  as rpmbuild does (`check_files`: every line takes a file, every file is taken, no system directory
-  claimed); reuse it for any new packaged path. The ROCm libraries find their kpack archives at
-  `<lib dir>/../.kpack` (`strings libhipblaslt.so | grep kpack`), so the runtimes' directory needs a
-  parent the package owns.
-- ggml (`ggml/src/ggml-backend-reg.cpp`, `ggml_backend_load_best`) looks for backends in the compiled-in
-  `GGML_BACKEND_DIR`, then the executable's directory, then the cwd, keeping the first of equal
-  score: a build with `GGML_BACKEND_DIR` prefers the installed backends over its own.
-- A shared-library fixture is built as CMake lays it out (`std::os::unix::fs::symlink`: `.so -> .so.N
-  -> .so.N.M.P`; a package ships only `.so.N` and the real file) and the found candidate is compared
-  after `canonicalize`, so the test pins which library opens, not which of its names. Read the soname
-  from the clone (`ggml/CMakeLists.txt` `GGML_VERSION_MAJOR`, `SOVERSION` in `ggml/src/CMakeLists.txt`)
-  and `ls build/linux/llama.cpp-cmake/bin`, never from an older note.
-- Packaging facts for maintainer scripts (checked on this machine): the local rpmbuild has no
-  `%systemd_post` & co. (`rpm --eval '%systemd_post x'` echoes it back), so scriptlets are written out
-  by hand; rpm 6 turns a sysusers.d `m user group` line into `Requires: group(<group>)`
-  (`/usr/lib/rpm/fileattrs/sysusers.attr`, `_use_weak_usergroup_deps` makes it a Recommends). The
-  debhelper snippets to mirror are in `/usr/share/debhelper/autoscripts/` (`postinst-systemd-enable`,
-  `-restart`, `postinst-sysusers`, `prerm-systemd-restart`, `postrm-systemd`); dbus' dpkg trigger is
-  `interest-noawait`, so a postinst cannot count on the bus policy being reloaded before it starts a
-  Type=dbus unit. `man 5 systemd.exec` etc. are installed locally (systemd 259): cite them.
-- A shell snippet in a test is checked with `sh -n` on stdin (parses, runs nothing). An `at(text,
-  needle)` helper returning the position pins both presence and order of commands.
-- A doc comment line starting with `1)` trips clippy's `doc_lazy_continuation`: reflow the sentence.
-- A server or client over `impl Read + Write` is tested without threads by a scripted stream: a
-  `Cursor` of the peer's frames for reads, an `Arc<Mutex<Vec<u8>>>` capturing writes, an optional
-  `ErrorKind` failing every read or write. Compare JSON frames as `serde_json::Value`, never as bytes
-  (key order). A real duplex for client-against-server is `UnixStream::pair()` with
-  `set_read_timeout` on the client end as the deadline (`manager/pipe.rs`, `tests/pipe_client.rs`).
-- Manager calls that are refused at authorization, or ask only `Status` with a valid id, never reach
-  `paths::`, so they can be plain `#[test]`s; anything listing instances or touching a file is an
-  e2e phase.
-- A frame cap needs a test in both directions on each side: a client that sends an oversized request
-  gets the server's hang-up, read as Unavailable or Other by timing, so the client refuses it first.
-- Windows-only decisions are pinned as OS-neutral pure functions and constants in
-  `crates/manager/src/manager/windows.rs` (SDDL, token facts, SCM spec, states, errors, service plan,
-  log rotation) and `pai_core::client::pipe` (pipe name, client access and flags, open errors); only
-  Win32 glue stays `cfg(windows)`. Win32 numeric values (access rights, error codes, flags) are read
-  from the local windows-sys source (`~/.cargo/registry/src/*/windows-sys-0.61.2/src`, generated from
-  Microsoft's metadata), the meaning from learn.microsoft.com. A crate's behaviour (windows-service
-  quoting, which APIs it lacks) is read from its `.crate` at `static.crates.io`, unpacked in /tmp.
-- A per-connection identity behind a shared `Authority` (the Windows pipe) is a thread-local set
-  around the call (`TokenAuthority::with_caller`); pin that it is cleared on return and on panic, and
-  that another thread sees none.
-- The pai-config names lint refuses a bare `private-ai-manager` (the old executable) everywhere but
-  in `MANAGER_SERVICE_NAMES` (the unit `.service`, the pipe `\pipe\private-ai-manager`) and the quoted
-  string in `WINDOWS_SERVICE_MODULE` (`manager/src/manager/windows.rs`). A test that must name the
-  manager's service elsewhere uses the constant, not the literal.
-- pai-config's Windows code is compiled by nobody (Skia builds only with MSVC): pin each per-OS choice
-  as a pure function of `server_control::Os` (`backend_kind`, `os_backend_for`, `log_source_for`,
-  `log_rotate_note_key`) tested on Linux for every variant, with `Os::current()` written with `cfg!`
-  (compiled on every OS) so only the Win32 call itself stays under `#[cfg(windows)]`.
-- A fake one-shot runner returning `std::process::Output` needs an `ExitStatus`: on Unix
-  `std::os::unix::process::ExitStatusExt::from_raw(code << 8)`; put such tests under `#[cfg(unix)]`,
-  since the user's Windows `cargo test --workspace` compiles pai-config's tests too.
-- `strings::t`/`fill` return the KEY itself when it is missing from the strings file: a test of a
-  new message must assert its content (and `!text.starts_with("<key>")`), never only equality with
-  `strings::fill("<new-key>", ..)`, which a stub using the same missing key would pass.
-- "Only the seam may name X" is one more scan in `tests/control_lint.rs` (`production_lines` +
-  a `*_hits(line)` helper + a scan test of the helper): `only_the_seam_reads_the_instances_log`
-  for `paths::server_log` is the model.
-- xtask's `windows/` module is `cfg(windows)`: nothing in it runs on Linux. Pin a Windows packaging
-  choice as an item in `common/` (`common::msi::CARGO_EXES`) plus a text check that `windows/*.rs`
-  uses it. The `.wxs` is checked as XML with roxmltree (xtask dev-dependency, `<?if?>` blocks parse as
-  processing instructions, entities come back decoded): the helpers in `common/msi.rs` find a
-  component's feature, and `dacl()` reads a `PermissionEx Sddl` into ACEs (aliases to SIDs, rights to
-  masks) so an ACL is pinned by meaning, not spelling.
-- WiX facts are read from docs.firegiant.com/wix/schema/wxs/<element>/ (the attribute table sits past
-  character 100000: WebFetch with `offset: 100000`); what the compiler accepts where, from
-  `src/wix/WixToolset.Core/Compiler.cs` at the pinned tag on GitHub (the element page's children list
-  can omit one: CreateFolder accepts the core `PermissionEx`).
-  What an MSI search sets is not on the WiX page: read the Windows Installer tables on learn.microsoft.com
-  (`appsearch-table`: a signature with no Signature row is a directory search, its property set to the
-  directory's path; `drlocator-table` for Depth).
-- A new parameter on a core method (the caller on `Manager::read_file`): a stub that takes it and keeps
-  the old body gives assertion reds in every phase, where a `todo!` would stop the one e2e `#[test]` at
-  its first read. To see each later phase red, run a copy of `src/tests/mod.rs` calling only that phase
-  (restore it after): replace the other calls with `{}`, not delete them, or their `#[cfg(..)]` lines
-  dangle and nothing compiles.
-- The manager's `Authority` has two questions: `is_authorized` (may prompt) and `is_authorized_quietly`
-  (never prompts: polkit flags `None`, a challenge is no). `FakeAuthority::new(allow).quietly(q)` answers
-  them apart and logs the quiet ones in `asked_quietly`; pin "no prompt" as `asked` holding only what
-  was asked before. A changed D-Bus reply signature is pinned with
-  `r.body().deserialize::<OldShape>().is_err()`: an older client fails to read it.
-- A real chown(2) seam is testable without root: an owner may give its file any group it belongs to
-  (`id -Gn`, the gid from `getent group <name>`); an unknown group name must come back `NotFound`.
-- `#[cfg(test)]` is off in a library compiled as a dependency: an item another crate's tests need
-  (a fake, an `_e2e` phase, the test branch of `server_control::backend()`) goes behind a
-  `test-support` feature its dev-dependency turns on, as in pai-core. Without it, the dependent's
-  tests silently take the real backend.
-- The configurator's source lints read files by path: `control_lint` (`src_dirs`), `binding_lint`
-  (`src_dirs`) and `names_lint` walk `crates/app/src` beside `crates/config/src`. A new crate holding
-  configurator code must be added to all three, or they keep passing while scanning less.
-- Cargo.lock writes each dependency on its own line (`"name"`, `"name version"` when two versions
-  exist, plus `(source)`), and lists dev and build dependencies of every target: a walk over it
-  over-reports, never misses (`crates/app/src/tests/deps_lint.rs`).
-- After a move between crates, diff the test names against HEAD (`-- --list` of both crates now vs
-  the old crate in a worktree): only renames should show, each accounted for.
-- An executable is tested as a user runs it from `crates/<c>/tests/*.rs` with
-  `env!("CARGO_BIN_EXE_<bin>")`: set `PRIVATE_AI_DATA_ROOT` (and a `DBUS_SYSTEM_BUS_ADDRESS` to a missing
-  socket) on the CHILD only, so no in-process redirect races it, and wait with a `try_wait` deadline.
-  Every start runs the 2.4 migration, which the redirect keeps in the temp tree (`crates/cli/tests/pai_binary.rs`).
-  Run only commands that reach no backend: a non-test build takes the real manager.
-- Who launches the binaries with which arguments: the login entry `gui [--minimized]` (pai-app
-  `startup.rs`), the HW Monitor `current_exe() sdk-devices` (`hwmon/sdk.rs`), xtask's Linux and macOS
-  package and install read `pai-config --version`, the MSI runs `control stop-and-close`
-  (`installer/msi-stop-processes.ps1`). Check them before dropping an argument.
-- A test helper two crates need goes in its own file without tests (`crates/app/src/tests/lock_walk.rs`),
-  included by the other crate with `#[path = "..."] mod`.
-- A stub at a file's move destination (`crates/cli/src/cli.rs`) keeps the new crate's tests compiling;
-  tell the coder to replace it with `git mv -f`.
-- A text pin on a source file that also holds the test (`"pai-cli"` in `common/configurator.rs`) must
-  read only the code before `#[cfg(test)]\nmod tests`, or the test's own literal satisfies it.
-- A new `Component` variant compiles with `todo!("...")` arms in `suffix`, `texts` and `version_of`
-  (linux/package.rs): every test reaching `package()` then reds with the stub's name.
-- A new crate that prints text (pai-bff) joins binding_lint's `src_dirs` and names_lint's crate list;
-  if its keys are in `cli.toml` alone, its printing functions go in `CLI_ONLY_FNS` (by a file name no
-  other crate has: `bff.rs`, never `lib.rs` or `main.rs`, which match every crate) and the file in
-  `CLI_PRINT_PATHS`. The scans see a key only as `strings::t(` / `strings::fill(`: an imported bare
-  `fill(` is missed, and an `env!("...")` inside `println!` is flagged as a literal.
-- An axum router is tested without a socket: `pai_bff::router().oneshot(request)` (tower `util`
-  feature) and `http_body_util::BodyExt::collect` for the body, in `#[tokio::test]`s. The executable's
-  socket test reserves a free loopback port (bind `127.0.0.1:0`, drop), writes it into the config under
-  the child's data root, polls a raw HTTP/1.1 GET over `TcpStream` with a deadline and kills the child
-  in a `Drop` guard; no HTTP client dependency is needed.
-- The web UI (`fe/`, React + Vite + TS) is tested with Vitest in jsdom: `npm --prefix fe test`
-  (`vitest run`; `npm --prefix fe ci` first if `fe/node_modules` is missing). Globals are off, so a
-  test file calls Testing Library's `cleanup()` in its own `afterEach`; fetch is mocked with
-  `vi.stubGlobal('fetch', vi.fn(..))`. The machine's npm is Debian's 9.2.0: an install whose peer
-  ranges disagree (vitest 5.0.5 beside `@vitest/*` 5.1.0) dies with `Cannot read properties of null
-  (reading 'edgesOut')`; align the versions rather than add `--legacy-peer-deps`. Try installs in a
-  /tmp copy of `package.json` first.
-- Vitest does not type-check: a `const x: number = 'a'` in `fe/src/Version.tsx` leaves its tests
-  green; only `npm --prefix fe run typecheck` fails (TS2322). `tsconfig.app.json` excludes
-  `*.test.ts(x)` (so `npm run build` ignores test type errors); `typecheck` adds
-  `tsconfig.test.json` for them, and a source error shows twice since both configs see the file.
-  Type a fetch mock as `vi.fn<typeof globalThis.fetch>(..)`: bare `vi.fn(answer)` types
-  `mock.calls` as `[][]` (TS2493), and `typeof fetch` hits a local `const fetch` (TS7022).
-  `noUnusedLocals` is on, so probe the linter with a rule tsc lacks (rules-of-hooks). To probe a check,
-  copy the file to the scratchpad, append the violation, run, copy it back and `cmp`: `git checkout --`
-  would also throw away uncommitted work.
-- The bff's embedded page is tested on whatever the build embedded (`fe/dist` or
-  `crates/bff/fe-fixture`), taken from `build.rs`'s `rustc-env` `PAI_BFF_FE_DIR` (`tests/fe.rs`
-  `embedded()`), never re-decided at run time: a `fe/dist` made after the build reruns nothing, so a
-  run-time check disagrees with the binary. Read its `index.html`, follow the
-  `/assets/...` it names and compare bytes, so the same tests hold with or without node. A real
-  `vite build` emits no CSS for the scaffold: only the fixture exercises `text/css`.
-- A build script cannot be run by a test: pin it on its text from `crates/<c>/tests/*.rs`, comment
-  lines dropped first (they explain what the code must not do), e.g. the arguments of every `watch(`
-  call in `crates/bff/build.rs` (`tests/build_script.rs`).
-- `option_env!("X").expect(..)` is denied by clippy (`option_env_unwrap`): for a variable a build
-  script exports, use `env!("X")` and accept the compile error as the red until it exists.
-- A graceful stop is pinned from the binary test: send the signal with `Command::new("kill").args(["-TERM",
-  &pid])` (no libc dependency), wait with a deadline, expect `status.code() == Some(0)`; a death by
-  signal reads `None`, which is the red before the handler exists.
-- A candidate systemd unit is checked without installing it: write it to /tmp with `ExecStart=/usr/bin/true`
-  and run `systemd-analyze verify ./x.service` (unknown directives fail) and `systemd-analyze security
-  --offline=true ./x.service` (exposure score).
-- `paths::installed_share_dir` looks at `<exe>/../../share`: for a program in `/usr/libexec/private-ai`
-  that is `/usr/libexec/share`, so a libexec program (pai-manager, pai-bff) finds no `cli.toml` there.
-- A Windows service's SID (`NT SERVICE\<name>`, a virtual account's user SID) is computable:
-  [MS-LSAT] 3.1.1.1.2 (learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lsat/252cb6b0-2edc-4403-9d75-5b2786ba859e):
-  SHA-1 of the upper-case UTF-16LE name, five little-endian u32, `S-1-5-80-...`. Its example (ALG) and
-  TrustedInstaller check the rule; pai-manager's tests derive it with the `sha1` dev-dependency
-  (`service_sid` in `manager/windows.rs`). Quick check: `python3 -I -c` with hashlib and `struct.unpack('<5I', ..)`.
-- A bff route that asks the manager is tested through `pai_bff::router_with(connect, timeout)` and a
-  fake `ManagerClient` (`tests/instances.rs`); every request under `tokio::time::timeout` (tokio `time`
-  is a bff dev-dependency). A fake that sleeps runs in `spawn_blocking`, which the test runtime waits
-  for at its end (tokio's `spawn_blocking` docs), so keep the sleep short (2 s against a 200 ms timeout).
-  `cargo test -p pai-bff --test a --test b` stops at the first red test binary: run each `--test`
-  on its own to see every red.
-- In fe tests, read a new string through a `text(key)` helper that throws when the key is missing from
-  `en_US.json`: the red names the missing string instead of failing on `findByText(undefined)`. The
-  fe's `strings.test.ts` sees a key only as a literal `t('key'` (a template key like
-  `t(\`state-${s}\`)` counts its value as unused) and flags any letters between `>` and `<` in a
-  `.tsx`, a `? :` chain written inline in JSX included.
-- Distribution package facts, read-only: `apt-get download <pkg>` into a fresh /tmp dir, then `dpkg -c`
-  / `dpkg-deb -f` (Ubuntu 26.04 here: `llama.cpp` is a metapackage, the commands are in
-  `llama.cpp-tools`); Fedora specs come raw with `curl -sL
-  https://src.fedoraproject.org/rpms/<name>/raw/rawhide/f/<name>.spec`. The 2.4.0 `.deb`/`.rpm` of
-  this project sit in `dist/`: `dpkg -c` them to see what a predecessor held before naming it in a
-  relation. Order checks: `dpkg --compare-versions a gt b`, `rpm --eval '%{lua:
-  print(rpm.vercmp(a, b))}'`; rpm's own text is rpm-spec(5) and rpm-version(7) at
-  rpm-software-management.github.io/rpm/man/. `rpm -qp --qf '%{EVR}'` prints `1:1.0.0-pai1`, and no
-  `0:` without an epoch (a throwaway noarch spec with an empty `%files` builds in a second).
-- A "no old text left" pin on production code (`!code.contains(..)`) must be narrow: doc comments
-  legitimately describe the old format (`OLD_SPLIT_BEFORE` explains 2.4's `+llama.cpp.<tag>`). Pin
-  the code shape (`"+llama.cpp.{"`), and run it against the throwaway candidate.
-- Naming a stub after a local of `run()` (`fn homepage` beside `let homepage = ..` in
-  `linux/package.rs`) makes the call `E0618: expected function`: the local shadows the fn. Rename
-  one, and tell the coder which.
-- A name-prefix match must be tested with every name that shares the prefix: `llama.cpp-v` starts
-  `llama.cpp-vulkan-v...` but not `llama.cpp-rocm-v...`, so a rocm-only fixture passed while the real
-  dist/ broke. Build fixtures from the full real file set, the suspect file written last.
-- A unit that talks to the system bus cannot use `DynamicUser=` where the bus is dbus-daemon (Ubuntu
-  26.04, 1.16.2): the connection is dropped at Hello ("Transport endpoint is not connected"), so the bff
-  runs as a static sysusers.d user. Reproduce with `systemd-run -p DynamicUser=yes busctl --system call
-  org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetId` against `-p User=nobody`.
-  A system file read through `files()` by path needs no stub function to go red.
-- A backend that calls another D-Bus service (`SystemdService` over systemd) is tested against a
-  stand-in: a `#[zbus::interface(name = "org.freedesktop.systemd1.Manager")]` struct served p2p at
-  `/org/freedesktop/systemd1` (snake_case methods become `GetUnitFileState`, `EnableUnitFiles`...),
-  the backend built on the client end; its proxy's destination `org.freedesktop.systemd1` is
-  accepted on p2p (`dbus.rs` tests, checked with a throwaway candidate). The signatures are in the
-  local `man 5 org.freedesktop.systemd1`, the `is-enabled` states in `man 1 systemctl` Table 3.
-- A new `ManagerClient` method needs an impl in every implementor or nothing compiles: `DbusClient`,
-  `PipeClient` (stubs), pai-app's `fake::FakeClient` and `fake::DiskClient`, and pai-bff's
-  `tests/instances.rs` `FakeManager` (test code: implement them yourself).
-- To reproduce a unit test that races the e2e redirect, run it filtered together with the e2e
-  (`cargo test -p <crate> -- <unit> data_root_e2e`) in a loop: a race seen 2 times in 5 full runs
-  showed 31 times in 40 that way. Pin the exact `paths::`-derived value in an e2e phase instead.
-- To pin what a maintainer script does rather than its spelling, run it (`xtask/src/linux/system_files.rs`,
-  `Sandbox`): fake `systemctl`, `deb-systemd-invoke`... on PATH that log their args, the script's `/run`
-  paths replaced by sandbox paths, and an assert that no `/run/` or absolute tool path is left before it
-  runs, so a script the test does not know can never touch the real system. rpm scriptlets run the same
-  way, their body behind a `#!/bin/sh` line, `$1` passed as the argument.
-- The script `Sandbox` in `system_files.rs` also moves `/etc/llama.cpp` and
-  `/usr/share/private-ai/llama.cpp` (and refuses any other `/etc/` path), fakes `getent` (the group
-  private-ai exists after `set_group(true)`), `chown`, `chgrp` and `install` (copies, applies `-m`, only
-  logs `-g`/`-o`, so it runs unprivileged), and its `systemctl` appends `has-default=yes|no` to each
-  logged call: the order of a copy against a start is read from the log line.
-  It also moves `/etc/systemd/system` (`SYSTEM_UNITS`; `$DPKG_ROOT`-prefixed in `run_chroot`), and
-  `enable_instance` makes an instance's `multi-user.target.wants` link. Enabled template instances
-  are known only by those links: `systemctl list-unit-files 'getty@*'` lists the template alone
-  (systemd 259), so a script cannot query them, and a test must pin the links, not a systemctl answer.
-- A run-time-read fixture file (`std::fs::read_to_string(CARGO_MANIFEST_DIR/..)`) gives a red naming
-  the missing file, where `include_str!` would stop the whole crate from compiling.
-- A maintainer script that must work in a chroot install (dpkg `--root`, `DPKG_ROOT`) is run with
-  `Sandbox::run_chroot` in `xtask/src/linux/system_files.rs`: it leaves `/etc` and `/usr/share` paths as
-  they are and refuses, before running, any not prefixed with `$DPKG_ROOT`, so the host's `/etc` is never
-  written; the red is that refusal ("a /etc/ path not under $DPKG_ROOT").
-- A data file pinned by a test is the coder's to write: you cannot trial a candidate content in the
-  real tree (overwriting a tracked file was refused), so check by reading that the assertions can all
-  hold at once. `server_cfg::render` always writes ModelsDir and StateDir resolved (and Hostname), so a
-  shipped starting file must name the service user's paths or the manager's first write resolves them
-  against its own home.
-- xtask's command line is pinned with `Cli::try_parse_from` (tests in `main.rs`, `cli_tests`). To pin a
-  renamed `ValueEnum` variant or a new field without a compile error, compare
-  `m.to_possible_value().unwrap().get_name()` (or `Module::value_variants()`) and match the variant
-  with `Phase::Package { .. }`; a positional the subcommand lacks fails as "unexpected argument".
-  `linux::package::run` itself reads the real `build/linux/` (no redirect): pin its decisions as pure
-  functions over a `build_root: &Path` and a temp tree.
-- The engine's Windows tree is `%ProgramData%\llama.cpp\` again, but the pai-config names lint still
-  refuses `ProgramData\llama.cpp` and `join("llama.cpp")` in code lines (doc comments are skipped):
-  spell the directory through a const (`const ENGINE: &str = "llama.cpp"; pd.join(ENGINE)`).
-  Windows path decisions are pinned through `paths::windows_machine_dirs(program_data)`, pure, plus a
-  text check that each real-path fn's body calls it.
-- A new test file beside a big inline `mod tests`: declare `mod <name>;` inside it (msi.rs's
-  `mod tests { mod two_installers; }` lives at `common/msi/tests/two_installers.rs`); `use super::*;`
-  reaches the parent's private helpers (`elements`, `dacl`, `folder_dacl`...), no `pub` needed.
-- Windows Installer conditions never compare versions ("Conditional Statement Syntax" on
-  learn.microsoft.com): pin a minimum version of another product as `Upgrade Id=<its UpgradeCode>` +
-  `UpgradeVersion OnlyDetect="yes" Minimum=...` (FindRelatedProducts runs before LaunchConditions),
-  then a `Launch` on its property, not a RegistrySearch compared in a condition.
-- A `.wxs` condition is pinned by meaning with the evaluator in `xtask/src/common/msi/tests/engine_lifecycle.rs`
-  (`holds(cond, props)`, the MSI condition subset; XOR/EQV/IMP refused) over named scenarios (first
-  install, repair, the new and the old package of an upgrade, uninstall, a `KEEPINSTANCES` removal):
-  `runs_in(doc, action)` lists where a sequence entry runs. With `MajorUpgrade` scheduled
-  afterInstallValidate, the old package is removed before the new one's deferred actions can run, so a
-  "before the files are replaced on upgrade" action runs in the OLD package (`UPGRADINGPRODUCTCODE`).
-- xtask's `macos/` is `cfg(target_os = "macos")`: pin a macOS packaging choice as a pure item in
-  `common/macos_pkg.rs` (tests in `common/macos_pkg/tests.rs`) plus text checks on `macos/*.rs` and
-  `main.rs`; `cargo check -p xtask --target aarch64-apple-darwin` type-checks the Mac side. xtask has no
-  `tempfile`: use `temp_dir()` + pid behind a `Drop` guard. The xtask names lint refuses `opt/llama.cpp`
-  in code lines (2.4's macOS tree, now the engine's prefix) except `ENGINE_DIR_SOURCE`'s one line; spell
-  it `concat!("/opt/", "llama", ".cpp")` in tests.
-- A clap doc comment is pinned on what the user reads, not on the source text:
-  `Cli::command().find_subcommand("install")`, `.get_arguments().find(|a| a.get_id() == "force")`,
-  `.get_help()` (`clap::CommandFactory`; derive joins the doc lines with spaces). The names lint skips
-  `///` lines, so a doc comment may spell `/opt/llama.cpp`; the test names it through `macos_pkg::ENGINE_DIR`.
-- A staleness rule over file dates is tested on a temp tree with `std::fs::File::set_modified(UNIX_EPOCH
-  + secs)`: no sleeps, and both orders (package before and after the build) in one test each.
-- xtask's `common::macos_pkg` (and other per-OS modules) are `#[cfg(unix)]`: a test outside them that
-  imports one needs `#[cfg(unix)]` too, or `cargo check -p xtask --all-targets --target
-  x86_64-pc-windows-gnu` fails with E0432. Run that check on new xtask tests before handing over.
-- An unset ModelsDir/StateDir is materialized in two places, not one: `server_cfg::render` (resolved
-  through `paths::`) and pai-config's `server_form::config_to_form` (the field is seeded with
-  `models_dir_or_default()`, so `form_to_config` gives it back as `Some`). Pinning "unset stays unset"
-  at the render covers `pai`, not the GUI's Save.
-- `Path::new(..)` is already a `&Path`: passing `&data_root` for one fails `cargo clippy --all-targets
-  -D warnings` (needless_borrow) in the coder's lint run. Pass it bare.
-- A slint field's placeholder is read with `ElementHandle::accessible_placeholder_text()` over
-  `itest::ElementQuery::from_root(app).match_descendants().match_predicate(..).find_all()`: the query
-  yields one match per ancestor it descends through, so assert non-empty, never a count. Each page is an
-  `if current_tab == N`: set `st.set_current_tab(N)` in the phase (and put it back), or its widgets are
-  not in the tree.
-- pai-config's names lint also flags `llama.cpp\` inside a Windows path (`C:\ProgramData\llama.cpp\..`):
-  split it with `concat!(r"C:\ProgramData\llama", r".cpp\models")`.
-- Never `git stash` to compare with HEAD: other sessions edit the same tree (docs, fe/), and a stash
-  takes their work too. Run the one test on its own instead.
-- A throwaway git repo in a test (`xtask/src/common/version.rs` tests): run git with
-  `-c user.name=.. -c user.email=.. -c commit.gpgsign=false -c tag.gpgsign=false`,
-  `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so the user's signing or hooks never apply.
-  After a fallback is removed, grep its old output (`b0-`) for doc comments of callers still describing it.
-- "Not written again" is pinned by setting the file's mtime in the past (`File::set_modified`, std)
-  and asserting it did not move; a read-only file in a 555 directory pins a failed write (skip as
-  root; a passing run hides the skip's `eprintln!`, so on a rerun confirm it did not skip with
-  `cargo test -p <crate> <name> -- --nocapture`). A fixture's expected text can be produced by the code itself on a sibling temp path
-  (`startup.rs` `fresh_entry`: what an enable writes now), which keeps the test free of the
-  machine's `/usr/bin/pai-config` and `current_exe()`.
-- After restoring a throwaway candidate from a `tar` backup, `touch` the restored sources: tar keeps
-  the old mtimes, cargo sees the candidate's newer build as fresh and runs it, so the reds look green.
-- A text pin on xtask's `main.rs` cuts the test code at `#[cfg(test)]\nmod cli_tests {`, never at the
-  first `#[cfg(test)]\nmod `: `mod names_lint;` sits under one at the top of the file.
-- What a GitHub runner has installed (for CI slices) is in `actions/runner-images`:
-  `images/windows/Windows2025-Readme.md` lists the tools, `images/windows/scripts/build/Install-<Tool>.ps1`
-  says where each goes and whether it is on PATH (LLVM by choco, on PATH; OpenSSL in
-  `C:\Program Files\OpenSSL`, its `bin` on PATH). Check there before writing a test for "the runner lacks X".
-- A GitHub workflow is pinned as text (`xtask/src/ci_windows.rs`: comment lines dropped, an `after()`
-  helper for order, msiexec switches matched after a space, quote or comma). Prove the helpers with a
-  throwaway candidate workflow written in place and deleted after. The runner label `windows-2025` is
-  the VS 2026 image: read `images/windows/Windows2025-VS2026-Readme.md`, not `Windows2025-Readme.md`
-  (the label map is in the runner-images `README.md`).
-- Reviewing a workflow or installer check: a check that only re-observes what was already true before
-  the action (files present before a repair, no instance service when none was ever made) proves
-  nothing; mutate first (delete, edit) and check the action undid or kept it. An msiexec exit code
-  alone (1603) is any fatal error: pair it with the expected message in the `/l*v` log.
-- A "kept after uninstall" check on a folder nothing wrote into proves nothing: Windows Installer removes
-  the empty folders it created. A workflow test (`xtask/src/ci_windows.rs`) pins a file written into it
-  before the `/x` and checked after; region checks there slice the text between `switches(.., "/x")`.
-- The macOS workflow (`xtask/src/ci_macos.rs`) needs no prerequisites switch: the script passes
-  `--skip vulkan` on to `xtask prereq`. `macos-15` (arm64) already has Homebrew, cmake, ninja, node,
-  Rust and the Command Line Tools (`images/macos/macos-15-arm64-Readme.md`). `xtask install` adds
-  `sudo` to `installer` itself, so the workflow runs it unprefixed (pinned). A `.pkg` has no documented
-  uninstall, so the check after install is a same-version reinstall that restores a removed file.
-- xtask's names lint (`names_lint::xtask_code_names_the_new_executable_tree_and_variable`) also refuses
-  `/opt/llama.cpp` in an xtask test literal, even in a workflow needle: run `cargo test -p xtask` whole,
-  not just your filter, and split it in a const (`concat!("/opt/llama", ".cpp/bin/...")`).
-- A GitHub Actions `pwsh` step ends with the last native command's `$LASTEXITCODE`, even without a `throw`:
-  the runner prepends `$ErrorActionPreference = 'stop'` and appends
-  `if ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`. A step that only prints a
-  command allowed to fail must end with `exit 0`, so pin that line too. Source: "Exit codes and error action
-  preference" in https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
-  (checked 2026-11-14).
-- A text pin that counts or forbids a call in a file that also holds the test (cli.rs, gui.rs) matches
-  its own doc comment and assertion message too: split the needle with `concat!` and keep the literal
-  out of the comment and the message. A body pin on a top-level fn finds `"\npub fn <name>("` (test fns
-  are indented), since presets.rs has `#[cfg(test)]` items before its production fns.
-- An e2e expectation that differs per OS branches on `cfg!(...)` (`cfg!(any(windows, target_os =
-  "linux"))` for "under the manager"), never on the pure function under test, or the e2e only echoes
-  it. The ModelsDir seeding by a preset save or a download is pinned in pai-app's `config_seam_e2e`
-  (`server_control.rs`); the instance's unset ModelsDir/StateDir in pai-core's `instance_launch_e2e`.
-- An extension element in the `.wxs` (`util:ServiceConfig`) is pinned by namespace URI with roxmltree
-  (`n.tag_name().namespace() == Some(UTIL_NS)`, the prefix is not kept); the root's declaration by
-  `root.namespaces().any(|ns| ns.name() == Some("util") && ns.uri() == ..)`. Util attribute tables:
-  docs.firegiant.com/wix/schema/util/<element>/ (past offset 100000). A per-step workflow pin uses
-  `steps()` in `xtask/src/ci_windows.rs` (each `      - ` entry with its lines; step keys at 8 spaces).
-- llama-server and a missing `LLAMA_CACHE`: the cached-model listing returns empty when the folder does
-  not exist (`common/hf-cache.cpp`, `if (!fs::exists(cache_path))`) and a download creates it
-  (`fs_get_cache_file` -> `common_create_directories`); only `--slot-save-path` must exist before the
-  start. The configurator's scans skip a missing folder (`model_scan.rs` `read_dir` else continue) and
-  its downloads create their parents (`hf.rs`).
-- A pure unit test whose expectation is a `paths::` default (the user's `<data root>/state`) races
-  `data_root_e2e`, which moves the root on another thread: assert its shape (`ends_with("state")`, not
-  the instance folder) and leave the exact path to an e2e phase.
-- Web UI (`fe/`, from the web UI session's tester): the nav, the Overview and the instance page each read
-  `/api/instances`, so a `deferred()` whose one `Response` is given to every read breaks the second
-  `json()` (a body reads once): gate the reads instead, `() => gate.promise.then(() => reply(..))`. The
-  focus move to the `h1` happens on a route change, not on the first render: `navigate()` first. A hint
-  under `hidden` is still in its field's `textContent`: never assert a unit or label with
-  `textContent.toContain`. To check text in JSX, parse with `ts.createSourceFile(..., ScriptKind.TSX)`,
-  not a regex.
-- A folder that needs a mode other than the unit's one `StateDirectoryMode=` (it applies to every
-  `StateDirectory=` entry, `man 5 systemd.exec`) ships as a tmpfiles.d `d` line in `/usr/lib/tmpfiles.d`
-  (debhelper's autoscript `postinst-init-tmpfiles`: `systemd-tmpfiles ${DPKG_ROOT:+--root=..} --create
-  <file> || true` behind `command -v`). The engine (`llama.cpp`) installs before the core that creates
-  the user `private-ai` (the core depends on it): a line owned by that user needs the core's postinst
-  to apply it again after `systemd-sysusers`; on rpm the engine's `%posttrans` runs after every `%post`.
-  The script `Sandbox` fakes `systemd-tmpfiles` too: add every new system tool a script calls to its
-  fake list, or the sandboxed run calls the real one.
-  Measured (systemd 259, `--root=` on a scratch tree): a tmpfiles line whose owner does not exist is
-  skipped with "Failed to resolve user", the other lines still apply, exit 65; so `|| true` is needed
-  and the second run after the user exists does the work. Every new header-free or engine-headed file
-  goes on the exclusion list of `the_system_files_and_scripts_name_the_core_package`.
-- A Windows service's `SERVICE_STATUS` is not only what the service itself reported: one never started
-  since the last boot reads `SERVICE_STOPPED` with `dwWin32ExitCode` 1077 (ERROR_SERVICE_NEVER_STARTED),
-  filled in by the SCM. Pin states the SCM produces on its own, not only the ones `run-instance` reports.
-- The workflow tests in `xtask/src/ci_windows.rs` only match text: when a step checks a reply's fields,
-  confirm the names and values against their producer by hand (`/api/instances` in
-  `crates/bff/src/lib.rs`, the state names in `crates/core/src/client.rs`), since nothing runs the step.
-- A bff route that reads the client address (`axum::extract::ConnectInfo<SocketAddr>`) is tested with
-  `oneshot` by inserting `ConnectInfo(addr)` into the request's extensions; that hides whether
-  serve.rs serves with `into_make_service_with_connect_info` (without it the route answers 500), so
-  pin the shipped wiring with one request to the binary (`tests/pai_bff_binary.rs`).
-- `cargo test --test a --test b` stops after the first binary that fails: add `--no-fail-fast` to see
-  every red.
-- A hand check of the web UI against the real bff can click and type: drive the snap's `geckodriver
-  --port <free>` over plain WebDriver HTTP from a `python3 -I` urllib script (`POST /session` with
-  `moz:firefoxOptions` `args: ["-headless"]`, then `/url`, `/element`, `/element/<id>/value`,
-  `/click`, `/execute/sync`, `GET /screenshot` as base64 PNG): the screenshots come back over HTTP,
-  so they land anywhere (no `~/snap` profile), and a 2 s sleep after each load lets the fetches answer.
-  Firefox will not go below 500 px wide. The geckodriver left running cannot be killed from outside
-  its snap (AppArmor: "Permission denied", even unsandboxed): `snap run --shell
-  firefox.geckodriver -c 'kill -TERM <pid>'` does it. The bff's `build/windows/cargo-target` is the
-  target dir here (the generated `.cargo/config.toml` in this tree pins it); `grep -a -c <hashed asset name>` on the
-  binary confirms it embeds the `fe/dist` just built.
-- A rate limit or lockout tested one request at a time misses the race: a check before a slow call and
-  a record after it lets parallel requests all pass the check. Pin it with a fake that sleeps in the
-  seam, a `multi_thread` tokio test and a `JoinSet` of N requests on router clones, asserting the seam's
-  call count. Also try the key's spellings (case, domain prefixes) the real backend treats as one.
-- Reviewing a slot reserved under a lock and given back by a `Drop` guard in an async handler: check there
-  is no `.await` between the reservation and the guard's creation (a cancelled future would leak the
-  slot), and that every `MutexGuard` on the same lock is dropped before the guard (else the `Drop`
-  deadlocks). A cancelled request leaves its `spawn_blocking` call running, unrecorded.
-- Web UI in jsdom: a click on a `#` link moves `location.hash` in a later task, so wait one
-  `setTimeout(0)` inside `act` before asserting the route did not change; `HTMLDialogElement` has no
-  `showModal`/`close`, and a stand-in that sets `open` makes dialogs findable by role. Mutation runs go
-  in a scratch copy of `fe/` with `node_modules` symlinked.
-- A new bff route needs no stub: the router answers an unknown path with axum's empty 404, so its
-  tests compile and go red on the status (or on `content-type ""` for an expected JSON 404). Check the
-  red is not the sign-in helper failing first: the panics must point at the reply assertions.
-- The contract's words and the fe's code can disagree on a value's JSON type: read
-  `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning one; `RocblasUseHipblaslt` is
-  `"on"`/`"off"` there, not a bool.
-- A bff value sent by role (`OpencodeApiKey` to `can_configure` sessions only, `tests/server.rs`) is
-  tested with a second user in the fake authenticator (`root`, `can_configure: true`) and
-  `sign_in_as(user)`; besides the `null`, assert the secret's text is nowhere in the body. The admin and
-  nothing-withheld cases are green before the code: only the withheld case is the red.
-- A new argument on a method with many call sites (`write_file(.., keep_api_key)`: ~90 in tests) is
-  added by a small Python pass that finds each `.write_file(`, walks to its matching paren (skipping
-  string literals, and matches preceded by `"` or `fn `) and inserts `, false`; then `cargo fmt -p`.
-  A `[(..); N]` array of cases needs its length bumped by hand.
-- A throwaway candidate that edits production files (strings, `.slint`) can be refused by the
-  permission classifier even when restored after: then leave that layer unproven, order the test so
-  its earlier asserts (the load, the form) run before the one the missing code fails, and say so.
-- `server_cfg::render` writes an unset `OpencodeApiKey` as a commented hint only, no key line: a
-  manager rule that only rewrites an existing key line never sees one from a pai-app save.
-- To make a manager read fail while its write still succeeds, chmod the FILE `0o000` (the atomic
-  write renames over it in a writable directory); a directory in place of the file fails the rename
-  too, so the test goes green for the wrong reason. Probe the read really fails (root), restore the mode
-  before asserting.
-- The GUI's Server save re-reads the file right after writing (`refresh_server_snapshot`): a fake state
-  meant to change "after the first save" must change before that save, or its own re-read sees the old
-  state and the red never shows.
-- Web UI: for a shared read that deduplicates requests, test a held read still pending when the next
-  consumer's read is due, and resolve it before counting "no request after X".
-- pai-app's fake manager backend (`server_control::fake`, withheld key, refusals) is `#[cfg(test)]` in
-  pai-app: pai-config tests cannot install it, so a GUI path that depends on the manager's answer is
-  tested at the pai-app level, with the manager's state passed down as a parameter.
-- Web UI: a control added to the instance header breaks whole-main queries in other test files; scope
-  them to their section. After an interrupted session, run the test file before adding tests: the
-  interrupted run's work may already be on disk.
-- `server_cfg::render` silently writes an out-of-range `Port` (<= 0), `ModelsMax` (< 0) or thread count
-  (<= 0) as the commented hint, i.e. unset: a check run on the rendered text passes them. Pin a server
-  check on the `ServerConfig` values (`pai_app::server_cfg::check`), not on `render`'s output.
-- clap 4 refuses `--flag -1` ("unexpected argument '-1'") unless the arg has `allow_hyphen_values`
-  (`--models-memory-margin` has it); `--flag=-1` parses either way. Build the CLI with
-  `Cli::try_parse_from` and panic with clap's error so that red is not mistaken for a refusal.
-- A preset range test over `checks::PRESET_INT_KEYS` builds each Preset with `Preset::from_keys` (it
-  reads any i32) and checks `render_section` writes `key = v` back, so a key the reader does not fill
-  shows as "not read" instead of a vacuous pass. Changing a range in `PRESET_INT_KEYS` also needs
-  `form::form_to_preset`'s own `parse_int_in(.., &ini::INT_*)` literal changed (ctx-size had one):
-  pai-config's `invalid_numbers_match_what_the_conversion_drops` goes red until it is.
-- A manager e2e block (`manager_checks_e2e`) stops at its first failed assert: to show a later block
-  red, neutralise the earlier assert on a backup copy, run, restore.
+  set on this thread (not spawned ones), else a manager over `DiskClient` (every action and probe
+  `Unavailable`; files at the per-user paths). Pin the manager's bytes with `FakeClient` (`with_file`,
+  `files`, `fail_write`, `fail_write_of` to refuse one file mid-sequence, `fake::writes(&log)`;
+  `fake::actions` omits probes and reads); a second fake sharing `files` continues from the first.
+  `os_backend()` is the real choice.
+- To order a llama-server call against a fake's, share one log: `server_control::fake::http_stub(&log)`
+  answers `/models`, `/health` and a slot restore on a loopback port; point `Port` at it in an e2e phase.
+- The GUI's Server save re-reads the file at once (`refresh_server_snapshot`): fake state meant to change
+  "after the first save" must change before it.
+- A preset range test over `checks::PRESET_INT_KEYS` builds each Preset with `Preset::from_keys` and
+  checks `render_section` writes it back. A range change there also needs `form::form_to_preset`'s
+  `parse_int_in(.., &ini::INT_*)` literal changed (`invalid_numbers_match_what_the_conversion_drops`).
+- A model-header check is testable without libggml-base: write the GGUF with `hf_fit::tests::{gguf,
+  write_sparse, W}` (sparse, so 4 GiB costs nothing) and read it with the pure-Rust `hf_fit` reader;
+  `gguf::read_*` go through `ffi`, which finds no library from a test binary.
+- To pin a launch, build a `Command` and read back `get_program`/`get_args`/`get_envs`/`get_current_dir`;
+  take the exe as a parameter (`paths::llama_server_exe()` finds nothing from a test binary) and compute
+  expected args with `server_args()`.
+- pai-config's Windows code is compiled by nobody: pin each per-OS choice as a pure function of
+  `server_control::Os` tested for every variant, `Os::current()` written with `cfg!`.
+- slint: `ElementHandle` has no visibility query (a `visible: false` element is still found); pin a
+  sometimes-shown note as an `if`. A `Text`'s accessible label is its text. Placeholders:
+  `accessible_placeholder_text()` over `ElementQuery::from_root(app).match_descendants()...find_all()`
+  (one match per ancestor: assert non-empty, never a count). Each page is `if current_tab == N`: set it
+  in the phase and put it back.
+- Who launches binaries with which arguments: login entry `gui [--minimized]` (`startup.rs`), HW Monitor
+  `sdk-devices` (`hwmon/sdk.rs`), xtask's packaging reads `pai-config --version`, the MSI runs `control
+  stop-and-close` (`installer/msi-stop-processes.ps1`). Check them before dropping an argument.
+- An executable is tested from `crates/<c>/tests/*.rs` with `env!("CARGO_BIN_EXE_<bin>")`:
+  `PRIVATE_AI_DATA_ROOT` and a `DBUS_SYSTEM_BUS_ADDRESS` to a missing socket on the CHILD only, a
+  `try_wait` deadline, only commands reaching no backend (a non-test build takes the real manager).
+  A graceful stop: `Command::new("kill").args(["-TERM", &pid])`, expect `code() == Some(0)` (death by
+  signal reads `None`).
+- After a move between crates, diff `-- --list` names against the old crate in a worktree (`LC_ALL=C
+  sort`): only accounted renames. A stub at the move destination keeps tests compiling; tell the coder to
+  replace it with `git mv -f`. For an older commit's worktree (`git worktree add --detach build/<name>
+  <rev>`): copy the gitignored `resources/llama.ico` and `llama-brand-logo.svg`, set
+  `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` and a separate `CARGO_TARGET_DIR`.
+- A new argument on a method with many test call sites: a small Python pass that walks each call to its
+  matching paren (skipping string literals and `fn ` definitions) inserting the argument, then `cargo
+  fmt -p`; bump `[(..); N]` array lengths by hand.
+
+## Manager, D-Bus, pipe
+
+- A seam called through `&self` gets a fake with `Mutex` logs (seams must be `Sync`), read through an
+  accessor; pin "nothing happened" on a refusal by empty logs plus the error kind.
+- `Authority` has `is_authorized` (may prompt) and `is_authorized_quietly` (never: a challenge is no);
+  `FakeAuthority::new(allow).quietly(q)` logs the quiet ones in `asked_quietly`. A changed D-Bus reply
+  signature is pinned with `r.body().deserialize::<OldShape>().is_err()`.
+- "A slow seam holds up nobody": `fakes::Gate` in `manager/service.rs` (`GateAuthority`,
+  `GateResolver`): wait with `gate.arrived(n)`, run other calls via `on_thread(..)` + `recv_timeout`,
+  open the gate before panicking on a timeout, check `try_recv()` still empty. Pin a race by holding one
+  call at a seam inside the critical section and accepting either serialization.
+- A reservation under a lock released by a `Drop` guard in async code: no `.await` between reservation
+  and guard (cancellation leaks it), every `MutexGuard` on that lock dropped before the guard (else
+  deadlock). A cancelled request leaves its `spawn_blocking` running.
+- A per-connection identity behind a shared `Authority` is a thread-local set around the call
+  (`TokenAuthority::with_caller`): pin it cleared on return and on panic, unseen by other threads.
+- zbus 5 without a bus (`zbus::blocking`): `UnixStream::pair()`; server
+  `Builder::async_io_unix_stream(s0).server(Guid::generate())?.p2p().serve_at(..)?.build()` on its own
+  thread; client `.p2p().method_timeout(..)`. Stamp a sender with `client.inner().set_unique_name(":1.42")`
+  (dev feature `bus-impl`). `org.freedesktop.DBus.Error.*` replies come back as `zbus::Error::FDO`,
+  others as `MethodError`. A destination `Some(BUS_NAME)` is accepted on p2p.
+- "No manager": serve at another path (`UnknownObject` as `FDO`) or drop the server (`InputOutput` at
+  once). No system bus: `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<tempdir>/none`, in one test of the binary. To
+  prove a run never dials the real bus, point the variable at a logging Unix listener (`python3 -I`) and
+  run `cargo test` filtered on `bench:: cli:: slot_state gui::` plus the e2e.
+- zbus 5 (async-io) runs every task of a connection on one executor thread: a sync `fn` method blocks
+  every other call on that connection.
+- Another D-Bus service (systemd) is faked by a `#[zbus::interface(name =
+  "org.freedesktop.systemd1.Manager")]` struct served p2p at `/org/freedesktop/systemd1` (snake_case
+  methods become `GetUnitFileState`...). Signatures: local `man 5 org.freedesktop.systemd1`; `is-enabled`
+  states: `man 1 systemctl`.
+- A new `ManagerClient` method needs an impl in `DbusClient`, `PipeClient`, pai-app's `FakeClient` and
+  `DiskClient`, and pai-bff's `tests/instances.rs` `FakeManager` (implement the test ones yourself).
+- A server or client over `impl Read + Write`: a `Cursor` of peer frames for reads, an
+  `Arc<Mutex<Vec<u8>>>` for writes, an optional failing `ErrorKind`; compare JSON as `serde_json::Value`.
+  A real duplex: `UnixStream::pair()` with `set_read_timeout` (`manager/pipe.rs`,
+  `crates/manager/src/tests/pipe_client.rs`). A frame cap needs a test in both directions on each side.
+- Windows decisions are OS-neutral pure functions in `manager/windows.rs` and `pai_core::client::pipe`;
+  only Win32 glue is `cfg(windows)`. Numeric Win32 values come from the local windows-sys source
+  (`~/.cargo/registry/src/*/windows-sys-*/src`), meanings from learn.microsoft.com, a crate's behaviour
+  from its `.crate` on static.crates.io. A registry test's guard restores every value in `Drop` (no
+  panic there). The SCM reports states on its own: never-started reads `SERVICE_STOPPED` with exit code
+  1077. A service SID (`NT SERVICE\<name>`) is computable per [MS-LSAT] 3.1.1.1.2 (SHA-1 of the
+  upper-case UTF-16LE name; `service_sid`).
+
+## Packaging, installers, CI (xtask)
+
+- Most xtask path code has no test: after a path change check the targets exist by hand and say so.
+  `linux::package::run` reads the real `build/linux/`: pin decisions as pure functions over a
+  `build_root: &Path`. xtask has no `tempfile`: `temp_dir()` + pid behind a `Drop` guard.
+- xtask's `windows/` (`cfg(windows)`) and `macos/` never run on Linux: pin choices as items in `common/`
+  (`common::msi::CARGO_EXES`, `common/macos_pkg.rs`) plus a text check that the per-OS code uses them.
+  Per-OS modules are `#[cfg(unix)]`, so a test importing one needs it too; run `cargo check -p xtask
+  --all-targets --target x86_64-pc-windows-gnu` (and `aarch64-apple-darwin` for the Mac side) before
+  handing over.
+- xtask's CLI: `Cli::try_parse_from` (`cli_tests`); compare `ValueEnum` names via
+  `to_possible_value().unwrap().get_name()`. clap 4 refuses `--flag -1` without `allow_hyphen_values`
+  (`--flag=-1` parses): panic with clap's error so it is not read as a refusal.
+- A new `Component` variant compiles with `todo!` arms in `suffix` (`common/components.rs`) and `texts`
+  (`linux/package.rs`).
+- A new test file beside a big inline `mod tests`: declare `mod <name>;` inside it (`common/msi/tests/`);
+  `use super::*;` reaches private helpers.
+- The `.wxs` is parsed with roxmltree (`<?if?>` are processing instructions, entities decoded); `dacl()`
+  reads `PermissionEx Sddl` into ACEs so an ACL is pinned by meaning. Extension elements are matched by
+  namespace URI (the prefix is not kept). Conditions are pinned by meaning with `holds(cond, props)` and
+  `runs_in(doc, action)` in `common/msi/tests/engine_lifecycle.rs` over named scenarios; with
+  `MajorUpgrade` afterInstallValidate, a "before files are replaced on upgrade" action runs in the OLD
+  package (`UPGRADINGPRODUCTCODE`).
+- MSI facts: conditions never compare versions, so a minimum version of another product is `Upgrade` +
+  `UpgradeVersion OnlyDetect="yes" Minimum=..` plus a `Launch` on its property. An AppSearch signature
+  with no Signature row is a directory search (`appsearch-table`, `drlocator-table` on
+  learn.microsoft.com). WiX schema pages (docs.firegiant.com/wix/schema/wxs|util/<element>/) put the
+  attribute table past offset 100000; what the compiler accepts is in `Compiler.cs` at the pinned tag.
+  Windows Installer removes empty folders it created: a "kept after uninstall" check writes a file there
+  first. An msiexec exit code (1603) alone is any fatal error: pair it with the `/l*v` log message.
+- Linux packages: `check_files` (`linux/package.rs`) checks a spec's `%files` against a temp tree as
+  rpmbuild does; reuse it for every new path. ROCm libraries find kpack archives at `<lib>/../.kpack`.
+  A shared-library fixture follows CMake's symlink chain (`.so -> .so.N -> .so.N.M.P`), compared after
+  `canonicalize`; read the soname from the clone, never an older note. ggml loads backends from
+  `GGML_BACKEND_DIR`, then the exe's dir, then cwd, first of equal score winning.
+- Maintainer scripts are run in `Sandbox` (`linux/system_files.rs`): fake `systemctl`,
+  `deb-systemd-invoke`, `getent`, `chown`, `install`, `systemd-tmpfiles`... log their args; `/run`,
+  `/etc/llama.cpp`, `/etc/systemd/system` and other system paths are moved, others refused; `systemctl`
+  logs `has-default=yes|no` to order a copy against a start. Add every new tool a script calls to the
+  fakes. `run_chroot` refuses any `/etc` path not under `$DPKG_ROOT`. Enabled template instances exist
+  only as `multi-user.target.wants` links (`systemctl list-unit-files` lists the template alone): pin
+  the links. rpm scriptlets run the same way, `$1` as argument.
+- Packaging facts (this machine): local rpmbuild has no `%systemd_post` (write scriptlets by hand); rpm 6
+  turns a sysusers.d `m` line into `Requires: group(..)`; debhelper snippets to mirror are in
+  `/usr/share/debhelper/autoscripts/`; dbus' trigger is `interest-noawait` (the policy may not be
+  reloaded before a postinst starts a Type=dbus unit). A unit on the system bus cannot use
+  `DynamicUser=` under dbus-daemon (dropped at Hello): use a sysusers.d user. One `StateDirectoryMode=`
+  applies to every `StateDirectory=`: another mode ships as a tmpfiles.d line, applied again by the
+  core's postinst after `systemd-sysusers` (a line whose owner is missing is skipped, exit 65: keep `||
+  true`). Every new header-free or engine-headed file goes on the exclusion list of
+  `the_system_files_and_scripts_name_the_core_package`. `paths::installed_share_dir` is
+  `<exe>/../../share`, so a `/usr/libexec/private-ai` program finds no `cli.toml`.
+- Check a candidate unit with `systemd-analyze verify` and `systemd-analyze security --offline=true` on
+  a /tmp copy with `ExecStart=/usr/bin/true`. Local man pages (systemd 259) are citable.
+- Version order: `dpkg --compare-versions a gt b`, `rpm --eval '%{lua: print(rpm.vercmp(a, b))}'`
+  (`2.4.0+x` sorts above `2.4.0`); rpm-spec(5), rpm-version(7). Distribution package contents:
+  `apt-get download` into a fresh /tmp dir, `dpkg -c`; Fedora specs via
+  `curl -sL https://src.fedoraproject.org/rpms/<n>/raw/rawhide/f/<n>.spec`; docs.fedoraproject.org
+  blocks scripts, read it through web.archive.org and say so. The predecessor `.deb`/`.rpm` sit in
+  `dist/`.
+- journalctl's refusal texts: systemd's `src/shared/journal-util.c`; `strings` on the installed
+  `libsystemd-shared*.so` gives this version's wording.
+- llama-server: a missing `LLAMA_CACHE` lists empty and a download creates it; only `--slot-save-path`
+  must exist before start.
+- CI workflows (`xtask/src/ci_windows.rs`, `ci_macos.rs`) are pinned as text (`after()` for order,
+  `steps()` per step, `switches(..)` regions); prove helpers with a throwaway workflow. Runner contents:
+  `actions/runner-images` (`windows-2025` is the VS 2026 image: `Windows2025-VS2026-Readme.md`;
+  `macos-15-arm64-Readme.md`). A `pwsh` step exits with the last native `$LASTEXITCODE`: a step printing
+  a command allowed to fail ends with `exit 0` (pin it).
+
+## bff and web UI
+
+- An axum router is tested with `router().oneshot(request)` and `BodyExt::collect` in `#[tokio::test]`;
+  a route asking the manager through `router_with(connect, timeout)` and a fake `ManagerClient`, every
+  request under `tokio::time::timeout`; a sleeping fake runs in `spawn_blocking`, which the runtime
+  awaits at its end, so keep sleeps short. A new route needs no stub (axum's empty 404 is the red);
+  check the panics point at reply assertions, not the sign-in helper.
+- `ConnectInfo<SocketAddr>` is inserted into extensions for `oneshot`, which hides missing
+  `into_make_service_with_connect_info`: pin the wiring with one request to the binary. The binary's
+  socket test reserves a free port, polls a raw HTTP/1.1 GET over `TcpStream` with a deadline, kills the
+  child in a `Drop` guard.
+- A rate limit or lockout: fake that sleeps in the seam, `multi_thread` runtime, a `JoinSet` of N
+  requests, assert the seam's call count; try the key spellings the backend treats as one.
+- A value sent by role: add a second user to the fake authenticator and `sign_in_as(user)`; assert the
+  secret's text is nowhere in the body, not only the `null`.
+- The embedded page is tested on what the build embedded (`PAI_BFF_FE_DIR` from `build.rs`, `tests/fe.rs`
+  `embedded()`), following `index.html`'s `/assets/...`; only `crates/bff/fe-fixture` exercises CSS.
+- Read a JSON type from `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning it
+  (`RocblasUseHipblaslt` is `"on"`/`"off"`).
+- fe tests (Vitest, jsdom): globals off, so call `cleanup()` in `afterEach`; mock fetch with
+  `vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(..))` (bare `vi.fn` types calls as `[][]`).
+  Vitest does not type-check: run `npm --prefix fe run typecheck`. Debian's npm 9.2.0 dies on mismatched
+  peer ranges (`reading 'edgesOut'`): align versions, try installs in a copy of `package.json`.
+- Read new strings through a `text(key)` helper that throws on a missing key. `strings.test.ts` sees a
+  key only as a literal `t('key'` and flags letters between `>` and `<` in a `.tsx`; check JSX text with
+  `ts.createSourceFile(.., ScriptKind.TSX)`, not a regex.
+- Several components read `/api/instances`: a `Response` body reads once, so gate reads
+  (`() => gate.promise.then(() => reply(..))`) instead of sharing one. For a deduplicating read, hold one
+  pending when the next consumer's is due. Focus moves to the `h1` on route change: `navigate()` first.
+  A `hidden` hint is still in `textContent`. A `#` link moves `location.hash` in a later task: wait one
+  `setTimeout(0)` in `act`. jsdom's `HTMLDialogElement` lacks `showModal`/`close`. Scope queries to
+  their section (header controls break whole-main queries). After an interrupted session run the file
+  first. Mutation runs go in a scratch copy of `fe/` with `node_modules` symlinked.
+- A hand check against the real bff: drive the snap's `geckodriver --port <free>` over plain WebDriver
+  HTTP from `python3 -I` (`-headless`, screenshots as base64 over HTTP, 2 s after each load; Firefox
+  stops at 500 px wide). Kill it with `snap run --shell firefox.geckodriver -c 'kill -TERM <pid>'`. The
+  bff's target dir here is `build/windows/cargo-target`; `grep -a -c <asset name>` on the binary
+  confirms it embeds the new `fe/dist`.
