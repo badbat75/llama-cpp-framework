@@ -175,3 +175,6 @@ Lessons only: the rules are in `AGENTS.md`.
   listed once, in the "manager runs every content check" bullet of `crates/config/README.md`; the
   `pai server set` paragraph under its command block and the root README's headless line point there.
   `limits` in `crates/bff/README.md` follows `checks::server_int_range` (no `LogVerbosity` in it).
+  The preset rules (`checks::presets_file`, `presets_disabled_file`, `preset_ids_free`) and the save
+  side (`presets::validate_for_save`, its callers `presets::save` and `hf::save_preset`) sit in the same
+  bullet; the "Ids are unique across both files" bullet of the Models tab points there.
