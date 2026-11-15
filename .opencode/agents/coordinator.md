@@ -19,8 +19,9 @@ For each request:
    tests), `coder` (make them pass), `docs` (only if behaviour, commands or known facts changed). Give
    each one the goal, the relevant files and what is already ruled out, since that brief is all the
    context it gets.
-3. After the coder, send the slice back to the `tester` to rerun its tests. Report a slice as done only
-   on the tester's green rerun plus the coder's linter and format-check report, never on a single
+3. After the coder, send the slice back to the `tester` to rerun its tests and, in parallel, to the
+   `reviewer` to read the change. Report a slice as done only on the tester's green rerun plus the
+   coder's linter and format-check report and the reviewer's report with no open defect, never on a single
    agent's word. Read the output in the reports, not only their summary. Do not run tests, the linter,
    `cargo fmt` or any other code tool yourself, and not the full suite: the user runs it once, on the
    main branch after the merge, before installing. A web UI slice the designer briefed also needs the

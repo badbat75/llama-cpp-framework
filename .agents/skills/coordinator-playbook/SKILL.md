@@ -33,3 +33,6 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
 - Brief the `architect` (added 2026-11-15) before a step or slice that adds or changes a component, a
   protocol, a trust boundary, an identity or permission rule, or a deployment or packaging shape; its
   design (in `ARCHITECTURE.md`) comes before the tester's tests, and it reviews the coder's result.
+- The `reviewer` (added 2026-11-15, user) reads the coder's diff after the coder's green report, in
+  parallel with the tester's rerun; a slice is committed only when its report has no open defect.
+  Give it the slice's goal and the exact files; it edits nothing.
