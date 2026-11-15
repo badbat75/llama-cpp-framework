@@ -314,7 +314,7 @@ refused `nobody` the manager's `Stop`, `WriteFile` and `ReadFile` of `server@def
 `NotAuthorized`; the bff answered `/api/version`, `/api/instances` with `[]` and 200, and 503
 `unavailable` with the manager stopped. The `.rpm` files have not been installed.
 
-On the same install, the same day, with the start at boot of step 12 (reported by the user):
+On the same install, the same day, with the instance's start at boot (reported by the user):
 `pai server boot on` left `systemctl is-enabled llama.cpp@default` at `enabled` and created the link in
 `multi-user.target.wants/`, `pai server boot off` left it `disabled`, and the Settings toggle matched
 systemd both ways. Reinstalling at the same version after `llama.cpp@.service` moved from `core` to

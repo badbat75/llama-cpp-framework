@@ -453,45 +453,6 @@ files and the engine's homepage are llama.cpp's); **2** (done, Linux) the packag
   1:1.0.0)` and the engine package at `1:1.0.0+pai1`; the engine or the framework can be rebuilt alone;
   the two Windows installers and the `.pkg` follow the same split; the docs describe it.
 
-### 12. Test the Windows and macOS installers on GitHub's runners
-
-The user has no Mac and will test on Windows later (2026-11-14), so the installers are first tested on
-GitHub-hosted runners: `windows-2025` and `macos-15` (arm64, M1), free and unlimited for this public
-repository. Decided with the user on 2026-11-14:
-
-- **Started by hand only** (`workflow_dispatch`), never on push; each run needs the user's go-ahead.
-- **A CI-only reduced build**: xtask gets an option that builds llama.cpp with fewer backends
-  (Windows: CPU or Vulkan only, no ROCm or CUDA SDK; macOS: Metal only, no Vulkan SDK), so a job fits
-  the runner's disk and time. The MSIs and `.pkg` are built and installed for real; the bundling of
-  the GPU runtimes is not tested there and stays for the user's machines.
-- Each job: prerequisites, `xtask configure`, `xtask build`, `xtask package`, then install the
-  packages, check that `pai --version`, `llama-server --version` and (Windows) the services run from
-  the installed folders, upgrade over the same version, uninstall, and check what is left. The
-  automatable checks of the installer test plan (`installer/AGENTS.md`) go in; those needing a GPU, a
-  desktop session or a dialog stay for the user.
-
-Slices, each test first: **1** (done) the reduced-build option in xtask: `xtask configure --minimal`
-(Windows, macOS; Linux refuses it), recorded in the config, GGML_CUDA/HIP/VULKAN off, the engine's file
-named `llama.cpp-v<release>-minimal-<arch>` so a release upload never takes it, no `-vulkan` `.pkg`;
-the Windows runner's own LLVM clang and OpenSSL should satisfy `configure` (read from the runner image,
-not run), and running the prerequisites script there avoids depending on PATH order for OpenSSL; **2** (written, not yet run) the Windows workflow
-`.github/workflows/installers-windows.yml` (first WiX compile of both MSIs): prerequisites with
-`-Minimal` (which skips the GPU dists and works without winget), the WiX EULA accepted on the runner
-(user, 2026-11-14), the framework alone refused with its message, `xtask install`, the services'
-start mode, path and account, `/api/version` and `/api/instances`, a `/fecmus` repair that restores a
-deleted default and keeps a changed one, both uninstalls with what each must remove and keep, the MSIs
-and logs uploaded; left: its first run (the user's go-ahead), and `find_openssl` still knows only
-`OpenSSL-Win64` (the workflow puts the runner's `Program Files\OpenSSL` first on PATH); **3** (green on its first run, 43645311957, 36 min, 2026-11-14) the macOS workflow `.github/workflows/installers-macos.yml`
-(first `pkgbuild` run): prerequisites with `--skip vulkan`, `configure --minimal`, exactly four `.pkg`,
-`xtask install`, the two `--version` from `/opt`, the `/usr/local/bin` links and the `pkgutil`
-receipts, then a reinstall of the same version that must restore a removed `pai-config`; no uninstall
-(the project documents none for macOS); left: on macOS xtask builds with four dead-code warnings
-(`components.rs`: `OLD_BASE_NAME`, `LLAMA_CPP_REVISION`, `llama_cpp_version`, `llama_cpp_min`, used only
-by the Linux and Windows packaging).
-
-- Done when: both workflows have run green on GitHub at least once, from a run the user started or
-  approved, and what they cover is written in `installer/AGENTS.md` and `docs/build-macos.md`.
-
 ### 13. One set of checks for the GUI, `pai`, the manager and the bff
 
 Found by the web UI session's read-only inventory of the configurator (2026-11-14, section 3 of its
@@ -835,6 +796,11 @@ Later slices (not yet written): the presets page, the gateway, the benchmark por
   with 7.1: typescript-eslint issue #12518, Microsoft's TS 7.0 announcement). Move to 7 only when
   every tool of the `fe/` stack supports it (typescript-eslint first), checked in each tool's own
   docs.
+- **CI leftovers from step 12** (both installer workflows green: Windows run 43654217880, macOS
+  43645311957): `find_openssl` knows only `OpenSSL-Win64`, not the runner's `Program Files\OpenSSL`
+  (the workflow puts it first on PATH); on macOS xtask builds with four dead-code warnings
+  (`components.rs`: `OLD_BASE_NAME`, `LLAMA_CPP_REVISION`, `llama_cpp_version`, `llama_cpp_min`, used
+  only by the Linux and Windows packaging); both workflows' header comments still cite "PLAN.md step 12".
 - **macOS build stack, unverified:** `crates/app/build.rs` `emit_build_stack` reads the CMake
   cache under `build/windows` or `build/linux` only, so on a Mac the recorded SDK versions would come
   out empty (found by reading; nothing has run on a Mac, R3).

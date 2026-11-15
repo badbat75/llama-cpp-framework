@@ -54,9 +54,9 @@ then a system clang, then GCC.
 ### The minimal build
 
 **`xtask configure --minimal` records a build without the GPU backends that need an SDK, for CI
-only.** It is meant for GitHub's runners, which have no ROCm, CUDA or Vulkan SDK (`PLAN.md` step 12).
+only.** It is meant for GitHub's runners, which have no ROCm, CUDA or Vulkan SDK (`.github/workflows/installers-windows.yml`, `installers-macos.yml`).
 Read from the code and its tests (`xtask/src/main.rs`, `cmake_options.rs`, `msi.rs`, `macos_pkg.rs`);
-both branches have run in CI, green: Windows in run 43651545466, macOS in run 43645311957.
+both branches have run in CI, green: Windows last in run 43654217880, macOS in run 43645311957.
 
 - `xtask build` adds `xtask/cmake/minimal.toml` over the OS options: `GGML_CUDA`, `GGML_HIP` and
   `GGML_VULKAN` off, every other option as in the full build. Windows is left with the CPU backends,

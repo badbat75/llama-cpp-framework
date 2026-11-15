@@ -164,3 +164,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - A commit message's reason can be wrong in a detail: check it in the code before repeating it
   (dbc43cb blamed the instance unit's `ProtectHome`, which only `private-ai-bff.service` sets:
   `xtask/src/linux/system_files.rs`).
+- When a `PLAN.md` step closes, grep `step <N>` (not only `PLAN.md step <N>`) in every `.md` and in
+  `.github/workflows/*.yml` comments: plan numbers are reused, so a bare `step 12` may mean an older
+  step, and the installer test plan has its own numbered steps. Point to the file that now holds it.

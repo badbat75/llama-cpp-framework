@@ -24,7 +24,8 @@ The web UI already has a read-only Server page, built against a route the bff do
   `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
   the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
   In CI (run 43651545466, a `windows-2025` runner) it ran as that service, its path and account as
-  declared, `/api/version` answering the framework version and `/api/instances` 200; nothing else has
+  declared, `/api/version` answering the framework version and `/api/instances` 200 (since run
+  43654217880 listing exactly `default`, engine `llama.cpp`, state `inactive`); nothing else has
   run on Windows, and the open checks are in the test plan of
   [installer/AGENTS.md](../../installer/AGENTS.md).
 
