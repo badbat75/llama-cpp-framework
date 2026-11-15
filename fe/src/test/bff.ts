@@ -222,6 +222,13 @@ export const EN: Record<string, string> = {
   'presets-load-failed': 'The presets could not be read.',
   'presets-off-note':
     'A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
+  // Slice 2b (fe/briefs/02-models.md, section 2b.9): the list's filter.
+  'presets-filter-label': 'Filter presets',
+  'presets-filter-hint':
+    'Matches part of the preset name or of its model file path. Case does not matter.',
+  'presets-filter-clear': 'Clear filter',
+  'presets-filter-count': 'Presets shown: {0} of {1}.',
+  'presets-no-match': 'No presets match the filter.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -305,6 +312,8 @@ export type Preset = {
   engine: string
   engineAvailable: boolean
   enabled: boolean
+  /** The section's `model` value as the file holds it; "" when unset (2b). */
+  model: string
 }
 
 /** The default preset list: one switched on, one switched off, one engine. */
@@ -314,12 +323,15 @@ export const PRESETS: Preset[] = [
     engine: 'llama.cpp',
     engineAvailable: true,
     enabled: true,
+    model:
+      '/var/lib/private-ai/.llama.cpp/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
   },
   {
     id: 'gemma-3-12b-it',
     engine: 'llama.cpp',
     engineAvailable: true,
     enabled: false,
+    model: '',
   },
 ]
 

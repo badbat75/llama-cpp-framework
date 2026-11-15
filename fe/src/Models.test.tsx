@@ -1,7 +1,8 @@
 // The Models page, slice 2a (fe/briefs/02-models.md, section 2): the nav's
 // Models link, the #/models route and its read-only preset list. The whole
 // app renders against a fake bff (mocked fetch) answering GET /api/presets
-// with [{"id", "engine", "engineAvailable", "enabled"}] in the bff's order,
+// with [{"id", "engine", "engineAvailable", "enabled", "model"}] in the bff's
+// order (the model since slice 2b, whose filter is in ModelsFilter.test.tsx),
 // errors as {"key", "args"} (fe/briefs/api-contract.md). "2a.17" is the
 // brief's criterion 17 of section 2. Criterion 19 (reflow) and the muted
 // colour of 12 are checked in the designer's review, not in jsdom.
@@ -46,8 +47,9 @@ function preset(
   enabled = true,
   engine = 'llama.cpp',
   engineAvailable = true,
+  model = '',
 ): Preset {
-  return { id, engine, engineAvailable, enabled }
+  return { id, engine, engineAvailable, enabled, model }
 }
 
 /** The app at #/models; returns the fake bff and main. */
@@ -163,7 +165,12 @@ function tabbable(): HTMLElement[] {
 }
 
 function nameOf(el: HTMLElement): string {
-  return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // A field is named by its label (the filter, slice 2b).
+  const text =
+    el instanceof HTMLInputElement
+      ? [...(el.labels ?? [])].map((l) => l.textContent).join(' ')
+      : el.textContent
+  return (text ?? '').replace(/\s+/g, ' ').trim()
 }
 
 // ── Failure paths first: errors (17) ────────────────────────────────────
@@ -186,7 +193,7 @@ test('2a.17: 403 client-not-authorized and 503 client-unavailable show their api
   }
 })
 
-test('2a.17: any other status or key, a malformed body or a network failure shows presets-load-failed, never the body', async () => {
+test('2a.17, 2b.22: any other status or key, a malformed body (a row without a string model included) or a network failure shows presets-load-failed, never the body', async () => {
   const answers: [string, () => Response | Promise<Response>][] = [
     ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
     ['500', () => reply(500, { key: 'secret-detail', args: [] })],
@@ -205,28 +212,48 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       '200 a row without engineAvailable',
       () =>
         reply(200, [
-          { id: 'secret-detail', engine: 'llama.cpp', enabled: true },
+          {
+            model: '',
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            enabled: true,
+          },
         ]),
     ],
     [
       '200 a row without enabled',
       () =>
         reply(200, [
-          { id: 'secret-detail', engine: 'llama.cpp', engineAvailable: true },
+          {
+            model: '',
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            engineAvailable: true,
+          },
         ]),
     ],
     [
       '200 a row without id',
       () =>
         reply(200, [
-          { engine: 'secret-detail', engineAvailable: true, enabled: true },
+          {
+            model: '',
+            engine: 'secret-detail',
+            engineAvailable: true,
+            enabled: true,
+          },
         ]),
     ],
     [
       '200 a row without engine',
       () =>
         reply(200, [
-          { id: 'secret-detail', engineAvailable: true, enabled: true },
+          {
+            model: '',
+            id: 'secret-detail',
+            engineAvailable: true,
+            enabled: true,
+          },
         ]),
     ],
     [
@@ -234,6 +261,7 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       () =>
         reply(200, [
           {
+            model: '',
             id: 7,
             engine: 'secret-detail',
             engineAvailable: true,
@@ -246,6 +274,7 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       () =>
         reply(200, [
           {
+            model: '',
             id: 'secret-detail',
             engine: null,
             engineAvailable: true,
@@ -258,6 +287,7 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       () =>
         reply(200, [
           {
+            model: '',
             id: 'secret-detail',
             engine: 'llama.cpp',
             engineAvailable: true,
@@ -270,9 +300,61 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       () =>
         reply(200, [
           {
+            model: '',
             id: 'secret-detail',
             engine: 'llama.cpp',
             engineAvailable: 1,
+            enabled: true,
+          },
+        ]),
+    ],
+    [
+      '200 a row without model',
+      () =>
+        reply(200, [
+          {
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            engineAvailable: true,
+            enabled: true,
+          },
+        ]),
+    ],
+    [
+      '200 model a number',
+      () =>
+        reply(200, [
+          {
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            engineAvailable: true,
+            enabled: true,
+            model: 7,
+          },
+        ]),
+    ],
+    [
+      '200 model null',
+      () =>
+        reply(200, [
+          {
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            engineAvailable: true,
+            enabled: true,
+            model: null,
+          },
+        ]),
+    ],
+    [
+      '200 one good row, one without model',
+      () =>
+        reply(200, [
+          preset('good-one'),
+          {
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            engineAvailable: true,
             enabled: true,
           },
         ]),
@@ -282,7 +364,12 @@ test('2a.17: any other status or key, a malformed body or a network failure show
       () =>
         reply(200, [
           preset('good-one'),
-          { id: 'secret-detail', engine: 'llama.cpp', enabled: false },
+          {
+            model: '',
+            id: 'secret-detail',
+            engine: 'llama.cpp',
+            enabled: false,
+          },
         ]),
     ],
   ]
@@ -705,7 +792,7 @@ test('2a.18: leaving #/models and coming back reads the presets again, once', as
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20: Tab goes skip link, banner, nav (Overview, instances, Models), and reaches nothing in the page', async () => {
+test('2a.20, 2b.35: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, and reaches nothing in the table', async () => {
   const { main } = open({ session: 'user' })
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-instances') })
@@ -718,10 +805,11 @@ test('2a.20: Tab goes skip link, banner, nav (Overview, instances, Models), and 
     'default',
     'coder',
     en('nav-models'),
+    en('presets-filter-label'),
   ])
 })
 
-test('2a.21: the table has 3 columns and each data row 3 cells under them; the load announces nothing but the status going away', async () => {
+test('2a.21, 2b.30: the table has 3 columns and each data row 3 cells under them; the load announces nothing: the filter status is there, empty', async () => {
   const { main } = open()
   const t = await table(main)
   expect(within(t).getAllByRole('columnheader')).toHaveLength(3)
@@ -730,7 +818,11 @@ test('2a.21: the table has 3 columns and each data row 3 cells under them; the l
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
   expect(dataRows).toHaveLength(2)
   for (const row of dataRows) expect(cellsOf(row)).toHaveLength(3)
-  expect(within(main).queryByRole('status')).toBeNull()
+  const status = within(main).getByRole('status')
+  expect(status.tagName).toBe('P')
+  expect(status.textContent).toBe('')
   expect(within(main).queryByRole('alert')).toBeNull()
-  expect(main.querySelectorAll('[aria-live]')).toHaveLength(0)
+  expect(
+    [...main.querySelectorAll('[aria-live]')].filter((el) => el !== status),
+  ).toHaveLength(0)
 })

@@ -174,6 +174,158 @@ The filter (2b), the on/off switch and any write (2c), links to the preset page 
 path on the server, of no use to a reader who cannot open it; the Server page names only its file),
 any column the GUI's list does not show (model file, load on startup), sorting, polling.
 
+## 2b. Slice 2b: the list's filter
+
+Added on 2026-11-15. Criteria go on from 2a's numbers. Everything in 2a stays true unless a line
+below changes it. The reference is the GUI's filter: the `LineEdit` with `input-type: search` above
+the list (`crates/config/ui/models_page.slint` 76-81), the rule `preset_matches` in
+`crates/config/src/gui.rs` 908-914, applied on each edit (`on_filter_presets`,
+`crates/config/src/gui/models_tab.rs` 423), and the texts `filter-presets` and `no-presets-match`
+(`crates/core/strings/en_US.toml`).
+
+### 2b.1 Data
+
+22. 2b reads only what 2a reads: `GET /api/presets`, whose rows now carry a fifth field, `model`
+    (a string; section 2b.8). A 200 whose rows lack `model` or carry a non-string there is a reply of
+    the wrong shape: `presets-load-failed`, as criterion 17. Filtering is in the fe, over the rows
+    already read: typing reads nothing.
+
+### 2b.2 The field
+
+23. **Where.** Below `presets-intro`, before the status line (criterion 29) and the table: a label,
+    the field, its hint, and the **Clear filter** button when the field holds text (criterion 31).
+    The label `presets-filter-label` sits above the field as a visible `<label for>`; the hint
+    `presets-filter-hint` sits below it in `--muted`, 0.875rem, and is tied to the field with
+    `aria-describedby`. No placeholder: a placeholder is not a label and disappears as one types.
+    ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions),
+    [1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [2.4.6](https://www.w3.org/TR/WCAG22/#headings-and-labels))
+24. **Type.** `<input type="search">` (the GUI's `input-type: search`; its role is `searchbox`, so
+    `getByRole('searchbox', { name: 'Filter presets' })` finds it), with `autocomplete="off"` and
+    `spellcheck="false"` (ids and paths are not words). Not inside a `<form>` and no `search`
+    landmark: it filters one table and submits nothing **(preference)**. The browser's own clear
+    glyph (`::-webkit-search-cancel-button`) is hidden, so Blink and WebKit do not show a second clear
+    control beside the button of criterion 31 and Firefox looks the same.
+25. **Width.** At 375 px and down to 320 px, the field and the Clear button sit on one line, the
+    field taking the rest of the main column (flex 1, `min-width: 0`), the button not wrapping
+    (`nowrap`); no horizontal scroll. From 640 px up the row is at most 24rem wide, left-aligned. The
+    field's font is the body font, not monospace (ids are typed as words). Checked in review, not in
+    jsdom. ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow))
+26. **Same for both roles**: a user and an administrator see the same field, button, hint and
+    status, with the same roles and names. Filtering changes nothing on the server.
+
+### 2b.3 What matches
+
+27. **The GUI's rule, exactly.** An empty field shows every row. Otherwise a row is shown when its
+    `id` or its `model`, lowercased, contains the whole field's text, lowercased, as one substring:
+    no trimming (a typed space counts, as in the GUI), no splitting into words, no wildcard or
+    pattern, path separators matched as typed. Lowercasing is JavaScript's `toLowerCase()` (Unicode
+    default case mapping, as Rust's `to_lowercase` in the GUI; not the locale-dependent
+    `toLocaleLowerCase`). A row with `model` `""` matches only by its id. Examples a test can use:
+    with rows `Qwen3-27B` (model `/m/qwen/Qwen3-27B-Q8_0.gguf`) and `Old-Coder` (model `""`):
+    `qwen` and `Q8_0` show only `Qwen3-27B`; `coder` shows only `Old-Coder`; `-` shows both;
+    `27b q8` shows none; ` qwen` (leading space) shows none.
+28. **Order and look kept**: the shown rows keep the reply's order (criterion 9) and their 2a cells
+    and muting; switched-off rows are filtered like the others. The filter hides rows, never sorts or
+    highlights.
+
+### 2b.4 When the list updates, and what is heard
+
+29. **As typed.** Each change of the field's value (typing, pasting, deleting, Clear, Escape)
+    updates the table at once; no Enter, no button, no delay. Enter does nothing. Nothing moves focus
+    or changes the page's context. ([3.2.2](https://www.w3.org/TR/WCAG22/#on-input))
+30. **The status line.** A `<p role="status">` (implicit `aria-live="polite"`, `aria-atomic` true),
+    rendered whenever the field is, between the field row and the table, so it is in the page before
+    its text changes (technique [ARIA22](https://www.w3.org/WAI/WCAG22/Techniques/aria/ARIA22): the
+    container has `role="status"` before the message occurs). Its text:
+    - field empty: empty (nothing to announce; the paragraph stays in the DOM);
+    - one or more rows match: `presets-filter-count` filled with the shown count and the total
+      ("Presets shown: 2 of 5.");
+    - no row matches: `presets-no-match` ("No presets match the filter."), and the table is not
+      rendered (no header row over nothing); `presets-off-note` stays below.
+    A screen reader hears the count or the no-match text after the typed character's echo, without
+    focus moving: a result count and "No results returned" are status messages in
+    [Understanding 4.1.3](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html). Shown in
+    `--muted`, 0.875rem. ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+    **Its line is kept while empty** (`min-height: 1lh`, one line of its own text), so the table does
+    not move when the first character is typed or the field is cleared (preference: the rows a user
+    is reading stay put). Measured in review at 1280 px: with the empty paragraph at height 0 its
+    margins collapse and the table jumped 29 px down on the first character and back on Clear. The
+    `lh` unit: [MDN, CSS values and units](https://developer.mozilla.org/en-US/docs/Web/CSS/length#lh).
+    Checked in review, not in jsdom.
+
+### 2b.5 Clearing
+
+31. **Clear filter button.** A native `<button type="button">` `presets-filter-clear`, after the
+    field on the same line, rendered only while the field holds text (a button that clears nothing is
+    empty chrome, D1.4). Pressing it empties the field, shows every row, empties the status line, and
+    puts focus in the field (the button it was on is gone).
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
+    [2.4.6](https://www.w3.org/TR/WCAG22/#headings-and-labels))
+32. **Escape** in the field, while it holds text, does the same as the button, focus staying in the
+    field. With the field empty, Escape does nothing. (Blink also clears a search field on Escape by
+    itself; the result must be the same, so the field is controlled and its value set to `""` either
+    way.) ([2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+
+### 2b.6 States and life
+
+33. **Not shown** while loading, on any error (criteria 14, 16, 17) and for an empty list (200 with
+    `[]`, criterion 15: nothing to filter, D1.4). In those states neither the label, the field, the
+    hint, the button nor the status paragraph is in the DOM. They appear with the table.
+34. **Not kept.** Each time the page opens (criterion 18: route change to `#/models`, a sign-in
+    that returns to it) the field is empty and every row shows. The text is not in the URL, in
+    storage, or kept across a page change **(preference: keep it simple; the GUI keeps it only
+    because its tab never closes)**.
+
+### 2b.7 Keyboard and screen reader
+
+35. **Tab order**: skip link, banner, nav, the filter field, the Clear filter button (when shown),
+    then nothing in the table (criterion 20). Focus on arrival stays on the `h1` (criterion 3).
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
+36. **On focus** a screen reader says the field's name, role and hint: "Filter presets, search
+    field, Matches part of the preset name or of its model file path. Case does not matter." (the
+    exact wording of the role is the reader's). The focus ring is DESIGN.md's, on both field and
+    button. ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value),
+    [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible))
+
+### 2b.8 The model path: searched, not shown
+
+Decision: the `model` value is matched but not shown in 2b. Reasons: the GUI's list shows only the
+id and the switch (2a's out-of-scope line already left the model column out); at 320 px the name
+column is 112 px wide (criterion 19), and a fourth column of server paths would squeeze ids to a
+character a line; the path is shown on the preset page (2d, Assets card). The hint (criterion 23)
+says the filter also matches the model file, so a row matched by its path alone is not a surprise.
+
+### 2b.9 Strings, slice 2b
+
+| Key | English | Source |
+|---|---|---|
+| `presets-filter-label` | Filter presets | GUI `filter-presets`, without the ellipsis (a label, not a placeholder) |
+| `presets-filter-hint` | Matches part of the preset name or of its model file path. Case does not matter. | new (the GUI says nothing; its list does not show the path either) |
+| `presets-filter-clear` | Clear filter | new |
+| `presets-filter-count` | Presets shown: {0} of {1}. | new; "label: n of m" so one text fits 1 and many |
+| `presets-no-match` | No presets match the filter. | GUI `no-presets-match` |
+
+### 2b.10 Out of 2b
+
+Showing the model path, highlighting the matched text, matching by words or any other field (engine,
+on or off), sorting, keeping the filter across pages or in the URL, a keyboard shortcut to the
+field.
+
+### 2b.11 Proposed contract change (for the bff's coordinator)
+
+To `GET /api/presets` in [api-contract.md](api-contract.md), by its keeper:
+
+> Each row gains `"model"`: the value of the section's `model` key as the preset file holds it, a
+> string, unchanged by the bff (no path resolution against the models folder, no check that the file
+> exists, the server machine's separators kept); `""` when the section has no `model` key or it is
+> empty. It is what `presets::Preset::model` reads (`get("model")`, `crates/app/src/presets.rs`,
+> empty by default) and what the GUI's filter matches. Success becomes
+> `[{"id", "engine", "engineAvailable", "enabled", "model"}]`; the example rows gain
+> `"model": "/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf"` and `"model": ""`. Same
+> errors and right as today: any signed-in user, since the manager's `ReadFile` needs no right for
+> the preset files. The fe treats a row without a string `model` as a malformed reply.
+
 ## 3. Proposed contract: `GET /api/presets` (for the bff's coordinator)
 
 To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top apply.
@@ -210,7 +362,7 @@ the preset files; the route still needs a session (the Models page is for signed
 - A missing file is an empty group, not an error (`presets.ini.disabled` is often absent).
 - **Errors**: 401 not signed in; 403 `client-not-authorized`; 503 `client-unavailable`; 502
   `client-other` for any other failure, each with empty `args`.
-- Only the four fields 2a shows; 2b adds `model`.
+- Only the four fields 2a shows; 2b adds `model` (section 2b.11).
 
 ## 4. Questions only the user can answer
 

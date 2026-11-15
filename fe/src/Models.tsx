@@ -1,6 +1,7 @@
 // The Models page (#/models, fe/briefs/02-models.md, slice 2a): the presets of
-// every engine read from the bff's /api/presets, shown read-only.
-import { useEffect, useState } from 'react'
+// every engine read from the bff's /api/presets, shown read-only, with a
+// filter over them (slice 2b).
+import { useEffect, useRef, useState } from 'react'
 import { apiError, call, isRecord } from './api.ts'
 import PageHeading from './PageHeading.tsx'
 import { t } from './strings.ts'
@@ -10,6 +11,7 @@ type Preset = {
   engine: string
   engineAvailable: boolean
   enabled: boolean
+  model: string
 }
 
 /** What the read gave: the presets, or the error key of its message. */
@@ -24,7 +26,8 @@ function isPreset(value: unknown): value is Preset {
     typeof value.id === 'string' &&
     typeof value.engine === 'string' &&
     typeof value.engineAvailable === 'boolean' &&
-    typeof value.enabled === 'boolean'
+    typeof value.enabled === 'boolean' &&
+    typeof value.model === 'string'
   )
 }
 
@@ -98,6 +101,81 @@ function Body({ answer }: { answer: Answer | undefined }) {
   if (answer.length === 0) {
     return <p>{t('presets-empty')}</p>
   }
+  return <Filtered presets={answer} />
+}
+
+/** The GUI's rule: the whole text, lowercased, in the id or the model. */
+function matches(p: Preset, filter: string): boolean {
+  const text = filter.toLowerCase()
+  return (
+    p.id.toLowerCase().includes(text) || p.model.toLowerCase().includes(text)
+  )
+}
+
+/** The filter field, its status line and the rows it lets through. */
+function Filtered({ presets }: { presets: Preset[] }) {
+  const [filter, setFilter] = useState('')
+  const field = useRef<HTMLInputElement>(null)
+  const shown = presets.filter((p) => matches(p, filter))
+
+  function clear() {
+    setFilter('')
+    field.current?.focus()
+  }
+
+  let statusText = ''
+  if (filter !== '') {
+    statusText =
+      shown.length === 0
+        ? t('presets-no-match')
+        : t(
+            'presets-filter-count',
+            String(shown.length),
+            String(presets.length),
+          )
+  }
+
+  return (
+    <>
+      <div className="presets-filter">
+        <label htmlFor="presets-filter">{t('presets-filter-label')}</label>
+        <div className="presets-filter-row">
+          <input
+            ref={field}
+            id="presets-filter"
+            type="search"
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby="presets-filter-hint"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && filter !== '') {
+                e.preventDefault()
+                setFilter('')
+              }
+            }}
+          />
+          {filter !== '' && (
+            <button type="button" className="secondary" onClick={clear}>
+              {t('presets-filter-clear')}
+            </button>
+          )}
+        </div>
+        <p id="presets-filter-hint" className="presets-filter-hint">
+          {t('presets-filter-hint')}
+        </p>
+      </div>
+      <p role="status" className="presets-filter-status">
+        {statusText}
+      </p>
+      {shown.length > 0 && <Table presets={shown} />}
+    </>
+  )
+}
+
+/** The presets as a table. */
+function Table({ presets }: { presets: Preset[] }) {
   return (
     <table className="presets" aria-labelledby="presets-title">
       <thead>
@@ -108,7 +186,7 @@ function Body({ answer }: { answer: Answer | undefined }) {
         </tr>
       </thead>
       <tbody>
-        {answer.map((p) => (
+        {presets.map((p) => (
           <tr key={p.id} className={p.enabled ? undefined : 'off'}>
             <td>{p.id}</td>
             <td>

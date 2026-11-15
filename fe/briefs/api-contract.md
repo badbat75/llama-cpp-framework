@@ -38,7 +38,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances/{id}/boot` | anyone | 1c, proposed | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, proposed | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
-| `GET /api/presets` | signed in | 2a, proposed | `[{"id", "engine", "engineAvailable", "enabled"}]` |
+| `GET /api/presets` | signed in | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 
 ### `GET /api/instances`
 
@@ -142,7 +142,7 @@ preset's engine is the engine whose preset file holds it, never a key in the fil
 ### `GET /api/presets`
 
 The one preset list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
-user: `[{"id", "engine", "engineAvailable", "enabled"}]`.
+user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`.
 
 - `engine` is the id of the engine whose preset file holds the section. No key in the file names
   it: llama-server refuses a `--models-preset` file with a key it does not know (llama.cpp v1.0.0:
@@ -154,6 +154,11 @@ user: `[{"id", "engine", "engineAvailable", "enabled"}]`.
 - The order is the GUI's (`presets::load_listed`): the switched-on presets, then the switched-off
   ones, each in file order; an id in both files is listed once, as on; a missing file is an empty
   group. The fe does not sort.
+- `model` (slice 2b, for the list's filter) is the value of the section's `model` key as the preset
+  file holds it, a string the bff does not change (no path resolution, no check that the file
+  exists, the server machine's separators kept); `""` when the section has no `model` key or it
+  is empty. The fe treats a row without a string `model` as a malformed reply. Any signed-in user
+  receives it, as the manager already lets any caller read the preset files.
 - Errors, each with empty `args`: 401; 403 `client-not-authorized`; 503 `client-unavailable`; 502
   `client-other`.
 

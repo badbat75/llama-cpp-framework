@@ -332,6 +332,58 @@ td {
   color: var(--muted);
 }
 
+/* The filter over the presets (02-models.md 2b): field and Clear on one line,
+   at most 24rem wide, the browser's own clear glyph hidden. */
+.presets-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 24rem;
+}
+
+.presets-filter label {
+  font-weight: 600;
+}
+
+.presets-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.presets-filter-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
+}
+
+.presets-filter-row input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.presets-filter-row button {
+  white-space: nowrap;
+}
+
+.presets-filter-hint,
+.presets-filter-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.presets-filter-status {
+  margin: var(--space-2) 0;
+  min-height: 1lh;
+}
+
 .presets-note {
   margin-top: var(--space-2);
   color: var(--muted);

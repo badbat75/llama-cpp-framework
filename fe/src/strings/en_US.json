@@ -183,5 +183,10 @@
   "presets-loading": "Loading the presets…",
   "presets-empty": "No presets yet.",
   "presets-load-failed": "The presets could not be read.",
-  "presets-off-note": "A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it."
+  "presets-off-note": "A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it.",
+  "presets-filter-label": "Filter presets",
+  "presets-filter-hint": "Matches part of the preset name or of its model file path. Case does not matter.",
+  "presets-filter-clear": "Clear filter",
+  "presets-filter-count": "Presets shown: {0} of {1}.",
+  "presets-no-match": "No presets match the filter."
 }
