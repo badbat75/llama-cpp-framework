@@ -478,7 +478,15 @@ Slices, each test first, in order:
    `presets.ini.disabled` refused by the manager too; `ctx-size = 0` either writable (as the README and
    integrations treat it) or documented as not; the MoE cache floor; then floats (no `inf`/`NaN`),
    enums, `chat-template-kwargs` JSON and min <= max pairs, each where a check is cheap.
-4. **Docs and strings**: the README's stale draft pin, Model info and `DefaultSpinBox` mentions; the
+4. **The manager withholds the API key** (user, 2026-11-15): `read_file` of an instance file needs
+   only `control` (any user of the active session on Linux, any interactive user on Windows), so
+   `pai-config` and `pai server show` show `OpencodeApiKey` to non-administrators though the file is
+   mode 0640. The manager blanks the value for a caller without `configure`, checked without a
+   prompt (a polkit challenge counts as no), and says it withheld it; the GUI and `pai` show "a key is
+   set, only an administrator can see it", and an administrator gets it through an authorized read
+   (the prompt). The bff reads as itself until the manager acts for the signed-in user (step 10 slice
+   6b), so until then an administrator in the web UI gets the withheld document too.
+5. **Docs and strings**: the README's stale draft pin, Model info and `DefaultSpinBox` mentions; the
    literals that break "no text in code" (`model_scan.rs`, `gpu_split.rs`, `bench/exec.rs`,
    `bench.rs`); GUI keys a non-GUI client needs copied to `cli.toml` when that client shows them.
 
