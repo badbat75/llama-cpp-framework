@@ -779,10 +779,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (D-Bus `(ss)->(bb)`, pipe `Authenticate`), answering only the bff's account (Linux: the uid of
    `private-ai-bff`; Windows: its service SID), through PAM service `private-ai` (Linux, root manager:
    `unix_chkpwd(8)` checks only the caller's own password, so the bff cannot) and `LogonUserW` network
-   logon (Windows), `can_configure` = member of `pai`. Next, 6b part 2b: the packages ship
-   `/etc/pam.d/private-ai` (`.deb`: `common-auth` + `common-account`; `.rpm`: `system-auth`; without
-   it PAM falls back to `other`, which may deny) and create the group `pai` (sysusers.d; the MSI);
-   polkit `configure` becomes `auth_self_keep` for `pai` members (2026-11-15 decision below). 6b part
+   logon (Windows), `can_configure` = member of `pai`. 6b part 2b, Linux, done: the core package
+   ships `/etc/pam.d/private-ai` (a conffile; `.deb` `common-auth` + `common-account`, `.rpm`
+   `system-auth`: Fedora's `other` is `pam_deny`), the empty group `pai` (sysusers.d), and the polkit
+   rule `50-private-ai.rules` (`configure`: `auth_self_keep` for `pai`, `no` otherwise; the action's
+   own defaults `no`); root still configures (polkit always authorizes uid 0); a polkit without
+   JavaScript rules (0.105) leaves only root. Next, 6b part 2b, Windows: the MSI creates the local
+   group `pai` and the manager's `configure` on the pipe becomes membership of `pai` instead of
+   Administrators. 6b part
    2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
    `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`

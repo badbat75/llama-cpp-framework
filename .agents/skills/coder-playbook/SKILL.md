@@ -335,3 +335,7 @@ Lessons only: the rules are in `AGENTS.md`.
   modifiers = "+verbatim")]`, `manager/accounts.rs`): no `libpam.so` symlink or `pam_appl.h` (libpam0g-dev)
   is installed here, and none is needed to build. Users and groups by name go through `nix` (`user`
   feature, already in the lock); `nix::libc` gives PAM's conversation its `calloc`/`strdup`.
+- xtask's `.deb` and `.rpm` of a package are built from ONE staged tree, `.deb` first: a file whose
+  text differs per format (the core's PAM service) is written by each build (`write_deb_scripts`,
+  `write_rpm_files`) and the `.deb` build removes its copy with `DEBIAN/`. The `cargo::unused_dependencies`
+  manifest warnings on the Windows GNU target are older than this and do not fail `-D warnings`.

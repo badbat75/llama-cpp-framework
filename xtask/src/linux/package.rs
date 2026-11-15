@@ -173,6 +173,14 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
             files.push_str(&format!("/{rel}\n"));
         }
     }
+    // The PAM service is the administrator's to edit: an update keeps a local
+    // edit (rpm-spec(5) `%config(noreplace)`).
+    if root.join(system_files::PAM_SERVICE).is_file() {
+        files.push_str(&format!(
+            "%config(noreplace) /{}\n",
+            system_files::PAM_SERVICE
+        ));
+    }
     let (epoch, version, release) = rpm_evr(f);
     let epoch = epoch
         .map(|e| format!("Epoch:          {e}\n"))
@@ -1354,6 +1362,9 @@ fn build_deb(
     if !status.success() {
         bail!("dpkg-deb failed ({status})");
     }
+    // The .deb text of the PAM service goes with DEBIAN/: an .rpm of the same
+    // tree writes its own.
+    util::remove_all(&root.join(system_files::PAM_SERVICE))?;
     util::remove_all(&root.join("DEBIAN"))
 }
 
@@ -1435,6 +1446,7 @@ fn build_rpm(
 ) -> Result<()> {
     let package = f.component.package();
     ui::head(format!("Building the .rpm of {package}..."));
+    system_files::write_rpm_files(root, f.component)?;
     let spec = pkg_work.join(format!("{package}.spec"));
     std::fs::write(&spec, rpm_spec(f, license, libraries, root))?;
     let file_name = rpm_file.file_name().unwrap().to_string_lossy().into_owned();
@@ -2211,13 +2223,18 @@ mod tests {
         assert!(!summary.contains("CLI"), "{summary}");
     }
 
-    /// The `%files` lines of a spec.
+    /// The `%files` lines of a spec, by path: a `%config(...)` line gives
+    /// its path, other directives (`%defattr`) none.
     fn files_section(spec: &str) -> Vec<String> {
         spec.split_once("\n%files\n")
             .map(|(_, rest)| rest)
             .unwrap_or_default()
             .lines()
             .map(str::trim)
+            .filter_map(|l| match l.strip_prefix("%config") {
+                Some(rest) => rest.split_once(' ').map(|(_, p)| p.trim()),
+                None => Some(l),
+            })
             .filter(|l| !l.is_empty() && !l.starts_with('%'))
             .map(str::to_string)
             .collect()
@@ -2333,6 +2350,58 @@ mod tests {
         assert!(
             !spec.lines().any(|l| l.trim_start().starts_with("%config")),
             "{spec}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The core's `.rpm` takes the PAM service of the web sign-in as
+    /// `%config(noreplace)` (rpm-spec(5): a locally modified file is kept
+    /// on update, the new one saved as `.rpmnew`), in exactly one `%files`
+    /// line and never as a plain one; `build_rpm` writes the `.rpm` text
+    /// ([`system_files::write_rpm_files`]) before it writes the spec, which
+    /// lists what the tree holds. The engine's `.rpm` has no /etc file.
+    #[test]
+    fn the_core_rpm_takes_the_pam_service_as_a_noreplace_config_file() {
+        let dir = scratch("rpm-pam");
+        let core = dir.join("core");
+        for (rel, mode) in [
+            ("usr/libexec/private-ai/pai-manager", 0o755),
+            ("usr/share/private-ai/strings/cli.toml", 0o644),
+            ("usr/share/doc/private-ai-framework-core/copyright", 0o644),
+            ("usr/share/private-ai/licenses/core/README.txt", 0o644),
+        ] {
+            put(&core, rel, ELF, mode);
+        }
+        for (rel, text) in system_files::files()
+            .into_iter()
+            .filter(|(rel, _)| components::of(rel) == Component::Core)
+        {
+            put(&core, rel, text.as_bytes(), 0o644);
+        }
+        put(&core, "etc/pam.d/private-ai", b"#%PAM-1.0\n", 0o644);
+        let f = fields_v(Component::Core, FW, &[], Some(ENGINE_MIN));
+        let spec = rpm_spec(&f, "MIT", "libggml\\\\-base", &core);
+        check_files(&spec, &core);
+        let after = spec.split_once("\n%files\n").unwrap().1;
+        let pam: Vec<&str> = after
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.ends_with("/etc/pam.d/private-ai"))
+            .collect();
+        assert_eq!(pam, ["%config(noreplace) /etc/pam.d/private-ai"], "{spec}");
+        let src = include_str!("package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let build = code
+            .split("fn build_rpm(")
+            .nth(1)
+            .and_then(|r| r.split("\nfn ").next())
+            .expect("build_rpm()");
+        let writes = build
+            .find("system_files::write_rpm_files(root, f.component)")
+            .expect("build_rpm() does not write the .rpm files");
+        assert!(
+            writes < build.find("rpm_spec(").expect("rpm_spec in build_rpm"),
+            "the spec is written before the .rpm files"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2575,7 +2644,7 @@ mod tests {
             .into_iter()
             .filter(|(rel, _)| components::of(rel) == Component::Core)
             .collect();
-        assert_eq!(ours.len(), 4, "{ours:?}");
+        assert_eq!(ours.len(), 5, "{ours:?}");
         for (rel, text) in &ours {
             put(&core, rel, text.as_bytes(), 0o644);
         }

@@ -295,6 +295,13 @@ Lessons only: the rules are in `AGENTS.md`.
   true`). Every new header-free or engine-headed file goes on the exclusion list of
   `the_system_files_and_scripts_name_the_core_package`. `paths::installed_share_dir` is
   `<exe>/../../share`, so a `/usr/libexec/private-ai` program finds no `cli.toml`.
+- polkit rules (`.rules`, JavaScript) are pinned by meaning: `rules_answer` (`linux/system_files.rs`)
+  runs them under node (a build prerequisite) against a stand-in `polkit` object. polkit facts, from its
+  source (github.com/polkit-org/polkit, `src/polkitbackend/`): a rule returning nothing falls back to
+  the action XML's defaults (`polkitbackendduktapeauthority.c`); uid 0 is always authorized unless
+  `ALWAYS_CHECK` (`polkitbackendinteractiveauthority.c`). The `.deb`/`.rpm` share one staged tree, so a
+  per-format file (`/etc/pam.d/private-ai`) is written by `write_deb_scripts` / `write_rpm_files` into
+  the core's root; the test helper `files_section` reads `%config(noreplace) <path>` lines by path.
 - Check a candidate unit with `systemd-analyze verify` and `systemd-analyze security --offline=true` on
   a /tmp copy with `ExecStart=/usr/bin/true`. Local man pages (systemd 259) are citable.
 - Version order: `dpkg --compare-versions a gt b`, `rpm --eval '%{lua: print(rpm.vercmp(a, b))}'`
