@@ -367,24 +367,19 @@ test('1c.45a: read once when the header is shown, not polled; not read without a
 
 // "Administrators only" (R3): 45b's user half went with the disabled box, so
 // every signed-in session gets the same enabled box and writes with the same PUT.
-test.each(['admin', 'user'] as const)(
-  '1c.45b: %s gets the checkbox enabled, and a change shows the new value and sends PUT {enabled}',
-  async (session) => {
-    const { bff, main } = await loaded({ session, boot: boot(false) })
-    const box = bootBox(main)
-    expect(box.disabled, `${session}: enabled`).toBe(false)
-    expect(inactive(box), `${session}: not aria-disabled`).toBe(false)
-    press(bootBox(main))
-    await flush()
-    expect(bootBox(main).checked, `${session}: the new value at once`).toBe(
-      true,
-    )
-    expect(bootWrites(bff), session).toEqual([{ enabled: true }])
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  },
-)
+test('1c.45b: a signed-in session gets the checkbox enabled, and a change shows the new value and sends PUT {enabled}', async () => {
+  const { bff, main } = await loaded({ boot: boot(false) })
+  const box = bootBox(main)
+  expect(box.disabled, 'enabled').toBe(false)
+  expect(inactive(box), 'not aria-disabled').toBe(false)
+  press(bootBox(main))
+  await flush()
+  expect(bootBox(main).checked, 'the new value at once').toBe(true)
+  expect(bootWrites(bff)).toEqual([{ enabled: true }])
+  cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 test('1c.45b: an administrator gets the checkbox enabled', async () => {
   const { main } = await loaded()
@@ -586,7 +581,7 @@ test('1c.43b, 45e: the same administrator signs in again: the alert and Sign in 
 test('1c.43b: a sign-in as another user after a boot 401 leaves the box enabled, with no new read; focus on the h1', async () => {
   const { bff, main } = await loaded({
     boot: boot(false, SESSION_ENDED),
-    signIn: () => reply(200, { user: 'carol', canConfigure: true }),
+    signIn: () => reply(200, { user: 'carol' }),
   })
   press(bootBox(main))
   await flush()
@@ -604,49 +599,17 @@ test('1c.43b: a sign-in as another user after a boot 401 leaves the box enabled,
   expect(bootWrites(bff)).toHaveLength(1)
 })
 
-// 43b's first row, with the field saying the other role (until R4 the stubs
-// keep sending it): the same `user` keeps the page, its edits, and the focus
-// on the control whose request got the 401.
-test('1c.43b: the same user signing in with the other canConfigure keeps the page and its edits, focus on the checkbox', async () => {
-  const { bff, main } = await loaded({
-    boot: boot(false, SESSION_ENDED),
-    signIn: () => reply(200, { user: 'alice', canConfigure: false }),
-  })
-  type(portBox(main), '8581')
-  press(bootBox(main))
-  await flush()
-  press(bootSignIns(main)[0]!)
-  await flush()
-  await signInInDialog('alice')
-  expect(screen.getByRole('banner').textContent).toContain(
-    en('session-signed-in-as', 'alice'),
-  )
-  expect(bootAlerts(main)).toEqual([])
-  expect(bootSignIns(main)).toEqual([])
-  expect(document.activeElement, 'focus on the refused control').toBe(
-    bootBox(main),
-  )
-  expect(portBox(main).value, 'the edits are intact').toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
-  expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
-  expect(bff.to('GET', SERVER), 'the file is not read again').toHaveLength(1)
-  expect(bootReads(bff), 'no new boot read').toBe(2)
-  expect(bootWrites(bff), 'nothing resent').toHaveLength(1)
-  expect(bootBox(main).disabled, 'the box stays enabled').toBe(false)
-})
-
 test('1c.43b: a sign-in as another user after a run 401 leaves the box enabled, without a new read; focus on the h1', async () => {
   const { bff, main } = await loaded({
-    session: 'user',
     run: SESSION_ENDED,
-    signIn: () => reply(200, { user: 'alice', canConfigure: true }),
+    signIn: () => reply(200, { user: 'carol' }),
   })
   expect(bootBox(main).disabled, 'enabled before the sign-in').toBe(false)
   press(button(main, 'run-stop'))
   await flush()
   press(runSignIn(main))
   await flush()
-  await signInInDialog('alice')
+  await signInInDialog('carol')
   expect(bootBox(main).disabled, 'enabled after the sign-in').toBe(false)
   expect(bootReads(bff), 'no new boot read').toBe(1)
   expect(document.activeElement).toBe(h1(main))

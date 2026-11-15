@@ -1,15 +1,12 @@
 // The signed-in user, read and changed through the bff's /api/session.
 import { apiError, call, type ApiError } from './api.ts'
 
-export type Session = { user: string; canConfigure: boolean }
+export type Session = { user: string }
 
 function isSession(value: unknown): value is Session {
   if (typeof value !== 'object' || value === null) return false
-  const { user, canConfigure } = value as {
-    user?: unknown
-    canConfigure?: unknown
-  }
-  return typeof user === 'string' && typeof canConfigure === 'boolean'
+  const { user } = value as { user?: unknown }
+  return typeof user === 'string'
 }
 
 /** The session, or null when signed out or when it cannot be read. */

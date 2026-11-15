@@ -8,52 +8,16 @@ Server tab (`crates/config/ui/server_page.slint`, `crates/config/src/server_form
 
 ## Administrators only (user, 2026-11-15)
 
-The whole web UI is run by administrators (`fe/DESIGN.md` section 3). Sign-in succeeds only for an
-administrator, a member of the OS group `pai` on the server machine (created empty by the packages,
-on Linux and Windows); anyone else is refused at sign-in (new criterion 14b, in 2.2).
-The Overview stays visible without sign-in (19 unchanged). Everything built for a non-administrator
-goes: the read-only Server page, a user's views of the API key, the disabled Start at boot box,
-`canConfigure` as a switch between views, and the "same role" half of the sign-in rule. This section
-overrides the criteria below it; the code already on main is removed in the slices R1 to R4 (end of
-this section).
+The whole web UI is run by administrators (`fe/DESIGN.md` section 3): sign-in succeeds only for a
+member of the OS group `pai` on the server machine, and anyone else is refused (14b, in 2.2). The
+Overview stays visible without sign-in (19). There is one signed-in role: no page has a read-only view,
+and the fe reads no role from the session. The criteria below are written for that rule.
 
-**Removed** (their tests are deleted, not rewritten):
-
-- 27b, 27c (2.8): a user's two views of F4. The string `server-api-key-withheld` goes. `withheld`
-  stays in the reply shape and the fe keeps handling it (27a, 27d, 27e below).
-- 45b: a user's disabled Start at boot box.
-- The 2.6 bullet "Show (27)", second half ("Superseded by 27b and 27c").
-
-**Changed** (new text, one line each):
-
-- 1 (data), session: `GET` and `POST /api/session` 200 is `{"user": "<name>"}`; a `canConfigure` field,
-  if sent, is ignored. `POST` adds 403 `{"key":"session-not-administrator","args":[]}` (14b).
-- 4: signed in, the banner shows `session-signed-in-as` with the user's name, then **Sign out**; no
-  role word (`session-role-admin` and `session-role-user` go).
-- 9: `signin-intro` reads "Use the user name and password of your account on the computer that runs
-  Private AI Framework. Only members of its pai group can sign in." (it says up front who can sign in,
-  [3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions)).
-- 14b (new): see 2.2.
-- 25, 27, 27a, 27d, 27e, 28, 36b, 43b, 45c, 45g and 5.1 to 5.3 F4: rewritten in place (built in R2
-  and R3).
-- 5.6: `server-edits-dropped` loses "or with one that cannot save these settings" (slice R4).
-- 5.5: `session-role-admin`, `session-role-user`, `server-read-only` go; `signin-intro` changes (9).
-  2.8's table: `server-api-key-withheld` goes. 5.7: `boot-hint` loses its second line, "Changing it needs an
-  administrator." (user, 2026-11-15): every signed-in user is one, so it says nothing; slice R1.
-
-**Removal of the code on main**, in build order. Each line is one tester run and one coder run, with a
-test that fails first. Until R4, the session parser still requires `canConfigure`, so R2 and R3 tests
-stub `{"user", "canConfigure": false}` to show the field no longer changes anything; R4 drops the
-field from the stubs.
-
-| Slice | Criteria | Tester deletes | Tester asserts instead | Strings |
-|---|---|---|---|---|
-| **R1** sign-in refusal (built) | 14b, 9 | the test of today's `signin-intro` text | a 403 `session-not-administrator` shows `api-session-not-administrator` in the alert above the fields, password cleared, user name kept, focus on the user name field; `signin-intro`'s new text | adds `api-session-not-administrator`; changes `signin-intro` |
-| **R2** Server page (built) | 25, 27, 27a to 27e, 28, 5.1 to 5.3 F4 | the tests of the read-only form, the `server-read-only` Notice, the user's F4 views (27b, 27c, the user rows of 27a and 27e) and 1b's "a user keeps the read-only form" | a session with `canConfigure: false` gets the editable form, the save bar, the password input and Show; a withheld document fails the read for it too (27d) and renders no key (27e) | removes `server-read-only`, `server-api-key-withheld` |
-| **R3** instance header and dialogs (built) | 45b, 45c, 45g, 36b, 43b | the tests of the disabled boot box (45b) and of 36b and 43b's "role changed" cases | with `canConfigure: false` the boot box is enabled and a change sends the `PUT`; a sign-in in any dialog as the same `user` with a different `canConfigure` keeps the page and its edits, focus on the refused control; a different `user` drops the edits | none |
-| **R4** session reply | 1, 4, 5.6 (`server-edits-dropped`) | the role word tests (`session-role-admin`, `session-role-user`) | a 200 `{"user":"alice"}` without `canConfigure` signs in (today it reads as signed out); the banner shows "Signed in as alice" then Sign out, and no "Administrator" or "User"; after a sign-in as a different `user` with dirty edits, `server-edits-dropped` reads its new text (5.6) | removes `session-role-admin`, `session-role-user`; changes `server-edits-dropped` |
-
-Models (brief 02) has no code to remove: 2a and 2b are the same for everyone, and 2c is not built.
+Record: the code built for a non-administrator was removed in four slices, all built: **R1** the
+sign-in refusal and `signin-intro` (14b, 9); **R2** the read-only Server page and a user's views of the
+API key (25, 27, 27a to 27e, 28, 5.1 to 5.3 F4; 27b and 27c removed); **R3** the disabled boot box and
+the "same role" half of the sign-in rule (45b removed; 45c, 45g, 36b, 43b); **R4** the session reply
+without `canConfigure` and the role words (1, 4, 5.6). Models (brief 02) had no code to remove.
 
 ## 0. The split
 
@@ -80,9 +44,11 @@ The bff's shape (coordinator, 2026-11-14): everything under `/api/`; errors are
 `{"key": "<strings key>", "args": [...]}`; 401 not signed in, 403 the manager refused. Exact bodies are
 the coordinator's contract; the brief assumes these:
 
-- `GET /api/session`: 200 `{"user": "<name>", "canConfigure": <bool>}`, 401 when signed out.
+- `GET /api/session`: 200 `{"user": "<name>"}`, 401 when signed out. A reply that still carries
+  `canConfigure` is accepted and the field ignored (the bff drops it next).
 - `POST /api/session` `{"username", "password"}`: 200 as above (sets the cookie); 401
   `{"key":"session-bad-credentials"}`; 429 `{"key":"session-too-many-attempts","args":["<seconds>"]}`;
+  403 `{"key":"session-not-administrator","args":[]}` (14b);
   503 `{"key":"session-unavailable","args":[]}` (no way to check a password: the bff shipped before
   the OS login answers it to every sign-in); 400 `session-malformed`. A session ends after 30 minutes
   without a request; the next call answers 401 (`session-required` on `/api/session`).
@@ -118,10 +84,9 @@ the coordinator's contract; the brief assumes these:
    `<p role="status">` `loading`, and the nav shows only Overview.
 3. **Signed out** (401): the banner shows a button or link **Sign in** (`session-sign-in`); the nav
    holds only **Overview** (`nav-overview`).
-4. **Signed in**: the banner shows `session-signed-in-as` with the user's name, then
-   `session-role-admin` when `canConfigure` is true or `session-role-user` otherwise, then a button
-   **Sign out** (`session-sign-out`). The nav holds Overview, then a heading-like label **Instances**
-   (`nav-instances`, a list labelled by it) with one link per instance from `GET /api/instances`, the
+4. **Signed in**: the banner shows `session-signed-in-as` with the user's name,
+   then a button **Sign out** (`session-sign-out`); no role word. The nav holds Overview, then a
+   heading-like label **Instances** (`nav-instances`, a list labelled by it) with one link per instance from `GET /api/instances`, the
    link text being the id, in the reply's order. A failed instances read leaves the list out of the
    nav (the Overview shows the error); from 1c, only until a read succeeds (41a).
 5. The link of the current page has `aria-current="page"`.
@@ -837,6 +802,23 @@ the idle poll shares the pending read for good (41c, 41d (b)). These criteria en
 **Out of 1c**: logs, per-action progress, "Open chat UI", polling the Overview or start at boot, a
 retry button for a failed boot read, guarding Back and Forward (3.1, still open).
 
+## 4b. Later slice B1: a long user name in the banner (reviewed 2026-11-15, not built)
+
+Found at the review of R4; it predates R4. The signed-in span in `.session` has no break rule, so a
+user name with no break point keeps its full width and can push the page wider than the viewport.
+`useradd` takes user names of up to 32 characters ([useradd(8), CAVEATS](https://man7.org/linux/man-pages/man8/useradd.8.html));
+testing at that length is a preference, since names made by other means can be longer. One CSS rule, no new string, no new token:
+`overflow-wrap: anywhere` on the signed-in span, as `.nav a` and `td` already have.
+
+46b. **Long user name** (checked in review, rendered: jsdom does no layout): signed in as a
+    32-character user name without a break point (e.g. `abcdefghijklmnopqrstuvwxyz012345`), at a
+    viewport 320 CSS px wide, the page does not scroll sideways; the name wraps inside the banner and
+    Sign out stays visible and reachable by Tab
+    ([1.4.10 Reflow](https://www.w3.org/TR/WCAG22/#reflow)). The tester may pin the rule only by a
+    static check of `fe/src/index.css`, if one is wanted; the review renders it.
+
+Out of scope: truncating the name with an ellipsis (it would hide part of who is signed in).
+
 ## 5. The Server form
 
 ### 5.1 Cards and fields, in order
@@ -952,10 +934,8 @@ Hints marked "adapted" differ from the GUI's text where it was wrong on the web;
 | `session-sign-in` | Sign in |
 | `session-sign-out` | Sign out |
 | `session-signed-in-as` | Signed in as {0} |
-| `session-role-admin` | Administrator |
-| `session-role-user` | User |
 | `signin-title` | Sign in |
-| `signin-intro` | Use the user name and password of your account on the computer that runs Private AI Framework. |
+| `signin-intro` | Use the user name and password of your account on the computer that runs Private AI Framework. Only members of its pai group can sign in. |
 | `signin-required` | Sign in to see this page. |
 | `signin-username` | User name |
 | `signin-password` | Password |
@@ -1108,7 +1088,7 @@ Renamed from the first draft of this brief, before any code used them: `run-fail
 
 - Tab order follows the DOM: skip link, product link, Menu (narrow), Sign in or Sign out, nav links,
   then main: h1 (programmatic focus only), run buttons, their Sign in, boot hint toggle and checkbox,
-  its Sign in (1c, 46a), Notice, the fields card by card
+  its Sign in (1c, 46a), the fields card by card
   in table order (default box before its textbox; hint toggle after the label), the save bar.
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
 - Checkboxes toggle with Space, selects open with the keyboard (native controls); no custom widget.
@@ -1121,8 +1101,7 @@ Renamed from the first draft of this brief, before any code used them: `run-fail
   "Overview"; button "Sign in" / "Sign out"; textbox "User name"; "Password" (by label); heading level
   1 "default"; heading level 2 "Server"; headings level 3 per card; group "Port" with checkbox
   "default" and textbox "Port"; group "Bind to" with checkbox "localhost (only the computer running
-  the server)"; combobox "Log level"; button "About Port" (`aria-expanded`); group "API key" with
-  description "A key is set. Only an administrator can see it." (27b); button "Show" (`aria-pressed`);
+  the server)"; combobox "Log level"; button "About Port" (`aria-expanded`); group "API key"; button "Show" (`aria-pressed`);
   buttons "Save changes", "Discard", "Start", "Stop", "Restart"; group "Start at boot" with button
   "About Start at boot" and checkbox "start llama-server when the system starts"; dialog "Discard
   unsaved changes?"; dialog "Sign in".

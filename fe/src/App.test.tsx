@@ -18,6 +18,7 @@ import App from './App.tsx'
 import strings from './strings/en_US.json'
 import {
   EN,
+  ROLE_WORDS,
   before,
   deferred,
   en,
@@ -78,7 +79,7 @@ test('1a.2: until the session answers, main shows loading and the nav only Overv
   expect(status.textContent).toBe(en('loading'))
   expect(navLinks()).toEqual([en('nav-overview')])
   await act(async () => {
-    session.resolve(reply(200, { user: 'alice', canConfigure: true }))
+    session.resolve(reply(200, { user: 'alice' }))
   })
   await screen.findByRole('button', { name: en('session-sign-out') })
   expect(bff.to('GET', '/api/session')).toHaveLength(1)
@@ -203,33 +204,49 @@ test('1a.3: signed out, the banner offers Sign in and the nav holds only Overvie
   ).toBeTruthy()
 })
 
-test('1a.4: signed in as an administrator, the banner names the user, the role, then Sign out', async () => {
-  fakeBff({ session: 'admin' })
+test('1a.1, 4: a session reply of {"user"} alone signs in: the banner shows the user, then Sign out, and no role word', async () => {
+  fakeBff({ session: () => reply(200, { user: 'alice' }) })
   render(<App />)
   const banner = screen.getByRole('banner')
-  await within(banner).findByRole('button', { name: en('session-sign-out') })
+  const signOut = await within(banner).findByRole('button', {
+    name: en('session-sign-out'),
+  })
   const text = banner.textContent ?? ''
   const name = text.indexOf(en('session-signed-in-as', 'alice'))
-  const role = text.indexOf(en('session-role-admin'))
   const out = text.indexOf(en('session-sign-out'))
-  expect(name).toBeGreaterThanOrEqual(0)
-  expect(role).toBeGreaterThan(name)
-  expect(out).toBeGreaterThan(role)
-  expect(text).not.toContain(en('session-role-user'))
+  expect(name, 'the user name shows').toBeGreaterThanOrEqual(0)
+  expect(out, 'Sign out comes after it').toBeGreaterThan(name)
+  // The role words are gone: every signed-in session is an administrator.
+  for (const word of ROLE_WORDS)
+    expect(text, `no ${word} in the banner`).not.toContain(word)
+  expect(signOut).toBeTruthy()
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }),
   ).toBeNull()
 })
 
-test('1a.4: signed in as a user, the banner shows the User role', async () => {
-  fakeBff({ session: 'user' })
-  render(<App />)
-  const banner = screen.getByRole('banner')
-  await within(banner).findByRole('button', { name: en('session-sign-out') })
-  const text = banner.textContent ?? ''
-  expect(text).toContain(en('session-signed-in-as', 'bob'))
-  expect(text).toContain(en('session-role-user'))
-  expect(text).not.toContain(en('session-role-admin'))
+test('1a.1: a session reply that still carries canConfigure signs in the same way (the bff keeps sending it)', async () => {
+  for (const canConfigure of [true, false]) {
+    fakeBff({ session: () => reply(200, { user: 'alice', canConfigure }) })
+    render(<App />)
+    const banner = screen.getByRole('banner')
+    await within(banner).findByRole('button', {
+      name: en('session-sign-out'),
+    })
+    const text = banner.textContent ?? ''
+    const who = String(canConfigure)
+    expect(text, who).toContain(en('session-signed-in-as', 'alice'))
+    for (const word of ROLE_WORDS)
+      expect(text, `${who}: no ${word}`).not.toContain(word)
+    // Signed in: the nav holds the instances.
+    const nav = screen.getByRole('navigation', { name: en('nav-label') })
+    expect(
+      await within(nav).findByRole('list', { name: en('nav-instances') }),
+      who,
+    ).toBeTruthy()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
 })
 
 test('1a.4: signed in, the nav holds Overview then an Instances list with one link per instance, in order', async () => {
@@ -434,8 +451,13 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // The web UI is run by administrators only, so the English of the
   // non-administrator views goes with them (fe/briefs/01-server.md,
   // "Administrators only", 5.5 and 2.8): the Server page has no read-only
-  // Notice and the API key has no withheld sentence.
-  const removed = ['server-read-only', 'server-api-key-withheld']
+  // Notice, the API key has no withheld sentence, and the banner names no role.
+  const removed = [
+    'server-read-only',
+    'server-api-key-withheld',
+    'session-role-admin',
+    'session-role-user',
+  ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),
     'strings the brief removed',

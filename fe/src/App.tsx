@@ -221,7 +221,7 @@ export default function App() {
   )
 }
 
-/** The banner's end: Sign in, or the user, the role and Sign out. */
+/** The banner's end: Sign in, or the user and Sign out. */
 function SessionBar({
   session,
   current,
@@ -249,11 +249,6 @@ function SessionBar({
   return (
     <div className="session">
       <span>{t('session-signed-in-as', session.user)}</span>
-      <span className="role">
-        {session.canConfigure
-          ? t('session-role-admin')
-          : t('session-role-user')}
-      </span>
       <button type="button" className="secondary" onClick={onSignOut}>
         {t('session-sign-out')}
       </button>

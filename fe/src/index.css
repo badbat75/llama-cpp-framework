@@ -201,11 +201,6 @@ a.session {
   border-radius: var(--radius);
 }
 
-.role {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
 .nav {
   padding: var(--space-4);
   background: var(--surface);

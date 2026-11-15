@@ -14,6 +14,7 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  ROLE_WORDS,
   before,
   deferred,
   en,
@@ -410,16 +411,77 @@ test('1a.12: while the request runs the button reads signin-busy and a second su
   fireEvent.submit(username.closest('form')!)
   expect(bff.to('POST', '/api/session')).toHaveLength(1)
   await act(async () => {
-    pending.resolve(reply(200, { user: 'alice', canConfigure: true }))
+    pending.resolve(reply(200, { user: 'alice' }))
   })
   await screen.findByRole('button', { name: en('session-sign-out') })
   expect(bff.to('POST', '/api/session')).toHaveLength(1)
 })
 
+test('1a.1, 13: a sign-in answered with {"user"} alone signs in: the banner names the user, no role word', async () => {
+  const bff = fakeBff({
+    session: 'signed-out',
+    signIn: () => reply(200, { user: 'alice' }),
+  })
+  render(<App />)
+  const { main, username, password, submit } = await form()
+  type(username, 'alice')
+  type(password, 'hunter2')
+  fireEvent.click(submit)
+  const banner = screen.getByRole('banner')
+  const signOut = await within(banner).findByRole('button', {
+    name: en('session-sign-out'),
+  })
+  const text = banner.textContent ?? ''
+  expect(text).toContain(en('session-signed-in-as', 'alice'))
+  for (const word of ROLE_WORDS)
+    expect(text, `no ${word} in the banner`).not.toContain(word)
+  // The form is gone, the app landed on the Overview (13).
+  expect(
+    within(main).queryByRole('heading', { level: 1, name: en('signin-title') }),
+  ).toBeNull()
+  await screen.findByRole('heading', {
+    level: 1,
+    name: en('overview-title'),
+  })
+  expect(bff.to('POST', '/api/session')).toHaveLength(1)
+  expect(signOut).toBeTruthy()
+})
+
+test('1a.1: a sign-in answered with canConfigure still in the reply signs in the same way (the bff keeps sending it)', async () => {
+  for (const canConfigure of [true, false]) {
+    const who = String(canConfigure)
+    fakeBff({
+      session: 'signed-out',
+      signIn: () => reply(200, { user: 'alice', canConfigure }),
+    })
+    render(<App />)
+    const { username, password, submit } = await form()
+    type(username, 'alice')
+    type(password, 'hunter2')
+    fireEvent.click(submit)
+    const banner = screen.getByRole('banner')
+    await within(banner).findByRole('button', {
+      name: en('session-sign-out'),
+    })
+    const text = banner.textContent ?? ''
+    expect(text, who).toContain(en('session-signed-in-as', 'alice'))
+    for (const word of ROLE_WORDS)
+      expect(text, `${who}: no ${word}`).not.toContain(word)
+    await screen.findByRole('heading', {
+      level: 1,
+      name: en('overview-title'),
+    })
+    cleanup()
+    vi.unstubAllGlobals()
+    // The sign-in moved the page to #/: the next reply renders at #/sign-in.
+    startAt('#/sign-in')
+  }
+})
+
 test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the Overview', async () => {
   fakeBff({
     session: 'signed-out',
-    signIn: () => reply(200, { user: 'bob', canConfigure: false }),
+    signIn: () => reply(200, { user: 'bob' }),
   })
   render(<App />)
   const { username, password, submit } = await form()
@@ -428,8 +490,10 @@ test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the
   fireEvent.click(submit)
   const banner = screen.getByRole('banner')
   await within(banner).findByRole('button', { name: en('session-sign-out') })
-  expect(banner.textContent).toContain(en('session-signed-in-as', 'bob'))
-  expect(banner.textContent).toContain(en('session-role-user'))
+  const text = banner.textContent ?? ''
+  expect(text).toContain(en('session-signed-in-as', 'bob'))
+  for (const word of ROLE_WORDS)
+    expect(text, `no ${word} in the banner`).not.toContain(word)
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   expect(
     await within(nav).findByRole('list', { name: en('nav-instances') }),
@@ -443,8 +507,8 @@ test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the
 
 test('1a.13 (2.6): signed in, #/sign-in still shows the form, and signing in lands on the Overview', async () => {
   const bff = fakeBff({
-    session: 'admin',
-    signIn: () => reply(200, { user: 'bob', canConfigure: false }),
+    session: 'signed-in',
+    signIn: () => reply(200, { user: 'bob' }),
   })
   render(<App />)
   const banner = screen.getByRole('banner')
@@ -494,7 +558,7 @@ test('1a.15: Sign out sends DELETE /api/session and shows the signed-out Overvie
   ]
   for (const [what, signOut] of answers) {
     startAt('#/instances/default')
-    const bff = fakeBff({ session: 'admin', signOut })
+    const bff = fakeBff({ session: 'signed-in', signOut })
     render(<App />)
     const out = await screen.findByRole('button', {
       name: en('session-sign-out'),

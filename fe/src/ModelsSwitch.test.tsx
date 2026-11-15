@@ -613,7 +613,7 @@ test('2c.49: the same administrator signs in again: alert and Sign in go, focus 
 test('2c.49: another administrator signs in: the banner shows it, the alert goes, the presets are read again, the filter emptied, focus on the h1', async () => {
   const { bff, main } = await open({
     presetSwitch: SESSION_ENDED,
-    signIn: () => reply(200, { user: 'carol', canConfigure: true }),
+    signIn: () => reply(200, { user: 'carol' }),
   })
   type(filterField(main), 'q')
   press(switchOf(main, 'Qwen3-27B'))

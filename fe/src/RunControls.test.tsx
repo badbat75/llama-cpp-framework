@@ -444,86 +444,28 @@ test('1c.43b: the same administrator signs in again: alert and Sign in go, focus
   expect(posts(bff), 'nothing resent').toHaveLength(1)
 })
 
-test('1c.43b: a user who signs in again as themself keeps the page, focus on the button they clicked', async () => {
-  const { bff, main } = await loaded({
-    session: 'user',
-    run: SESSION_ENDED,
-    signIn: () => reply(200, { user: 'bob', canConfigure: false }),
-  })
-  const stop = button(main, 'run-stop')
-  press(stop)
-  await flush()
-  expect(runAlerts(main)).toEqual([en('session-ended-retry')])
-  press(runSignIns(main)[0]!)
-  await flush()
-  await signInInDialog('bob')
-  expect(document.activeElement, 'focus on Stop, not the h1').toBe(
-    button(main, 'run-stop'),
-  )
-  expect(runAlerts(main)).toEqual([])
-  expect(runSignIns(main)).toEqual([])
-  expect(
-    bff.to('GET', '/api/instances/default/server'),
-    'the file is not read again',
-  ).toHaveLength(1)
-  expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
-  // "Administrators only" (R2): signing in again as the same user changes no role, so
-  // the page is not read again, and the form is the editable one it had before.
-  expect(posts(bff)).toHaveLength(1)
-})
-
 // "Administrators only" (R3): 43b compares by `user` only, so every case here
 // changes user, and the form it brings is the editable one (28).
 test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits-dropped only when the form was dirty; focus on the h1', async () => {
-  const cases: {
-    what: string
-    session: 'admin' | 'user'
-    signIn: { user: string; canConfigure: boolean }
-    dirty: boolean
-  }[] = [
-    {
-      what: 'admin, dirty, signs in as carol',
-      session: 'admin',
-      signIn: { user: 'carol', canConfigure: true },
-      dirty: true,
-    },
-    {
-      what: 'admin, clean, signs in as carol',
-      session: 'admin',
-      signIn: { user: 'carol', canConfigure: true },
-      dirty: false,
-    },
-    {
-      what: 'user signs in as alice',
-      session: 'user',
-      signIn: { user: 'alice', canConfigure: true },
-      dirty: false,
-    },
-    {
-      // The field says the other role; the user is a different one, so the
-      // edits are dropped like anywhere else (the role plays no part).
-      what: 'admin signs in as bob, who cannot configure',
-      session: 'admin',
-      signIn: { user: 'bob', canConfigure: false },
-      dirty: true,
-    },
+  const cases: { what: string; user: string; dirty: boolean }[] = [
+    { what: 'dirty form', user: 'carol', dirty: true },
+    { what: 'clean form', user: 'carol', dirty: false },
   ]
   for (const c of cases) {
     const { bff, main } = await loaded({
-      session: c.session,
       run: SESSION_ENDED,
-      signIn: () => reply(200, c.signIn),
+      signIn: () => reply(200, { user: c.user }),
     })
     if (c.dirty) type(portBox(main), '8581')
     press(button(main, 'run-stop'))
     await flush()
     press(runSignIns(main)[0]!)
     await flush()
-    await signInInDialog(c.signIn.user)
+    await signInInDialog(c.user)
     expect(
       screen.getByRole('banner').textContent,
-      `${c.what}: the banner shows the new session`,
-    ).toContain(en('session-signed-in-as', c.signIn.user))
+      `${c.what}: the banner shows the new user`,
+    ).toContain(en('session-signed-in-as', c.user))
     expect(
       bff.to('GET', '/api/instances/default/server'),
       `${c.what}: the file is read again`,
@@ -540,53 +482,6 @@ test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits
     )
     expect(document.activeElement, `${c.what}: focus on the h1`).toBe(h1(main))
     expect(posts(bff), c.what).toHaveLength(1)
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
-
-// 43b's first row, with the field saying the other role (until R4 the stubs
-// keep sending it): the same `user` keeps the page, its edits, and the focus
-// on the control whose request got the 401.
-test('1c.43b: the same user signing in with the other canConfigure keeps the page and its edits, focus on the run button', async () => {
-  for (const session of ['admin', 'user'] as const) {
-    // The signed-in session is alice/true (admin) or bob/false (user); the
-    // sign-in answers the same user with the other value of the field.
-    const signIn =
-      session === 'admin'
-        ? { user: 'alice', canConfigure: false }
-        : { user: 'bob', canConfigure: true }
-    const { bff, main } = await loaded({
-      session,
-      run: SESSION_ENDED,
-      signIn: () => reply(200, signIn),
-    })
-    type(portBox(main), '8581')
-    press(button(main, 'run-stop'))
-    await flush()
-    press(runSignIns(main)[0]!)
-    await flush()
-    await signInInDialog(signIn.user)
-    expect(screen.getByRole('banner').textContent, session).toContain(
-      en('session-signed-in-as', signIn.user),
-    )
-    expect(document.activeElement, `${session}: focus on Stop`).toBe(
-      button(main, 'run-stop'),
-    )
-    expect(runAlerts(main), session).toEqual([])
-    expect(runSignIns(main), session).toEqual([])
-    expect(portBox(main).value, `${session}: the edits are intact`).toBe('8581')
-    expect(saveStatus(main).textContent, session).toBe(en('save-unsaved'))
-    expect(
-      within(main).queryByText(en('server-edits-dropped')),
-      session,
-    ).toBeNull()
-    expect(
-      bff.to('GET', '/api/instances/default/server'),
-      `${session}: the file is not read again`,
-    ).toHaveLength(1)
-    expect(posts(bff), `${session}: nothing resent`).toHaveLength(1)
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
@@ -1533,31 +1428,19 @@ test('1c.42b: leaving the page ends the outcome', async () => {
 
 // ── The header's controls (40) ──────────────────────────────────────────
 
-test('1c.40: both roles get Start, Stop, Restart after the state line, then the empty run status, before the Server section', async () => {
-  for (const session of ['admin', 'user'] as const) {
-    const { main } = await loaded({ session })
-    const state = within(main).getByText(stateText('instance-state-active'))
-    const [start, stop, restart] = runButtons(main)
-    expect(
-      before(state, start!),
-      `${session}: Start after the state line`,
-    ).toBe(true)
-    expect(before(start!, stop!), session).toBe(true)
-    expect(before(stop!, restart!), session).toBe(true)
-    const status = runStatus(main)
-    expect(status.tagName, session).toBe('P')
-    expect(status.textContent, `${session}: empty until an action`).toBe('')
-    expect(before(restart!, status), `${session}: status after Restart`).toBe(
-      true,
-    )
-    expect(before(status, serverTitle(main)), session).toBe(true)
-    expect(runAlerts(main), `${session}: no alert until there is text`).toEqual(
-      [],
-    )
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
+test('1c.40: Start, Stop, Restart come after the state line, then the empty run status, before the Server section', async () => {
+  const { main } = await loaded()
+  const state = within(main).getByText(stateText('instance-state-active'))
+  const [start, stop, restart] = runButtons(main)
+  expect(before(state, start!), 'Start after the state line').toBe(true)
+  expect(before(start!, stop!)).toBe(true)
+  expect(before(stop!, restart!)).toBe(true)
+  const status = runStatus(main)
+  expect(status.tagName).toBe('P')
+  expect(status.textContent, 'empty until an action').toBe('')
+  expect(before(restart!, status), 'status after Restart').toBe(true)
+  expect(before(status, serverTitle(main))).toBe(true)
+  expect(runAlerts(main), 'no alert until there is text').toEqual([])
 })
 
 test('1c.40: the run alert is a paragraph after the run status', async () => {

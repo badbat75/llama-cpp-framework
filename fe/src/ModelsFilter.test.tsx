@@ -273,33 +273,23 @@ test('2b.24: an <input type="search"> with autocomplete off and spellcheck false
   expect(screen.queryByRole('search')).toBeNull()
 })
 
-test('2b.26: a user and an administrator see the same field, hint and status, and filtering writes nothing', async () => {
-  const seen: string[][] = []
-  for (const session of ['admin', 'user'] as const) {
-    const { bff, main } = open({ session, presets: EXAMPLE })
-    const input = await field(main)
-    type(input, 'qwen')
-    expect(shownIds(main), session).toEqual(['Qwen3-27B'])
-    seen.push([
-      nameOf(input),
-      description(input),
-      status(main).textContent ?? '',
-      clearButton(main)?.textContent?.trim() ?? '',
-    ])
-    expect(
-      bff.calls.filter((c) => c.method !== 'GET'),
-      session,
-    ).toEqual([])
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  expect(seen[0]).toEqual(seen[1])
-  expect(seen[0]).toEqual([
+test('2b.26: the field, its hint and the status read as the brief gives them, and filtering writes nothing', async () => {
+  const { bff, main } = open({ presets: EXAMPLE })
+  const input = await field(main)
+  type(input, 'qwen')
+  expect(shownIds(main)).toEqual(['Qwen3-27B'])
+  expect([
+    nameOf(input),
+    description(input),
+    status(main).textContent ?? '',
+    clearButton(main)?.textContent?.trim() ?? '',
+  ]).toEqual([
     en('presets-filter-label'),
     en('presets-filter-hint'),
     en('presets-filter-count', '1', '2'),
     en('presets-filter-clear'),
   ])
+  expect(bff.calls.filter((c) => c.method !== 'GET')).toEqual([])
 })
 
 // ── What matches (27, 28) ───────────────────────────────────────────────

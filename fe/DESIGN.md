@@ -132,14 +132,14 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   on the control whose request was refused. Another user makes the page read its data again for the
   new session; unsaved edits are dropped (they belong to the session that made them) and an alert
   says so.
-- Sign out is in the user menu of the header; with unsaved changes it asks first.
+- Sign out is beside the user name in the header; with unsaved changes it asks first.
 - The sign-in form lets password managers and paste work: `autocomplete="username"` and
   `"current-password"`, no paste blocking, no puzzle
   ([3.3.8 Accessible Authentication (Minimum)](https://www.w3.org/TR/WCAG22/#accessible-authentication-minimum)).
 
 ## 4. Layout and responsive rules
 
-- **App shell**: a header (product name, user menu or Sign in), a nav, and the main region.
+- **App shell**: a header (product name, then the user name and Sign out, or Sign in), a nav, and the main region.
   Landmarks: `header` (banner), `nav` with an accessible name, `main`. A "Skip to content" link is the
   first focusable element ([2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG22/#bypass-blocks)).
 - **Wide (min-width 960px)**: nav as a fixed column of 224px on the left; main content max 880px wide.
@@ -359,7 +359,7 @@ requirements to these.
 | Async results (loading, saved, refused, started) in a live region; errors after an action as `role="alert"` | [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages) |
 | Errors named in text beside the field, with a suggestion | [3.3.1](https://www.w3.org/TR/WCAG22/#error-identification), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion) |
 | Contrast and focus per section 5.1; state never by colour alone | [1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color), [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum), [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast), [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible) |
-| The nav, header and user menu sit in the same place and order on every page | [3.2.3](https://www.w3.org/TR/WCAG22/#consistent-navigation), [3.2.4](https://www.w3.org/TR/WCAG22/#consistent-identification) |
+| The nav, header, user name and Sign out sit in the same place and order on every page | [3.2.3](https://www.w3.org/TR/WCAG22/#consistent-navigation), [3.2.4](https://www.w3.org/TR/WCAG22/#consistent-identification) |
 | A session that ends keeps the user's edits; nothing asks for the same data twice | [3.3.7 Redundant Entry](https://www.w3.org/TR/WCAG22/#redundant-entry) |
 
 ## 9. Tests (for the tester)

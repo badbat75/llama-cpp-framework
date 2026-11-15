@@ -23,8 +23,6 @@ export const EN: Record<string, string> = {
   'session-sign-in': 'Sign in',
   'session-sign-out': 'Sign out',
   'session-signed-in-as': 'Signed in as {0}',
-  'session-role-admin': 'Administrator',
-  'session-role-user': 'User',
   'signin-title': 'Sign in',
   'signin-intro':
     'Use the user name and password of your account on the computer that runs Private AI Framework. Only members of its pai group can sign in.',
@@ -174,7 +172,7 @@ export const EN: Record<string, string> = {
     'These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost.',
   'api-other': 'The request was refused ({0}).',
   'server-edits-dropped':
-    'Your unsaved changes were dropped: you signed in with a different account, or with one that cannot save these settings. The form shows the saved settings.',
+    'Your unsaved changes were dropped: you signed in with a different account. The form shows the saved settings.',
   // Slice 1c (section 5.7): run controls and live state.
   'run-start': 'Start',
   'run-stop': 'Stop',
@@ -248,6 +246,9 @@ export function en(key: string, ...args: string[]): string {
     (whole, n: string) => args[Number(n)] ?? whole,
   )
 }
+
+/** The reply's `user`, no role: the words the banner must stop showing (criterion 4). */
+export const ROLE_WORDS = ['Administrator', 'User']
 
 export function reply(status: number, body?: unknown): Response {
   if (status === 204) return new Response(null, { status })
@@ -398,9 +399,9 @@ export function serverDoc(
 type Answer = Response | ((init?: RequestInit) => Response | Promise<Response>)
 
 export type BffOptions = {
-  /** GET /api/session: a role, or the reply. Default 'admin'. */
-  session?: 'admin' | 'user' | 'signed-out' | Answer
-  /** POST /api/session: the reply. Default 200 for an administrator. */
+  /** GET /api/session: `{"user":"alice"}`, 401 signed out, or the reply. Default signed in. */
+  session?: 'signed-in' | 'signed-out' | Answer
+  /** POST /api/session: the reply. Default 200 `{"user":"alice"}`. */
   signIn?: Answer
   /** DELETE /api/session: the reply. Default 204. */
   signOut?: Answer
@@ -494,13 +495,9 @@ export function fakeBff(options: BffOptions = {}) {
     calls.push({ method, path, body })
     const route = `${method} ${path}`
     if (route === 'GET /api/session') {
-      const s = options.session ?? 'admin'
-      if (s === 'admin')
-        return Promise.resolve(
-          reply(200, { user: 'alice', canConfigure: true }),
-        )
-      if (s === 'user')
-        return Promise.resolve(reply(200, { user: 'bob', canConfigure: false }))
+      const s = options.session ?? 'signed-in'
+      if (s === 'signed-in')
+        return Promise.resolve(reply(200, { user: 'alice' }))
       if (s === 'signed-out')
         return Promise.resolve(
           reply(401, { key: 'session-required', args: [] }),
@@ -509,8 +506,7 @@ export function fakeBff(options: BffOptions = {}) {
     }
     if (route === 'POST /api/session')
       return answer(
-        options.signIn ??
-          (() => reply(200, { user: 'alice', canConfigure: true })),
+        options.signIn ?? (() => reply(200, { user: 'alice' })),
         init,
       )
     if (route === 'DELETE /api/session')

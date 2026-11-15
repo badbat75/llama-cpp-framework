@@ -509,7 +509,7 @@ test('2a.1: while the session read is pending the nav holds only Overview, and n
   expect(navLinks()).toEqual([en('nav-overview')])
   expect(presetsReads(bff)).toBe(0)
   await act(async () => {
-    session.resolve(reply(200, { user: 'alice', canConfigure: true }))
+    session.resolve(reply(200, { user: 'alice' }))
   })
   expect(
     await within(nav()).findByRole('link', { name: en('nav-models') }),
@@ -531,27 +531,23 @@ test('2a.1: signed out the nav has no Models link', async () => {
 })
 
 test('2a.1: signed in, the nav holds Overview, the instance links, then Models to #/models, outside the Instances group', async () => {
-  for (const session of ['admin', 'user'] as const) {
-    startAt('#/')
-    open({ session })
-    const list = await within(nav()).findByRole('list', {
-      name: en('nav-instances'),
-    })
-    const models = await within(nav()).findByRole('link', {
-      name: en('nav-models'),
-    })
-    expect(models.getAttribute('href'), session).toBe('#/models')
-    expect(navLinks(), session).toEqual([
-      en('nav-overview'),
-      'default',
-      'coder',
-      en('nav-models'),
-    ])
-    expect(list.contains(models), session).toBe(false)
-    expect(before(list, models), session).toBe(true)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  startAt('#/')
+  open()
+  const list = await within(nav()).findByRole('list', {
+    name: en('nav-instances'),
+  })
+  const models = await within(nav()).findByRole('link', {
+    name: en('nav-models'),
+  })
+  expect(models.getAttribute('href')).toBe('#/models')
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    'default',
+    'coder',
+    en('nav-models'),
+  ])
+  expect(list.contains(models)).toBe(false)
+  expect(before(list, models)).toBe(true)
 })
 
 test('2a.1: a failed instances read leaves out the Instances group, not Models', async () => {

@@ -29,10 +29,10 @@ lines of 2c below are already fixed in place; 2a and 2b are built and change onl
 - 53: the tab order without "(a user's Notice holds no control)" and "(administrator; a user's
   disabled switches are not in the sequence)".
 - 54: drop "for a user, the same with the reader's dimmed or unavailable".
-- 55: 2c reads what 2b reads; not the session's `canConfigure`.
+- 55: 2c reads what 2b reads, nothing from the session.
 - 0, the split: "R" only reads, "W" adds writing; no slice has a view for a non-administrator.
 
-No code on main to remove: 2a and 2b never read `canConfigure`.
+No code on main to remove: 2a and 2b never read a role.
 
 ## 0. The split
 

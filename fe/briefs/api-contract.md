@@ -53,8 +53,8 @@ manager's detail never reaches the body).
 - `GET /api/session` answers 404 until the bff has the route; the fe reads any reply but 200 as
   signed out.
 - **Only administrators sign in** (user, 2026-11-15): an administrator is a member of the OS group
-  `pai` on the server machine. The session reply is `{"user"}`; it no longer carries
-  `canConfigure` (the fe ignores the field while a bff still sends it). The manager still decides
+  `pai` on the server machine. The session reply is `{"user"}`; a reply that still carries
+  `canConfigure` is accepted and the field ignored (the bff drops it next). The manager still decides
   every request, and a refusal is 403 `client-not-authorized`.
 - `POST /api/session` takes `{"username", "password"}`. Failures:
   - 401 `session-bad-credentials`: the same reply for an unknown user and a wrong password.
