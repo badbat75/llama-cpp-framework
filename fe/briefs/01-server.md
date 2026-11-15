@@ -485,6 +485,12 @@ Every field also has its hint toggle (`field-about`) and hint `<field key>-hint`
   unknown value is `default` (as the GUI).
 - **Checkboxes**: `true` checked; `null` or `false` clear.
 
+**An unset switch shows the configurator's default, not "off"** (found by the bff's tester,
+2026-11-15): `Webui` unset (`null`, a file with no `Webui` line, as the shipped
+`server@default.ini`) shows the Web UI checkbox ticked, as the GUI does (`webui_or_default` in
+`crates/core/src/server_cfg.rs`); every other switch is off when unset. A file with `Webui` unset
+loads clean, and a save then sends `true`.
+
 ### 5.3 Dependencies (1b; in 1a everything is disabled anyway)
 
 - F1, F3, F7, F8: textbox enabled only while its default box is clear.

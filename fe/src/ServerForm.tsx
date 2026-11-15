@@ -158,7 +158,7 @@ function fromValues(v: Keys, d: Keys, rows: Row[]): Draft {
     ModelsMax: withDefault(v.ModelsMax, d.ModelsMax),
     ModelsMemoryMargin: withDefault(v.ModelsMemoryMargin, d.ModelsMemoryMargin),
     ModelsDir: shown(v.ModelsDir),
-    Webui: v.Webui === true,
+    Webui: v.Webui == null || v.Webui === true,
     WebuiMcpProxy: v.WebuiMcpProxy === true,
     LogVerbosity: logLevel(v.LogVerbosity),
     SaveStateOnShutdown: v.SaveStateOnShutdown === true,

@@ -740,6 +740,67 @@ test('1a.25: unset values show their defaults, other values their own branch', a
   ).toBe(true)
 })
 
+/**
+ * The switches as the shipped server@default.ini leaves them: no line for
+ * any of them, so every one is null in the document.
+ */
+const SWITCHES_UNSET = {
+  Webui: null,
+  WebuiMcpProxy: null,
+  SaveStateOnShutdown: null,
+  RocprofAttach: null,
+  CudaDisableGraphs: null,
+  AttnRotDisable: null,
+}
+
+/** The switch fields with their checkbox names, in form order. */
+const SWITCHES: [string, string][] = [
+  ['Web UI', 'server-web-ui-toggle'],
+  ['Web UI MCP proxy', 'server-mcp-proxy-toggle'],
+  ['Save on shutdown', 'server-save-on-shutdown-toggle'],
+  ['Profiler attach', 'server-profiler-attach-toggle'],
+  ['Disable GPU graphs', 'server-gpu-graphs-toggle'],
+  ['KV rotation', 'server-kv-rotation-toggle'],
+]
+
+function switches(main: HTMLElement): Record<string, boolean> {
+  return Object.fromEntries(
+    SWITCHES.map(([field, key]) => [
+      field,
+      checked(group(main, field).getByRole('checkbox', { name: en(key) })),
+    ]),
+  )
+}
+
+test.each(['user', 'admin'] as const)(
+  '5.2 (session %s): an unset Web UI shows ticked (the default), every other unset switch unticked',
+  async (session) => {
+    const main = await loaded({
+      session,
+      server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+    })
+    expect(switches(main)).toEqual({
+      'Web UI': true,
+      'Web UI MCP proxy': false,
+      'Save on shutdown': false,
+      'Profiler attach': false,
+      'Disable GPU graphs': false,
+      'KV rotation': false,
+    })
+  },
+)
+
+test.each(['user', 'admin'] as const)(
+  '5.2 (session %s): a Web UI set to false shows unticked',
+  async (session) => {
+    const main = await loaded({
+      session,
+      server: () => reply(200, serverDoc({ ...SWITCHES_UNSET, Webui: false })),
+    })
+    expect(switches(main)['Web UI']).toBe(false)
+  },
+)
+
 test('1a.25: a set Base URL and Max models show their value, an unset API key No key', async () => {
   const main = await loaded({
     server: () =>

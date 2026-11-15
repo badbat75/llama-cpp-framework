@@ -1939,6 +1939,66 @@ test('1b 5.3: MCP proxy follows Web UI and Snapshot folder follows Save on shutd
   })
 })
 
+// ── An unset switch shows the configurator's default (5.2) ──────────────
+
+/**
+ * The switches as the shipped server@default.ini leaves them: no line for
+ * any of them, so every one is null in the document.
+ */
+const SWITCHES_UNSET = {
+  Webui: null,
+  WebuiMcpProxy: null,
+  SaveStateOnShutdown: null,
+  RocprofAttach: null,
+  CudaDisableGraphs: null,
+  AttnRotDisable: null,
+}
+
+test('1b 5.2: a file with every switch unset loads clean for an administrator', async () => {
+  const { bff, main } = await loaded({
+    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+  })
+  expect(check(main, 'Web UI', en('server-web-ui-toggle')).checked).toBe(true)
+  expect(status(main).textContent).toBe('')
+  expect(saveButton(main).getAttribute('aria-disabled')).toBe('true')
+  expect(discardButton(main).getAttribute('aria-disabled')).toBe('true')
+  fireEvent.click(saveButton(main))
+  await act(async () => {})
+  expect(bff.to(...PUT)).toHaveLength(0)
+})
+
+test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web UI, the other unset switches false', async () => {
+  const { bff, main } = await loaded({
+    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+  })
+  editPort(main)
+  await save(main, bff)
+  expect(bff.to(...PUT)[0]!.body).toEqual({
+    revision: REVISION,
+    values: {
+      ...UNCHANGED,
+      Port: 8581,
+      Webui: true,
+      WebuiMcpProxy: false,
+      SaveStateOnShutdown: false,
+      RocprofAttach: false,
+      CudaDisableGraphs: false,
+      AttnRotDisable: false,
+    },
+  })
+})
+
+test('1b 5.3: with Web UI unset (ticked) the MCP proxy is enabled for an administrator, and follows Web UI', async () => {
+  const { main } = await loaded({
+    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+  })
+  const proxy = check(main, 'Web UI MCP proxy', en('server-mcp-proxy-toggle'))
+  expect(proxy.disabled).toBe(false)
+  expect(proxy.checked).toBe(false)
+  fireEvent.click(check(main, 'Web UI', en('server-web-ui-toggle')))
+  expect(proxy.disabled).toBe(true)
+})
+
 // ── Leaving with unsaved changes (1b.38) ────────────────────────────────
 
 /** Edits, then follows `link` (focused first, as a keyboard user does). */
