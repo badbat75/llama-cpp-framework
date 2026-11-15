@@ -195,6 +195,12 @@ button {
   margin-left: auto;
 }
 
+/* A user name with no break point breaks anywhere, so it wraps inside the
+   banner instead of widening the page (01-server.md 4b). */
+.session > span {
+  overflow-wrap: anywhere;
+}
+
 /* Signed out: the Sign in link, padded like a nav link for its current-page bar. */
 a.session {
   padding: var(--space-1) var(--space-3);

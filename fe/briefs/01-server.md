@@ -405,14 +405,65 @@ a missing or mistyped member) is `save-failed`, the form stays dirty. Never the 
     handler calls `preventDefault()` and also sets `returnValue` to `true`, as MDN recommends for
     browsers that predate `preventDefault()` there (Chrome and Edge before 119;
     [MDN, `beforeunload`](https://developer.mozilla.org/en-US/docs/Web/API/Window/beforeunload_event)).
-    A click on the link of the page already shown asks nothing (nothing would be left). **Known gap
-    of 1b:** the browser's Back and Forward buttons and an address typed in the bar change the hash
-    without a click, so they leave without asking; closing it is open (the question below, section 3.1).
+    A click on the link of the page already shown asks nothing (nothing would be left). The browser's
+    Back and Forward and a hash typed in the address bar ask too: slice G1, 38b to 38h.
 38a. **Escape in the discard dialog is Keep editing**: it closes the dialog (the native `cancel` of a
     modal `<dialog>`), nothing is discarded, the route does not change, focus returns to the control
     that opened it (the link, Sign out, or Reload of 35). The same for every dialog of the slice:
     Escape is the choice that changes nothing.
     ([2.1.2](https://www.w3.org/TR/WCAG22/#no-keyboard-trap); D5.2 Dialog)
+
+**Slice G1: Back, Forward and a typed address while dirty** (user, 2026-11-15: they must ask too).
+The technique: a `hashchange` fires only after the fragment has changed and cannot be held back
+([MDN, `hashchange`](https://developer.mozilla.org/en-US/docs/Web/API/Window/hashchange_event): "fired
+when the fragment identifier of the URL has changed"). So while dirty the app's `hashchange` handler
+does not show the new page: it puts the address back with `history.replaceState(null, '', <the
+previous hash>)`, which fires no `hashchange` of its own (same MDN page: "does not fire when the hash
+is modified using `history.pushState()` or `history.replaceState()`"), and opens the discard dialog
+of 38. "The previous hash" is the hash of the page the app shows (its route state), not the event's
+`oldURL`, so the tests need no `HashChangeEvent` members. No string is new: the dialog and its texts
+are 38's.
+
+38b. **The question.** On a `hashchange` while the form is dirty, to a hash other than the one shown:
+    `location.hash` is the instance page's again (`#/instances/<id>`, as before the change), the page
+    is not remounted (same form, every edit and field error, the save bar's status and alert as they
+    were), `document.title` and the nav's `aria-current` do not change, focus does not move to the
+    `h1`, and the discard dialog of 38 is open with Keep editing focused.
+38c. **Keep editing** (or Escape, 38a): the dialog closes, the address stays the instance page's, the
+    edits stay. Focus returns to the element that had it when the `hashchange` came, if it is still in
+    the document and is not `body`; otherwise to the page's `h1`. Nothing is sent.
+    ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
+38d. **Discard changes**: the app goes to the hash the user asked for (`location.hash` set to it), the
+    edits are dropped, and that page shows as after any route change (2.1, 7: title, `aria-current`,
+    focus on its `h1`). It does not ask a second time: the `hashchange` that this navigation fires
+    passes. The same holds for 38's Discard on a link and for Sign out's return to `#/` (today these
+    also set the hash while the form still reads dirty).
+38e. **Clean form**: Back, Forward or a typed hash change the page as today, no dialog. In particular
+    after a successful save (33, clean) and after Discard (30), Back leaves without asking. A form
+    dirty again by 33b asks.
+38f. **While the session has ended** (36a): the same as 38b to 38d (the edits are still on screen).
+    Signed out there is no form, so nothing differs.
+38g. **A second change while the dialog is open** (Back pressed again, or another hash typed): the
+    address is put back again, the one dialog stays open (not a second one), focus stays in it, and
+    its Discard now goes to the latest hash asked for. A dialog opened by a link (38) takes the latest
+    hash too.
+38h. **What is not guarded**: a hash equal to the one shown fires no `hashchange` and does nothing; a
+    full address to another page (not a hash) is `beforeunload` (38).
+
+Side effects, accepted: `replaceState` rewrites the history entry the browser moved to, so after Back
+and Keep editing that entry holds the instance page's address and the entry the user left is still
+there after it (Back a second time goes one entry further back than the user might expect; Forward
+goes to the instance page with no change). After Discard the new page is a new entry (setting
+`location.hash` pushes one), which drops the Forward entries. A typed hash and Keep editing leaves two
+entries with the instance page's address. **Checked only in a real browser** (jsdom has no browser
+history UI): the history entries above, that the browser's Back and Forward over same-document
+entries fire `hashchange`, and that `document.activeElement` is the page's element and not the
+browser's toolbar when the event arrives. The tests drive 38b to 38h by setting `location.hash` (or
+`history.back()` after a `location.hash` change) while dirty.
+
+Out of scope for G1: `popstate`, a guard on any page but the instance page (no other page has a
+form), the Models page (it has no unsaved state yet), and a dirty form under another open dialog of
+the page (43a, 45e): the discard dialog opens on top of it, as for a link.
 39. No keyboard shortcut for Save (D8).
 
 ### 3.1 Decided at the review of 1b (2026-11-15)
@@ -458,8 +509,8 @@ here and are part of the brief.
 - **The banner's Sign in link** has the nav links' padding and radius, so its current-page bar does
   not touch the text. Accepted at the second 1b review; the link widens by about 3 px when bold on
   `#/sign-in` (right-aligned, so its left edge moves), the banner's height does not change.
-- **Open, for the user**: guard Back, Forward and a typed address while dirty (38, known gap)? It
-  needs the app to undo the hash change and ask; it can ride along with 1c or wait.
+- **Back, Forward and a typed address while dirty** (was open, for the user): decided by the user on
+  2026-11-15, they ask too. Built as slice G1, 38b to 38h.
 
 ## 4. Slice 1c: run controls, live state and start at boot
 

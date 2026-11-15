@@ -489,3 +489,19 @@ test('1b.8a (2.7): index.html declares one inline SVG icon in the head, after th
   expect(viewport, 'the viewport meta').not.toBeNull()
   expect(before(viewport!, icon), 'after the viewport meta').toBe(true)
 })
+
+// ── The banner's CSS ────────────────────────────────────────────────────
+
+test('46b (4b): index.css breaks a long user name inside the banner', () => {
+  // A user name with no break point (32 characters, the useradd(8) maximum)
+  // keeps its full width and can push the page past a 320 px viewport.
+  // jsdom does no layout, so the brief lets this be pinned as the CSS rule:
+  // overflow-wrap: anywhere on the signed-in span of .session. Comments are
+  // dropped first, so a comment that quotes the rule is not a green.
+  const raw = readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')
+  const css = raw.replace(/\/\*[\s\S]*?\*\//g, '')
+  expect(
+    /\.session\s*>?\s*span\s*\{[^}]*overflow-wrap:\s*anywhere/.test(css),
+    'no overflow-wrap: anywhere rule for the signed-in span of .session',
+  ).toBe(true)
+})

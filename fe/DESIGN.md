@@ -102,8 +102,10 @@ Decided with the user on 2026-11-14.
   ([2.4.2 Page Titled](https://www.w3.org/TR/WCAG22/#page-titled)), and focus moves to the page's
   `h1` (`tabindex="-1"`), so a screen reader announces the new page
   ([2.4.3 Focus Order](https://www.w3.org/TR/WCAG22/#focus-order)).
-- Leaving a page with unsaved changes asks first (section 6, "Unsaved changes"); closing the tab
-  triggers the browser's own `beforeunload` prompt.
+- Leaving a page with unsaved changes asks first (section 6, "Unsaved changes"), whether by a link,
+  the browser's Back or Forward, or a hash typed in the address bar (the app puts the address back
+  and asks: `fe/briefs/01-server.md` 38b); closing the tab triggers the browser's own
+  `beforeunload` prompt.
 
 ## 3. Who is acting: sign-in
 
