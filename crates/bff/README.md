@@ -4,8 +4,8 @@
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
 framework version and the manager's instances with their state, and has the session routes, whose
 check against the operating system is not wired yet: every sign-in answers 503 (`PLAN.md` step 10).
-The web UI already has a read-only Server page, built against a route the bff does not serve yet
-([below](#the-web-ui-fe)).
+The web UI already has a Server page, editable for an administrator, built against routes the bff
+does not serve yet ([below](#the-web-ui-fe)): a save on the shipped bff fails.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -161,15 +161,23 @@ opens and never shows a reply's text.
 | --- | --- | --- |
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
-| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`, read-only for every role: every control disabled, a notice for a non-administrator | signed in; otherwise the sign-in form in its place |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: for an administrator (`canConfigure`) editable, with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`); for anyone else every control disabled and a notice | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
   `{"user", "canConfigure"}` signs the page in, any other reply or failure leaves it signed out.
   Sign out is `DELETE /api/session`, signed out whatever it answers; a 401 from the server read
   signs the page out too.
-- **`/api/instances/{id}/server` is not served by the bff yet**: it is proposed in
-  `fe/briefs/api-contract.md`, and the fe is tested against it with mocked replies only. The bff
+- **A save** sends the file's revision and the typed values. Before it the form runs the client
+  checks and marks the failing fields; the reply is read by its key: a refusal under the field it
+  names, a stale revision (`server-changed-elsewhere`) with a Reload button, a 401 with a sign-in
+  dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
+  first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
+  browser's own prompt; Back, Forward and a typed address do not ask yet.
+- **`/api/instances/{id}/server` is not served by the bff yet**, neither `GET` nor `PUT` (`PLAN.md`
+  step 10, slices 7 and 8): both are proposed in `fe/briefs/api-contract.md`, and the fe is
+  tested against them with mocked replies only, never against a real bff, so a save on the shipped
+  bff fails. The bff
   serves `/api/session`, but until its authenticator is wired every sign-in answers 503
   `session-unavailable`, so the page stays signed out with the Overview whole and an instance page
   shows the sign-in form.
