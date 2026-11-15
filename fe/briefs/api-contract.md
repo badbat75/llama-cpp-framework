@@ -40,6 +40,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
 | `GET /api/presets` | administrator | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
+| `GET /api/presets/{id}` | administrator | 2d, proposed | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
 
 ### `GET /api/instances`
 
@@ -53,8 +54,9 @@ manager's detail never reaches the body).
 - `GET /api/session` answers 404 until the bff has the route; the fe reads any reply but 200 as
   signed out.
 - **Only administrators sign in** (user, 2026-11-15): an administrator is a member of the OS group
-  `pai` on the server machine. The session reply is `{"user"}`; a reply that still carries
-  `canConfigure` is accepted and the field ignored (the bff drops it next). The manager still decides
+  `pai` on the server machine. The session reply is `{"user"}`, which is all the bff sends since
+  commit 296165f; the fe still accepts a reply that carries `canConfigure` and ignores the field
+  (an older bff sent it). The manager still decides
   every request, and a refusal is 403 `client-not-authorized`.
 - `POST /api/session` takes `{"username", "password"}`. Failures:
   - 401 `session-bad-credentials`: the same reply for an unknown user and a wrong password.
@@ -191,6 +193,43 @@ matched case-insensitively. Body `{"enabled": <bool>}`.
 - A preset id is unique across every engine (user, 2026-11-15), so the id alone names the preset.
   The ids `.` and `..` cannot travel in a URL path (URL Standard, dot path segments); the user
   decided (2026-11-15) that the common id check refuses them, for the GUI and the CLI too.
+
+### `GET /api/presets/{id}` (proposed)
+
+One preset, for its page ([02-models.md](02-models.md), slice 2d, section 2d.12 there with the
+reasons). `{id}` is one percent-decoded path segment, matched case-insensitively; `presets.ini` is
+searched first, so an id in both files is the enabled copy, as in the list. Needs a session; the
+manager's `ReadFile` needs no right for the preset files.
+
+```json
+{
+  "id": "Qwen3-27B",
+  "engine": "llama.cpp",
+  "engineAvailable": true,
+  "enabled": true,
+  "values": {
+    "model": "/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf",
+    "spec-type": "ngram-mod,draft-mtp",
+    "ctx-size": "172032"
+  },
+  "projectUrl": "https://huggingface.co/org/repo",
+  "revision": "<opaque>"
+}
+```
+
+- `id` as the file spells it; `engine`, `engineAvailable`, `enabled` as in `GET /api/presets`.
+- `values`: every key of the section, keyed by the preset file's key name, each value the string
+  the file holds after the INI reader's trim (no typing, no path resolution, no defaults); a key the
+  section lacks is absent, never `null`.
+- `projectUrl`: the section's `; url =` comment (`presets::project_url_of`), `""` when none.
+- `revision`: opaque, for the saves of 2h; the fe ignores it until then. Proposed: the hash of the
+  text of the file holding the section, as `server.rs` `revision` does.
+- It grows without breaking: later slices read more keys from `values`, and add top-level fields
+  (a comment such as `; placement =` as `placementNote`, server-computed data) or routes; no field
+  is removed or retyped, and the fe ignores fields it does not know.
+- Errors, each `{"key", "args"}`: 401 `session-required`; 404 `no-preset-named` with `args: [id]`
+  when neither file holds the id; 403 `client-not-authorized`; 503 `client-unavailable`; 502
+  `client-other` with empty `args`.
 
 ## Open on the bff side
 

@@ -45,7 +45,8 @@ The bff's shape (coordinator, 2026-11-14): everything under `/api/`; errors are
 the coordinator's contract; the brief assumes these:
 
 - `GET /api/session`: 200 `{"user": "<name>"}`, 401 when signed out. A reply that still carries
-  `canConfigure` is accepted and the field ignored (the bff drops it next).
+  `canConfigure` is accepted and the field ignored (the bff sends `{"user"}` alone since commit
+  296165f; an older bff sent the field).
 - `POST /api/session` `{"username", "password"}`: 200 as above (sets the cookie); 401
   `{"key":"session-bad-credentials"}`; 429 `{"key":"session-too-many-attempts","args":["<seconds>"]}`;
   403 `{"key":"session-not-administrator","args":[]}` (14b);

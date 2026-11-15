@@ -37,7 +37,7 @@ only an administrator can be (section 3).
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | later |
+| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read); the rest `fe/briefs/02-models.md` section 0 |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -97,7 +97,11 @@ Decided with the user on 2026-11-14.
   and the bff needs no fallback route.
 - The nav lists only pages that exist. Under "Instances" one link per instance, from
   `GET /api/instances`, in the manager's order.
-- The current page's nav link has `aria-current="page"`.
+- The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
+  link of its own (a preset's page under Models), that entry keeps the current-page style with
+  `aria-current="true"`: it leads elsewhere, but the page belongs to it
+  ([WAI-ARIA 1.2, `aria-current`](https://www.w3.org/TR/wai-aria-1.2/#aria-current)). Such a page
+  also starts with a link back to its list, before the `h1` (`fe/briefs/02-models.md` 61).
 - On every route change: `document.title` becomes `<page> | Private AI Framework`
   ([2.4.2 Page Titled](https://www.w3.org/TR/WCAG22/#page-titled)), and focus moves to the page's
   `h1` (`tabindex="-1"`), so a screen reader announces the new page
@@ -266,6 +270,13 @@ Each is one React component, reused by every page.
   is announced by its status line (Action feedback) **(preference)**.
 - **Table**: a native `<table>` with `<th scope="col">` headers; a link in the first cell when the row
   opens a page.
+- **Value list**: settings shown as text, not as controls (a page or card that reads before its
+  slice can write, e.g. the preset page's Assets in 2d): a `<dl>`, each field a `<dt>` label then
+  its `<dd>` value, laid out as Forms in section 4 (label column from 720px). Values from the file
+  unchanged, in monospace for paths, flags and values, wrapping anywhere (`overflow-wrap: anywhere`,
+  `min-width: 0`); an empty value is the page's "(none)" text in the body font and `--muted`.
+  Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+  technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
   when it appears after a user action, otherwise a plain paragraph.
 - **Notice**: a bordered paragraph above a form, or above a table whose rows hold controls (e.g.

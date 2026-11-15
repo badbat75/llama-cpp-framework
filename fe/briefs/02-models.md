@@ -45,7 +45,7 @@ pattern and the session-ended dialog of slice 1b.
 | **2a** | R: nav entry, `#/models`, the one mixed preset list (name, engine, on or off), loading, empty, read errors. **This brief.** |
 | 2b | R: the list's filter field (the GUI's "Filter presets…": id or model path, case-insensitive; adds `model` to the list reply). |
 | 2c | W: the on/off switch of each row (moves the section between `presets.ini` and `presets.ini.disabled`). |
-| 2d | R: the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field: the engine whose preset file holds the preset, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
+| **2d** | R (section 2d): the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field: the engine whose preset file holds the preset, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
 | 2e | R: the plain cards, each field as in the GUI: Hardware, Resource / context, KV cache, Chat / reasoning, Sampling, Embeddings, Advanced, Vision, Speculative (values and enable rules; no warnings). |
 | 2f | R: GPU distribution and Tensor placement tables (needs the server machine's device list from the bff). |
 | 2g | R: Model info card (needs a GGUF read on the server: the bff links pai-core only today, inventory 4.1). |
@@ -598,6 +598,311 @@ To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top
 >   ([URL Standard, single-dot and double-dot path segments](https://url.spec.whatwg.org/#single-dot-path-segment)).
 >   Such a preset cannot be switched from the web until that is settled (question U4).
 
+## 2d. Slice 2d: the preset page, read-only
+
+Added on 2026-11-15. Criteria go on from 2c's numbers. Everything in 2a to 2c stays true unless a
+line below changes it; 2d replaces criterion 5 (`#/models/<id>` not found) and 10 (name as plain
+text), and adds to 53 and 54 (tab order, what is heard in a row). The page reads only: no field
+saves, because writing comes in 2h and 2i, not because of a role (every session is an
+administrator's). The reference is the GUI's editor column (`crates/config/ui/models_page.slint`
+172-286: the heading `preset-id-heading`, then the Assets card), the inventory's Assets rows
+([configurator-inventory.md](configurator-inventory.md) 1.2), the `--spec-type` helpers
+`spec_type_drafter` and `spec_type_is_draftless` (`crates/app/src/presets.rs` 932-958), and D2.2
+for the Engine field.
+
+### 2d.1 Route and address
+
+56. **The address.** `#/models/<id>`, the id percent-encoded as one segment
+    (`encodeURIComponent`, as `instanceHref` does for instances): `Qwen3-27B` is `#/models/Qwen3-27B`,
+    `a b` is `#/models/a%20b`. The fe decodes the segment with `decodeURIComponent` and asks the bff
+    for that id (2d.8). Replaces criterion 5.
+57. **Malformed addresses** show the `not-found` page (slice 1 criterion 8, its link
+    `not-found-home`): `#/models/` (empty id), more than one segment (`#/models/a/b`), and a segment
+    that does not decode (`#/models/%E0%A4%A`, where `decodeURIComponent` throws). `#/models` stays
+    the list.
+58. **Signed out.** `#/models/<id>` shows the sign-in form in its place with `signin-required`, the
+    address unchanged; after sign-in, the preset page, read then, focus on its `h1` (as criterion 4).
+59. **Unknown id**: a 404 `no-preset-named` from the read shows the Message `preset-not-found`
+    filled with the id from the address ("There is no preset named Qwen3-28B."), a plain paragraph
+    in place of the content; the back link (criterion 61) stays, so the way out is in the page.
+    The ids `.` and `..` are not handled apart: the common id check refuses them (user, 2026-11-15),
+    and a hand-written one reaches the bff as another path (the URL parser resolves dot segments,
+    [URL Standard](https://url.spec.whatwg.org/#single-dot-path-segment)), whose reply falls under
+    criterion 66. (The fragment itself keeps them: the parser does not resolve dots after `#`.)
+
+### 2d.2 From the list and back
+
+60. **The row's name becomes a link.** In the list's name cell, the id is an `<a>` to the preset's
+    address (criterion 56), its text the id. It stays inside the element whose id names the row's
+    switch (criterion 38), so the switch's name is still the id. The link keeps `--accent` and an
+    underline in every row, a switched-off row included (the row's other text stays `--muted`,
+    criterion 12): a link drawn muted would differ from text only by its underline. Its target is
+    the cell's text line, 24 px high at 1rem and line height 1.5 (D5.1 Targets). Replaces criterion
+    10. ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context),
+    [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum),
+    [1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color))
+61. **The way back.** The first thing in the main region, before the `h1`, is a link
+    `preset-back` ("All presets") to `#/models`, shown in every state of the page (loading, each
+    error, not found, loaded). The browser's Back works too (hash routes). Before the `h1` so it sits
+    where a reader looks for the way up (preference); focus lands on the `h1` (criterion 63), so the
+    link is one Shift+Tab away and not in the way of the fields.
+62. **Coming back to the list** is opening it (criterion 18): the list is read again, the filter
+    field is empty and every row shows (criterion 34 holds), focus is on the list's `h1` (criterion
+    3), and the page starts at the top. Nothing of the list (filter text, scroll, the switch
+    region's messages) is kept across the visit **(preference: the simplest; question U7)**.
+
+### 2d.3 Heading, title, nav, focus
+
+63. **Heading and title.** The `h1` is the preset's id, through `PageHeading` as on the instance
+    page: `document.title` is `page-title` filled with the id ("Qwen3-27B | Private AI
+    Framework"), focus on the `h1` (`tabindex="-1"`) on arrival, whether from a row's link, the
+    address bar, Back or Forward, or a sign-in returning to the page. While loading and on an error
+    the `h1` is the id from the address; once read, the reply's `id` (the file's spelling, since the
+    bff matches ids case-insensitively). No subtitle: the engine is a field of the preset, not a fact
+    under its name (D2.2). ([2.4.2](https://www.w3.org/TR/WCAG22/#page-titled),
+    [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
+    [2.4.6](https://www.w3.org/TR/WCAG22/#headings-and-labels))
+64. **Nav.** On `#/models/<id>` the nav's **Models** link has the current-page style and
+    `aria-current="true"`, not `"page"`: it leads to the list, which is not this page, but this page
+    belongs to it ([WAI-ARIA 1.2, `aria-current`](https://www.w3.org/TR/wai-aria-1.2/#aria-current):
+    `page` is "the current page within a set of pages", `true` "the current item within a
+    container or set of related elements"). On `#/models` it keeps `aria-current="page"`
+    (criterion 2). D2.3. ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships))
+
+### 2d.4 States
+
+65. **Loading**: `<p role="status">` `preset-loading` below the `h1`, in place of the content.
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
+66. **Read errors**, a plain paragraph in place of the content (no alert: nobody acted), the back
+    link and `h1` kept:
+    - 401, whatever the body: the whole app becomes signed out, as criterion 16 (the sign-in form
+      with `signin-required` in place of the page, the banner's **Sign in**, the nav without
+      Instances and Models); after sign-in the page reads again (criterion 58);
+    - 403 `client-not-authorized`: `api-client-not-authorized`;
+    - 503 `client-unavailable`: `api-client-unavailable`;
+    - 404 `no-preset-named`: criterion 59;
+    - any other status or key (a 404 with another key or none included), a body that is not the
+      error shape, a 200 not of the shape of criterion 81, a network failure, or the 15 s `GET` limit
+      of `call()` running out: `preset-load-failed`. Never the reply's body.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
+67. **When it reads**: once each time the page opens (a route change to `#/models/<id>`, another id
+    included, and a sign-in that returns to it). No polling, no refresh button.
+
+### 2d.5 The loaded page
+
+68. **Order** below the `h1`: the off line (criterion 69, only for a switched-off preset), the `h2`
+    `preset-settings-title`, the Notice of criterion 72 (only for an engine not available), the
+    Engine field (criterion 70), then the Assets card (criterion 73). The `h2` keeps the heading
+    order of D8 (`h1` page, `h2` section, `h3` card) as the Server page does.
+    ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [1.3.2](https://www.w3.org/TR/WCAG22/#meaningful-sequence))
+69. **A switched-off preset** is shown like any other (the user's decision: switched-off presets
+    stay visible and editable), with one plain paragraph under the `h1`: `preset-off`. A
+    switched-on preset has no such line (no empty chrome, D1.4). The state is said in words, never
+    by colour or muting alone: the page is not drawn muted.
+    ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color))
+
+### 2d.6 The Engine field (D2.2)
+
+70. **A select, first field.** A D5.2 `SelectField`: the label `preset-engine` ("Engine"), its
+    About toggle (`field-about` with the label) revealing `preset-engine-hint`, and a native
+    `<select>` named "Engine", so `getByRole('combobox', { name: 'Engine' })` finds it. In 2d it holds
+    **one** option, the preset's engine, selected: its text the reply's `engine` as data (D7,
+    `llama.cpp`), or `presets-engine-not-available` filled with it when `engineAvailable` is false
+    ("Strata (not available)"). Shown with one entry because it is how a preset's engine is chosen
+    (D1.4's exception, D2.2). It is enabled and in the tab sequence, as it will be when 2h lets it
+    change; picking its only option changes nothing and sends nothing. The other engines join it with
+    `GET /api/engines` when the choice can be saved (2h, 2l).
+    ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value))
+71. **No save around it**: no save bar, no Discard; the page has nothing to save in 2d, so leaving
+    it never asks (D6 "Unsaved changes" does not arise).
+72. **Engine not available** (possible only once a second engine's preset file exists): a D5.2
+    Notice above the Engine field, `preset-engine-unavailable` filled with the engine ("Strata is not
+    available on the server, so no instance can serve this preset until it is installed again."), a
+    bordered paragraph, not a live region (it is part of the page as read). The Assets card is shown
+    as for any preset (2o replaces it with the raw lines of an engine the fe does not know).
+
+### 2d.7 The Assets card, values as text
+
+73. **The card.** A D5.2 Card, `h3` `preset-assets` ("Assets"), holding a D5.2 Value list (new,
+    `fe/DESIGN.md` 5.2): one `<dl>`, each field a `<dt>` (its label) followed by its `<dd>` (its value),
+    in the GUI's order:
+
+    | Label (key or literal) | Value from the reply | GUI |
+    |---|---|---|
+    | `preset-model-file` "Model file" | `values.model` | Model file (`model`) |
+    | `preset-project-url` "Project URL" | `projectUrl` | Project URL (`; url =` comment) |
+    | `MMProj` (an acronym: literal, as the GUI's label) | `values.mmproj` | MMProj (`mmproj`) |
+    | `preset-draft-model` "Draft model" | `values["model-draft"]` | Draft model (`model-draft`) |
+    | `preset-drafter` "Drafter" | the draft entry of `values["spec-type"]` (criterion 75) | Drafter |
+    | `preset-ngram-drafters` "N-gram drafters" | the n-gram entries of `values["spec-type"]` (criterion 75) | N-gram drafters |
+
+    No input, picker, checkbox or button in the card (2i brings the pickers), so nothing in it is in
+    the tab sequence. No hints in 2d: the GUI's hints for these fields explain how to pick a file
+    (`draft-model-hint`: "Picking one sets Drafter..."), which the page cannot do yet; they come with
+    the pickers. A test reads the pairs with `getAllByRole('term')` and `getAllByRole('definition')`
+    in order. ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40))
+74. **Values as the file holds them.** Each value is the reply's string unchanged: the server's path
+    in full, its separators kept (no file-name shortening, no resolving against the models folder,
+    D1.3), in the monospace font (D5.1: paths, flags and values). The Project URL is text, not a link
+    (the GUI's **Open** is out of 2d).
+75. **The `spec-type` list**, split as `presets.rs` does: on `,`, each entry trimmed, empty entries
+    and `none` dropped. **Drafter** is the first entry that does not start with `ngram-`
+    (`spec_type_drafter`); **N-gram drafters** are the entries that start with `ngram-`, in the
+    value's order, joined with `, ` (`ngram-cache` included: the GUI keeps it untouched). Examples:
+    `ngram-mod,draft-mtp` gives `draft-mtp` and `ngram-mod`; `draft-eagle3` gives `draft-eagle3`
+    (the GUI's combo shows `none` for a drafter it does not list; the page shows what the file says,
+    on purpose); ` ngram-simple , ngram-map-k ` gives no drafter and `ngram-simple, ngram-map-k`.
+76. **Empty values.** A key absent from `values`, an empty string, an empty `projectUrl`, or a
+    `spec-type` with no entry of that kind shows `preset-value-none` ("(none)", the GUI's label for
+    an empty pick, `model_scan.rs`) in the body font and `--muted`, so it does not read as a file
+    named "(none)". A preset with no model shows it too: the page reports the file, it does not
+    check it (2k brings the checks).
+77. **Long values at 320 px.** From 720 px up the `<dt>` sits in the 200 px label column and the
+    `<dd>` beside it (D4 Forms); below, the label above its value. The `<dd>` wraps anywhere
+    (`overflow-wrap: anywhere`, `min-width: 0`): a path such as
+    `/var/lib/private-ai/.llama.cpp/models/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`
+    breaks across lines inside the main column, with no horizontal scroll at 320 px and at 400 %
+    zoom. The `h1` wraps anywhere as well (an id has no spaces). Checked in review, not in jsdom.
+    ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow), [1.4.4](https://www.w3.org/TR/WCAG22/#resize-text))
+
+### 2d.8 Keyboard and screen reader
+
+78. **Tab order on the preset page**: skip link, banner, nav, `preset-back`, then (focus starts on
+    the `h1`) the Engine field's About toggle and its select. Nothing else on the page takes focus.
+    On the list, criterion 53 gains each row's link before its switch: ..., then per row, in row
+    order, the name link and the switch. ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
+    [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+79. **What a screen reader says**: on arrival, the `h1` ("Qwen3-27B, heading level 1"); the select
+    "Engine, combo box, llama.cpp"; the card as a heading and a description list, each value with
+    its term ("Model file", then the path). Nothing is announced when the page loads apart from the
+    loading status going away (a page read, not an action). In the list's table navigation, adding
+    to criterion 54: "Preset, Qwen3-27B, link". The focus ring is D5.1's on the back link, the row
+    links, the About toggle and the select.
+    ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value),
+    [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible))
+
+### 2d.9 Data and the tests
+
+80. 2d reads `GET /api/presets/<id>` (2d.12), the id encoded as in criterion 56, and nothing else
+    on the preset page: not `GET /api/presets`, not `GET /api/engines`, not the instances (the nav
+    reads those as slice 1 does). The list's reads and writes are unchanged.
+81. **The shape the fe checks**: a JSON object with `id` (string), `engine` (string),
+    `engineAvailable` (boolean), `enabled` (boolean), `values` (an object whose every value is a
+    string) and `projectUrl` (string). Any other field (`revision` included) is ignored in 2d, and a
+    key of `values` the page does not show is ignored. Anything else is `preset-load-failed`.
+82. The tests stub: a 200 with every Assets value set; a 200 with `values` `{}` and `projectUrl`
+    `""`; `spec-type` values of criterion 75; a switched-off preset; `engineAvailable` false; 401;
+    403 `client-not-authorized`; 503 `client-unavailable`; 404 `no-preset-named`; 404 with no body;
+    a 502 `client-other`; a 200 `[]`; a 200 whose `values` holds a number; a network failure; a
+    timeout. Routes: an id with a space and one with `%`; `#/models/`; `#/models/a/b`; a segment
+    that does not decode.
+
+### 2d.10 Strings, slice 2d
+
+| Key | English | Source |
+|---|---|---|
+| `preset-back` | All presets | new |
+| `preset-loading` | Loading the preset… | new, as `presets-loading` |
+| `preset-load-failed` | The preset could not be read. | new, as `presets-load-failed` |
+| `preset-not-found` | There is no preset named {0}. | core `no-preset-named`, as a sentence (and as `instance-not-found`) |
+| `preset-off` | This preset is switched off: it is kept, but its engine does not serve it. Switch it on in the presets list. | 2a's `presets-off-note`, for one preset, with what to do |
+| `preset-settings-title` | Preset settings | new (the GUI's editor has no section heading) |
+| `preset-engine` | Engine | GUI `engine` |
+| `preset-engine-hint` | The engine whose preset files hold this preset. Every instance of that engine can serve it. | new (D2.2) |
+| `preset-engine-unavailable` | {0} is not available on the server, so no instance can serve this preset until it is installed again. | D2.2's Notice, without "or another engine is chosen" (the select cannot change in 2d) |
+| `preset-assets` | Assets | GUI `assets` |
+| `preset-model-file` | Model file | GUI `model-file` |
+| `preset-project-url` | Project URL | GUI `project-url` |
+| `preset-draft-model` | Draft model | GUI `draft-model` |
+| `preset-drafter` | Drafter | GUI `drafter` |
+| `preset-ngram-drafters` | N-gram drafters | GUI `n-gram-drafters` |
+| `preset-value-none` | (none) | GUI's empty pick (`model_scan.rs`, a literal there) |
+
+Reused, unchanged: `page-title`, `signin-required`, `not-found`, `not-found-home`, `field-about`,
+`presets-engine-not-available`, `api-client-not-authorized`, `api-client-unavailable`. Not strings
+(D7): the id, the engine, every value, the label `MMProj`.
+
+### 2d.11 Out of 2d
+
+Editing anything (2h, 2i), the file pickers and the models-folder scan (2i), the GUI's hints for the
+Assets fields (with the pickers), the Project URL's Open, the other cards (2e to 2g), the engine
+list and changing the engine (2h, 2l), the raw lines of an unknown engine (2o), switching the preset
+on or off from this page, New, Clone, Rename, Delete (2l to 2n), keeping the list's filter across
+the visit (question U7), a "next / previous preset" control, polling.
+
+### 2d.12 Proposed contract (for the bff's coordinator)
+
+To add to [api-contract.md](api-contract.md) by its keeper (written there as proposed); the rules at
+its top apply.
+
+| Route | Who | Slice | Success |
+| --- | --- | --- | --- |
+| `GET /api/presets/{id}` | administrator (signed in) | 2d, proposed | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
+
+> ### `GET /api/presets/{id}`
+>
+> One preset, for its page. `{id}` is one path segment, percent-decoded, matched against the
+> section names case-insensitively as `presets::set_enabled` and `load_listed` do; `presets.ini` is
+> searched first, so an id in both files (an interrupted switch) is the enabled copy, as in the list.
+>
+> ```json
+> {
+>   "id": "Qwen3-27B",
+>   "engine": "llama.cpp",
+>   "engineAvailable": true,
+>   "enabled": true,
+>   "values": {
+>     "model": "/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf",
+>     "spec-type": "ngram-mod,draft-mtp",
+>     "ctx-size": "172032"
+>   },
+>   "projectUrl": "https://huggingface.co/org/repo",
+>   "revision": "<opaque>"
+> }
+> ```
+>
+> - `id`: the section name as the file spells it.
+> - `engine`, `engineAvailable`, `enabled`: as in `GET /api/presets` (the engine whose file holds
+>   the section; whether it is in `GET /api/engines`; `presets.ini` or `presets.ini.disabled`).
+> - `values`: **every key of the section**, keyed by the preset file's own key name (`model`,
+>   `mmproj`, `model-draft`, `spec-type`, `ctx-size`, ...), each value the string the file holds
+>   after the INI reader's trim, unchanged (no typing, no path resolution, no defaults filled in). A
+>   key the section lacks is absent, never `null`. Strings, not typed JSON as the server document's
+>   `values`, because the bff then needs no table of llama.cpp's option types, and an engine the fe
+>   does not know can be shown as raw `key = value` lines from the same object (2o).
+> - `projectUrl`: the value of the section's `; url =` comment (`presets::project_url_of`), `""`
+>   when there is none. A comment, not a key: llama-server refuses an unknown key.
+> - `revision`: opaque, for the saves of 2h; the fe ignores it until then. Proposed: the hash of the
+>   text of the file holding the section, as `server.rs` `revision` does for a server file; whether
+>   it should cover only the section (so that a save is not refused because another preset changed)
+>   is 2h's to settle.
+> - **Growing without breaking**: 2e reads more keys from the same `values` (no change); comment-borne
+>   data gets a named top-level field of its own when a slice shows it (2f: `placementNote`, the
+>   `; placement =` comment); data computed on the server (2f's device list, 2g's model info) gets a
+>   new top-level field or its own route. No field is removed or retyped; the fe ignores fields it
+>   does not know.
+> - **Errors**, each `{"key", "args"}`: 401 `session-required` with no session (the manager not
+>   asked); 404 `no-preset-named` with `args: [id]` when neither file holds the id; 403
+>   `client-not-authorized`; 503 `client-unavailable` (no manager, or no answer in time); 502
+>   `client-other` for anything else, empty `args` (the detail stays in the bff's log).
+> - **Who**: a signed-in session, as `GET /api/presets`; the manager's `ReadFile` needs no right for
+>   the preset files.
+>
+> **What the lower layers already give** (read-only check, 2026-11-15): the manager's `ReadFile`
+> (`pai_core::client::ManagerClient::read_file`, `crates/core/src/client.rs` 142; the bff already
+> calls it for the server file in `crates/bff/src/server.rs` 29) returns each preset file's text, or
+> none when it is missing; `pai_core::ini::parse_sections` (`crates/core/src/ini.rs` 60) gives each
+> section's `id`, its `keys` (a `BTreeMap`, so `values` has no file order, which the fe does not
+> need) and its whole-line `comments`. The `; url =` reader (`comment_value`, `project_url_of`) and
+> the list logic (`listed_in`, `has_section_in`) are private to `pai-app` (`crates/app/src/presets.rs`
+> 897-920, 1187-1290), which the bff does not link (it links `pai-core` only): the bff either moves
+> the comment reader into `pai-core` or reads the comment itself; the coordinator's call. Nothing
+> needs a new manager method.
+
 ## 3. Proposed contract: `GET /api/presets` (for the bff's coordinator)
 
 To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top apply.
@@ -653,3 +958,7 @@ the preset files; the route still needs a session (the Models page is for signed
 - **U6. Preset ids across engines.** `PUT /api/presets/{id}/enabled` assumes an id names one preset
   across every engine's files (as 2m's rename rule says for both files of one engine). Once a second
   engine exists, may two engines hold the same id? If yes, the route needs the engine too.
+- **U7. The list's filter after a visit to a preset page** (criterion 62). Options: (a) emptied on
+  return, as every opening of the list today (recommended: the simplest, nothing to keep in step);
+  (b) kept for the tab's life, in memory, so Back from a preset shows the same filtered rows;
+  (c) kept in the address (`#/models?filter=...`), so it also survives a reload and can be shared.
