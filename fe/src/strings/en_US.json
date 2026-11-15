@@ -131,6 +131,7 @@
   "save-invalid": "Not saved: correct the marked fields.",
   "save-refused": "Not saved: {0}",
   "save-failed": "Not saved: the service did not answer as expected. Your changes are kept; try again.",
+  "save-timeout": "Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.",
   "save-reload": "Reload",
   "session-ended": "Your session has ended. Sign in again to save; your changes are kept.",
   "discard-title": "Discard unsaved changes?",

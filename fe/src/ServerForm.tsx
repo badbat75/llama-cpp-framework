@@ -351,8 +351,10 @@ async function sendSave(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ revision, values }),
     })
-  } catch {
-    return failed(t('save-failed'))
+  } catch (e) {
+    // A timeout may have written the file (4.8, 47d).
+    const timedOut = e instanceof DOMException && e.name === 'TimeoutError'
+    return failed(timedOut ? t('save-timeout') : t('save-failed'))
   }
   if (reply.status === 401) return { kind: 'signed-out' }
   const body = reply.body

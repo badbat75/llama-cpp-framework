@@ -314,7 +314,10 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
   web and the GUI say the same thing. The key picks the message, never the status, except 401
   (sign in). A refusal (422, a check that failed) with a key the fe does not know shows `api-other`
   with the key as its value: better a diagnostic than nothing. Any other reply with an unknown key or
-  no valid key, a malformed body or a network failure is `failed`.
+  no valid key, a malformed body or a network failure is `failed`. Every request has a time
+  limit (15 s for a `GET`, 120 s for any other method; reasons in `fe/briefs/01-server.md` 4.8): a
+  request that runs out is aborted and is that call's network failure, unless its brief says
+  otherwise (a save that times out may have been written: 47d there).
 - Messages say what happened and what to do, in one or two sentences. Buttons are verbs ("Save
   changes", "Sign in"). Labels in sentence case, as in the GUI.
 

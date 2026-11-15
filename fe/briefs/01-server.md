@@ -549,14 +549,16 @@ Settings tab's start at boot (`crates/config/src/gui/settings_tab.rs`,
     action settles (42a) or its deadline comes. Every read
     of this poll is a request sent after the `POST` answered: when its time comes while a read asked
     before that answer is still in flight (the ignored idle read, or the nav's), it waits for that
-    read to answer and then sends its own; it never takes the older read's answer, which can show
+    read to answer or to be aborted at its limit (47c: at most 15 s after that read was sent, so
+    always before the deadline) and then sends its own at once; the abort of the ignored idle read
+    schedules no idle read (the idle poll stays paused). It never takes the older read's answer, which can show
     the state from before the action (a `failed` instance clicked Start would read
     `run-ended-failed` at once, a Restart `run-restarted`). A failed read in this poll keeps the
     last state and the poll goes on.
     **The deadline** is 60 s after the `POST`'s 2xx, whatever is pending then (an action read in
-    flight, or one waiting behind an older read): it runs on its own timer, not when the next read
-    is due, since `call()` has no fetch timeout and a read stuck on the bff would otherwise leave
-    the status and the inactive buttons for good (decided by the coordinator after the tester's
+    flight): it runs on its own timer, not when the next read
+    is due, since a read stuck on the bff would otherwise hold the status and the inactive buttons
+    until its time limit (47) (decided by the coordinator after the tester's
     rerun of 1c, part 1). At that moment the status reads `run-timeout` and the buttons follow 40a
     for the state the header shows; an answer arriving later for that action settles nothing (the
     status stays `run-timeout`). No action read is sent at or after the deadline, nor after the
@@ -581,14 +583,22 @@ Settings tab's start at boot (`crates/config/src/gui/settings_tab.rs`,
     status still reads `run-starting`, and a new `GET` is sent at once; answered `active`, it gives
     `run-started`. A successful list without this page's id: the nav loses the link, the state line
     and buttons stay. A click on an inactive button sends no request at all.
-    The deadline (times from the 2xx): (a) state `failed`, an idle read held pending, a click on
-    Start, its 204: no `GET` up to 60 000 ms; at 60 000 ms the status reads `run-timeout` and Start
-    is not `aria-disabled` (Stop and Restart are: 40a for `failed`); the held read answers `active`
-    at 60 500 ms: the status still reads `run-timeout`, the state line is unchanged, no `GET` is
-    sent then, and the next `GET` is sent at 65 000 ms. (b) The first action read (at 1000 ms) never
-    answers: no second `GET`; at 60 000 ms `run-timeout`, the buttons per 40a for the state shown;
-    at 65 000 ms no new `GET` (the idle read shares the pending one); a click on Start right after
-    60 000 ms sends one `POST` and the status reads `run-starting`. (c) An idle read held pending, a
+    The deadline (times from the 2xx): (a) state `failed`; 5 000 ms after the opening read the idle
+    read is sent and held (it never answers); a click on Start in the same tick, its 204 at once
+    (so the 2xx is at 5 000 ms after opening, and the held read was sent 0 ms before it). Up to
+    14 999 ms no second `GET` (the action read due at 1 000 ms waits behind the held read: 41c); at
+    15 000 ms the held read is aborted (47c), the status still reads `run-starting`, and one action
+    `GET` is sent at once, with no idle read scheduled by the abort. (a1) That read answers
+    `active`: `run-started`, and the next `GET` is sent 5 000 ms after that answer (20 000 ms
+    after the 2xx if it answers at once). (a2) Every action read held too: the read sent at 15 000
+    ms is aborted at 30 000 ms, the next sent at 31 000 ms, aborted at 46 000 ms, the next sent at
+    47 000 ms; at 60 000 ms the status reads `run-timeout` and Start is not `aria-disabled` (Stop and
+    Restart are: 40a for `failed`); the read sent at 47 000 ms answers `active` at 60 500 ms
+    (before its abort at 62 000 ms): the status still reads `run-timeout`, the state line is
+    unchanged, no `GET` is sent then, and the next `GET` is sent at 65 000 ms. In both, no action
+    is settled by the held idle read, and `run-timeout` comes only from the 60 s timer. (b) Every action read never
+    answers: replaced by 47e (reads aborted at 15 s, so new `GET`s go on); a click on Start right
+    after 60 000 ms sends one `POST` and the status reads `run-starting`. (c) An idle read held pending, a
     click on Stop, its 204, 1000 ms (the action read waits behind the held read), a route change,
     the held read answers: then 10 s send no `GET`.
 
@@ -741,6 +751,68 @@ Settings tab's start at boot (`crates/config/src/gui/settings_tab.rs`,
     when shown, then the Server section (section 6). Inactive buttons and the boot checkbox while its
     write runs stay in the sequence (40b, 45c).
     ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order), [2.1.1](https://www.w3.org/TR/WCAG22/#keyboard))
+
+### 4.8 A time limit for every request
+
+Today `call()` (`fe/src/api.ts`) waits for ever: a bff stuck on the manager leaves a read, a save, a
+run action's `POST`, the boot read or write or a sign-in pending for good, and after `run-timeout`
+the idle poll shares the pending read for good (41c, 41d (b)). These criteria end that.
+
+47. **Two limits, by method, in `call()` only** (no caller sets its own):
+    - a `GET`: **15 s**. The bff gives up on the manager after 5 s for every read it serves today
+      (`crates/bff/src/lib.rs`, `MANAGER_TIMEOUT`), so a read that has not answered in 15 s is stuck,
+      not slow. 15 s is also well inside the action deadline (60 s, 41c), so a stuck action read
+      leaves room for later ones.
+    - any other method (`POST`, `PUT`, `DELETE`: sign-in and sign-out, a save, a run action, the boot
+      write): **120 s**. A stop or a restart with Save on shutdown on answers only after the bff has
+      saved the slot snapshots (contract, "Start, stop, restart, boot"), several GiB per slot;
+      how long that takes is not measured, 120 s is an assumption (report).
+    The time runs from the call until the body has been read, not only the headers.
+47a. **How**: an `AbortController` per call, aborted by a `setTimeout` that is cleared when the body
+    has been read. Not `AbortSignal.timeout()`: it "does not provide a way to cancel its timeout", and
+    MDN recommends `AbortController` with `setTimeout()`/`clearTimeout()` when the timeout must be
+    cancelled early ([MDN, `AbortSignal.timeout()`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static));
+    `abort()` aborts the fetch and the consumption of its body
+    ([MDN, `AbortController.abort()`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController/abort)),
+    and `setTimeout` is what the tests' fake timers drive. The controller is aborted with a
+    `DOMException` named `TimeoutError` (the name `AbortSignal.timeout()` itself uses, same MDN page),
+    so `call()` rejects with it, and a caller can tell a timeout from an unreachable service by
+    `name === 'TimeoutError'`. The request is gone: no late answer reaches the page.
+47b. **A timed-out call is that call's network failure**: the page shows exactly what it shows today
+    when `call()` rejects, with no new string except the save's (47d):
+    - sign-in (14): `signin-failed`;
+    - the Overview's instances read (16): `instances-failed`; the version read: `version-unavailable`;
+    - the server read (24): `server-load-failed`;
+    - a run action's `POST` (43): `request-failed` in the run alert, the status emptied, the buttons
+      per 40a for the last state, the idle poll resumes 5 s later (41c), which then shows the real
+      state (the job may have run);
+    - the boot read (45a): `boot-load-failed`; the boot write (45e): `request-failed`, then the state
+      read again (45e), which shows whether the write happened.
+47c. **The polls**: a timed-out idle read is a failed read (41a): the last state stays, nothing is
+    shown, the next idle read goes 5 s after the abort. A timed-out action read is a failed read of
+    the action's poll (41c): it settles nothing, the next action read goes 1 s after the abort, and
+    the 60 s deadline is unchanged (it does not wait for the limit). A read asked while one runs still
+    shares it (41) until that one answers or is aborted; a share never outlives the limit.
+47d. **A save that times out** (`PUT .../server`): the file may or may not have been written, so
+    `save-failed` ("Not saved") could be false. The bar's alert shows `save-timeout` (the one new
+    string, 5.7); everything else is 37: edits kept, the form stays dirty, the revision the page holds
+    does not change, still signed in. If the first write did land, the next Save answers 409
+    `server-changed-elsewhere` and 35 takes over (Reload shows the file, the user's own values in it).
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification): the error is described as it is
+    known; [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages): it is in the bar's `role="alert"`)
+47e. **For the tests (fake timers, `fetch` stubbed with a promise that never settles unless the
+    signal aborts; the stub rejects with the signal's `reason`)**:
+    - a `GET` held: at 14 999 ms not aborted, at 15 000 ms its signal is aborted with a `TimeoutError`;
+      a `PUT` held: at 119 999 ms not aborted, at 120 000 ms aborted. A reply at 1 000 ms: no abort
+      later (the timer was cleared).
+    - idle poll: the read after the opening one held: at 15 000 ms after it was sent it is aborted,
+      the state line unchanged, nothing shown; 5 000 ms later one new `GET`.
+    - 41d (b) now reads: every action read held; `GET`s at 1 000, 17 000, 33 000 and 49 000 ms after
+      the 2xx; at 60 000 ms `run-timeout`, buttons per 40a; the read sent at 49 000 ms is aborted at
+      64 000 ms; at 65 000 ms one new idle `GET` is sent (no longer a shared one).
+    - a save held to 120 000 ms: the bar's alert reads `save-timeout`, the form stays dirty, the next
+      Save sends the same revision; a run `POST` held to 120 000 ms: `request-failed`, the status
+      empty, a `GET` 5 000 ms later; sign-in held: `signin-failed`, the button usable again.
 
 **Out of 1c**: logs, per-action progress, "Open chat UI", polling the Overview or start at boot, a
 retry button for a failed boot read, guarding Back and Forward (3.1, still open).
@@ -1009,6 +1081,7 @@ not added: `session-sign-in`, `signin-title`, `signin-cancel`, `instance-not-fou
 | `boot-on` | llama-server will start when the system starts. (copy of `start-at-boot-on`) |
 | `boot-off` | llama-server will no longer start when the system starts. (copy of `start-at-boot-off`) |
 | `boot-load-failed` | Whether llama-server starts at boot could not be read. |
+| `save-timeout` | Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure. (4.8, 47d) |
 
 Renamed from the first draft of this brief, before any code used them: `run-failed` is
 `request-failed` and `session-ended-run` is `session-ended-retry` (both serve the boot write too).

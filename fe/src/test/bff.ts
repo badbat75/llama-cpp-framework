@@ -202,6 +202,9 @@ export const EN: Record<string, string> = {
   'boot-on': 'llama-server will start when the system starts.',
   'boot-off': 'llama-server will no longer start when the system starts.',
   'boot-load-failed': 'Whether llama-server starts at boot could not be read.',
+  // Slice 1c (section 5.7, 4.8): a save that timed out.
+  'save-timeout':
+    'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -233,6 +236,42 @@ export function deferred(): {
     resolve = r
   })
   return { promise, resolve }
+}
+
+/**
+ * A reply held like `deferred()`, that also behaves as fetch does when its
+ * request is aborted: it rejects with the signal's `reason` (1c.47e).
+ * `answer` is passed to the fake bff (it receives the fetch `init`);
+ * `signals` holds the signal of each request it answered, in order.
+ */
+export function held(): {
+  answer: (init?: RequestInit) => Promise<Response>
+  resolve: (r: Response) => void
+  signals: (AbortSignal | undefined)[]
+} {
+  const signals: (AbortSignal | undefined)[] = []
+  let settle: (r: Response) => void = () => {}
+  const replied = new Promise<Response>((r) => {
+    settle = r
+  })
+  return {
+    signals,
+    answer(init?: RequestInit) {
+      const signal = init?.signal ?? undefined
+      signals.push(signal)
+      return new Promise<Response>((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(signal.reason)
+          return
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        })
+        void replied.then(resolve)
+      })
+    },
+    resolve: (r) => settle(r),
+  }
 }
 
 /** One instance as /api/instances lists it. */
@@ -295,7 +334,7 @@ export function serverDoc(
   }
 }
 
-type Answer = Response | (() => Response | Promise<Response>)
+type Answer = Response | ((init?: RequestInit) => Response | Promise<Response>)
 
 export type BffOptions = {
   /** GET /api/session: a role, or the reply. Default 'admin'. */
@@ -309,12 +348,16 @@ export type BffOptions = {
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
-  server?: (id: string) => Response | Promise<Response>
+  server?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
    * PUT /api/instances/{id}/server: the reply to the n-th save (from 1), given
    * the parsed body. Default 200 {"revision": "r-2", "running": false}.
    */
-  save?: (body: unknown, n: number) => Response | Promise<Response>
+  save?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /**
    * POST /api/instances/{id}/start, /stop or /restart: the reply to the n-th
    * run action (from 1, all three counted together). Default 204.
@@ -323,6 +366,7 @@ export type BffOptions = {
     action: 'start' | 'stop' | 'restart',
     id: string,
     n: number,
+    init?: RequestInit,
   ) => Response | Promise<Response>
   /**
    * GET and PUT /api/instances/{id}/boot. `read`: the reply to the n-th GET
@@ -331,19 +375,24 @@ export type BffOptions = {
    * `enabled` echoed.
    */
   boot?: {
-    read?: (id: string, n: number) => Response | Promise<Response>
+    read?: (
+      id: string,
+      n: number,
+      init?: RequestInit,
+    ) => Response | Promise<Response>
     write?: (
       body: unknown,
       id: string,
       n: number,
+      init?: RequestInit,
     ) => Response | Promise<Response>
   }
 }
 
 export type Call = { method: string; path: string; body: unknown }
 
-function answer(a: Answer): Promise<Response> {
-  return Promise.resolve(typeof a === 'function' ? a() : a)
+function answer(a: Answer, init?: RequestInit): Promise<Response> {
+  return Promise.resolve(typeof a === 'function' ? a(init) : a)
 }
 
 /** Stubs fetch with a fake bff; returns the calls it saw. */
@@ -382,29 +431,31 @@ export function fakeBff(options: BffOptions = {}) {
         return Promise.resolve(
           reply(401, { key: 'session-required', args: [] }),
         )
-      return answer(s)
+      return answer(s, init)
     }
     if (route === 'POST /api/session')
       return answer(
         options.signIn ??
           (() => reply(200, { user: 'alice', canConfigure: true })),
+        init,
       )
     if (route === 'DELETE /api/session')
-      return answer(options.signOut ?? (() => reply(204)))
+      return answer(options.signOut ?? (() => reply(204)), init)
     if (route === 'GET /api/version')
       return answer(
         options.version ?? (() => reply(200, { version: '2.99.0' })),
+        init,
       )
     if (route === 'GET /api/instances') {
       const i = instances ?? INSTANCES
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))
-      return answer(i)
+      return answer(i, init)
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)
     if (server) {
       const id = decodeURIComponent(server[1]!)
       return Promise.resolve(
-        options.server ? options.server(id) : reply(200, serverDoc()),
+        options.server ? options.server(id, init) : reply(200, serverDoc()),
       )
     }
     if (/^PUT \/api\/instances\/[^/]+\/server$/.test(route)) {
@@ -413,7 +464,7 @@ export function fakeBff(options: BffOptions = {}) {
       ).length
       return Promise.resolve(
         options.save
-          ? options.save(body, n)
+          ? options.save(body, n, init)
           : reply(200, { revision: 'r-2', running: false }),
       )
     }
@@ -427,7 +478,7 @@ export function fakeBff(options: BffOptions = {}) {
       const action = run[2] as 'start' | 'stop' | 'restart'
       return Promise.resolve(
         options.run
-          ? options.run(action, decodeURIComponent(run[1]!), n)
+          ? options.run(action, decodeURIComponent(run[1]!), n, init)
           : reply(204),
       )
     }
@@ -440,13 +491,13 @@ export function fakeBff(options: BffOptions = {}) {
       if (boot[1] === 'GET')
         return Promise.resolve(
           options.boot?.read
-            ? options.boot.read(id, n)
+            ? options.boot.read(id, n, init)
             : reply(200, { enabled: false }),
         )
       const enabled = (body as { enabled?: unknown } | undefined)?.enabled
       return Promise.resolve(
         options.boot?.write
-          ? options.boot.write(body, id, n)
+          ? options.boot.write(body, id, n, init)
           : reply(200, { enabled }),
       )
     }

@@ -20,6 +20,7 @@ import {
   deferred,
   en,
   fakeBff,
+  held,
   isHidden,
   navigate,
   reply,
@@ -1152,34 +1153,6 @@ test('1c.41d: a held read across a click on Start from failed: only the read sen
 // reads run-timeout, no action read starts at or after it, and a later answer
 // settles nothing.
 
-test('1c.41c, 42a: an idle read held across a Start click and past 60 s does not defeat the deadline', async () => {
-  const { bff, main } = await loaded({ instances: list('inactive') })
-  const idle = deferred()
-  bff.setInstances(() => idle.promise)
-  await advance(5000)
-  expect(reads(bff), 'the idle read is in flight').toBe(2)
-  // Any read sent from now on would settle the action.
-  bff.setInstances(list('active'))
-  press(button(main, 'run-start'))
-  await flush()
-  expect(posts(bff)).toEqual(['/api/instances/default/start'])
-  // The 204 answered at once: the deadline is 60 000 ms from now.
-  await advance(59_999)
-  expect(reads(bff), 'the action read waits behind the held one').toBe(2)
-  expect(runStatus(main).textContent).toBe(en('run-starting'))
-  await advance(1)
-  expect(runStatus(main).textContent, 'at 60 000 ms').toBe(en('run-timeout'))
-  expect(runStatus(main).textContent).not.toBe(en('run-starting'))
-  // The last state shown is inactive: Start active, Stop and Restart not.
-  expect(inactiveSet(main)).toEqual([false, true, true])
-
-  await advance(500)
-  await act(async () => idle.resolve(reply(200, list('inactive'))))
-  await flush()
-  expect(reads(bff), 'no action read after the deadline').toBe(2)
-  expect(runStatus(main).textContent).toBe(en('run-timeout'))
-})
-
 test('1c.41c, 42a: an action read that never answers: run-timeout at 60 000 ms, then a click sends', async () => {
   const { bff, main } = await loaded({ instances: list('inactive') })
   press(button(main, 'run-start'))
@@ -1212,20 +1185,80 @@ test('1c.41c, 42a: an action read that never answers: run-timeout at 60 000 ms, 
   expect(document.activeElement).toBe(start)
 })
 
-test('1c.41d (a): failed, an idle read held across Start: run-timeout at 60 000 ms; its answer at 60 500 ms changes nothing; the next GET at 65 000 ms', async () => {
+test('1c.41d (a1), 47c: failed, an idle read held across Start: no GET to 14 999 ms; at 15 000 ms it is aborted and the action GET goes at once; answered active: run-started, the next GET 5 000 ms later', async () => {
   const { bff, main } = await loaded({ instances: list('failed') })
-  const idle = deferred()
-  bff.setInstances(() => idle.promise)
+  const idle = held()
+  bff.setInstances(idle.answer)
   await advance(5000)
   expect(reads(bff), 'the idle read is in flight').toBe(2)
+  // The click in the same tick; the 204 answers at once: times are from now.
+  const action = held()
+  bff.setInstances(action.answer)
   press(button(main, 'run-start'))
   await flush()
   expect(posts(bff)).toEqual(['/api/instances/default/start'])
-  // Step one second at a time: each action poll timer is armed after a render.
-  for (let s = 1; s <= 59; s++) await advance(1000)
-  await advance(999)
-  expect(reads(bff), 'no GET up to 60 000 ms').toBe(2)
+  await advance(14_999)
+  expect(reads(bff), 'no second GET up to 14 999 ms').toBe(2)
+  expect(idle.signals[0]?.aborted, 'the idle read at 14 999 ms').toBe(false)
   expect(runStatus(main).textContent).toBe(en('run-starting'))
+  await advance(1)
+  expect(idle.signals[0]?.aborted, 'the idle read aborted at 15 000 ms').toBe(
+    true,
+  )
+  expect(runStatus(main).textContent, 'not settled by the abort').toBe(
+    en('run-starting'),
+  )
+  expect(reads(bff), 'the action GET is sent at once').toBe(3)
+  expect(action.signals, 'it is the action read').toHaveLength(1)
+
+  bff.setInstances(list('failed'))
+  await act(async () => action.resolve(reply(200, list('active'))))
+  await flush()
+  expect(runStatus(main).textContent).toBe(en('run-started'))
+  expectState(main, 'instance-state-active')
+  await advance(4999)
+  expect(reads(bff), 'none at 19 999 ms').toBe(3)
+  await advance(1)
+  expect(reads(bff), 'the next GET at 20 000 ms').toBe(4)
+})
+
+test('1c.41d (a2), 47c: failed, the idle read and every action read held: aborts at 15 000, 30 000, 46 000; GETs at 15 000, 31 000, 47 000; run-timeout at 60 000; the answer at 60 500 changes nothing; the next GET at 65 000', async () => {
+  const { bff, main } = await loaded({ instances: list('failed') })
+  const h = held()
+  bff.setInstances(h.answer)
+  await advance(5000)
+  expect(reads(bff), 'the idle read is in flight').toBe(2)
+  // The click in the same tick; the 204 answers at once: times are from now.
+  press(button(main, 'run-start'))
+  await flush()
+  expect(posts(bff)).toEqual(['/api/instances/default/start'])
+  await advance(14_999)
+  expect(reads(bff), 'no second GET up to 14 999 ms').toBe(2)
+  expect(h.signals[0]?.aborted, 'the idle read at 14 999 ms').toBe(false)
+  await advance(1)
+  expect(h.signals[0]?.aborted, 'the idle read aborted at 15 000 ms').toBe(true)
+  expect(runStatus(main).textContent).toBe(en('run-starting'))
+  expect(reads(bff), 'the first action GET at 15 000 ms').toBe(3)
+
+  for (const [i, abortAt, nextAt] of [
+    [1, 30_000, 31_000],
+    [2, 46_000, 47_000],
+  ] as const) {
+    await advance(14_999)
+    expect(h.signals[i]?.aborted, `read ${i} before ${abortAt} ms`).toBe(false)
+    await advance(1)
+    expect(h.signals[i]?.aborted, `read ${i} aborted at ${abortAt} ms`).toBe(
+      true,
+    )
+    expect(runStatus(main).textContent).toBe(en('run-starting'))
+    await advance(999)
+    expect(reads(bff), `none before ${nextAt} ms`).toBe(2 + i)
+    await advance(1)
+    expect(reads(bff), `the next action GET at ${nextAt} ms`).toBe(3 + i)
+  }
+
+  await advance(12_999)
+  expect(runStatus(main).textContent, 'at 59 999 ms').toBe(en('run-starting'))
   await advance(1)
   expect(runStatus(main).textContent, 'at 60 000 ms').toBe(en('run-timeout'))
   expect(inactiveSet(main), '40a for failed: Start active').toEqual([
@@ -1233,64 +1266,93 @@ test('1c.41d (a): failed, an idle read held across Start: run-timeout at 60 000 
     true,
     true,
   ])
+  expect(reads(bff), 'no GET at the deadline').toBe(5)
 
   await advance(500)
+  expect(h.signals[3]?.aborted, 'the 47 000 ms read, at 60 500 ms').toBe(false)
   bff.setInstances(list('failed'))
-  await act(async () => idle.resolve(reply(200, list('active'))))
+  await act(async () => h.resolve(reply(200, list('active'))))
   await flush()
   expect(runStatus(main).textContent, 'at 60 500 ms').toBe(en('run-timeout'))
   expectState(main, 'instance-state-failed')
   expect(
     within(main).queryByText(stateText('instance-state-active')),
-    'the held answer does not reach the header',
+    'the late answer does not reach the header',
   ).toBeNull()
-  expect(reads(bff), 'no GET at the held answer').toBe(2)
+  expect(reads(bff), 'no GET at the late answer').toBe(5)
   await advance(4499)
-  expect(reads(bff), 'none at 64 999 ms').toBe(2)
+  expect(reads(bff), 'none at 64 999 ms').toBe(5)
   await advance(1)
-  expect(reads(bff), 'the idle read at 65 000 ms').toBe(3)
+  expect(reads(bff), 'the next GET at 65 000 ms').toBe(6)
   expect(runStatus(main).textContent).toBe(en('run-timeout'))
 })
 
-test('1c.41d (b): the action read never answers: at 65 000 ms no new GET, the idle read shares the pending one', async () => {
+test('1c.41d (b), 47e: every action read held: aborted at 15 s, GETs at 1 000, 17 000, 33 000, 49 000; run-timeout at 60 000; the last read aborted at 64 000; a new idle GET at 65 000', async () => {
   const { bff, main } = await loaded({ instances: list('inactive') })
   press(button(main, 'run-start'))
   await flush()
   const n = reads(bff)
-  const held = deferred()
-  bff.setInstances(() => held.promise)
+  const h = held()
+  bff.setInstances(h.answer)
+  // The 204 answered at once: times are from now.
   await advance(1000)
-  expect(reads(bff), 'the action read is sent and stays pending').toBe(n + 1)
-  await advance(59_000)
+  expect(reads(bff), 'the first action read at 1 000 ms').toBe(n + 1)
+  for (const [i, at] of [17_000, 33_000, 49_000].entries()) {
+    // The read sent 16 000 ms before `at` is aborted 15 000 ms after it was sent.
+    await advance(14_999)
+    expect(h.signals[i]?.aborted, `read ${i + 1}, 14 999 ms after`).toBe(false)
+    await advance(1)
+    expect(h.signals[i]?.aborted, `read ${i + 1} aborted at 15 s`).toBe(true)
+    await advance(999)
+    expect(reads(bff), `none before ${at} ms`).toBe(n + 1 + i)
+    await advance(1)
+    expect(reads(bff), `the next action read at ${at} ms`).toBe(n + 2 + i)
+  }
+  await advance(10_999)
+  expect(runStatus(main).textContent, 'at 59 999 ms').toBe(en('run-starting'))
+  await advance(1)
   expect(runStatus(main).textContent, 'at 60 000 ms').toBe(en('run-timeout'))
-  await advance(4999)
-  expect(reads(bff)).toBe(n + 1)
+  expect(inactiveSet(main), 'the buttons follow inactive (40a)').toEqual([
+    false,
+    true,
+    true,
+  ])
+  expect(reads(bff), 'no action read at the deadline').toBe(n + 4)
+  await advance(3999)
+  expect(h.signals[3]?.aborted, 'the 49 000 ms read at 63 999 ms').toBe(false)
   await advance(1)
-  expect(reads(bff), 'at 65 000 ms: shared, not a second GET').toBe(n + 1)
-  // The pending answer lands: it settles nothing, and as the idle read's
-  // answer it restarts the 5 s chain.
-  bff.setInstances(list('inactive'))
-  await act(async () => held.resolve(reply(200, list('active'))))
-  await flush()
+  expect(h.signals[3]?.aborted, 'aborted at 64 000 ms').toBe(true)
+  expect(reads(bff), 'nothing sent at the abort').toBe(n + 4)
+  await advance(999)
+  expect(reads(bff), 'none at 64 999 ms').toBe(n + 4)
+  await advance(1)
+  expect(reads(bff), 'at 65 000 ms one new idle GET, not a shared one').toBe(
+    n + 5,
+  )
   expect(runStatus(main).textContent).toBe(en('run-timeout'))
-  await advance(4999)
-  expect(reads(bff)).toBe(n + 1)
-  await advance(1)
-  expect(reads(bff), 'the next idle read, 5 s after that answer').toBe(n + 2)
 })
 
 test('1c.42a: an action answer that lands in the same tick as the deadline changes the status no more', async () => {
   const { bff, main } = await loaded({ instances: list('inactive') })
   press(button(main, 'run-start'))
   await flush()
-  const held = deferred()
-  bff.setInstances(() => held.promise)
+  const n = reads(bff)
+  const h = held()
+  bff.setInstances(h.answer)
+  // Action reads at 1 000, 17 000, 33 000 and 49 000 ms (each aborted at
+  // 15 s, 47c): the one sent at 49 000 ms is in flight at the deadline.
   await advance(1000)
-  // The deadline fires and the held action read answers active before React
-  // renders again: the poll must already count as ended.
+  for (let i = 0; i < 3; i++) {
+    await advance(15_000)
+    await advance(1000)
+  }
+  expect(reads(bff), 'the read sent at 49 000 ms').toBe(n + 4)
+  expect(h.signals[3]?.aborted).toBe(false)
+  // The deadline fires and that read answers active before React renders
+  // again: the poll must already count as ended.
   await act(async () => {
-    vi.advanceTimersByTime(59_000)
-    held.resolve(reply(200, list('active')))
+    vi.advanceTimersByTime(11_000)
+    h.resolve(reply(200, list('active')))
     for (let i = 0; i < 20; i++) await Promise.resolve()
   })
   await flush()
@@ -1354,9 +1416,11 @@ test('1c.41b, 41d: leaving the page while the action read waits behind a held re
     left,
     'only the held idle read was ever sent after the opening one',
   ).toBe(2)
-  expect(vi.getTimerCount(), 'no deadline or poll timer left').toBe(0)
+  // Counted once the held read answered: until then its own time limit (47a)
+  // is a timer of call(), not of the page.
   await act(async () => idle.resolve(reply(200, list('active'))))
   await flush()
+  expect(vi.getTimerCount(), 'no deadline or poll timer left').toBe(0)
   await advance(10_000)
   expect(reads(bff), 'no GET after leaving').toBe(left)
 })

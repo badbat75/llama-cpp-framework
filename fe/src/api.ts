@@ -7,16 +7,35 @@ export type Reply = { status: number; ok: boolean; body: unknown }
 /** An error reply's strings key and the values for its placeholders. */
 export type ApiError = { key: string; args: string[] }
 
-/** Calls `path`; rejects only when the service cannot be reached. */
+/** How long a GET and any other method may take, body included (4.8, 47). */
+const GET_LIMIT_MS = 15_000
+const OTHER_LIMIT_MS = 120_000
+
+/**
+ * Calls `path`; rejects when the service cannot be reached, or with a
+ * `DOMException` named `TimeoutError` when it has not answered, body
+ * included, within the method's limit.
+ */
 export async function call(path: string, init?: RequestInit): Promise<Reply> {
-  const reply = await fetch(path, init)
-  let body: unknown
+  const method = (init?.method ?? 'GET').toUpperCase()
+  const controller = new AbortController()
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('timed out', 'TimeoutError')),
+    method === 'GET' ? GET_LIMIT_MS : OTHER_LIMIT_MS,
+  )
   try {
-    body = await reply.json()
-  } catch {
-    body = undefined
+    const reply = await fetch(path, { ...init, signal: controller.signal })
+    const text = await reply.text()
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = undefined
+    }
+    return { status: reply.status, ok: reply.ok, body }
+  } finally {
+    clearTimeout(timer)
   }
-  return { status: reply.status, ok: reply.ok, body }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
