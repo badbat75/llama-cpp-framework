@@ -791,8 +791,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    never a domain group or user named `pai`) or LocalSystem; `control` adds `pai` members; the
    installers workflow checks the group and that a member survives repair and uninstall (not yet run
    on a Windows runner). Left from it: the configure-refusal strings (`manager.configure_denied`,
-   `manager.write_denied` in `en_US.toml`, `CliDeniedConfigure` in `cli.toml`), `installer/AGENTS.md`
-   and `crates/manager/README.md` still name Administrators; rename `ADMIN_GROUP` (it reads as
+   `manager.write_denied` in `en_US.toml`, `CliDeniedConfigure` in `cli.toml`) still name
+   Administrators; rename `ADMIN_GROUP` (it reads as
    Administrators). 6b part
    2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
    `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From

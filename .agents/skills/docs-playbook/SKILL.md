@@ -12,6 +12,34 @@ Lessons only: the rules are in `AGENTS.md`.
   line), the role bodies in `.opencode/agents/*.md`, the playbooks, and `PLAN.md`'s Definition of Done.
   Grep all of them when one changes, the role files' `description:` lines too (`tester`: "Use first in
   every slice"), and the coordinator's "done only on" sentence in the `AGENTS.md` Roles bullet.
+- A rule about **who may configure** repeats in: `AGENTS.md` (the Windows and the Linux machine-tree
+  bullets), `installer/AGENTS.md` (the pipe bullet, the features bullet, the group's own bullet,
+  "What CI covers", the test plan steps), `crates/config/README.md` ("Through the manager"),
+  `crates/bff/README.md`, the root `README.md`, `docs/build-packaging.md`, `ARCHITECTURE.md`,
+  `fe/DESIGN.md`, `fe/briefs/`. Grep `Administrators`, `administrator` and the group's name in every
+  `.md`. The manager's side is pinned by test names worth running:
+  `cargo test -p pai-manager -- an_admin_member_controls_but_configures_only_in_pai` (the Windows
+  decisions compile and run on Linux: `manager.rs` keeps `mod windows` unconditional, the Win32 glue
+  is `cfg(windows)`).
+- The Windows manager reads the client's TOKEN, so a group membership added after a logon counts at the
+  **next logon**; the web sign-in's `Authenticate` reads the group database (`NetUserGetLocalGroups`,
+  `logon::in_local_group`) and sees it at once. Two answers, no run has settled the first: say so.
+- A test plan's "as an administrator" splits: a manager call needs the group (`configure`), a hand edit
+  of `%ProgramData%\llama.cpp\config\` needs an elevated Administrators member (the folder's ACL, the
+  group has nothing there). Re-read every one: the phrase never says which.
+- A group the MSI creates is machine data: `util:Group` wants a per-machine key path (an HKLM value of
+  the product's key) and `RemoveOnUninstall="no"`, because Util's default deletes it at every uninstall
+  and `MajorUpgrade` uninstalls first, so each upgrade would empty what the administrator filled. The
+  `.wxs` test in `xtask/src/common/msi.rs` reads the group's name from the manager's `ADMIN_GROUP`
+  const, so renaming the group fails a test: grep the const too.
+- PowerShell cmdlet syntax: verify on learn.microsoft.com with `?view=powershell-5.1` (Windows
+  PowerShell 5.1, what the runners and the custom actions use) and cite the page.
+- Docs quoting a strings-file text that names an old role (`api-key-withheld`: "Only an administrator
+  can see it.") quote it as it is: the string is code's to change. Name the rule behind it
+  (`configure`), report the string.
+- `PLAN.md` can name a file that does not exist: it lists `crates/manager/README.md` as naming
+  Administrators, and `git ls-files crates/manager` has no README and never had one. Check with
+  `git ls-files` before promising to edit a file, and report the line.
 - The `AGENTS.md` and README lines are paragraphs thousands of characters long: grep with a short
   context window (a small Python `re` script) instead of printing whole lines, and replace with an
   exact, count-checked substring. Re-read a file right before editing it: the coordinator edits
