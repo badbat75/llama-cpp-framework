@@ -186,3 +186,9 @@ Lessons only: the rules are in `AGENTS.md`.
   `call(` paths in `fe/src/*.tsx`, and the served routes with `grep -rn '"/api' crates/bff/src`: the
   table lagged two fe slices once (run controls, start at boot). The overview sentences in `AGENTS.md`
   and the root README repeat the page list.
+- When an authorization rule changes (polkit defaults, rules files, groups), grep `auth_admin`,
+  `auth_self`, `administrator` and the action id across `AGENTS.md`, both READMEs of `crates/config`
+  and `crates/bff`, the root README and `build-packaging.md`; `ARCHITECTURE.md` and `fe/briefs/` repeat
+  them too but are not ours: report them. Absolute sentences ("No config file is shipped", "overwritten
+  on every upgrade") break when a package gains a conffile. Before citing a `PLAN.md` slice for a bff
+  route, check the slice lists that route.

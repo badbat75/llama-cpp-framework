@@ -4,9 +4,12 @@
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state and, for a signed-in user, an
 instance's server file, and has the session routes, whose check against the operating system is not
-wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI already has an instance page
-(Start, Stop, Restart, start at boot and a Server page editable for an administrator) and a Models
-page whose routes the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
+wired yet: every sign-in answers 503 (`PLAN.md` step 10). The web UI is for administrators only,
+members of the group `pai` (user, 2026-11-15): the Overview (version, instances) shows without
+sign-in, and once the bff calls the manager sign-in will refuse anyone else with 403
+`session-not-administrator` (`fe/briefs/api-contract.md`). Behind sign-in it already has an instance
+page (Start, Stop, Restart, start at boot and a Server page) and a Models page with an on/off switch
+per preset, whose routes the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -123,8 +126,11 @@ the two calls the manager answers without authorization, and the only ones the b
 
 `POST /api/session` takes `{"username": <text>, "password": <text>}` as `application/json` and asks
 the authenticator (`session::Authenticator` in `crates/bff/src/session.rs`) on a blocking thread.
-The shipped one, `SystemAuthenticator`, answers unavailable to every sign-in until PAM (Linux) and
-LogonUser (Windows) are wired; under `PRIVATE_AI_DATA_ROOT` it must never ask the real system.
+The shipped one, `SystemAuthenticator`, answers unavailable to every sign-in until it calls the
+manager's `Authenticate` (PAM service `private-ai` on Linux, `LogonUserW` on Windows: "Through the
+manager" in [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)), which
+exists and answers only the bff's account but is not called yet; then a right password from a
+non-member of `pai` gets 403 `session-not-administrator` (the contract, not built); under `PRIVATE_AI_DATA_ROOT` it must never ask the real system.
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -208,7 +214,7 @@ opens and never shows a reply's text.
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: for an administrator (`canConfigure`) editable, with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`); for anyone else every control disabled and a notice | signed in; otherwise the sign-in form in its place |
-| `#/models` | The presets of every engine (`GET /api/presets`) as a read-only table of preset, engine (with "(not available)" when its engine is not) and status On or Off (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
+| `#/models` | The presets of every engine (`GET /api/presets`) as a table of preset, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its preset that sends `PUT /api/presets/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
@@ -222,7 +228,7 @@ opens and never shows a reply's text.
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
 - **The bff does not serve yet** `PUT /api/instances/{id}/server` (`PLAN.md` step 10, slice 8),
-  the start, stop, restart and boot routes (slice 9), nor `GET /api/presets` (slice 11); `GET` of the server
+  the start, stop, restart and boot routes (slice 9), nor `GET /api/presets` (slice 11) and `PUT /api/presets/{id}/enabled` (no bff slice in `PLAN.md` yet); `GET` of the server
   file is served ([above](#the-server-file-of-an-instance)). All are in `fe/briefs/api-contract.md`,
   and the fe is tested against them with mocked replies only, never against a real bff, so on the
   shipped bff a save, a run control and start at boot fail and the Models page shows "The presets
