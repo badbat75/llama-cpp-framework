@@ -16,3 +16,14 @@ description: What the architect has learned about this project's components, int
     asks the member's own password on Linux (polkit `auth_self_keep`).
 - PLAN.md's step 10 holds the bff's decisions with dates; read it before designing anything the web
   UI touches.
+- `pai_core::client::pipe::PipeClient` works over any `Read + Write` stream, so the manager protocol
+  can ride any byte stream (a socket pair in tests, rustls' `StreamOwned` across machines) without a
+  new client; the server side's unknown method ends the connection with `BadRequest`
+  (`manager::pipe`), so additive protocol changes need a version a client can ask first.
+- The manager's `Caller` is a transport identity only (bus name on Linux, token SID on Windows);
+  who acts on whose behalf is not modelled yet (step 10 slice 6b part 3). Keep a vouched user a
+  separate request field, never folded into `Caller` (ARCHITECTURE.md, part 2).
+- Sources already checked for cross-machine designs (2026-11-15): D-Bus non-local TCP is deprecated
+  and unprotected (D-Bus spec, "TCP Sockets"); OpenSSH server is in the box only on Windows Server
+  2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash pinning is the precedent for join
+  codes; rustls' `ClientCertVerifier` is the hook for pinning a client.

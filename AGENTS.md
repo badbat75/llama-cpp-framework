@@ -27,6 +27,7 @@ This file is the map; the details of each area live in the guide named beside it
 - **Diagnostics** → [tools\AGENTS.md](tools/AGENTS.md): `report-memory.ps1` (requested vs actual GPU memory of the running server) and `pcie-bench\` (host <-> GPU transfer benchmark).
 - **Per-GPU and per-model guides** → [docs\AGENTS.md](docs/AGENTS.md): rules for the `docs\*.md` pages (page types, required sections, the citation rule, `bench-chart` blocks, `templates\`); `docs\README.md` is the index. The `.md` files are the source of the HTML site built by `tools\site\` (`cargo run -p docs-site`) and published on GitHub Pages.
 - **Writing the guides** → [.agents\skills\write-docs\SKILL.md](.agents/skills/write-docs/SKILL.md): how to create or update a guide so it reads as one complete review. Documentation work is delegated to the `docs` agent, which loads this skill for the guides.
+- **Architecture** → [ARCHITECTURE.md](ARCHITECTURE.md): the components, their interfaces, identities and trust boundaries, where data lives, and the design records (the super-manager, step 14); kept by the `architect`.
 - **Open work** → [PLAN.md](PLAN.md): requirements, Definition of Done and the open steps. The out-of-tree optimization candidates already checked: [patches\llama.cpp\candidates.md](patches/llama.cpp/candidates.md).
 - `resources\llama.ico` (both MSIs, `pai-config.exe`) is **generated, not checked in**: a build regenerates it when missing (node+npm and network); "The build script" in [crates\config\README.md](crates/config/README.md) says how.
 

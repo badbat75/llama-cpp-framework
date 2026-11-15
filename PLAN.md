@@ -508,14 +508,22 @@ ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; de
 Covers: R13. Asked by the user on 2026-11-15: a component above the managers, on a different server,
 that governs several of them; a bff connected to it is offered node management as well.
 
-1. **Design first** (the `architect`): the super-manager's role and boundaries against the manager
-   and the bff, how nodes join and are trusted (identity, transport across machines, what replaces
-   D-Bus and the named pipe off the machine), who may act on which node (the `pai` group and the
-   sessions), what the bff and the web UI change, failure modes (a node down, the super-manager down),
-   packaging, and the slices; the questions only the user can answer go to the user.
+Design accepted by the user on 2026-11-15: `ARCHITECTURE.md` part 2 (a separate unprivileged
+`pai-supermanager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
+until its administrator enables it; join by a one-time code; every `pai` member of the super-manager's
+machine administers every joined node; Linux super-manager first, Linux and Windows nodes). The
+slices, each test first, with the outcome each shows, are in `ARCHITECTURE.md` "Slices":
 
-- Done when: the design is in `ARCHITECTURE.md`, accepted by the user, and this step is rewritten into
-  its slices.
+0. The acting user as its own request field, apart from `Caller`, and a `Version` method in the
+   manager protocol: before step 10 slice 6b part 3 hardens the caller model.
+1. Node identity (`pai node show|enable`). 2. The TLS listener with pinned fingerprints. 3. The join
+   (code, `Join`, `leave`). 4. Delegated rights and per-change logging of who acted. 5. The
+   super-manager: its key, the node list, adding a node. 6. Its local socket, open only to the bff's
+   account. 7. The bff's hub mode against a fake super-manager, local mode unchanged. 8. The web UI
+   (designer's brief first). 9. Linux packaging, then the user's run on two machines.
+
+- Done when: a bff in hub mode lists two joined nodes and starts and stops an instance on each, on
+  the user's two machines, and every local-mode test still passes.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
