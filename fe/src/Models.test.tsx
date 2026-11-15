@@ -165,7 +165,13 @@ function tabbable(): HTMLElement[] {
 }
 
 function nameOf(el: HTMLElement): string {
-  // A field is named by its label (the filter, slice 2b).
+  // A field is named by its label (the filter, slice 2b), a switch by
+  // aria-labelledby (slice 2c).
+  const by = el.getAttribute('aria-labelledby')
+  if (by)
+    return (document.getElementById(by)?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
   const text =
     el instanceof HTMLInputElement
       ? [...(el.labels ?? [])].map((l) => l.textContent).join(' ')
@@ -742,25 +748,17 @@ test('2a.11: the engine is shown as data, and an engine not available reads "<en
   ])
 })
 
-test('2a.13: nothing in the page acts, for an administrator or a user', async () => {
-  for (const session of ['admin', 'user'] as const) {
-    const { main } = open({ session })
-    const t = await table(main)
-    for (const role of ['button', 'link', 'checkbox', 'switch'] as const) {
-      expect(within(t).queryAllByRole(role), `${session} ${role}`).toHaveLength(
-        0,
-      )
-      expect(
-        within(main).queryAllByRole(role),
-        `${session} ${role} in main`,
-      ).toHaveLength(0)
-    }
-    expect(
-      t.querySelectorAll('input, select, textarea, [tabindex]'),
-    ).toHaveLength(0)
-    cleanup()
-    vi.unstubAllGlobals()
+test('2a.13, 2c.37: the one control in a row is its switch; nothing else in the table acts', async () => {
+  // 2c replaces 2a.13: each row gains its on/off switch (administrator only:
+  // only administrators sign in, user 2026-11-15).
+  const { main } = open()
+  const t = await table(main)
+  for (const role of ['button', 'link', 'checkbox'] as const) {
+    expect(within(t).queryAllByRole(role), role).toHaveLength(0)
   }
+  expect(within(t).queryAllByRole('switch')).toHaveLength(2)
+  expect(t.querySelectorAll('input')).toHaveLength(2)
+  expect(t.querySelectorAll('select, textarea, [tabindex]')).toHaveLength(0)
 })
 
 // ── When it reads (18) ──────────────────────────────────────────────────
@@ -792,8 +790,9 @@ test('2a.18: leaving #/models and coming back reads the presets again, once', as
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, and reaches nothing in the table', async () => {
-  const { main } = open({ session: 'user' })
+test('2a.20, 2b.35, 2c.53: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, then each row switch', async () => {
+  // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
+  const { main } = open()
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-instances') })
   expect(tabbable().map(nameOf)).toEqual([
@@ -806,10 +805,12 @@ test('2a.20, 2b.35: Tab goes skip link, banner, nav (Overview, instances, Models
     'coder',
     en('nav-models'),
     en('presets-filter-label'),
+    'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    'gemma-3-12b-it',
   ])
 })
 
-test('2a.21, 2b.30: the table has 3 columns and each data row 3 cells under them; the load announces nothing: the filter status is there, empty', async () => {
+test('2a.21, 2b.30, 2c.50: the table has 3 columns and each data row 3 cells under them; the load announces nothing: the filter status and the switch status are there, empty', async () => {
   const { main } = open()
   const t = await table(main)
   expect(within(t).getAllByRole('columnheader')).toHaveLength(3)
@@ -818,11 +819,17 @@ test('2a.21, 2b.30: the table has 3 columns and each data row 3 cells under them
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
   expect(dataRows).toHaveLength(2)
   for (const row of dataRows) expect(cellsOf(row)).toHaveLength(3)
-  const status = within(main).getByRole('status')
-  expect(status.tagName).toBe('P')
-  expect(status.textContent).toBe('')
+  // 2c.50 adds the switch region's status after the filter's.
+  const statuses = within(main).getAllByRole('status')
+  expect(statuses).toHaveLength(2)
+  for (const status of statuses) {
+    expect(status.tagName).toBe('P')
+    expect(status.textContent).toBe('')
+  }
   expect(within(main).queryByRole('alert')).toBeNull()
   expect(
-    [...main.querySelectorAll('[aria-live]')].filter((el) => el !== status),
+    [...main.querySelectorAll('[aria-live]')].filter(
+      (el) => !statuses.includes(el as HTMLElement),
+    ),
   ).toHaveLength(0)
 })

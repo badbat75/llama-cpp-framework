@@ -332,6 +332,42 @@ td {
   color: var(--muted);
 }
 
+/* Each row's switch (02-models.md 2c.39): the drawn checkbox centred in a
+   24 by 24 px label, its hit area, then its word. */
+.presets-switch {
+  display: inline-grid;
+  place-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin-right: var(--space-1);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+/* While a write runs: focusable, drawn as the disabled checkbox; no opacity,
+   which would dim the focus ring too. */
+.presets-switch input[aria-disabled='true'] {
+  cursor: default;
+}
+
+@media (forced-colors: active) {
+  .presets-switch input[type='checkbox'][aria-disabled='true'],
+  .presets-switch input[type='checkbox'][aria-disabled='true']::before {
+    border-color: GrayText;
+  }
+}
+
+/* The switches' feedback, at the body size (2c.50). */
+.presets-switch-status {
+  margin: 0;
+  min-height: 1lh;
+}
+
+.presets-switch-alert {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 /* The filter over the presets (02-models.md 2b): field and Clear on one line,
    at most 24rem wide, the browser's own clear glyph hidden. */
 .presets-filter {

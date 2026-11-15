@@ -101,8 +101,9 @@ function type(input: HTMLInputElement, value: string) {
   fireEvent.change(input, { target: { value } })
 }
 
+/** The filter's status line: the first status (2c.50 adds the switch one after it). */
 function status(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('status')
+  return within(main).getAllByRole('status')[0]!
 }
 
 /** The text of the elements an element's aria-describedby names. */
@@ -138,6 +139,11 @@ function tabbable(): HTMLElement[] {
 }
 
 function nameOf(el: HTMLElement): string {
+  const by = el.getAttribute('aria-labelledby')
+  if (by)
+    return (document.getElementById(by)?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
   const text =
     el instanceof HTMLInputElement
       ? [...(el.labels ?? [])].map((l) => l.textContent).join(' ')
@@ -375,7 +381,7 @@ test('2b.29: each change updates the table at once; Enter does nothing; focus an
   expect(window.location.hash).toBe('#/models')
 })
 
-test('2b.30: one status paragraph, in the page before its text changes: empty, the count, or no-match with no table and the note kept', async () => {
+test('2b.30, 2c.50: the filter status paragraph, in the page before its text changes: empty, the count, or no-match with no table and the note kept', async () => {
   const { main } = open({ presets: EXAMPLE })
   const input = await field(main)
   const line = status(main)
@@ -490,10 +496,11 @@ test('2b.34: the text is not kept: not in the URL or storage, and empty again wh
 
 // ── Keyboard and screen reader (35, 36) ─────────────────────────────────
 
-test('2b.35: with text, Tab reaches the field then Clear filter, nothing in the table; focus on arrival stays on the h1', async () => {
+test('2b.35, 2c.53: with text, Tab reaches the field, Clear filter, then the shown row switches; focus on arrival stays on the h1', async () => {
+  // 2c.53 replaces 2b.35: the administrator's switches follow Clear filter.
   // Focus moves to the h1 only after a route change, never on a first load.
   startAt('#/')
-  const { main } = open({ session: 'user', presets: EXAMPLE })
+  const { main } = open({ presets: EXAMPLE })
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
   navigate('#/models')
   const h1 = await within(main).findByRole('heading', {
@@ -504,13 +511,16 @@ test('2b.35: with text, Tab reaches the field then Clear filter, nothing in the 
   await waitFor(() => expect(document.activeElement).toBe(h1))
   type(input, 'q')
   const order = tabbable().map(nameOf)
-  expect(order.slice(-3)).toEqual([
+  expect(order.slice(-4)).toEqual([
     en('nav-models'),
     en('presets-filter-label'),
     en('presets-filter-clear'),
+    'Qwen3-27B',
   ])
   const t = await table(main)
-  expect(tabbable().filter((el) => t.contains(el))).toEqual([])
+  expect(tabbable().filter((el) => t.contains(el))).toEqual(
+    within(t).queryAllByRole('switch'),
+  )
 })
 
 test("2b.36: the field's accessible name is the label, its role searchbox, its description the hint", async () => {

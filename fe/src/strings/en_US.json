@@ -188,5 +188,10 @@
   "presets-filter-hint": "Matches part of the preset name or of its model file path. Case does not matter.",
   "presets-filter-clear": "Clear filter",
   "presets-filter-count": "Presets shown: {0} of {1}.",
-  "presets-no-match": "No presets match the filter."
+  "presets-no-match": "No presets match the filter.",
+  "presets-switched-on": "Switched {0} on.",
+  "presets-switched-off": "Switched {0} off.",
+  "presets-switched-on-restart": "Switched {0} on: restart the running instances of {1} to apply.",
+  "presets-switched-off-restart": "Switched {0} off: restart the running instances of {1} to apply.",
+  "api-no-preset-named": "There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are."
 }

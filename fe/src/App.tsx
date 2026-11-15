@@ -343,7 +343,7 @@ function Page({
     return <SignIn required onSignedIn={onSignedIn} />
   }
   if (route.page === 'models') {
-    return <Models onSignedOut={onSignedOut} />
+    return <Models onSignedOut={onSignedOut} onRenewed={onRenewed} />
   }
   return (
     <InstancePage

@@ -406,7 +406,7 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
 39. **The cell**: the switch, then the word `presets-status-on` / `presets-status-off` of criterion 12
     (still shown, so a sighted reader does not have to read a tick under "Status"), the word
     `aria-hidden="true"` (the switch already says on or off; read once, not twice). Gap
-    `--space-1`, the cell `nowrap`. The word follows the switch's state at every moment (criteria 44,
+    `--space-1` from the edge of the switch's 24 px hit area, the cell `nowrap`. The word follows the switch's state at every moment (criteria 44,
     46, 48). The switch's hit area is at least 24 by 24 CSS px (D5.1 Targets).
     ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum))
 40. **Muting.** A switched-off row's text stays in `--muted` (criterion 12), but an enabled switch in
@@ -493,7 +493,11 @@ line below changes it; 2c replaces criteria 13 (nothing in a row acts), 20 and 3
     cell squeezed to about 60 px at 320 px (criterion 41), or add rows to the table that are not
     presets **(preference)**. Both texts go at the next switch change or when the page is left; the
     alert also at a sign-in (criterion 49). Typing in the filter does not clear them. Shown at the
-    body size (not the filter status's 0.875rem), the alert in `--danger` with D5.2's error icon.
+    body size (not the filter status's 0.875rem), the alert in `--danger` at weight 600 with no icon,
+    as the run controls' and Start at boot's alerts (D5.2 Action feedback; the error icon is a
+    field error's). The status paragraph keeps one line's height while empty (`min-height: 1lh`, as
+    the filter status, criterion 30), so the table does not move down and up by a line at every
+    switch (review of 2026-11-15 measured a 24 px jump at each change and success) **(preference)**.
     ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages), [1.3.2](https://www.w3.org/TR/WCAG22/#meaningful-sequence))
 51. **Not lost below a long list.** On a failure the switch itself shows the value read again (or the
     one before), so the row a sighted administrator is looking at shows that the switch did not

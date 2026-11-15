@@ -229,6 +229,15 @@ export const EN: Record<string, string> = {
   'presets-filter-clear': 'Clear filter',
   'presets-filter-count': 'Presets shown: {0} of {1}.',
   'presets-no-match': 'No presets match the filter.',
+  // Slice 2c (fe/briefs/02-models.md, section 2c.8): the on/off switch.
+  'presets-switched-on': 'Switched {0} on.',
+  'presets-switched-off': 'Switched {0} off.',
+  'presets-switched-on-restart':
+    'Switched {0} on: restart the running instances of {1} to apply.',
+  'presets-switched-off-restart':
+    'Switched {0} off: restart the running instances of {1} to apply.',
+  'api-no-preset-named':
+    'There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -402,6 +411,17 @@ export type BffOptions = {
   instances?: Instance[] | Answer
   /** GET /api/presets: the presets, or the reply. Default PRESETS. */
   presets?: Preset[] | Answer
+  /**
+   * PUT /api/presets/{id}/enabled: the reply to the n-th switch (from 1),
+   * given the parsed body and the decoded id. Default 200 with the body's
+   * `enabled` echoed and `running: false`.
+   */
+  presetSwitch?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
   server?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
@@ -510,6 +530,20 @@ export function fakeBff(options: BffOptions = {}) {
       const p = options.presets ?? PRESETS
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
+    }
+    const presetSwitch = /^PUT \/api\/presets\/([^/]+)\/enabled$/.exec(route)
+    if (presetSwitch) {
+      const id = decodeURIComponent(presetSwitch[1]!)
+      const n = calls.filter(
+        (c) =>
+          c.method === 'PUT' && /^\/api\/presets\/[^/]+\/enabled$/.test(c.path),
+      ).length
+      const enabled = (body as { enabled?: unknown } | undefined)?.enabled
+      return Promise.resolve(
+        options.presetSwitch
+          ? options.presetSwitch(body, id, n, init)
+          : reply(200, { enabled, running: false }),
+      )
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)
     if (server) {
