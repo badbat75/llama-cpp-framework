@@ -171,3 +171,7 @@ Lessons only: the rules are in `AGENTS.md`.
   of `crates/config/README.md` (D-Bus signature and pipe JSON); `installer/AGENTS.md`'s pipe bullet and
   `crates/bff/README.md` point there. Check per-call authorization in `manager/service.rs` itself:
   the README said "reads need none" long after 7af81f4 made an instance file's read need `control`.
+- The server.ini rules (`checks::server_file`, plus `pai-app` `server_cfg::check`'s thread bound) are
+  listed once, in the "manager runs every content check" bullet of `crates/config/README.md`; the
+  `pai server set` paragraph under its command block and the root README's headless line point there.
+  `limits` in `crates/bff/README.md` follows `checks::server_int_range` (no `LogVerbosity` in it).

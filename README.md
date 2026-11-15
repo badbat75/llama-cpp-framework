@@ -37,7 +37,7 @@ Beside llama.cpp it ships **`pai-config`**, a GUI configurator (Rust, [Slint](ht
 - Hugging Face search and download that creates the preset and recommends a quantization that fits this machine's GPUs.
 - Conversation snapshots: each model's KV cache saved on stop and restored on the next start, so a restart does not re-read a long conversation.
 - Integrations: the OpenCode provider (one model per enabled preset) and a Claude Code environment snippet; log rotation; start at login; start llama-server when the system starts (Linux, Windows: the instance's service enabled, `pai server boot on|off`) or, on macOS, when the configurator launches.
-- The same operations headless: `pai server|preset|control|bench|config ...`.
+- The same operations headless: `pai server|preset|control|bench|config ...`, with the GUI's checks: `pai server set` refuses what the Server tab's Save refuses (a port of 0, a negative models-max, a log level past 5, threads above the CPU count) and writes nothing.
 
 **Benchmarks** ([benchmarks/README.md](benchmarks/README.md))
 

@@ -473,7 +473,8 @@ Slices, each test first, in order:
    the CPU count in `pai-app` `server_cfg::check`, run by every save; the base URL normalised in one
    helper shared by the GUI and the save. Left, small: a hand-edited file with `ModelsMax = -1` makes
    every unrelated `pai server set` fail, and `pai` has no way back to unset; a negative
-   `--models-max` could clear it, as `--models-memory-margin` does.)
+   `--models-max` could clear it, as `--models-memory-margin` does; its `--help` still says "Stored
+   as-is".)
 3. **The preset checks move below the GUI**: `validate_for_save` gains model-required and the integer
    ranges (macOS today has no check at all); a duplicate id across `presets.ini` and
    `presets.ini.disabled` refused by the manager too; `ctx-size = 0` either writable (as the README and
