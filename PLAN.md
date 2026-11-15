@@ -769,7 +769,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 9. **Control and boot.** `POST start|stop|restart` (a stop or restart with `SaveStateOnShutdown` saves
    the slot snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`, as the contract's
    "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
-   session-free reads move no session). Optional: answer start and restart after systemd's
+   session-free reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
+   or restart that saves GiB-sized slot snapshots first, need their own limit, chosen from a measured
+   snapshot save (none measured yet), under the fe's 120 s for non-GET calls. Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 
