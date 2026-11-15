@@ -721,6 +721,10 @@ Decided with the user on 2026-11-14 (relayed by the web UI session, confirmed he
   exposes that list (e.g. `GET /api/engines`, today one entry) and a check refuses a write naming an
   engine outside it. The coordinator's choice: a preset without the key is read as llama.cpp and the
   key is not written back for it, so no file changes until the user picks another engine.
+  Corrected on 2026-11-15: a preset names its engine by the file that holds it, never by a key;
+  llama-server refuses an unknown key in `--models-preset` (llama.cpp v1.0.0
+  `tools/server/server-models.cpp:415` leaves `ignore_unknown_keys` false; `common/preset.cpp:325`
+  throws), so an `engine` key would stop it loading its presets.
 - **First editing slice.** The whole UI's structure in `fe/DESIGN.md`, then the Server page of instance
   `default` with the same controls and checks as `pai-config`. The web UI session (`fe/` only) sends
   the coordinator the bff API contract it needs (login and session, reading and writing the server and
@@ -778,6 +782,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
+11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
+   enabled}]`, engine from the file holding the section, in `presets::load_listed`'s order (on
+   first, then off, file order; an id in both files once, as on); errors `{key, args: []}`: 401, 403
+   `client-not-authorized`, 503 `client-unavailable`, 502 `client-other` (the web UI's Models page,
+   `fe/briefs/02-models.md`).
 
 Later slices (not yet written): the presets page, the gateway, the benchmark portal, LAN access.
 

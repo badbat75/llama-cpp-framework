@@ -33,3 +33,6 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   tabbing and comparing each focused element's rect with the sticky bar's.
 - A brief that says "join the read in flight" must name which reads may not join. Forced colours:
   set `browser.display.document_color_use` to 2 in the profile, and remove it from `prefs.js` after.
+- Presets are shared by every instance of an engine, the manager reads the preset files without
+  asking for a right, and the GUI lists switched-on presets before switched-off ones, each in file
+  order. A preset's engine is the file that holds it: llama-server refuses unknown preset keys.
