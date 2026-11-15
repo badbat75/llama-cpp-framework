@@ -1,5 +1,6 @@
 // The h1 of every page: it names the page in the document title and takes the
-// focus when the page changes (fe/DESIGN.md, section 2.3).
+// focus when the page changes (fe/DESIGN.md, section 2.3). Its id lets the app
+// give the focus back to it when a dialog closes.
 import { createContext, useContext, useEffect, useRef } from 'react'
 import { t } from './strings.ts'
 
@@ -19,7 +20,7 @@ export default function PageHeading({ text }: { text: string }) {
   }, [request])
 
   return (
-    <h1 ref={ref} tabIndex={-1}>
+    <h1 id="page-heading" ref={ref} tabIndex={-1}>
       {text}
     </h1>
   )

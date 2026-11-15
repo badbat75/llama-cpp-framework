@@ -447,7 +447,7 @@ test('1a.1, 13: a sign-in answered with {"user"} alone signs in: the banner name
   expect(signOut).toBeTruthy()
 })
 
-test('1a.1: a sign-in answered with canConfigure still in the reply signs in the same way (the bff keeps sending it)', async () => {
+test('1a.1: a sign-in answered with canConfigure still in the reply signs in the same way (an older bff sent it)', async () => {
   for (const canConfigure of [true, false]) {
     const who = String(canConfigure)
     fakeBff({

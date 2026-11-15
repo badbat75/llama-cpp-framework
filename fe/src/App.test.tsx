@@ -225,7 +225,7 @@ test('1a.1, 4: a session reply of {"user"} alone signs in: the banner shows the 
   ).toBeNull()
 })
 
-test('1a.1: a session reply that still carries canConfigure signs in the same way (the bff keeps sending it)', async () => {
+test('1a.1: a session reply that still carries canConfigure signs in the same way (an older bff sent it)', async () => {
   for (const canConfigure of [true, false]) {
     fakeBff({ session: () => reply(200, { user: 'alice', canConfigure }) })
     render(<App />)

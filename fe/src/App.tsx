@@ -1,9 +1,11 @@
 // The app shell (fe/briefs/01-server.md, section 2.1): skip link, banner,
 // nav and main; the session read once on start; the page of the hash route;
-// leaving a page with unsaved changes asks first (38).
+// leaving a page with unsaved changes asks first (38), the browser's Back,
+// Forward and a typed address too (G1).
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
@@ -34,11 +36,15 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   // The page holds unsaved changes.
   const [dirty, setDirty] = useState(false)
-  // Leaving asked about: where to (none: Sign out) and the control that asked.
+  // Leaving asked about: where to (none: Sign out) and what to give the
+  // focus back to (the link or control that asked, or what had it when the
+  // browser moved the address).
   const [leaving, setLeaving] = useState<{
     href?: string
     opener: HTMLElement
   } | null>(null)
+  // The hash the app asked for: its hashchange passes the guard of 38b.
+  const going = useRef<string | null>(null)
   // The one read of /api/instances the nav and the pages share.
   const [store] = useState(instancesStore)
   const route = parseRoute(hash)
@@ -53,20 +59,59 @@ export default function App() {
     }
   }, [])
 
+  /**
+   * A navigation the app asked for: it is not one to ask about (38d). The
+   * token goes only when the address really moved: a hash equal to the one
+   * shown fires no hashchange, and a token left there would pass a later Back
+   * to it through the guard. It holds what the browser reads back, an encoded
+   * hash coming back normalised.
+   */
+  const go = (href: string) => {
+    const before = window.location.hash
+    window.location.hash = href
+    const after = window.location.hash
+    if (after !== before) going.current = after
+  }
+
   useEffect(() => {
     const onHash = () => {
-      setHash(window.location.hash)
+      const next = window.location.hash
+      if (going.current === next) going.current = null
+      else if (dirty && next !== hash) {
+        // The browser moved the address (Back, Forward, a hash typed in the
+        // address bar) while the form has edits, and a hashchange cannot be
+        // held back: the address goes back (replaceState fires none of its
+        // own), the page stays with its edits, and 38's dialog asks. The
+        // focus the page had is kept for Keep editing (38c); a second change
+        // retargets the dialog that is already open (38g).
+        history.replaceState(
+          null,
+          '',
+          `${window.location.pathname}${window.location.search}${hash}`,
+        )
+        setLeaving((l) => ({
+          href: next,
+          // Nothing focused, the body or a null activeElement (the spec
+          // allows it): keep() gives the focus back to the page's h1.
+          opener:
+            l?.opener ??
+            (document.activeElement as HTMLElement | null) ??
+            document.body,
+        }))
+        return
+      }
+      setHash(next)
       setFocus((n) => n + 1)
       setMenuOpen(false)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
-  }, [])
+  }, [dirty, hash])
 
   const signedIn = (s: Session) => {
     setSession(s)
     setFocus((n) => n + 1)
-    if (route.page === 'sign-in') window.location.hash = '#/'
+    if (route.page === 'sign-in') go('#/')
   }
 
   /**
@@ -97,7 +142,7 @@ export default function App() {
   const leave = async () => {
     await signOut()
     signedOut()
-    window.location.hash = '#/'
+    go('#/')
   }
 
   /** A click on `link` while dirty asks first; true when it was held back. */
@@ -114,11 +159,18 @@ export default function App() {
     else void leave()
   }
 
-  /** Keep editing: the dialog goes, the focus back on what opened it. */
+  /** Keep editing: the dialog goes, the focus back on what opened it. With
+   * nothing of the page focused (the browser's address bar), its h1 (38c). */
   const keep = () => {
     const opener = leaving?.opener
     flushSync(() => setLeaving(null))
-    opener?.focus()
+    const gone =
+      opener === undefined || !opener.isConnected || opener === document.body
+    if (gone) {
+      document.getElementById('page-heading')?.focus()
+    } else {
+      opener.focus()
+    }
   }
 
   /** Discard changes: on where the click led. */
@@ -126,7 +178,7 @@ export default function App() {
     const href = leaving?.href
     setLeaving(null)
     if (href === undefined) void leave()
-    else window.location.hash = href
+    else go(href)
   }
 
   return (
