@@ -727,7 +727,8 @@ The web UI's side (the web UI session, `fe/` only): slice 1a done (e19f3d2: the 
 sign-in against `/api/session`, the read-only Server page, built against mocks; not yet tried against a
 real bff until d9bbe90's hand check, which found no mismatch); 1b done (4255577: editing and save for
 administrators, save bar, client checks, refusals beside their field, 409, 401 mid-edit; against
-mocks, no PUT route yet); next 1c (start, stop, restart, state polling, boot). Open with the user:
+mocks, no PUT route yet); 1c part 1 done (396d25c: Start, Stop, Restart and live state, against
+mocks); next 1c part 2 (start at boot). Open with the user:
 Back, Forward or a typed address leave a dirty form without asking.
 
 The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI

@@ -31,3 +31,5 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   Python script against a scripted stub server (the tester playbook has the calls). A headless window
   cannot go below 500 CSS px, so check 375 px inside an iframe; check 2.4.11 (focus not obscured) by
   tabbing and comparing each focused element's rect with the sticky bar's.
+- A brief that says "join the read in flight" must name which reads may not join. Forced colours:
+  set `browser.display.document_color_use` to 2 in the profile, and remove it from `prefs.js` after.
