@@ -243,6 +243,17 @@ Lessons only: the rules are in `AGENTS.md`.
   `crates/config/README.md`'s source-map manager row ("the bff does not call it yet"),
   `fe/briefs/api-contract.md` and `fe/briefs/01-server.md` ("answers this to every sign-in"),
   `PLAN.md`'s step 10 6a note.
+- A sign-in reply-shape change is repeated in the bff README in nine places: the route table's two
+  `/api/session` rows, the session status table's 200 row, the server-read paragraph's session check,
+  the 200 row and the `values`/`withheld` bullets of the server table, the fe shell's banner sentence,
+  the fe route table's instance row (its administrator/user pair) and the fe "The session" bullet.
+  Grep `canConfigure`, `role`, `withheld`, `administrat` there (296165f dropped `canConfigure`). The
+  API key's withholding sits in three of them: when the rule moves (6217308: the manager's
+  `read_file` flag alone, never the session), fix all three and name who decides.
+- When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
+  fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
+  case): cite the sha, and paraphrase a string rather than quoting it, its text living in
+  `fe/src/strings/en_US.json`.
 - The Read tool shows `N: ` plus a space before each line, so a file's 2-space indent reads as 3:
   an Edit `oldString` that starts with that leading whitespace never matches. Start `oldString`
   mid-line.

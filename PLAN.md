@@ -800,7 +800,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    5 per window then 429, apart from the bad-password failures. Left from its review: after a
    timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
    (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding are gone (every session is a `pai` member; the manager's flag alone withholds the key); the bff README still names `canConfigure` in five places. Then 6b
-   part 3: the bff calls the manager for the signed-in user. From
+   part 3: the bff calls the manager for the signed-in user, designed in `ARCHITECTURE.md` "Acting for
+   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first:
+   the manager's `As` methods carry a principal only from the bff's account, re-check the user's `pai`
+   membership at each call, never ask polkit for it; `Version`; a log of who acted; the bff connects
+   as the session's user. Decided by the user (2026-11-15): when the manager refuses a signed-in user
+   (removed from `pai`), the bff ends that session at once and the page returns to sign-in. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

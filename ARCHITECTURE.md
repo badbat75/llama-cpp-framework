@@ -51,7 +51,9 @@ Linux system files in `xtask/src/linux/system_files.rs`.
 - **The manager protocol**: one request, one reply; on the pipe a u32 little-endian length and a JSON
   body of at most 1 MiB, the D-Bus method and error names (`crates/core/src/client/pipe.rs` header,
   the server in `crates/manager/src/manager/pipe.rs`). Methods: `ListInstances`, `Status`, `Start`,
-  `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`. The client works over any `Read + Write` stream.
+  `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`; designed,
+  not built: the `<Method>As` forms and `Version` ("Acting for a signed-in user" below). The client
+  works over any `Read + Write` stream.
 - **The bff's HTTP API**: the routes and error shape `{key, args}` in
   [crates/bff/README.md](crates/bff/README.md); the contract the web UI is built against in
   `fe/briefs/api-contract.md`.
@@ -65,7 +67,7 @@ Linux system files in `xtask/src/linux/system_files.rs`.
 | --- | --- | --- |
 | The manager (root, LocalSystem) | Every right on the machine | Everything; the one authority over the instance files |
 | `private-ai` / `NT SERVICE\llama.cpp_<id>` | Reads the instance files (group `private-ai`, mode 0640 for `server@<id>.ini`), its models and state | Running one engine; reaches no manager call that changes anything |
-| `private-ai-bff` / `NT SERVICE\private-ai-bff` | No file but `bff.ini`; the manager's unauthenticated reads | Today: reads, and asking the manager to check a password (`Authenticate`, which answers only this account; the bff does not call it yet). Decided: vouching for the user it signed in |
+| `private-ai-bff` / `NT SERVICE\private-ai-bff` | No file but `bff.ini`; the manager's unauthenticated reads | Today: reads, and asking the manager to check a password (`Authenticate`, which answers only this account). Designed: naming the signed-in user on guarded calls, the manager re-checking that user's `pai` membership ("Acting for a signed-in user") |
 | A desktop user | Their own tree (`settings.ini`, `bench.db`) | `control` (start, stop, restart) in the active session without a password (Linux), as an interactive user (Windows) |
 | An administrator | | `configure` (write a file, start at boot, read the API key) |
 
@@ -99,12 +101,149 @@ The exact paths and modes are in `AGENTS.md` "Key conventions" and "Through the 
 
 ### Where the web sign-in stands (2026-11-15)
 
-Shipped in the manager (04a7f9e, `PLAN.md` step 10 slice 6b part 2): `Authenticate(user, password) ->
-(ok, can_configure)`, answered only to the bff's account (`Authority::is_bff`: the bus name's uid on
-Linux, the service SID on Windows), the password checked through PAM service `private-ai`
-(`crates/manager/src/manager/accounts.rs`) or `LogonUser` (`windows/logon.rs`), `can_configure` from
-membership of `pai` (`PasswordChecker` in `service.rs`), on both transports. Next: part 2b, the
-packaging (`/etc/pam.d/private-ai`, the group `pai`, the polkit rule); then 2c, the bff calls it.
+Shipped: `Authenticate(user, password) -> (ok, can_configure)` in the manager, answered only to the
+bff's account (`Authority::is_bff`: the bus name's uid on Linux, the service SID on Windows), the
+password checked through PAM service `private-ai` (`crates/manager/src/manager/accounts.rs`) or
+`LogonUser` (`windows/logon.rs`), `can_configure` from membership of `pai` (`PasswordChecker::is_admin`
+in `service.rs`); the packaging (part 2b) and the bff's call (part 2c, de07ddf: `SystemAuthenticator`,
+every session a `pai` member, `session::Identity { user }`). Open: the bff still calls every other
+method as itself and has no right, so `GET /api/instances/{id}/server` answers 403. The design below
+closes that.
+
+### Acting for a signed-in user (step 14 slice 0 and step 10 slice 6b part 3)
+
+Designed 2026-11-15, not yet built. One design serves both: the bff names the signed-in user on each
+guarded call, and the super-manager will later name its user the same way (Part 2, slice 4).
+
+**The model.** The manager's core stops taking a bare `Caller` for a guarded call and takes a
+`Requester { caller: Caller, principal: Option<Principal> }` (`service.rs`), `Principal(String)` a user
+name some trusted caller vouches for. `Caller` stays the transport's identity (bus name, token SID);
+the principal is never folded into it, and a later enrolled peer is one more kind of caller, not a
+third way to name a user.
+
+**How it travels.** A principal is carried only by new methods whose name says so, the same names on
+both transports:
+
+| D-Bus (`org.privateai.Manager1`) | Pipe request | Reply |
+| --- | --- | --- |
+| `StartAs(s principal, s id)`, `StopAs`, `RestartAs` (same) | `{"method":"StartAs","principal":"alice","id":"default"}` | as `Start` |
+| `ReadFileAs(s principal, s name) -> (b exists, s text, b withheld)` | `{"method":"ReadFileAs","principal":..,"name":..}` | as `ReadFile` |
+| `WriteFileAs(s principal, s name, s contents, b keep_api_key)` | `{"method":"WriteFileAs","principal":..,"name":..,"contents":..,"keep_api_key":..}` | as `WriteFile` |
+| `SetBootEnabledAs(s principal, s id, b enabled)` | `{"method":"SetBootEnabledAs","principal":..,"id":..,"enabled":..}` | as `SetBootEnabled` |
+| `Version() -> (s version, u protocol)` | `{"method":"Version"}` | `{"ok":{"version":"<framework>","protocol":1}}` |
+
+`ListInstances`, `Status`, `BootEnabled` and `Authenticate` get no `As` form: they need no right, or
+answer the bff alone. On the pipe a `principal` field on any other method is `BadRequest`, and an `As`
+method without one is `BadRequest` too (today the parser ignores unknown fields).
+
+| Option for the principal | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. New `<Method>As` methods, same names on both transports** | Six one-line methods per face; the existing methods and every desktop client untouched | None found: an old manager answers `UnknownMethod` (D-Bus) or `BadRequest` (pipe), so the principal can never be dropped | **Chosen** |
+| B. An extra argument on the existing methods | Every client changes at once; an empty string as "no principal" is a sentinel | A mixed install fails every call | Rejected |
+| C. An `a{sv}` options dict (D-Bus), an optional field (pipe) | One generic shape | An older pipe server ignores the unknown field and runs the call as the bff: safe today only because the bff has no right, silent escalation the day it gets one | Rejected |
+| D. A ticket the manager issues at `Authenticate`, sent instead of a name | Session state in a manager that keeps none; lost at its restart | A compromised bff could act only for users who sign in while it is compromised, but it captures their passwords then anyway | Not now |
+
+**Who may send a principal.** Only the bff's account, as for `Authenticate` (`Authority::is_bff`: the
+uid behind the bus name, `GetConnectionUnixUser`, against `private-ai-bff`'s, both looked up per
+call; on Windows the connection token's SID against the bff's service SID). Anyone else sending an
+`As` method is refused `NotAuthorized` before anything else is asked, logged, and nothing is done:
+refused, never downgraded to a call as the sender.
+
+**What the manager checks for a principal**, in this order, each failure `NotAuthorized` with
+nothing done and the later checks not asked:
+
+1. the caller is the bff (above);
+2. the name is well formed: 1 to 256 bytes (the bff's own `MAX_USER_BYTES`), no control character
+   (so no NUL, no newline in a log line);
+3. the principal is a member of `pai` **now**: `PasswordChecker::is_admin(principal)`, the same
+   lookup `Authenticate` uses, at every call, never cached by the manager, never taken from the bff.
+   Linux: `getgrouplist(3)` over NSS (`accounts::group_names`); Windows: `NetUserGetLocalGroups` with
+   `LG_INCLUDE_INDIRECT` (`windows/logon.rs`). A failed lookup or an unknown account is false.
+
+Both `control` and `configure` need membership (the web UI is for administrators only, user
+2026-11-15), so the action does not change the answer; a principal's `ReadFileAs` of an instance file
+is never withheld (`withheld: false`). polkit is never asked for a principal: its subjects are a
+process, a session or a bus name
+([polkit Authority interface](https://www.freedesktop.org/software/polkit/docs/latest/eggdbus-interface-org.freedesktop.PolicyKit1.Authority.html),
+"Subject"), and the only one at hand is the bff's, so asking would authorize the bff, not the user.
+The password polkit's `auth_self_keep` would ask was checked by the manager at sign-in; the session
+(30 minutes idle) stands in for polkit's keep.
+
+**A principal call does not need the bff's own rights**, and the bff keeps none: the right is the
+pair (the bff's account, a current `pai` member). Requiring both would mean granting the bff
+`control`/`configure` on its own, which a call without a principal could then use.
+
+**Fail closed.** A user removed from `pai` is refused at their next call (the bff's route answers 403
+`client-not-authorized`; the session itself lives on until it idles out or signs out, harmless since
+every call is refused). A deleted account fails the lookup. A site caching NSS (`nscd`, `sssd`) delays
+a removal by that cache's lifetime (nscd.conf(5), sssd.conf(5)): the manager adds no cache of its own.
+An old manager refuses every `As` method (the bff answers 502 `client-other`); the Linux packages pin
+`-bff` to `-core` at the same version and Windows ships one framework MSI, so that skew needs a
+broken install.
+
+**Version.** `Version` needs no right; `version` is the manager's framework version, `protocol` an
+integer that grows with each additive change (1 = the `As` methods and `Version`; the TLS major of
+Part 2 rides in ALPN). The client side is an inherent method on `DbusClient` and `PipeClient`, not on
+`ManagerClient`: `version() -> Result<Option<ManagerVersion>, ClientError>`, `None` for a manager
+older than the method (D-Bus `org.freedesktop.DBus.Error.UnknownMethod`; pipe `BadRequest`, after which
+the server has closed the stream and that client is spent: open a new one). Nothing calls it in
+production until the super-manager; the bff does not (same-version packages).
+
+**The log of who acted.** Every guarded call, done or refused, writes one record through a seam
+(`Manager::with_log`, an `ActionLog` trait, a fake in tests): `action`, `target` (id or file name),
+`caller`, `principal` (`-` when none), `outcome` (`ok`, `refused`, or the error name). Values are
+written with Rust's `{:?}` quoting, so nothing in a name can forge a record; never a password or file
+contents. Linux: one line on stderr, which the unit sends to the journal. Windows: an appended file
+`%ProgramData%\private-ai\logs\private-ai-manager.log` (SYSTEM and Administrators), the service having
+no console. A record, read by administrators and scripts, so a literal format, not a strings-file text
+(as the comments written into `server.ini`).
+
+**The client and the bff.** `ManagerClient` is unchanged; `DbusClient` and `PipeClient` gain
+`acting_for(user)`, a client bound to a principal whose guarded methods send the `As` forms (its
+unguarded ones are unchanged), so `pai-config`, `pai` and `pai-app` change nothing. The bff's `Connect`
+becomes `Fn(Option<&str>) -> Result<Client, ClientError>`: `system_connect(Some(user))` returns the
+bound client. The rule for routes: **every route behind a session connects as the session's user**
+(`Sessions::current`, never a name from the request), so a removed member is refused at once;
+session-free routes (`/api/instances`, GET boot) and the authenticator connect with `None`, as the bff.
+
+**Trust boundaries crossed.** Browser to bff: the session cookie. Bff to manager: the kernel's peer
+identity (bus uid, pipe token) authenticates the bff; the bff vouches for the principal; the manager
+re-checks the principal's group itself. What each side can do if compromised: the bff, act as any
+current `pai` member by naming them (accepted by the user, 2026-11-15: "the bff vouches"), never as
+anyone else and never beyond `control`/`configure`; a local user who is not the bff, nothing new (every
+`As` call refused and logged); a `pai` member, what they can already do from the desktop.
+
+**Slices**, each test first, in order:
+
+1. **The core (step 14 slice 0).** `Requester`, `Principal`, the three checks, `read_file` unwithheld
+   for a principal. Done when unit tests in `service.rs` with `FakeAuthority` and `FakePasswords` pin:
+   the bff with member `alice` starts an instance, `is_admin("alice")` asked, `is_authorized` (polkit)
+   never; a non-bff caller with a principal is refused, `is_admin` not asked, the service not called;
+   the bff with a non-member is refused; a member removed between two calls is refused on the second;
+   an empty, NUL-, newline-bearing or 257-byte name is refused with nothing asked; calls without a
+   principal ask `is_authorized` as today (the existing tests unchanged).
+2. **The pipe and `Version`.** `pipe.rs` parses the `As` methods and `Version`; `PipeClient::acting_for`
+   and `version`. Done when: `acting_for("alice").start("default")` sends exactly
+   `{"method":"StartAs","principal":"alice","id":"default"}` and the server reaches the core with that
+   `Requester`; `principal` on plain `Start`, and `StartAs` without it, are `BadRequest`; `Version`
+   answers `CARGO_PKG_VERSION` and 1; `version()` against a server answering `BadRequest` is `Ok(None)`.
+3. **The D-Bus face.** The same methods on `ManagerInterface`, `DbusClient::acting_for` and `version`.
+   Done when, over the peer connection of `manager_dbus_e2e`: a bound client's `StartAs` from the
+   caller `FakeAuthority` marks as the bff starts the instance; from another caller it is
+   `NotAuthorized` with nothing started; `Version` answers; `version()` against an object without it is
+   `Ok(None)`.
+4. **The log.** `ActionLog`, the Linux stderr writer, the Windows file writer (type-checked only).
+   Done when a fake log holds one record per guarded call with caller, principal and outcome, refusals
+   included, and a name with a quote or newline cannot produce a second record.
+5. **The bff (step 10 slice 6b part 3).** `Connect` takes the principal. Done when: `GET
+   /api/instances/{id}/server` with alice's session connects with `Some("alice")` and answers 200;
+   without a session it answers 401 and never connects; `/api/instances` and the authenticator connect
+   with `None`; the manager's `NotAuthorized` still maps to 403 `client-not-authorized`.
+
+Then the docs agent updates `crates/bff/README.md`, "Through the manager" and the pipe client's header.
+Later, not needed now: ending a session when the manager refuses its user; the manager returning the
+canonical account name at `Authenticate` (PAM may fold case: a mismatch fails closed); renaming
+`is_admin` and `ADMIN_GROUP` (`PLAN.md` step 10 leftovers).
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
@@ -309,7 +448,7 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
 
 ### What the current code should change before it hardens
 
-- **The manager's caller model.** `Caller(String)` is a transport identity (bus name or SID) and
+- **The manager's caller model** (designed: Part 1, "Acting for a signed-in user"). `Caller(String)` is a transport identity (bus name or SID) and
   `Authority` answers per action. Step 10 slice 6b part 3 will add "the bff vouches for user X"; carry
   that user as an explicit, optional principal on the request (a pipe field, a D-Bus argument or an
   options dictionary), with the caller kind (local, bff, enrolled peer) decided by the transport, so the
@@ -323,7 +462,7 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
   already needs for long stops.
 - **The revision** (`PLAN.md` step 10 slice 8): key the hash before it crosses a network, as already
   planned.
-- **A protocol version.** Add the `Version` method to the manager protocol while the only clients are
+- **A protocol version** (designed: Part 1, "Acting for a signed-in user"). Add the `Version` method to the manager protocol while the only clients are
   in this repository; it costs one method now and saves guessing later.
 
 ### Questions only the user can answer

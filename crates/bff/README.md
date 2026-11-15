@@ -67,8 +67,8 @@ runtime (axum).
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}` |
 | `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
-| `POST /api/session` | Signs in: `{"user", "canConfigure"}` and the session cookie ([below](#the-session)) |
-| `GET /api/session` | `{"user", "canConfigure"}` of the cookie's session |
+| `POST /api/session` | Signs in: `{"user"}` and the session cookie ([below](#the-session)) |
+| `GET /api/session` | `{"user"}` of the cookie's session |
 | `DELETE /api/session` | Signs out: 204, the cookie cleared |
 | `GET /api/instances/{id}/server` | The instance's `server@<id>.ini` with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `GET /` | The embedded `index.html` |
@@ -144,7 +144,7 @@ counter. Under `PRIVATE_AI_DATA_ROOT` `connect` dials nothing, so a test never a
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"user", "canConfigure"}`, the typed name and the authenticator's second answer | Signed in; `Set-Cookie: pai_session=<id>; HttpOnly; SameSite=Strict; Path=/` |
+| 200 | `{"user"}`, the typed name: the authenticator's second answer (the group `pai`) gates the sign-in, it is not in the reply | Signed in; `Set-Cookie: pai_session=<id>; HttpOnly; SameSite=Strict; Path=/` |
 | 400 | `{"key": "session-malformed", "args": []}` | Not JSON, another content type, `username` or `password` missing or not text, an empty `username` |
 | 401 | `{"key": "session-bad-credentials", "args": []}` | No such account or the wrong password (not told apart); an empty password, refused without asking |
 | 403 | `{"key": "session-not-administrator", "args": []}` | The password was right, the account is not a member of `pai`. The refusal confirms the password, so it never joins the bad-password counter, only the refusals' own 5 |
@@ -172,18 +172,19 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
 connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
 connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
-yet: the bff reads the file as itself, so the session is checked to exist and, for the API key
-alone, whether its user is an administrator: a member of the group `pai` (`canConfigure`, the second
-answer of the manager's `Authenticate`). The manager also withholds the key from a reader allowed
+yet: the bff reads the file as itself, so the session is only checked to exist. The bff keeps no role
+per session, and withholds nothing on its own: every session is a member of the group `pai`, sign-in
+refuses anyone else 403. The API key is the manager's to keep: it withholds it from a reader allowed
 `control` but not `configure` ("Through the manager" in
-[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)); a file it
-withheld is marked withheld for every user, an administrator included (`server.rs` `document`).
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)), and the bff nulls
+the key and marks it withheld exactly when the manager's read says so, even when the text it sent
+still names a key (`server.rs` `document`).
 The bff's own account gets no `control` today ([above](#the-instances-from-the-manager)), so the
 manager refuses its read (403).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when a value was kept from the user | The file was read |
+| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read |
 | 401 | `{"key": "session-required", "args": []}` | No session |
 | 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
@@ -194,11 +195,11 @@ manager refuses its read (403).
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
   `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
   `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
-  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` goes to administrators only:
-  for a session whose user cannot configure it is `null`.
-- **`withheld`**: `["OpencodeApiKey"]` when the file sets the API key and the user cannot configure,
-  or when the manager withheld it from the bff, so the web UI can say a key is saved without
-  showing it; absent otherwise.
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` is `null` exactly when the
+  manager's read reported the key withheld, the key in the file's text included.
+- **`withheld`**: `["OpencodeApiKey"]` exactly when the manager's read reported the key withheld, so
+  the web UI can say a key is saved without showing it; absent otherwise. The bff never withholds on
+  its own: every session is a `pai` member, it keeps no role per session.
 - **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
   `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
   the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file
@@ -220,21 +221,23 @@ kept by the `designer`; the slice briefs and the API contract the fe is built ag
 (`api-contract.md`) are in `fe/briefs/`.
 
 **A shell with hash routes** (`fe/src/App.tsx`, `fe/src/route.ts`), since the bff serves only `/`
-and `/assets/`: a skip link, a banner (Sign in, or the user, the role and Sign out), a nav (behind a
-Menu button below 960px; the instances listed once signed in) and the route's page, whose heading
-takes the focus and names the document title on a change. Each page reads its data once when it
-opens and never shows a reply's text.
+and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no role word: fe slice R4,
+1827023), a nav (behind a Menu button below 960px; the instances listed once signed in) and the
+route's page, whose heading takes the focus and names the document title on a change. Each page reads
+its data once when it opens and never shows a reply's text.
 
 | Route | Page | Who |
 | --- | --- | --- |
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
-| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: for an administrator (`canConfigure`) editable, with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`); for anyone else every control disabled and a notice | signed in; otherwise the sign-in form in its place |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/models` | The presets of every engine (`GET /api/presets`) as a table of preset, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its preset that sends `PUT /api/presets/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
-  `{"user", "canConfigure"}` signs the page in, any other reply or failure leaves it signed out.
+  `{"user"}` signs the page in (the reply carries nothing else: 296165f; a reply that still names a
+  role field signs in the same way, the field ignored: 1827023), any other reply or failure leaves it
+  signed out.
   Sign out is `DELETE /api/session`, signed out whatever it answers; a 401 from the server read
   signs the page out too.
 - **A save** sends the file's revision and the typed values. Before it the form runs the client

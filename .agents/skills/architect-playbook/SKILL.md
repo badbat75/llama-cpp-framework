@@ -21,8 +21,14 @@ description: What the architect has learned about this project's components, int
   new client; the server side's unknown method ends the connection with `BadRequest`
   (`manager::pipe`), so additive protocol changes need a version a client can ask first.
 - The manager's `Caller` is a transport identity only (bus name on Linux, token SID on Windows);
-  who acts on whose behalf is not modelled yet (step 10 slice 6b part 3). Keep a vouched user a
-  separate request field, never folded into `Caller` (ARCHITECTURE.md, part 2).
+  a vouched user is `Requester.principal`, carried by `<Method>As` methods (ARCHITECTURE.md, "Acting
+  for a signed-in user"). Why method names and not an optional field: the pipe parser ignores unknown
+  JSON fields, so an older server would silently run the call as the sender.
+- polkit cannot authorize a user who has no process: its subjects are a process, a session or a bus
+  name (polkit Authority interface, "Subject"). For a vouched user the manager checks `pai` itself.
+- Local version skew between the bff and the manager needs a broken install: the Linux packages pin
+  every framework package to `-core` at the same version (`xtask/src/linux/package.rs`), Windows has
+  one framework MSI. `Version` matters only across machines.
 - Sources already checked for cross-machine designs (2026-11-15): D-Bus non-local TCP is deprecated
   and unprotected (D-Bus spec, "TCP Sockets"); OpenSSH server is in the box only on Windows Server
   2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash pinning is the precedent for join
