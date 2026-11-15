@@ -36,3 +36,8 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - Presets are shared by every instance of an engine, the manager reads the preset files without
   asking for a right, and the GUI lists switched-on presets before switched-off ones, each in file
   order. A preset's engine is the file that holds it: llama-server refuses unknown preset keys.
+- Before proposing a bff reply, check what it links: `pai-bff` links `pai-core` only (`ReadFile`,
+  `ini::parse_sections`), while the preset logic (`; url =` comment, `listed_in`, the spec-type
+  helpers) is private to `pai-app`. Say which helper the bff must move or redo.
+- Hash routes keep `.` and `..` (the URL parser resolves dot segments in the path only), but the
+  same id in an API path does not survive: `new URL('/api/presets/..', base)` is `/api/`.

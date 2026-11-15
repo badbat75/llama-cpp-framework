@@ -859,6 +859,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,
    `checks::preset_id` refuses `.` and `..` (pai-core). The fe no longer reads `canConfigure` (fe slice
    R4, 1827023): the bff drops it from the session reply (`{user}`) after 6b part 2c.
+11c. **A preset's page, read-only.** `GET /api/presets/{id}` as proposed in `fe/briefs/api-contract.md`
+   (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
+   revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method
+   (`ReadFile` plus `ini::parse_sections`); the `; url =` comment reader moves from `pai-app` to
+   `pai-core` so the bff can read `projectUrl`. After slices 11 and 11b.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
    enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
    the bff), engine from the file holding the section, in `presets::load_listed`'s order (on
