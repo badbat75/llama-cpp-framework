@@ -306,3 +306,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - A new engine (or bff) file in `xtask/src/linux/system_files.rs` `files()` also needs its path in the
   exclusion list of `the_system_files_and_scripts_name_the_core_package`, which wants the core's header
   on every other file: when the tester's tests did not add it, report the conflict, do not edit it.
+- Web UI: after an `await` in a save handler the closure's draft is stale; read the rendered DOM after
+  `flushSync` or use a state updater. A sticky bar whose height changes needs its scroll padding
+  measured at runtime (`ResizeObserver`, guarded: jsdom has none).

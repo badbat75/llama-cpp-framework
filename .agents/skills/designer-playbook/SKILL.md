@@ -27,3 +27,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   way; those stay read from the code.
 - jsdom applies no CSS, so the review checks specificity by eye: `input[type='text']` (0,1,1) with
   `font: inherit` beats a class such as `.mono` (0,1,0).
+- Clicks and focus can be driven after all: `/snap/bin/geckodriver` over plain WebDriver HTTP from a
+  Python script against a scripted stub server (the tester playbook has the calls). A headless window
+  cannot go below 500 CSS px, so check 375 px inside an iframe; check 2.4.11 (focus not obscured) by
+  tabbing and comparing each focused element's rect with the sticky bar's.

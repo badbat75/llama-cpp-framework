@@ -564,3 +564,7 @@ Lessons only: the rules are in `AGENTS.md`.
   is no `.await` between the reservation and the guard's creation (a cancelled future would leak the
   slot), and that every `MutexGuard` on the same lock is dropped before the guard (else the `Drop`
   deadlocks). A cancelled request leaves its `spawn_blocking` call running, unrecorded.
+- Web UI in jsdom: a click on a `#` link moves `location.hash` in a later task, so wait one
+  `setTimeout(0)` inside `act` before asserting the route did not change; `HTMLDialogElement` has no
+  `showModal`/`close`, and a stand-in that sets `open` makes dialogs findable by role. Mutation runs go
+  in a scratch copy of `fe/` with `node_modules` symlinked.
