@@ -789,8 +789,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    deletes it at every uninstall, so a MajorUpgrade would empty it); the pipe's `configure` is `pai`
    enabled in the client's token (looked up per connection as a local alias of this computer only,
    never a domain group or user named `pai`) or LocalSystem; `control` adds `pai` members; the
-   installers workflow checks the group and that a member survives repair and uninstall (not yet run
-   on a Windows runner). Left from it (no string names Administrators, checked):
+   installers workflow checks the group and that a member survives repair and uninstall (green on
+   run 43743455408). Left from it (no string names Administrators, checked):
    `client-not-authorized` could say how to join `pai`; rename `ADMIN_GROUP` and
    `PasswordChecker::is_admin` (they read as Administrators); the doc comments of `PIPE_SDDL` (manager
    `windows.rs`) and `crates/bff/src/server.rs` near line 48 still describe the old rule. 6b part
