@@ -739,8 +739,9 @@ administrators, save bar, client checks, refusals beside their field, 409, 401 m
 mocks, no PUT route yet); 1c part 1 done (396d25c: Start, Stop, Restart and live state, against
 mocks); 1c part 2 done (47e2c67: Start at boot, against mocks), so fe slice 1 is complete on the
 web UI's side; the bff routes it needs are slices 6b to 9. Models page (`fe/briefs/02-models.md`):
-2a done (4731d88: the read-only preset list at `#/models`, against mocks of slice 11); next 2b (a
-filter by preset id or model path, which adds `model` to slice 11's reply). Open with the user:
+2a done (4731d88: the read-only preset list at `#/models`, against mocks of slice 11); 2b done
+(c06c90f: a filter by preset id or model path); next 2c (an administrator's on/off switch per row,
+which needs a write route for a preset's on/off state, contract to come). Open with the user:
 Back, Forward or a typed address leave a dirty form without asking.
 
 The bff side of the web UI's slice 1, from the contract `fe/briefs/api-contract.md` (the web UI

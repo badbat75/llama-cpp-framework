@@ -346,3 +346,5 @@ Lessons only: the rules are in `AGENTS.md`.
   confirms it embeds the new `fe/dist`.
 - Web UI: the fake bff's `deferred()` ignores abort, so a GET held for 15 s or more of fake time
   must use `held()`, or a timeout test passes without a real browser's behaviour.
+- Web UI: when a later slice adds a control or live region to a page, the earlier slice's tab-order
+  and "no status" tests break by design; update them in place and cite both criteria.
