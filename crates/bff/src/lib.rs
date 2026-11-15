@@ -28,7 +28,9 @@ pub fn router() -> axum::Router {
     router_with_session(
         std::sync::Arc::new(system_connect),
         MANAGER_TIMEOUT,
-        std::sync::Arc::new(session::SystemAuthenticator),
+        std::sync::Arc::new(session::SystemAuthenticator::new(std::sync::Arc::new(
+            system_connect,
+        ))),
         std::sync::Arc::new(std::time::Instant::now),
     )
 }
@@ -58,7 +60,10 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 
 /// The routes of [`router_with`] plus the session routes, signing in
 /// through `auth` and reading the time from `clock`, and those that need a
-/// session: `GET /api/instances/{id}/server`.
+/// session: `GET /api/instances/{id}/server`. One sign-in's check is given
+/// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
+/// `session::routes_with_sign_in_timeout` is what a test hands its own
+/// bound to).
 pub fn router_with_session(
     connect: Connect,
     timeout: std::time::Duration,

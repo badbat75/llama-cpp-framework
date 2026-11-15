@@ -794,8 +794,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `client-not-authorized` could say how to join `pai`; rename `ADMIN_GROUP` and
    `PasswordChecker::is_admin` (they read as Administrators); the doc comments of `PIPE_SDDL` (manager
    `windows.rs`) and `crates/bff/src/server.rs` near line 48 still describe the old rule. 6b part
-   2c: the bff's `SystemAuthenticator` calls `Authenticate`, refusing a non-member with 403
-   `session-not-administrator`. Then 6b part 3: the bff calls the manager for the signed-in user. From
+   2c done: the bff's `SystemAuthenticator` calls `Authenticate` (a client per check, bounded by
+   `SIGN_IN_TIMEOUT`, 10 s: a timeout is 503 and counts nothing); a right password of a non-member
+   is 403 `session-not-administrator`, counted in its own refusals list per (lowercased user, IP),
+   5 per window then 429, apart from the bad-password failures. Left from its review: after a
+   timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
+   (the "bound concurrent checks" item above); next, the session reply drops `canConfigure`. Then 6b
+   part 3: the bff calls the manager for the signed-in user. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

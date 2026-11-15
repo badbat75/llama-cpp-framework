@@ -1,6 +1,7 @@
 //! Signing in to the web UI: the authenticator seam the session routes call
 //! (`POST`, `GET`, `DELETE /api/session`).
 
+use crate::Connect;
 use axum::extract::{ConnectInfo, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -22,6 +23,12 @@ pub struct Identity {
 pub enum AuthError {
     /// No such account, or the wrong password: the two are not told apart.
     BadCredentials,
+    /// The password was right, but the account is not one the web UI is
+    /// for: not a member of the administrators' group. The routes answer
+    /// 403. The refusal confirms the password, so guessing has nothing to
+    /// gain: it is no credential failure and joins the lockout only
+    /// through the refusals' own counter, never the failures'.
+    NotAdministrator,
     /// The system could not check the credentials at all.
     Unavailable,
 }
@@ -41,10 +48,17 @@ const COOKIE: &str = "pai_session";
 /// A session ends after this long without a request that uses it.
 const IDLE: Duration = Duration::from_secs(30 * 60);
 
-/// This many failed sign-ins for one user from one client address within
-/// [`WINDOW`] lock that pair for [`WINDOW`] from the last of them.
+/// This many failed sign-ins, or this many 403 refusals, for one user from
+/// one client address within [`WINDOW`] keep that pair's next sign-in out
+/// for [`WINDOW`]. The two are counted apart and never added together.
 const MAX_FAILURES: usize = 5;
 const WINDOW: Duration = Duration::from_secs(60);
+
+/// How long one check is given to answer: a check that has not answered by
+/// the bound is answered 503 `session-unavailable`, records no lockout
+/// entry and frees its place in the counters, so the next request is
+/// checked and not refused 429.
+pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The random bytes of a session id.
 const ID_BYTES: usize = 32;
@@ -57,6 +71,8 @@ const MAX_USER_BYTES: usize = 256;
 pub(crate) struct Sessions {
     auth: Arc<dyn Authenticator>,
     clock: Clock,
+    /// How long one check is given, [`SIGN_IN_TIMEOUT`] in the service.
+    sign_in_timeout: Duration,
     state: Mutex<Store>,
 }
 
@@ -64,42 +80,58 @@ pub(crate) struct Sessions {
 struct Store {
     /// By session id: who, and when the session was last used.
     sessions: HashMap<String, (Identity, Instant)>,
-    /// By (user name in lowercase, client address): the recent failures,
-    /// the end of the lock they caused and the sign-ins still being checked.
+    /// By (user name in lowercase, client address): the recent failures and
+    /// refusals, the end of the lock they caused and the sign-ins still
+    /// being checked.
     attempts: HashMap<(String, IpAddr), Attempts>,
 }
 
 #[derive(Default)]
 struct Attempts {
     failures: Vec<Instant>,
+    /// The 403 refusals, counted apart from the failures: a refusal
+    /// confirms the password, so it never joins `failures`.
+    refusals: Vec<Instant>,
     locked_until: Option<Instant>,
-    /// Sign-ins the authenticator has not answered yet: each counts as a
-    /// failure until it answers, so guesses sent at once cannot overrun the
-    /// lock.
+    /// Sign-ins the authenticator has not answered yet: each counts toward
+    /// both limits until it answers, so guesses sent at once cannot overrun
+    /// the lock.
     in_flight: usize,
 }
 
 impl Attempts {
     /// Whether the entry still holds anything at `now`.
     fn live(&self, now: Instant) -> bool {
+        let kept = |list: &[Instant]| {
+            list.iter()
+                .any(|t| now.saturating_duration_since(*t) < WINDOW)
+        };
         self.in_flight > 0
             || self.locked_until.is_some_and(|until| until > now)
-            || self
-                .failures
-                .iter()
-                .any(|t| now.saturating_duration_since(*t) < WINDOW)
+            || kept(&self.failures)
+            || kept(&self.refusals)
     }
 }
 
 /// A sign-in being checked, holding its slot in [`Attempts::in_flight`];
-/// dropping it gives the slot back, also when the request is abandoned.
+/// releasing it (or dropping the sign-in when the request is abandoned)
+/// gives the slot back.
 struct InFlight {
     sessions: Arc<Sessions>,
     key: (String, IpAddr),
+    /// False once the slot was given back, so `Drop` does not give it
+    /// a second time.
+    held: bool,
 }
 
-impl Drop for InFlight {
-    fn drop(&mut self) {
+impl InFlight {
+    /// Gives the slot back and prunes the entry when nothing is left of
+    /// it, under one lock.
+    fn release(&mut self) {
+        if !self.held {
+            return;
+        }
+        self.held = false;
         let now = (self.sessions.clock)();
         let mut store = self.sessions.store();
         if let Some(attempts) = store.attempts.get_mut(&self.key) {
@@ -108,6 +140,12 @@ impl Drop for InFlight {
                 store.attempts.remove(&self.key);
             }
         }
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -135,13 +173,36 @@ impl Sessions {
 }
 
 /// No session yet, signing in through `auth` and reading the time from
-/// `clock`.
+/// `clock`, one check given [`SIGN_IN_TIMEOUT`].
 pub(crate) fn sessions(auth: Arc<dyn Authenticator>, clock: Clock) -> Arc<Sessions> {
+    sessions_with(auth, clock, SIGN_IN_TIMEOUT)
+}
+
+/// The same with `sign_in_timeout` as the bound on one check.
+fn sessions_with(
+    auth: Arc<dyn Authenticator>,
+    clock: Clock,
+    sign_in_timeout: Duration,
+) -> Arc<Sessions> {
     Arc::new(Sessions {
         auth,
         clock,
+        sign_in_timeout,
         state: Mutex::new(Store::default()),
     })
+}
+
+/// The session routes, with one sign-in's check bounded by
+/// `sign_in_timeout`: a check that has not answered by the bound is
+/// answered 503 `session-unavailable`, counts as no lockout failure and
+/// gives its slot in the lockout counters back (the next request is
+/// checked, not refused 429).
+pub fn routes_with_sign_in_timeout(
+    auth: Arc<dyn Authenticator>,
+    clock: Clock,
+    sign_in_timeout: Duration,
+) -> axum::Router {
+    routes(sessions_with(auth, clock, sign_in_timeout))
 }
 
 /// `POST`, `GET` and `DELETE /api/session` over `state`.
@@ -175,11 +236,17 @@ async fn sign_in(
         attempts
             .failures
             .retain(|t| now.saturating_duration_since(*t) < WINDOW);
-        // Locked, or as many guesses pending as would lock it: the end of
-        // the lock, or of the one the pending guesses would cause.
+        attempts
+            .refusals
+            .retain(|t| now.saturating_duration_since(*t) < WINDOW);
+        // Locked, or as many checks pending as would fill either counter:
+        // the end of the lock, or of the one the pending checks would cause.
         let until = match attempts.locked_until.filter(|until| *until > now) {
             Some(until) => Some(until),
             None if attempts.failures.len() + attempts.in_flight >= MAX_FAILURES => {
+                Some(now + WINDOW)
+            }
+            None if attempts.refusals.len() + attempts.in_flight >= MAX_FAILURES => {
                 Some(now + WINDOW)
             }
             None => None,
@@ -195,18 +262,26 @@ async fn sign_in(
         }
         attempts.in_flight += 1;
     }
-    let slot = InFlight {
+    let mut slot = InFlight {
         sessions: s.clone(),
         key: key.clone(),
+        held: true,
     };
     let answer = if password.is_empty() {
         Err(AuthError::BadCredentials)
     } else {
         let auth = s.auth.clone();
         let typed = user.clone();
-        tokio::task::spawn_blocking(move || auth.authenticate(&typed, &password))
-            .await
-            .unwrap_or(Err(AuthError::Unavailable))
+        let check = tokio::task::spawn_blocking(move || auth.authenticate(&typed, &password));
+        match tokio::time::timeout(s.sign_in_timeout, check).await {
+            Ok(grounded) => grounded.unwrap_or(Err(AuthError::Unavailable)),
+            // The check did not answer: the bff's own failure, so nothing
+            // is recorded, and `slot` gives its place back as it is
+            // dropped: the next request is checked, not refused 429.
+            Err(_elapsed) => {
+                return error(StatusCode::SERVICE_UNAVAILABLE, "session-unavailable", &[])
+            }
+        }
     };
     match answer {
         Ok(identity) => {
@@ -219,7 +294,10 @@ async fn sign_in(
             let body = identity_json(&identity);
             let mut store = s.store();
             if let Some(attempts) = store.attempts.get_mut(&key) {
+                // A right password ends the pair's counters, the refusals
+                // included: whoever holds it has nothing to guess.
                 attempts.failures.clear();
+                attempts.refusals.clear();
                 attempts.locked_until = None;
             }
             store
@@ -251,7 +329,24 @@ async fn sign_in(
             drop(slot);
             error(StatusCode::UNAUTHORIZED, "session-bad-credentials", &[])
         }
+        Err(AuthError::NotAdministrator) => {
+            // The refusal confirms the password: it joins the refusals' own
+            // counter, never the failures'. The 429 check ran above, before
+            // the check. The slot goes back with the refusal recorded.
+            let now = (s.clock)();
+            let mut store = s.store();
+            let attempts = store.attempts.entry(key).or_default();
+            attempts
+                .refusals
+                .retain(|t| now.saturating_duration_since(*t) < WINDOW);
+            attempts.refusals.push(now);
+            drop(store);
+            slot.release();
+            error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
+        }
         Err(AuthError::Unavailable) => {
+            // The system could not check at all: the bff's failure, so
+            // nothing is recorded and `slot` is dropped with the request.
             error(StatusCode::SERVICE_UNAVAILABLE, "session-unavailable", &[])
         }
     }
@@ -328,14 +423,36 @@ pub(crate) fn error(status: StatusCode, key: &str, args: &[u64]) -> Response {
         .into_response()
 }
 
-/// The system's authenticator. The operating system's check (PAM, LogonUser)
-/// is not wired yet, so every sign-in is unavailable; under the test
-/// redirect (`PRIVATE_AI_DATA_ROOT`) it must stay so, never asking the real
-/// system.
-pub(crate) struct SystemAuthenticator;
+/// The system's authenticator: asks `private-ai-manager`'s
+/// `Authenticate` over a client opened through `connect`, the way the
+/// bff's other routes open theirs (the manager answers only the bff's
+/// account; under the test redirect (`PRIVATE_AI_DATA_ROOT`) `connect`
+/// reaches no manager, so a test never asks the real system).
+pub struct SystemAuthenticator {
+    connect: Connect,
+}
+
+impl SystemAuthenticator {
+    pub fn new(connect: Connect) -> Self {
+        Self { connect }
+    }
+}
 
 impl Authenticator for SystemAuthenticator {
-    fn authenticate(&self, _user: &str, _password: &str) -> Result<Identity, AuthError> {
-        Err(AuthError::Unavailable)
+    fn authenticate(&self, user: &str, password: &str) -> Result<Identity, AuthError> {
+        // One client per check, as the bff's other routes open theirs. The
+        // password travels to the manager only: `AuthError` carries no
+        // text, so the manager's detail cannot ride along to the browser.
+        match (self.connect)().and_then(|client| client.authenticate(user, password)) {
+            Ok((true, true)) => Ok(Identity {
+                user: user.to_string(),
+                can_configure: true,
+            }),
+            Ok((true, false)) => Err(AuthError::NotAdministrator),
+            // A wrong password is never a sign-in: the group of an account
+            // whose password was wrong is not consulted.
+            Ok((false, _)) => Err(AuthError::BadCredentials),
+            Err(_) => Err(AuthError::Unavailable),
+        }
     }
 }

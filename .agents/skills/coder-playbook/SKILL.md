@@ -195,6 +195,24 @@ Lessons only: the rules are in `AGENTS.md`.
   from a `Drop` guard (`session.rs` `InFlight`): axum drops the handler future when the client goes
   away, and a decrement written after the `.await` would then never run. Never drop the guard while
   holding the store's guard (it locks the same mutex).
+- The sign-in lockout counts the 403 refusals (NotAdministrator) in a list of their own per
+  (lowercased user, IP) within the window, never in `failures`; the gate answers 429 on
+  `failures + in_flight >= MAX` or on `refusals + in_flight >= MAX` (two match arms, never a sum of the
+  two). That is what makes a burst deterministic with no locking trick: every asked check of a pair is
+  in flight or already recorded, so at the k-th admission both counters read k-1 and the pair is asked
+  at most MAX times, in every timing.
+- Bounding one check: `tokio::time::timeout(bound, spawn_blocking(..))` answers at the bound while the
+  blocking thread keeps running, so the check's result must be written to the store only by the handler
+  after the await (a timed-out handler drops the join handle and records nothing), and the `InFlight`
+  guard's Drop frees the slot, so the request after a timeout is checked, not refused 429.
+- A test that pins "403 is answered only after the password check" and then asserts the fake's per-user
+  call count stayed at the lockout limit cannot pass: a 403 for a *new* (user, IP) pair needs a call, so
+  the count is limit + 1. The only state that answers 403 without asking (a memo by user name) breaks
+  the burst test's `forbidden == calls`. Report it to the tester; do not add the memo.
+- A field named `connect` typed `Arc<dyn Fn() -> R>`: `self.connect()` is a hard error ("field, not
+  a method"); call the field with `(self.connect)()`. A method call on `Box<dyn Trait>` (the bff's
+  `Client` alias) needs no `use` of the trait: the alias's dyn type names it and rustc resolves
+  the method.
 - The fe's JSX-text lint (`strings.test.ts`) flags letters between any `>` and the next `<` with no
   `{`/`}` between them, code included (`</p>\n  else if (x) content =`): write each branch as a braced
   `if (..) { return <..> }` so a brace always sits between the tags.

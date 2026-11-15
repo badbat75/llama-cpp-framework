@@ -46,7 +46,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - Format one file with `rustfmt --edition 2021 <file>`, then `cargo fmt -p <crate> --check`.
 - Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
   (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
-  compile error as the red).
+  compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`).
 - Comments never cite PLAN.md step or slice numbers; name the feature.
 - `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
 - A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
@@ -338,6 +338,40 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## bff and web UI
 
+- Sign-in split for tests: the manager's `(ok, can_configure)` mapping belongs to `SystemAuthenticator`
+  (fake `ManagerClient` over a `Connect`, plain `#[test]`s in `tests/authenticator.rs`); the HTTP
+  mapping (403 `session-not-administrator` is no credential failure: refusals are a counter of their
+  own per (lowercased name, IP) within the window, refusals + in-flight reaching the limit makes the
+  next request 429, and the 429 check runs first) is pinned in `tests/session.rs` with the `Account`
+  fake holding `answer: Result<Identity, AuthError>`, so the fake models the seam's mapped outcome,
+  not the pair.
+- A counter rule is pinned as `N` sequential requests of that kind (each asked and answered), then the
+  next request 429 without asking, then the same after the window moved (the count expires), then the
+  two counters apart (4 of one + 4 of the other: the 5th of each is asked, and locks). Every pin needs
+  a fresh `App`: one lockout per fixture. A burst is deterministic in the same shape: each request
+  that passes the gate is asked and answers 403, so `403 count == calls` and `403 + 429 == burst`, and
+  the asked count lands exactly on the limit serialized or concurrent.
+- A "does not lock the other pair" test whose authenticator log is by name, not by (name, address):
+  put the asked-while-locked assert right after the locked pair's 429. A later request of the fresh
+  pair (same name, other address) is legitimately asked, and a 403 answers only after the ask, so the
+  name's total ends at `MAX_FAILURES + 1`, never `MAX_FAILURES`.
+- A per-account `hang: Duration` in the fake authenticator (sleep in `authenticate`, before the answer)
+  serves the fast and the hanging account in one fake; let the hanging answer be a 200 so an unbounded
+  check reads `left: 200, right: 503`, the reason for the red. Keep the sleep 20x the injected bound
+  and assert the reply came in less than half the sleep: the bound answers fast, a wait for the answer
+  is an order of magnitude late. Sleeps run in `spawn_blocking`, the runtime joins them at the end.
+- Inject a production const (the sign-in bound) into an integration test with a new `pub` builder in
+  the module that takes it (`session::routes_with_sign_in_timeout(auth, clock, bound)`): one new
+  function, no call site of `router_with_session` changes (other test files keep compiling), a `pub`
+  stub in a lib crate is no dead code, underscore-prefix the unused parameter. Its 10 s production
+  value cannot be waited out: pin it with a source lint over `src/*.rs` (the `const SIGN_IN_TIMEOUT`
+  line carries `from_secs(10)`, and the name appears at least twice: declared and used), never
+  `assert_eq!(crate::SIGN_IN_TIMEOUT, ..)` (a missing const is a compile error that hides the binary).
+- `todo!()` emits no clippy diagnostic on this toolchain (checked with `-W clippy::todo`): stub reds
+  under `-D warnings` are only `dead_code` on fields the stub does not read; underscore-prefix stub
+  params. A `todo!` in an axum handler body unwinds the `oneshot` caller: a test task spawned
+  concurrently reads it as `JoinError::Panic`, not a 503; a panic inside a `spawn_blocking` closure
+  is caught by the `JoinHandle` and mapped by the handler (`unwrap_or`).
 - An axum router is tested with `router().oneshot(request)` and `BodyExt::collect` in `#[tokio::test]`;
   a route asking the manager through `router_with(connect, timeout)` and a fake `ManagerClient`, every
   request under `tokio::time::timeout`; a sleeping fake runs in `spawn_blocking`, which the runtime
