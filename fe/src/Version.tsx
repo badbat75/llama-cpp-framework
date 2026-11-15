@@ -1,13 +1,13 @@
 // The framework version, read from the bff's /api/version.
 import { useEffect, useState } from 'react'
+import { call } from './api.ts'
 import { t } from './strings.ts'
 
 /** The version from the reply, or null when the reply is not one. */
 async function readVersion(): Promise<string | null> {
   try {
-    const reply = await fetch('/api/version')
-    if (!reply.ok) return null
-    const body: unknown = await reply.json()
+    const { ok, body } = await call('/api/version')
+    if (!ok) return null
     if (typeof body !== 'object' || body === null) return null
     const version = (body as { version?: unknown }).version
     return typeof version === 'string' && version !== '' ? version : null

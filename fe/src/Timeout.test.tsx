@@ -15,6 +15,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
+import Version from './Version.tsx'
 import { call } from './api.ts'
 import {
   before,
@@ -346,6 +347,27 @@ test('1c.47c, 47e: a held idle read is aborted 15 000 ms after it was sent; the 
   expect(reads(bff), 'none 4 999 ms after the abort').toBe(2)
   await advance(1)
   expect(reads(bff), 'one new GET 5 000 ms after the abort').toBe(3)
+})
+
+test('1c.47b, 47e: a held version read is not aborted at 14 999 ms; at 15 000 ms it is, and the page shows version-unavailable', async () => {
+  fakeClock()
+  const h = heldFetch()
+  render(<Version />)
+  await flush()
+  const signal = h.signals[0]
+  expect(signal, 'the version read passes a signal to fetch').toBeInstanceOf(
+    AbortSignal,
+  )
+  await advance(14_999)
+  expect(signal!.aborted, 'not aborted at 14 999 ms').toBe(false)
+  expect(screen.queryByText(en('version-unavailable'))).toBeNull()
+  await advance(1)
+  expect(signal!.aborted, 'aborted at 15 000 ms').toBe(true)
+  expect(errorName(signal!.reason)).toBe('TimeoutError')
+  expect(
+    screen.queryByText(en('version-unavailable')),
+    'the page shows version-unavailable',
+  ).not.toBeNull()
 })
 
 // ── call(): the limits (47, 47a) ────────────────────────────────────────
