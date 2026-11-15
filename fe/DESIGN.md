@@ -220,7 +220,10 @@ Each is one React component, reused by every page.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
   `1e3` and changes on the wheel **(preference)**). Paths and URLs in monospace.
 - **Secret input**: `type="password"`, `autocomplete="off"`, plus a **Show** toggle button
-  (`aria-pressed`).
+  (`aria-pressed`), disabled while there is nothing to reveal (No key ticked). A secret the API withholds from this user
+  (`withheld` in the reply) has no input and no Show: the field says in a sentence that a value is set
+  and who can see it, never a mask string standing in for the value (a mask would read as the
+  secret's length).
 - **Select**: a native `<select>`.
 - **Checkbox list**: a `<fieldset>` of native checkboxes (Bind to). Its error sits inside the
   fieldset after the last row; the checked rows (the value) get `aria-invalid` and `aria-describedby`

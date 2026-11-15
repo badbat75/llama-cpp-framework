@@ -30,6 +30,13 @@ export type ServerDoc = {
   defaults: Keys
   limits?: unknown
   interfaces: { value: string; label: string }[]
+  /** The keys the bff did not send to this session (2.8). */
+  withheld?: unknown
+}
+
+/** Whether the bff withheld the API key from this session (27a). */
+export function withholdsKey(doc: ServerDoc): boolean {
+  return Array.isArray(doc.withheld) && doc.withheld.includes('OpencodeApiKey')
 }
 
 /** llama-server's log levels, by number (data, not text). */
@@ -664,6 +671,7 @@ export default function ServerForm({
           ticked={v.OpencodeApiKey.ticked}
           value={autoBox(v.OpencodeApiKey)}
           readOnly={readOnly}
+          withheld={withholdsKey(doc)}
           onTick={tick('OpencodeApiKey')}
           onText={text('OpencodeApiKey')}
         />

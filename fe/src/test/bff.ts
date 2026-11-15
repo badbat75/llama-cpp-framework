@@ -86,6 +86,7 @@ export const EN: Record<string, string> = {
   'server-base-url-hint':
     'The address integrations use (opencode.json and Claude Code).\nDefault: built from host and port, with /v1 added for opencode.json; the default shown is that of the saved settings. Untick default to enter your own, for a proxy or gateway.',
   'server-api-key': 'API key',
+  'server-api-key-withheld': 'A key is set. Only an administrator can see it.',
   'server-cpu-threads': 'CPU threads',
   'server-cpu-threads-hint':
     "How many CPU threads generate tokens. More won't help once the GPU is the limit.\nDefault: llama.cpp uses the physical core count. Maximum = the logical processors of the computer running the server.\nFlag: --threads",
@@ -216,8 +217,14 @@ export const INSTANCES: Instance[] = [
   { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
 ]
 
-/** A server document (GET /api/instances/{id}/server) with every kind of value. */
-export function serverDoc(values: Record<string, unknown> = {}) {
+/**
+ * A server document (GET /api/instances/{id}/server) with every kind of value.
+ * `extra` adds or replaces top-level members, such as `withheld`.
+ */
+export function serverDoc(
+  values: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {},
+) {
   return {
     revision: 'r-1731628800-42',
     values: {
@@ -258,6 +265,7 @@ export function serverDoc(values: Record<string, unknown> = {}) {
       ThreadsBatch: [1, 32],
     },
     interfaces: [{ value: '192.168.1.20', label: 'enp5s0 (192.168.1.20)' }],
+    ...extra,
   }
 }
 

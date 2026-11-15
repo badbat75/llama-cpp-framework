@@ -154,8 +154,9 @@ route, and returning to it after sign-in).
 26. Each field's hint toggle (D5.2) works in 1a: button named "About `<label>`" (`field-about` plus
     the label), `aria-expanded` false, then true on Enter, Space or click, revealing the hint with one
     paragraph per line of the text.
-27. The API key shows masked; its **Show** button (`field-show`, `aria-pressed`) reveals it, also
-    for a user (a user may read the file: manager `control`).
+27. **Superseded by 27a to 27e (2.8)** for a user: the API key reaches administrators only (user,
+    2026-11-15). For an administrator it still holds: the key shows masked; its **Show** button
+    (`field-show`, `aria-pressed`) reveals it.
 
 ### 2.6 Decided at the review of 1a (2026-11-15)
 
@@ -179,6 +180,8 @@ of the brief.
 - **Sign-in busy** (12): the button stays enabled (no `disabled`, no `aria-disabled`, so focus
   never drops); its text is `signin-busy` and a second submit sends nothing.
 - **Show** (27): enabled for every role in 1a, also while No key is ticked; 5.3 governs it from 1b.
+  **Superseded by 27b and 27c (2.8)**: for a user, Show is not rendered when the key is withheld and
+  is disabled when there is no key.
 - **Reads of `/api/instances`**: in 1a the nav, the Overview and the instance page each read it on
   their own. 1c's polling (41, 42) must share one read across them, so the nav and the badge never
   disagree.
@@ -211,6 +214,71 @@ Two observations from running 1a against the real bff. Both ride along with slic
     `fe/index.html` (one `link rel="icon"`, a `data:image/svg+xml` href) or checked in review.
     Source: [MDN, `rel="icon"`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel#icon).
     Unverified: which browsers ignore an SVG icon and still ask for `/favicon.ico`.
+
+### 2.8 The API key reaches administrators only (user, 2026-11-15)
+
+The bff no longer sends `OpencodeApiKey` to a session whose `canConfigure` is false: its value is
+always `null`, and the document carries `"withheld": ["OpencodeApiKey"]` when the file has a key
+(`fe/briefs/api-contract.md`, `GET /api/instances/{id}/server`, last bullet). These criteria replace
+27 for a user and the Show bullet of 2.6; they change only F4.
+
+27a. **The three views of F4.** The fe picks one from the session's `canConfigure` and the
+    document's `withheld`. "Withheld" means `withheld` is an array that contains the string
+    `"OpencodeApiKey"`; anything else (absent, `[]`, an array of other names, `null`, not an array)
+    is "not withheld". Names in `withheld` the fe does not know are ignored.
+    - user (`canConfigure` false), withheld: 27b;
+    - user, not withheld: 27c;
+    - administrator (`canConfigure` true): 27d.
+27b. **User, key withheld.** The group "API key" (`server-api-key`, the `fieldset` of 5.1) holds, in
+    this order: the checkbox "No key" (`field-no-key`) **not checked** and disabled; then a paragraph
+    `server-api-key-withheld` ("A key is set. Only an administrator can see it."). There is **no
+    password input and no Show button** in this view: nothing that looks like a hidden value the user
+    could uncover. The hint toggle "About API key" is as on every field (26). The group has
+    `aria-describedby` pointing at the paragraph, so a screen reader that enters the group (for
+    example by tabbing to its hint toggle) also reads "A key is set. Only an administrator can see
+    it."; in reading order the paragraph follows the checkbox. The paragraph is plain text, not a live
+    region (it comes with the page) and not `--danger` (it is not an error); its text is drawn in
+    `--muted`, like the values of disabled controls (`fe/DESIGN.md`, "Disabled controls stay readable";
+    **(preference)**). The view is the same whatever `values.OpencodeApiKey` holds: if a bff sent a
+    value anyway, withheld wins and the value is rendered nowhere.
+    ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [1.3.2](https://www.w3.org/TR/WCAG22/#meaningful-sequence),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value): the checkbox's state must be true, so it
+    is not checked when a key exists; `aria-describedby` is a global attribute:
+    [WAI-ARIA 1.2](https://www.w3.org/TR/wai-aria-1.2/#aria-describedby))
+27c. **User, not withheld.** As 5.2: `values.OpencodeApiKey` `null` or empty, so "No key" checked
+    and disabled, the password input disabled and empty. **Show follows 5.3 for every role**: here it
+    is rendered, `disabled`, `aria-pressed="false"`, since No key is ticked (it would reveal an empty
+    box). The 2.6 rule "enabled for every role, also while No key is ticked" no longer applies. (A
+    user given a value with no `withheld`, which the contract rules out, sees it masked with Show
+    enabled, as 5.2 and 5.3 say: the bff decides who reads the key, not the fe.)
+27d. **Administrator.** Unchanged: 5.2, 5.3 and 1b's editing; the key masked, Show reveals it. An
+    administrator's document never carries `withheld` naming `OpencodeApiKey` (the contract). If one
+    does anyway, the fe treats the whole read as failed: `server-load-failed` in place of the form
+    (24), no save bar. Why not ignore it: the value would be `null`, so the form would show No key
+    ticked and a save would send `null`, erasing the key from the file. Why not show 27b inside an
+    editable form: it adds a state to the form (what does a save send for F4?) for a case the
+    contract excludes. A failed read loses nothing; reopening the page reads again.
+27e. **Nothing in the page holds a key or a stand-in for one in 27b.** No `input` of any type for F4
+    (no password, no hidden, no text input), no `value`, `title`, `placeholder`, `data-*` or
+    `aria-*` attribute carrying a key, and no mask string (no run of `•`, `*` or similar characters):
+    a fake mask would read as a secret's length. Testable by stubbing a user document with
+    `"withheld": ["OpencodeApiKey"]` and, as a contract breach, `values.OpencodeApiKey: "sk-test"`:
+    the rendered HTML contains neither `sk-test` nor `•`, and the group holds exactly one `input`,
+    the checkbox.
+
+Differs from the GUI on purpose: `pai-config` and `pai` read the file through the manager, which
+gives it whole to any caller allowed `control` (`crates/manager/src/manager/pipe.rs`, the test
+`reading_an_instance_file_asks_control_and_a_refused_caller_reads_nothing`), so they show the key to
+every user who may read the file. On the web the bff withholds it (`crates/bff/src/server.rs`), by the
+user's decision. Whether the GUI follows is out of scope. A blank key in the file is unset
+(`server_cfg.rs`, `opt_nonblank`), so a user never sees 27b for an empty key.
+
+Strings added:
+
+| Key | English |
+|---|---|
+| `server-api-key-withheld` | A key is set. Only an administrator can see it. |
 
 ## 3. Slice 1b: editing and saving (administrators)
 
@@ -437,7 +505,7 @@ Same cards and order as the GUI. Card headings are `h3`; the SDK tuning groups a
 | F1 | Network (`server-network`) | Port (`server-port`) | default box + text, numeric | group "Port": checkbox `field-default`, textbox "Port" | `Port` |
 | F2 | | Bind to (`server-bind-to`) | checkbox list | group "Bind to": one checkbox per row (5.2) | `Hostname` |
 | F3 | | Base URL (`server-base-url`) | default box + text | group: checkbox `field-default`, textbox | `OpencodeBaseUrl` |
-| F4 | | API key (`server-api-key`) | No key box + secret + Show | group: checkbox `field-no-key`, password input labelled "API key" (found by label: a password input has no ARIA role), button `field-show` | `OpencodeApiKey` |
+| F4 | | API key (`server-api-key`) | No key box + secret + Show | group: checkbox `field-no-key`, password input labelled "API key" (found by label: a password input has no ARIA role), button `field-show`; for a user whose key is withheld, the checkbox and the paragraph `server-api-key-withheld` instead (27b) | `OpencodeApiKey` |
 | F5 | Resources (`server-resources`) | CPU threads (`server-cpu-threads`) | auto box + text, numeric | group: checkbox `field-auto`, textbox | `Threads` |
 | F6 | | Batch threads (`server-batch-threads`) | auto box + text, numeric | same | `ThreadsBatch` |
 | F7 | | Max models (`server-max-models`) | default box + text, numeric | group: checkbox `field-default`, textbox | `ModelsMax` |
@@ -464,7 +532,7 @@ Every field also has its hint toggle (`field-about`) and hint `<field key>-hint`
 - **F3**: `null` → box ticked, textbox disabled showing `defaults.OpencodeBaseUrl` (computed by the
   bff from the saved file; it does not follow unsaved edits of Port or Bind to, said in the hint).
 - **F4**: `null` or empty → No key ticked, password box disabled and empty. Else No key clear, the key
-  masked.
+  masked. For a user whose key is withheld: 27b (No key clear, no password box, no Show).
 - **F5, F6**: `null` → auto ticked, textbox disabled and empty. A number → shown. Unticking leaves
   the textbox empty and focused. Differs from the GUI on purpose: a text field, not a slider (exact
   entry, works on touch, the same Field as the rest); same range, 1 to the server's CPU count.
@@ -494,7 +562,8 @@ loads clean, and a save then sends `true`.
 ### 5.3 Dependencies (1b; in 1a everything is disabled anyway)
 
 - F1, F3, F7, F8: textbox enabled only while its default box is clear.
-- F4: password box and Show enabled only while No key is clear.
+- F4: password box and Show enabled only while No key is clear, for every role (27c); in a user's
+  read-only form the password box stays disabled and only Show follows this rule.
 - F5, F6: textbox enabled only while auto is clear.
 - F2: checking `0.0.0.0` unchecks every other row and disables them; unchecking it re-enables them
   and leaves localhost checked. Checking another row unchecks `0.0.0.0`. Unchecking the last checked
@@ -699,7 +768,8 @@ GUI's words.
   "Overview"; button "Sign in" / "Sign out"; textbox "User name"; "Password" (by label); heading level
   1 "default"; heading level 2 "Server"; headings level 3 per card; group "Port" with checkbox
   "default" and textbox "Port"; group "Bind to" with checkbox "localhost (only the computer running
-  the server)"; combobox "Log level"; button "About Port" (`aria-expanded`); button "Show"
-  (`aria-pressed`); buttons "Save changes", "Discard", "Start", "Stop", "Restart"; checkbox "start
-  llama-server when the system starts"; dialog "Discard unsaved changes?".
+  the server)"; combobox "Log level"; button "About Port" (`aria-expanded`); group "API key" with
+  description "A key is set. Only an administrator can see it." (27b); button "Show" (`aria-pressed`);
+  buttons "Save changes", "Discard", "Start", "Stop", "Restart"; checkbox "start llama-server when
+  the system starts"; dialog "Discard unsaved changes?".
 - Every requirement of D8 applies; contrast, targets and reflow are checked in review.

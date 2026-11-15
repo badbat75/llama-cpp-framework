@@ -3,7 +3,7 @@
 // the form, or the message saying why not.
 import { useEffect, useState } from 'react'
 import { apiError, call, isRecord } from './api.ts'
-import ServerForm, { type ServerDoc } from './ServerForm.tsx'
+import ServerForm, { type ServerDoc, withholdsKey } from './ServerForm.tsx'
 import type { Session } from './session.ts'
 import { t } from './strings.ts'
 
@@ -143,6 +143,10 @@ function Body({
     return <p role="status">{t('server-loading')}</p>
   }
   if ('doc' in answer) {
+    // An administrator is never sent a withheld key (27d): a save would erase it.
+    if (canConfigure && withholdsKey(answer.doc)) {
+      return <p>{t('server-load-failed')}</p>
+    }
     return (
       <ServerForm
         id={id}

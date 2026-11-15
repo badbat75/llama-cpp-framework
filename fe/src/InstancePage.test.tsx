@@ -914,26 +914,193 @@ test('1a.26: the About toggle reveals the hint, one paragraph per line, and hide
 })
 
 // For an administrator, 1b's dependencies govern Show (5.3): ServerSave.test.tsx.
-test('1a.27 (2.6): Show stays enabled for a user while No key is ticked', async () => {
-  for (const session of ['user'] as const) {
-    const main = await loaded({
-      session,
-      server: () => reply(200, serverDoc({ OpencodeApiKey: null })),
-    })
-    const key = group(main, 'API key')
+// The API key reaches administrators only (2.8, criteria 27a to 27e).
+
+/** A user's document whose key the bff withheld (the contract's shape). */
+function withheldDoc(
+  key: unknown = null,
+  withheld: unknown = ['OpencodeApiKey'],
+) {
+  return serverDoc({ OpencodeApiKey: key }, { withheld })
+}
+
+function noKey(main: HTMLElement): HTMLInputElement {
+  return group(main, 'API key').getByRole('checkbox', {
+    name: en('field-no-key'),
+  }) as HTMLInputElement
+}
+
+function apiKeyGroup(main: HTMLElement): HTMLElement {
+  return within(main).getByRole('group', { name: en('server-api-key') })
+}
+
+test('1a.27d (2.8): an administrator whose document withholds the key gets server-load-failed, no form, no save bar', async () => {
+  for (const [what, doc] of [
+    ['withheld, key null', withheldDoc(null)],
+    ['withheld, key sent', withheldDoc('sk-local-123')],
+    [
+      'withheld among other names',
+      withheldDoc(null, ['Other', 'OpencodeApiKey']),
+    ],
+  ] as const) {
+    fakeBff({ session: 'admin', server: () => reply(200, doc) })
+    render(<App />)
+    const main = screen.getByRole('main')
     expect(
-      checked(key.getByRole('checkbox', { name: en('field-no-key') })),
-      session,
-    ).toBe(true)
-    const show = key.getByRole('button', { name: en('field-show') })
-    expect((show as HTMLButtonElement).disabled, session).toBe(false)
-    expect(show.getAttribute('aria-disabled'), session).toBeNull()
+      await within(main).findByText(en('server-load-failed')),
+      what,
+    ).toBeTruthy()
+    expect(within(main).queryByRole('group'), what).toBeNull()
+    expect(
+      within(main).queryByRole('button', { name: en('save-button') }),
+      what,
+    ).toBeNull()
+    expect(document.body.innerHTML, what).not.toContain('sk-local-123')
+    expect(
+      within(main).getByRole('heading', { level: 2, name: en('server-title') }),
+      what,
+    ).toBeTruthy()
     cleanup()
     vi.unstubAllGlobals()
   }
 })
 
-test('1a.27: the API key shows masked; Show reveals it, also for a user', async () => {
+test('1a.27d (2.8): an administrator whose withheld does not name the key reads the form as before', async () => {
+  for (const withheld of [[], ['Other'], null]) {
+    const main = await loaded({
+      session: 'admin',
+      server: () => reply(200, serverDoc({}, { withheld })),
+    })
+    const what = JSON.stringify(withheld)
+    expect(noKey(main).checked, what).toBe(false)
+    expect(apiKey(main).value, what).toBe('sk-local-123')
+    expect(within(main).queryByText(en('server-load-failed')), what).toBeNull()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends it anyway', async () => {
+  const main = await loaded({
+    session: 'user',
+    server: () => reply(200, withheldDoc('sk-test')),
+  })
+  const html = document.documentElement.outerHTML
+  expect(html).not.toContain('sk-test')
+  expect(html).not.toContain('•')
+  const box = apiKeyGroup(main)
+  const inputs = [...box.querySelectorAll('input')]
+  expect(inputs).toHaveLength(1)
+  expect(inputs[0]!.type).toBe('checkbox')
+  expect(inputs[0]).toBe(noKey(main))
+  expect(box.textContent ?? '').not.toMatch(/[•*●]{2,}/)
+})
+
+test('1a.27b (2.8): a user whose key is withheld sees No key clear and disabled, then the withheld paragraph; no password box, no Show', async () => {
+  for (const withheld of [
+    ['OpencodeApiKey'],
+    ['SomethingNew', 'OpencodeApiKey'],
+  ]) {
+    const what = JSON.stringify(withheld)
+    const main = await loaded({
+      session: 'user',
+      server: () => reply(200, withheldDoc(null, withheld)),
+    })
+    const box = apiKeyGroup(main)
+    const g = within(box)
+    const checkbox = noKey(main)
+    expect(checkbox.checked, what).toBe(false)
+    expect(checkbox.disabled, what).toBe(true)
+    const paragraph = g.getByText(en('server-api-key-withheld'))
+    expect(paragraph.tagName, what).toBe('P')
+    expect(before(checkbox, paragraph), what).toBe(true)
+    // Plain text: not a live region, not an alert.
+    expect(paragraph.getAttribute('role'), what).toBeNull()
+    expect(paragraph.getAttribute('aria-live'), what).toBeNull()
+    expect(
+      within(main).queryByLabelText(en('server-api-key'), {
+        selector: 'input',
+      }),
+      what,
+    ).toBeNull()
+    expect(g.queryByRole('button', { name: en('field-show') }), what).toBeNull()
+    // The hint toggle is as on every field (26).
+    expect(g.getByRole('button', { name: about('API key') }), what).toBeTruthy()
+    // The group is described by the paragraph.
+    expect(paragraph.id, what).not.toBe('')
+    const described = (box.getAttribute('aria-describedby') ?? '').split(/\s+/)
+    expect(described, what).toContain(paragraph.id)
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('1a.27b (2.8, 6): with the key withheld Tab reaches only the About toggle in the API key group', async () => {
+  await loaded({ session: 'user', server: () => reply(200, withheldDoc()) })
+  const names = tabbable().map(nameOf)
+  expect(names.slice(-FIELDS.length)).toEqual(FIELDS.map(about))
+})
+
+test('1a.27c (2.8): a user with no key sees No key ticked, the password box disabled and empty, Show rendered but disabled', async () => {
+  for (const key of [null, '']) {
+    const what = JSON.stringify(key)
+    const main = await loaded({
+      session: 'user',
+      server: () => reply(200, serverDoc({ OpencodeApiKey: key })),
+    })
+    expect(noKey(main).checked, what).toBe(true)
+    expect(noKey(main).disabled, what).toBe(true)
+    expect(apiKey(main).disabled, what).toBe(true)
+    expect(apiKey(main).value, what).toBe('')
+    const show = group(main, 'API key').getByRole('button', {
+      name: en('field-show'),
+    }) as HTMLButtonElement
+    expect(show.disabled, what).toBe(true)
+    expect(show.getAttribute('aria-pressed'), what).toBe('false')
+    expect(
+      within(main).queryByText(en('server-api-key-withheld')),
+      what,
+    ).toBeNull()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('1a.27a (2.8): withheld absent, empty, naming other keys, null or not an array is not withheld', async () => {
+  for (const withheld of [
+    undefined,
+    [],
+    ['Other'],
+    null,
+    'OpencodeApiKey',
+    { OpencodeApiKey: true },
+  ]) {
+    const what = JSON.stringify(withheld) ?? 'absent'
+    const extra = withheld === undefined ? {} : { withheld }
+    const main = await loaded({
+      session: 'user',
+      server: () => reply(200, serverDoc({ OpencodeApiKey: null }, extra)),
+    })
+    expect(within(main).queryByText(en('server-load-failed')), what).toBeNull()
+    // 27c, not 27b.
+    expect(noKey(main).checked, what).toBe(true)
+    expect(apiKey(main).disabled, what).toBe(true)
+    const show = group(main, 'API key').getByRole('button', {
+      name: en('field-show'),
+    }) as HTMLButtonElement
+    expect(show.disabled, what).toBe(true)
+    expect(
+      within(main).queryByText(en('server-api-key-withheld')),
+      what,
+    ).toBeNull()
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+// 27c's aside: a user given a value with no withheld (a contract breach) sees
+// it masked with Show enabled; the bff decides who reads the key, not the fe.
+test('1a.27c (2.8): a user given a key without withheld sees it masked; Show reveals it', async () => {
   const main = await loaded({ session: 'user' })
   const input = apiKey(main)
   expect(input.type).toBe('password')

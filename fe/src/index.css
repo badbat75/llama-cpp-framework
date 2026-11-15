@@ -418,6 +418,12 @@ legend.field-label {
   font-size: 0.875rem;
 }
 
+/* A secret the bff withheld: plain text, not an error (01-server.md 27b). */
+.withheld {
+  margin: 0;
+  color: var(--muted);
+}
+
 .field-hint p {
   margin: 0 0 var(--space-1);
 }

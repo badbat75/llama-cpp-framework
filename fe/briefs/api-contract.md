@@ -88,6 +88,11 @@ manager's detail never reaches the body).
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
 - `interfaces` are the server machine's network interfaces (`net_ifaces::interfaces()`).
 - `revision` is opaque; the fe sends it back on a save.
+- **`OpencodeApiKey` goes to administrators only** (user, 2026-11-15). For a session whose
+  `canConfigure` is false, `values.OpencodeApiKey` is always `null`, and the document gains
+  `"withheld": ["OpencodeApiKey"]` when the file has a key; `withheld` is absent or `[]` when the
+  file has none. The read-only page shows that a key is set, never its value. An administrator
+  gets the value as before and no `withheld`. The bff decides from the session's `canConfigure`.
 
 ### `PUT /api/instances/{id}/server`
 

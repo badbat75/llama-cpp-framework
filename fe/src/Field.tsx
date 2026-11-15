@@ -93,11 +93,16 @@ function GroupField({
   label,
   hint,
   error,
+  describedBy,
   children,
-}: Common & { children: ReactNode }) {
+}: Common & { describedBy?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
-    <fieldset className="field" aria-labelledby={`${id}-label`}>
+    <fieldset
+      className="field"
+      aria-labelledby={`${id}-label`}
+      aria-describedby={describedBy}
+    >
       <legend className="field-label">
         <span id={`${id}-label`}>{label}</span>
         <HintToggle
@@ -199,7 +204,8 @@ export function DefaultBoxField({
 
 /**
  * A secret: a `No key` box, the masked input and a Show toggle. Ticked, the
- * input and, on an editable form, Show are disabled.
+ * input and Show are disabled. Withheld (2.8, 27b), the box is clear and a
+ * sentence says a value is set, with no input and no Show.
  */
 export function SecretField({
   id,
@@ -210,6 +216,7 @@ export function SecretField({
   ticked,
   value,
   readOnly,
+  withheld,
   onTick,
   onText,
 }: Common & {
@@ -217,10 +224,34 @@ export function SecretField({
   ticked: boolean
   value: string
   readOnly: boolean
+  /** The bff did not send the value to this session. */
+  withheld: boolean
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
   const [shown, setShown] = useState(false)
+  if (withheld) {
+    return (
+      <GroupField
+        id={id}
+        label={label}
+        hint={hint}
+        error={error}
+        describedBy={`${id}-withheld`}
+      >
+        <Check
+          id={`${id}-box`}
+          text={box}
+          checked={false}
+          disabled
+          onChange={onTick}
+        />
+        <p id={`${id}-withheld`} className="withheld">
+          {t('server-api-key-withheld')}
+        </p>
+      </GroupField>
+    )
+  }
   return (
     <GroupField id={id} label={label} hint={hint} error={error}>
       <Check
@@ -245,7 +276,7 @@ export function SecretField({
         type="button"
         className="secondary"
         aria-pressed={shown}
-        disabled={!readOnly && ticked}
+        disabled={ticked}
         onClick={() => setShown((s) => !s)}
       >
         {t('field-show')}
