@@ -88,7 +88,7 @@ function LabelField({
  * A field of several controls, or a checkbox with its own text: a group named
  * by the label, `<id>-label`, which also names the main text input.
  */
-function GroupField({
+export function GroupField({
   id,
   label,
   hint,
@@ -125,6 +125,7 @@ function Check({
   text,
   checked,
   disabled,
+  inactive,
   onChange,
   aria,
 }: {
@@ -132,6 +133,8 @@ function Check({
   text: string
   checked: boolean
   disabled: boolean
+  /** aria-disabled: focusable, the caller ignores changes. */
+  inactive?: boolean
   onChange: (checked: boolean) => void
   aria?: ReturnType<typeof invalid>
 }) {
@@ -142,6 +145,7 @@ function Check({
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-disabled={inactive || undefined}
         onChange={(e) => onChange(e.target.checked)}
         {...aria}
       />
@@ -285,7 +289,7 @@ export function SecretField({
   )
 }
 
-/** A switch: one checkbox with its own text. */
+/** A switch: one checkbox with its own text, then `children` if any. */
 export function CheckboxField({
   id,
   label,
@@ -294,12 +298,16 @@ export function CheckboxField({
   toggle,
   checked,
   disabled,
+  inactive,
   onChange,
+  children,
 }: Common & {
   toggle: string
   checked: boolean
   disabled: boolean
+  inactive?: boolean
   onChange: (checked: boolean) => void
+  children?: ReactNode
 }) {
   return (
     <GroupField id={id} label={label} hint={hint} error={error}>
@@ -308,9 +316,11 @@ export function CheckboxField({
         text={toggle}
         checked={checked}
         disabled={disabled}
+        inactive={inactive}
         onChange={onChange}
         aria={invalid(id, error)}
       />
+      {children}
     </GroupField>
   )
 }

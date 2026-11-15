@@ -2285,7 +2285,7 @@ test('1b 6: the save bar status is one live region, present before its text chan
   expect(status(main)).toBe(line)
 })
 
-test('1b 6: Tab reaches the enabled controls field by field, then Discard and Save changes', async () => {
+test('1b 6: Tab reaches the run buttons, Start at boot, the enabled controls field by field, then Discard and Save changes', async () => {
   const { main } = await loaded()
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'coder' })
@@ -2295,10 +2295,12 @@ test('1b 6: Tab reaches the enabled controls field by field, then Discard and Sa
   const run = (key: string) =>
     within(main).getByRole('button', { name: en(key) })
   const expected: [string, HTMLElement][] = [
-    // The header's run buttons come first (1c.46a); Start at boot will follow.
+    // The header's run buttons come first, then Start at boot (1c.46a).
     ['Start', run('run-start')],
     ['Stop', run('run-stop')],
     ['Restart', run('run-restart')],
+    ['About Start at boot', about(en('boot-label'))],
+    ['Start at boot', check(main, en('boot-label'), en('boot-toggle'))],
     ['About Port', about('Port')],
     ['Port default', check(main, 'Port', en('field-default'))],
     ['Port', box(main, 'Port')],

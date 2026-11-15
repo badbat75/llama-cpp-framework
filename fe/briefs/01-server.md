@@ -699,6 +699,12 @@ Settings tab's start at boot (`crates/config/src/gui/settings_tab.rs`,
     alert are emptied. While the `PUT` runs the checkbox is `aria-disabled="true"`: a click or Space
     changes nothing and sends nothing (the native toggle is prevented), focus stays on it. No text
     while it runs **(preference)**: one quick call, and the box already shows the value asked for.
+    **Drawn** as a disabled checkbox (D5.2, "Disabled controls stay readable": box border and tick in
+    `--muted` on `--bg`), cursor default, and under `@media (forced-colors: active)` border and tick
+    in `GrayText`, as the inactive buttons (D5.2 Buttons). Never with `opacity` on the input: it
+    dims the focus ring too, to 2.8:1 on `--bg` in light at 0.6, under the 3:1 floor of D5.1
+    ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast), [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible))
+    (added at the review of 1c part 2, where the coder had to choose).
 45d. **Success**: a 2xx whose body is `{"enabled": <boolean>}`: the checkbox takes the reply's value;
     the field's status reads `boot-on` or `boot-off` by that value. A 2xx of another shape is a
     failure (45e, `request-failed`).

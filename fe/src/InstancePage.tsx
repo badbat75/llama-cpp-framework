@@ -1,7 +1,7 @@
 // An instance's page (#/instances/<id>, signed in): the header with the id,
 // the engine, the state and the run controls, kept live from the app's one
-// read of /api/instances, then the Server section (fe/briefs/01-server.md,
-// sections 2.4 and 4).
+// read of /api/instances, and Start at boot, then the Server section
+// (fe/briefs/01-server.md, sections 2.4 and 4).
 import {
   useCallback,
   useEffect,
@@ -11,8 +11,9 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call } from './api.ts'
+import { apiError, call, isRecord } from './api.ts'
 import Dialog from './Dialog.tsx'
+import { CheckboxField, GroupField } from './Field.tsx'
 import {
   errorText,
   type Answer,
@@ -158,7 +159,8 @@ export default function InstancePage({
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
     null,
   )
-  const [asking, setAsking] = useState(false)
+  // The Sign in whose dialog is open (43a, 45e).
+  const [asking, setAsking] = useState<'run' | 'boot' | null>(null)
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
   // Sign-ins in the page's dialogs (43b): the Server section is read again
   // (remounted) after each one as another session.
@@ -286,14 +288,20 @@ export default function InstancePage({
   }
 
   function closeAsking() {
-    flushSync(() => setAsking(false))
-    document.getElementById(`${uid}-sign-in`)?.focus()
+    const from = asking
+    flushSync(() => setAsking(null))
+    const signIn = from === 'boot' ? `${uid}-boot-sign-in` : `${uid}-sign-in`
+    document.getElementById(signIn)?.focus()
   }
 
   function signedIn(session: Session) {
+    const from = asking
     const kept = renewed(session)
-    flushSync(() => setAsking(false))
-    if (kept) document.getElementById(`${uid}-${clicked.current}`)?.focus()
+    flushSync(() => setAsking(null))
+    if (!kept) return
+    const control =
+      from === 'boot' ? `${uid}-boot-control` : `${uid}-${clicked.current}`
+    document.getElementById(control)?.focus()
   }
 
   return (
@@ -335,11 +343,18 @@ export default function InstancePage({
                   id={`${uid}-sign-in`}
                   type="button"
                   className="secondary"
-                  onClick={() => setAsking(true)}
+                  onClick={() => setAsking('run')}
                 >
                   {t('session-sign-in')}
                 </button>
               )}
+              <Boot
+                id={id}
+                fieldId={`${uid}-boot`}
+                canConfigure={canConfigure}
+                renewals={signIns.rereads + signIns.kept}
+                onSignIn={() => setAsking('boot')}
+              />
             </div>
             <ServerSection
               key={signIns.rereads}
@@ -355,7 +370,7 @@ export default function InstancePage({
           </>
         )}
       </Body>
-      {asking && (
+      {asking !== null && (
         <Dialog title={t('signin-title')} onClose={closeAsking}>
           <SignIn
             required={false}
@@ -389,4 +404,175 @@ function Body({
     return <InstanceNotFound id={id} />
   }
   return children
+}
+
+/** Reads whether the instance starts at boot: the value, or the error key. */
+async function readBoot(id: string): Promise<boolean | string> {
+  try {
+    const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
+    if (reply.ok) return enabledIn(reply.body) ?? 'failed'
+    return apiError(reply.body)?.key ?? 'failed'
+  } catch {
+    return 'failed'
+  }
+}
+
+/** Writes it: the value the reply gives, else 'signed-out' or the error key. */
+async function writeBoot(
+  id: string,
+  enabled: boolean,
+): Promise<boolean | string> {
+  try {
+    const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    if (reply.ok) return enabledIn(reply.body) ?? 'failed'
+    if (reply.status === 401) return 'signed-out'
+    return apiError(reply.body)?.key ?? 'failed'
+  } catch {
+    return 'failed'
+  }
+}
+
+/** The `enabled` of a `{"enabled": <boolean>}` body, null for any other. */
+function enabledIn(body: unknown): boolean | null {
+  return isRecord(body) && typeof body.enabled === 'boolean'
+    ? body.enabled
+    : null
+}
+
+/** The paragraph of a failed boot read, by its key (45a). */
+function bootReadText(key: string): string {
+  switch (key) {
+    case 'client-unavailable':
+      return t('api-client-unavailable')
+    case 'client-not-authorized':
+      return t('api-client-not-authorized')
+    default:
+      return t('boot-load-failed')
+  }
+}
+
+/**
+ * Start at boot (45): read once at mounting, written at once by an
+ * administrator; not part of the Server form. Its checkbox is
+ * `<fieldId>-control` and its Sign in `<fieldId>-sign-in`.
+ */
+function Boot({
+  id,
+  fieldId,
+  canConfigure,
+  renewals,
+  onSignIn,
+}: {
+  id: string
+  fieldId: string
+  canConfigure: boolean
+  /** Raised by every sign-in that kept the page: a session-ended alert goes. */
+  renewals: number
+  onSignIn: () => void
+}) {
+  // The value read, or the read's error key; undefined while it is awaited.
+  const [value, setValue] = useState<boolean | string | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+  const [stored, setAlert] = useState<{
+    text: string
+    signIn: boolean
+    at: number
+  } | null>(null)
+  const alert = stored?.signIn && stored.at !== renewals ? null : stored
+
+  useEffect(() => {
+    let live = true
+    readBoot(id).then((v) => {
+      if (live) setValue(v)
+    })
+    return () => {
+      live = false
+    }
+  }, [id])
+
+  // Read by a write's answer: whether the page is still shown, and the
+  // sign-in count when the answer arrives (43b).
+  const mounted = useRef(true)
+  const renewalsNow = useRef(renewals)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    renewalsNow.current = renewals
+  }, [renewals])
+
+  if (value === undefined) return null
+  if (typeof value === 'string') {
+    return (
+      <GroupField id={fieldId} label={t('boot-label')} hint={t('boot-hint')}>
+        <p>{bootReadText(value)}</p>
+      </GroupField>
+    )
+  }
+
+  async function change(enabled: boolean) {
+    if (busy || !canConfigure || typeof value !== 'boolean') return
+    const previous = value
+    setValue(enabled)
+    setBusy(true)
+    setStatus('')
+    setAlert(null)
+    const result = await writeBoot(id, enabled)
+    if (!mounted.current) return
+    if (typeof result === 'boolean') {
+      setValue(result)
+      setStatus(result ? t('boot-on') : t('boot-off'))
+      setBusy(false)
+      return
+    }
+    setAlert({
+      text: failureText(id, result),
+      signIn: result === 'signed-out',
+      at: renewalsNow.current,
+    })
+    const again = await readBoot(id)
+    if (!mounted.current) return
+    setValue(typeof again === 'boolean' ? again : previous)
+    setBusy(false)
+  }
+
+  return (
+    <CheckboxField
+      id={fieldId}
+      label={t('boot-label')}
+      hint={t('boot-hint')}
+      toggle={t('boot-toggle')}
+      checked={value}
+      disabled={!canConfigure}
+      inactive={busy}
+      onChange={(enabled) => void change(enabled)}
+    >
+      <p role="status" className="boot-status">
+        {status}
+      </p>
+      {alert !== null && (
+        <p role="alert" className="boot-alert">
+          {alert.text}
+        </p>
+      )}
+      {alert?.signIn && (
+        <button
+          id={`${fieldId}-sign-in`}
+          type="button"
+          className="secondary"
+          onClick={onSignIn}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+    </CheckboxField>
+  )
 }

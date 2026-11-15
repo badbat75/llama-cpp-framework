@@ -2,9 +2,9 @@
 // slice 1c, sections 4.1 to 4.5 and 4.7, with section 6): Start, Stop and
 // Restart in the header, the one shared read of /api/instances and its polls,
 // what an action shows, its errors, a sign-in after a 401, and the Server form
-// left alone. Start at boot (4.6) is not here. The whole app renders against a
-// fake bff (mocked fetch) on fake timers, so the poll times of 41d are exact;
-// "1c.41d" is the brief's criterion 41d.
+// left alone. Start at boot (4.6) is in Boot.test.tsx. The whole app renders
+// against a fake bff (mocked fetch) on fake timers, so the poll times of 41d
+// are exact; "1c.41d" is the brief's criterion 41d.
 import {
   act,
   cleanup,
@@ -148,12 +148,21 @@ function serverTitle(main: HTMLElement): HTMLElement {
   })
 }
 
+/**
+ * True when `el` is in the Start at boot field, whose own status, alert and
+ * Sign in (4.6, 45f) are not the run controls'.
+ */
+function inBoot(main: HTMLElement, el: HTMLElement): boolean {
+  const boot = within(main).queryByRole('group', { name: en('boot-label') })
+  return boot !== null && boot.contains(el)
+}
+
 /** The run status: the one status line of the header (before the Server h2). */
 function runStatus(main: HTMLElement): HTMLElement {
   const h2 = serverTitle(main)
   const all = within(main)
     .getAllByRole('status')
-    .filter((s) => before(s, h2))
+    .filter((s) => before(s, h2) && !inBoot(main, s))
   expect(all, 'one run status in the header').toHaveLength(1)
   return all[0]!
 }
@@ -168,21 +177,21 @@ function saveStatus(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** The texts of the header's alerts (before the Server h2). */
+/** The texts of the run alerts (in the header, outside Start at boot). */
 function runAlerts(main: HTMLElement): string[] {
   const h2 = serverTitle(main)
   return within(main)
     .queryAllByRole('alert')
-    .filter((a) => before(a, h2))
+    .filter((a) => before(a, h2) && !inBoot(main, a))
     .map((a) => a.textContent ?? '')
 }
 
-/** The Sign in buttons of the header (the run alert's, 43a). */
+/** The run alert's Sign in buttons (43a), not Start at boot's. */
 function runSignIns(main: HTMLElement): HTMLButtonElement[] {
   const h2 = serverTitle(main)
   return within(main)
     .queryAllByRole('button', { name: en('session-sign-in') })
-    .filter((b) => before(b, h2)) as HTMLButtonElement[]
+    .filter((b) => before(b, h2) && !inBoot(main, b)) as HTMLButtonElement[]
 }
 
 function stateText(stateKey: string): string {

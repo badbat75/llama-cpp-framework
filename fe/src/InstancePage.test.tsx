@@ -97,6 +97,15 @@ function group(main: HTMLElement, name: string) {
   return within(within(main).getByRole('group', { name }))
 }
 
+/** The Server section: the element holding its h2 (the header's Start at boot is outside). */
+function serverSection(main: HTMLElement): HTMLElement {
+  const h2 = within(main).getByRole('heading', {
+    level: 2,
+    name: en('server-title'),
+  })
+  return h2.parentElement!
+}
+
 function selected(el: HTMLElement): string | undefined {
   return (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? undefined
 }
@@ -319,7 +328,7 @@ test('1a.24: 403 and 503 show their api- message in place of the form', async ()
     render(<App />)
     const main = screen.getByRole('main')
     expect(await within(main).findByText(english), key).toBeTruthy()
-    expect(within(main).queryByRole('group'), key).toBeNull()
+    expect(within(serverSection(main)).queryByRole('group'), key).toBeNull()
     // In place of the form: the page and its Server section stay.
     expect(
       within(main).getByRole('heading', { level: 1, name: 'default' }),
@@ -354,7 +363,7 @@ test('1a.24: anything else, malformed included, shows server-load-failed, never 
       what,
     ).toBeTruthy()
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    expect(within(main).queryByRole('group'), what).toBeNull()
+    expect(within(serverSection(main)).queryByRole('group'), what).toBeNull()
     expect(
       within(main).getByRole('heading', { level: 2, name: en('server-title') }),
       what,
@@ -879,7 +888,8 @@ test('1a.25: the log level is clamped to 0..5 and Bind to matches without case',
 
 test('1a.26: every field has its About toggle, enabled, in field order', async () => {
   const main = await loaded({ session: 'user' })
-  expect(toggles(main)).toEqual(FIELDS.map(about))
+  // The Server section's: Start at boot's toggle sits in the header (1c.45).
+  expect(toggles(serverSection(main))).toEqual(FIELDS.map(about))
   for (const b of within(main).getAllByRole('button', { name: /^About / })) {
     expect((b as HTMLButtonElement).disabled, b.textContent ?? '').toBe(false)
     expect(b.getAttribute('aria-expanded'), b.textContent ?? '').toBe('false')
@@ -949,7 +959,7 @@ test('1a.27d (2.8): an administrator whose document withholds the key gets serve
       await within(main).findByText(en('server-load-failed')),
       what,
     ).toBeTruthy()
-    expect(within(main).queryByRole('group'), what).toBeNull()
+    expect(within(serverSection(main)).queryByRole('group'), what).toBeNull()
     expect(
       within(main).queryByRole('button', { name: en('save-button') }),
       what,
@@ -1137,7 +1147,7 @@ function nameOf(el: HTMLElement): string {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
-test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, then the fields in table order', async () => {
+test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, About Start at boot, then the fields in table order', async () => {
   await loaded({ session: 'user' })
   const names = tabbable().map(nameOf)
   const tail = FIELDS.flatMap((f) =>
@@ -1151,11 +1161,12 @@ test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run bu
     en('nav-overview'),
     'default',
     'coder',
-    // The header's run buttons, inactive ones included (1c.46a); Start at
-    // boot's About toggle will follow them.
+    // The header's run buttons, inactive ones included, then Start at
+    // boot's About toggle; a user's checkbox is disabled (1c.45b, 46a).
     en('run-start'),
     en('run-stop'),
     en('run-restart'),
+    about(en('boot-label')),
     ...tail,
   ])
   // The h1 takes focus only from the page (tabindex -1).

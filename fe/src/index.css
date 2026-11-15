@@ -537,12 +537,14 @@ input[type='checkbox']:checked::before {
   visibility: visible;
 }
 
-input[type='checkbox']:disabled {
+input[type='checkbox']:disabled,
+input[type='checkbox'][aria-disabled='true'] {
   background: var(--bg);
   border-color: var(--muted);
 }
 
-input[type='checkbox']:disabled::before {
+input[type='checkbox']:disabled::before,
+input[type='checkbox'][aria-disabled='true']::before {
   border-color: var(--muted);
 }
 
@@ -754,4 +756,31 @@ html:has(.save-bar) {
 .run-alert {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* Start at boot's messages: each on its own line under the checkbox. */
+.boot-status,
+.boot-alert {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.boot-alert {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* Its checkbox while the write runs: focusable, drawn as the disabled
+   checkbox above; no opacity, which would dim the focus ring too. */
+.check input[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* So it still reads as inactive in a high-contrast theme: the tick is the
+   ::before border, so GrayText reaches it. */
+@media (forced-colors: active) {
+  .check input[type='checkbox'][aria-disabled='true'],
+  .check input[type='checkbox'][aria-disabled='true']::before {
+    border-color: GrayText;
+  }
 }

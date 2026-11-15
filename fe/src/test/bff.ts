@@ -194,6 +194,14 @@ export const EN: Record<string, string> = {
   'session-ended-retry': 'Your session has ended. Sign in again, then retry.',
   'api-client-service-failed':
     "The service manager reported an error. The instance's log on the server says why.",
+  // Slice 1c (section 5.7): start at boot.
+  'boot-label': 'Start at boot',
+  'boot-toggle': 'start llama-server when the system starts',
+  'boot-hint':
+    "Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).\nChanging it needs an administrator.",
+  'boot-on': 'llama-server will start when the system starts.',
+  'boot-off': 'llama-server will no longer start when the system starts.',
+  'boot-load-failed': 'Whether llama-server starts at boot could not be read.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -316,6 +324,20 @@ export type BffOptions = {
     id: string,
     n: number,
   ) => Response | Promise<Response>
+  /**
+   * GET and PUT /api/instances/{id}/boot. `read`: the reply to the n-th GET
+   * (from 1), default 200 {"enabled": false}. `write`: the reply to the n-th
+   * PUT (from 1), given the parsed body, default 200 with the body's
+   * `enabled` echoed.
+   */
+  boot?: {
+    read?: (id: string, n: number) => Response | Promise<Response>
+    write?: (
+      body: unknown,
+      id: string,
+      n: number,
+    ) => Response | Promise<Response>
+  }
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -386,7 +408,9 @@ export function fakeBff(options: BffOptions = {}) {
       )
     }
     if (/^PUT \/api\/instances\/[^/]+\/server$/.test(route)) {
-      const n = calls.filter((c) => c.method === 'PUT').length
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path.endsWith('/server'),
+      ).length
       return Promise.resolve(
         options.save
           ? options.save(body, n)
@@ -405,6 +429,25 @@ export function fakeBff(options: BffOptions = {}) {
         options.run
           ? options.run(action, decodeURIComponent(run[1]!), n)
           : reply(204),
+      )
+    }
+    const boot = /^(GET|PUT) \/api\/instances\/([^/]+)\/boot$/.exec(route)
+    if (boot) {
+      const id = decodeURIComponent(boot[2]!)
+      const n = calls.filter(
+        (c) => c.method === boot[1] && c.path.endsWith('/boot'),
+      ).length
+      if (boot[1] === 'GET')
+        return Promise.resolve(
+          options.boot?.read
+            ? options.boot.read(id, n)
+            : reply(200, { enabled: false }),
+        )
+      const enabled = (body as { enabled?: unknown } | undefined)?.enabled
+      return Promise.resolve(
+        options.boot?.write
+          ? options.boot.write(body, id, n)
+          : reply(200, { enabled }),
       )
     }
     return Promise.reject(new TypeError(`unexpected ${route}`))

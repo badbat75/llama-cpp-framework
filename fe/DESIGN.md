@@ -261,7 +261,10 @@ Each is one React component, reused by every page.
     Enter or Space does nothing (the handler checks; the attribute blocks nothing by itself), and it
     is drawn with `--bg` background, `--muted` text and `--control` border. Under
     `@media (forced-colors: active)` its text and border are `GrayText`, so it still reads as
-    inactive in a high-contrast theme. A control that is never enabled for the role (a user's
+    inactive in a high-contrast theme. A checkbox inactive this way (Start at boot while its write
+    runs) is drawn as a disabled checkbox (Field, "Disabled controls stay readable"), `GrayText`
+    likewise under forced colours. Never by `opacity`: it dims the focus ring with the control,
+    below the 3:1 floor of 5.1. A control that is never enabled for the role (a user's
     read-only form) keeps `disabled`.
     ([APG, focusability of disabled controls](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#focusabilityofdisabledcontrols),
     [MDN, `aria-disabled`](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes/aria-disabled);
