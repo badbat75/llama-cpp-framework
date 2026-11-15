@@ -75,6 +75,12 @@ as not checked, and the step stays open.
 
 ## Where things stand
 
+**The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
+in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
+presets and switches them on or off. Left for it, in order: step 10 slice 6b part 3 (five slices,
+`ARCHITECTURE.md` "Acting for a signed-in user"), slice 9 (control and boot), slice 8 (save the server
+file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
+
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
 an x4 slot with no AtomicOps); the RTX 4070 SUPER is out of it, so the mixed-pair measurements wait for it.
