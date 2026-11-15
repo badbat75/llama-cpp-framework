@@ -344,3 +344,5 @@ Lessons only: the rules are in `AGENTS.md`.
   stops at 500 px wide). Kill it with `snap run --shell firefox.geckodriver -c 'kill -TERM <pid>'`. The
   bff's target dir here is `build/windows/cargo-target`; `grep -a -c <asset name>` on the binary
   confirms it embeds the new `fe/dist`.
+- Web UI: the fake bff's `deferred()` ignores abort, so a GET held for 15 s or more of fake time
+  must use `held()`, or a timeout test passes without a real browser's behaviour.

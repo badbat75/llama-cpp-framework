@@ -329,3 +329,5 @@ Lessons only: the rules are in `AGENTS.md`.
   at run time: under `cargo test` it finds none and returns `None`, so a check that must work on the
   tests' fixture GGUFs (`hf_fit::tests::gguf` + `write_sparse`) reads with the pure-Rust
   `hf_fit` reader instead (`hf_fit::local_experts`, used by the save's MoE cache floor).
+- Web UI: `strings.test.ts` counts only literal `t('key')` calls, so write `cond ? t('a') : t('b')`,
+  never `t(cond ? 'a' : 'b')`.

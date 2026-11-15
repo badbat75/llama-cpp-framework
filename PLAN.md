@@ -774,7 +774,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
    session-free reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
    or restart that saves GiB-sized slot snapshots first, need their own limit, chosen from a measured
-   snapshot save (none measured yet), under the fe's 120 s for non-GET calls. Optional: answer start and restart after systemd's
+   snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
+   a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 
