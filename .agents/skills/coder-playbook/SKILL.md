@@ -364,9 +364,11 @@ Lessons only: the rules are in `AGENTS.md`.
   it in a ref written only by effects, with mounted set true in the effect's setup (StrictMode mounts
   twice). Opacity on a focusable control dims its focus ring too.
 - A server.ini rule lives once in `pai_core::checks` (a `pub fn` per rule, run on the file text by
-  `server_file`); `pai_app::server_cfg::check` runs the same fns on the `ServerConfig` values, since
+  `server_file`); `pai_core::server_cfg::check` runs the same fns on the `ServerConfig` values, since
   `render` writes an out-of-range value as the commented hint and the text check would pass it.
-  `save` calls `check` on both backends, so `pai server set` and the GUI refuse alike.
+  `save` (pai-app, which re-exports the core's `server_cfg`) calls `check` on both backends, so
+  `pai server set` and the GUI refuse alike; the CPU count is a parameter, so the core stays free of
+  `available_parallelism`.
 - `gguf::read_model_info`/`read_tensors` go through `gguf::ffi`, which loads llama.cpp's ggml library
   at run time: under `cargo test` it finds none and returns `None`, so a check that must work on the
   tests' fixture GGUFs (`hf_fit::tests::gguf` + `write_sparse`) reads with the pure-Rust

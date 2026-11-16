@@ -433,8 +433,8 @@ Designed 2026-11-16, proposed. `PUT /api/instances/{id}/server`, body `{revision
 the whole text, `OpencodeApiKey` included. The manager's `write_file` (`service.rs`) takes
 `configure`, holds the `writing` mutex, runs `checks::server_file` and the address check, and writes
 atomically; it has no notion of a revision, and the GUI and `pai` write last-writer-wins. The render
-of a whole file from values is in `pai-core` (`server_cfg::render_for`); the thread limit check is in
-`pai-app` (`server_cfg::check`), which the bff does not link.
+of a whole file from values is in `pai-core` (`server_cfg::render_for`); the thread limit check was in
+`pai-app` (`server_cfg::check`), which the bff does not link; slice 2 moved it to `pai-core`.
 
 **The key oracle, as it stands.** Every reader of the revision is a signed-in `pai` member whose read is
 never withheld, so the same response already carries the key in `values`: today the hash leaks nothing

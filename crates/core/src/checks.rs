@@ -918,7 +918,7 @@ top-p = 0.95\r\n";
 
     /// The fields with no check of the file's text stay lenient: the thread
     /// counts (their bound is the machine's CPU count, checked by the
-    /// configurator, `pai_app::server_cfg::check`; the reader drops what is
+    /// configurator, `pai_core::server_cfg::check`; the reader drops what is
     /// not a positive number), a bool the reader drops.
     #[test]
     fn server_keys_with_no_check_today_pass() {

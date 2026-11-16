@@ -7,7 +7,6 @@ use std::fs;
 use std::io;
 
 use crate::server_control::{self, ConfigFile, Os};
-use pai_core::checks;
 pub use pai_core::server_cfg::*;
 
 /// The instance's server config, read through the seam: defaults when the
@@ -19,46 +18,6 @@ pub fn load() -> ServerConfig {
         .ok()
         .flatten();
     from_text(&text.unwrap_or_default())
-}
-
-/// The checks a server config must pass before it is written, the same for
-/// every writer (the GUI, `pai`, the bff) and every backend (macOS has no
-/// manager): the manager's own content checks (`pai_core::checks::server_file`)
-/// on the values as set, and what needs this machine: `Threads` and
-/// `ThreadsBatch` from 1 to `cpus`, the logical CPU count. Pure, no `paths::`.
-pub fn check(cfg: &ServerConfig, cpus: usize) -> Result<(), checks::Refusal> {
-    let ints = [
-        ("Port", cfg.port),
-        ("ModelsMax", cfg.models_max),
-        ("ModelsMemoryMargin", cfg.models_memory_margin),
-        ("LogVerbosity", cfg.log_verbosity),
-    ];
-    for (key, value) in ints {
-        if let (Some(v), Some(range)) = (value, checks::server_int_range(key)) {
-            checks::whole_number(key, &v.to_string(), &range)?;
-        }
-    }
-    let cpus = 1..=i32::try_from(cpus).unwrap_or(i32::MAX);
-    for (key, value) in [
-        ("Threads", cfg.threads),
-        ("ThreadsBatch", cfg.threads_batch),
-    ] {
-        if let Some(v) = value {
-            checks::whole_number(key, &v.to_string(), &cpus)?;
-        }
-    }
-    let texts = [
-        ("ModelsDir", &cfg.models_dir),
-        ("StateDir", &cfg.state_dir),
-        ("OpencodeBaseUrl", &cfg.opencode_base_url),
-        ("OpencodeApiKey", &cfg.opencode_api_key),
-    ];
-    for (key, value) in texts {
-        if let Some(v) = value {
-            checks::comment_markers(key, v)?;
-        }
-    }
-    checks::bind_list(cfg.hostname.as_deref().unwrap_or_default())
 }
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
@@ -409,142 +368,6 @@ mod tests {
                 !code.contains(concat!("models_dir", ".is_none()")),
                 "{file} still seeds whenever ModelsDir is unset:\n{code}"
             );
-        }
-    }
-
-    // ── The checks before a write (`check`) ─────────────────────────────
-
-    /// A config with both folders explicit: their defaults resolve through
-    /// `paths::`, which unit tests must not touch.
-    fn checked_base() -> ServerConfig {
-        ServerConfig {
-            models_dir: Some("/models".into()),
-            state_dir: Some("/var/lib/private-ai/state".into()),
-            ..ServerConfig::default()
-        }
-    }
-
-    fn not_int(key: &'static str, text: &str, lo: i32, hi: i32) -> pai_core::checks::Refusal {
-        pai_core::checks::Refusal {
-            key: "not-whole-number-in-range",
-            values: vec![key.into(), text.into(), lo.to_string(), hi.to_string()],
-        }
-    }
-
-    /// A config as the configurator writes it passes, all keys set or none.
-    #[test]
-    fn the_check_passes_a_config_as_the_configurator_writes_it() {
-        let rich = ServerConfig {
-            port: Some(9090),
-            hostname: Some("127.0.0.1,192.168.1.10".into()),
-            threads: Some(12),
-            threads_batch: Some(16),
-            models_max: Some(0),
-            models_memory_margin: Some(0),
-            log_verbosity: Some(5),
-            opencode_base_url: Some("https://gw.example.com/llm".into()),
-            opencode_api_key: Some("sk-abc123".into()),
-            ..checked_base()
-        };
-        assert_eq!(check(&rich, 16), Ok(()));
-        assert_eq!(check(&checked_base(), 16), Ok(()));
-        let all = ServerConfig {
-            hostname: Some("0.0.0.0".into()),
-            log_verbosity: Some(0),
-            port: Some(65535),
-            ..checked_base()
-        };
-        assert_eq!(check(&all, 1), Ok(()));
-    }
-
-    /// What the manager refuses in `server@<id>.ini`, refused here too, on the
-    /// value as set: a port of 0 or a negative ModelsMax would otherwise
-    /// render as the commented hint, i.e. silently unset.
-    #[test]
-    #[allow(clippy::type_complexity)]
-    fn the_check_refuses_what_the_manager_refuses() {
-        use pai_core::checks::Refusal;
-        let max = i32::MAX;
-        let cases: Vec<(&str, fn(&mut ServerConfig), Refusal)> = vec![
-            (
-                "port 0",
-                |c| c.port = Some(0),
-                not_int("Port", "0", 1, 65535),
-            ),
-            (
-                "port 65536",
-                |c| c.port = Some(65536),
-                not_int("Port", "65536", 1, 65535),
-            ),
-            (
-                "ModelsMax -1",
-                |c| c.models_max = Some(-1),
-                not_int("ModelsMax", "-1", 0, max),
-            ),
-            (
-                "ModelsMemoryMargin -1",
-                |c| c.models_memory_margin = Some(-1),
-                not_int("ModelsMemoryMargin", "-1", 0, max),
-            ),
-            (
-                "LogVerbosity 7",
-                |c| c.log_verbosity = Some(7),
-                not_int("LogVerbosity", "7", 0, 5),
-            ),
-            (
-                "LogVerbosity -1",
-                |c| c.log_verbosity = Some(-1),
-                not_int("LogVerbosity", "-1", 0, 5),
-            ),
-            (
-                "0.0.0.0 with another address",
-                |c| c.hostname = Some("0.0.0.0,127.0.0.1".into()),
-                Refusal {
-                    key: "bind-all-with-others",
-                    values: vec![],
-                },
-            ),
-            (
-                "a comment marker",
-                |c| c.models_dir = Some("/models #1".into()),
-                Refusal {
-                    key: "comment-markers",
-                    values: vec!["ModelsDir".into()],
-                },
-            ),
-        ];
-        for (label, set, want) in cases {
-            let mut cfg = checked_base();
-            set(&mut cfg);
-            assert_eq!(check(&cfg, 16), Err(want), "{label}");
-        }
-    }
-
-    /// The thread counts run from 1 to this machine's logical CPU count, as
-    /// the Server tab's sliders do.
-    #[test]
-    fn the_check_holds_the_thread_counts_to_the_cpu_count() {
-        for (key, set) in [
-            (
-                "Threads",
-                (|c, n| c.threads = Some(n)) as fn(&mut ServerConfig, i32),
-            ),
-            ("ThreadsBatch", |c, n| c.threads_batch = Some(n)),
-        ] {
-            for bad in [17, 0, -1] {
-                let mut cfg = checked_base();
-                set(&mut cfg, bad);
-                assert_eq!(
-                    check(&cfg, 16),
-                    Err(not_int(key, &bad.to_string(), 1, 16)),
-                    "{key} = {bad}"
-                );
-            }
-            for good in [1, 16] {
-                let mut cfg = checked_base();
-                set(&mut cfg, good);
-                assert_eq!(check(&cfg, 16), Ok(()), "{key} = {good}");
-            }
         }
     }
 }

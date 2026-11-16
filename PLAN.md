@@ -476,7 +476,7 @@ Slices, each test first, in order:
    entry; `pai server show` and the restore read the instance folders.)
 2. (Done: Port, ModelsMax not negative, ModelsMemoryMargin, LogVerbosity 0..5 and the bind list
    (`bind-all-with-others`) in `pai-core` `checks.rs`, which the manager runs on a write; threads at most
-   the CPU count in `pai-app` `server_cfg::check`, run by every save; the base URL normalised in one
+   the CPU count in `pai-core` `server_cfg::check` (moved from `pai-app` in step 10 slice 8.2), run by every save; the base URL normalised in one
    helper shared by the GUI and the save. Left, small: a hand-edited file with `ModelsMax = -1` makes
    every unrelated `pai server set` fail, and `pai` has no way back to unset; a negative
    `--models-max` could clear it, as `--models-memory-margin` does; its `--help` still says "Stored
@@ -853,7 +853,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    "Saving the server file from the web (step 10 slice 8)" (2026-11-16), six slices there, in order:
    (1, built) the revision a SipHash-2-4 keyed by a secret drawn at each bff start (it stops being a
    key oracle; user, 2026-11-16: an open form gets one 409 and a Reload after a bff restart), (2)
-   `server_cfg::check` moved to `pai-core`, (3) the manager's `write_file_if` (compare and write under
+   `server_cfg::check` moved to `pai-core` (built), (3) the manager's `write_file_if` (compare and write under
    its `writing` lock, `Changed` otherwise), (4) its pipe and D-Bus faces, protocol 2, (5) the body to
    the file text or 400/422, (6) the route: 200 `{revision, running}`, 409 `server-changed-elsewhere`,
    422 `{key, args, field}`, 403 `session-not-administrator`, and 504 `client-timeout` when the

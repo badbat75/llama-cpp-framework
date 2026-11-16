@@ -84,6 +84,15 @@ Lessons only: the rules are in `AGENTS.md`.
   compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`).
 - `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
   `Vec::<String>::new()`, the pattern this repo already uses.
+- A `[(label, |c| ..); N]` table of setters: `as fn(Cfg) -> Cfg` on the first element fixes the element
+  type, so a later closure that captures a local is E0308 "expected fn pointer, found closure". A table of
+  values (`(key, threads, threads_batch)` with `Some(n)`/`None`) has no coercion to fight.
+- A pure function MOVING crates (not wrapped): the behaviour tests move with it, calling `crate::<mod>::<fn>`
+  in the destination's inline `mod tests`. The red is E0425 "cannot find function" on every call site, which
+  stops that crate's whole test binary: report the count and that its existing tests did not run. The source
+  crate keeps ONE behaviour test through the public entry (green before and after the move, machine-derived
+  bounds computed in the test: `cpus + 1` from `available_parallelism`) plus a source lint over the code half
+  that requires the re-export line and forbids `fn <name>(` (a second copy of the rule).
 - Comments never cite PLAN.md step or slice numbers; name the feature.
 - rustfmt reorders consecutive `mod` declarations: a new `pub mod x;` goes in the sorted spot, with its
   own comment line (it travels with the item). A bare `assert_eq!(a, b)` (no message) over ~60 chars of
@@ -345,6 +354,13 @@ Lessons only: the rules are in `AGENTS.md`.
   GUI's Save. `render` also writes an unset `OpencodeApiKey`, and an out-of-range `Port`, `ModelsMax` or
   thread count, as a commented hint: pin checks on `ServerConfig` values (`server_cfg::check`), not on
   rendered text.
+- A plain `#[test]` that reaches `server_cfg::save` (any success path) sets `models_dir` and `state_dir`
+  to temp paths: where the dirs are NOT left unset (macOS, `Os::current()`) the save ends with
+  `create_dir_all(cfg.models_dir_or_default())`, so an unset pair creates the real home-derived folder.
+  A unit test must NOT call `paths::redirect_for_tests` (process-wide, never restored: only an e2e phase).
+- A source lint on a call SHAPE (`code.contains("check(cfg, cpus)")`) breaks when production renames a
+  local; the behaviour test that sees the refusal already pins the call. Keep such a lint to the "no
+  second copy of the rule" guard (`!code.contains("fn check(")`) and name the behaviour test in its doc.
 - `#[cfg(test)]` is off in a library compiled as a dependency: items another crate's tests need go
   behind a `test-support` feature, or the dependent silently takes the real backend. pai-app's fake
   manager is `#[cfg(test)]`: a GUI path depending on the manager's answer is tested in pai-app with that
@@ -404,6 +420,15 @@ Lessons only: the rules are in `AGENTS.md`.
   replace it with `git mv -f`. For an older commit's worktree (`git worktree add --detach build/<name>
   <rev>`): copy the gitignored `resources/llama.ico` and `llama-brand-logo.svg`, set
   `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` and a separate `CARGO_TARGET_DIR`.
+ - For a move of a PURE fn (no new deps), the accounting needs no worktree build: per file, take the test
+   half (`awk '/#\[cfg\(test\)\]/{t=1} t'`), `grep -oE "fn [a-z_0-9]+"`, `sort`, and `diff` it against
+   `git show HEAD:<file>` (HEAD is the coder's base while the tree is uncommitted). A pure move shows as
+   the same names lost by the source file and gained by the destination, helpers (`checked_base`, `not_int`)
+   included: count those, do not assume. Names only, so a renamed test would pass uncounted: report the list.
+ - After a move, grep the OLD path in every consumer: code (`grep -rn "pai_app::server_cfg" --include=*.rs
+   crates`: a `pub use pai_core::server_cfg::*;` re-export makes the old call path legal, so a hit is not
+   automatically stale) and the docs pages (`crates/config/README.md` names the check's crate: it read
+   `pai-app`; the coder does not edit docs, so the report sends the stale sentence to the `docs` agent).
 - A new argument on a method with many test call sites: a small Python pass that walks each call to its
   matching paren (skipping string literals and `fn ` definitions) inserting the argument, then `cargo
   fmt -p`; bump `[(..); N]` array lengths by hand.

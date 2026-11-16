@@ -1994,6 +1994,84 @@ mod tests {
         );
     }
 
+    /// The content check belongs to `pai-core`: pai-app holds no copy of the
+    /// rule beside the core's. That the save runs the core's check is pinned
+    /// by `the_save_refuses_threads_above_the_cpu_count`.
+    #[test]
+    fn the_save_runs_the_core_s_check() {
+        let code = include_str!("server_cfg.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(
+            !code.contains("fn check("),
+            "pai-app defines its own check beside the core's:\n{code}"
+        );
+    }
+
+    /// The save of the GUI and `pai` refuses a thread count above this
+    /// machine's logical CPU count, before asking the manager for anything.
+    #[test]
+    fn the_save_refuses_threads_above_the_cpu_count() {
+        use crate::server_cfg::{self, ServerConfig};
+        let cpus = std::thread::available_parallelism()
+            .expect("this machine's CPU count")
+            .get();
+        let over = i32::try_from(cpus + 1).expect("a CPU count in range");
+        let at = i32::try_from(cpus).unwrap_or(i32::MAX);
+        // The folders a save may create (macOS, where the dirs are not left
+        // unset) go to a temp tree: a plain unit test never redirects the
+        // real data root, only an e2e phase does (`paths::redirect_for_tests`).
+        let root = tempfile::tempdir().expect("tempdir");
+        let base = || ServerConfig {
+            port: Some(8099),
+            models_dir: Some(root.path().join("models").display().to_string()),
+            state_dir: Some(root.path().join("state").display().to_string()),
+            ..ServerConfig::default()
+        };
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_file("server@default.ini", "[Server]\nPort = 8099\n");
+        let files = c.files.clone();
+        let before = files.lock().unwrap().clone();
+        fake::scoped(fake::backend(c), || {
+            for (key, threads, threads_batch) in [
+                ("Threads", Some(over), None),
+                ("ThreadsBatch", None, Some(over)),
+            ] {
+                let cfg = ServerConfig {
+                    threads,
+                    threads_batch,
+                    ..base()
+                };
+                let want = pai_core::checks::Refusal {
+                    key: "not-whole-number-in-range",
+                    values: vec![key.into(), over.to_string(), "1".into(), cpus.to_string()],
+                };
+                let err = server_cfg::save(&cfg).expect_err("threads above the CPU count");
+                assert_eq!(err.to_string(), want.text(), "{key} = {over}");
+                assert_eq!(
+                    fake::writes(&log),
+                    Vec::<String>::new(),
+                    "{key} = {over}: the manager was not asked"
+                );
+                assert_eq!(
+                    *files.lock().unwrap(),
+                    before,
+                    "{key} = {over}: nothing written"
+                );
+            }
+            // The same count, at the CPU count, saves: the refusal is about
+            // the count, not a save that always fails.
+            server_cfg::save(&ServerConfig {
+                threads: Some(at),
+                ..base()
+            })
+            .expect("threads at the CPU count");
+            assert_eq!(fake::writes(&log).len(), 1, "one write");
+        });
+    }
+
     #[test]
     fn a_connection_that_fails_is_unavailable() {
         let b = Backend::Manager(ManagerBackend::new(Box::new(|| {
