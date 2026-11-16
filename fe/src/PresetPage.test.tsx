@@ -512,7 +512,9 @@ test('2d.56: the address reads GET /api/presets/<id>, the id percent-encoded as 
     startAt(`#/models/${encoded}`)
     const { bff, main } = open()
     expect(await heading1(main, id), id).toBeTruthy()
-    expect(presetReads(bff, id), id).toBe(1)
+    // The h1 is there from the address, before the read is sent: the call is
+    // waited for, the way the switch tests wait for their write.
+    await waitFor(() => expect(presetReads(bff, id), id).toBe(1))
     // Criterion 80: the page reads only this, not the list, not the engines.
     expect(
       presetCalls(bff).map((c) => `${c.method} ${c.path}`),
