@@ -39,5 +39,13 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - Before proposing a bff reply, check what it links: `pai-bff` links `pai-core` only (`ReadFile`,
   `ini::parse_sections`), while the preset logic (`; url =` comment, `listed_in`, the spec-type
   helpers) is private to `pai-app`. Say which helper the bff must move or redo.
+- The tester and coder run on a small local model: a slice of more than ~12 criteria fails. Split a
+  big slice into sub-slices, the first settling every shared rule, the rest field tables (key,
+  label key with toml line, hint, control, absent value, enable rule); put them in their own brief
+  file so the tester reads only that (`fe/briefs/02e-preset-cards.md`).
+- GUI preset hints sometimes name a slider or a number the GUI parks a ticked default box on
+  (`crates/config/src/form.rs` `HINT_*`, e.g. 32768 for Context size, invented): the web shows no
+  such number, so those lines are cut from the web's hint. The GUI also reads unparseable values as
+  unset (`ini::parse_bool` takes only `true` / `false`); the web shows the file as written.
 - Hash routes keep `.` and `..` (the URL parser resolves dot segments in the path only), but the
   same id in an API path does not survive: `new URL('/api/presets/..', base)` is `/api/`.
