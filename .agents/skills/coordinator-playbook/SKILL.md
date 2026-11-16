@@ -9,6 +9,9 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   type is missing, start one before doing its work yourself.
 - Check results by the output in the agents' reports, not their summary. A background command's exit
   code can come from its last, unrelated line, so the output is what counts.
+- Run an OpenCode agent as the background command itself (no `nohup ... &`), so its exit is the
+  notification. A waiter `until ! pgrep -f "<title>"` never ends: `pgrep -f` matches the waiter's own
+  command line, and an hour went by after the agent had finished.
 - Say what you expect from a real run before it starts. When the result differs, say so plainly and find
   out why: an unexpected result is often the most useful finding of the run.
 - Ask the user for real runs one at a time, with the exact command and the expected result.

@@ -4,6 +4,7 @@
 
 pub mod checks;
 pub mod client;
+pub mod http;
 pub mod ini;
 pub mod launch;
 pub mod migrate;
@@ -11,6 +12,8 @@ pub mod net_ifaces;
 pub mod paths;
 pub mod proc;
 pub mod server_cfg;
+// The save leg of the slot snapshots, over the router's HTTP endpoints.
+pub mod slot_save;
 pub mod slot_state;
 pub mod strings;
 // The end-to-end test that runs every phase redirecting the data root

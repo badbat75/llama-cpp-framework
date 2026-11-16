@@ -48,26 +48,34 @@
 //! LRU would evict whatever a second restore pushed out anyway. Restoring the
 //! one model the user was last working on is the predictable choice; the others
 //! stay on disk and are simply overwritten the next time they are live.
+//!
+//! WHAT LIVES HERE. The save leg is the core's (`pai_core::slot_save`), because
+//! the instance's own stop reaches it without this crate: the client and the
+//! service therefore write the same dumps. [`save_all`] is the seam the GUI and
+//! the command line call, and the restore leg is entirely here.
 
 use crate::strings;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::http::request;
+use pai_core::slot_save::STATE_EXT;
 
-/// Extension every dump carries. Not `.bin`: the directory is user-visible and
-/// these are large files, so it should be obvious what may be deleted.
-const STATE_EXT: &str = "llamastate";
-
-/// Read timeout for the save and restore calls. Generous on purpose: the server
-/// answers only once the whole state has hit the disk, which for a long
-/// conversation can take minutes on a slow disk. The cost of guessing too
-/// low is a half-written dump reported as a failure.
+/// Read timeout for the restore call. Generous on purpose: the server answers
+/// only once the model is loaded and the whole state has been read back, which
+/// for a long conversation can take minutes on a slow disk. The cost of guessing
+/// too low is a restore reported as a failure while the server is still working.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// Read timeout for the small control call (`GET /models`). Short: if the router
-/// is not answering in five seconds it is not going to save anything either.
+/// Read timeout for the small control call (`GET /health`). Short: a router that
+/// is not answering in five seconds is not going to restore anything either.
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The deadline of a whole save run: one budget for the model list and for every
+/// save in it, not one per model. A per-model timeout would let a run with
+/// several models last several budgets, and a stop that waits that long is a
+/// stop that never happens (`pai_core::slot_save`).
+const SAVE_BUDGET: Duration = Duration::from_secs(240);
 
 /// How long a restore waits for the router to open its port after a start.
 ///
@@ -94,28 +102,11 @@ const SLOT_ID: u32 = 0;
 
 pub use pai_core::slot_state::{ensure_dir, state_dir};
 
-/// The dump file name for a model, as llama-server will see it.
-///
-/// Sanitized rather than escaped, because the server rejects the request
-/// outright when `fs_validate_filename` dislikes the name and the error would
-/// surface as a mysterious failed save. Anything outside `[A-Za-z0-9._-]`
-/// becomes `_`, so two models whose names differ only in punctuation could
-/// collide; that costs one wasted restore attempt (the token lists will not
-/// match and the prompt is prefilled normally), never a wrong answer.
+/// The dump file name for a model, as llama-server will see it: the core's rule
+/// (`pai_core::slot_save::dump_file_name`), because the save leg there writes
+/// that name and the restore here is the one that reads it.
 pub fn state_file_name(model: &str) -> String {
-    let stem: String = model
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let stem = stem.trim_matches('.');
-    let stem = if stem.is_empty() { "model" } else { stem };
-    format!("{stem}.{STATE_EXT}")
+    pai_core::slot_save::dump_file_name(model)
 }
 
 /// Every dump currently on disk, newest first. `mtime` is what orders them, so
@@ -135,37 +126,6 @@ fn dumps_newest_first(dir: &Path) -> Vec<PathBuf> {
         .collect();
     found.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
     found.into_iter().map(|(_, p)| p).collect()
-}
-
-// ── Model discovery ──────────────────────────────────────────────────────
-
-/// The models the router currently has resident, in the order it lists them.
-///
-/// Read from the router's `GET /models`, whose per-model `status.value` is one
-/// of the strings in `server_model_status_to_string`. Only `loaded` qualifies:
-/// `loading` has no slot to snapshot yet and `sleeping` has released its KV
-/// cache, so asking either to save produces an error, not a dump.
-pub fn loaded_models(port: u16) -> Result<Vec<String>, String> {
-    let res = request(port, "GET", "/models", None, CONTROL_TIMEOUT)?;
-    if res.status != 200 {
-        return Err(strings::fill("models-status", &[&res.status]));
-    }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&res.body).map_err(|e| strings::fill("models-unreadable", &[&e]))?;
-    let Some(items) = parsed.get("data").and_then(|d| d.as_array()) else {
-        return Ok(Vec::new());
-    };
-    Ok(items
-        .iter()
-        .filter(|m| {
-            m.get("status")
-                .and_then(|s| s.get("value"))
-                .and_then(|v| v.as_str())
-                == Some("loaded")
-        })
-        .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-        .map(str::to_string)
-        .collect())
 }
 
 // ── Save & restore ───────────────────────────────────────────────────────
@@ -297,11 +257,19 @@ fn transfer_from_json(model: &str, parsed: &serde_json::Value) -> Transfer {
 /// Snapshot every loaded model, then prune the dumps of models that are no
 /// longer live.
 ///
+/// The saving is the core's (`pai_core::slot_save`), the same code the
+/// instance's own stop runs, so the client and the service write the same dumps.
+/// This is the seam the GUI and the command line call: it reads the port and the
+/// state folder out of `cfg` and hands over [`SAVE_BUDGET`], the one deadline for
+/// the whole run. The core writes each dump under a `-partial` name and renames
+/// it only once the server has answered the whole save.
+///
 /// The prune is what keeps the directory meaningful: it makes the state dir a
 /// picture of the LAST shutdown rather than an accumulating pile, which in turn
 /// is what lets [`restore_newest`] treat "the newest file" as "the model you
-/// were working on". It runs only over models that saved successfully, so a
-/// failed save never deletes the older dump it failed to replace.
+/// were working on". Every model the server reported as loaded keeps its dump,
+/// saved or refused: the dump of a save that did not complete is the snapshot
+/// the next start restores.
 ///
 /// Returns the transfers plus a per-model error list; a partial result is still
 /// worth reporting, since one model failing to snapshot says nothing about the
@@ -312,41 +280,17 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
         Ok(d) => d,
         Err(e) => return (Vec::new(), vec![strings::fill("state-dir-failed", &[&e])]),
     };
-
-    let models = match loaded_models(port) {
-        Ok(m) => m,
-        Err(e) => return (Vec::new(), vec![e]),
-    };
-    if models.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    let mut done = Vec::new();
-    let mut errors = Vec::new();
-    let mut keep = Vec::new();
-    for model in &models {
-        let filename = state_file_name(model);
-        match slot_action(port, "save", model, &filename) {
-            Ok(t) => {
-                keep.push(filename);
-                done.push(t);
-            }
-            Err(e) => errors.push(e),
-        }
-    }
-
-    if !done.is_empty() {
-        for stale in dumps_newest_first(&dir) {
-            let is_kept = stale
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| keep.iter().any(|k| k == n));
-            if !is_kept {
-                let _ = std::fs::remove_file(stale);
-            }
-        }
-    }
-    (done, errors)
+    let (done, errors) = pai_core::slot_save::save_all(port, &dir, SAVE_BUDGET);
+    (
+        done.into_iter()
+            .map(|t| Transfer {
+                model: t.model,
+                bytes: t.bytes,
+                tokens: t.tokens,
+            })
+            .collect(),
+        errors,
+    )
 }
 
 /// Hand the newest dump back to llama-server.
@@ -503,6 +447,28 @@ mod tests {
         // which is the one input that would otherwise produce a bare ".llamastate".
         assert_eq!(state_file_name("..."), "model.llamastate");
         assert_eq!(state_file_name(""), "model.llamastate");
+    }
+
+    /// The name is the core's: the save leg in `pai_core::slot_save` writes it,
+    /// the restore here reads it. One rule, one owner, or a dump lands at a
+    /// name no start ever looks for (an id with a separator is where they
+    /// differed: the save took the last component, the restore the whole id).
+    #[test]
+    fn the_dump_name_is_the_cores() {
+        for id in [
+            "Qwen3.8-27B-UD",
+            "org/model:Q4",
+            r"C:\models\Qwen3.8-27B.gguf",
+            "/models/Qwen3.8-27B/Qwen3.8-27B-Q4_K_M",
+            ".hidden.",
+            "",
+        ] {
+            assert_eq!(
+                state_file_name(id),
+                pai_core::slot_save::dump_file_name(id),
+                "the name the save writes and the name the restore reads must be one name for {id:?}"
+            );
+        }
     }
 
     #[test]
@@ -693,5 +659,247 @@ mod tests {
         .unwrap_err();
         assert!(began.elapsed() < Duration::from_secs(10));
         assert!(err.contains("exited"), "{err}");
+    }
+
+    // ── The save leg: a wrapper over the core's ──────────────────────────
+
+    /// The `filename` a save request asks the server to write.
+    fn requested_filename(body: &str) -> Option<String> {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()?
+            .get("filename")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    /// The names in `dir`, sorted (a `read_dir` listing is unordered).
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read the state dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A stand-in router that writes what it is asked to write, as llama-server
+    /// does: it answers `GET /models` with `models_body` and then, for each of
+    /// the `saves` saves that follow, writes the `filename` of the request into
+    /// `dir` and answers with the counts. The listener is bound before the
+    /// helper returns, so the caller never races it. Returns the port and the
+    /// request lines and bodies, in the order the router saw them.
+    ///
+    /// Every accept is bounded: a caller that stops asking ends the thread with
+    /// what it saw, so a red is an assertion, never a hang.
+    fn saving_router(
+        dir: &Path,
+        models_body: &str,
+        saves: usize,
+    ) -> (u16, std::thread::JoinHandle<Vec<(String, String)>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpStream;
+        fn read_request(sock: &mut TcpStream) -> (String, String) {
+            let mut r = BufReader::new(sock.try_clone().expect("clone socket"));
+            let mut line = String::new();
+            r.read_line(&mut line).expect("request line");
+            let mut len = 0usize;
+            loop {
+                let mut head = String::new();
+                if r.read_line(&mut head).expect("request header") == 0 {
+                    break;
+                }
+                if head.trim().is_empty() {
+                    break;
+                }
+                if let Some(v) = head.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().expect("content-length");
+                }
+            }
+            let mut body = vec![0u8; len];
+            if len > 0 {
+                r.read_exact(&mut body).expect("request body");
+            }
+            (
+                line.trim().to_string(),
+                String::from_utf8_lossy(&body).to_string(),
+            )
+        }
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = l.local_addr().expect("local addr").port();
+        l.set_nonblocking(true).expect("nonblocking listener");
+        let dir = dir.to_path_buf();
+        let list = models_body.to_string();
+        (
+            port,
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(20);
+                let mut seen = Vec::new();
+                for i in 0..=saves {
+                    let mut sock = loop {
+                        match l.accept() {
+                            Ok((sock, _)) => {
+                                sock.set_nonblocking(false).expect("blocking socket");
+                                sock.set_read_timeout(Some(Duration::from_secs(10)))
+                                    .expect("read timeout");
+                                break sock;
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                if std::time::Instant::now() > deadline {
+                                    return seen;
+                                }
+                                std::thread::sleep(Duration::from_millis(20));
+                            }
+                            Err(e) => panic!("accept: {e}"),
+                        }
+                    };
+                    let (line, body) = read_request(&mut sock);
+                    seen.push((line, body.clone()));
+                    let reply = if i == 0 {
+                        (200, list.clone())
+                    } else {
+                        if let Some(name) = requested_filename(&body) {
+                            std::fs::write(dir.join(name), "the bytes llama-server wrote")
+                                .expect("write the dump");
+                        }
+                        (
+                            200,
+                            r#"{"id_slot":0,"n_saved":166000,"n_written":1024}"#.to_string(),
+                        )
+                    };
+                    write!(
+                        sock,
+                        "HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        reply.0,
+                        reply.1.len(),
+                        reply.1
+                    )
+                    .expect("reply");
+                }
+                seen
+            }),
+        )
+    }
+
+    /// The save the GUI and `pai` call is a thin wrapper: it hands the core's save
+    /// the port and the folder the config names, and the dump lands under the name
+    /// the restore picks.
+    #[test]
+    fn the_wrapper_saves_through_the_core_and_lands_the_dump() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let list = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "Qwen3.8-27B", "status": {"value": "loaded"}},
+                {"id": "Qwen3.8-Flash-Next", "status": {"value": "loaded"}}
+            ]
+        })
+        .to_string();
+        let (port, router) = saving_router(dir.path(), &list, 2);
+        let cfg = crate::server_cfg::ServerConfig {
+            port: Some(i32::from(port)),
+            state_dir: Some(dir.path().display().to_string()),
+            ..Default::default()
+        };
+
+        let (done, errors) = save_all(&cfg);
+        assert_eq!(
+            errors,
+            Vec::<String>::new(),
+            "the save reported: {errors:?}"
+        );
+        let models_saved: Vec<String> = done.iter().map(|t| t.model.clone()).collect();
+        assert_eq!(
+            models_saved,
+            vec!["Qwen3.8-27B", "Qwen3.8-Flash-Next"],
+            "one transfer per loaded model, with its counts"
+        );
+        assert_eq!(done[0].tokens, 166_000, "n_saved counts tokens");
+        assert_eq!(done[0].bytes, 1_024, "n_written counts bytes");
+
+        let seen = router.join().expect("the router ended");
+        let (lines, bodies): (Vec<String>, Vec<String>) = seen.into_iter().unzip();
+        assert_eq!(
+            lines,
+            vec![
+                "GET /models HTTP/1.1",
+                "POST /slots/0?action=save HTTP/1.1",
+                "POST /slots/0?action=save HTTP/1.1",
+            ],
+            "the loaded models of the config's port, slot 0, the save action"
+        );
+        let asked: Vec<String> = bodies
+            .iter()
+            .map(|b| requested_filename(b).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            asked,
+            vec![
+                "",
+                "Qwen3.8-27B.llamastate-partial",
+                "Qwen3.8-Flash-Next.llamastate-partial",
+            ],
+            "the save asks for the partial name, so a save cut short leaves the previous dump"
+        );
+
+        assert_eq!(
+            names_in(dir.path()),
+            vec![
+                state_file_name("Qwen3.8-27B"),
+                state_file_name("Qwen3.8-Flash-Next")
+            ],
+            "the partial is renamed to the dump's name, nothing is left behind"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(state_file_name("Qwen3.8-27B")))
+                .expect("the dump the save wrote"),
+            "the bytes llama-server wrote",
+            "the file that lands is the one the server wrote"
+        );
+    }
+
+    /// The save leg lives in the core, so the instance's own stop (the Linux
+    /// unit's `ExecStop=`, the Windows service's stop) reaches the same code as
+    /// the clients, and the wrapper is what carries the 240 s budget of the
+    /// design to it.
+    #[test]
+    fn the_save_leg_delegates_to_the_core() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/slot_state.rs"),
+        )
+        .expect("read slot_state.rs");
+        // Only the production half: the e2e phase and this module come after it.
+        let code = src.split("\n#[cfg(test)]\n").next().expect("the code half");
+        assert!(
+            code.contains("slot_save::save_all"),
+            "the wrapper must call the core's save: this file is where the GUI and the CLI ask for a snapshot"
+        );
+        assert!(
+            code.contains("from_secs(240)"),
+            "the whole save gets the design's budget, one deadline for every request"
+        );
+        let posts_a_save = regex::Regex::new(r#"slot_action\(\s*port,\s*"save""#).expect("regex");
+        assert!(
+            !posts_a_save.is_match(code),
+            "the save request is the core's now: only the restore leg posts a slot action here"
+        );
+    }
+
+    /// A save cut short leaves `<stem>.llamastate-partial` on disk. The restore
+    /// takes the newest dump, so the partial must never be a candidate.
+    #[test]
+    fn a_partial_is_never_a_restore_candidate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join(state_file_name("Qwen3.8-27B")), b"dump").expect("dump");
+        std::fs::write(
+            dir.path().join("Qwen3.8-Flash-Next.llamastate-partial"),
+            b"half written",
+        )
+        .expect("partial");
+
+        assert_eq!(
+            dumps_newest_first(dir.path()),
+            vec![dir.path().join(state_file_name("Qwen3.8-27B"))],
+            "the restore reads the newest complete dump, never a half-written one"
+        );
     }
 }
