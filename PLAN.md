@@ -898,6 +898,15 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method
    (`ReadFile` plus `ini::parse_sections`); the `; url =` comment reader moves from `pai-app` to
    `pai-core` so the bff can read `projectUrl`. After slices 11 and 11b.
+11d. **A preset flag reads as llama-server reads it** (found by the web UI session's designer,
+   2026-11-16; checked in the v1.0.0 clone: `common/preset.cpp` turns a flag whose value is one of
+   `off`, `disabled`, `false`, `0` into its `--no-` form, any other value into the plain flag,
+   `common_arg_utils::is_falsey` in `common/arg.cpp`). The configurator reads a preset's booleans with
+   `ini::parse_bool` (`presets.rs`), which knows only `true`/`false`, so a hand-written `jinja = 0` runs
+   without jinja while the GUI shows the field's default (on). Rule: in `presets.ini` a flag is off for
+   exactly those four values (after trimming) and on for any other; `server.ini` and `settings.ini` keep
+   `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
+   `pai-core` with `pai-app`'s reader; before the MVP's run.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
    enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
    the bff), engine from the file holding the section, in `presets::load_listed`'s order (on
