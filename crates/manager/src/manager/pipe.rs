@@ -23,7 +23,7 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 
 /// The protocol version this manager answers with, the number `Version`
 /// reports beside the framework version.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
 /// `principal`.
@@ -41,6 +41,7 @@ enum Request {
     Restart(String, Option<Principal>),
     ReadFile(String, Option<Principal>),
     WriteFile(String, String, bool, Option<Principal>),
+    WriteFileIf(String, String, String, Option<Principal>),
     BootEnabled(String),
     SetBootEnabled(String, bool, Option<Principal>),
     Authenticate(String, String),
@@ -84,6 +85,17 @@ impl Request {
                 arg("name")?,
                 arg("contents")?,
                 v.get("keep_api_key")?.as_bool()?,
+                principal().map(Some)?,
+            ),
+            // The compare and swap names no `keep_api_key`: the caller holds
+            // the file's own text, key line included, and sends it back.
+            "WriteFileIf" => {
+                Request::WriteFileIf(arg("name")?, arg("contents")?, arg("expected")?, None)
+            }
+            "WriteFileIfAs" => Request::WriteFileIf(
+                arg("name")?,
+                arg("contents")?,
+                arg("expected")?,
                 principal().map(Some)?,
             ),
             "BootEnabled" => Request::BootEnabled(arg("id")?),
@@ -145,6 +157,11 @@ where
             .map(|file| json!(file.map(|f| json!({"text": f.text, "withheld": f.withheld})))),
         Request::WriteFile(name, contents, keep, principal) => requester(caller, principal)
             .and_then(|who| manager.write_file(&who, &name, &contents, keep))
+            .map(|()| Value::Null),
+        // The compare and swap: `expected` is the text the caller read, and
+        // the core answers `Changed` when the file no longer holds it.
+        Request::WriteFileIf(name, contents, expected, principal) => requester(caller, principal)
+            .and_then(|who| manager.write_file_if(&who, &name, &contents, &expected))
             .map(|()| Value::Null),
         Request::BootEnabled(id) => manager.boot_enabled(&id).map(|on| json!(on)),
         Request::SetBootEnabled(id, enabled, principal) => requester(caller, principal)
@@ -387,7 +404,7 @@ mod tests {
     /// reached.
     #[test]
     fn a_malformed_request_is_answered_and_ends_the_connection() {
-        let bodies: [&[u8]; 14] = [
+        let bodies: [&[u8]; 21] = [
             b"",
             b"not json",
             b"{\"method\":",
@@ -403,6 +420,17 @@ mod tests {
             // `keep_api_key` is required, a bool, as SetBootEnabled's `enabled`.
             b"{\"method\":\"WriteFile\",\"name\":\"presets.ini\",\"contents\":\"\"}",
             b"{\"method\":\"WriteFile\",\"name\":\"presets.ini\",\"contents\":\"\",\"keep_api_key\":\"no\"}",
+            // `WriteFileIf` requires the content the file must still hold:
+            // missing, a number, null, is the same BadRequest. A frame with no
+            // `expected` is refused, never treated as an empty expectation.
+            b"{\"method\":\"WriteFileIf\",\"name\":\"presets.ini\",\"contents\":\"x\"}",
+            b"{\"method\":\"WriteFileIf\",\"name\":\"presets.ini\",\"contents\":\"x\",\"expected\":42}",
+            b"{\"method\":\"WriteFileIf\",\"name\":\"presets.ini\",\"contents\":\"x\",\"expected\":null}",
+            // The name and the new content are arguments of both spellings.
+            b"{\"method\":\"WriteFileIf\",\"contents\":\"x\",\"expected\":\"\"}",
+            b"{\"method\":\"WriteFileIf\",\"name\":\"presets.ini\",\"expected\":\"\"}",
+            b"{\"method\":\"WriteFileIfAs\",\"principal\":\"alice\",\"name\":\"presets.ini\",\"contents\":\"x\"}",
+            b"{\"method\":\"WriteFileIfAs\",\"name\":\"presets.ini\",\"contents\":\"x\",\"expected\":\"\"}",
         ];
         for body in bodies {
             let c = core(true);
@@ -485,10 +513,14 @@ mod tests {
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Restart", "id": "default"}),
                 json!({"method": "WriteFile", "name": "presets.ini", "contents": "[x]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
+                // The compare-and-swap write is a guarded call like the plain
+                // one: refused for a caller without the right, no path
+                // resolved, nothing written.
+                json!({"method": "WriteFileIf", "name": "server.ini", "contents": "x", "expected": ""}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
-        assert_eq!(replies, vec![error("NotAuthorized", "NotAuthorized"); 4]);
+        assert_eq!(replies, vec![error("NotAuthorized", "NotAuthorized"); 5]);
         assert_eq!(calls(&c), vec![]);
         assert_eq!(
             asked(&c),
@@ -496,6 +528,7 @@ mod tests {
                 (alice(), Action::Control),
                 (alice(), Action::Control),
                 (alice(), Action::Control),
+                (alice(), Action::Configure),
                 (alice(), Action::Configure),
             ]
         );
@@ -537,6 +570,7 @@ mod tests {
                 json!({"method": "Stop", "id": "default"}),
                 json!({"method": "Restart", "id": "default"}),
                 json!({"method": "WriteFile", "name": "presets.ini", "contents": "", "keep_api_key": false}),
+                json!({"method": "WriteFileIf", "name": "presets.ini", "contents": "", "expected": ""}),
                 json!({"method": "ReadFile", "name": "server@default.ini"}),
                 json!({"method": "Status", "id": "default"}),
             ]),
@@ -546,6 +580,7 @@ mod tests {
         assert_eq!(
             replies,
             vec![
+                refused.clone(),
                 refused.clone(),
                 refused.clone(),
                 refused.clone(),
@@ -756,6 +791,7 @@ mod tests {
                 }),
                 "Invalid",
             ),
+            (ManagerError::Changed, "Changed"),
         ]
     }
 
@@ -777,9 +813,7 @@ mod tests {
                 ManagerError::Service(s) => ClientError::Service(s.0.clone()),
                 ManagerError::Io(k) => ClientError::Io(k.to_string()),
                 ManagerError::Invalid(r) => ClientError::Invalid(r.clone()),
-                // The client's `Changed` is the faces' step (PLAN step 10,
-                // slice 4); no `every_error` entry before then.
-                ManagerError::Changed => todo!("the Changed client error: slice 4"),
+                ManagerError::Changed => ClientError::Changed,
             };
             assert_eq!(ClientError::from_reply(&name, &message), expected, "{e:?}");
         }
@@ -973,6 +1007,7 @@ mod tests {
                 json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "../x", "enabled": true}),
                 json!({"method": "ReadFileAs", "principal": "alice", "name": "server.ini"}),
                 json!({"method": "WriteFileAs", "principal": "alice", "name": "server.ini", "contents": "x", "keep_api_key": false}),
+                json!({"method": "WriteFileIfAs", "principal": "alice", "name": "server.ini", "contents": "x", "expected": ""}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -983,12 +1018,13 @@ mod tests {
                 error("InvalidId", "InvalidId"),
                 error("BadFileName", "BadFileName"),
                 error("BadFileName", "BadFileName"),
+                error("BadFileName", "BadFileName"),
             ]
         );
         assert_eq!(calls(&c), vec![Call::Stop("default".into())]);
         assert_eq!(
             asked_admin(&admins),
-            vec!["alice".to_string(); 4],
+            vec!["alice".to_string(); 5],
             "the membership of the name the request vouches for, once per call"
         );
         assert_eq!(
@@ -996,7 +1032,7 @@ mod tests {
             vec![],
             "polkit asked, so the call ran as the bff's own, not for the principal"
         );
-        assert_eq!(asked_bff(&c), vec![bff(); 4]);
+        assert_eq!(asked_bff(&c), vec![bff(); 5]);
     }
 
     /// A caller that is not the bff naming a principal: NotAuthorized for
@@ -1007,7 +1043,7 @@ mod tests {
     fn an_as_method_from_a_caller_that_is_not_the_bff_is_refused_unasked() {
         for caller in [alice(), Caller("S-1-5-18".into()), Caller(String::new())] {
             let (c, admins) = principal_core(FakePasswords::new());
-            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 6];
+            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 7];
             expected.push(json!({"ok": "active"}));
             let (result, replies) = serve(
                 &c,
@@ -1018,6 +1054,7 @@ mod tests {
                     json!({"method": "RestartAs", "principal": "alice", "id": "default"}),
                     json!({"method": "ReadFileAs", "principal": "alice", "name": "server@default.ini"}),
                     json!({"method": "WriteFileAs", "principal": "alice", "name": "presets.ini", "contents": "", "keep_api_key": false}),
+                    json!({"method": "WriteFileIfAs", "principal": "alice", "name": "presets.ini", "contents": "", "expected": ""}),
                     json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default", "enabled": true}),
                     json!({"method": "Status", "id": "default"}),
                 ]),
@@ -1045,7 +1082,7 @@ mod tests {
             if !caller.0.is_empty() {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![caller.clone(); 6],
+                    vec![caller.clone(); 7],
                     "{caller:?}: the caller is checked first, once per call"
                 );
             }
@@ -1065,17 +1102,18 @@ mod tests {
                 requests(&[
                     json!({"method": "StopAs", "principal": user, "id": "default"}),
                     json!({"method": "SetBootEnabledAs", "principal": user, "id": "../x", "enabled": true}),
+                    json!({"method": "WriteFileIfAs", "principal": user, "name": "server.ini", "contents": "x", "expected": ""}),
                 ]),
             );
             assert!(result.is_ok(), "{user}: {result:?}");
             assert_eq!(
                 replies,
-                vec![error("NotAuthorized", "NotAuthorized"); 2],
+                vec![error("NotAuthorized", "NotAuthorized"); 3],
                 "{user}"
             );
             assert_eq!(
                 asked_admin(&admins),
-                vec![user.to_string(); 2],
+                vec![user.to_string(); 3],
                 "{user}: the membership asked for the name sent"
             );
             assert_eq!(asked(&c), vec![], "{user}: polkit asked");
@@ -1098,8 +1136,10 @@ mod tests {
             json!({"method": "RestartAs", "id": "default"}),
             json!({"method": "ReadFileAs", "name": "presets.ini"}),
             json!({"method": "WriteFileAs", "name": "presets.ini", "contents": "", "keep_api_key": false}),
+            json!({"method": "WriteFileIfAs", "name": "presets.ini", "contents": "", "expected": ""}),
             json!({"method": "SetBootEnabledAs", "id": "default", "enabled": true}),
             json!({"method": "StartAs", "principal": 5, "id": "default"}),
+            json!({"method": "WriteFileIfAs", "principal": 5, "name": "presets.ini", "contents": "", "expected": ""}),
             json!({"method": "StartAs", "principal": null, "id": "default"}),
             json!({"method": "StartAs", "principal": ["alice"], "id": "default"}),
             json!({"method": "StartAs", "principal": {"name": "alice"}, "id": "default"}),
@@ -1107,6 +1147,8 @@ mod tests {
             json!({"method": "StartAs", "principal": "alice"}),
             json!({"method": "ReadFileAs", "principal": "alice"}),
             json!({"method": "WriteFileAs", "principal": "alice", "name": "presets.ini"}),
+            json!({"method": "WriteFileIfAs", "principal": "alice", "name": "presets.ini", "contents": ""}),
+            json!({"method": "WriteFileIfAs", "principal": "alice", "name": "presets.ini", "expected": ""}),
             json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default"}),
             json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default", "enabled": "yes"}),
             // The name says it carries a principal: the plain spelling is
@@ -1142,11 +1184,13 @@ mod tests {
             json!({"method": "Restart", "id": "default", "principal": "alice"}),
             json!({"method": "ReadFile", "name": "presets.ini", "principal": "alice"}),
             json!({"method": "WriteFile", "name": "presets.ini", "contents": "", "keep_api_key": false, "principal": "alice"}),
+            json!({"method": "WriteFileIf", "name": "presets.ini", "contents": "", "expected": "", "principal": "alice"}),
             json!({"method": "BootEnabled", "id": "default", "principal": "alice"}),
             json!({"method": "SetBootEnabled", "id": "default", "enabled": true, "principal": "alice"}),
             json!({"method": "Authenticate", "user": "alice", "password": "s3cret-Pw", "principal": "alice"}),
             json!({"method": "Version", "principal": "alice"}),
             json!({"method": "Start", "id": "default", "principal": 5}),
+            json!({"method": "WriteFileIf", "name": "presets.ini", "contents": "", "expected": "", "principal": 5}),
             json!({"method": "Start", "id": "default", "principal": null}),
         ] {
             let (c, admins) = principal_core(FakePasswords::new());
@@ -1178,6 +1222,11 @@ mod tests {
                 json!({"method": "Status", "id": "default", "Principal": "alice"}),
                 json!({"method": "Version", "id": "default"}),
                 json!({"method": "BootEnabled", "id": "../x", "nonsense": [1, 2]}),
+                // `WriteFileIf` carries no `keep_api_key`: the compare and
+                // swap needs no key to preserve, so the field is one the
+                // manager does not know and the call runs (the name is the
+                // core's to refuse, here before any path is resolved).
+                json!({"method": "WriteFileIf", "name": "server.ini", "contents": "x", "expected": "", "keep_api_key": true, "nonsense": [1, 2]}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -1185,8 +1234,9 @@ mod tests {
             replies,
             vec![
                 json!({"ok": "active"}),
-                json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 1}}),
+                json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 2}}),
                 error("InvalidId", "InvalidId"),
+                error("BadFileName", "BadFileName"),
             ]
         );
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
@@ -1204,6 +1254,7 @@ mod tests {
             bff(),
             requests(&[
                 json!({"method": "StopAs", "principal": "", "id": "default"}),
+                json!({"method": "WriteFileIfAs", "principal": "", "name": "server.ini", "contents": "x", "expected": ""}),
                 json!({"method": "Status", "id": "default"}),
             ]),
         );
@@ -1211,6 +1262,7 @@ mod tests {
         assert_eq!(
             replies,
             vec![
+                error("NotAuthorized", "NotAuthorized"),
                 error("NotAuthorized", "NotAuthorized"),
                 json!({"ok": "active"}),
             ]
@@ -1245,7 +1297,7 @@ mod tests {
                     json!({"method": "Status", "id": "default"}),
                 ]),
             );
-            let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 1}});
+            let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 2}});
             assert!(result.is_ok(), "{caller:?}: {result:?}");
             assert_eq!(
                 replies,
@@ -1276,7 +1328,7 @@ mod tests {
     #[test]
     fn an_acting_client_round_trips_over_a_socket_pair() {
         use pai_core::client::pipe::PipeClient;
-        use pai_core::client::{InstanceState, ManagerClient, ManagerVersion};
+        use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerVersion};
         use std::os::unix::net::UnixStream;
         use std::time::Duration;
 
@@ -1308,12 +1360,21 @@ mod tests {
                 Ok(InstanceState::Active),
                 "an unguarded method of a bound client"
             );
+            // The compare-and-swap write goes over the `As` form for the
+            // member: the gate runs before any path is resolved, so a name
+            // the core refuses answers BadFileName. The round trip against a
+            // data root is in `src/tests/pipe_client.rs`.
+            assert_eq!(
+                bound.write_file_if("server.ini", "x", ""),
+                Err(ClientError::BadFileName),
+                "the compare-and-swap write of a bound client, for the member"
+            );
         }
         assert_eq!(
             client.version(),
             Ok(Some(ManagerVersion {
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                protocol: 1,
+                protocol: 2,
             })),
             "the version this manager answers"
         );
@@ -1324,8 +1385,8 @@ mod tests {
         );
         assert_eq!(
             asked_admin(&admins),
-            vec!["alice".to_string()],
-            "the membership of the name, once"
+            vec!["alice".to_string(); 2],
+            "the membership of the name, once per bound call"
         );
         assert_eq!(
             asked(&core),

@@ -689,7 +689,6 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// caller sent the file as it read it, key line included. The principal and
     /// `configure` gates run first, as `write_file`'s, and the compare runs
     /// under the same `writing` lock as the write.
-    ///
     pub fn write_file_if<W: AsRequester>(
         &self,
         who: &W,

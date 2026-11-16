@@ -240,6 +240,21 @@ where
             .await?)
     }
 
+    /// The compare and swap: `expected` is the text the caller read, and the
+    /// file still holds (`Manager::write_file_if`).
+    async fn write_file_if(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        name: String,
+        contents: String,
+        expected: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.write_file_if(&who, &name, &contents, &expected))
+            .await?)
+    }
+
     /// `Start` for `principal`, the signed-in user the caller vouches for;
     /// the principal comes first, as the design's `StartAs(s principal, s id)`.
     async fn start_as(
@@ -317,6 +332,21 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.write_file(&who, &name, &contents, keep_api_key))
+            .await?)
+    }
+
+    /// `WriteFileIf` for `principal`.
+    async fn write_file_if_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        name: String,
+        contents: String,
+        expected: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.write_file_if(&who, &name, &contents, &expected))
             .await?)
     }
 
@@ -823,6 +853,8 @@ pub(crate) fn manager_dbus_e2e() {
             assert_eq!(e.0, err_name("BadFileName"), "ReadFile {bad:?}");
             let e = call(&client, "WriteFile", &(bad, "x", false)).expect_err("WriteFile");
             assert_eq!(e.0, err_name("BadFileName"), "WriteFile {bad:?}");
+            let e = call(&client, "WriteFileIf", &(bad, "x", "")).expect_err("WriteFileIf");
+            assert_eq!(e.0, err_name("BadFileName"), "WriteFileIf {bad:?}");
         }
         assert!(!dir.path().join("x").exists() && !sys.join("server.ini").exists());
         let r = call(&client, "ReadFile", &("presets.ini.disabled",)).expect("ReadFile");
@@ -943,6 +975,54 @@ pub(crate) fn manager_dbus_e2e() {
         let (_server, client) = connect(&c, None);
         let r = call(&client, "Status", &("default",)).expect("Status");
         assert_eq!(body::<String>(&r), name, "{state:?}");
+    }
+
+    // ── WriteFileIf: the compare and swap over D-Bus ──────────────────────
+    // The content on the wire is the file's own bytes, read from disk: the
+    // caller that holds them writes, a caller holding a content the file no
+    // longer holds is refused `org.privateai.Manager1.Error.Changed` with the
+    // file left as the landed write left it, and a file that is not there is
+    // `Changed` as well (the core's rule).
+    {
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let base = std::fs::read_to_string(sys.join("server@default.ini")).expect("read default");
+        let first = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+        let second = "[Server]\nPort = 8083\nHostname = 127.0.0.1\n";
+        call(
+            &client,
+            "WriteFileIf",
+            &("server@default.ini", first, base.as_str()),
+        )
+        .expect("a caller holding the file's content writes");
+        assert_eq!(
+            std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),
+            first,
+            "the fresh content landed"
+        );
+        let e = call(
+            &client,
+            "WriteFileIf",
+            &("server@default.ini", second, base.as_str()),
+        )
+        .expect_err("a caller holding a content the file no longer holds");
+        assert_eq!(e.0, err_name("Changed"), "the name of a stale content");
+        assert!(!e.1.trim().is_empty(), "the reply carries a message: {e:?}");
+        assert_eq!(
+            std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),
+            first,
+            "the refused write changed nothing on the way to the error"
+        );
+        let e = call(&client, "WriteFileIf", &("server@nope.ini", "x", ""))
+            .expect_err("a file that is not there");
+        assert_eq!(e.0, err_name("Changed"), "no file, no match");
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 3],
+            "the write is the guarded call it is: configure asked of the sender, every call"
+        );
+        assert_eq!(calls(&c), vec![], "a file write touches no unit");
+        std::fs::write(sys.join("server@default.ini"), default_ini).expect("restore default");
     }
 }
 
@@ -1508,6 +1588,67 @@ pub(crate) fn manager_dbus_principal_e2e() {
             "no membership looked up for a caller that is not the bff"
         );
     }
+
+    // ── The member's compare and swap write, vouched for by the bff ───────
+    // `WriteFileIfAs` with the content the file holds lands as the member's
+    // own write; the same call with a content the file no longer holds is
+    // `Changed`, with the file left as the landed write left it. The counts
+    // are relative: this phase's log already carries every call above.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        let base = text_of("presets.ini");
+        let next = format!("{base}[Qwen3.5-9B]\nmodel = /m/Qwen3.5-9B-Q4_K_M.gguf\n");
+        call(
+            &client,
+            "WriteFileIfAs",
+            &("alice", "presets.ini", next.as_str(), base.as_str()),
+        )
+        .expect("a member's compare and swap write, holding the file's content");
+        assert_eq!(
+            text_of("presets.ini"),
+            next,
+            "the member's fresh content landed"
+        );
+        let e = call(
+            &client,
+            "WriteFileIfAs",
+            &("alice", "presets.ini", base.as_str(), base.as_str()),
+        )
+        .expect_err("the same call with a content the file no longer holds");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}Changed"),
+            "the name of a stale content"
+        );
+        assert_eq!(
+            text_of("presets.ini"),
+            next,
+            "the refused write changed nothing on the way to the error"
+        );
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Start("default".into()),
+                Call::Stop("default".into()),
+                Call::Restart("default".into()),
+                Call::SetBootEnabled("default".into(), true),
+                Call::BootEnabled("default".into()),
+            ],
+            "a file write touches no unit"
+        );
+        assert_eq!(polkit(&c), vec![], "a principal call asks polkit nothing");
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 2,
+            "the membership of the vouched name, asked once per write"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 2,
+            "the caller checked once per principal call"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1573,6 +1714,7 @@ mod tests {
                 }),
                 "Invalid",
             ),
+            (ManagerError::Changed, "Changed"),
         ];
         for (error, kind) in cases {
             let (name, message) = error_reply(&error);
@@ -2025,8 +2167,8 @@ mod tests {
         m.body().deserialize().expect("reply body")
     }
 
-    /// The six `As` methods, each with its own arguments after the principal.
-    fn as_methods() -> [(&'static str, AsCall); 6] {
+    /// The seven `As` methods, each with its own arguments after the principal.
+    fn as_methods() -> [(&'static str, AsCall); 7] {
         [
             ("StartAs", |c, p| call(c, "StartAs", &(p, "default"))),
             ("StopAs", |c, p| call(c, "StopAs", &(p, "default"))),
@@ -2036,6 +2178,9 @@ mod tests {
             }),
             ("WriteFileAs", |c, p| {
                 call(c, "WriteFileAs", &(p, "presets.ini", "", false))
+            }),
+            ("WriteFileIfAs", |c, p| {
+                call(c, "WriteFileIfAs", &(p, "presets.ini", "", ""))
             }),
             ("SetBootEnabledAs", |c, p| {
                 call(c, "SetBootEnabledAs", &(p, "default", true))
@@ -2104,7 +2249,7 @@ mod tests {
             if let Some(name) = sender {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![Caller(name.to_string()); 6],
+                    vec![Caller(name.to_string()); 7],
                     "{sender:?}: the caller is checked first, once per call"
                 );
             }
@@ -2138,6 +2283,13 @@ mod tests {
             format!("{PREFIX}BadFileName"),
             "the name, after the gate"
         );
+        let e = call(&client, "WriteFileIfAs", &("alice", "server.ini", "x", ""))
+            .expect_err("WriteFileIfAs of a bad name");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}BadFileName"),
+            "the name, after the gate"
+        );
         assert_eq!(
             service_calls(&c),
             vec![fakes::Call::Stop("default".into())],
@@ -2145,12 +2297,12 @@ mod tests {
         );
         assert_eq!(
             asked_admin(&admins),
-            vec!["alice".to_string(); 4],
+            vec!["alice".to_string(); 5],
             "the membership of the name the caller vouches for, once per call"
         );
         assert_eq!(
             asked_bff(&c),
-            vec![Caller(BFF.into()); 4],
+            vec![Caller(BFF.into()); 5],
             "the caller is checked first, at every call"
         );
         assert_eq!(
@@ -2179,7 +2331,7 @@ mod tests {
             }
             assert_eq!(
                 asked_admin(&admins),
-                vec![user.to_string(); 6],
+                vec![user.to_string(); 7],
                 "the membership of {user}: asked, and it says no"
             );
             assert_eq!(
@@ -2244,7 +2396,7 @@ mod tests {
             );
             assert_eq!(
                 body::<(String, u32)>(&reply),
-                (env!("CARGO_PKG_VERSION").to_string(), 1),
+                (env!("CARGO_PKG_VERSION").to_string(), 2),
                 "{sender:?}: the framework version and the protocol"
             );
             assert!(

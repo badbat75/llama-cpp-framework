@@ -11,6 +11,7 @@
 //! {"method":"Status","id":"default"}        (also Start, Stop, Restart)
 //! {"method":"ReadFile","name":"presets.ini"}
 //! {"method":"WriteFile","name":"presets.ini","contents":"...","keep_api_key":false}
+//! {"method":"WriteFileIf","name":"presets.ini","contents":"...","expected":"..."}
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! {"method":"Authenticate","user":"alice","password":"..."}
@@ -18,7 +19,8 @@
 //! ```
 //!
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
-//! `Stop`, `Restart`, `ReadFile`, `WriteFile` and `SetBootEnabled` go as the
+//! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf` and
+//! `SetBootEnabled` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
 //! that need no right are unchanged.
@@ -29,6 +31,8 @@
 //! {"method":"SetBootEnabledAs","principal":"alice","id":"default","enabled":true}
 //! {"method":"WriteFileAs","principal":"alice","name":"presets.ini",
 //!                              "contents":"...","keep_api_key":false}
+//! {"method":"WriteFileIfAs","principal":"alice","name":"presets.ini",
+//!                               "contents":"...","expected":"..."}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -254,6 +258,16 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("name", json!(name)),
                 ("contents", json!(contents)),
                 ("keep_api_key", json!(keep_api_key)),
+            ],
+        ))
+    }
+    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "WriteFileIf",
+            &[
+                ("name", json!(name)),
+                ("contents", json!(contents)),
+                ("expected", json!(expected)),
             ],
         ))
     }
@@ -823,7 +837,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 11] = [
+        let cases: [(Call, Value); 12] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -877,6 +891,19 @@ mod tests {
                         .err()
                 },
                 json!({"method": "WriteFile", "name": "server@lan-2.ini", "contents": "[Server]\nOpencodeApiKey =\n", "keep_api_key": true}),
+            ),
+            (
+                |c| {
+                    c.write_file_if(
+                        "presets.ini",
+                        "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
+                        "",
+                    )
+                    .err()
+                },
+                // The compare and swap: the file's name, the new content and
+                // the content it must still hold, and no `keep_api_key`.
+                json!({"method": "WriteFileIf", "name": "presets.ini", "contents": contents, "expected": ""}),
             ),
         ];
         for (f, request) in cases {
@@ -1178,7 +1205,7 @@ mod tests {
     #[test]
     fn an_acting_client_sends_the_as_forms() {
         let refused = error_reply("InvalidId", "InvalidId");
-        let cases: [Case; 6] = [
+        let cases: [Case; 7] = [
             (
                 "start",
                 |c| c.start("default").err(),
@@ -1206,6 +1233,17 @@ mod tests {
                         .err()
                 },
                 json!({"method": "WriteFileAs", "principal": "alice", "name": "presets.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
+            ),
+            (
+                "write_file_if",
+                |c| {
+                    c.write_file_if("presets.ini", "[m]\nmodel = /m/x.gguf\n", "")
+                        .err()
+                },
+                // The `expected` content travels beside the new one, and no
+                // `keep_api_key`: the caller that holds the file's text has
+                // no key to preserve.
+                json!({"method": "WriteFileIfAs", "principal": "alice", "name": "presets.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "expected": ""}),
             ),
             (
                 "set_boot_enabled",

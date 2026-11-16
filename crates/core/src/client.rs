@@ -70,6 +70,9 @@ pub enum ClientError {
     Io(String),
     /// The content check that refused the write.
     Invalid(Refusal),
+    /// The file no longer holds the content the caller named, or is not
+    /// there: the compare and swap refused, nothing was written.
+    Changed,
     /// No manager answers: not running, its name not on the bus, no bus.
     Unavailable,
     /// Any other failure, with its detail.
@@ -99,6 +102,7 @@ impl ClientError {
             "Service" => ClientError::Service(message.to_string()),
             "Io" => ClientError::Io(message.to_string()),
             "Invalid" => Refusal::decode(message).map_or_else(other, ClientError::Invalid),
+            "Changed" => ClientError::Changed,
             _ => other(),
         }
     }
@@ -117,6 +121,7 @@ impl ClientError {
             ClientError::Service(m) => strings::fill("client-service-failed", &[m]),
             ClientError::Io(kind) => strings::fill("client-io-failed", &[kind]),
             ClientError::Invalid(r) => r.text(),
+            ClientError::Changed => strings::t("client-changed"),
             ClientError::Unavailable => strings::t("client-unavailable"),
             ClientError::Other(detail) => strings::fill("client-other", &[detail]),
         }
@@ -154,6 +159,21 @@ pub trait ManagerClient {
     /// says of it: for a caller the key was withheld from.
     fn write_file(&self, name: &str, contents: &str, keep_api_key: bool)
         -> Result<(), ClientError>;
+    /// Replace the file with `contents` only while it still holds `expected`,
+    /// the text the caller read: a file that is not there, or holds something
+    /// else, is [`ClientError::Changed`], and nothing is written. Guarded as
+    /// `write_file` is. No `keep_api_key`: the caller that holds the file's
+    /// own text has no key to preserve.
+    ///
+    /// The default body is for a transport that speaks no compare and swap:
+    /// the call is one it cannot make, said as [`ClientError::Other`]. A
+    /// transport that speaks the method overrides it.
+    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+        let _ = (name, contents, expected);
+        Err(ClientError::Other(
+            "this transport of the manager speaks no compare and swap".into(),
+        ))
+    }
     /// Whether the instance starts when the system starts.
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError>;
     /// Make the instance start when the system starts, or not.
@@ -182,7 +202,7 @@ mod tests {
     }
 
     /// The error keys of the client, with how many `{N}` each takes.
-    const KEYS: [(&str, usize); 10] = [
+    const KEYS: [(&str, usize); 11] = [
         ("client-not-authorized", 0),
         ("client-invalid-id", 0),
         ("client-no-instance", 0),
@@ -191,6 +211,7 @@ mod tests {
         ("client-unresolvable-host", 1),
         ("client-service-failed", 1),
         ("client-io-failed", 1),
+        ("client-changed", 0),
         ("client-unavailable", 0),
         ("client-other", 1),
     ];
@@ -269,6 +290,9 @@ mod tests {
             reply("Io", "permission denied"),
             ClientError::Io("permission denied".into())
         );
+        // The compare and swap refused: the wire name of the face's
+        // `ManagerError::Changed` (both transports reply it).
+        assert_eq!(reply("Changed", "Changed"), ClientError::Changed);
     }
 
     #[test]
@@ -395,6 +419,7 @@ mod tests {
                 fill("client-io-failed", "permission denied"),
             ),
             (ClientError::Unavailable, fill("client-unavailable", "")),
+            (ClientError::Changed, fill("client-changed", "")),
             (
                 ClientError::Other("connection reset".into()),
                 fill("client-other", "connection reset"),
@@ -414,6 +439,63 @@ mod tests {
             text.contains("StateDir") && text != "comment-markers",
             "{text:?}"
         );
+    }
+
+    /// A client that speaks none of the compare and swap: the trait's default
+    /// body, for a transport that has no such method.
+    struct NoCompareSwap;
+
+    impl ManagerClient for NoCompareSwap {
+        fn list_instances(&self) -> Result<Vec<String>, ClientError> {
+            Ok(vec![])
+        }
+        fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {
+            Ok(InstanceState::Inactive)
+        }
+        fn start(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn stop(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn restart(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn read_file(&self, _name: &str) -> Result<Option<ManagerFile>, ClientError> {
+            Ok(None)
+        }
+        fn write_file(
+            &self,
+            _name: &str,
+            _contents: &str,
+            _keep_api_key: bool,
+        ) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn boot_enabled(&self, _id: &str) -> Result<bool, ClientError> {
+            Ok(false)
+        }
+        fn set_boot_enabled(&self, _id: &str, _enabled: bool) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
+            Ok((false, false))
+        }
+    }
+
+    /// The default body: a call the client cannot make, said as `Other` with
+    /// a detail. Never Ok, never one of the manager's refusals: a caller
+    /// must not read a transport with no compare and swap as a write the
+    /// manager refused. A transport that speaks the method overrides the body
+    /// (the round trips are in `pai-manager`'s e2e).
+    #[test]
+    fn a_client_of_the_default_body_reports_other() {
+        match NoCompareSwap.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", "") {
+            Err(ClientError::Other(detail)) => {
+                assert!(!detail.is_empty(), "the detail says why: {detail:?}")
+            }
+            other => panic!("the trait's default body: {other:?}"),
+        }
     }
 
     // ── D-Bus ───────────────────────────────────────────────────────────

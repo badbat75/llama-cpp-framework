@@ -10,6 +10,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - Never wait without a deadline (`recv_timeout`, `try_wait` loop, `method_timeout`): a test must fail,
   not hang. `recv_timeout` returns `Disconnected` at once when the thread panicked (a `todo!` stub):
   report it apart from `Timeout`, or the red reads as a hang.
+- A phase helper that runs the call on a thread (`on(what, &Arc<Client>, impl FnOnce(&Client) -> T +
+  Send + 'static)`) takes a `'static` closure: it cannot borrow a local of the phase (`E0373 closure
+  may outlive the current function`). Bind owned clones next to the call (`let (a, b) = (x.clone(),
+  y.clone());`) and `move` them in; the originals stay for the asserts after it.
 - Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
   did not exist yet). Recheck such tests once the code exists.
 - An independent rerun of cargo commands that prints `Finished ... in 0.0xs` is cargo replaying a cached
@@ -150,6 +154,10 @@ Lessons only: the rules are in `AGENTS.md`.
   mutate first, then check the action undid or kept it.
 - `cargo test -p <crate> --test <name> -- --list` type-checks one integration test binary (and its
   helpers) without running a test: the cheapest way to see the whole file compile.
+- `crates/bff/tests/pai_bff_binary.rs` spawns the real binary and grabs ports through `free_port()`
+  (bind, release, rebind): one test in 12 flaked on the first cold run after `cargo clean` and never
+  reproduced (11 full-suite greens + a solo `--test` run). Probe solo, then rerun the suite 2-3 times
+  before reporting a red from that binary.
 - bff oneshot: `Request::builder().header(name, value)` appends (`http-1.5.0/src/request.rs:899`), so
   the same name twice reaches the router as two values; `HeaderName::from_static` wants the lowercase
   name. A header the bff cannot read: `HeaderValue::from_bytes` accepts `>= 0x20` except `0x7F`, plus
@@ -330,7 +338,11 @@ Lessons only: the rules are in `AGENTS.md`.
   every later run reports block 1's panic. A block that asserts "nothing was recorded" passes on a stub
   by design: report it as a guard, not a red. Restore by `cp` and `sha256sum` against the backup, and
   restore in a `finally` (an exception mid-loop leaves the tree patched; `git diff --stat` after each run
-  shows the patch is gone).
+  shows the patch is gone). Two traps: a `    {` that opens a nested ITEM (a `fn f<B>(..)` whose signature
+  wraps past a `where`, so rustfmt puts the brace on its own line) is not a statement block, `if false {`
+  there is `expected one of #, {, lifetime, or type` and nothing runs, so accept a `    {` only when the
+  previous code line (whole-line comments skipped) ends with `}` or `;`; and a run that prints no
+  `panicked at` is that patch compile error, not a green, so print the run's `error` tail too.
 - Blocks of ONE phase share its data root, so a later block's read expects what an earlier block wrote
   (a presets file written in block 1): say so in a comment. The cumulative probe then shows a LATER block
   red on the fixture (`left: Ok(Some(<older text>))`), not on its point: read the red, do not chase it; the
@@ -462,6 +474,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - The manager's `FakeService` records every `ServiceControl` call, `status` (the probe) included: a
   batch that ends with a successful `Status` pins `vec![Call::Status(..)]` in the calls log, never an
   empty one; write the refusal tests' expectation as "nothing beside the Status probe".
+- A later block of a shared e2e phase asserts its count as a DELTA on a baseline taken INSIDE the block
+  (beside `admins_before`/`bff_before`, take `calls_before` too): an intervening block that ran a probe
+  (`boot_enabled` records `Call::BootEnabled` in the SAME service-calls log as `status`) makes the previous
+  block's absolute count stale (8, not 7). A "the write adds no unit call" assert, with the pipe sibling
+  pinning `vec![]`, goes: `assert_eq!(calls(&c).len(), calls_before, "a file write touches no unit")`.
 - A core method signature change when the transport faces (`dbus.rs`, `pipe.rs`) are off-limits: a local
   bound (`trait AsRequester { fn as_requester(&self) -> Requester }`, implemented for the old bare
   `Caller` and the new `Requester`) keeps every face call site compiling; the stub keeps the old body, so

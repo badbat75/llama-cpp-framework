@@ -105,6 +105,12 @@ pub(crate) fn manager_pipe_client_e2e() {
             client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
             Err(ClientError::NotAuthorized)
         );
+        // The compare and swap write is the same guarded call: no identity,
+        // no write, nobody asked.
+        assert_eq!(
+            client.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", ""),
+            Err(ClientError::NotAuthorized)
+        );
         // An instance file can hold a secret (OpencodeApiKey): its read
         // needs the control authorization, refused here unasked.
         assert_eq!(
@@ -473,6 +479,55 @@ pub(crate) fn manager_pipe_client_e2e() {
         let (server, client) = connect(&c, &alice);
         assert_eq!(client.status("default"), Ok(expected), "{state:?}");
         hang_up(server, client);
+    }
+
+    // ── The compare and swap write, end to end ────────────────────────────
+    // The same rule as over D-Bus, over the named pipe's frame: the content
+    // on the wire is the file's own bytes, a caller holding a content the
+    // file no longer holds gets `ClientError::Changed` with the file left
+    // alone, and a file that is not there is `Changed` too.
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &alice);
+        let base = std::fs::read_to_string(sys.join("presets.ini")).expect("read presets");
+        let more = format!("{base}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
+        assert_eq!(
+            client.write_file_if("presets.ini", &more, &base),
+            Ok(()),
+            "a caller holding the file's content writes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            more,
+            "the fresh content landed"
+        );
+        assert_eq!(
+            client.write_file_if("presets.ini", &base, &base),
+            Err(ClientError::Changed),
+            "a caller holding a content the file no longer holds"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            more,
+            "the refused write changed nothing on the way to the error"
+        );
+        assert_eq!(
+            client.write_file_if(
+                "server@nope.ini",
+                "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+                ""
+            ),
+            Err(ClientError::Changed),
+            "no file, no match"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 3],
+            "the guarded call the plain write is, at every call"
+        );
+        assert_eq!(calls(&c), vec![], "a file write touches no unit");
+        hang_up(server, client);
+        std::fs::write(sys.join("presets.ini"), presets).expect("restore presets");
     }
 }
 

@@ -102,7 +102,7 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 10] = [
+    let each: [(&str, ClientCall); 11] = [
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
         }),
@@ -114,6 +114,9 @@ fn a_peer_without_the_manager_object_is_unavailable() {
         ("read_file", |c| c.read_file("presets.ini").err()),
         ("write_file", |c| {
             c.write_file("presets.ini", "", false).err()
+        }),
+        ("write_file_if", |c| {
+            c.write_file_if("presets.ini", "", "").err()
         }),
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
@@ -174,6 +177,12 @@ pub(crate) fn manager_dbus_client_e2e() {
         assert_eq!(client.restart("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
             client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
+            Err(ClientError::NotAuthorized)
+        );
+        // The compare and swap write is the same guarded call: no sender, no
+        // write, nobody asked.
+        assert_eq!(
+            client.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", ""),
             Err(ClientError::NotAuthorized)
         );
         // An instance file can hold a secret (OpencodeApiKey): its read
@@ -388,6 +397,11 @@ pub(crate) fn manager_dbus_client_e2e() {
                 Err(ClientError::BadFileName),
                 "{bad:?}"
             );
+            assert_eq!(
+                client.write_file_if(bad, "x", ""),
+                Err(ClientError::BadFileName),
+                "{bad:?}"
+            );
         }
         assert_eq!(
             client.write_file(
@@ -484,6 +498,54 @@ pub(crate) fn manager_dbus_client_e2e() {
         let c = core_in(state, true, &[]);
         let (_server, client) = connect(&c, None);
         assert_eq!(client.status("default"), Ok(expected), "{state:?}");
+    }
+
+    // ── The compare and swap write, end to end ────────────────────────────
+    // `write_file_if` hands the content on the wire as the file's own bytes:
+    // a caller holding them writes; a caller holding a content the file no
+    // longer holds gets `ClientError::Changed` with the file left alone; a
+    // file that is not there is `Changed` too.
+    {
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let base = std::fs::read_to_string(sys.join("presets.ini")).expect("read presets");
+        let more = format!("{base}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
+        assert_eq!(
+            client.write_file_if("presets.ini", &more, &base),
+            Ok(()),
+            "a caller holding the file's content writes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            more,
+            "the fresh content landed"
+        );
+        assert_eq!(
+            client.write_file_if("presets.ini", &base, &base),
+            Err(ClientError::Changed),
+            "a caller holding a content the file no longer holds"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            more,
+            "the refused write changed nothing on the way to the error"
+        );
+        assert_eq!(
+            client.write_file_if(
+                "server@nope.ini",
+                "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+                ""
+            ),
+            Err(ClientError::Changed),
+            "no file, no match"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 3],
+            "the guarded call the plain write is, at every call"
+        );
+        assert_eq!(calls(&c), vec![], "a file write touches no unit");
+        std::fs::write(sys.join("presets.ini"), presets).expect("restore presets");
     }
 }
 
@@ -614,7 +676,7 @@ fn the_dbus_client_reads_the_managers_version() {
         got,
         Ok(Some(ManagerVersion {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol: 1,
+            protocol: 2,
         })),
         "the version this manager answers"
     );
@@ -920,6 +982,60 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             bff_checks(&c),
             expect_bff,
             "the caller of every guarded call is checked, and the other caller as itself"
+        );
+    }
+
+    // ── The member's compare and swap write, through the client ──────────
+    // The bff's client bound to `alice`: the member's `write_file_if` writes
+    // while the file holds the content the caller sends, and is
+    // `ClientError::Changed` when it no longer does, leaving the file. The
+    // counts are relative: this phase's logs already carry every call above.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        let calls_before = calls(&c).len();
+        let base = text_of("presets.ini");
+        let next = format!("{base}[Qwen3.5-9B]\nmodel = /models/Qwen3.5-9B-Q4_K_M.gguf\n");
+        let (land, land_of) = (next.clone(), base.clone());
+        assert_eq!(
+            on("write_file_if", &client, move |c| c
+                .acting_for("alice")
+                .write_file_if("presets.ini", &land, &land_of)),
+            Ok(()),
+            "a member's compare and swap write, holding the file's content"
+        );
+        assert_eq!(
+            text_of("presets.ini"),
+            next,
+            "the member's fresh content landed"
+        );
+        let (back, back_of) = (base.clone(), base.clone());
+        assert_eq!(
+            on("write_file_if", &client, move |c| c
+                .acting_for("alice")
+                .write_file_if("presets.ini", &back, &back_of)),
+            Err(ClientError::Changed),
+            "the same call with a content the file no longer holds"
+        );
+        assert_eq!(
+            text_of("presets.ini"),
+            next,
+            "the refused write changed nothing on the way to the error"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            calls_before,
+            "a file write touches no unit"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 2,
+            "the membership of the vouched name, asked once per write"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 2,
+            "the caller checked once per principal call"
         );
     }
 }

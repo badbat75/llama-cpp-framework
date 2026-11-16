@@ -386,7 +386,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - The tree is shared: a process can restore tracked files from git while an agent works (it happened
   mid-task, a few minutes after the tests were green: the edits were gone). Re-read a file before
   editing it, report the exact files changed, rerun the red list before trusting a green result, and
-  never "fix" it with `git stash`, use `git show HEAD:<path>` to read the base.
+  never "fix" it with `git stash`, use `git show HEAD:<path>` to read the base. The reset can land
+  AFTER your own post-edit `git diff --stat` shows everything in place: a test that fails quoting code
+  you already replaced (a `todo!()` message from a body you rewrote, a strings key the file has) is
+  the tree moving, not a logic bug, and it can hit only SOME of your files; re-read each and re-apply
+  before debugging.
 - windows-sys: `PSID` is `*mut c_void`, so a `SID` buffer goes in as `sid.as_mut_ptr().cast::<c_void>()`,
   not `as_ptr()` (that is a `*mut u8`, E0308). `SID_NAME_USE` is an `i32` newtype, so pass
   `&mut use as *mut i32`. `LookupAccountNameW` is under `Win32::Security` and asks for the size with a
@@ -728,3 +732,27 @@ Lessons only: the rules are in `AGENTS.md`.
   check the rest without editing a test as a fix: make the minimal temporary edit, run the test, then
   restore it with the exact inverse edit and re-read the lines to prove it. Report both the run and the
   temporary edit; the tester owns the expectation.
+- Web UI (`fe/`): `PresetCards.tsx`'s `readAs` is the ONE place a boolean key is read (the `Reading`
+  union), so a key with its own engine rule is a new member of that union and a new arm of `readAs`,
+  never a branch in `PresetField`. A checkbox row shows `row.absent` when its key is absent, so a key
+  whose engine default is on (`fit`) sets `absent: true`; a key that takes a value keeps the empty
+  value present in `heldFor` (the engine is passed `--key ""`). `Field.tsx` needs no change for a new
+  field error: `CheckboxField`/`GroupField` already take `error` and `describes()` names the error
+  first then the written-as line and sets `aria-invalid` only with an error.
+- Web UI: a group of 90 is an `h4` SIBLING right before `<div role="group" aria-labelledby>` (the
+  pattern `fe/DESIGN.md` writes), not a heading nested in the division: the tests' `before(a, b)` is
+  `compareDocumentPosition`, an ancestor precedes its descendants, so `before(h4, group)` is false for
+  a nested h4. A card's rows nest as data (a `group` row carrying `rows`), and the one renderer
+  dispatches on it, which is what the brief asks for.
+- Web UI, unsatisfiable assertions the tester must fix (report, never edit): `PresetCards5.test.tsx`
+  `nameOf(el)` returns `textContent` for anything that is not INPUT/SELECT/TEXTAREA, so
+  `nameOf(group) === heading` cannot hold for a group that holds fields (it also demands
+  `before(h4, group)`); its 113 test builds the stub key as `` `${heading}-size-n` `` without the
+  `spec-` prefix so `SET[key]` is `undefined`; its 81 test scopes `getByRole('button', {name: 'About
+  Lookup n-gram'})` to the CARD, which 113 makes three times ambiguous. The page-level 2d.68 pins the
+  heading outline as `1 2` + one `3` per card, so any h4 in a card turns it red.
+- Web UI: one test file is `cd fe && npx vitest run src/<File>.test.tsx` and one test adds
+  `-t "<test name>"` (`npm --prefix fe test -- <name>` passes the name as a FILE pattern and finds
+  nothing). `npm --prefix fe run typecheck` is `tsc -b`: it prints nothing when clean, so the exit
+  status is the result. Format before the checks with `cd fe && npx prettier --write <files>`, since
+  the npm scripts run in `fe/` (that is where `.prettierignore` lives).
