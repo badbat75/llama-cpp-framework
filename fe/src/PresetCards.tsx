@@ -9,7 +9,7 @@
 // is the same Field the Server page uses, so the page looks the same before
 // and after the save lands.
 import Card from './Card.tsx'
-import { DefaultBoxField, SelectField } from './Field.tsx'
+import { DefaultBoxField, SelectField, TextField } from './Field.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -23,8 +23,13 @@ type RowBase = {
   hint: string
 }
 
-/** A number: the default box and a text input showing the string as it is. */
-type NumberRow = RowBase & { kind: 'number'; integer: boolean }
+/** A number: the default box and a text input showing the string as it is. The
+ * unit, when the table gives one, sits after the input (criterion 89). */
+type NumberRow = RowBase & {
+  kind: 'number'
+  integer: boolean
+  unit?: string
+}
 
 /** A select: its options in the table's order, and the option an absent key
  * shows. */
@@ -34,7 +39,10 @@ type SelectRow = RowBase & {
   absent: string
 }
 
-type Row = NumberRow | SelectRow
+/** A text: one monospace input showing the string as it is. */
+type TextRow = RowBase & { kind: 'text' }
+
+type Row = NumberRow | SelectRow | TextRow
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
 type CardFields = { title: string; rows: Row[] }
@@ -52,9 +60,28 @@ const OFF_ON: Option[] = [
   { value: 'true', text: t('option-on') },
 ]
 
-/** The cards of 2e.1: Resource / context (92) and Embeddings (93), after the
- * Assets card. */
-export const CARDS: CardFields[] = [
+/** The cache types of 2e.2 (criterion 96): `default` is a string, the ten
+ * types are the literals the file writes. */
+const CACHE_TYPES: Option[] = [
+  { value: 'default', text: t('option-default') },
+  ...[
+    'f32',
+    'f16',
+    'bf16',
+    'f8_e4m3',
+    'q8_0',
+    'q5_1',
+    'q5_0',
+    'q4_1',
+    'q4_0',
+    'iq4_nl',
+  ].map((name) => ({ value: name, text: name })),
+]
+
+/** The cards built so far, in the order of criterion 83: the two of 2e.1
+ * (Resource / context, 92, and Embeddings, 93) after the Assets card, then the
+ * three of 2e.2 (KV cache, 96, Sampling overrides, 97, and Advanced, 98). */
+const CARDS: CardFields[] = [
   {
     title: t('preset-resource-context'),
     rows: [
@@ -121,7 +148,8 @@ export const CARDS: CardFields[] = [
           { value: 'default', text: t('option-default') },
           { value: 'none', text: t('option-none') },
           { value: 'mean', text: t('option-mean') },
-          // Not a strings key: the GUI's combo shows it as it is (MP 763-764).
+          // Not a strings key: a literal of the Embeddings table of
+          // fe/briefs/02e-preset-cards.md section 1.4.
           { value: 'cls', text: 'cls' },
           { value: 'last', text: t('option-last') },
           { value: 'rank', text: t('option-rank') },
@@ -129,6 +157,140 @@ export const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-pooling'),
         hint: t('preset-pooling-hint'),
+      },
+    ],
+  },
+  {
+    title: t('preset-kv-cache'),
+    rows: [
+      {
+        kind: 'select',
+        key: 'cache-type-k',
+        options: CACHE_TYPES,
+        absent: 'default',
+        label: t('preset-k-cache-type'),
+        hint: t('preset-k-cache-type-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'cache-type-v',
+        options: CACHE_TYPES,
+        absent: 'default',
+        label: t('preset-v-cache-type'),
+        hint: t('preset-v-cache-type-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'flash-attn',
+        options: TRISTATE,
+        absent: 'default',
+        label: t('preset-flash-attention'),
+        hint: t('preset-flash-attention-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        unit: 'MiB',
+        key: 'cache-ram',
+        label: t('preset-cache-ram'),
+        hint: t('preset-cache-ram-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'cache-reuse',
+        label: t('preset-cache-reuse'),
+        hint: t('preset-cache-reuse-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'ctx-checkpoints',
+        label: t('preset-context-checkpoints'),
+        hint: t('preset-context-checkpoints-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'checkpoint-min-step',
+        label: t('preset-checkpoint-step'),
+        hint: t('preset-checkpoint-step-hint'),
+      },
+    ],
+  },
+  {
+    title: t('preset-sampling-overrides'),
+    rows: [
+      {
+        kind: 'number',
+        integer: false,
+        key: 'temp',
+        label: t('preset-temperature'),
+        hint: t('preset-temperature-hint'),
+      },
+      {
+        // Not strings keys: Top-K, Top-P and Min-P are acronyms, so their
+        // labels are literals (table 97).
+        kind: 'number',
+        integer: true,
+        key: 'top-k',
+        label: 'Top-K',
+        hint: t('preset-top-k-hint'),
+      },
+      {
+        kind: 'number',
+        integer: false,
+        key: 'top-p',
+        label: 'Top-P',
+        hint: t('preset-top-p-hint'),
+      },
+      {
+        kind: 'number',
+        integer: false,
+        key: 'min-p',
+        label: 'Min-P',
+        hint: t('preset-min-p-hint'),
+      },
+      {
+        kind: 'number',
+        integer: false,
+        key: 'repeat-penalty',
+        label: t('preset-repeat-penalty'),
+        hint: t('preset-repeat-penalty-hint'),
+      },
+      {
+        kind: 'number',
+        integer: false,
+        key: 'presence-penalty',
+        label: t('preset-presence-penalty'),
+        hint: t('preset-presence-penalty-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'backend-sampling',
+        options: TRISTATE,
+        absent: 'default',
+        label: t('preset-backend-sampling'),
+        hint: t('preset-backend-sampling-hint'),
+      },
+    ],
+  },
+  {
+    title: t('preset-advanced'),
+    rows: [
+      {
+        kind: 'select',
+        key: 'load-on-startup',
+        options: OFF_ON,
+        absent: 'false',
+        label: t('preset-load-on-startup'),
+        hint: t('preset-load-on-startup-hint'),
+      },
+      {
+        kind: 'text',
+        key: 'chat-template-kwargs',
+        label: t('preset-chat-kwargs'),
+        hint: t('preset-chat-kwargs-hint'),
       },
     ],
   },
@@ -178,11 +340,27 @@ function PresetField({
         hint={row.hint}
         box={t('field-default')}
         numeric={row.integer}
+        unit={row.unit}
         ticked={value === undefined}
         text={value ?? ''}
         disabled
         onTick={() => undefined}
         onText={() => undefined}
+      />
+    )
+  }
+  if (row.kind === 'text') {
+    // No placeholder: an example in a field nobody can type into reads as a
+    // value (criterion 87).
+    return (
+      <TextField
+        id={id}
+        label={row.label}
+        hint={row.hint}
+        value={value ?? ''}
+        placeholder=""
+        disabled
+        onChange={() => undefined}
       />
     )
   }

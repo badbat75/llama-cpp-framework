@@ -27,6 +27,11 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
+import {
+  cardHeadings,
+  cardHeadingKeys,
+  fieldAboutToggles,
+} from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -345,7 +350,7 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice, the Engine field, the Assets card, then the Resource / context and Embeddings cards, and the off line stays above the h2', async () => {
+test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice, the Engine field, then every card of 83 in the page order (the list of test/presetCards.ts), and the off line stays above the h2', async () => {
   for (const [what, extra, off] of [
     ['a switched-on preset', {}, false],
     ['a switched-off preset', { enabled: false }, true],
@@ -369,11 +374,7 @@ test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice
       ['the read-only Notice', notice(main)],
       ['the Engine field', await engineSelect(main)],
     )
-    for (const title of [
-      'preset-assets',
-      'preset-resource-context',
-      'preset-embeddings',
-    ]) {
+    for (const title of cardHeadingKeys()) {
       const card = cardOf(main, title)
       expect(
         section!.contains(card),
@@ -723,24 +724,20 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...FIELDS.map((f) => `${en('field-about')} ${en(f.label)}`),
+    ...fieldAboutToggles(),
   ])
 })
 
 // ── The strings (95) ────────────────────────────────────────────────────
 
-test('2e.95: the two cards, the Notice, every label and every option show the English of the 22 new strings of 95', async () => {
+test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts), the Notice, every label and every option show the English of the 22 new strings of 95', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(
     within(main)
       .getAllByRole('heading', { level: 3 })
       .map((h) => text(h)),
     'the cards, in the order of 83',
-  ).toEqual(
-    ['preset-assets', 'preset-resource-context', 'preset-embeddings'].map(
-      (key) => en(key),
-    ),
-  )
+  ).toEqual(cardHeadings())
   expect(text(notice(main))).toBe(en('preset-read-only'))
   // Every label is the strings text of 95, and names its control.
   for (const f of FIELDS) {

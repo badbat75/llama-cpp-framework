@@ -26,6 +26,7 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
+import { PRESET_CARDS, fieldAboutToggles } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -48,19 +49,10 @@ const LABELS = [
   en('preset-ngram-drafters'),
 ]
 
-/** The 2e.1 cards' fields, in card and field order (02e-preset-cards.md 92,
- * 93): each is one tab stop, its About toggle (criterion 91), and nothing else
- * of a 2e card takes focus (criterion 85). */
-const CARD_TAB_STOPS = [
-  en('preset-context-size'),
-  en('preset-parallel-slots'),
-  en('preset-unified-kv'),
-  en('preset-per-slot-context'),
-  en('preset-batch-size'),
-  en('preset-u-batch-size'),
-  en('preset-embedding-mode'),
-  en('preset-pooling'),
-].map((label) => `${en('field-about')} ${label}`)
+/** The 2e cards' fields, in card and field order: each is one tab stop, its
+ * About toggle (criterion 91), and nothing else of a 2e card takes focus
+ * (criterion 85). The list is test/presetCards.ts. */
+const CARD_TAB_STOPS = fieldAboutToggles()
 
 /** A preset with every Assets value set (82), as the file holds it, plus keys
  * the page does not show. `extra` replaces a top-level member, `projectUrl`
@@ -328,8 +320,8 @@ test('2d.68: below the h1, in order: the off line (a switched-off preset), the h
         .getAllByRole('heading')
         .map((h) => h.getAttribute('aria-level') ?? h.tagName.slice(1))
         .join(' '),
-      `${what}: the heading order of D8`,
-    ).toBe('1 2 3 3 3')
+      `${what}: the heading order of D8 (the h1, the h2, one h3 per card of test/presetCards.ts)`,
+    ).toBe(`1 2${' 3'.repeat(PRESET_CARDS.length)}`)
     cleanup()
     vi.unstubAllGlobals()
   }
