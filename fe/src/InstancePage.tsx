@@ -32,14 +32,23 @@ type Action = 'start' | 'stop' | 'restart'
 
 const ACTIONS: Action[] = ['start', 'stop', 'restart']
 
-/** The idle poll's wait after an answer, the action poll's, and its limit (41b, 41c). */
+/** The idle poll's wait after an answer, the action poll's, and the limit of
+ * each action: a Start, and a Stop or Restart under the service, which can
+ * save slot snapshots for minutes before it stops (41b, 41c, 4d S2.1). */
 const IDLE_MS = 5000
 const ACTION_MS = 1000
 const ACTION_LIMIT_MS = 60_000
+const ACTION_LIMIT_STOP_MS = 360_000
 
 /** When an action's poll ends, counted from its 2xx answer (now). */
-function actionDeadline(): number {
-  return Date.now() + ACTION_LIMIT_MS
+function actionDeadline(action: Action): number {
+  const limit = action === 'start' ? ACTION_LIMIT_MS : ACTION_LIMIT_STOP_MS
+  return Date.now() + limit
+}
+
+/** The status an action's deadline shows (41c, 4d S2.6). */
+function timeoutText(action: Action): string {
+  return action === 'start' ? t('run-timeout') : t('run-timeout-stop')
 }
 
 function label(action: Action): string {
@@ -202,7 +211,7 @@ export default function InstancePage({
             () => {
               live = false
               setBusy(null)
-              setStatus(t('run-timeout'))
+              setStatus(timeoutText(run.action))
               setNext({ delay: IDLE_MS, run: null })
             },
             Math.max(0, run.deadline - Date.now()),
@@ -265,7 +274,7 @@ export default function InstancePage({
     if (result === 'ok') {
       setNext({
         delay: ACTION_MS,
-        run: { action, deadline: actionDeadline(), n },
+        run: { action, deadline: actionDeadline(action), n },
       })
       return
     }

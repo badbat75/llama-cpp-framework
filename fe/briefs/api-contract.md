@@ -150,7 +150,10 @@ not served yet (bff slice 8, sub-slice 6).
 - Errors, each `{"key", "args"}`: 401 `session-required`; 400 `server-malformed` (a body or a value
   not of the read's type); 403 `session-not-administrator` (the session is ended); 404
   `client-no-instance`; 503 `client-unavailable` (also a time-out after the manager may have
-  written); 502 `client-other`.
+  written until 504 is served); 502 `client-other`.
+- 504 `client-timeout`, `args: []` (accepted, not served yet): the time limit ran out after the
+  write was sent to the manager, so the file may or may not be saved; 503 `client-unavailable` stays
+  for a manager never reached.
 
 ### Start, stop, restart, boot
 

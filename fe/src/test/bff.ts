@@ -189,6 +189,9 @@ export const EN: Record<string, string> = {
     'llama-server is in the Failed state. Its log on the server says why.',
   'run-timeout':
     'llama-server did not reach the expected state within a minute. The state above keeps updating.',
+  // Slice S2 (section 4d): a Stop or Restart that saves snapshots for minutes.
+  'run-timeout-stop':
+    'llama-server did not reach the expected state within six minutes. The state above keeps updating.',
   'request-failed': 'The request did not go through. Try again.',
   'session-ended-retry': 'Your session has ended. Sign in again, then retry.',
   'api-client-service-failed':

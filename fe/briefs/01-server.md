@@ -982,6 +982,10 @@ S2.2. **Check (Stop):** every action read answering `deactivating`: 359 `GET`s a
     next `GET` 5000 ms later. A read answering `inactive` at 240 000 ms gives `run-stopped`.
 S2.3. **Check (Restart):** reads answering `deactivating` to 200 000 ms, `activating` to 290 000 ms,
     then `active`: `run-restarting` throughout, then `run-restarted`; no `run-timeout*` at 60 000 ms.
+S2.3b. **Restart, `inactive` is not an outcome.** For a Restart a read answering `inactive` (Windows
+    shows about 250 ms between the stop and the start) changes nothing: the status stays
+    `run-restarting` and all three buttons `aria-disabled` until a read answers `active`
+    (`run-restarted`) or the 360 s deadline (`run-timeout-stop`). The tests already carry it.
 S2.4. **Check (Start):** unchanged, `run-timeout` at 60 000 ms (41c).
 S2.5. **Announcement**: the status stays one `role="status"` region; the text changes only at the
     outcome or the deadline, so nothing is announced each second
@@ -1017,7 +1021,13 @@ S3.4. **409 text.** A 409 `server-changed-elsewhere` shows the new English text 
 S3.5. **Announcement**: unchanged: the alert is `role="alert"`
     ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)), the marked field names its error
     ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification)).
-S3.6. **Strings, slice S3.** New: `api-bind-all-with-others` | Hostname lists 0.0.0.0 with other
+S3.6. **504.** A save answered 504 `client-timeout` reads exactly as the fe's own save time-out
+    (4.8, 47d; `sendSave`'s `TimeoutError` branch): the bar's `role="alert"` shows `save-timeout`
+    with no button (no Reload, no Sign in); the form keeps the draft as typed, still dirty, no field
+    marked; the revision held is not changed. A later Save sends that revision: if the file was
+    written it is stale and meets the 409 path (S3.4, Reload), else the save goes through. No new
+    string.
+S3.7. **Strings, slice S3.** New: `api-bind-all-with-others` | Hostname lists 0.0.0.0 with other
     addresses; 0.0.0.0 already covers every address, so bind it alone. (verbatim from
     `crates/core/strings/en_US.toml` line 1010). Changed: `api-server-changed-elsewhere` | These
     settings changed elsewhere, or the web service restarted, after you opened them. Reload to see

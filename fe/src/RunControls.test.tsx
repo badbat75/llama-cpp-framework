@@ -2,9 +2,11 @@
 // slice 1c, sections 4.1 to 4.5 and 4.7, with section 6): Start, Stop and
 // Restart in the header, the one shared read of /api/instances and its polls,
 // what an action shows, its errors, a sign-in after a 401, and the Server form
-// left alone. Start at boot (4.6) is in Boot.test.tsx. The whole app renders
-// against a fake bff (mocked fetch) on fake timers, so the poll times of 41d
-// are exact; "1c.41d" is the brief's criterion 41d.
+// left alone. Slice S2 (section 4d): a Stop or Restart that saves snapshots for
+// minutes, with its 360 s deadline. Start at boot (4.6) is in Boot.test.tsx.
+// The whole app renders against a fake bff (mocked fetch) on fake timers, so
+// the poll times of 41d are exact; "1c.41d" is the brief's criterion 41d and
+// "S2.2" is section 4d's criterion S2.2.
 import {
   act,
   cleanup,
@@ -15,6 +17,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
+import strings from './strings/en_US.json'
 import {
   before,
   deferred,
@@ -1521,7 +1524,8 @@ test('1c.44a: an action started after a save-saved-restart ends it when it settl
 })
 
 test('1c.44a: on a timeout or an error, save-saved-restart stays', async () => {
-  // A timeout.
+  // A timeout. A Restart that saves snapshots runs to its 360 s deadline
+  // (slice S2), not to the 60 s of a Start.
   {
     const { bff, main } = await loaded({ save: RUNNING_SAVE })
     await savedRestart(main)
@@ -1529,7 +1533,11 @@ test('1c.44a: on a timeout or an error, save-saved-restart stays', async () => {
     await flush()
     bff.setInstances(list('activating'))
     for (let s = 0; s < 60; s++) await advance(1000)
-    expect(runStatus(main).textContent).toBe(en('run-timeout'))
+    expect(runStatus(main).textContent, 'no timeout at 60 000 ms').toBe(
+      en('run-restarting'),
+    )
+    for (let s = 0; s < 300; s++) await advance(1000)
+    expect(runStatus(main).textContent).toBe(en('run-timeout-stop'))
     expect(saveStatus(main).textContent, 'timeout').toBe(
       en('save-saved-restart'),
     )
@@ -1596,4 +1604,354 @@ test('1c.46a: Tab reaches Start, Stop, Restart (inactive ones included), then th
     en('session-sign-in'),
   ])
   expect(names.indexOf(`${en('field-about')} Port`)).toBeGreaterThan(3)
+})
+
+// ── Slice S2: a Stop or Restart that saves snapshots for minutes (4d) ────
+//
+// A Stop or Restart with "Save on shutdown" on lasts up to 300 s in
+// deactivating, so its deadline is 360 s after the POST's 2xx (S2.1) and the
+// status must not read a failure at 60 s. Times below are counted from the 2xx.
+
+/**
+ * Advances the clock 1 s at a time for `seconds`, sampling the run status at
+ * each step (the action poll reads every 1000 ms, 41c): sample n is what the
+ * status shows at n seconds after the 2xx. Every step is sampled, so a status
+ * that changed text for one second is caught (S2.5).
+ *
+ * The status node is taken once, before the loop, and read through
+ * `textContent`: `runStatus()` walks the tree for the ONE role="status"
+ * region, which costs more than the 360 polls it would watch. After the loop
+ * the same query pins that the node is still the single run status, so the
+ * samples are all of that one live region.
+ */
+async function statusEachSecond(
+  main: HTMLElement,
+  seconds: number,
+): Promise<string[]> {
+  const status = runStatus(main)
+  const seen: string[] = []
+  for (let s = 1; s <= seconds; s++) {
+    await advance(1000)
+    seen.push(status.textContent ?? '')
+  }
+  expect(runStatus(main), 'the run status stayed one node').toBe(status)
+  return seen
+}
+
+/** The samples that are a timeout text: none belong before the deadline. */
+function timeoutSamples(seen: string[]): string[] {
+  return seen.filter(
+    (s) => s === en('run-timeout') || s === en('run-timeout-stop'),
+  )
+}
+
+/** The distinct texts of `seen`, in the order they appear. */
+function distinct(seen: string[]): string[] {
+  return [...new Set(seen)]
+}
+
+test('S2.1: the deadline follows the action: a Stop and a Restart read on past 60 s, a Start ends at 60 s', async () => {
+  for (const [state, key, action, readAt60, textAt60] of [
+    ['inactive', 'run-start', 'start', 59, en('run-timeout')],
+    ['active', 'run-stop', 'stop', 60, en('run-stopping')],
+    ['active', 'run-restart', 'restart', 60, en('run-restarting')],
+  ] as const) {
+    const { bff, main } = await loaded({ instances: list(state) })
+    press(button(main, key))
+    await flush()
+    expect(posts(bff), key).toEqual([`/api/instances/default/${action}`])
+    bff.setInstances(list(state === 'active' ? 'deactivating' : 'activating'))
+    const n = reads(bff)
+    const seen = await statusEachSecond(main, 60)
+    expect(
+      timeoutSamples(seen.slice(0, 59)),
+      `${key}: no timeout before 60 s`,
+    ).toEqual([])
+    expect(seen[59], `${key} at 60 000 ms`).toBe(textAt60)
+    expect(reads(bff), `${key}: ${readAt60} reads at 60 000 ms`).toBe(
+      n + readAt60,
+    )
+    cleanup()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('S2.2: a Stop every read says deactivating: 359 reads, run-stopping at 60 000 and 359 999 ms, run-timeout-stop at 360 000 ms, the next read 5 s later', async () => {
+  const { bff, main } = await loaded({ instances: list('active') })
+  const stop = button(main, 'run-stop')
+  press(stop)
+  await flush()
+  expect(posts(bff)).toEqual(['/api/instances/default/stop'])
+  bff.setInstances(list('deactivating'))
+  const n = reads(bff)
+  const seen = await statusEachSecond(main, 359)
+  expect(reads(bff), '359 reads by 359 000 ms').toBe(n + 359)
+  expect(
+    distinct(seen),
+    'the status stays run-stopping for 359 s (S2.5)',
+  ).toEqual([en('run-stopping')])
+  expect(
+    inactiveSet(main),
+    'deactivating leaves all three inactive (40a)',
+  ).toEqual([true, true, true])
+  expectState(main, 'instance-state-deactivating')
+
+  // One ms before the deadline: nothing has happened.
+  await advance(999)
+  expect(runStatus(main).textContent, 'at 359 999 ms').toBe(en('run-stopping'))
+  expect(reads(bff), 'no read at 359 999 ms').toBe(n + 359)
+
+  // The deadline: the status says the six minute text, no read goes.
+  await advance(1)
+  expect(runStatus(main).textContent, 'at 360 000 ms').toBe(
+    en('run-timeout-stop'),
+  )
+  expect(reads(bff), 'no action read at or after the deadline').toBe(n + 359)
+  expectState(main, 'instance-state-deactivating')
+  expect(
+    inactiveSet(main),
+    'the buttons follow the state the header shows (40a)',
+  ).toEqual([true, true, true])
+  expect(document.activeElement, 'focus stayed on Stop (40b)').toBe(stop)
+  expect(runAlerts(main), 'a timeout is not an alert').toEqual([])
+
+  // The idle chain resumes 5 s after the deadline (41c).
+  await advance(4999)
+  expect(reads(bff)).toBe(n + 359)
+  await advance(1)
+  expect(reads(bff), 'the idle read 5 s after the 360 000 ms mark').toBe(
+    n + 360,
+  )
+})
+
+test('S2.2: a Stop whose read answers inactive at 240 000 ms settles with run-stopped', async () => {
+  const { bff, main } = await loaded({ instances: list('active') })
+  const stop = button(main, 'run-stop')
+  press(stop)
+  await flush()
+  bff.setInstances(list('deactivating'))
+  const n = reads(bff)
+  const seen = await statusEachSecond(main, 239)
+  expect(distinct(seen), 'run-stopping to 239 000 ms').toEqual([
+    en('run-stopping'),
+  ])
+  bff.setInstances(list('inactive'))
+  await advance(1000)
+  expect(reads(bff), 'the read at 240 000 ms').toBe(n + 240)
+  expect(runStatus(main).textContent).toBe(en('run-stopped'))
+  expectState(main, 'instance-state-inactive')
+  expect(inactiveSet(main)).toEqual([false, true, true])
+  expect(document.activeElement, 'focus stayed on Stop').toBe(stop)
+  await advance(4000)
+  expect(reads(bff), 'not 1 s any more').toBe(n + 240)
+  await advance(1000)
+  expect(reads(bff), 'the idle chain, 5 s after the settling read').toBe(
+    n + 241,
+  )
+})
+
+test('S2.3: a Restart reading deactivating to 200 000 ms and activating to 290 000 ms: run-restarting throughout, no run-timeout at 60 000 ms, run-restarted when it reads active', async () => {
+  const { bff, main } = await loaded({ instances: list('active') })
+  const restart = button(main, 'run-restart')
+  press(restart)
+  await flush()
+  expect(posts(bff)).toEqual(['/api/instances/default/restart'])
+  const n = reads(bff)
+
+  bff.setInstances(list('deactivating'))
+  const stopping = await statusEachSecond(main, 200)
+  expect(distinct(stopping), 'run-restarting through deactivating').toEqual([
+    en('run-restarting'),
+  ])
+  expect(stopping[59], 'at 60 000 ms').toBe(en('run-restarting'))
+  expect(timeoutSamples(stopping), 'no run-timeout* in 200 s').toEqual([])
+  expect(inactiveSet(main), 'deactivating leaves all three inactive').toEqual([
+    true,
+    true,
+    true,
+  ])
+
+  bff.setInstances(list('activating'))
+  const starting = await statusEachSecond(main, 90)
+  expect(distinct(starting), 'run-restarting through activating').toEqual([
+    en('run-restarting'),
+  ])
+  expect(timeoutSamples(starting), 'no run-timeout* by 290 000 ms').toEqual([])
+  expect(reads(bff), 'one read each second to 290 000 ms').toBe(n + 290)
+  expect(
+    within(main).queryByText(/did not reach the expected state/),
+    'no timeout text anywhere on the page',
+  ).toBeNull()
+
+  bff.setInstances(list('active'))
+  await advance(1000)
+  expect(runStatus(main).textContent).toBe(en('run-restarted'))
+  expectState(main, 'instance-state-active')
+  expect(inactiveSet(main)).toEqual([true, false, false])
+  expect(document.activeElement, 'focus stayed on Restart (40b)').toBe(restart)
+})
+
+test('S2.3b: a Restart that reads inactive in the Windows gap keeps run-restarting and all three buttons until a read says active', async () => {
+  const { bff, main } = await loaded({ instances: list('active') })
+  const restart = button(main, 'run-restart')
+  press(restart)
+  await flush()
+  bff.setInstances(list('deactivating'))
+  const seen = await statusEachSecond(main, 65)
+  expect(distinct(seen), 'past the old 60 s mark').toEqual([
+    en('run-restarting'),
+  ])
+  expect(inactiveSet(main)).toEqual([true, true, true])
+
+  // The gap on Windows: the service stopped the instance and has not started
+  // it yet, so a read answers inactive between the stop and the start.
+  bff.setInstances(list('inactive'))
+  for (const s of [66, 67]) {
+    await advance(1000)
+    expect(
+      runStatus(main).textContent,
+      `${s} 000 ms: a Restart does not settle on inactive`,
+    ).toBe(en('run-restarting'))
+    expect(
+      inactiveSet(main),
+      `${s} 000 ms: Start stays inactive through the gap`,
+    ).toEqual([true, true, true])
+    expectState(main, 'instance-state-inactive')
+  }
+
+  bff.setInstances(list('activating'))
+  await advance(1000)
+  expect(runStatus(main).textContent).toBe(en('run-restarting'))
+  expect(inactiveSet(main)).toEqual([true, true, true])
+
+  bff.setInstances(list('active'))
+  await advance(1000)
+  expect(
+    runStatus(main).textContent,
+    'the gap ends at the first active read',
+  ).toBe(en('run-restarted'))
+  expect(inactiveSet(main)).toEqual([true, false, false])
+  expect(document.activeElement, 'focus stayed on Restart').toBe(restart)
+})
+
+test('S2.3b: a Restart stuck at inactive in the gap: run-restarting to 359 999 ms, run-timeout-stop at 360 000 ms', async () => {
+  const { bff, main } = await loaded({ instances: list('active') })
+  const restart = button(main, 'run-restart')
+  press(restart)
+  await flush()
+  bff.setInstances(list('deactivating'))
+  await advance(1000)
+  const n = reads(bff)
+  bff.setInstances(list('inactive'))
+  const seen = await statusEachSecond(main, 358)
+  expect(reads(bff), 'the reads of the gap go on each second').toBe(n + 358)
+  expect(timeoutSamples(seen.slice(0, 59)), 'no timeout before 60 s').toEqual(
+    [],
+  )
+  expect(distinct(seen), 'run-restarting through the gap').toEqual([
+    en('run-restarting'),
+  ])
+  expect(inactiveSet(main), 'the gap keeps all three inactive').toEqual([
+    true,
+    true,
+    true,
+  ])
+
+  await advance(999)
+  expect(runStatus(main).textContent, 'at 359 999 ms').toBe(
+    en('run-restarting'),
+  )
+  expect(reads(bff), 'no read at 359 999 ms').toBe(n + 358)
+  await advance(1)
+  expect(runStatus(main).textContent, 'at 360 000 ms').toBe(
+    en('run-timeout-stop'),
+  )
+  expect(reads(bff), 'no action read at the deadline').toBe(n + 358)
+  expect(
+    inactiveSet(main),
+    'at the deadline the buttons follow the state shown (40a)',
+  ).toEqual([false, true, true])
+  expect(document.activeElement, 'focus stayed on Restart (40b)').toBe(restart)
+})
+
+test('S2.4: Start is unchanged: 59 reads, run-timeout at 60 000 ms and not run-timeout-stop, the next read 5 s later', async () => {
+  const { bff, main } = await loaded({ instances: list('inactive') })
+  press(button(main, 'run-start'))
+  await flush()
+  bff.setInstances(list('activating'))
+  const n = reads(bff)
+  const seen = await statusEachSecond(main, 59)
+  expect(reads(bff)).toBe(n + 59)
+  expect(distinct(seen), 'run-starting to 59 000 ms').toEqual([
+    en('run-starting'),
+  ])
+  await advance(1000)
+  expect(reads(bff), 'no read at 60 000 ms').toBe(n + 59)
+  const text = runStatus(main).textContent
+  expect(text).toBe(en('run-timeout'))
+  expect(text, 'a Start keeps the one minute text').not.toBe(
+    en('run-timeout-stop'),
+  )
+  expect(inactiveSet(main), 'the last state is activating: all three').toEqual([
+    true,
+    true,
+    true,
+  ])
+  await advance(4999)
+  expect(reads(bff)).toBe(n + 59)
+  await advance(1)
+  expect(reads(bff), 'the idle chain, 5 s after the 60 000 ms mark').toBe(
+    n + 60,
+  )
+})
+
+test('S2.5: the one run status changes text only at the outcome and at the deadline, never each second', async () => {
+  // To the deadline: run-stopping at every read, the new text at 360 000 ms.
+  const first = await loaded({ instances: list('active') })
+  press(button(first.main, 'run-stop'))
+  await flush()
+  first.bff.setInstances(list('deactivating'))
+  const toDeadline = await statusEachSecond(first.main, 359)
+  expect(
+    distinct(toDeadline),
+    '359 reads, one text: nothing announced each second',
+  ).toEqual([en('run-stopping')])
+  await advance(1000)
+  expect(
+    runStatus(first.main).textContent,
+    'the deadline is the only change',
+  ).toBe(en('run-timeout-stop'))
+  cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+
+  // Settled: the outcome is the only change, and 60 000 ms changes nothing.
+  const second = await loaded({ instances: list('active') })
+  press(button(second.main, 'run-stop'))
+  await flush()
+  second.bff.setInstances(list('deactivating'))
+  const toSettle = await statusEachSecond(second.main, 61)
+  expect(toSettle[59], 'at 60 000 ms').toBe(en('run-stopping'))
+  expect(distinct(toSettle), 'no change past the old 60 s mark').toEqual([
+    en('run-stopping'),
+  ])
+  second.bff.setInstances(list('inactive'))
+  await advance(1000)
+  expect(runStatus(second.main).textContent, 'the outcome').toBe(
+    en('run-stopped'),
+  )
+})
+
+test('S2.6: strings/en_US.json carries run-timeout-stop with the brief text: six minutes, not a minute', () => {
+  const table: Record<string, string> = strings
+  expect(
+    table['run-timeout-stop'],
+    'the strings file holds the new key, as the test English does',
+  ).toBe(en('run-timeout-stop'))
+  expect(en('run-timeout-stop')).toContain('six minutes')
+  expect(en('run-timeout-stop')).toContain('The state above keeps updating.')
+  expect(en('run-timeout-stop'), 'a text of its own').not.toBe(
+    en('run-timeout'),
+  )
 })
