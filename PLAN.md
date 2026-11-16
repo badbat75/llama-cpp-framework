@@ -914,8 +914,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (`common/arg.cpp`): on for `on`, `enabled`, `true`, `1`, off for the four falsey values, any other value
    refused by llama-server, and an absent key means llama.cpp's default, on (`common.h` `fit_params`;
    the launch passes no `-fit` then); the configurator today reads `on`/`true` in any case as on and an
-   absent key as off. Whether a preset with no `fit` shows Fit to VRAM on or off is the user's
-   product question (asked through the web UI session). `server.ini` and
+   absent key as off. The user decided (2026-11-16, through the web UI session): a preset
+   with no `fit` shows Fit to VRAM on, as the engine does; the launch keeps passing no `-fit`. The rule
+   that Fit is allowed only with `ctx-size` and `n-gpu-layers` at their defaults is unchanged. `server.ini` and
    `settings.ini` keep `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
    `pai-core` with `pai-app`'s reader; before the MVP's run.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
