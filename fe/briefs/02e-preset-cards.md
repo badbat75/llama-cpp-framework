@@ -21,6 +21,7 @@ settles every shared rule; 2e.2 to 2e.5 are mostly field tables applying it. A t
 | 2e.2b | 118-121 | The full-value line: a long value stays readable under its disabled control (added 2026-11-16 after the 2e.1 review; applies to every field built so far and, through the shared renderer, to 2e.3 to 2e.5) |
 | 2e.3 | 101-106 | Chat / reasoning, Vision |
 | 2e.4 | 107-111 | Hardware |
+| 2e.3c | 127-129 | Fit to VRAM reads as llama-server reads `fit` (added 2026-11-16 after the 2e.4 review; lands after 2e.3b and 2e.4) |
 | 2e.5 | 112-117 | Speculative decoding |
 
 ## 0. The main decision: real controls, disabled
@@ -416,7 +417,12 @@ field built so far and to 2e.4 and 2e.5 through the shared renderer.
 
     Absent shows the field's default, as before. Valued options with their own words (`reasoning`,
     `pooling`, the cache types, `lazy-mode`, `load-mode`) keep criterion 87's exact match: they are
-    not booleans. `fit` (2e.4, valued `[on|off]`) keeps criterion 108 until 2e.4 is reviewed.
+    not booleans. `fit` (valued `[on|off]` with no third value) has a reading of its own, the
+    table's fourth row, built in sub-slice 2e.3c (criteria 127 to 129), not in 2e.3b.
+
+    | Reading | Keys and rows | On | Off | Other values |
+    |---|---|---|---|---|
+    | **Valued, on / off only** (2e.3c; its handler `common/arg.cpp` 2852-2863) | Checkbox: `fit` | `on`, `enabled`, `true`, `1`, **and absent** (llama.cpp's default) | `off`, `disabled`, `false`, `0` | **invalid**: llama-server refuses them ("unknown value for --fit"), `""` included (criterion 128) |
 123. **The empty value** (decision a): for a flag, `key =` is **on**, whatever the field's default
     (a checkbox defaulting to off shows checked; a tri-state shows `on`, not `default`), because
     llama-server then passes the plain flag; criterion 86's "`""` is absent" stays for every other
@@ -508,14 +514,17 @@ Applies criteria 83 to 91 and 103.
     and surrounding space (`from_keys` 866-871). So `fit` `on` with `ctx-size` set shows unchecked,
     "needs Context size and GPU layers at default", as in the GUI; the web does not invent a third
     state **(preference: the same reading as the GUI, where the rest of 2e shows the file; here the
-    GUI's own text explains the difference)**.
+    GUI's own text explains the difference)**. **2e.3c replaces the checked state** (criterion
+    127: the box shows what llama-server does, absent is on); the allowed rule and the two toggle
+    texts stay as written here.
 109. **The tests stub** (2e.4): every key set (`n-gpu-layers` `99`, `n-cpu-moe` `20`,
     `moe-cache-mib` `2048`, `n-cpu-ffn` `4`, `op-offload` `false`, `repack` `true`, `no-host`
     `true`, `lazy-mode` `auto`, `load-mode` `MLOCK` (selects `mlock`), `fit` `on`, `fit-ctx`
     `8192`, `fit-target` `2048,1024`, `device-draft` `ROCm1`, `n-gpu-layers-draft` `0`): Fit to
     VRAM unchecked with `preset-fit-not-allowed`; `values` `{fit: "on"}`: checked with
     `preset-fit-allowed`; `values` `{}`: unchecked with `preset-fit-allowed`; `fit` `TRUE` with
-    nothing else: checked.
+    nothing else: checked. 2e.3c changes three of these expectations (criterion 129): every key set
+    shows checked, `values` `{}` checked, `fit` `TRUE` invalid.
 110. **Strings, 2e.4** (32 new): `preset-hardware-config` "Hardware config" (toml 255); the 14
     labels and 14 hints of table 107 (keys `preset-` plus the GUI key: `gpu-layers`,
     `moe-cpu-layers`, `moe-cache`, `dense-ffn-cpu-layers`, `op-offload`, `repack`,
@@ -525,6 +534,61 @@ Applies criteria 83 to 91 and 103.
     English per the table and the web texts of 107; the rest unchanged.
 111. **Out of 2e.4**: the embedded-MTP note (MP 620-625, needs the model read: 2g), the slider
     maxima and the CPU/GPU switch of a blockless drafter (2g), the probed device list (2f).
+
+## 2e.3c. Fit to VRAM reads as llama-server reads `fit`
+
+Added 2026-11-16 after the 2e.4 review; the reading was confirmed in the llama.cpp v1.0.0 clone
+and the user decided to show what the engine does. Lands after 2e.3b (it reuses the written-as
+line, criterion 124) and 2e.4 (the field). A tester reads section 0, section 1, criterion 108 and
+this section. `fit` takes a value (`-fit [on|off]`): `common_preset::to_args` passes it as written
+(`common/preset.cpp` 66-68), and its handler (`common/arg.cpp` 2852-2863) sets fit on for
+`is_truthy` (exactly `on`, `enabled`, `true`, `1`), off for `is_falsey` (exactly `off`,
+`disabled`, `false`, `0`), and throws "unknown value for --fit" for anything else, so llama-server
+does not start that preset. Compared trimmed and case-sensitive, as in 2e.3b. An absent key is on:
+`params.fit_params = true` (`common/common.h` 497), and the router passes no `-fit` of its own
+(`crates/core/src/launch.rs` 710). The configurator writes `on` / `off` (`presets.rs` 2106).
+
+127. **The checked state** (replaces 108's): the box is checked when `fit` is absent or one of the
+    four on values, unchecked when it is one of the four off values or invalid (criterion 128). The
+    allowed rule of 108 still picks the toggle text, but no longer unchecks the box: `fit` on with
+    `ctx-size` or `n-gpu-layers` set shows **checked**, "needs Context size and GPU layers at
+    default". Reason: llama-server does run the fit there (with `ctx-size` set it still sizes the
+    layers; with `n-gpu-layers` set it gives up and logs a warning, `common/fit.cpp` 550-551), and
+    the text tells the user what the configurator needs for a full fit. The absent key is **not**
+    "`""` is absent" here: `fit =` is passed as `--fit ""` and refused, so `""` is invalid
+    (criterion 86 does not apply to `fit`). The written-as line (criterion 124) shows for a valid
+    present value that is not exactly `on` or `off` (the configurator's spellings for this key, in
+    place of 124's `true` / `false`): `true`, `enabled`, `1`, `false`, `disabled`, `0`, or a valid
+    value with spaces around it.
+128. **An invalid value** is an error, not a spelling: llama-server will not start this preset. The
+    box shows unchecked; under it, the written-as line (criterion 124: "Written as TRUE", or "Written
+    with no value" for `""`), then the D5.2 Field **Error** (`fe/DESIGN.md` 5.2, the `error` of
+    `CheckboxField`): a paragraph `preset-fit-error` (`<id>-error`) in `--danger` with the error icon,
+    `preset-fit-invalid`, and the checkbox gets `aria-invalid="true"` and `aria-describedby` that
+    paragraph. Not `role="alert"`: it is part of the page as read, not the outcome of an action
+    (DESIGN "Error by key": no alert on load). The icon and the text carry it, not the colour alone.
+    No other field shows an error in 2e. ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
+    [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion),
+    [1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value))
+129. **Tests** (jsdom; the allowed rule as in 108). Strings (1 new): `preset-fit-invalid`
+    "llama-server refuses this value, so this preset does not start. Use on or off."
+
+    | `values` | Box | Toggle text | Written-as line | Error |
+    |---|---|---|---|---|
+    | `{}` | checked | `preset-fit-allowed` | none | none |
+    | `{fit: "on"}`, `{fit: "off"}` | checked, unchecked | `preset-fit-allowed` | none | none |
+    | `{fit: "1"}`, `{fit: "enabled"}`, `{fit: " on "}` | checked | `preset-fit-allowed` | "Written as 1", "...enabled", "... on " | none |
+    | `{fit: "0"}`, `{fit: "false"}` | unchecked | `preset-fit-allowed` | "Written as 0", "...false" | none |
+    | `{fit: "TRUE"}`, `{fit: "On"}`, `{fit: "auto"}` | unchecked | `preset-fit-allowed` | "Written as TRUE" etc. | `preset-fit-invalid`, `aria-invalid` on the box |
+    | `{fit: ""}` | unchecked | `preset-fit-allowed` | "Written with no value" | `preset-fit-invalid` |
+    | `{fit: "on", "ctx-size": "8192"}`, `{"n-gpu-layers": "99"}` (fit absent) | checked | `preset-fit-not-allowed` | none | none |
+    | 109's every-key stub | checked | `preset-fit-not-allowed` | none | none |
+
+    Each line and the error found by id; the box stays `disabled` in every row. **Out of 2e.3c**: an
+    error for `flash-attn`'s refused values (it keeps its extra option), the configurator's own
+    reading (`PLAN.md` step 10 slice 11d), and whether the Fit hint's "Off by default here" still
+    reads right once the configurator follows this rule (11d's to judge).
 
 ## 2e.5. Speculative decoding
 
