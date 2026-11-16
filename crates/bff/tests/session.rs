@@ -230,7 +230,7 @@ fn app_with(auth: FakeAuth) -> App {
     let auth = Arc::new(auth);
     let clock = FakeClock::new();
     // The session routes never ask the manager.
-    let connect: pai_bff::Connect = Arc::new(|| Err(ClientError::Unavailable));
+    let connect: pai_bff::Connect = Arc::new(|_| Err(ClientError::Unavailable));
     let router = pai_bff::router_with_session(
         connect,
         Duration::from_millis(200),
@@ -1024,7 +1024,7 @@ async fn guesses_sent_at_once_do_not_overrun_the_lock() {
     let auth = Arc::new(SlowAuth {
         calls: Mutex::new(0),
     });
-    let connect: pai_bff::Connect = Arc::new(|| Err(ClientError::Unavailable));
+    let connect: pai_bff::Connect = Arc::new(|_| Err(ClientError::Unavailable));
     let router = pai_bff::router_with_session(
         connect,
         Duration::from_millis(200),

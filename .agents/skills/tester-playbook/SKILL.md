@@ -16,14 +16,17 @@ Lessons only: the rules are in `AGENTS.md`.
   pass (its fingerprint does match the current sources: `cargo check -v` prints `Fresh <pkg>`). To compile
   the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
   cross target with `cargo clean -p <pkg> --target <triple>`. The rerun's own log proves the compile when
-  it prints `Compiling <pkg>`; a follow-up `cargo clippy -p <pkg> -v` printing `Fresh <pkg>` confirms the
-  fingerprint (cargo's own `-v` changes no rustc fingerprint). Write the `-v` log to a file and grep
+  it prints `Compiling <pkg>`; a follow-up `cargo check -p <pkg> -v` printing `Fresh <pkg>` confirms the
+  fingerprint (cargo's own `-v` changes no rustc fingerprint). For clippy `-v` is NOT a neutral probe: the
+  clippy driver records `CLIPPY_ARGS`, so any `-v` run reports `Dirty <own pkg>: the environment variable
+  CLIPPY_ARGS changed` and re-checks (that run is proof too, it re-runs every target). Write the `-v` log to a file and grep
   that file: piped through `head`/`grep -c` the pipe closes early (SIGPIPE), the log truncates, and the
   `Fresh <own pkg>` line (late in the dep list) reads as missing. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
   A clean rerun IS fast (0.4 s for every pai-bff target on 24 cores, deps cached): to prove it checked
-  them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff: 14, the
-  lib and bin each with a test twin, 11 integration binaries, the build script twice). To prove a green
+  them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff today: 15
+  lines, 14 of them its own: lib and bin each with a test twin (4), 9 integration binaries, the build
+  script and its test twin; the 15th is the dependency `pai_core`). To prove a green
   `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
   (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
@@ -582,6 +585,10 @@ Lessons only: the rules are in `AGENTS.md`.
   secret's text is nowhere in the body, not only the `null`.
 - The embedded page is tested on what the build embedded (`PAI_BFF_FE_DIR` from `build.rs`, `tests/fe.rs`
   `embedded()`), following `index.html`'s `/assets/...`; only `crates/bff/fe-fixture` exercises CSS.
+  That env var is baked by the build script, so a build script output left by a removed worktree points at
+  a path that no longer exists: `cargo clean -p pai-bff -p pai-core` (plus `--target <triple>` for the
+  cross check) before the rerun, and read `tests/fe.rs` as the observable that the rebuild baked this
+  repo's path (5 tests, byte-for-byte, they red naming the missing dir on a stale one).
 - Read a JSON type from `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning it
   (`RocblasUseHipblaslt` is `"on"`/`"off"`).
 - fe tests (Vitest, jsdom): globals off, so call `cleanup()` in `afterEach`; mock fetch with
@@ -634,3 +641,30 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: a throw from a React click handler is swallowed at jsdom's listener boundary: fireEvent
   returns, the test continues, and vitest reports the TypeError as Unhandled at the end, so the
   assertion after it also reds.
+- bff `Connect` (`Arc<dyn Fn(Option<&str>) -> Result<Client, ClientError> + Send + Sync>`): each test
+  binary's fake connect records the principal it was called with in an `Arc<Mutex<Vec<Option<String>>>>`
+  (`principals_of(&log)` reads it), and every fake closure is written `let connect: Connect =
+  Arc::new(move |principal: Option<&str>| ..)`, so the type is pinned at the closure: against the old
+  zero-argument `Connect` all four binaries red as `E0593: closure is expected to take 0 arguments, but
+  it takes 1 argument` (six sites), which is the signature red, kept separate from the assertion reds.
+- bff principal refusals: give the `FakeManager` (`tests/server.rs`) `as_user: Option<String>` (the
+  account a read answers for) and `refuse: Vec<String>` (`is_admin` is the membership), and answer the
+  read of a refused account with `ClientError::NotAuthorized`, the kind the manager gives every principal
+  refusal. One app then refuses alice and answers bob, so 403, "the session that acted is the session
+  that ends" and "an unrefused user keeps their session" run in one test, each with its own cookie.
+- bff "this refusal ends the session" is pinned as the NEXT request with the same cookie answering 401
+  `session-required` (the reply's `Set-Cookie` clear is not pinned: not in the design, say so in the
+  report). Pin the negatives too, since they are the rule's edge: the same cookie after a 503
+  (`Unavailable`) and after a 502 (`Io`) is still 200, and a 403 on the session-free `/api/instances`
+  ends nothing (that route has no session, and it is where a 403 from the bff's own rule lands).
+- A stub that keeps the old `connect(None)` call greens the session-free routes (the instances route,
+  sign-in) and reds only the principal and session-end asserts: `left: [None], right: [Some("alice")]`
+  for the principal, `left: 200, right: 403` for the refusal (the stub connects an unrefused principal),
+  `left: 200, right: 401` for the session end. Adapt the existing fakes mechanically (a closure ignoring
+  the argument) so their tests stay green and the reds name the slice.
+- Probe an older commit's sources without touching the shared tree: `git worktree add --detach build/<name>
+  <rev>` (gitignored), copy the test files in, write the worktree's own `.cargo/config.toml` with an
+  ABSOLUTE `target-dir` pointing at the shared tree's (`build/windows/cargo-target`), else cargo rebuilds
+  every dependency; pai-bff needs no `pai-manager` dependency and its `build.rs` falls back to
+  `crates/bff/fe-fixture` when `fe/dist` is missing, so a bff probe compiles in two minutes. Clean up with
+  `git worktree remove --force` (the config you wrote is untracked).

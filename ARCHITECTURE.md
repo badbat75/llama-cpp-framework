@@ -51,9 +51,9 @@ Linux system files in `xtask/src/linux/system_files.rs`.
 - **The manager protocol**: one request, one reply; on the pipe a u32 little-endian length and a JSON
   body of at most 1 MiB, the D-Bus method and error names (`crates/core/src/client/pipe.rs` header,
   the server in `crates/manager/src/manager/pipe.rs`). Methods: `ListInstances`, `Status`, `Start`,
-  `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`; designed,
-  not built: the `<Method>As` forms and `Version` ("Acting for a signed-in user" below). The client
-  works over any `Read + Write` stream.
+  `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`, the
+  `<Method>As` forms of the six guarded ones and `Version` (protocol 1; "Acting for a signed-in user"
+  below). The client works over any `Read + Write` stream.
 - **The bff's HTTP API**: the routes and error shape `{key, args}` in
   [crates/bff/README.md](crates/bff/README.md); the contract the web UI is built against in
   `fe/briefs/api-contract.md`.
@@ -67,17 +67,18 @@ Linux system files in `xtask/src/linux/system_files.rs`.
 | --- | --- | --- |
 | The manager (root, LocalSystem) | Every right on the machine | Everything; the one authority over the instance files |
 | `private-ai` / `NT SERVICE\llama.cpp_<id>` | Reads the instance files (group `private-ai`, mode 0640 for `server@<id>.ini`), its models and state | Running one engine; reaches no manager call that changes anything |
-| `private-ai-bff` / `NT SERVICE\private-ai-bff` | No file but `bff.ini`; the manager's unauthenticated reads | Today: reads, and asking the manager to check a password (`Authenticate`, which answers only this account). Designed: naming the signed-in user on guarded calls, the manager re-checking that user's `pai` membership ("Acting for a signed-in user") |
+| `private-ai-bff` / `NT SERVICE\private-ai-bff` | No file but `bff.ini`; the manager's unauthenticated reads; no right of its own | Reads; asking the manager to check a password (`Authenticate`); naming the signed-in user on guarded calls (the `As` methods), the manager re-checking that user's `pai` membership at each call. The manager answers both only to this account ("Acting for a signed-in user") |
 | A desktop user | Their own tree (`settings.ini`, `bench.db`) | `control` (start, stop, restart) in the active session without a password (Linux), as an interactive user (Windows) |
 | An administrator | | `configure` (write a file, start at boot, read the API key) |
 
 **Who is an administrator** (user, 2026-11-15, `PLAN.md` step 10 slice 6): a member of the group `pai`,
-created empty by the packages, on every client; on Linux `configure` asks the member's own password and
-keeps it (polkit `auth_self_keep`, which a `.rules` file can grant by `subject.isInGroup("pai")`,
-[polkit(8)](https://polkit.pages.freedesktop.org/polkit/polkit.8.html)); on Windows from the token's
-membership. **Not yet in the packages:** the shipped polkit actions still say `auth_admin_keep` for
-`configure` and Windows still grants it to Administrators. The web UI is for administrators only: a
-sign-in succeeds only for a `pai` member.
+created empty by the packages, on every client. On Linux the shipped action `configure` defaults to
+`no` and the rules file `50-private-ai.rules` answers `auth_self_keep` to a member of `pai`, `no` to
+everyone else (`polkit_policy()`, `polkit_rules()` in `xtask/src/linux/system_files.rs`;
+`subject.isInGroup`, [polkit(8)](https://polkit.pages.freedesktop.org/polkit/polkit.8.html)). On
+Windows `configure` is a token in `pai` or the local system account, and an Administrators member
+outside `pai` gets `control` only (`allowed` in `crates/manager/src/manager/windows.rs`). The web UI
+is for administrators only: a sign-in succeeds only for a `pai` member.
 
 Boundaries a call crosses: the browser to the bff (HTTP, a session cookie; loopback only); the bff,
 `pai-config` and `pai` to the manager (the bus or the pipe, the caller identified by the OS, never by
@@ -94,25 +95,27 @@ crosses the machine today.
 | Instance logs | the instance | the journal / `%ProgramData%\llama.cpp\logs\` |
 | Models, slot snapshots | the instance's account | `/var/lib/...` per the shipped defaults / `%ProgramData%\llama.cpp\models`, `state` |
 | `settings.ini`, `bench.db` | the desktop user | `~/.config/private-ai/`, `~/.local/share/private-ai/` / `%LOCALAPPDATA%\private-ai\` |
-| Web sessions | the bff, in memory | lost at restart |
+| Web sessions | the bff, in memory | lost at restart, or ended by sign-out, idling out or the manager's first refusal of the user |
+| The record of who acted | the manager | the journal of `private-ai-manager` (its stderr) / `%ProgramData%\private-ai\logs\private-ai-manager.log` |
 | Web users' shared state (preferences, `bench.db`, tokens) | decided machine-wide, place not planned (`PLAN.md` step 10) | |
 
 The exact paths and modes are in `AGENTS.md` "Key conventions" and "Through the manager".
 
-### Where the web sign-in stands (2026-11-15)
+### Where the web sign-in stands (2026-11-16)
 
 Shipped: `Authenticate(user, password) -> (ok, can_configure)` in the manager, answered only to the
 bff's account (`Authority::is_bff`: the bus name's uid on Linux, the service SID on Windows), the
 password checked through PAM service `private-ai` (`crates/manager/src/manager/accounts.rs`) or
 `LogonUser` (`windows/logon.rs`), `can_configure` from membership of `pai` (`PasswordChecker::is_admin`
 in `service.rs`); the packaging (part 2b) and the bff's call (part 2c, de07ddf: `SystemAuthenticator`,
-every session a `pai` member, `session::Identity { user }`). Open: the bff still calls every other
-method as itself and has no right, so `GET /api/instances/{id}/server` answers 403. The design below
-closes that.
+every session a `pai` member, `session::Identity { user }`); and, below, every route behind a session
+calling the manager for the session's user, so `GET /api/instances/{id}/server` answers a member.
 
 ### Acting for a signed-in user (step 14 slice 0 and step 10 slice 6b part 3)
 
-Designed 2026-11-15, not yet built. One design serves both: the bff names the signed-in user on each
+Designed 2026-11-15, **built** 2026-11-16 (adab61c the core, 1d2e12c the pipe, b2f3777 D-Bus, c03d911
+and 4216745 the log, then the bff's connect), reviewed against this text by the architect; the
+Windows side is type-checked only. One design serves both: the bff names the signed-in user on each
 guarded call, and the super-manager will later name its user the same way (Part 2, slice 4).
 
 **The model.** The manager's core stops taking a bare `Caller` for a guarded call and takes a
@@ -173,9 +176,12 @@ The password polkit's `auth_self_keep` would ask was checked by the manager at s
 pair (the bff's account, a current `pai` member). Requiring both would mean granting the bff
 `control`/`configure` on its own, which a call without a principal could then use.
 
-**Fail closed.** A user removed from `pai` is refused at their next call (the bff's route answers 403
-`client-not-authorized`; the session itself lives on until it idles out or signs out, harmless since
-every call is refused). A deleted account fails the lookup. A site caching NSS (`nscd`, `sssd`) delays
+**Fail closed.** A user removed from `pai` is refused at their next call, and the bff ends that
+session at the first refusal: the route answers 403 `client-not-authorized` and the same cookie is
+then 401 `session-required` (user, 2026-11-16, reversing this design's earlier "the session lives on").
+Only the manager's `NotAuthorized` ends it; an unavailable or slow manager, an unknown instance or any
+other failure keeps the session, being the bff's news and not a refusal of the user. A deleted account
+fails the lookup. A site caching NSS (`nscd`, `sssd`) delays
 a removal by that cache's lifetime (nscd.conf(5), sssd.conf(5)): the manager adds no cache of its own.
 An old manager refuses every `As` method (the bff answers 502 `client-other`); the Linux packages pin
 `-bff` to `-core` at the same version and Windows ships one framework MSI, so that skew needs a
@@ -193,10 +199,17 @@ production until the super-manager; the bff does not (same-version packages).
 (`Manager::with_log`, an `ActionLog` trait, a fake in tests): `action`, `target` (id or file name),
 `caller`, `principal` (`-` when none), `outcome` (`ok`, `refused`, or the error name). Values are
 written with Rust's `{:?}` quoting, so nothing in a name can forge a record; never a password or file
-contents. Linux: one line on stderr, which the unit sends to the journal. Windows: an appended file
-`%ProgramData%\private-ai\logs\private-ai-manager.log` (SYSTEM and Administrators), the service having
-no console. A record, read by administrators and scripts, so a literal format, not a strings-file text
-(as the comments written into `server.ini`).
+contents. A sink never fails a call: a record it cannot write is lost, the action stands
+(`crates/manager/src/manager/action_log.rs`). Linux: one line on stderr (`WriterLog`), which the unit
+sends to the journal. Windows: one append write per record to
+`%ProgramData%\private-ai\logs\private-ai-manager.log` (`FileActionLog`, `manager_log_path`), the
+service having no console; the manager creates `logs\` at its first record, which inherits the
+protected DACL the framework's MSI puts on `%ProgramData%\private-ai` (SYSTEM and Administrators full,
+Users read: `MachineDataRoot` in `installer/private-ai-framework.wxs`), so any local user reads the
+records and only SYSTEM and Administrators write them; a user cannot pre-create `logs\` to redirect
+the manager's writes. The MSI does not know the folder, so the file outlives an uninstall. **No size
+cap or rotation yet**: it grows with every guarded call. A record, read by administrators and scripts,
+so a literal format, not a strings-file text (as the comments written into `server.ini`).
 
 **The client and the bff.** `ManagerClient` is unchanged; `DbusClient` and `PipeClient` gain
 `acting_for(user)`, a client bound to a principal whose guarded methods send the `As` forms (its
@@ -205,6 +218,10 @@ becomes `Fn(Option<&str>) -> Result<Client, ClientError>`: `system_connect(Some(
 bound client. The rule for routes: **every route behind a session connects as the session's user**
 (`Sessions::current`, never a name from the request), so a removed member is refused at once;
 session-free routes (`/api/instances`, GET boot) and the authenticator connect with `None`, as the bff.
+Built: `Connect` and `system_connect` in `crates/bff/src/lib.rs`, the server read in
+`crates/bff/src/server.rs` (the only route behind a session today), `Sessions::end` in
+`crates/bff/src/session.rs`, shared with sign-out. A route added behind a session follows the same
+two rules: connect with the session's user, end the session on `NotAuthorized`.
 
 **Trust boundaries crossed.** Browser to bff: the session cookie. Bff to manager: the kernel's peer
 identity (bus uid, pipe token) authenticates the bff; the bff vouches for the principal; the manager
@@ -213,7 +230,7 @@ current `pai` member by naming them (accepted by the user, 2026-11-15: "the bff 
 anyone else and never beyond `control`/`configure`; a local user who is not the bff, nothing new (every
 `As` call refused and logged); a `pai` member, what they can already do from the desktop.
 
-**Slices**, each test first, in order:
+**Slices**, each test first, in order (all five built; kept as the record of what each pins):
 
 1. **The core (step 14 slice 0).** `Requester`, `Principal`, the three checks, `read_file` unwithheld
    for a principal. Done when unit tests in `service.rs` with `FakeAuthority` and `FakePasswords` pin:
@@ -238,12 +255,13 @@ anyone else and never beyond `control`/`configure`; a local user who is not the 
 5. **The bff (step 10 slice 6b part 3).** `Connect` takes the principal. Done when: `GET
    /api/instances/{id}/server` with alice's session connects with `Some("alice")` and answers 200;
    without a session it answers 401 and never connects; `/api/instances` and the authenticator connect
-   with `None`; the manager's `NotAuthorized` still maps to 403 `client-not-authorized`.
+   with `None`; the manager's `NotAuthorized` still maps to 403 `client-not-authorized` and ends that
+   session alone, every other failure keeping it.
 
 Then the docs agent updates `crates/bff/README.md`, "Through the manager" and the pipe client's header.
-Later, not needed now: ending a session when the manager refuses its user; the manager returning the
-canonical account name at `Authenticate` (PAM may fold case: a mismatch fails closed); renaming
-`is_admin` and `ADMIN_GROUP` (`PLAN.md` step 10 leftovers).
+Later, not needed now: the manager returning the canonical account name at `Authenticate` (PAM may
+fold case: a mismatch fails closed); renaming `is_admin` and `ADMIN_GROUP` (`PLAN.md` step 10
+leftovers); a size cap or rotation for the Windows log file.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
@@ -448,13 +466,11 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
 
 ### What the current code should change before it hardens
 
-- **The manager's caller model** (designed: Part 1, "Acting for a signed-in user"). `Caller(String)` is a transport identity (bus name or SID) and
-  `Authority` answers per action. Step 10 slice 6b part 3 will add "the bff vouches for user X"; carry
-  that user as an explicit, optional principal on the request (a pipe field, a D-Bus argument or an
-  options dictionary), with the caller kind (local, bff, enrolled peer) decided by the transport, so the
-  peer of slice 2 is one more kind and not a third way to name a user.
-- **The bff's identity.** `session::Identity { user, can_configure }`: `can_configure` goes with the
-  2026-11-15 decision; let the user be a principal with its origin (the machine that checked the
+- **The manager's caller model** (built: Part 1, "Acting for a signed-in user"). `Caller(String)` stays
+  the transport identity and the user the bff vouches for is `Requester.principal`, carried by the
+  `<Method>As` methods; the peer of slice 2 is one more kind of caller, not a third way to name a user.
+- **The bff's identity.** `session::Identity { user }` (`can_configure` went with the 2026-11-15
+  decision); let the user be a principal with its origin (the machine that checked the
   password), so a node's log can tell `alice@hub` from a local `alice`.
 - **The bff's upstream.** Today one `ManagerClient` per request with one 5 s `MANAGER_TIMEOUT`. Put
   the upstream behind a seam that returns a client for a node (one node, "local", in local mode), and
@@ -462,8 +478,8 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
   already needs for long stops.
 - **The revision** (`PLAN.md` step 10 slice 8): key the hash before it crosses a network, as already
   planned.
-- **A protocol version** (designed: Part 1, "Acting for a signed-in user"). Add the `Version` method to the manager protocol while the only clients are
-  in this repository; it costs one method now and saves guessing later.
+- **A protocol version** (built: Part 1, "Acting for a signed-in user"): `Version` answers the
+  framework version and protocol 1 to anybody; nothing calls it in production yet.
 
 ### Questions only the user can answer
 

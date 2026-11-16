@@ -77,8 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: step 10 slice 6b part 3 (five slices,
-`ARCHITECTURE.md` "Acting for a signed-in user"), slice 9 (control and boot), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9 (control and boot), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -803,26 +802,20 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    is 403 `session-not-administrator`, counted in its own refusals list per (lowercased user, IP),
    5 per window then 429, apart from the bad-password failures. Left from its review: after a
    timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
-   (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding are gone (every session is a `pai` member; the manager's flag alone withholds the key); the bff README still names `canConfigure` in five places. Then 6b
-   part 3: the bff calls the manager for the signed-in user, designed in `ARCHITECTURE.md` "Acting for
-   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first (slices 1 to 3 done: the manager's core, then the `As` methods and `Version` on the pipe and on D-Bus; slice 4, the record of who acted and its sinks, done):
-   the manager's `As` methods carry a principal only from the bff's account, re-check the user's `pai`
-   membership at each call, never ask polkit for it; `Version`; a log of who acted; the bff connects
-   as the session's user. Decided by the user (2026-11-15): when the manager refuses a signed-in user
-   (removed from `pai`), the bff ends that session at once and the page returns to sign-in.
-   For the bff slice (review of slice 2): after a `BadRequest` or `Unavailable` the pipe connection is
-   spent, for every `acting_for` sibling too (a timed-out read can leave a stale reply on the shared
-   stream), so the bff opens a new one; say so in `PipeClient::version`'s doc. A bound call against an
-   old manager is a plain `Other`; `BAD_REQUEST` is defined in both `client/pipe.rs` and
-   `manager/pipe.rs`. From the review of slice 3: `DbusClient::version` matches only
+   (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding are gone (every session is a `pai` member; the manager's flag alone withholds the key); Step 10 slice 6b part 3 (the bff calls the manager for the
+   signed-in user) is built (adab61c, 1d2e12c, b2f3777, c03d911, 4216745 and the bff commit; ARCHITECTURE.md
+   "Acting for a signed-in user"). Left from its reviews: after a `BadRequest` or `Unavailable` the pipe
+   connection is spent for every `acting_for` sibling, so a caller opens a new one (say so in
+   `PipeClient::version`'s doc); a bound call against an old manager is a plain `Other`; `BAD_REQUEST`
+   is defined in both `client/pipe.rs` and `manager/pipe.rs`; `DbusClient::version` matches only
    `zbus::Error::MethodError` for `UnknownMethod`, which zbus 6 reports as `Error::FDO`: match both
    before a zbus bump; the doc comment of `requester_of` (`manager/dbus.rs`) still says the D-Bus face
-   carries no principal. From the review of slice 4: `error_kind` repeats the table of `error_reply`
-   (`service.rs`); a test with U+2028 in a caller would pin the quoting; the Windows log
+   carries no principal; `error_kind` repeats the table of `error_reply` (`service.rs`); a test with
+   U+2028 in a caller would pin the quoting; the Windows log
    `%ProgramData%\private-ai\logs\private-ai-manager.log` grows without a cap (about 100 bytes a
-   record), is readable by Users like the engine's logs (kept so, coordinator 2026-11-16), and outlives
-   an uninstall with `config\`: `installer\AGENTS.md` and the CI's uninstall checks still say `config\`
-   only. From
+   record; a cap later), is readable by Users like the engine's logs (kept so, 2026-11-16), and
+   outlives an uninstall with `config\`: `installer\AGENTS.md` and the CI's uninstall checks still say
+   `config\` only. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

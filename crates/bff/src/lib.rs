@@ -13,7 +13,11 @@ use pai_core::client::ClientError;
 pub type Client = Box<dyn pai_core::client::ManagerClient + Send + Sync>;
 
 /// How the bff connects to the manager, called for each request that asks it.
-pub type Connect = std::sync::Arc<dyn Fn() -> Result<Client, ClientError> + Send + Sync>;
+/// `principal` is the user the call acts for: a route behind a session hands
+/// its session's user, the session-free routes and the sign-in check hand
+/// `None` and act as the bff's own account.
+pub type Connect =
+    std::sync::Arc<dyn Fn(Option<&str>) -> Result<Client, ClientError> + Send + Sync>;
 
 /// The engine every instance runs: llama.cpp, the only engine today.
 const ENGINE_LLAMA_CPP: &str = "llama.cpp";
@@ -85,21 +89,33 @@ pub fn router_with_session(
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on
 /// Windows, none on macOS; under the test redirect (`PRIVATE_AI_DATA_ROOT`)
-/// none, so a test never dials the real one.
-fn system_connect() -> Result<Client, ClientError> {
+/// none, so a test never dials the real one. The principal is the signed-in
+/// user the call acts for: the client is bound to them (`acting_for`), so
+/// their guarded calls name them; with `None` the client is the bff's own,
+/// as the bff's account has no right of its own.
+fn system_connect(principal: Option<&str>) -> Result<Client, ClientError> {
     if std::env::var_os("PRIVATE_AI_DATA_ROOT").is_some() {
         return Err(ClientError::Unavailable);
     }
     #[cfg(target_os = "linux")]
     {
-        pai_core::client::dbus::DbusClient::connect_system().map(|c| Box::new(c) as Client)
+        let client = pai_core::client::dbus::DbusClient::connect_system()?;
+        Ok(match principal {
+            Some(user) => Box::new(client.acting_for(user)) as Client,
+            None => Box::new(client) as Client,
+        })
     }
     #[cfg(windows)]
     {
-        pai_core::client::pipe::connect().map(|c| Box::new(c) as Client)
+        let client = pai_core::client::pipe::connect()?;
+        Ok(match principal {
+            Some(user) => Box::new(client.acting_for(user)) as Client,
+            None => Box::new(client) as Client,
+        })
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
+        let _ = principal;
         Err(ClientError::Unavailable)
     }
 }
@@ -110,7 +126,7 @@ async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::resp
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
-        let client = connect()?;
+        let client = connect(None)?;
         let mut list = Vec::new();
         for id in client.list_instances()? {
             match client.status(&id) {

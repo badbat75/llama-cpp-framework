@@ -33,3 +33,12 @@ description: What the architect has learned about this project's components, int
   and unprotected (D-Bus spec, "TCP Sockets"); OpenSSH server is in the box only on Windows Server
   2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash pinning is the precedent for join
   codes; rustls' `ClientCertVerifier` is the hook for pinning a client.
+- A file the Windows manager creates under `%ProgramData%\private-ai` inherits the MSI's protected DACL
+  on that root (SYSTEM, Administrators full, Users read: `MachineDataRoot` in
+  `installer/private-ai-framework.wxs`), so users cannot pre-create a subfolder to redirect a
+  LocalSystem write; a new folder under bare `%ProgramData%` would not have that protection (its ACL
+  lets users create subfolders). The MSI removes the root only when empty, so such files outlive an
+  uninstall.
+- Reviewing a slice: `git show <commit> -- <path>` per commit and `git diff HEAD -- crates/<x>` for the
+  working tree; the core's guarded methods are in `service.rs` around `authorize_as`,
+  `check_principal`, `record_action`, the pipe parser in `manager/pipe.rs` `Request::parse`.

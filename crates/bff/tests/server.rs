@@ -40,12 +40,18 @@
 //! - Errors `{"key", "args": []}`, never the manager's detail: 404
 //!   `client-no-instance` (no such file, or the manager says no such
 //!   instance or refuses the id), 503 `client-unavailable` (no manager, or
-//!   too slow), 403 `client-not-authorized` (the manager refused), 502
-//!   `client-other` for anything else.
-//!
-//! The manager acting for the signed-in user does not exist yet: for now the
-//! bff reads the file as itself, so these tests check only that a session
-//! exists, not who the manager is told is asking.
+//!   too slow), 403 `client-not-authorized` (the manager refused the call
+//!   for the signed-in user), 502 `client-other` for anything else.
+//! - The route sits behind a session, so it acts for the signed-in user:
+//!   `Connect` is asked with that user's name as the principal, taken from
+//!   the session (`Sessions::current`), never from the request, so the
+//!   manager re-checks the user's membership of `pai` at every call. The
+//!   session-free routes connect with no principal, as sign-in does:
+//!   `tests/instances.rs` and `tests/authenticator.rs` pin those.
+//! - A 403 refusal for the signed-in user ends their session at once
+//!   (user, 2026-11-16): the same cookie is 401 `session-required`
+//!   afterwards, so the page returns to the sign-in form. Only that
+//!   session ends, and no other answer ends one.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -99,14 +105,27 @@ const KEYS: [&str; 19] = [
 
 type Log = Arc<Mutex<Vec<String>>>;
 
+/// The principal every connect was asked for, in order: `None` is a call the
+/// bff makes as its own account.
+type Principals = Arc<Mutex<Vec<Option<String>>>>;
+
+fn principals_of(p: &Principals) -> Vec<Option<String>> {
+    p.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 // ── Fakes ───────────────────────────────────────────────────────────────
 
 /// A manager whose `read_file` answers `file` (for any name) after `delay`,
-/// logging every call (`read <name>`, `status <id>`, ...).
+/// logging every call (`read <name>`, `status <id>`, ...). It is the client
+/// of one connect, so it knows the principal that connect was handed
+/// (`as_user`), and refuses the read for the principals in `refuse`, the way
+/// the real manager refuses a user who is no longer a member of `pai`.
 struct FakeManager {
     file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
     log: Log,
+    as_user: Option<String>,
+    refuse: Vec<String>,
 }
 
 impl FakeManager {
@@ -141,6 +160,13 @@ impl ManagerClient for FakeManager {
     }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
+        if self
+            .refuse
+            .iter()
+            .any(|u| Some(u.as_str()) == self.as_user.as_deref())
+        {
+            return Err(ClientError::NotAuthorized);
+        }
         std::thread::sleep(self.delay);
         self.file.clone()
     }
@@ -186,11 +212,12 @@ impl Authenticator for FakeAuth {
 }
 
 /// A router over a manager that answers `file` after `delay`, with the
-/// manager's call log and the number of connects.
+/// manager's call log, the number of connects and the principal of each.
 struct App {
     router: Router,
     log: Log,
     connects: Arc<AtomicUsize>,
+    principals: Principals,
 }
 
 fn app_with(
@@ -198,16 +225,43 @@ fn app_with(
     file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
 ) -> App {
+    app_for(connect_result, file, delay, Vec::new())
+}
+
+/// A manager holding `text` as every file, refusing the read for the
+/// principals in `refused`: for them the call is `NotAuthorized`, as it is
+/// for a user removed from `pai`.
+fn app_refusing(refused: &[&str], text: &str) -> App {
+    app_for(
+        Ok(()),
+        Ok(Some(whole(text))),
+        Duration::ZERO,
+        refused.iter().map(|u| u.to_string()).collect(),
+    )
+}
+
+fn app_for(
+    connect_result: Result<(), ClientError>,
+    file: Result<Option<ManagerFile>, ClientError>,
+    delay: Duration,
+    refuse: Vec<String>,
+) -> App {
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
-    let (l, c) = (log.clone(), connects.clone());
-    let connect: Connect = Arc::new(move || {
+    let principals = Principals::default();
+    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let connect: Connect = Arc::new(move |principal: Option<&str>| {
         c.fetch_add(1, Ordering::SeqCst);
+        p.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
         connect_result.clone()?;
         Ok(Box::new(FakeManager {
             file: file.clone(),
             delay,
             log: l.clone(),
+            as_user: principal.map(str::to_string),
+            refuse: refuse.clone(),
         }) as Client)
     });
     let start = Instant::now();
@@ -221,6 +275,7 @@ fn app_with(
         router,
         log,
         connects,
+        principals,
     }
 }
 
@@ -300,9 +355,18 @@ impl App {
 
     /// `GET uri` with `cookie` when given.
     async fn get(&self, uri: &str, cookie: Option<&str>) -> Reply {
+        self.get_with(uri, cookie, &[]).await
+    }
+
+    /// `GET uri` with `cookie` and extra headers (a request that tries to
+    /// name the user it wants the bff to act for).
+    async fn get_with(&self, uri: &str, cookie: Option<&str>, extra: &[(&str, &str)]) -> Reply {
         let mut builder = Request::builder().method(Method::GET).uri(uri);
         if let Some(c) = cookie {
             builder = builder.header(header::COOKIE, c);
+        }
+        for (name, value) in extra {
+            builder = builder.header(*name, *value);
         }
         let request = builder.body(Body::empty()).expect("request");
         let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
@@ -382,6 +446,12 @@ impl Reply {
         );
         self.json()
     }
+
+    /// `GET /api/session` for a session that is still signed in: `{"user"}`.
+    fn assert_signed_in_as(&self, user: &str) {
+        assert_eq!(self.status, StatusCode::OK, "signed in: {}", self.body);
+        assert_eq!(self.json(), json!({ "user": user }), "{}", self.body);
+    }
 }
 
 // ── Failure paths first: the session ────────────────────────────────────
@@ -395,6 +465,11 @@ async fn without_a_session_it_is_session_required_and_the_manager_is_not_asked()
     r.assert_error(StatusCode::UNAUTHORIZED, "session-required");
     assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
+    assert!(
+        principals_of(&app.principals).is_empty(),
+        "no principal named: {:?}",
+        principals_of(&app.principals)
+    );
 }
 
 /// A cookie naming no session (made up, or from before a restart) is the
@@ -410,7 +485,139 @@ async fn an_unknown_session_is_session_required() {
         )
         .await;
     r.assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
+}
+
+// ── The principal: the route acts for the signed-in user ────────────────
+
+/// The connect is asked with the session's user as the principal, so the
+/// manager re-checks that user's own right for every read: the session-free
+/// routes connect with none (`tests/instances.rs`), this one names the user.
+#[tokio::test]
+async fn the_read_connects_as_the_signed_in_user() {
+    for user in ["alice", "root"] {
+        let app = app_holding(SHIPPED);
+        let doc = app.read_default_as(user).await.document();
+        assert!(doc["values"].is_object(), "{user}: {doc}");
+        assert_eq!(
+            principals_of(&app.principals),
+            vec![Some(user.to_string())],
+            "{user}: the principal of the connect"
+        );
+        assert_eq!(app.calls(), ["read server@default.ini"], "{user}");
+    }
+}
+
+/// A name in the request never becomes the principal: a query parameter and
+/// a header naming another user are ignored, the session's user is asked
+/// for. The principal comes from the session and nowhere else.
+#[tokio::test]
+async fn a_name_in_the_request_is_never_the_principal() {
+    let app = app_holding(SHIPPED);
+    let cookie = app.sign_in_as("alice").await;
+    let doc = app
+        .get_with(
+            "/api/instances/default/server?user=root",
+            Some(&cookie),
+            &[("x-user", "root"), ("x-principal", "root")],
+        )
+        .await
+        .document();
+    assert!(doc["values"].is_object(), "{doc}");
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("alice".to_string())],
+        "the session's user, never the request's"
+    );
+}
+
+/// The session ends for the user the manager refused, at once: 403
+/// `client-not-authorized` and the same cookie signed out.
+#[tokio::test]
+async fn a_refused_user_is_answered_403_and_signed_out() {
+    let app = app_reading(Err(ClientError::NotAuthorized));
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("alice".to_string())],
+        "the refused read, nothing after it"
+    );
+}
+
+/// Only that session ends: a read refused for `root` signs `root` out and
+/// leaves `alice`'s session signed in and answered.
+#[tokio::test]
+async fn a_refusal_ends_that_session_and_no_other() {
+    let app = app_refusing(&["root"], SHIPPED);
+    let alice = app.sign_in_as("alice").await;
+    let root = app.sign_in_as("root").await;
+    app.get("/api/instances/default/server", Some(&root))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+    app.get("/api/session", Some(&root))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    let doc = app
+        .get("/api/instances/default/server", Some(&alice))
+        .await
+        .document();
+    assert!(doc["values"].is_object(), "alice is answered: {doc}");
+    app.get("/api/session", Some(&alice))
+        .await
+        .assert_signed_in_as("alice");
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("root".to_string()), Some("alice".to_string())],
+        "each read asked for its own session's user"
+    );
+}
+
+/// A manager that is not there, or too slow, is the bff's own news and not a
+/// refusal of the user: the session lives on.
+#[tokio::test]
+async fn a_manager_that_is_unavailable_keeps_the_session() {
+    let app = app_with(
+        Err(ClientError::Unavailable),
+        Ok(Some(whole(SHIPPED))),
+        Duration::ZERO,
+    );
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The other failures are no refusal of the user either: 404 (no such
+/// instance) and 502 (any other failure) keep the session signed in.
+#[tokio::test]
+async fn a_failure_that_is_not_a_refusal_keeps_the_session() {
+    for (file, status, key) in [
+        (Ok(None), StatusCode::NOT_FOUND, "client-no-instance"),
+        (
+            Err(ClientError::Service("unit failed".into())),
+            StatusCode::BAD_GATEWAY,
+            "client-other",
+        ),
+    ] {
+        let app = app_reading(file);
+        let cookie = app.sign_in().await;
+        app.get("/api/instances/default/server", Some(&cookie))
+            .await
+            .assert_error(status, key);
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
 }
 
 // ── Failure paths: the manager ──────────────────────────────────────────

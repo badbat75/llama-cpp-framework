@@ -23,6 +23,8 @@
 //! - The password travels to the manager and nowhere else: the fake
 //!   records the pair it was handed, so the test pins the typed pair
 //!   arrives whole (the route tests pin that no reply carries it).
+//! - The connect is asked with no principal: sign-in checks an account, it
+//!   does not act for a signed-in user (there is none yet).
 
 use pai_bff::session::{AuthError, Authenticator, Identity, SystemAuthenticator};
 use pai_bff::{Client, Connect};
@@ -83,21 +85,28 @@ impl ManagerClient for FakeManager {
     }
 }
 
-/// A `SystemAuthenticator` over a manager that answers `answer`,
-/// counting the connects.
+/// A `SystemAuthenticator` over a manager that answers `answer`, counting
+/// the connects, recording the principal each was asked for and the pairs
+/// the manager was handed.
 struct Harness {
     auth: SystemAuthenticator,
     pairs: Pairs,
     connects: Arc<AtomicUsize>,
+    principals: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 fn harness(answer: Result<(bool, bool), ClientError>) -> Harness {
     let pairs: Pairs = Arc::new(Mutex::new(Vec::new()));
     let connects = Arc::new(AtomicUsize::new(0));
+    let principals: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
     let connect: Connect = {
-        let (pairs, connects) = (pairs.clone(), connects.clone());
-        Arc::new(move || {
+        let (pairs, connects, principals) = (pairs.clone(), connects.clone(), principals.clone());
+        Arc::new(move |principal: Option<&str>| {
             connects.fetch_add(1, Ordering::SeqCst);
+            principals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(principal.map(str::to_string));
             Ok(Box::new(FakeManager {
                 answer: answer.clone(),
                 pairs: pairs.clone(),
@@ -108,7 +117,15 @@ fn harness(answer: Result<(bool, bool), ClientError>) -> Harness {
         auth: SystemAuthenticator::new(connect),
         pairs,
         connects,
+        principals,
     }
+}
+
+fn principals_of(h: &Harness) -> Vec<Option<String>> {
+    h.principals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 fn pairs_of(h: &Harness) -> Vec<(String, String)> {
@@ -131,6 +148,9 @@ fn a_member_with_the_right_password_signs_in() {
         pairs_of(&h),
         vec![("alice".to_string(), "correct horse".to_string())]
     );
+    // Sign-in is checked as the bff's own account: there is no session yet,
+    // so the connect is asked with no principal.
+    assert_eq!(principals_of(&h), vec![None], "no principal at sign-in");
 }
 
 /// `Ok((true, false))`: the password was right, the account is not a
@@ -188,13 +208,14 @@ fn any_manager_failure_is_unavailable() {
 /// client is ever made).
 #[test]
 fn no_manager_to_connect_to_is_unavailable() {
-    let connect: Connect = Arc::new(|| Err(ClientError::Unavailable));
+    let connect: Connect = Arc::new(|_| Err(ClientError::Unavailable));
     let auth = SystemAuthenticator::new(connect);
     assert_eq!(auth.authenticate("alice", "x"), Err(AuthError::Unavailable));
 }
 
 /// One client per check, as `/api/instances` opens one per request: a
-/// manager started after a failed sign-in is seen by the next one.
+/// manager started after a failed sign-in is seen by the next one. Each
+/// check is the bff's own, so each connect is asked with no principal.
 #[test]
 fn a_client_is_opened_for_each_check() {
     let h = harness(Ok((true, true)));
@@ -207,5 +228,10 @@ fn a_client_is_opened_for_each_check() {
         h.connects.load(Ordering::SeqCst),
         2,
         "one connect per check"
+    );
+    assert_eq!(
+        principals_of(&h),
+        vec![None, None],
+        "no principal at sign-in"
     );
 }

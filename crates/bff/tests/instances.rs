@@ -11,6 +11,9 @@
 //! manager answers (none, gone, or too slow), 502 `client-not-authorized`
 //! when the manager refuses the bff, 502 `client-other` with no args on any
 //! other failure, never the manager's detail.
+//!
+//! The route needs no session, so it asks the manager as the bff's own
+//! account: every `Connect` here is handed no principal (`None`).
 
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
@@ -114,16 +117,38 @@ impl ManagerClient for FakeManager {
     }
 }
 
+/// The principal every connect was asked for, in order: `None` is a call the
+/// bff makes as its own account.
+type Principals = Arc<Mutex<Vec<Option<String>>>>;
+
+fn principals_of(p: &Principals) -> Vec<Option<String>> {
+    p.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// A connect that hands out `make()` each time, counts the calls and records
+/// the principal each was asked for.
+fn connect_logging(
+    count: &Arc<AtomicUsize>,
+    principals: &Principals,
+    make: impl Fn() -> Result<Client, ClientError> + Send + Sync + 'static,
+) -> Connect {
+    let (count, principals) = (count.clone(), principals.clone());
+    Arc::new(move |principal: Option<&str>| {
+        count.fetch_add(1, Ordering::SeqCst);
+        principals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
+        make()
+    })
+}
+
 /// A connect that hands out `make()` each time and counts the calls.
 fn connect_with(
     count: &Arc<AtomicUsize>,
     make: impl Fn() -> Result<Client, ClientError> + Send + Sync + 'static,
 ) -> Connect {
-    let count = count.clone();
-    Arc::new(move || {
-        count.fetch_add(1, Ordering::SeqCst);
-        make()
-    })
+    connect_logging(count, &Principals::default(), make)
 }
 
 /// A connect to one fake manager, built afresh for each call by `make`.
@@ -454,6 +479,27 @@ async fn reading_the_instances_asks_only_the_read_only_calls() {
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(calls(&log), ["list", "status default", "status coder"]);
+}
+
+/// The route is session-free and acts as the bff's own account: the connect
+/// is asked with no principal, so the manager answers it with the bff's
+/// rights (the reads it asks need none). A route behind a session names its
+/// user instead (`tests/server.rs`).
+#[tokio::test]
+async fn the_instances_route_connects_without_a_principal() {
+    let log = Log::default();
+    let l = log.clone();
+    let principals = Principals::default();
+    let connect = connect_logging(&Arc::new(AtomicUsize::new(0)), &principals, move || {
+        Ok(Box::new(FakeManager::new(&l, &[("default", InstanceState::Active)])) as Client)
+    });
+    let r = get_instances(connect).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        principals_of(&principals),
+        vec![None],
+        "the bff acts as itself here"
+    );
 }
 
 /// A manager that starts after the bff is seen at the next request: the

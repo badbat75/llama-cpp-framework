@@ -170,6 +170,13 @@ impl Sessions {
         let identity = identity.clone();
         Some((id, identity))
     }
+
+    /// Ends the session `id`: sign-out's removal, which the manager's
+    /// refusal of the signed-in user shares, so a session that lost its
+    /// right is gone at once and the page returns to the sign-in form.
+    pub(crate) fn end(&self, id: &str) {
+        self.store().sessions.remove(id);
+    }
 }
 
 /// No session yet, signing in through `auth` and reading the time from
@@ -364,7 +371,7 @@ async fn read(State(s): State<Arc<Sessions>>, headers: HeaderMap) -> Response {
 async fn sign_out(State(s): State<Arc<Sessions>>, headers: HeaderMap) -> Response {
     match s.current(&headers) {
         Some((id, _)) => {
-            s.store().sessions.remove(&id);
+            s.end(&id);
             (
                 StatusCode::NO_CONTENT,
                 [(
@@ -440,7 +447,7 @@ impl Authenticator for SystemAuthenticator {
         // One client per check, as the bff's other routes open theirs. The
         // password travels to the manager only: `AuthError` carries no
         // text, so the manager's detail cannot ride along to the browser.
-        match (self.connect)().and_then(|client| client.authenticate(user, password)) {
+        match (self.connect)(None).and_then(|client| client.authenticate(user, password)) {
             Ok((true, true)) => Ok(Identity {
                 user: user.to_string(),
             }),

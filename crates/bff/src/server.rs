@@ -15,6 +15,13 @@ use std::time::Duration;
 
 /// The answer to `GET /api/instances/{id}/server`, or `{"key", "args": []}`:
 /// 401 with no session (the manager not asked), never the manager's detail.
+/// The read is a call for the session's user, named as the principal of the
+/// connect from the session alone: a name the request carries is never
+/// asked for. The manager re-checks that user's membership of `pai` at every
+/// call, so a member removed since the sign-in is refused: 403
+/// `client-not-authorized` and the session ends with the right that
+/// authorized it. The other answers keep the session: they are the bff's
+/// news, not a refusal of the user.
 pub(crate) async fn read(
     connect: Connect,
     timeout: Duration,
@@ -22,11 +29,12 @@ pub(crate) async fn read(
     id: String,
     headers: HeaderMap,
 ) -> Response {
-    if sessions.current(&headers).is_none() {
+    let Some((session, identity)) = sessions.current(&headers) else {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
-    }
+    };
     let name = format!("server@{id}.ini");
-    let ask = tokio::task::spawn_blocking(move || connect()?.read_file(&name));
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || connect(Some(user.as_str()))?.read_file(&name));
     let (status, key) = match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file)).into_response(),
         Ok(Ok(Ok(None)))
@@ -36,7 +44,10 @@ pub(crate) async fn read(
         Ok(Ok(Err(ClientError::Unavailable))) | Err(_) => {
             (StatusCode::SERVICE_UNAVAILABLE, "client-unavailable")
         }
-        Ok(Ok(Err(ClientError::NotAuthorized))) => (StatusCode::FORBIDDEN, "client-not-authorized"),
+        Ok(Ok(Err(ClientError::NotAuthorized))) => {
+            sessions.end(&session);
+            (StatusCode::FORBIDDEN, "client-not-authorized")
+        }
         Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "client-other"),
     };
     error(status, key, &[])

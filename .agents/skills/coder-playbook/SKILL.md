@@ -497,3 +497,16 @@ Lessons only: the rules are in `AGENTS.md`.
   does) creates it there, so no implementation passes. The fix is the tester's:
   `create_dir_all(&over_a_dir)` (the path itself becomes the directory, append then fails EISDIR)
   and assert `over_a_dir.is_dir()`, since `!exists()` is false for the directory the test made.
+- The shared `CARGO_TARGET_DIR` holds artifacts of other worktrees: cargo reuses a `pai-bff` build whose
+  baked `CARGO_MANIFEST_DIR` is `build/<worktree>/crates/core`, so every strings lookup misses (the
+  binary prints the raw key `bff-version`) and seven `pai_bff_binary` tests fail with "error-line". Not a
+  code defect: prove it with `strace -e trace=openat ./build/windows/cargo-target/debug/pai-bff --version`
+  (it opens `build/<worktree>/crates/core/strings/cli.toml`), then `touch crates/core/src/lib.rs`, rebuild
+  from this tree and rerun.
+- The bff's principal seam: `Connect = Fn(Option<&str>)`; only `server::read` names a principal, and it
+  comes from `Sessions::current` (which returns the session id AND the user), never from a header or a
+  query. `Sessions::end(id)` is the ONE removal: sign-out and the manager's 403 share it; a
+  `NotAuthorized` read ends that session, every other answer (503, 404, 502) keeps it. `system_connect`
+  binds the client per OS with `acting_for(user)` (both `DbusClient` and `PipeClient` return `Self`), so
+  the `match` inside each `cfg` block casts each arm to `Client`; the macOS branch needs
+  `let _ = principal;`, plain clippy (not the windows-gnu one) shows the unused parameter.
