@@ -15,8 +15,17 @@
 // lives in the shared renderer of fe/src/PresetCards.tsx, so it applies to every
 // card of 2e. The fields themselves, their labels, hints and options are
 // PresetCards1 to PresetCards4.test.tsx; for a field that is NOT a flag the
-// empty value stays absent (criterion 86, pinned there). `fit` is 2e.3c.
-import { cleanup, render, screen, within } from '@testing-library/react'
+// empty value stays absent (criterion 86, pinned there). `fit` takes a value
+// (`-fit [on|off]`) and reads as llama-server reads it, with a field error for
+// a value the engine refuses: sub-slice 2e.3c, criteria 127 to 129, pinned at
+// the end of this file.
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -154,13 +163,16 @@ const FLAGS: Flag[] = [
     valued: true,
   },
   // `fit` takes a value (`-fit [on|off]`), so it is none of the three readings
-  // of 122: its own reading is 2e.3c's, and until then it keeps 108's.
+  // of 122: its own reading, and the error of a value the engine refuses, are
+  // 2e.3c's (127, 128), pinned in the table at the end of this file. `valued`
+  // keeps it out of the flag selects of 125, and an absent `fit` is on: what
+  // llama.cpp defaults to (127).
   {
     key: 'fit',
     label: 'preset-fit-to-vram',
     kind: 'checkbox',
     toggle: 'preset-fit-allowed',
-    absentChecked: false,
+    absentChecked: true,
     valued: true,
   },
 ]
@@ -560,11 +572,17 @@ function selectOf(main: HTMLElement, label: string): HTMLSelectElement {
   }) as HTMLSelectElement
 }
 
-/** A checkbox field's checkbox: named by the table's toggle text (87). */
-function checkBoxOf(main: HTMLElement, f: Flag): HTMLInputElement {
+/** A checkbox field's checkbox: named by the table's toggle text (87). 108
+ * picks between two texts for Fit to VRAM, so `toggle` names the text the page
+ * shows when the row's own does not (the not-allowed state of 127). */
+function checkBoxOf(
+  main: HTMLElement,
+  f: Flag,
+  toggle?: string,
+): HTMLInputElement {
   const group = within(main).getByRole('group', { name: en(f.label) })
   return within(group).getByRole('checkbox', {
-    name: en(f.toggle ?? ''),
+    name: toggle ?? en(f.toggle ?? ''),
   }) as HTMLInputElement
 }
 
@@ -817,9 +835,13 @@ test('2e.124a: a valued key past what its select holds shows the value trimmed o
 })
 
 test('2e.124, 2e.124b: true and false, what the configurator writes, show no line and name no written-as id, on every flag key of 122', async () => {
+  // `fit` is not in this loop: the configurator writes `on` / `off` for it, so
+  // `true` and `false` are there a spelling the line shows (127), pinned in the
+  // 2e.3c table at the end of this file.
   for (const spelling of ['true', 'false']) {
     const values: Record<string, string> = {}
-    for (const f of FLAGS) values[f.key] = spelling
+    for (const f of FLAGS.filter((x) => x.key !== 'fit'))
+      values[f.key] = spelling
     const { main } = await page(values)
     const lines = [...main.querySelectorAll('[id^="preset-written-"]')]
     expect(
@@ -1043,11 +1065,13 @@ test('2e.125: no flag select shows an extra option: every key of 122 with auto, 
 
 // ── 122: a row whose key is not a flag keeps its own reading ────────────
 
-test('2e.122, 2e.108: Fit to VRAM is none of the three readings: yes and an empty value show unchecked, with the toggle text of 108', async () => {
+test('2e.122, 2e.127, 2e.128: Fit to VRAM is none of the three readings: yes and an empty value show unchecked with the toggle text of 108, and as refused values, with the line and the field error', async () => {
   // `fit` is `-fit [on|off]`, so the plain-flag reading of 122 is not its own
-  // (table 122 says so, and 2e.3c builds it): the page keeps 108's, which is on
-  // for `on` and `true` only. A flag reading would check the box for `yes`, and
-  // for the empty value the engine is given no value at all for `-fit`.
+  // (table 122 says so, and 2e.3c builds it): a flag reading would check the
+  // box for `yes`, and would read `fit =` as absent, while the engine is given
+  // `--fit ""` and refuses it (127). What 2e.3c keeps of 108 is the box
+  // unchecked and the toggle text; what it adds is that the value is refused,
+  // not a spelling: the written-as line, then the field error of 128.
   for (const value of ['yes', '']) {
     const { main } = await page({ fit: value })
     const box = checkBoxOf(main, flagOf('fit'))
@@ -1056,7 +1080,291 @@ test('2e.122, 2e.108: Fit to VRAM is none of the three readings: yes and an empt
       (box.closest('label')?.textContent ?? '').trim(),
       `fit ${JSON.stringify(value)}: the toggle text of 108, the rule untouched`,
     ).toBe(en('preset-fit-allowed'))
+    expect(
+      (writtenOf(main, 'fit') ?? { textContent: null }).textContent,
+      `fit ${JSON.stringify(value)}: 127: the spelling the file holds`,
+    ).toBe(value === '' ? EMPTY : as_(value))
+    const err = errorOf(main, 'fit')
+    expect(
+      err,
+      `fit ${JSON.stringify(value)}: 128: a refused value is an error`,
+    ).toBeTruthy()
+    expect(
+      err!.textContent,
+      `fit ${JSON.stringify(value)}: 128: the words of 129`,
+    ).toContain(FIT_INVALID)
     cleanup()
     vi.unstubAllGlobals()
   }
+})
+
+// ── 2e.3c: Fit to VRAM shows what llama-server does (127, 128, 129) ────
+// `fit` takes a value (`-fit [on|off]`): `common_preset::to_args` passes it as
+// written and its handler (`common/arg.cpp`) sets fit on for `on`, `enabled`,
+// `true`, `1` and off for `off`, `disabled`, `false`, `0`, compared trimmed
+// (spaces and tabs) and case-sensitive, and refuses anything else, so
+// llama-server does not start that preset. The box shows that reading, the
+// absent key included (127); a refused value gets the field error of 128, not
+// a spelling of its own. The allowed rule of 108 stays, and only picks the
+// toggle's text.
+
+/** One value of `fit`, with what the page must show (the table of 129). */
+type FitReading = {
+  /** The value of `values`; `undefined` for a key the file does not hold. */
+  value: string | undefined
+  /** The box's state (127). */
+  checked: boolean
+  /** The written-as line's text exactly, `undefined` for no line (127, 124). */
+  written: string | undefined
+  /** The field error's text, `undefined` for no error (128). */
+  error: string | undefined
+}
+
+/** The words 129 gives for a value llama-server refuses. */
+const FIT_INVALID = en('preset-fit-invalid')
+
+/** One row per value: the four on spellings and the absent key, the four off
+ * ones, the refused ones, and the trims. The INI grammar drops spaces and
+ * tabs, not U+00A0, so `on` padded with tabs reads on and `on` with a U+00A0
+ * is refused. */
+const FIT: FitReading[] = [
+  { value: undefined, checked: true, written: undefined, error: undefined },
+  { value: 'on', checked: true, written: undefined, error: undefined },
+  {
+    value: 'enabled',
+    checked: true,
+    written: as_('enabled'),
+    error: undefined,
+  },
+  { value: 'true', checked: true, written: as_('true'), error: undefined },
+  { value: '1', checked: true, written: as_('1'), error: undefined },
+  { value: 'off', checked: false, written: undefined, error: undefined },
+  {
+    value: 'disabled',
+    checked: false,
+    written: as_('disabled'),
+    error: undefined,
+  },
+  { value: 'false', checked: false, written: as_('false'), error: undefined },
+  { value: '0', checked: false, written: as_('0'), error: undefined },
+  // Refused: the engine's two lists are case-sensitive, so these do not start
+  // the preset: the box is unchecked and the field says so (128).
+  { value: 'TRUE', checked: false, written: as_('TRUE'), error: FIT_INVALID },
+  { value: 'yes', checked: false, written: as_('yes'), error: FIT_INVALID },
+  // `fit =` reaches the engine as `--fit ""` and is refused: the absent key of
+  // 127 is not the empty value, and criterion 86 does not apply to `fit`.
+  { value: '', checked: false, written: EMPTY, error: FIT_INVALID },
+  // The trim: the value reads on, and the line shows it trimmed, since the
+  // file's padding is not the spelling.
+  { value: ' on ', checked: true, written: as_('on'), error: undefined },
+  { value: '\ton\t', checked: true, written: as_('on'), error: undefined },
+  // U+00A0 survives the trim, so the value is not `on`: refused.
+  {
+    value: `on${NBSP}`,
+    checked: false,
+    written: as_(`on${NBSP}`),
+    error: FIT_INVALID,
+  },
+]
+
+/** The field error of `key`, by the id 128 gives it (`<id>-error`). */
+function errorOf(main: HTMLElement, key: string): HTMLElement | null {
+  return main.querySelector(`#preset-${key}-error`)
+}
+
+/** What one row of the 2e.3c table shows: the box, its line, its error. */
+function expectFit(main: HTMLElement, r: FitReading): void {
+  const shown = JSON.stringify(r.value)
+  const box = checkBoxOf(main, flagOf('fit'))
+  // 129: the box stays disabled in every row.
+  expect(box.disabled, `fit ${shown}: the box is disabled`).toBe(true)
+  // 127: the box shows what llama-server does.
+  expect(box.checked, `fit ${shown}: 127: the box`).toBe(r.checked)
+  // 108, untouched: Context size and GPU layers are both absent in these rows,
+  // so the toggle text is the allowed one.
+  expect(
+    (box.closest('label')?.textContent ?? '').trim(),
+    `fit ${shown}: 108: the toggle text`,
+  ).toBe(en('preset-fit-allowed'))
+  // 127, 124: the written-as line of the spelling the file holds.
+  const line = writtenOf(main, 'fit')
+  if (r.written === undefined)
+    expect(line, `fit ${shown}: 127: no written-as line`).toBeNull()
+  else
+    expect(
+      (line ?? { textContent: null }).textContent,
+      `fit ${shown}: 127: #preset-written-fit`,
+    ).toBe(r.written)
+  // 128: the field error of this field, and no other field's in 2e.
+  const err = errorOf(main, 'fit')
+  expect(
+    [...main.querySelectorAll('.field-error')].map((el) => el.id),
+    `fit ${shown}: 128: this field's error, alone on the page`,
+  ).toEqual(r.error === undefined ? [] : ['preset-fit-error'])
+  if (r.error !== undefined) {
+    expect(err, `fit ${shown}: 128: #preset-fit-error`).toBeTruthy()
+    expect(
+      (err!.textContent ?? '').trim(),
+      `fit ${shown}: 128: the words of 129`,
+    ).toBe(r.error)
+    expect(err!.tagName, `fit ${shown}: 128: a paragraph`).toBe('P')
+    // 128: not the alert of an action: the page as read carries it.
+    expect(err!.getAttribute('role'), `fit ${shown}: 128: no role`).toBeNull()
+    expect(
+      main.querySelectorAll('[role="alert"]').length,
+      `fit ${shown}: 128: no alert on load`,
+    ).toBe(0)
+    // 128: the icon and the text carry it, not the colour alone, and the
+    // paragraph is the field error of DESIGN 5.2, in --danger.
+    const icon = err!.querySelector('svg.error-icon')
+    expect(icon, `fit ${shown}: 128: the error icon`).toBeTruthy()
+    expect(
+      icon!.getAttribute('aria-hidden'),
+      `fit ${shown}: 128: the icon carries no text of its own`,
+    ).toBe('true')
+    expect(
+      err!.classList.contains('field-error'),
+      `fit ${shown}: 128: the field error of DESIGN 5.2`,
+    ).toBe(true)
+    const css = readFileSync(
+      join(import.meta.dirname, 'index.css'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(
+      [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(
+        (m) =>
+          /(^|,)\s*\.field-error\s*(,|$)/.test(m[1]!) &&
+          /color:\s*var\(--danger\)/.test(m[2]!),
+      ),
+      `fit ${shown}: 128: the field error is shown in --danger`,
+    ).toBe(true)
+    // 128: in the field, after the control, and after the written-as line.
+    const field = box.closest('.field')
+    expect(field, `fit ${shown}: its Field`).toBeTruthy()
+    expect(field!.contains(err), `fit ${shown}: 128: in the field`).toBe(true)
+    expect(
+      before(box, err!),
+      `fit ${shown}: 128: the error is after the control`,
+    ).toBe(true)
+    if (line !== null)
+      expect(
+        before(line, err!),
+        `fit ${shown}: 128: the line comes before the error`,
+      ).toBe(true)
+  }
+  // 124b, 128: the control names the error first and the line beside it, and
+  // with neither there is no description at all.
+  const ids: string[] = []
+  if (r.error !== undefined) ids.push('preset-fit-error')
+  if (r.written !== undefined) ids.push('preset-written-fit')
+  expect(describedIds(box), `fit ${shown}: 124b, 128: what it names`).toEqual(
+    ids,
+  )
+  expect(
+    box.getAttribute('aria-invalid'),
+    `fit ${shown}: 128: aria-invalid only with the error`,
+  ).toBe(r.error === undefined ? null : 'true')
+}
+
+test.each(FIT)(
+  '2e.127, 2e.128, 2e.129: fit $value: the box $checked, the line $written, the error $error',
+  async (r) => {
+    const { main } = await page(r.value === undefined ? {} : { fit: r.value })
+    expectFit(main, r)
+  },
+)
+
+// ── 127: the allowed rule of 108 only picks the toggle's text ──────────
+
+test('2e.127, 2e.108, 2e.129: Fit to VRAM shows what the engine does where the configurator is not allowed: the four combinations of the box and the two toggle texts, and the error follows the value, not the rule', async () => {
+  // 108's rule stands for the toggle text; 127 takes from it the power to
+  // uncheck the box: `fit` on with Context size set, or with GPU layers set, is
+  // checked with the not-allowed text, and an absent `fit` is checked there
+  // too, the engine's own default. A refused value keeps its error beside the
+  // not-allowed text.
+  for (const [values, checked, toggleKey, hasError] of [
+    [{ fit: 'on' }, true, 'preset-fit-allowed', false],
+    [{ fit: 'off' }, false, 'preset-fit-allowed', false],
+    [{ fit: 'on', 'ctx-size': '8192' }, true, 'preset-fit-not-allowed', false],
+    [
+      { fit: 'on', 'n-gpu-layers': '99' },
+      true,
+      'preset-fit-not-allowed',
+      false,
+    ],
+    [{ 'n-gpu-layers': '99' }, true, 'preset-fit-not-allowed', false],
+    [
+      { fit: 'off', 'ctx-size': '172032', 'n-gpu-layers': '99' },
+      false,
+      'preset-fit-not-allowed',
+      false,
+    ],
+    [
+      { fit: 'TRUE', 'ctx-size': '8192' },
+      false,
+      'preset-fit-not-allowed',
+      true,
+    ],
+  ] as [Record<string, string>, boolean, string, boolean][]) {
+    const { main } = await page(values)
+    const box = checkBoxOf(main, flagOf('fit'), en(toggleKey))
+    const shown = JSON.stringify(values)
+    expect(box.checked, `${shown}: 127: the box`).toBe(checked)
+    expect(
+      (box.closest('label')?.textContent ?? '').trim(),
+      `${shown}: 108: the toggle text`,
+    ).toBe(en(toggleKey))
+    expect(
+      errorOf(main, 'fit') !== null,
+      `${shown}: 128: the error is the value's, not the rule's`,
+    ).toBe(hasError)
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+// ── 129a: the Fit to VRAM hint reads as the box does ───────────────────
+
+/** The hint's four lines as 129a writes them, taken from the brief: with 127
+ * an absent `fit` shows checked, so the hint can no longer say the default is
+ * off here. Only the second line changed, the other three stay as they are. */
+const FIT_HINT = [
+  'Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.',
+  'On by default, as in llama.cpp. For a full fit, leave Context size and GPU layers at default.',
+  'When on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.',
+  'Flag: -fit',
+]
+
+test('2e.129a: the opened Fit to VRAM hint shows the four lines of 129a, and says nothing about a default that is off here', async () => {
+  // The hint opens the way the other hint tests of the preset page open one
+  // (PresetCards4.test.tsx, criterion 88): the About toggle of the field, then
+  // the element it names.
+  const { main } = await page({})
+  const about = within(main).getByRole('button', {
+    name: `${en('field-about')} ${en('preset-fit-to-vram')}`,
+  })
+  const hintId = about.getAttribute('aria-controls')
+  expect(hintId, 'fit: aria-controls names the hint').toBe('preset-fit-hint')
+  const hint = document.getElementById(hintId!)
+  expect(hint, 'fit: the hinted element is in the page').toBeTruthy()
+  expect(isHidden(hint), 'fit: the hint is hidden before the click').toBe(true)
+  fireEvent.click(about)
+  expect(about.getAttribute('aria-expanded'), 'fit: the hint is open').toBe(
+    'true',
+  )
+  expect(isHidden(hint), 'fit: the hint shows').toBe(false)
+  const shown = [...hint!.querySelectorAll('p')].map((p) =>
+    (p.textContent ?? '').trim(),
+  )
+  // 88: one paragraph per line of the strings text.
+  expect(shown.length, 'fit: one paragraph per line').toBe(FIT_HINT.length)
+  // 129a: the second line, the one that changes, as the brief writes it.
+  expect(shown[1], 'fit: 129a: the second line').toBe(FIT_HINT[1])
+  // 129a: the other three lines are untouched.
+  expect(shown, 'fit: 129a: the hint as the user reads it').toEqual(FIT_HINT)
+  // 129a: the words the checked box contradicts are gone from the hint.
+  expect(
+    hint!.textContent ?? '',
+    'fit: 129a: no "off by default here" left in the hint',
+  ).not.toContain('Off by default here')
 })

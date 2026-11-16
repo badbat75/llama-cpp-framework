@@ -2,14 +2,17 @@
 // criteria 107 to 111): the field table of 107 (six numbers, four selects, the
 // device select of 103, one checkbox, one text, two MiB units), what 2e.4
 // brings that the earlier sub-slices did not have: the Fit to VRAM checkbox of
-// 108, whose state and toggle text follow the GUI's rule (allowed only with
-// Context size and GPU layers both absent), the lazy-mode select matched
+// 108, whose toggle text follows the GUI's rule (allowed only with
+// Context size and GPU layers both absent) while its state is the engine's
+// reading of 127 (2e.3c), the lazy-mode select matched
 // exactly, and the load-mode select matched ignoring case and space. The
 // shared rules of section 1 are pinned for the cards of 2e.1 in
 // PresetCards1.test.tsx, for those of 2e.2 in PresetCards2.test.tsx and for
 // what 2e.3 adds in PresetCards3.test.tsx; here they are pinned for the
-// Hardware card. The checkbox is pinned for `true`, `false` and the absent key
-// only: the other spellings are being re-specified. The route and the read are
+// Hardware card. The checkbox is pinned here for the `on` value of the 109 stub
+// and for the absent key only: every row of the 129 table, with the written-as
+// line and the field error, is pinned in PresetFlags.test.tsx. The route and
+// the read are
 // PresetPage.test.tsx, the Engine field and the Assets card are
 // PresetContent.test.tsx, the full-value line as a rule is
 // PresetFullValue.test.tsx. The colours of 85, the width of 91 and the muted
@@ -120,7 +123,7 @@ type Row = {
   options?: string[]
   /** A select: the option text it shows when the key is absent. */
   absentOption?: string
-  /** A checkbox: the state its key absent shows (107, 108). */
+  /** A checkbox: the state its key absent shows (107; for `fit`, 127). */
   absentChecked?: boolean
   /** The value of the criterion 109 stub. */
   set: string
@@ -224,10 +227,13 @@ const FIELDS: Row[] = [
     label: en('preset-fit-to-vram'),
     hint: 'preset-fit-to-vram-hint',
     kind: 'checkbox',
-    absentChecked: false,
+    // 127: the box is checked when `fit` is absent (llama.cpp's default) and
+    // when it is one of the four on values, so `on` reads checked and the
+    // absent key reads checked: 2e.3c replaces 108's rule for the state.
+    absentChecked: true,
     set: 'on',
-    shown: 'unchecked',
-    shownChecked: false,
+    shown: 'checked',
+    shownChecked: true,
   },
   {
     key: 'fit-ctx',
@@ -533,9 +539,10 @@ function expectAbsent(main: HTMLElement, f: Row): void {
     expect(boxOf(group).checked, `${f.key}: the default box ticked`).toBe(true)
     expect(inputOf(group, f.label).value, `${f.key}: an empty input`).toBe('')
   } else if (f.kind === 'checkbox') {
-    expect(checkBoxOf(main, f).checked, `${f.key}: absent unchecked`).toBe(
-      f.absentChecked,
-    )
+    expect(
+      checkBoxOf(main, f).checked,
+      `${f.key}: absent shows ${f.absentChecked ? 'checked' : 'unchecked'}`,
+    ).toBe(f.absentChecked)
   } else if (f.kind === 'select') {
     expectAbsentSelect(main, f)
   } else if (f.kind === 'device') {
@@ -720,9 +727,12 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the card (81, 86) ─────────────────────
 
-test('2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
+test('2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123) and not `fit` (2e.3c: `""` reaches the engine as `--fit ""`, which it refuses, criterion 127)', async () => {
   for (const f of FIELDS) {
-    if (['op-offload', 'repack', 'no-host'].includes(f.key)) continue
+    // op-offload, repack, no-host: the flag reading of 123. fit: `-fit
+    // [on|off]` takes a value, so `""` is invalid, not absent (127, 128; the
+    // rows of 129 are pinned in PresetFlags.test.tsx).
+    if (['op-offload', 'repack', 'no-host', 'fit'].includes(f.key)) continue
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
@@ -771,7 +781,7 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware 
 
 // ── Fit to VRAM, the rule 2e.4 takes from the GUI (108, 109) ────────────
 
-test('2e.108: Fit to VRAM is allowed only when Context size and GPU layers are both absent, and its toggle text is preset-fit-allowed when allowed and preset-fit-not-allowed when not', async () => {
+test('2e.108, 2e.127: the rule of 108 picks only the toggle text, preset-fit-allowed when Context size and GPU layers are both absent and preset-fit-not-allowed when not: the box keeps the file reading of 127, so `fit: true` shows checked in every row', async () => {
   for (const [ctx, layers, allowed] of [
     [undefined, undefined, true],
     ['172032', undefined, false],
@@ -786,8 +796,10 @@ test('2e.108: Fit to VRAM is allowed only when Context size and GPU layers are b
     })
     fitShows(
       main,
-      // Allowed and `true`: checked. Not allowed: unchecked, whatever the file.
-      allowed,
+      // 127: `true` is an on value, so the box is checked whatever the rule
+      // says: llama-server runs the fit there and the text tells the user
+      // what the configurator needs for a full one.
+      true,
       allowed ? 'preset-fit-allowed' : 'preset-fit-not-allowed',
       `ctx-size ${ctx ?? 'absent'}, n-gpu-layers ${layers ?? 'absent'}`,
     )
@@ -796,10 +808,12 @@ test('2e.108: Fit to VRAM is allowed only when Context size and GPU layers are b
   }
 })
 
-test('2e.109: the stub of 109 shows as 108 says: every key set unchecks Fit to VRAM with preset-fit-not-allowed, values {fit: on} checks it with preset-fit-allowed, values {} unchecks it with preset-fit-allowed, fit TRUE alone checks it', async () => {
-  // Every key of 107 set, and the read holds ctx-size: not allowed.
+test('2e.109: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-not-allowed, values {fit: on} checks it with preset-fit-allowed, values {} checks it, fit TRUE alone is refused so unchecked with the field error', async () => {
+  // Every key of 107 set, and the read holds n-gpu-layers: not allowed, so the
+  // not-allowed text of 108. The file's `fit` is `on`, so the box is checked:
+  // 127 replaces the unchecked 109 read from 108.
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
-  fitShows(main, false, 'preset-fit-not-allowed', 'the stub of 109')
+  fitShows(main, true, 'preset-fit-not-allowed', 'the stub of 109')
   cleanup()
   vi.unstubAllGlobals()
   // `values` {fit: "on"}: allowed, and `on` is on.
@@ -807,16 +821,23 @@ test('2e.109: the stub of 109 shows as 108 says: every key set unchecks Fit to V
   fitShows(on.main, true, 'preset-fit-allowed', 'values {fit: "on"}')
   cleanup()
   vi.unstubAllGlobals()
-  // `values` {}: allowed, nothing to check.
+  // `values` {}: allowed, and an absent `fit` is on: llama.cpp's own default
+  // (127 replaces the unchecked 109 read from 108).
   const none = await loaded({ preset: () => reply(200, exactOf({})) })
-  fitShows(none.main, false, 'preset-fit-allowed', 'values {}')
+  fitShows(none.main, true, 'preset-fit-allowed', 'values {}')
   cleanup()
   vi.unstubAllGlobals()
-  // `fit` TRUE with nothing else: 108 ignores case.
+  // `fit` TRUE with nothing else: the engine's two lists are case-sensitive, so
+  // it refuses the value: unchecked, with the field error of 128 (109 read it
+  // checked, 127 and 128 replace that).
   const true_ = await loaded({
     preset: () => reply(200, exactOf({ fit: 'TRUE' })),
   })
-  fitShows(true_.main, true, 'preset-fit-allowed', 'fit TRUE')
+  fitShows(true_.main, false, 'preset-fit-allowed', 'fit TRUE')
+  expect(
+    true_.main.querySelector('#preset-fit-error')?.textContent,
+    'fit TRUE: 128: #preset-fit-error names the refused value',
+  ).toContain(en('preset-fit-invalid'))
   cleanup()
   vi.unstubAllGlobals()
   // `false` with nothing else: allowed, unchecked.
@@ -826,11 +847,12 @@ test('2e.109: the stub of 109 shows as 108 says: every key set unchecks Fit to V
   fitShows(off.main, false, 'preset-fit-allowed', 'fit false')
   cleanup()
   vi.unstubAllGlobals()
-  // `fit` on with GPU layers set: as in the GUI, unchecked and the GUI's text.
+  // `fit` on with GPU layers set: checked, with the GUI's text: the engine
+  // still fits (127), the text says what the configurator needs (108).
   const layers = await loaded({
     preset: () => reply(200, exactOf({ fit: 'on', 'n-gpu-layers': '99' })),
   })
-  fitShows(layers.main, false, 'preset-fit-not-allowed', 'fit on, layers set')
+  fitShows(layers.main, true, 'preset-fit-not-allowed', 'fit on, layers set')
 })
 
 // ── The two selects 2e.4 adds (107) ────────────────────────────────────

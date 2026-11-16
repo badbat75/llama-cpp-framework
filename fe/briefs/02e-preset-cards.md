@@ -611,8 +611,29 @@ does not start that preset. Compared trimmed and case-sensitive, as in 2e.3b. An
 
     Each line and the error found by id; the box stays `disabled` in every row. **Out of 2e.3c**: an
     error for `flash-attn`'s refused values (it keeps its extra option), the configurator's own
-    reading (`PLAN.md` step 10 slice 11d), and whether the Fit hint's "Off by default here" still
-    reads right once the configurator follows this rule (11d's to judge).
+    reading (`PLAN.md` step 10 slice 11d), and the configurator's own Fit hint (11d's to change;
+    the web's is changed here, criterion 129a).
+129a. **The Fit to VRAM hint** (added 2026-11-16 after the 2e.3c review): with criterion 127 an
+    absent `fit` shows checked, so the hint can no longer say "Off by default here". The key
+    `preset-fit-to-vram-hint` in `fe/src/strings/en_US.json` reads exactly (four lines, `\n` as in
+    the file):
+
+    `Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.\nOn by default, as in llama.cpp. For a full fit, leave Context size and GPU layers at default.\nWhen on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.\nFlag: -fit`
+
+    Only the second line changes. This is a deliberate difference from the configurator, whose
+    `fit-to-vram-hint` (`crates/core/strings/en_US.toml` 274) keeps "Available only with Context
+    size and GPU layers at default. Off by default here, though llama.cpp's own default is on."
+    until the platform side's slice 11d makes it read `fit` as the engine does. Test: the opened
+    hint `preset-fit-hint` shows the second line and does not contain "Off by default here"
+    ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions): instructions that match what
+    the control shows).
+
+**For 2h** (the save slice must decide): (1) the text beside a checked Fit box when Fit is not
+allowed, picked by which key is set: with `n-gpu-layers` set llama-server gives up the fit
+(`common/fit.cpp` 550-551, recheck before writing), so a checked box with "needs Context size and
+GPU layers at default" overstates it; with only `ctx-size` set it still fits the layers; (2) what a
+save does with an invalid `fit` value (writes it back as found, or blocks the save until the user
+picks on or off), and how the field's error of criterion 128 reads once the box can be changed.
 
 ## 2e.5. Speculative decoding
 

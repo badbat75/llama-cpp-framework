@@ -446,10 +446,12 @@ export const EN: Record<string, string> = {
     "How this model's weights get into memory. Pick one: the modes do not combine.\nDefault: auto (llama.cpp's own).\nauto: memory-maps the file (reads it on demand) unless a device can't; fastest to load.\nnone: reads the weights into RAM up front: slower, uses the model's size in RAM, but nothing can be dropped back to the file.\nmmap: always memory-maps.\nmlock: locks the weights in physical RAM WITHOUT memory-mapping: steady latency, needs room for the whole model.\nmmap+mlock: memory-maps and locks what it maps.\ndio: Direct I/O where the platform offers it.\nLazy tensors stay mapped whatever this says.\nFlag: --load-mode",
   'preset-fit-to-vram': 'Fit to VRAM',
   'preset-fit-to-vram-hint':
-    "Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.\nAvailable only with Context size and GPU layers at default. Off by default here, though llama.cpp's own default is on.\nWhen on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.\nFlag: -fit",
+    'Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.\nOn by default, as in llama.cpp. For a full fit, leave Context size and GPU layers at default.\nWhen on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.\nFlag: -fit',
   'preset-fit-allowed':
     'auto-fit context and layers to device memory (-fit on)',
   'preset-fit-not-allowed': 'needs Context size and GPU layers at default',
+  'preset-fit-invalid':
+    'llama-server refuses this value, so this preset does not start. Use on or off.',
   'preset-fit-min-context': 'Fit min context',
   'preset-fit-min-context-hint':
     "The smallest context Fit to VRAM may cut down to. Only used with Fit to VRAM on.\nDefault: 4096 (llama.cpp's own).\nFlag: --fit-ctx",

@@ -15,7 +15,9 @@
 // the device list arrives with 2f. 2e.4 adds the Hardware card (107) and, with
 // it, the unit of a text row, the empty option each device select names for
 // itself, a select matched ignoring case and space (Load mode), and a checkbox
-// the configurator only allows under a rule (Fit to VRAM, 108).
+// the configurator only allows under a rule (Fit to VRAM, 108). 2e.3c gives
+// that row the reading llama-server has for `-fit [on|off]` (127), and the
+// field error of a value the engine refuses to start with (128).
 import Card from './Card.tsx'
 import {
   CheckboxField,
@@ -37,8 +39,12 @@ type Option = { value: string; text: string }
  *   short list of words and every other value, the empty one included, is off
  *   (`is_truthy`, `tools/server/server-models.cpp`).
  * - `valued`: `[on|off|auto]`: its handler reads both lists and keeps any other
- *   value as the extra option of criterion 87. */
-type Reading = 'flag' | 'truthy' | 'valued'
+ *   value as the extra option of criterion 87.
+ * - `fit`: `-fit [on|off]`, the one checkbox whose value the engine reads with
+ *   the same two lists and refuses anything outside them, so such a value is an
+ *   error and not a spelling (criterion 128). The key is absent for it, too,
+ *   where the engine's own default is on (`common/common.h`). */
+type Reading = 'flag' | 'truthy' | 'valued' | 'fit'
 
 /** What every row carries: the key and the strings keys of its texts. */
 type RowBase = {
@@ -84,8 +90,8 @@ type CheckboxRow = RowBase & {
   /** A box the configurator only lets the user set under a rule (criterion
    * 108: Fit to VRAM sizes the context and the GPU layers, so it is allowed
    * while both are absent). Each key of `needsAbsent` must be absent; when one
-   * is not, the box shows unchecked, its text is `notAllowed` and the file's
-   * value decides nothing. */
+   * is not, the text is `notAllowed`. The box keeps showing the file's reading
+   * either way (criterion 127). */
   allowed?: { needsAbsent: string[]; notAllowed: string }
 }
 
@@ -265,8 +271,9 @@ const CARDS: CardFields[] = [
       {
         kind: 'checkbox',
         key: 'fit',
+        reading: 'fit',
         toggle: t('preset-fit-allowed'),
-        absent: false,
+        absent: true,
         allowed: {
           needsAbsent: ['ctx-size', 'n-gpu-layers'],
           notAllowed: t('preset-fit-not-allowed'),
@@ -655,15 +662,18 @@ function held(values: Record<string, string>, key: string): string | undefined {
 
 /** The string a row reads. For a flag the key is present when the file holds it,
  * the empty value included, because llama-server then passes the plain flag
- * (criterion 123). Every other row keeps criterion 86: an empty value is
- * absent. */
+ * (criterion 123). `fit` takes a value too, so `fit =` reaches the engine as
+ * `--fit ""`: present, and refused (criterion 127). Every other row keeps
+ * criterion 86: an empty value is absent. */
 function heldFor(
   row: RowBase,
   values: Record<string, string>,
 ): string | undefined {
   const raw = values[row.key]
   if (raw === undefined) return undefined
-  return row.reading === 'flag' || row.reading === 'truthy'
+  return row.reading === 'flag' ||
+    row.reading === 'truthy' ||
+    row.reading === 'fit'
     ? raw
     : raw === ''
       ? undefined
@@ -701,32 +711,38 @@ function writtenText(trimmed: string): string {
  * control shows it as the extra option of criterion 87.
  *
  * `written` is the line's text for a value the configurator would not write: the
- * configurator keeps `true` and `false`, so those two show no line. */
+ * configurator keeps `true` and `false`, so those two show no line. The `fit`
+ * row's configurator writes `on` and `off`, so those two show no line there.
+ *
+ * `error` is the field's error for a value the engine refuses to start with
+ * (criterion 128): only `fit` refuses, the other readings hand the value on. */
 function readAs(
   reading: Reading,
   raw: string,
-): { on: boolean | undefined; written: string | undefined } {
+): {
+  on: boolean | undefined
+  written: string | undefined
+  error: string | undefined
+} {
   const trimmed = iniTrim(raw)
   const falsey = FALSEY.includes(trimmed)
   const truthy = TRUTHY.includes(trimmed)
+  if (reading === 'fit')
+    return {
+      on: truthy,
+      written: raw === 'on' || raw === 'off' ? undefined : writtenText(trimmed),
+      error: falsey || truthy ? undefined : t('preset-fit-invalid'),
+    }
   if (reading === 'valued' && !falsey && !truthy)
-    return { on: undefined, written: undefined }
+    return { on: undefined, written: undefined, error: undefined }
   return {
     on: reading === 'flag' ? !falsey : truthy,
     written:
       trimmed === 'true' || trimmed === 'false'
         ? undefined
         : writtenText(trimmed),
+    error: undefined,
   }
-}
-
-/** A value as the configurator reads a boolean: `ini::parse_bool`
- * (crates/core/src/ini.rs) answers only for `true` and `false`, trimmed, and
- * gives nothing for the rest. A checkbox row decides what that nothing shows
- * (its `absent`). */
-function parseBool(value: string): boolean | undefined {
-  const text = value.trim()
-  return text === 'true' ? true : text === 'false' ? false : undefined
 }
 
 /** A select's options and its selected value. A value no option carries
@@ -766,14 +782,6 @@ function shownDevice(
   const none = { value: '', text: row.empty }
   if (value === undefined) return { options: [none], value: '' }
   return { options: [none, { value, text: value }], value }
-}
-
-/** The state of a box the configurator only allows under a rule (criterion
- * 108): the file's value is on for the two spellings the configurator reads as
- * on, ignoring case and surrounding space (`from_keys`). */
-function allowedOn(value: string | undefined): boolean {
-  const text = value?.trim().toLowerCase() ?? ''
-  return text === 'on' || text === 'true'
 }
 
 /** The full-value line's limits, in characters (criterion 119): the number
@@ -843,30 +851,27 @@ function PresetField({
   }
   if (row.kind === 'checkbox') {
     // A box the configurator only allows under a rule (108) says so in its own
-    // text and, where it is not allowed, shows the file's value as off: the
-    // configurator would write it off at its next save.
+    // text. The rule says nothing about the box itself: what the box shows is
+    // what the engine does with the file's value, allowed or not (127), and a
+    // value the engine refuses carries the field's error (128).
     const rule = row.allowed
-    const allowed =
+    const toggle =
       rule === undefined ||
       rule.needsAbsent.every((key) => held(values, key) === undefined)
+        ? row.toggle
+        : rule.notAllowed
+    const written = state?.written
     return (
       <CheckboxField
         {...common}
-        toggle={rule === undefined || allowed ? row.toggle : rule.notAllowed}
-        checked={
-          allowed &&
-          (state !== undefined
-            ? // A checkbox row's reading is a flag, which has no third state.
-              state.on === true
-            : rule === undefined
-              ? (parseBool(value ?? '') ?? row.absent)
-              : allowedOn(value))
-        }
+        toggle={toggle}
+        checked={state === undefined ? row.absent : state.on === true}
         written={
-          state?.written === undefined
+          written === undefined
             ? undefined
-            : { id: `preset-written-${row.key}`, text: state.written }
+            : { id: `preset-written-${row.key}`, text: written }
         }
+        error={state?.error}
         onChange={() => undefined}
       />
     )
