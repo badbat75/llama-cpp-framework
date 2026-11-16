@@ -964,6 +964,37 @@ S1.10. **Strings, slice S1.** New: `session-revoked` | You have been signed out:
 explicit sign-out of the banner on S1.4 to S1.7 (36a keeps the page as it was, whatever ended the
 session).
 
+## 4d. Later slice S2: a Stop or Restart that saves snapshots for minutes
+
+Written 2026-11-16 against bff slice 9b (contract, "A long stop"). Today a Stop or Restart with
+`SaveStateOnShutdown` on lasts up to 300 s in `deactivating`, but the action's deadline is 60 s
+(41c; `ACTION_LIMIT_MS`, `fe/src/InstancePage.tsx` line 38): at 60 s the status reads `run-timeout`
+("did not reach the expected state within a minute"), which reads as a failure while the stop is
+going as planned. The state line (`instance-state-deactivating`, Stopping), the inactive buttons
+(40a) and the rest of the page are already right. No new pattern, component or token.
+
+S2.1. **Deadline per action.** The deadline of 41c is 360 s after the `POST`'s 2xx for Stop and
+    Restart (the 300 s stop budget plus Start's 60 s), and stays 60 s for Start. Everything else in
+    41c, 41d and 47 is unchanged (the action poll still reads every 1000 ms).
+S2.2. **Check (Stop):** every action read answering `deactivating`: 359 `GET`s after the 2xx; at
+    60 000 ms and at 359 999 ms the status still reads `run-stopping`, all three buttons are
+    `aria-disabled`; at 360 000 ms the status reads `run-timeout-stop`, the buttons follow 40a, the
+    next `GET` 5000 ms later. A read answering `inactive` at 240 000 ms gives `run-stopped`.
+S2.3. **Check (Restart):** reads answering `deactivating` to 200 000 ms, `activating` to 290 000 ms,
+    then `active`: `run-restarting` throughout, then `run-restarted`; no `run-timeout*` at 60 000 ms.
+S2.4. **Check (Start):** unchanged, `run-timeout` at 60 000 ms (41c).
+S2.5. **Announcement**: the status stays one `role="status"` region; the text changes only at the
+    outcome or the deadline, so nothing is announced each second
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)). Focus as 40b.
+S2.6. **Strings, slice S2.** New: `run-timeout-stop` | llama-server did not reach the expected
+    state within six minutes. The state above keeps updating. Reused: `run-stopping`,
+    `run-restarting`, `run-stopped`, `run-restarted`, `run-timeout`, `instance-state-deactivating`.
+
+S2 replaces S1's "Snapshots at a web Stop or Restart": the save now happens, and the fe says nothing
+more than Stopping **(preference)**: the Save on shutdown hint (`server-snapshots-intro`) already
+says stopping waits for the write. **Out of S2**: a status that clears when an idle read later shows
+the expected state after a timeout (true of Start today as well).
+
 ## 5. The Server form
 
 ### 5.1 Cards and fields, in order

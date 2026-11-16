@@ -16,18 +16,18 @@ exist yet. Change this file first when a shape changes.
   refused value without its reason (`api-other`), since the status already says a check refused it.
 - **401** means not signed in (no session, or it ended), on any route that needs one.
 - **403** `client-not-authorized` means the manager refused the call for this user, on a route that
-  acts for the signed-in user; the session lives on. On a route that needs no sign-in
+  acts for the signed-in user; the session lives on. No served route sends it today (since bff slice
+  9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (**accepted** as bff slice 9e, not served yet; S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
   sends this key exactly when it ends a session on a refusal, and `client-not-authorized` only when
   the session lives on, so the fe needs no second read of `GET /api/session` to tell them apart.
-  Today's bff (2d69d2f, `server.rs` `read`, `control.rs` `action_failure`) ends the session but still
-  sends `client-not-authorized`: the fe then shows the plain refusal and meets the 401 at its next
-  request, which is correct but one step late.
+  Where: `crates/bff/src/server.rs` `read` and `control.rs` `action_failure`. The session-free reads
+  (`GET /api/instances`, `GET .../boot`) keep 502 `client-not-authorized`.
 - **The guard's keys**, each 403 or 413 with `args: []`, answered before any session is looked at
   (`crates/bff/src/origin.rs`): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
   is not this bff), `request-bad-host` (a `Host` that is not `localhost`, `127.x.x.x` or `[::1]`),
@@ -143,20 +143,22 @@ Body `{"revision", "values"}`.
 - `POST /api/instances/{id}/start`, `/stop` and `/restart` take no body and answer 204 once the
   service manager has accepted the job; the state read just after can still be the previous one, so
   the fe polls `GET /api/instances` (any 2xx counts as accepted). Errors: 401; 403
-  `client-not-authorized`; 403 `session-not-administrator` (accepted, above: the session ended);
+  `client-not-authorized`; 403 `session-not-administrator` (above: the session ended);
   404 `client-no-instance`; 503 `client-unavailable`; 502 `client-service-failed` with
   `args: []` when the service manager refused or the unit failed (its message stays in the bff's
   log); 502 `client-other` for anything else.
-- **Not yet**: a stop or a restart from the web does not save the slot snapshots, even with
-  `SaveStateOnShutdown` on (the GUI saves them itself, `slot_state::save_all`). `PLAN.md` step 9b
-  moves the save into the instance's own stop, so every stop path saves, before the MVP's run; the
-  fe says nothing of it meanwhile (01-server.md S1).
+- **A long stop** (bff slice 9b, done): with `SaveStateOnShutdown` on, the instance's own stop saves
+  the slot snapshots first, up to 300 s (`TimeoutStopSec=300`, `xtask/src/linux/system_files.rs`;
+  `RESTART_STOP_WAIT`, `crates/manager/src/manager/windows.rs`). `/stop` and `/restart` still
+  answer 204 at once (on Windows `/restart` when the stop is accepted); meanwhile
+  `GET /api/instances` reports the instance `deactivating`, then `inactive` (a restart then
+  `activating`, `active`). The fe waits for it: 01-server.md S2.
 - `GET /api/instances/{id}/boot` answers 200 `{"enabled": <bool>}`. Errors: 503
   `client-unavailable`, 502 `client-not-authorized` (a route that needs no sign-in, like
   `GET /api/instances`), 404 `client-no-instance`, 502 `client-other`.
 - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
   state read back after the write. Errors: 401, 403 `client-not-authorized`, 403
-  `session-not-administrator` (accepted), 404, 503, 502 `client-service-failed` or `client-other`
+  `session-not-administrator`, 404, 503, 502 `client-service-failed` or `client-other`
   (each with `args: []`), 400 `boot-malformed` for a body that is not `{"enabled": <bool>}` (the fe
   never sends one), 413 `payload-too-large`.
 - `GET /api/instances` and `GET /api/instances/{id}/boot` do not move a session's idle deadline:
