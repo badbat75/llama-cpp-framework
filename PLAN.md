@@ -903,9 +903,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `off`, `disabled`, `false`, `0` into its `--no-` form, any other value into the plain flag,
    `common_arg_utils::is_falsey` in `common/arg.cpp`). The configurator reads a preset's booleans with
    `ini::parse_bool` (`presets.rs`), which knows only `true`/`false`, so a hand-written `jinja = 0` runs
-   without jinja while the GUI shows the field's default (on). Rule: in `presets.ini` a flag is off for
-   exactly those four values (after trimming) and on for any other; `server.ini` and `settings.ini` keep
-   `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
+   without jinja while the GUI shows the field's default (on). Rule, per key, in `presets.ini`
+   (values trimmed of spaces and tabs, as llama.cpp's INI grammar does, `common/preset.cpp`): a plain flag
+   (`jinja`, `prefill-assistant`, `mmproj-offload`, `kv-unified`, `reasoning-preserve`, `op-offload`,
+   `repack`, `backend-sampling`, `embeddings`, `no-host`) is off for exactly those four values and on for
+   any other; `load-on-startup`, the router's own key, is on only for `on`, `enabled`, `true`, `1`
+   (`is_truthy`, `tools/server/server-models.cpp`) and off for any other; valued options (`flash-attn`
+   and `reasoning` on/off/auto, `fit`) are not flags and keep their own reading. `server.ini` and
+   `settings.ini` keep `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
    `pai-core` with `pai-app`'s reader; before the MVP's run.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
    enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
