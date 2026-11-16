@@ -91,7 +91,8 @@ the page does not have. The Engine select stays as 2d made it (enabled, one opti
 86. **The value read.** Each field reads `values[<key>]` of the 2d reply (criterion 81) for its key
     in the tables. **Absent** means the key is not in `values` **or** its value is `""`; the GUI
     reads both alike (`from_keys`: `parse_int("")` and `parse_bool("")` give none). Keys the page
-    does not show are still ignored (criterion 81).
+    does not show are still ignored (criterion 81). 2e.3b: not for a flag, where `""` is on
+    (criterion 123).
 87. **The four kinds of field**, each the D5.2 Field component the Server page uses, named by its
     label (so `getByRole(<role>, { name: <label> })` finds the control):
     - **Number** (`DefaultBoxField`, the GUI's `DefaultLineEdit` and `AutoSlider`): a group named by
@@ -108,9 +109,9 @@ the page does not have. The Engine select stays as 2d made it (enabled, one opti
       `<select>` with the table's options, in the table's order, each option's text its strings key
       or literal. The selected option follows the table's mapping column. **A value the mapping does
       not list** is shown as one extra, last option whose value and text are the reply's string as
-      written, selected (as the "(not available)" engine of D2.2). Differs from the GUI on purpose
-      for the tri-states, which the GUI reads as default when the file holds anything but `true` or
-      `false` (`ini::parse_bool`, `crates/core/src/ini.rs` 523-529), and would then drop on save.
+      written, selected (as the "(not available)" engine of D2.2). 2e.3b: a flag's select (tri-state,
+      off / on) has no extra option; it shows on or off by criterion 122 and the spelling by
+      criterion 124.
     - **Checkbox** (`CheckboxField`, the GUI's `CheckBox`): a group named by the label holding one
       checkbox whose text is the table's toggle text. Checked per the table's mapping; a value it
       does not list reads as the GUI reads it (the table says which).
@@ -154,12 +155,12 @@ Used by every select below. Texts of the GUI (`option-*` keys exist: `option-def
 `option-on` "on", `option-off` "off", `option-none` "none").
 
 - **Tri-state** (the GUI's default / on / off `SegmentedControl`): options `default`
-  (`option-default`), `on` (`option-on`), `off` (`option-off`). Mapping: absent shows `default`,
-  `true` shows `on`, `false` shows `off` (`emit_bool` writes `true` / `false`, `presets.rs`
-  2146-2150).
+  (`option-default`), `on` (`option-on`), `off` (`option-off`). Mapping (2e.3b, criterion 122):
+  absent shows `default`, `off` / `disabled` / `false` / `0` show `off`, any other value (`""`
+  included) shows `on` (`emit_bool` writes `true` / `false`, `presets.rs` 2146-2150).
 - **Off / on** (the GUI's two-pill `SegmentedControl` of a key written only when true): options
-  `off` (`option-off`), `on` (`option-on`). Mapping: absent and `false` show `off`, `true` shows
-  `on` (`from_keys`: `getb(..) == Some(true)`).
+  `off` (`option-off`), `on` (`option-on`). Mapping (2e.3b, criterion 122): absent and `off` /
+  `disabled` / `false` / `0` show `off`, any other value (`""` included) shows `on`.
 
 ### 1.4 The cards of 2e.1
 
@@ -192,7 +193,8 @@ Used by every select below. Texts of the GUI (`option-*` keys exist: `option-def
     `parallel` `2`, `kv-unified` `true`, `kv-unified-per-slot` `32768`, `batch-size` `4096`,
     `ubatch-size` `1024`, `embeddings` `true`, `pooling` `last`); a 200 with `values` `{}`; one
     with `ctx-size` `""` (box checked); `ctx-size` `abc` (shown as `abc`, box unchecked);
-    `kv-unified` `false` (`off`) and `auto` (extra option `auto`, selected); `pooling` `weird`
+    `kv-unified` `false` (`off`) and `auto` (extra option `auto`, selected; 2e.3b: `on` with the
+    line "Written as auto", criterion 126); `pooling` `weird`
     (extra option). Each test also checks that the control and its default box are disabled and the
     About toggle is not.
 95. **Strings, 2e.1** (22 new; `fe/src/strings.test.ts` keeps each used):
@@ -339,8 +341,8 @@ a 21-character budget message shows the full-value line, a 20-character one does
 
     | Key | Label | Hint | Control | Absent shows | Enable rule (2h) |
     |---|---|---|---|---|---|
-    | `jinja` | `preset-chat-template` "Chat template" (toml 237) | `preset-chat-template-hint` = toml 319 | Checkbox, toggle `preset-chat-template-toggle` (toml 320) | checked (`false` unchecked; anything else checked: `Preset::default` `jinja: Some(true)`, `form.rs` 258) | always |
-    | `prefill-assistant` | `preset-prefill-assistant` "Prefill assistant" (toml 321) | = toml 322 | Checkbox, toggle `preset-prefill-assistant-toggle` (toml 323) | checked (`false` unchecked; anything else checked: `form.rs` 296 `unwrap_or(true)`) | always |
+    | `jinja` | `preset-chat-template` "Chat template" (toml 237) | `preset-chat-template-hint` = toml 319 | Checkbox, toggle `preset-chat-template-toggle` (toml 320) | checked (2e.3b, criterion 122: unchecked for `off`, `disabled`, `false`, `0`; checked for any other value, `""` included; default on: `Preset::default` `jinja: Some(true)`, `form.rs` 258) | always |
+    | `prefill-assistant` | `preset-prefill-assistant` "Prefill assistant" (toml 321) | = toml 322 | Checkbox, toggle `preset-prefill-assistant-toggle` (toml 323) | checked (2e.3b, criterion 122: unchecked for `off`, `disabled`, `false`, `0`; checked for any other value, `""` included; default on: `form.rs` 296 `unwrap_or(true)`) | always |
     | `reasoning` | `preset-reasoning` "Reasoning" (toml 324) | = toml 325 | Select: `auto` (`option-auto`), `on` (`option-on`), `off` (`option-off`) | `auto` (`form.rs` 259, `Preset::default` `"auto"`) | always |
     | `reasoning-format` | `preset-reasoning-format` "Reasoning format" (toml 326) | = toml 327 | Select: `auto` (`option-auto`), `none` (`option-none`), `deepseek` (literal) | `auto` | always |
     | `reasoning-effort` | `preset-reasoning-effort` "Reasoning effort" (toml 328) | = toml 329 | Select, reasoning-effort options | `default` | always |
@@ -356,7 +358,7 @@ a 21-character budget message shows the full-value line, a 20-character one does
 
     | Key | Label | Hint | Control | Absent shows | Enable rule (2h) |
     |---|---|---|---|---|---|
-    | `mmproj-offload` | `preset-vision-on-gpu` "Vision on GPU" (toml 357) | = toml 358 | Checkbox, toggle `preset-vision-offload-toggle` (toml 359) | checked (`false` unchecked; anything else checked: `Preset::default` `Some(true)`, `form.rs` 160) | `mmproj` present (MP 1082) |
+    | `mmproj-offload` | `preset-vision-on-gpu` "Vision on GPU" (toml 357) | = toml 358 | Checkbox, toggle `preset-vision-offload-toggle` (toml 359) | checked (2e.3b, criterion 122: unchecked for `off`, `disabled`, `false`, `0`; checked for any other value, `""` included; default on: `Preset::default` `Some(true)`, `form.rs` 160) | `mmproj` present (MP 1082) |
     | `mmproj-device` | `preset-vision-gpu` "Vision GPU" (toml 360) | = toml 361 | Select, device (criterion 103) | the empty option | `mmproj` present and Vision on GPU checked (MP 1092) |
     | (note) | `preset-image-tokens-note` = toml 362, before Min image tokens (MP 1099-1104) | | criterion 90 | | |
     | `image-min-tokens` | `preset-min-image-tokens` "Min image tokens" (toml 363) | = toml 364 | Number, integer | box checked, `""` | `mmproj` present |
@@ -372,8 +374,10 @@ a 21-character budget message shows the full-value line, a 20-character one does
     `reasoning` `off`, `reasoning-format` `deepseek`, `reasoning-effort` `xhigh`, `reasoning-preserve`
     `false`, `reasoning-budget` `-1`, `reasoning-budget-message` `Wrap up now.`, `n-predict` `8192`,
     `mmproj-offload` `false`, `mmproj-device` `ROCm1`, `image-min-tokens` `1024`,
-    `image-max-tokens` `2048`); `values` `{}` (both checkboxes checked); `jinja` `yes` (checked,
-    as the GUI); `reasoning` `maybe` (extra option).
+    `image-max-tokens` `2048`); `values` `{}` (both checkboxes checked); `jinja` `yes` (checked;
+    2e.3b adds its written-as line, criterion 124); `reasoning` `maybe` (extra option: `reasoning`
+    is a valued option, not a flag, so criterion 122 does not apply). 2e.3b's own values: criterion
+    126.
 105. **Strings, 2e.3** (41 new): `preset-chat-reasoning` "Chat / reasoning" (toml 318); the labels,
     hints and toggles of table 101 (`preset-chat-template`, `-hint`, `-toggle`;
     `preset-prefill-assistant`, `-hint`, `-toggle`; `preset-reasoning`, `preset-reasoning-format`,
@@ -389,6 +393,72 @@ a 21-character budget message shows the full-value line, a 20-character one does
     placeholder string (criterion 87).
 106. **Out of 2e.3**: the budget message's example placeholder (toml 337, 2h), the KV warning
     strip and the embedded-MTP note (2k, 2g).
+
+## 2e.3b. A boolean reads as llama-server reads it
+
+Added 2026-11-16 after the 2e.3 review: a checkbox showed `jinja` `0` ticked, while llama-server
+passes `--no-jinja`. The rule (`PLAN.md` step 10 slice 11d), confirmed in the llama.cpp v1.0.0
+clone: for a **flag** (an option without a value), `common_preset::to_args`
+(`common/preset.cpp` 50-63) passes the negative flag, or drops the flag, when the value is
+`common_arg_utils::is_falsey` (`common/arg.cpp` 1309-1311: exactly `off`, `disabled`, `false`,
+`0`, case-sensitive), and the plain flag for any other value, `""` included. The INI grammar
+drops the spaces and tabs before and after a value (`common/preset.cpp` 200-208: `value` stops
+before `eol-start`), so the page compares the value trimmed. The configurator keeps writing `true` / `false`; it moves to this rule later. Applies to every
+field built so far and to 2e.4 and 2e.5 through the shared renderer.
+
+122. **Three readings, by key** (`fe/src/PresetCards.tsx`; each key checked in `common/arg.cpp`):
+
+    | Reading | Keys and rows | On | Off | Other values |
+    |---|---|---|---|---|
+    | **Flag** (no value: `to_args`) | Checkbox: `jinja`, `prefill-assistant`, `mmproj-offload`. Tri-state: `kv-unified`, `reasoning-preserve`, `backend-sampling`, `op-offload`, `repack`. Off / on: `embeddings`, `no-host` | any value not falsey, `""` included | `off`, `disabled`, `false`, `0` | none: every present value is on or off |
+    | **Truthy only** (preset-only key, read by the router: `tools/server/server-models.cpp` 930 `is_truthy`) | Off / on: `load-on-startup` | `on`, `enabled`, `true`, `1` (`common/arg.cpp` 1305-1307) | any other value, `""` included | none |
+    | **Valued** (`[on\|off\|auto]`, its handler `common/arg.cpp` 1726-1740) | Tri-state: `flash-attn` | `on`, `enabled`, `true`, `1` | `off`, `disabled`, `false`, `0` | the extra option of criterion 87 (`auto`, `-1`, anything the engine refuses) |
+
+    Absent shows the field's default, as before. Valued options with their own words (`reasoning`,
+    `pooling`, the cache types, `lazy-mode`, `load-mode`) keep criterion 87's exact match: they are
+    not booleans. `fit` (2e.4, valued `[on|off]`) keeps criterion 108 until 2e.4 is reviewed.
+123. **The empty value** (decision a): for a flag, `key =` is **on**, whatever the field's default
+    (a checkbox defaulting to off shows checked; a tri-state shows `on`, not `default`), because
+    llama-server then passes the plain flag; criterion 86's "`""` is absent" stays for every other
+    field. For `load-on-startup`, `""` is off (not truthy). 2e.4 and 2e.5 add no flag of their own;
+    a later sub-slice that adds one names its reading from this table.
+124. **The written-as line** (decision c): when a key of table 122 is present and its trimmed value
+    is not exactly `true` or `false`, and it is not shown as an extra option, a paragraph
+    `preset-written-<key>` under the control (where the full-value line goes) reads `preset-written-as`
+    "Written as {0}", `{0}` the value as written, or `preset-written-empty` "Written with no value"
+    for `""`. Styled as the full-value line (criterion 118). Reason: the control shows what the
+    engine will do, the line what the file holds; the configurator would rewrite `0` as `false` at
+    its next save, so the spelling is worth seeing. Not `aria-hidden`: a checkbox or a select does
+    not expose the spelling, so this is the only place it is read; no focus, read in browse order
+    after the control ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)). Not shown for
+    `true` or `false`: they are what the configurator writes.
+125. **Tri-state and off / on selects** (decision b): a flag's select shows `on` or `off` by table
+    122, no extra option, the spelling on the written-as line. Reason: the extra option showed the
+    file but hid what the engine does (`kv-unified` `auto` read as a third state, while llama-server
+    passes `--kv-unified`); select plus line serves both duties.
+126. **Tests** (each in the shared renderer, one key per reading suffices; jsdom):
+
+    | Key | Value | Control shows | Written-as line |
+    |---|---|---|---|
+    | `jinja` (checkbox) | `false`, `off`, `disabled`, `0` | unchecked | none for `false`; "Written as off", "...disabled", "...0" |
+    | `jinja` | `true` | checked | none |
+    | `jinja` | `yes`, `1`, `FALSE`, `Off` | checked (case-sensitive) | "Written as yes" etc. |
+    | `jinja` | `""` | checked | "Written with no value" |
+    | `jinja` | ` 0 ` (spaces) | unchecked (trimmed) | "Written as 0" |
+    | `jinja` | absent (`values` `{}`) | checked (default) | none |
+    | `kv-unified` (tri-state) | `auto` | `on` | "Written as auto" |
+    | `kv-unified` | `0` | `off` | "Written as 0" |
+    | `kv-unified` | `""` | `on` | "Written with no value" |
+    | `embeddings` (off / on) | `""` | `on` | "Written with no value" |
+    | `load-on-startup` (off / on) | `yes` | `off` | "Written as yes" |
+    | `load-on-startup` | `1` | `on` | "Written as 1" |
+    | `flash-attn` (tri-state) | `0` | `off` | "Written as 0" |
+    | `flash-attn` | `auto` | extra option `auto` | none |
+
+    The line is found by its id, without `aria-hidden`. Strings (2 new): `preset-written-as`
+    "Written as {0}", `preset-written-empty` "Written with no value". **Out of 2e.3b**: the
+    configurator's reading and writing (later, `PLAN.md` step 10 slice 11d); keys written in their
+    negative form (`no-jinja`), which the page does not read.
 
 ## 2e.4. Hardware
 

@@ -222,6 +222,10 @@ Each is one React component, reused by every page.
     0.875rem, wrapping anywhere, `aria-hidden="true"` (the control already exposes the value) and
     no tab stop. A count of characters, not a measure of the box, so it is the same at every width
     and testable without layout **(preference)**. Brief 02e, criteria 118 to 121.
+  - **A boolean shows what the engine will do**: a llama-server flag is off only for `off`,
+    `disabled`, `false`, `0` and on for any other value, `""` included; a value other than `true`
+    or `false` adds a "Written as ..." line (not `aria-hidden`) so the file's spelling stays
+    visible. Each key's reading (flag, truthy only, valued) is in brief 02e, criteria 122 to 126.
 - **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
