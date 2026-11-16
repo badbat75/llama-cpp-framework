@@ -53,7 +53,8 @@ Linux system files in `xtask/src/linux/system_files.rs`.
   the server in `crates/manager/src/manager/pipe.rs`). Methods: `ListInstances`, `Status`, `Start`,
   `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`, the
   `<Method>As` forms of the six guarded ones and `Version` (protocol 1; "Acting for a signed-in user"
-  below). The client works over any `Read + Write` stream.
+  below). Designed, not built: `WriteFileIf` and `WriteFileIfAs` (protocol 2, "Saving the server file
+  from the web" below). The client works over any `Read + Write` stream.
 - **The bff's HTTP API**: the routes and error shape `{key, args}` in
   [crates/bff/README.md](crates/bff/README.md); the contract the web UI is built against in
   `fe/briefs/api-contract.md`.
@@ -421,6 +422,155 @@ Then the docs agent updates "Conversation snapshots" and "Through the manager" i
 **Then, slice 9d** (user, 2026-11-16): the restore at the instance's start (boot and the web's Start
 included), which also fixes the Linux restore the desktop user cannot read; it loads the last model at
 every start.
+
+### Saving the server file from the web (step 10 slice 8)
+
+Designed 2026-11-16, proposed. `PUT /api/instances/{id}/server`, body `{revision, values}` as
+`fe/briefs/api-contract.md` words it: 200 `{revision, running}`, 422 `{key, args, field}`, 409
+`server-changed-elsewhere`.
+
+**What exists.** The read (`crates/bff/src/server.rs`) sends `revision`, the unkeyed 64-bit FNV-1a of
+the whole text, `OpencodeApiKey` included. The manager's `write_file` (`service.rs`) takes
+`configure`, holds the `writing` mutex, runs `checks::server_file` and the address check, and writes
+atomically; it has no notion of a revision, and the GUI and `pai` write last-writer-wins. The render
+of a whole file from values is in `pai-core` (`server_cfg::render_for`); the thread limit check is in
+`pai-app` (`server_cfg::check`), which the bff does not link.
+
+**The key oracle, as it stands.** Every reader of the revision is a signed-in `pai` member whose read is
+never withheld, so the same response already carries the key in `values`: today the hash leaks nothing
+the reader lacks. It still must go: an unkeyed function of the key is an oracle for any later reader of
+the revision without the key (a log, a super-manager view, a future non-administrator), and FNV makes
+no claim to resist an adversary ([draft-eastlake-fnv](https://datatracker.ietf.org/doc/html/draft-eastlake-fnv),
+section 6: "No assertion of suitability for cryptographic applications"; its section 2.2 adds that a
+secret offset basis is learnt by anyone who sees an output for a known input, so a secret prefix does
+not make it a MAC).
+
+| Option for the revision | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. A keyed PRF of the whole text, the key a per-process random secret of the bff** | `siphasher` (SipHash-2-4, 128-bit key: [docs.rs](https://docs.rs/siphasher/1.0.1/siphasher/sip/struct.SipHasher.html); already in `Cargo.lock` through usvg), 16 bytes from `getrandom` (already a bff dependency) at router construction | A bff restart makes every open form stale: one 409 and a Reload. Detects every change, the key's included | **Chosen** |
+| B. An unkeyed hash of the text with the key's value left out | None: stable across restarts, computable by the manager too | Misses a change of the key alone: a form opened before another administrator changed the key sends the old key back (the fe returns values as read), and the save silently reverts it | Rejected |
+| C. A keyed hash with a persistent secret | A secret file the sandboxed bff must own (it has no writable state today) and protect | More state for one avoided Reload per bff restart | Not now |
+
+SipHash is a keyed short-input PRF by design
+([Aumasson, Bernstein, "SipHash: a fast short-input PRF"](https://www.aumasson.jp/siphash/siphash.pdf));
+HMAC-SHA-256 would also do but needs the `hmac` crate, new to the lock. Preference: SipHash. The
+revision stays an opaque 16-hex-digit string, so the fe changes nothing.
+
+**Where the compare-and-swap happens.** A bff-only compare (read, compare, write) leaves a window
+between its read and its write in which a GUI or `pai` save, or a second web tab, is overwritten
+silently. Closing it needs the compare under the manager's `writing` mutex. Since a keyed revision
+cannot be checked by the manager, the two are split:
+
+1. the bff, at the PUT, reads the file (`ReadFileAs`), computes A on that text and answers 409 when it
+   is not the body's revision (covers everything up to that read, a bff restart included);
+2. it then calls the new **`WriteFileIfAs(principal, name, contents, expected)`**, `expected` being the
+   text it just read; the manager, under `writing`, reads the file and refuses **`Changed`** (nothing
+   written) when it is missing or differs byte for byte from `expected`, else runs `write_file`'s
+   checks and write. The plain text crosses only the bff-to-manager boundary, which already carries it.
+
+| Option for the manager side | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **`WriteFileIf` and `WriteFileIfAs`, `expected` the whole text, protocol 2** | Two methods per face (the plain form for symmetry with `acting_for`'s name mapping, and for the GUI to adopt later), one error name, one `ManagerClient` method with a default body so the fakes do not change | None found: an old manager answers `UnknownMethod` or `BadRequest`, never an unchecked write | **Chosen** |
+| An `expected` field on `WriteFileAs` | Fewer methods | An older pipe server ignores the field and writes unchecked (the reason the principal travels in the name) | Rejected |
+| No manager compare | Nothing | The window above | Rejected |
+
+`WriteFileIf` takes no `keep_api_key`: its caller sent the text it read whole. A reader the key was
+withheld from would always get `Changed` (its text is blanked); no such caller exists, the bff's reads
+being a principal's. The `writing` mutex already orders every write, so the compare is atomic against
+any manager write; a hand edit of the file as root is outside every guarantee, as today.
+
+**The API key in a save.** Every web read carries the key, so the body's `OpencodeApiKey` is the
+value to write: a string sets it, `null` unsets it. The bff writes with no `keep_api_key`. `withheld`
+no longer matters for the web: the manager never withholds a principal's read, and the fe treats a
+withheld document as a failed read, so no save can start from one. The bff's `withheld` handling in
+`document` stays (harmless, and the contract field), not extended to the PUT.
+
+**The bff's steps for a PUT**, each failure answered before the next step:
+
+1. session (401 `session-required`); body `{revision: string, values: object}` with each value the
+   type the read gives, else 400 `server-malformed` (new key, as `boot-malformed`);
+2. values to a `ServerConfig`: base URL through `server_cfg::normalize_base_url`, a blank `ModelsDir`
+   or `StateDir` unset;
+3. the checks the manager cannot run for it: `server_cfg::check` moves from `pai-app` to `pai-core`
+   (`pai-app` keeps calling it there) and the bff runs it with this machine's CPU count;
+4. render with `server_cfg::render_for(cfg, true)` (the bff runs only where dirs are left unset);
+5. `ReadFileAs`, the revision compare (409 `server-changed-elsewhere`), `WriteFileIfAs` (409 on
+   `Changed`), the manager running `checks::server_file` and the address check again;
+6. `Status(id)` (unguarded, as `/api/instances`) for `running`; 200 `{revision: A(contents),
+   running}`, the written text being exactly `contents`. A failed status read after a done write is
+   still 200, with `running: true`, so the fe says "restart to apply" rather than nothing
+   (preference: the save is done, and the safe hint costs at most a needless restart).
+
+Errors: a refusal (`ClientError::Invalid`, or the bff's own check) is 422 `{key, args, field}`, `field`
+`args[0]` for `not-whole-number-in-range` and `comment-markers`, `ModelsMax` for the two
+`load-on-startup-*` keys, `Hostname` for `bind-all-with-others`; `AddressInUse` is 422
+`client-address-in-use` `[id]` field `Port`, `UnresolvableHost` 422 `client-unresolvable-host` `[host]`
+field `Hostname`; `NotAuthorized` 403 `session-not-administrator`, the session ended (slice 9e);
+`NoInstance`, `InvalidId`, `BadFileName` 404 `client-no-instance`; unavailable or past the 5 s
+`MANAGER_TIMEOUT` 503 `client-unavailable`; anything else 502 `client-other`. A write is a small file
+plus at most one name lookup, so the read timeout fits; a timeout after the manager wrote reports 503
+for a saved file, and the fe's Reload shows the truth. The PUT moves the session's idle deadline; the
+same-origin guard and the 64 KiB body cap already cover it.
+
+**ModelsDir after a save.** What exists: the instances' default folders are made by packaging (Linux
+tmpfiles `d /var/lib/llama.cpp/models 0755 private-ai private-ai`, `engine_tmpfiles` in
+`xtask/src/linux/system_files.rs`; Windows llama.cpp's MSI `ENGINEMODELSFOLDER`), and a save leaves an
+unset `ModelsDir` unset, so the default case needs nothing. `ModelsDir` reaches llama-server only as
+`LLAMA_CACHE` (`launch.rs`), and llama.cpp creates the parents of a download itself
+(`common/download.cpp`, `create_directories`, v1.0.0) when the instance's account may. Creating a
+custom path in the manager would mean root making a folder owned by the instance's account wherever a
+`pai` member (or a compromised bff) names it, `/etc` included. **Recommendation: the save creates
+nothing**; a custom folder is the administrator's to create with the right owner, as from the GUI under
+the manager today. A missing custom `StateDir` stops the instance from starting (llama.cpp refuses a
+missing `--slot-save-path`): a check for it is later work, not this slice.
+
+**For the user to decide.** (1) Drop "ModelsDir created for the instance after a save" from slice 8
+(recommended, above), or have the manager create a custom folder owned by the instance's account.
+(2) Accept one 409 and Reload for an open form after each bff restart (option A, recommended), or pay
+for a persistent secret (C).
+
+**Trust boundaries.** Browser to bff: the session cookie, the same-origin guard; the revision tells the
+browser nothing it was not sent. Bff to manager: the kernel's peer identity, the principal re-checked
+in `pai` at the call; the manager runs every content check again, so a compromised bff can write what
+a `pai` member could, no more. What fails closed: a bad body, any check, a stale revision and a
+missing file write nothing; an old manager refuses the new method.
+
+**Slices**, each test first, in order:
+
+1. **Keyed revision (bff).** `revision` becomes SipHash-2-4 under a 16-byte key from `getrandom`,
+   held by the router; `router_with_session` (tests) can pass a fixed key. Done when: the same text
+   read twice through one router gives the same revision; two routers give different ones; the
+   revision is not the unkeyed FNV-1a of the text; a text differing only in `OpencodeApiKey` gives
+   another revision.
+2. **`check` in `pai-core`.** `server_cfg::check` moves to `pai-core`, `pai-app` calling it from there.
+   Done when its existing tests pass from `pai-core` and `pai-app`'s save still refuses `Threads`
+   above the CPU count.
+3. **`write_file_if` in the manager's core.** Done when unit tests in `service.rs` pin: the text equal
+   to `expected` is written and checked as `write_file` does; a different or missing file is `Changed`
+   with nothing written and the record's outcome `Changed`; the principal and `configure` gates run
+   first, as `write_file`'s.
+4. **The faces and the client.** Pipe `WriteFileIf`/`WriteFileIfAs`, D-Bus the same, error name
+   `Changed`, `ClientError::Changed`, `ManagerClient::write_file_if` (default body `Other`),
+   `DbusClient` and `PipeClient` (bound: the `As` form), `Version` protocol 2. Done when:
+   `acting_for("alice").write_file_if(..)` sends exactly the `WriteFileIfAs` request and reaches the core
+   with that requester; `expected` missing is `BadRequest`; over `manager_dbus_e2e` a stale `expected` is
+   `Changed`; `Version` answers 2.
+5. **The body to a file (bff, no manager).** A pure function from the JSON body to the rendered text
+   or a 400/422 answer. Done when: a well-typed body renders the text `render_for(_, true)` gives; a
+   string `Port` is 400 `server-malformed`; `Threads` above the CPU count is 422 with `field`
+   `Threads`; a `;` in `ModelsDir` is 422 `comment-markers` field `ModelsDir`; a base URL ending in
+   `/v1/` is stored without it; a blank `StateDir` is left unset; `OpencodeApiKey: null` writes no key.
+6. **The route.** `PUT /api/instances/{id}/server`. Done when, against the fake manager: a fresh
+   revision writes through `write_file_if` with the text read as `expected` and answers 200 with the
+   revision a GET then returns; a stale revision is 409 with no write; the manager's `Changed` is 409;
+   `Invalid` is 422 with the mapped `field`; `AddressInUse` 422 `client-address-in-use` field `Port`;
+   `NotAuthorized` 403 `session-not-administrator` and the session ended; no session 401 and no
+   connect; `running` follows the fake's status.
+
+Then the docs agent updates `crates/bff/README.md` ("The server file of an instance", the PUT and the
+revision), the contract (409 and 400 keys; `bind-all-with-others` is not among the 422 keys the fe
+knows, so it shows as `api-other` until the fe adds it), "Through the manager" (the new methods) and
+the pipe client's header.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 

@@ -849,13 +849,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set
    (done). Optional: refuse an id
    failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
-8. **Write it.** `PUT /api/instances/{id}/server` with the revision: step 13's checks (slices 1 and 2
-   first), 422 `{key, args, field}`, 409 `server-changed-elsewhere` on a stale revision; ModelsDir
-   created for the instance after a save.
-   First, the revision must stop being a key oracle: today it is an unsalted FNV-1a of the whole
-   file, key included, sent to non-administrators too, so a short key can be guessed offline against
-   it; key the hash with a secret (per process, a restart then reads as a stale revision: 409 and
-   Reload) or leave the key's value out of it.
+8. **Write it.** `PUT /api/instances/{id}/server` with the revision, designed in `ARCHITECTURE.md`
+   "Saving the server file from the web (step 10 slice 8)" (2026-11-16), six slices there, in order:
+   (1) the revision a SipHash-2-4 keyed by a secret drawn at each bff start (it stops being a key
+   oracle; user, 2026-11-16: an open form gets one 409 and a Reload after a bff restart), (2)
+   `server_cfg::check` moved to `pai-core`, (3) the manager's `write_file_if` (compare and write under
+   its `writing` lock, `Changed` otherwise), (4) its pipe and D-Bus faces, protocol 2, (5) the body to
+   the file text or 400/422, (6) the route: 200 `{revision, running}`, 409 `server-changed-elsewhere`,
+   422 `{key, args, field}`, 403 `session-not-administrator`. The save creates no folder (user,
+   2026-11-16: the default ModelsDir and StateDir exist on both systems; a custom one is the
+   administrator's to create).
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so

@@ -50,6 +50,12 @@ description: What the architect has learned about this project's components, int
   to a desktop user on Linux.
 - Windows service timeouts: preshutdown default 10 s since build 15063 (SERVICE_PRESHUTDOWN_INFO),
   plain shutdown about 20 s, control handler back within 30 s (HandlerEx remarks).
+- Writes and revisions (checked 2026-11-16): the manager serializes every write with its `writing`
+  mutex (`service.rs` `write_file`), so a compare-and-swap belongs there, not in the bff. `ModelsDir`
+  reaches llama-server only as `LLAMA_CACHE` (`launch.rs`), and llama.cpp creates a download's parents
+  itself. Keyed hashes: `siphasher` (SipHash-2-4) and `sha2` are in `Cargo.lock`, `hmac` is not; FNV
+  is not a MAC, even with a secret basis (draft-eastlake-fnv sections 2.2 and 6). The render of
+  `server@<id>.ini` from values is in `pai-core` (`server_cfg::render_for`).
 - Since slice 9b a stop can last minutes (the snapshot save): any caller that stops and then acts on
   the instance (client restore after a restart, the MSIs' `Stop-Service`, the Windows `restart`
   thread) must be checked for a race with a server that is still saving. Windows `restart` is
