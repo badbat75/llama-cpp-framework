@@ -589,3 +589,6 @@ Lessons only: the rules are in `AGENTS.md`.
   so they are not `strings::t` calls and `binding_lint` never sees them; the text lives in the fe's
   strings file, so a new guard key needs an entry there (a bff-side coder cannot write it: the fe is
   another session's tree).
+- From the web UI's UX check (2026-11-16): a check script proves each page rendered before it reports
+  "0 failing", and binds port 0 rather than probing a fixed port; React 19 `useId` ids look like
+  `_r_0_-Port`, so a stable selector is `[id$="-Port-label"]`.
