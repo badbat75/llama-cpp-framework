@@ -871,12 +871,18 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
+9e. **The session's end has its own key** (asked by the web UI session, accepted 2026-11-16): when the
+   bff ends a session because the manager refused its user, it answers 403 `session-not-administrator`
+   (the sign-in's key for the same fact), not `client-not-authorized`, on the server read, the control
+   routes and the boot write; `client-not-authorized` keeps its meaning. As `fe/briefs/api-contract.md`
+   (8ad54f7, proposed there). Small: after 9b, or between its slices.
 9c. **Left from the same-origin guard** (built with 9a's review; the bff refuses a foreign `Origin` or
    `Sec-Fetch-Site` on every method but GET, HEAD and OPTIONS, and any request whose `Host` is not a
    loopback name, which stops DNS rebinding; one 64 KiB body cap): the `Service` message the contract
    says "stays in the bff's log" is dropped (log it, or reword the contract and `control.rs`); the
    manager-error table is in both `server.rs` and `control.rs`: one helper. Before any non-loopback
-   bind the `Host` rule must change with it.
+   bind the `Host` rule must change with it. A page opened through a hostname alias gets the 403 JSON for `/` too, so no
+   fe code runs to explain it: a plain answer naming the localhost address would help (not needed now).
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 11b. **A preset's on/off.** `PUT /api/presets/{id}/enabled` (administrator), as worded in
    `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,
