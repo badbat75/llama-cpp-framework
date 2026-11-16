@@ -910,7 +910,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `repack`, `backend-sampling`, `embeddings`, `no-host`) is off for exactly those four values and on for
    any other; `load-on-startup`, the router's own key, is on only for `on`, `enabled`, `true`, `1`
    (`is_truthy`, `tools/server/server-models.cpp`) and off for any other; valued options (`flash-attn`
-   and `reasoning` on/off/auto, `fit`) are not flags and keep their own reading. `server.ini` and
+   and `reasoning` on/off/auto) are not flags and keep their own reading. `fit` is valued too
+   (`common/arg.cpp`): on for `on`, `enabled`, `true`, `1`, off for the four falsey values, any other value
+   refused by llama-server, and an absent key means llama.cpp's default, on (`common.h` `fit_params`;
+   the launch passes no `-fit` then); the configurator today reads `on`/`true` in any case as on and an
+   absent key as off. Whether a preset with no `fit` shows Fit to VRAM on or off is the user's
+   product question (asked through the web UI session). `server.ini` and
    `settings.ini` keep `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
    `pai-core` with `pai-app`'s reader; before the MVP's run.
 11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
