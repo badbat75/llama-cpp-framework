@@ -597,6 +597,29 @@ To add to [api-contract.md](api-contract.md) by its keeper; the rules at its top
 >   ([URL Standard, single-dot and double-dot path segments](https://url.spec.whatwg.org/#single-dot-path-segment)).
 >   Such a preset cannot be switched from the web until that is settled (question U4).
 
+## 2c-C. Later slice 2c-C: the switch meets 409 `preset-changed-elsewhere`
+
+Written 2026-11-16 against the accepted bff design (`fe/briefs/api-contract.md`,
+`PUT /api/presets/{id}/enabled`): a move is two compare-and-swap writes, and a write that finds its
+file changed after the bff's read answers 409 `preset-changed-elsewhere`; the move may be half done
+(the preset then in both files, which the list reads as on). Criteria go on from 02h's (198). No new
+pattern or component; one new string.
+
+199. **Text.** A 409 (or any status) with the key `preset-changed-elsewhere` shows, in the page's
+    alert (criterion 50), `presets-switch-changed-elsewhere` filled with the row's id; the status
+    stays empty. Today it falls to `request-failed` (criterion 48's last line).
+200. **Then as every failure** (criterion 48): one `GET /api/presets`, the switch takes that row's
+    `enabled` (on when the move was half done), the switches `aria-disabled` until that read
+    settles, focus stays on the switch (criterion 52). Nothing is retried by itself.
+201. **Announcement**: the alert is `role="alert"`
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)), the text says what to do
+    ([3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)).
+202. **Tests and strings.** A 409 `{key: "preset-changed-elsewhere", args: []}` on switching `a` off:
+    the alert text, one list read, the switch showing the read's value (on, then off when the read
+    says so). **String (1 new)**: `presets-switch-changed-elsewhere` | {0} changed elsewhere while
+    it was being switched. Its switch shows its state as read again; switch it again if that is not
+    what you want.
+
 ## 2d. Slice 2d: the preset page, read-only
 
 Added on 2026-11-15. Criteria go on from 2c's numbers. Everything in 2a to 2c stays true unless a

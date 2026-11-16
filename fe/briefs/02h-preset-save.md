@@ -21,7 +21,7 @@ finishes. A tester working on 2h.N reads section 0, section 1 (2h.1) and section
 | Sub-slice | Criteria | Holds | New strings |
 |---|---|---|---|
 | **2h.1** | 130-141 | Smallest end-to-end save: Embeddings editable; the changed-field rule; what is sent; save bar, Discard, PUT, 200, generic failure; leave guard | 1 |
-| 2h.2 | 142-150 | The PUT's keyed answers: 422 on a field, 409 and Reload, 404, 403, 503, 504 and time-out | 10 |
+| 2h.2 | 142-150 | The PUT's keyed answers: 422 on a field, 409 and Reload, 404, 403, 503, 504 and time-out | 12 |
 | 2h.3 | 151-154 | Session ended (401) and revoked (403 `session-not-administrator`) during a save | 0 |
 | 2h.4 | 155-163 | Number fields (default box, integer checks, units, input mode) and Resource / context | 1 |
 | 2h.5 | 164-169 | KV cache, Sampling overrides (decimal check), Advanced (JSON check) | 2 |
@@ -41,8 +41,10 @@ since 2e.3b the page shows the file's spelling ("Written as 0"), so a save that 
 untouched control would change a value the user never touched; and a key llama-server accepts but
 the configurator does not model (any llama-server option) would be lost. So the body carries the
 changed keys only, a string to set, `null` to remove; every other line of the file stays byte for
-byte. Differs from the Server PUT (whole document, re-rendered as the GUI does): said in the
-contract. **Question U1** asks the user to confirm.
+byte (an edited line is rewritten whole, so an inline comment on that line is lost). Differs from
+the Server PUT (whole document, re-rendered as the GUI does): said in the contract. **Decided by
+the user (2026-11-16, U1).** The bff accepts only the keys 2h.1 to 2h.9 enable and refuses an
+empty string (400): clearing a key is always `null` (table 133 never sends `""`).
 
 **D-b. Changed = the control's state differs from the state it loaded in.** Not "was operated":
 changing a value back makes the field unchanged again (01's 29). An unchanged field is never sent,
@@ -50,8 +52,8 @@ whatever its spelling. A changed field sends the configurator's canonical spelli
 
 **D-c. The configurator is the source of the enable rules**, with three deliberate differences,
 each in its sub-slice: the fields that need the model's facts (MoE, embedded MTP) wait for 2g
-(2h.7, 2h.9); Fit to VRAM stays operable when Context size or GPU layers is set and says what
-llama-server will fit (2h.8, **question U2**); a disabled group or card says why in one line
+(2h.7, 2h.9: MoE read-only, user U3); Fit to VRAM stays operable when Context size or GPU layers
+is set and says what llama-server will fit (2h.8, user U2); a disabled group or card says why in one line
 (2h.7, 2h.9), where the GUI only greys it out.
 
 **D-d. Discard and Reload.** Discard puts the controls back to the loaded values, with no request
@@ -160,13 +162,16 @@ fe does not know is `api-other` with the key. Anything else is 139.
     `aria-describedby`, D5.2 Error), focus moves to its control once the error is rendered, and the
     bar's alert shows `save-refused` with the same text (01's 34). Editing that field clears its
     error, not the alert. Without `field`, the fallback of table 150 names it.
-143. **The field is not a control of the page** (`model`, `override-tensor`, a key 2h shows nowhere,
-    or a field of a card still disabled in this sub-slice's build): only the bar's alert, no field
-    marked, focus stays on Save changes.
-144. **The field's control is disabled** (a dependent field, a ticked default box, a group switched
-    off by its rule): its error and `aria-invalid` stay on it, focus goes to the field's first
-    enabled control (its default box), else stays on Save changes (01's 34b; the switch that
-    enables a preset field is in Assets, not operable in 2h).
+143. **The field is not a control of the page** (`model`, `override-tensor`, a key 2h shows nowhere),
+    or the refusal has no field (`invalid-preset-id`, `preset-name-taken`): only the bar's alert,
+    no field marked, focus stays on Save changes.
+144. **The field's control is disabled, or on another card** (an untouched bad value: the manager
+    checks the section whole). Disabled means a dependent field, a ticked default box, a group off
+    by its rule, the MoE fields (178), or a card not yet enabled in this sub-slice's build: its
+    error and `aria-invalid` go on it as on any field, the bar's alert reads the text, and focus
+    goes to the field's first enabled control (its default box), else stays on Save changes (01's
+    34b; the switch that enables a preset field is in Assets, not operable in 2h). An enabled
+    control on another card takes focus like any other (142), scrolled into view by the browser.
 145. **409 `preset-changed-elsewhere`**: the bar's alert `api-preset-changed-elsewhere` and the button
     **Reload** (`save-reload`) after it (01's 35, 3.1). Reload opens the discard dialog when dirty
     (Keep editing: nothing happens, focus back on Reload); Discard changes, or no dialog when clean,
@@ -199,15 +204,18 @@ fe does not know is `api-other` with the key. Anything else is 139.
     | `preset-no-model` | none (Assets) | preset `{0}` names no model: every preset needs a `model` path (1007) |
     | `override-no-pattern` | none (2j) | tensor override {0} has an empty pattern (1008) |
     | `override-no-device` | none (2j) | (1009, verbatim) |
+    | `invalid-preset-id` | none | invalid preset id `{0}`: use letters, digits, '.', '-', '_' (996) |
+    | `preset-name-taken` | none | a preset named `{0}` already exists (1006) |
 
     The manager checks the whole section, so a hand-edited value the user did not touch (Pooling
     `weird`) is refused too, on its field: the user corrects it or picks another option. Tests: one
     per row of 142 to 149; `not-one-of` on `pooling` marks Pooling and focuses it; `preset-no-model`
-    marks nothing. **Strings (10 new)**: the seven `api-` rows above marked with a toml line, plus
-    `api-preset-changed-elsewhere` | The preset file changed elsewhere, or the web service
-    restarted, after you opened this preset. Reload to see it as it is now; your edits here will be
-    lost. (New: with a file-level revision, a save of another preset in the same file also gives
-    it.)
+    marks nothing; `not-one-of` on `cache-type-k` while the KV cache card is still disabled (an
+    untouched bad value) marks that field and leaves focus on Save changes (144). **Strings (12
+    new)**: the nine `api-` rows above marked with a toml line, plus `api-preset-changed-elsewhere`
+    | This preset changed elsewhere (edited, or switched on or off), or the web service restarted,
+    after you opened it. Reload to see it as it is now; your edits here will be lost. (The revision
+    covers the section and its file's name: a save of another preset gives no 409.)
 
 ## 2h.3. The session ends during a save
 
@@ -336,7 +344,7 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
 178. **MoE CPU layers and MoE cache stay disabled** until 2g (the GUI enables them only for a model
     with experts, MP 493-503, a fact read from the GGUF; a `moe-cache-mib` on a dense model does not
     load, `presets.rs` 1548-1552). A note row `preset-moe-later` sits before MoE CPU layers.
-    **Question U3.** Their values are kept and never sent.
+    Decided by the user (U3). Their values are kept and never sent (the bff refuses both keys).
 179. **A device select** (Vision GPU, Draft device: 2e's criterion 103) offers the empty option and
     the file's value only, until 2f brings the devices: picking the empty option sends `null`.
 180. **Load mode** sends the option's value, lowercase (`MLOCK` loaded selects `mlock`; unchanged it
@@ -364,7 +372,7 @@ set by user ... abort" when GPU layers is set (550-551); the throw is caught and
 warning (995-997) and does not undo the context already cut. With the context set it keeps it and
 sizes the layers. So the three cases differ.
 
-183. **Fit to VRAM is always enabled** (D-c, **question U2**; the GUI disables it unless Context size
+183. **Fit to VRAM is always enabled** (D-c, user U2; the GUI disables it unless Context size
      and GPU layers are both at default, MP 585, and saves `off` then, `form.rs` 550). Its checked
      state follows 2e.3c (criterion 127) at load, then the user's clicks.
 184. **Its toggle text** (the checkbox's accessible name, as in 2e), from the live state of the two
@@ -409,7 +417,8 @@ sizes the layers. So the three cases differ.
 189. **Editable**: 2e's table 112, with the rules below (MP 1151-1350).
 190. **The draft group** (`preset-draft-model-group`) is enabled while the preset has a draft: the
      read's `model-draft` is not empty, **or** `spec-type` holds a `draft-` entry (split as 2e's
-     criterion 75). The GUI's second half is "the model embeds MTP heads" (`state.slint` 346), a GGUF
+     criterion 75). `model-draft` and `spec-type` are read, never sent (the bff refuses them). The
+     GUI's second half is "the model embeds MTP heads" (`state.slint` 346), a GGUF
      fact the page reads only from 2g; until then a drafter named in `spec-type` stands in for it
      (the GUI's save removes a `draft-mtp` the model cannot use, `prune_inactive_draft_keys`, so a
      file it saved names one only for a model that has the heads). Deliberate difference: an MTP

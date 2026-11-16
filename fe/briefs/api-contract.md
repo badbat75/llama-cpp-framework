@@ -59,7 +59,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/presets` | administrator | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
 | `GET /api/presets/{id}` | administrator | 2d, proposed | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
-| `PUT /api/presets/{id}` | administrator (`configure`) | 2h, proposed | `{"revision", "running"}` |
+| `PUT /api/presets/{id}` | administrator (`configure`) | 2h, accepted, not served yet | `{"revision", "running"}` |
 
 ### `GET /api/instances`
 
@@ -230,8 +230,11 @@ matched case-insensitively. Body `{"enabled": <bool>}`.
   written.
 - Switching on runs the checks the GUI runs: the load-on-startup presets counted against the lowest
   `ModelsMax` of the instances, and every preset check on the moved section.
-- The bff runs one preset-file write at a time: a move is two writes, and two moves at once would
-  lose one.
+- The bff runs one preset-file write at a time: a move is two compare-and-swap writes (the
+  destination first, then the source). An interruption between them leaves the preset in both
+  files: it then reads enabled, and the next switch cleans up.
+- 409 `preset-changed-elsewhere` (accepted): a compare-and-swap write found its file changed after
+  the bff's read; the move may be half done (the preset then in both files, read as enabled).
 - Errors: 401; 403 `client-not-authorized`; 404 `no-preset-named` with `args: [id]` when neither
   file holds the id; 422 `load-on-startup-over-max` `[count, max]` or `load-on-startup-unlimited`
   `[count]`; 422 with the key of a preset check failing on a hand-edited section (the fe shows a
@@ -270,8 +273,10 @@ manager's `ReadFile` needs no right for the preset files.
   section lacks is absent, never `null`.
 - `projectUrl`: the section's `; url =` comment (`presets::project_url_of`), `""` when none.
 - `revision`: opaque, sent back by the save (`PUT`, below); required from 2h on (a read without a
-  string `revision` is a failed read). Proposed: the hash of the text of the file holding the
-  section, as `server.rs` `revision` does.
+  string `revision` is a failed read). Accepted: a keyed hash over the name of the file holding the
+  section and the section's text (trailing blank lines cut), so another preset's save does not
+  change it and switching the preset on or off does; like the server's, it does not survive a bff
+  restart.
 - It grows without breaking: later slices read more keys from `values`, and add top-level fields
   (a comment such as `; placement =` as `placementNote`, server-computed data) or routes; no field
   is removed or retyped, and the fe ignores fields it does not know.
@@ -279,73 +284,60 @@ manager's `ReadFile` needs no right for the preset files.
   when neither file holds the id; 403 `client-not-authorized`; 503 `client-unavailable`; 502
   `client-other` with empty `args`.
 
-### `PUT /api/presets/{id}` (proposed)
+### `PUT /api/presets/{id}` (accepted, not served yet)
 
-Saves the edits of one preset's page ([02h-preset-save.md](02h-preset-save.md)). `{id}` as in the
-`GET`; the section is edited in the file that holds it (`presets.ini` first, as the read), so a
-switched-off preset stays switched off, as `presets::save` does (`home_of`).
+Saves the edits of one preset's page ([02h-preset-save.md](02h-preset-save.md)). Designed in
+`ARCHITECTURE.md`, "Saving a preset from the web". `{id}` as in the `GET`; the section is edited in
+the file that holds it (`presets.ini` first, as the read), so a switched-off preset stays switched
+off, as `presets::save` does.
 
 Body `{"revision", "values"}`. **`values` holds only the keys the user changed**: a string sets the
 key to that value, `null` removes the key. A key not in `values` is not touched.
 
-- **Edited in place, not re-rendered.** For each entry, in the section's text: a set key replaces
-  the value of its line where the key already is (every other line of that key removed, since the
-  readers take the last one), or is appended after the section's last line when the key is new
-  (`pai-core` `ini::text::replace_key` does the replace and the append for the first occurrence;
-  removing lines needs a helper of its own); `null` removes every line of that key. Every other
-  line of both files stays byte for byte: comments, keys the web UI does not show (any option
-  llama-server accepts), their order, their spelling, the line endings. **Differs on purpose from
-  the Server PUT and from the configurator's save**, which render the whole section from their
-  struct (`presets::render_section`) and so drop comments and unknown keys and rewrite spellings
-  (`0` as `false`, an invalid `fit` as `off`): the web UI shows the file's spelling and must not
-  change a value the user did not touch (02h D-a).
-- Values are the strings the fe sends, written trimmed as `key = value`; the fe sends the
-  configurator's spellings (`true` / `false`, `on` / `off` for `fit`, numbers in decimal; 02h's
-  table 133). It never sends `model`, `mmproj`, `model-draft` or `spec-type` in 2h.
-- **400 `presets-malformed`** (proposed key, as for the switch) when the body is not that shape, a
-  key is not a preset key name (lowercase letters, digits and `-`, starting with a letter or digit),
-  or a value holds a line break, `[` at its start, or is not a string or `null`: these would break
-  the INI structure. `{}` is valid: 200, nothing written, the same revision.
-- Then the checks: the manager's `checks::presets_file` (or `presets_disabled_file`) on the new
-  text, which checks the whole changed section (every integer range, float, enum, JSON object,
-  `fit-target`, `override-tensor`, min <= max, `moe-cache-mib` with `split-mode tensor`, a `model`,
-  and, in `presets.ini`, the load-on-startup count against `ModelsMax`). So a hand-edited bad value
-  the user did not touch is refused too, on its field.
-- The write: one preset-file write at a time (as the switch), by the manager's compare-and-swap
-  write as the signed-in user (`WriteFileIfAs`, protocol 2), given the text the bff read.
-- **200 `{"revision", "running"}`**: `revision` of the new file text (what a `GET` now returns);
-  `running` is true when the preset is in `presets.ini` and an instance of its engine is `active`
-  or `activating` (the instance's llama-server read the preset file when it started:
-  `server_models::load_models`, `tools/server/server-models.cpp` 761-762 in the llama.cpp v1.0.0
-  clone), so the fe says "Saved: restart llama-server to apply."; false for a switched-off preset
-  (nothing serves it) and for a stopped instance. The bff restarts and reloads nothing.
-  Deliberate difference: the configurator's preset save says only "Saved preset [id]"
-  (`preset-saved`), though a running router keeps the old preset until it restarts.
-- 422 `{"key", "args", "field"}`: a check refused the section; `field` is the INI key it names:
-  `args[0]` for `not-whole-number-in-range`, `comment-markers`, `not-a-number`, `not-one-of`,
-  `not-json-object`, `min-above-max`; `fit-target` for `fit-target-format`; `moe-cache-mib` for
-  `moe-cache-with-tensor-split`; `load-on-startup` for `load-on-startup-over-max` and
-  `-unlimited`; `model` for `preset-no-model`; `override-tensor` for `override-no-pattern` and
-  `override-no-device`. Nothing is written.
-- 409 `preset-changed-elsewhere` (proposed key): the revision is stale (the file changed, the
-  section moved to the other file, or the bff restarted since the read), or the compare-and-swap
-  write found the file changed after the bff's read. Nothing is written. With a file-level
-  revision, a save of another preset in the same file between the read and this save also gives
-  409.
+- **Edited in place, not re-rendered.** Only the changed keys' lines are written; an edited line is
+  rewritten whole (`key = value`), so an inline comment on that line is lost. Every other line of
+  both files stays byte for byte: comments, keys the web UI does not show, their order and
+  spelling, the line endings. A new key is appended to the section. **Duplicates of an edited key**
+  (any letter case) are cleaned up, not refused: a set keeps one line, at the first one's place; a
+  removal drops every line of the key. **Differs on purpose from the Server PUT and from the
+  configurator's save**, which render the whole section from their struct
+  (`presets::render_section`) and so drop comments and unknown keys and rewrite spellings (02h D-a;
+  the user chose this, 2026-11-16).
+- **Accepted keys**: a fixed list, the keys 2h.1 to 2h.9 enable. Never `model`, `mmproj`,
+  `model-draft`, `spec-type`, `n-cpu-moe` or `moe-cache-mib` (Assets until 2i; MoE until 2g).
+- **400 `presets-malformed`**: a body not of that shape, a key outside the list, a value that is
+  neither a string nor `null`, an empty string (clearing a key is `null`), or a value holding a
+  control character other than tab. **422 `comment-markers`**, `field` the key, for a value holding
+  `;` or `#`. `{}` (no change): 200, nothing written, the revision still compared (409 if stale).
+- Then the manager checks the edited section **whole** (`checks::presets_file` or
+  `presets_disabled_file`): integer ranges, floats, enums, JSON object, `fit-target`,
+  `override-tensor`, min <= max, `moe-cache-mib` with `split-mode tensor`, a `model`, and, in
+  `presets.ini`, the load-on-startup count against `ModelsMax`. So a hand-edited bad value the user
+  did not touch is refused too, on its own field.
+- The write: one preset-file write at a time, by the manager's compare-and-swap write as the
+  signed-in user (`WriteFileIfAs`, protocol 2), given the text the bff read.
+- **200 `{"revision", "running"}`**: `revision` of the section as now written (what a `GET` now
+  returns); `running` is true when the section is in `presets.ini` and any instance is `active` or
+  `activating` (every instance serves the one preset file; it read the file when its llama-server
+  started), and also when the status read after a done write failed; false for a switched-off
+  preset. The fe then says "Saved: restart llama-server to apply." The bff restarts and reloads
+  nothing (no `GET /models?reload=1` for now). Deliberate difference: the configurator's preset save
+  says only "Saved preset [id]".
+- 422 `{"key", "args", "field"}`: `field` is the INI key the refusal names: `args[0]` for
+  `not-whole-number-in-range`, `comment-markers`, `not-a-number`, `not-one-of`, `not-json-object`,
+  `min-above-max` (the minimum's key); `fit-target` for `fit-target-format`; `moe-cache-mib` for
+  `moe-cache-with-tensor-split`; `load-on-startup` for `load-on-startup-over-max` and `-unlimited`;
+  `model` for `preset-no-model`; `override-tensor` for `override-no-pattern` and
+  `override-no-device`; **no field** for `invalid-preset-id` and `preset-name-taken` (the section is
+  present twice in the file). Nothing is written.
+- 409 `preset-changed-elsewhere`: the revision is stale (the section changed, it was switched on or
+  off, or the bff restarted since the read), or the compare-and-swap write found the file changed
+  after the bff's read. A save of **another** preset in the same file gives no 409. Nothing is
+  written.
 - Errors, each `{"key", "args"}`: 401 `session-required`; 403 `client-not-authorized` (session
   kept); 403 `session-not-administrator` (session ended); 404 `no-preset-named` `[id]`; 413
   `payload-too-large`; 503 `client-unavailable` (manager never reached); 504 `client-timeout` (the
   write was sent, it may or may not have landed); 502 `client-other`.
-
-**For the platform coordinator to decide**: (1) the revision: the file's text (as proposed: simple,
-the same function as the server's) or the section's (no 409 for an edit of another preset in the
-same file; the compare-and-swap still guards the write); (2) the key-removal helper and the
-duplicate-key rule above (new in `pai-core` `ini::text`); (3) whether a later slice applies a save
-without a restart: llama-server v1.0.0's router re-reads its preset file on `GET /models?reload=1`
-and unloads each running model whose preset changed (`server-models.cpp` 947-965, 2166-2169), which
-the framework does not call today; until then `running` drives the restart message; (4) the two
-proposed keys `presets-malformed` and `preset-changed-elsewhere`; (5) whether the bff refuses a body
-that sets `model` to `null` early or leaves it to `preset-no-model` (the fe never sends it).
 
 ## Open on the bff side
 
