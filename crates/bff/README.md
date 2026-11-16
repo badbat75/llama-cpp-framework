@@ -189,7 +189,9 @@ else 403. The API key stays the manager's to keep: it withholds it from a reader
 but not `configure`, and the bff nulls the key and marks it withheld exactly when the manager's read
 says so, even when the text it sent still names a key (`server.rs` `document`); on this route the
 read arrives unwithheld. **When the manager refuses that user**, typically one removed from `pai`
-since signing in, the route answers 403 `client-not-authorized` and the bff ends the session
+since signing in, the route answers 403 `session-not-administrator` (5f0d405: the sign-in's key for
+the same fact, so the web UI tells an ended session from a live one without a second read) and the
+bff ends the session
 (`Sessions::end`, shared with sign-out): the same cookie is then 401 `session-required`, so the page
 signs out at its next call. Only the manager's refusal ends a session: an unavailable or slow
 manager, an unknown instance and every other failure keep it, being the bff's news and not a refusal
@@ -201,7 +203,7 @@ guide).
 | --- | --- | --- |
 | 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read. A principal's read is never withheld, so on this route `"withheld"` is absent and `OpencodeApiKey` carries the saved key |
 | 401 | `{"key": "session-required", "args": []}` | No session |
-| 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on. A session-free read (the instances list, `GET boot`) answers the same refusal 502 `client-not-authorized` and ends nothing: it has no session |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
