@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9e (the session's end key), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 8 (save the server
 file, keyed revision first), slices 11, 11b, 11c and 11d (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -881,11 +881,6 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
-9e. **The session's end has its own key** (asked by the web UI session, accepted 2026-11-16): when the
-   bff ends a session because the manager refused its user, it answers 403 `session-not-administrator`
-   (the sign-in's key for the same fact), not `client-not-authorized`, on the server read, the control
-   routes and the boot write; `client-not-authorized` keeps its meaning. As `fe/briefs/api-contract.md`
-   (8ad54f7, proposed there). Small: after 9b, or between its slices.
 9c. **Left from the same-origin guard** (built with 9a's review; the bff refuses a foreign `Origin` or
    `Sec-Fetch-Site` on every method but GET, HEAD and OPTIONS, and any request whose `Host` is not a
    loopback name, which stops DNS rebinding; one 64 KiB body cap): the `Service` message the contract

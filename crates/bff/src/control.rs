@@ -178,14 +178,16 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// or an id the manager refuses, 503 when there is no manager, 502
 /// `client-service-failed` when the service manager refused the job (its
 /// message stays out of the body) and 502 `client-other` for anything else.
-/// The manager refused the signed-in user: 403, and the session that acted
-/// ends with the right that authorized it. The other answers are the bff's
-/// news, not a refusal of the user, so the session lives on.
+/// The manager refused the signed-in user: 403
+/// `session-not-administrator` (the sign-in's key for the same fact), and the
+/// session that acted ends with the right that authorized it. The other
+/// answers are the bff's news, not a refusal of the user, so the session
+/// lives on.
 fn action_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
     match failure {
         ClientError::NotAuthorized => {
             sessions.end(session);
-            error(StatusCode::FORBIDDEN, "client-not-authorized", &[])
+            error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
         }
         ClientError::NoInstance | ClientError::InvalidId => {
             error(StatusCode::NOT_FOUND, "client-no-instance", &[])

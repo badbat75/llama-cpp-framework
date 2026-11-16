@@ -40,8 +40,13 @@
 //! - Errors `{"key", "args": []}`, never the manager's detail: 404
 //!   `client-no-instance` (no such file, or the manager says no such
 //!   instance or refuses the id), 503 `client-unavailable` (no manager, or
-//!   too slow), 403 `client-not-authorized` (the manager refused the call
-//!   for the signed-in user), 502 `client-other` for anything else.
+//!   too slow), 403 `session-not-administrator` (the manager refused the
+//!   call for the signed-in user, and the bff ended that session: the
+//!   sign-in's key for the same fact), 502 `client-other` for anything else.
+//!   The key `client-not-authorized` belongs to the routes that need no
+//!   sign-in, where the manager refused the bff itself and no session lives
+//!   to end: there it comes with 502 (`tests/instances.rs`,
+//!   `tests/control.rs`).
 //! - The route sits behind a session, so it acts for the signed-in user:
 //!   `Connect` is asked with that user's name as the principal, taken from
 //!   the session (`Sessions::current`), never from the request, so the
@@ -51,7 +56,10 @@
 //! - A 403 refusal for the signed-in user ends their session at once
 //!   (user, 2026-11-16): the same cookie is 401 `session-required`
 //!   afterwards, so the page returns to the sign-in form. Only that
-//!   session ends, and no other answer ends one.
+//!   session ends, and no other answer ends one. The bff sends
+//!   `session-not-administrator` exactly when it ends a session on a
+//!   refusal, so the web UI needs no second read of `GET /api/session` to
+//!   tell the two apart.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -533,14 +541,14 @@ async fn a_name_in_the_request_is_never_the_principal() {
 }
 
 /// The session ends for the user the manager refused, at once: 403
-/// `client-not-authorized` and the same cookie signed out.
+/// `session-not-administrator` and the same cookie signed out.
 #[tokio::test]
 async fn a_refused_user_is_answered_403_and_signed_out() {
     let app = app_reading(Err(ClientError::NotAuthorized));
     let cookie = app.sign_in().await;
     app.get("/api/instances/default/server", Some(&cookie))
         .await
-        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&cookie))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -560,7 +568,7 @@ async fn a_refusal_ends_that_session_and_no_other() {
     let root = app.sign_in_as("root").await;
     app.get("/api/instances/default/server", Some(&root))
         .await
-        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&root))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -663,14 +671,16 @@ async fn a_manager_too_slow_is_unavailable() {
     );
 }
 
-/// The manager refuses the read: 403 on this route, since it acts for a
-/// signed-in user (502 is for the routes that need no sign-in).
+/// The manager refuses the read: 403 `session-not-administrator` on this
+/// route, since it acts for a signed-in user whose session the bff ends. The
+/// session-free routes answer the refusal 502 `client-not-authorized`
+/// (`tests/instances.rs`, `tests/control.rs`: the manager refused the bff).
 #[tokio::test]
-async fn a_manager_refusal_is_not_authorized_403() {
+async fn a_manager_refusal_on_this_route_is_403_not_502() {
     let app = app_reading(Err(ClientError::NotAuthorized));
     app.read_default()
         .await
-        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
 }
 
 /// An id with no `server@<id>.ini`: 404 `client-no-instance`.

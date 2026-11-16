@@ -19,9 +19,9 @@ use std::time::Duration;
 /// connect from the session alone: a name the request carries is never
 /// asked for. The manager re-checks that user's membership of `pai` at every
 /// call, so a member removed since the sign-in is refused: 403
-/// `client-not-authorized` and the session ends with the right that
-/// authorized it. The other answers keep the session: they are the bff's
-/// news, not a refusal of the user.
+/// `session-not-administrator` (the sign-in's key for the same fact) and the
+/// session ends with the right that authorized it. The other answers keep the
+/// session: they are the bff's news, not a refusal of the user.
 pub(crate) async fn read(
     connect: Connect,
     timeout: Duration,
@@ -46,7 +46,7 @@ pub(crate) async fn read(
         }
         Ok(Ok(Err(ClientError::NotAuthorized))) => {
             sessions.end(&session);
-            (StatusCode::FORBIDDEN, "client-not-authorized")
+            (StatusCode::FORBIDDEN, "session-not-administrator")
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "client-other"),
     };

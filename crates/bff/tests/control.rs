@@ -18,12 +18,15 @@
 //! - The control routes and `PUT .../boot` sit behind a session, so they act
 //!   for the signed-in user: `Connect` is asked with the session's user as the
 //!   principal, taken from the session alone, and the manager re-checks that
-//!   user's right at every call. A refusal is 403 `client-not-authorized` and
-//!   ends that session, as the server read does
-//!   (`crates/bff/src/server.rs`).
+//!   user's right at every call. A refusal is 403
+//!   `session-not-administrator` and ends that session, as the server read
+//!   does (`crates/bff/src/server.rs`): the sign-in's key for the same fact,
+//!   sent exactly when the bff ends a session on a refusal, so the web UI
+//!   needs no second read of `GET /api/session` to tell the two apart.
 //! - Errors are `{"key": <strings key>, "args": []}`, never the manager's
 //!   detail: 401 `session-required` with no session (the manager is not even
-//!   connected to), 403 `client-not-authorized`, 404 `client-no-instance` (no
+//!   connected to), 403 `session-not-administrator` (the manager refused
+//!   that user, and the session ends), 404 `client-no-instance` (no
 //!   such instance, or the manager refuses the id), 503 `client-unavailable`
 //!   (no manager, gone, or too slow), 502 `client-service-failed` with empty
 //!   `args` when the service manager refused the job (the manager's
@@ -791,8 +794,8 @@ async fn a_name_in_the_request_is_never_the_principal() {
 // ── The manager's answers on the control routes ─────────────────────────
 
 /// The manager refuses the call for the signed-in user: 403
-/// `client-not-authorized` and that session ends at once, as the server read
-/// does; the same cookie is 401 `session-required` afterwards.
+/// `session-not-administrator` and that session ends at once, as the server
+/// read does; the same cookie is 401 `session-required` afterwards.
 #[tokio::test]
 async fn a_refused_user_is_403_and_signed_out() {
     for verb in ["start", "stop", "restart"] {
@@ -800,7 +803,7 @@ async fn a_refused_user_is_403_and_signed_out() {
         let cookie = app.sign_in().await;
         app.post(&format!("/api/instances/default/{verb}"), Some(&cookie))
             .await
-            .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+            .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
         app.get("/api/session", Some(&cookie))
             .await
             .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -818,7 +821,7 @@ async fn a_refused_user_is_403_and_signed_out() {
         Some(&cookie),
     )
     .await
-    .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+    .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&cookie))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -840,7 +843,7 @@ async fn a_refusal_ends_that_session_and_no_other() {
     let root = app.sign_in_as("root").await;
     app.post("/api/instances/default/stop", Some(&root))
         .await
-        .assert_error(StatusCode::FORBIDDEN, "client-not-authorized");
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&root))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -1264,7 +1267,7 @@ async fn the_boot_write_errors() {
         (
             app_boot_write(Err(ClientError::NotAuthorized)),
             StatusCode::FORBIDDEN,
-            "client-not-authorized",
+            "session-not-administrator",
             true,
         ),
     ] {
