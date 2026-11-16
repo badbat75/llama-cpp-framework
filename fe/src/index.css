@@ -495,6 +495,15 @@ td {
   border-radius: var(--radius);
 }
 
+/* A note between a card's fields (DESIGN.md 5.2, 02e-preset-cards.md 90): the
+   GUI's muted text, drawn as the card's intro is, at the place the GUI gives
+   it. Its padding keeps the fields' rhythm around it. */
+.card .note {
+  padding: var(--space-2) 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .subgroup {
   margin-top: var(--space-4);
 }

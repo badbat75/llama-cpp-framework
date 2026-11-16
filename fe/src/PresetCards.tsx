@@ -8,8 +8,18 @@
 // and cannot change it until it can save, so nothing is ever sent. Each field
 // is the same Field the Server page uses, so the page looks the same before
 // and after the save lands.
+//
+// 2e.3 adds the rows of its tables (criteria 101, 102) and, with them, the
+// kinds the renderer had not met: the checkbox, the note of a card (90) and
+// the device select (103), which in 2e holds only the file's value because
+// the device list arrives with 2f.
 import Card from './Card.tsx'
-import { DefaultBoxField, SelectField, TextField } from './Field.tsx'
+import {
+  CheckboxField,
+  DefaultBoxField,
+  SelectField,
+  TextField,
+} from './Field.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -42,7 +52,24 @@ type SelectRow = RowBase & {
 /** A text: one monospace input showing the string as it is. */
 type TextRow = RowBase & { kind: 'text' }
 
-type Row = NumberRow | SelectRow | TextRow
+/** A checkbox: one checkbox whose text is the toggle. `absent` is the state an
+ * absent key shows and, as the configurator keeps what it has for a value it
+ * cannot parse (`form.rs`: `unwrap_or(true)`), the state of such a value. */
+type CheckboxRow = RowBase & {
+  kind: 'checkbox'
+  toggle: string
+  absent: boolean
+}
+
+/** A device select (criterion 103): the empty option, then the file's value
+ * when it has one. The device list arrives with 2f. */
+type DeviceRow = RowBase & { kind: 'device' }
+
+/** A note between fields (criterion 90): the GUI's muted paragraph. Its `key`
+ * is only the list's: a note reads no key of the file. */
+type NoteRow = { kind: 'note'; key: string; text: string }
+
+type Row = NumberRow | SelectRow | TextRow | CheckboxRow | DeviceRow | NoteRow
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
 type CardFields = { title: string; rows: Row[] }
@@ -78,9 +105,42 @@ const CACHE_TYPES: Option[] = [
   ].map((name) => ({ value: name, text: name })),
 ]
 
+/** The Reasoning select of 101: auto / on / off. */
+const REASONING: Option[] = [
+  { value: 'auto', text: t('option-auto') },
+  { value: 'on', text: t('option-on') },
+  { value: 'off', text: t('option-off') },
+]
+
+/** The Reasoning format of 101: `deepseek` is a literal (table 101). */
+const REASONING_FORMAT: Option[] = [
+  { value: 'auto', text: t('option-auto') },
+  { value: 'none', text: t('option-none') },
+  { value: 'deepseek', text: 'deepseek' },
+]
+
+/** The reasoning-effort options of 101 (MP 917-918). */
+const EFFORT: Option[] = [
+  { value: 'default', text: t('option-default') },
+  { value: 'minimal', text: t('option-minimal') },
+  { value: 'low', text: t('option-low') },
+  { value: 'medium', text: t('option-medium') },
+  { value: 'high', text: t('option-high') },
+  { value: 'xhigh', text: t('option-extra-high') },
+  { value: 'max', text: t('option-maximum') },
+]
+
+/** The empty option of a device select (103): the file names no device. */
+const DEVICE_NONE: Option = {
+  value: '',
+  text: t('preset-device-follows-model'),
+}
+
 /** The cards built so far, in the order of criterion 83: the two of 2e.1
- * (Resource / context, 92, and Embeddings, 93) after the Assets card, then the
- * three of 2e.2 (KV cache, 96, Sampling overrides, 97, and Advanced, 98). */
+ * (Resource / context, 92, and Embeddings, 93) after the Assets card, the
+ * three of 2e.2 (KV cache, 96, Sampling overrides, 97, and Advanced, 98), and
+ * the two of 2e.3 (Chat / reasoning, 101, after KV cache, and Vision, 102,
+ * after Advanced). */
 const CARDS: CardFields[] = [
   {
     title: t('preset-resource-context'),
@@ -219,6 +279,85 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    title: t('preset-chat-reasoning'),
+    rows: [
+      {
+        kind: 'checkbox',
+        key: 'jinja',
+        toggle: t('preset-chat-template-toggle'),
+        absent: true,
+        label: t('preset-chat-template'),
+        hint: t('preset-chat-template-hint'),
+      },
+      {
+        kind: 'checkbox',
+        key: 'prefill-assistant',
+        toggle: t('preset-prefill-assistant-toggle'),
+        absent: true,
+        label: t('preset-prefill-assistant'),
+        hint: t('preset-prefill-assistant-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'reasoning',
+        options: REASONING,
+        absent: 'auto',
+        label: t('preset-reasoning'),
+        hint: t('preset-reasoning-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'reasoning-format',
+        options: REASONING_FORMAT,
+        absent: 'auto',
+        label: t('preset-reasoning-format'),
+        hint: t('preset-reasoning-format-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'reasoning-effort',
+        options: EFFORT,
+        absent: 'default',
+        label: t('preset-reasoning-effort'),
+        hint: t('preset-reasoning-effort-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'reasoning-preserve',
+        options: TRISTATE,
+        absent: 'default',
+        label: t('preset-keep-past-thinking'),
+        hint: t('preset-keep-past-thinking-hint'),
+      },
+      {
+        // The note of 90, at the GUI's place (MP 933-938).
+        kind: 'note',
+        key: 'output-budget-note',
+        text: t('preset-output-budget-note'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'reasoning-budget',
+        label: t('preset-thinking-budget'),
+        hint: t('preset-thinking-budget-hint'),
+      },
+      {
+        kind: 'text',
+        key: 'reasoning-budget-message',
+        label: t('preset-budget-message'),
+        hint: t('preset-budget-message-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'n-predict',
+        label: t('preset-max-output'),
+        hint: t('preset-max-output-hint'),
+      },
+    ],
+  },
+  {
     title: t('preset-sampling-overrides'),
     rows: [
       {
@@ -294,6 +433,45 @@ const CARDS: CardFields[] = [
       },
     ],
   },
+  {
+    title: t('preset-vision'),
+    rows: [
+      {
+        kind: 'checkbox',
+        key: 'mmproj-offload',
+        toggle: t('preset-vision-offload-toggle'),
+        absent: true,
+        label: t('preset-vision-on-gpu'),
+        hint: t('preset-vision-on-gpu-hint'),
+      },
+      {
+        kind: 'device',
+        key: 'mmproj-device',
+        label: t('preset-vision-gpu'),
+        hint: t('preset-vision-gpu-hint'),
+      },
+      {
+        // The note of 90, at the GUI's place (MP 1099-1104).
+        kind: 'note',
+        key: 'image-tokens-note',
+        text: t('preset-image-tokens-note'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'image-min-tokens',
+        label: t('preset-min-image-tokens'),
+        hint: t('preset-min-image-tokens-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'image-max-tokens',
+        label: t('preset-max-image-tokens'),
+        hint: t('preset-max-image-tokens-hint'),
+      },
+    ],
+  },
 ]
 
 /** The string a key holds: absent and the empty string read alike (criterion
@@ -301,6 +479,15 @@ const CARDS: CardFields[] = [
 function held(values: Record<string, string>, key: string): string | undefined {
   const raw = values[key]
   return raw === undefined || raw === '' ? undefined : raw
+}
+
+/** A value as the configurator reads a boolean: `ini::parse_bool`
+ * (crates/core/src/ini.rs) answers only for `true` and `false`, trimmed, and
+ * gives nothing for the rest. A checkbox row decides what that nothing shows
+ * (its `absent`). */
+function parseBool(value: string): boolean | undefined {
+  const text = value.trim()
+  return text === 'true' ? true : text === 'false' ? false : undefined
 }
 
 /** A select's options and its selected value. A value no option carries
@@ -322,21 +509,36 @@ function shown(
   }
 }
 
+/** A device select's options and selected value (criterion 103): the empty
+ * option first, then the device the file names as its own option, selected.
+ * The page has no device list to add, so it lists no device of its own. */
+function shownDevice(value: string | undefined): {
+  options: Option[]
+  value: string
+} {
+  if (value === undefined) return { options: [DEVICE_NONE], value: '' }
+  return { options: [DEVICE_NONE, { value, text: value }], value }
+}
+
 /** The full-value line's limits, in characters (criterion 119): the number
  * input is 10ch wide (`input.number`), a text input or a select holds about 20
  * in the field column at 320 px, the narrowest case. A count and not a
  * measure, so the rule is the same at every width and needs no layout. */
-const FULL_LIMIT: Record<Row['kind'], number> = {
+const FULL_LIMIT: Record<'number' | 'text' | 'select' | 'device', number> = {
   number: 8,
   text: 20,
   select: 20,
+  device: 20,
 }
 
 /** The full-value line of criterion 118: a value longer than its control shows
  * is repeated in full under it, since a disabled control cannot be scrolled or
  * wrapped. `undefined` when the control shows all of the value: nothing to add.
  */
-function fullValue(row: Row, text: string) {
+function fullValue(
+  row: NumberRow | TextRow | SelectRow | DeviceRow,
+  text: string,
+) {
   return text.length <= FULL_LIMIT[row.kind]
     ? undefined
     : { id: `preset-full-${row.key}`, text }
@@ -350,24 +552,40 @@ function PresetField({
   row: Row
   values: Record<string, string>
 }) {
-  const id = `preset-${row.key}`
+  if (row.kind === 'note') return <p className="note">{row.text}</p>
+  // What every control of a read-only card shares: its id, the texts of its
+  // field, and the native disabled of criterion 85. Each control's own
+  // handler does nothing: the page sends nothing.
+  const common = {
+    id: `preset-${row.key}`,
+    label: row.label,
+    hint: row.hint,
+    disabled: true,
+  }
   const value = held(values, row.key)
   if (row.kind === 'number') {
     const text = value ?? ''
     return (
       <DefaultBoxField
-        id={id}
-        label={row.label}
-        hint={row.hint}
+        {...common}
         box={t('field-default')}
         numeric={row.integer}
         unit={row.unit}
         ticked={value === undefined}
         text={text}
         full={fullValue(row, text)}
-        disabled
         onTick={() => undefined}
         onText={() => undefined}
+      />
+    )
+  }
+  if (row.kind === 'checkbox') {
+    return (
+      <CheckboxField
+        {...common}
+        toggle={row.toggle}
+        checked={parseBool(value ?? '') ?? row.absent}
+        onChange={() => undefined}
       />
     )
   }
@@ -377,31 +595,30 @@ function PresetField({
     const text = value ?? ''
     return (
       <TextField
-        id={id}
-        label={row.label}
-        hint={row.hint}
+        {...common}
         value={text}
         full={fullValue(row, text)}
         placeholder=""
-        disabled
         onChange={() => undefined}
       />
     )
   }
-  const select = shown(row, value)
+  const select = row.kind === 'device' ? shownDevice(value) : shown(row, value)
   // What the user reads for a select is the selected option's text, which for
-  // an unlisted value is the value itself (criterion 87).
+  // an unlisted value is the value itself (criterion 87). A device select
+  // reads the file's device, and has nothing to repeat when the file names
+  // none (criterion 103).
   const text =
-    select.options.find((o) => o.value === select.value)?.text ?? select.value
+    row.kind === 'device'
+      ? (value ?? '')
+      : (select.options.find((o) => o.value === select.value)?.text ??
+        select.value)
   return (
     <SelectField
-      id={id}
-      label={row.label}
-      hint={row.hint}
+      {...common}
       options={select.options}
       value={select.value}
       full={fullValue(row, text)}
-      disabled
       onChange={() => undefined}
     />
   )

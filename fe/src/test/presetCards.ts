@@ -55,6 +55,20 @@ export const PRESET_CARDS: Card[] = [
     ],
   },
   {
+    heading: 'preset-chat-reasoning',
+    fields: [
+      'preset-chat-template',
+      'preset-prefill-assistant',
+      'preset-reasoning',
+      'preset-reasoning-format',
+      'preset-reasoning-effort',
+      'preset-keep-past-thinking',
+      'preset-thinking-budget',
+      'preset-budget-message',
+      'preset-max-output',
+    ],
+  },
+  {
     heading: 'preset-sampling-overrides',
     fields: [
       'preset-temperature',
@@ -69,6 +83,15 @@ export const PRESET_CARDS: Card[] = [
   {
     heading: 'preset-advanced',
     fields: ['preset-load-on-startup', 'preset-chat-kwargs'],
+  },
+  {
+    heading: 'preset-vision',
+    fields: [
+      'preset-vision-on-gpu',
+      'preset-vision-gpu',
+      'preset-min-image-tokens',
+      'preset-max-image-tokens',
+    ],
   },
 ]
 

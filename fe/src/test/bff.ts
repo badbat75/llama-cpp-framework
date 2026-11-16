@@ -346,6 +346,66 @@ export const EN: Record<string, string> = {
   'preset-chat-kwargs': 'Chat kwargs',
   'preset-chat-kwargs-hint':
     'Extra values passed to the chat template, as JSON, such as {"enable_thinking":true}.\nAdvanced: leave blank unless the model\'s documentation lists them.\nFlag: --chat-template-kwargs',
+  // Slice 2e.3 (fe/briefs/02e-preset-cards.md, criterion 105): the Chat /
+  // reasoning and Vision cards. Every English is the en_US.toml line the
+  // criterion names, unchanged.
+  'preset-chat-reasoning': 'Chat / reasoning',
+  'preset-chat-template': 'Chat template',
+  'preset-chat-template-hint':
+    'Uses the chat template embedded in the model to format conversations, instead of built-in guesses. Recommended on, for correct tool calls and roles.\nFlag: --jinja',
+  'preset-chat-template-toggle': 'use embedded chat template (--jinja)',
+  'preset-prefill-assistant': 'Prefill assistant',
+  'preset-prefill-assistant-hint':
+    "What to do when a request ends with an assistant message.\nOn (default, llama.cpp's own): treat it as the start of the reply and continue it, so a client can seed the answer's opening.\nOff: treat it as a finished turn and answer it. Turn it off if a client ends on an assistant turn and the model resumes mid-sentence instead of replying.\nFlags: --prefill-assistant, --no-prefill-assistant",
+  'preset-prefill-assistant-toggle':
+    'continue a trailing assistant message (--prefill-assistant)',
+  'preset-reasoning': 'Reasoning',
+  'preset-reasoning-hint':
+    "Whether the model thinks before answering.\nauto (recommended): follows the model's template.\non: force thinking.\noff: disable it.\nFlag: --reasoning",
+  'preset-reasoning-format': 'Reasoning format',
+  'preset-reasoning-format-hint':
+    'How thinking is delivered to the client.\nauto = let the template decide.\ndeepseek = thinking goes in a separate channel, apart from the answer.\nnone = left inline in the answer.\nFlag: --reasoning-format',
+  'preset-reasoning-effort': 'Reasoning effort',
+  'preset-reasoning-effort-hint':
+    "How hard the template asks the model to think: a level handed to the chat template, neither an on/off switch nor a token limit.\nDefault: whatever the template does on its own.\nOnly some templates read it (gpt-oss and harmony do, most do not); the others ignore it silently, and llama-server's log does not say. The Thinking row in Model info is the place that tells you.\nSet it here, not in Chat kwargs below: this one setting binds both names templates use (reasoning_effort, reasoning_strength), and a hand-written one sets only one of them.\nFlag: --reasoning-effort",
+  'preset-keep-past-thinking': 'Keep past thinking',
+  'preset-keep-past-thinking-hint':
+    "Sends the thinking of EVERY past assistant turn back to the model, not just the last one. It costs prompt tokens: the thinking is re-sent every turn.\nDefault: on (llama.cpp's own). on pins it; off drops it, the one value that changes anything.\nOnly works where the template supports it: llama-server says so in its log at startup.\nUse this, not preserve_thinking or preserve_reasoning in Chat kwargs below: templates read different names, so a hand-written one usually does nothing.\nFlags: --reasoning-preserve, --no-reasoning-preserve",
+  'preset-output-budget-note':
+    "The next three split one output budget in two. Thinking budget limits the thinking alone; Max output limits thinking and answer together, so the answer gets what the thinking leaves. Do not copy a model card's numbers as they are: they assume a certain context, and a budget larger than your context never takes effect.",
+  'preset-thinking-budget': 'Thinking budget',
+  'preset-thinking-budget-hint':
+    "The most tokens the model may spend thinking. Pick it by how long you are willing to wait.\n-1 = no limit, 0 = end thinking immediately, N > 0 = that many tokens.\nDefault: -1 (llama.cpp's own).\nAt the limit llama.cpp closes the thinking block for the model, which still writes a normal answer. Only works where the template declares thinking tags.\nFlag: --reasoning-budget",
+  'preset-budget-message': 'Budget message',
+  'preset-budget-message-hint':
+    "Text added just before thinking is closed at the budget, to steer the model into wrapping up instead of stopping mid-thought. Write it in the language the model answers in: another language invites mixed replies.\nBlank = no message (llama.cpp's own default).\nNo ';' or '#': the INI format cannot escape them, and the value would reload truncated.\nFlag: --reasoning-budget-message",
+  'preset-max-output': 'Max output',
+  'preset-max-output-hint':
+    "The most tokens one request may generate, thinking and answer together, for clients that do not set their own limit.\n-1 = keep going until the context is full.\nDefault: -1 (llama.cpp's own).\nNot a hard limit: a client's own max_tokens always wins, higher or lower.\nFlag: --n-predict",
+  'option-auto': 'auto',
+  'option-minimal': 'minimal',
+  'option-low': 'low',
+  'option-medium': 'medium',
+  'option-high': 'high',
+  'option-extra-high': 'xhigh',
+  'option-maximum': 'max',
+  'preset-vision': 'Vision',
+  'preset-vision-on-gpu': 'Vision on GPU',
+  'preset-vision-on-gpu-hint':
+    "Runs the image encoder (mmproj) on the GPU. On (default, llama.cpp's own), it holds VRAM as long as the model is loaded but only works on image requests. Off: slower image encoding, no VRAM.\nWhich GPU: see 'Vision GPU' below.\nFlags: --mmproj-offload, --no-mmproj-offload",
+  'preset-vision-offload-toggle': 'offload the image encoder to GPU',
+  'preset-vision-gpu': 'Vision GPU',
+  'preset-vision-gpu-hint':
+    "The GPU the image encoder runs on.\nDefault: the first GPU in this preset's device list; with no device checked, the first GPU llama.cpp finds, which on a mixed machine is often not the one running the model. It holds VRAM there and stays idle until an image arrives.\nName a device to override both.\nFlag: --mmproj-device",
+  'preset-image-tokens-note':
+    'The two limits below set how many tokens ONE image takes on dynamic-resolution vision models. They apply only with an MMProj picked above. Leave them at default to read the limit from the model.',
+  'preset-min-image-tokens': 'Min image tokens',
+  'preset-min-image-tokens-hint':
+    'The fewest tokens each image is encoded to, on vision models with dynamic resolution.\nDefault: read from the model.\nFlag: --image-min-tokens',
+  'preset-max-image-tokens': 'Max image tokens',
+  'preset-max-image-tokens-hint':
+    'The most tokens each image is encoded to, on vision models with dynamic resolution. Lower it to limit the prefill cost and VRAM of large images.\nDefault: read from the model.\nFlag: --image-max-tokens',
+  'preset-device-follows-model': '(default: follows device)',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
