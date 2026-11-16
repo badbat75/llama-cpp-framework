@@ -112,6 +112,27 @@ export const PRESET_CARDS: Card[] = [
       'preset-max-image-tokens',
     ],
   },
+  {
+    heading: 'preset-speculative-decoding',
+    fields: [
+      'preset-draft-n-max',
+      'preset-draft-p-min',
+      'preset-draft-n-min',
+      'preset-draft-n-ubatch',
+      'preset-draft-k-cache-type',
+      'preset-draft-v-cache-type',
+      'preset-match-length',
+      'preset-min-draft',
+      'preset-max-draft',
+      'preset-lookup-n-gram',
+      'preset-draft-m-gram',
+      'preset-lookup-n-gram',
+      'preset-draft-m-gram',
+      'preset-lookup-n-gram',
+      'preset-draft-m-gram',
+      'preset-min-hits',
+    ],
+  },
 ]
 
 /** The text of every card's h3, in page order (83). */

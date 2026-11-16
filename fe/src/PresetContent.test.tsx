@@ -54,6 +54,19 @@ const LABELS = [
  * (criterion 85). The list is test/presetCards.ts. */
 const CARD_TAB_STOPS = fieldAboutToggles()
 
+/** The five group headings of the Speculative decoding card of 2e.5 (criterion
+ * 114): the strings text of `preset-draft-model-group`, and the four speculator
+ * names as the INI literals they are. Each opens a group of criterion 90 as an
+ * `h4` inside its card, so the page's heading outline carries the five after
+ * the last card's `h3`, in the order of 112. */
+const SPEC_GROUP_HEADINGS = [
+  en('preset-draft-model-group'),
+  'ngram-mod',
+  'ngram-simple',
+  'ngram-map-k',
+  'ngram-map-k4v',
+]
+
 /** A preset with every Assets value set (82), as the file holds it, plus keys
  * the page does not show. `extra` replaces a top-level member, `projectUrl`
  * included. */
@@ -272,7 +285,7 @@ test('2d.71: no save bar and nothing to save: no Save changes, no Discard, no sa
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
 
-test('2d.68: below the h1, in order: the off line (a switched-off preset), the h2 Preset settings, the read-only Notice, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3', async () => {
+test("2d.68: below the h1, in order: the off line (a switched-off preset), the h2 Preset settings, the read-only Notice, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
   for (const [what, extra, off, unavailable] of [
     ['a switched-on preset', {}, false, false],
     ['a switched-off preset', { enabled: false }, true, false],
@@ -320,8 +333,17 @@ test('2d.68: below the h1, in order: the off line (a switched-off preset), the h
         .getAllByRole('heading')
         .map((h) => h.getAttribute('aria-level') ?? h.tagName.slice(1))
         .join(' '),
-      `${what}: the heading order of D8 (the h1, the h2, one h3 per card of test/presetCards.ts)`,
-    ).toBe(`1 2${' 3'.repeat(PRESET_CARDS.length)}`)
+      `${what}: the heading order of D8 (the h1, the h2, one h3 per card of test/presetCards.ts, then the five h4 group headings of 2e.5's last card, of criterion 114)`,
+    ).toBe(
+      `1 2${' 3'.repeat(PRESET_CARDS.length)}${' 4'.repeat(SPEC_GROUP_HEADINGS.length)}`,
+    )
+    // 114: the five group headings, in the order of 112, inside the last card.
+    const h4 = within(main)
+      .getAllByRole('heading', { level: 4 })
+      .map((h) => text(h))
+    expect(h4, `${what}: the group headings of 114, in order`).toEqual(
+      SPEC_GROUP_HEADINGS,
+    )
     cleanup()
     vi.unstubAllGlobals()
   }

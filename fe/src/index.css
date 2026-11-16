@@ -513,7 +513,11 @@ td {
 }
 
 .subgroup {
-  margin-top: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.card > h3 + .subgroup {
+  margin-top: 0;
 }
 
 fieldset {

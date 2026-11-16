@@ -210,8 +210,12 @@ Each is one React component, reused by every page.
 
 - **Card**: a `section` with an `h3` heading (the GUI's `SectionCard`); optional intro paragraph in
   `--muted`. A note between fields (the GUI's muted text) is drawn as the intro, at its place. A
-  group inside a card is an `h4`; when fields in two groups share a label, each group is a
-  `<div role="group">` named by its `h4` (`fe/briefs/02e-preset-cards.md` 90).
+  named group inside a card is one `div.subgroup` holding its `h4` and then its fields; when fields
+  in two groups share a label, the fields sit in a `<div role="group">` named by the `h4`
+  (`aria-labelledby`), the `h4` and that div the subgroup's only two children
+  (`fe/briefs/02e-preset-cards.md` 90, 90a). A subgroup has `--space-5` above it, more than the
+  24 px between two fields, so a group heading sits with the fields under it; a subgroup right
+  after the card's `h3` has none (the `h3`'s bottom margin parts them).
 - **Read-only form**: a form shown before its slice can save (the preset page's plain cards, 2e):
   the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
   saving slice only enables them. Not `readonly` (text inputs only in HTML) and not `aria-disabled`

@@ -17,7 +17,10 @@
 // itself, a select matched ignoring case and space (Load mode), and a checkbox
 // the configurator only allows under a rule (Fit to VRAM, 108). 2e.3c gives
 // that row the reading llama-server has for `-fit [on|off]` (127), and the
-// field error of a value the engine refuses to start with (128).
+// field error of a value the engine refuses to start with (128). 2e.5 adds the
+// Speculative decoding card (112) and, with it, the group row of 90: a card row
+// that is the GUI's bold sub-heading and the rows under it, so a card's rows
+// nest and the one renderer still shows them all.
 import Card from './Card.tsx'
 import {
   CheckboxField,
@@ -104,7 +107,26 @@ type DeviceRow = RowBase & { kind: 'device'; empty: string }
  * is only the list's: a note reads no key of the file. */
 type NoteRow = { kind: 'note'; key: string; text: string }
 
-type Row = NumberRow | SelectRow | TextRow | CheckboxRow | DeviceRow | NoteRow
+/** A group of a card (criterion 90): the GUI's bold sub-heading as an `h4`, and
+ * the rows under it in a `role="group"` division named by that heading, so the
+ * fields that share a label across groups (the Lookup n-gram and the Draft
+ * m-gram of 113) are told apart by their group. */
+type GroupRow = {
+  kind: 'group'
+  key: string
+  /** The heading's text: a strings key where the GUI words the group, a
+   * literal where its name is a value the file writes (the four speculator
+   * names of 114). */
+  title: string
+  rows: FieldRow[]
+}
+
+type Row =
+  NumberRow | SelectRow | TextRow | CheckboxRow | DeviceRow | NoteRow | GroupRow
+
+/** The rows that are a field or a note: what a group holds, and what
+ * `PresetField` shows. */
+type FieldRow = Exclude<Row, GroupRow>
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
 type CardFields = { title: string; rows: Row[] }
@@ -190,7 +212,8 @@ const LOAD_MODES: Option[] = [
  * 2e.4 (107) after the Assets card, then the two of 2e.1 (Resource / context,
  * 92, and Embeddings, 93), the three of 2e.2 (KV cache, 96, Sampling overrides,
  * 97, and Advanced, 98), and the two of 2e.3 (Chat / reasoning, 101, after KV
- * cache, and Vision, 102, after Advanced). */
+ * cache, and Vision, 102, after Advanced), and the one of 2e.5 (Speculative
+ * decoding, 112, after Vision, in the five groups of 90). */
 const CARDS: CardFields[] = [
   {
     title: t('preset-hardware-config'),
@@ -651,6 +674,171 @@ const CARDS: CardFields[] = [
       },
     ],
   },
+  {
+    title: t('preset-speculative-decoding'),
+    rows: [
+      {
+        kind: 'group',
+        key: 'draft-model',
+        title: t('preset-draft-model-group'),
+        rows: [
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-draft-n-max',
+            label: t('preset-draft-n-max'),
+            hint: t('preset-draft-n-max-hint'),
+          },
+          {
+            // The card's only float row (table 112).
+            kind: 'number',
+            integer: false,
+            key: 'spec-draft-p-min',
+            label: t('preset-draft-p-min'),
+            hint: t('preset-draft-p-min-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-draft-n-min',
+            label: t('preset-draft-n-min'),
+            hint: t('preset-draft-n-min-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-draft-n-ubatch',
+            label: t('preset-draft-n-ubatch'),
+            hint: t('preset-draft-n-ubatch-hint'),
+          },
+          {
+            // The note of 90, at the GUI's place: before the two cache types
+            // it speaks of.
+            kind: 'note',
+            key: 'draft-cache-note',
+            text: t('preset-draft-cache-note'),
+          },
+          {
+            kind: 'select',
+            key: 'spec-draft-type-k',
+            options: CACHE_TYPES,
+            absent: 'default',
+            label: t('preset-draft-k-cache-type'),
+            hint: t('preset-draft-k-cache-type-hint'),
+          },
+          {
+            kind: 'select',
+            key: 'spec-draft-type-v',
+            options: CACHE_TYPES,
+            absent: 'default',
+            label: t('preset-draft-v-cache-type'),
+            hint: t('preset-draft-v-cache-type-hint'),
+          },
+        ],
+      },
+      {
+        // The four groups are the speculator names the file writes, so they are
+        // literals and not strings (114, D7). Each group's rows share their
+        // labels with another group's: the group tells them apart (113).
+        kind: 'group',
+        key: 'ngram-mod',
+        title: 'ngram-mod',
+        rows: [
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-mod-n-match',
+            label: t('preset-match-length'),
+            hint: t('preset-match-length-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-mod-n-min',
+            label: t('preset-min-draft'),
+            hint: t('preset-min-draft-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-mod-n-max',
+            label: t('preset-max-draft'),
+            hint: t('preset-max-draft-hint'),
+          },
+        ],
+      },
+      {
+        kind: 'group',
+        key: 'ngram-simple',
+        title: 'ngram-simple',
+        rows: [
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-simple-size-n',
+            label: t('preset-lookup-n-gram'),
+            hint: t('preset-ngram-simple-lookup-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-simple-size-m',
+            label: t('preset-draft-m-gram'),
+            hint: t('preset-ngram-simple-draft-hint'),
+          },
+        ],
+      },
+      {
+        kind: 'group',
+        key: 'ngram-map-k',
+        title: 'ngram-map-k',
+        rows: [
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-map-k-size-n',
+            label: t('preset-lookup-n-gram'),
+            hint: t('preset-ngram-map-lookup-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-map-k-size-m',
+            label: t('preset-draft-m-gram'),
+            hint: t('preset-ngram-map-draft-hint'),
+          },
+        ],
+      },
+      {
+        kind: 'group',
+        key: 'ngram-map-k4v',
+        title: 'ngram-map-k4v',
+        rows: [
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-map-k4v-size-n',
+            label: t('preset-lookup-n-gram'),
+            hint: t('preset-ngram-map-values-lookup-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-map-k4v-size-m',
+            label: t('preset-draft-m-gram'),
+            hint: t('preset-ngram-map-values-draft-hint'),
+          },
+          {
+            kind: 'number',
+            integer: true,
+            key: 'spec-ngram-map-k4v-min-hits',
+            label: t('preset-min-hits'),
+            hint: t('preset-min-hits-hint'),
+          },
+        ],
+      },
+    ],
+  },
 ]
 
 /** The string a key holds: absent and the empty string read alike (criterion
@@ -813,7 +1001,7 @@ function PresetField({
   row,
   values,
 }: {
-  row: Row
+  row: FieldRow
   values: Record<string, string>
 }) {
   if (row.kind === 'note') return <p className="note">{row.text}</p>
@@ -933,6 +1121,31 @@ function PresetField({
   )
 }
 
+/** One row of a card: a group is its heading and the division the heading
+ * names, holding its own rows; every other row is the field of `PresetField`. */
+function PresetRow({
+  row,
+  values,
+}: {
+  row: Row
+  values: Record<string, string>
+}) {
+  if (row.kind === 'group') {
+    const heading = `preset-group-${row.key}`
+    return (
+      <div className="subgroup">
+        <h4 id={heading}>{row.title}</h4>
+        <div role="group" aria-labelledby={heading}>
+          {row.rows.map((nested) => (
+            <PresetRow key={nested.key} row={nested} values={values} />
+          ))}
+        </div>
+      </div>
+    )
+  }
+  return <PresetField row={row} values={values} />
+}
+
 /** The cards, in the order of the table, each with the fields of its rows. */
 export default function PresetCards({
   values,
@@ -944,7 +1157,7 @@ export default function PresetCards({
       {CARDS.map((card) => (
         <Card key={card.title} title={card.title}>
           {card.rows.map((row) => (
-            <PresetField key={row.key} row={row} values={values} />
+            <PresetRow key={row.key} row={row} values={values} />
           ))}
         </Card>
       ))}

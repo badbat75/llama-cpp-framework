@@ -136,6 +136,24 @@ the page does not have. The Engine select stays as 2d made it (enabled, one opti
     (`aria-labelledby`), so fields that share a label in two groups ("Lookup n-gram", 2e.5) are told
     apart by their group ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
     [2.4.6](https://www.w3.org/TR/WCAG22/#headings-and-labels)).
+90a. **A group is drawn as the Server page's `.subgroup`** (added 2026-11-16 after the 2e.5 review:
+    the `h4` sat 12 px under the field above it and fields sit 24 px apart, so each heading read as
+    part of the group before it). The DOM, pinned in unit tests: each group is one
+    `div.subgroup`, a direct child of the card's `section.card`, holding exactly two children in
+    this order: the `h4` (with an `id`) and the `div role="group"` whose `aria-labelledby` is that
+    `id`; the group's fields and notes are inside that `div role="group"`. The same shape for the
+    Server page's SDK card (`ServerForm.tsx`), where only the `role="group"` div is optional (its
+    groups share no label). The style, `fe/src/index.css`: `.subgroup` takes `margin-top:
+    var(--space-5)` (was `--space-4`), for both pages; **a `.subgroup` right after the card's `h3`
+    takes no top margin** (`.card > h3 + .subgroup`), since space there would only part the group
+    from its own card's title: the `h3`'s own bottom margin is enough (the preset card's Draft model
+    group; the SDK card is not affected, its intro comes first). Checked in review, not in jsdom
+    (no CSS there): "above" = the `h4`'s top minus the bottom of the last visible child of the
+    field before it; "between" = a field's label top minus the bottom of the last visible child of
+    the field before it, in the same group. In Chromium and Firefox, at 1280 and 320 px: above 36
+    px, between 24 px (above must exceed between by at least 8 px). The first group: its `h4` 8 px
+    under the `h3`. ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships): the grouping
+    seen matches the grouping coded.)
 91. **Keyboard and screen reader**, for every sub-slice. Tab order on the preset page: skip link,
     banner, nav, `preset-back`, the Engine field's About toggle and select, then each field's About
     toggle in card and field order (Assets has none). Nothing else takes focus. A screen reader on
