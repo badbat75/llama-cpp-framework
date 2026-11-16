@@ -28,6 +28,25 @@ export type Card = { heading: string; fields: Label[] }
 export const PRESET_CARDS: Card[] = [
   { heading: 'preset-assets', fields: [] },
   {
+    heading: 'preset-hardware-config',
+    fields: [
+      'preset-gpu-layers',
+      'preset-moe-cpu-layers',
+      'preset-moe-cache',
+      'preset-dense-ffn-cpu-layers',
+      'preset-op-offload',
+      'preset-repack',
+      'preset-no-host-buffer',
+      'preset-lazy-tensors',
+      'preset-load-mode',
+      'preset-fit-to-vram',
+      'preset-fit-min-context',
+      'preset-fit-free-vram',
+      'preset-draft-device',
+      'preset-draft-gpu-layers',
+    ],
+  },
+  {
     heading: 'preset-resource-context',
     fields: [
       'preset-context-size',

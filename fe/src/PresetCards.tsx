@@ -12,7 +12,10 @@
 // 2e.3 adds the rows of its tables (criteria 101, 102) and, with them, the
 // kinds the renderer had not met: the checkbox, the note of a card (90) and
 // the device select (103), which in 2e holds only the file's value because
-// the device list arrives with 2f.
+// the device list arrives with 2f. 2e.4 adds the Hardware card (107) and, with
+// it, the unit of a text row, the empty option each device select names for
+// itself, a select matched ignoring case and space (Load mode), and a checkbox
+// the configurator only allows under a rule (Fit to VRAM, 108).
 import Card from './Card.tsx'
 import {
   CheckboxField,
@@ -42,28 +45,39 @@ type NumberRow = RowBase & {
 }
 
 /** A select: its options in the table's order, and the option an absent key
- * shows. */
+ * shows. `normalize` is the match of a key whose value the configurator reads
+ * ignoring case and surrounding space (`normalize_load_mode`), so such a value
+ * selects its option instead of becoming an extra one. */
 type SelectRow = RowBase & {
   kind: 'select'
   options: Option[]
   absent: string
+  normalize?: boolean
 }
 
-/** A text: one monospace input showing the string as it is. */
-type TextRow = RowBase & { kind: 'text' }
+/** A text: one monospace input showing the string as it is. The unit, when the
+ * table gives one, sits after the input (criterion 89). */
+type TextRow = RowBase & { kind: 'text'; unit?: string }
 
 /** A checkbox: one checkbox whose text is the toggle. `absent` is the state an
- * absent key shows and, as the configurator keeps what it has for a value it
- * cannot parse (`form.rs`: `unwrap_or(true)`), the state of such a value. */
+ * absent key shows and, as the configurator keeps the default it has for a key
+ * for a value it cannot parse, the state of such a value. */
 type CheckboxRow = RowBase & {
   kind: 'checkbox'
   toggle: string
   absent: boolean
+  /** A box the configurator only lets the user set under a rule (criterion
+   * 108: Fit to VRAM sizes the context and the GPU layers, so it is allowed
+   * while both are absent). Each key of `needsAbsent` must be absent; when one
+   * is not, the box shows unchecked, its text is `notAllowed` and the file's
+   * value decides nothing. */
+  allowed?: { needsAbsent: string[]; notAllowed: string }
 }
 
 /** A device select (criterion 103): the empty option, then the file's value
- * when it has one. The device list arrives with 2f. */
-type DeviceRow = RowBase & { kind: 'device' }
+ * when it has one. The device list arrives with 2f. `empty` is the text of the
+ * empty option, which each field words for its own device (110). */
+type DeviceRow = RowBase & { kind: 'device'; empty: string }
 
 /** A note between fields (criterion 90): the GUI's muted paragraph. Its `key`
  * is only the list's: a note reads no key of the file. */
@@ -130,18 +144,148 @@ const EFFORT: Option[] = [
   { value: 'max', text: t('option-maximum') },
 ]
 
-/** The empty option of a device select (103): the file names no device. */
-const DEVICE_NONE: Option = {
-  value: '',
-  text: t('preset-device-follows-model'),
-}
+/** The Lazy tensors options of 107 (MP 564-565): the file's value is the
+ * option's value, matched exactly. */
+const LAZY_MODES: Option[] = [
+  { value: 'default', text: t('option-default') },
+  { value: 'on', text: t('option-on') },
+  { value: 'auto', text: t('option-auto') },
+  { value: 'off', text: t('option-off') },
+]
 
-/** The cards built so far, in the order of criterion 83: the two of 2e.1
- * (Resource / context, 92, and Embeddings, 93) after the Assets card, the
- * three of 2e.2 (KV cache, 96, Sampling overrides, 97, and Advanced, 98), and
- * the two of 2e.3 (Chat / reasoning, 101, after KV cache, and Vision, 102,
- * after Advanced). */
+/** The Load mode options of 107 (MP 102-103 of `components.slint`): three
+ * strings, then the literals the file writes. */
+const LOAD_MODES: Option[] = [
+  { value: 'default', text: t('option-default') },
+  { value: 'auto', text: t('option-auto') },
+  { value: 'none', text: t('option-none') },
+  { value: 'mmap', text: 'mmap' },
+  { value: 'mlock', text: 'mlock' },
+  { value: 'mmap+mlock', text: 'mmap+mlock' },
+  { value: 'dio', text: 'dio' },
+]
+
+/** The cards built so far, in the order of criterion 83: the Hardware card of
+ * 2e.4 (107) after the Assets card, then the two of 2e.1 (Resource / context,
+ * 92, and Embeddings, 93), the three of 2e.2 (KV cache, 96, Sampling overrides,
+ * 97, and Advanced, 98), and the two of 2e.3 (Chat / reasoning, 101, after KV
+ * cache, and Vision, 102, after Advanced). */
 const CARDS: CardFields[] = [
+  {
+    title: t('preset-hardware-config'),
+    rows: [
+      {
+        kind: 'number',
+        integer: true,
+        key: 'n-gpu-layers',
+        label: t('preset-gpu-layers'),
+        hint: t('preset-gpu-layers-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'n-cpu-moe',
+        label: t('preset-moe-cpu-layers'),
+        hint: t('preset-moe-cpu-layers-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        unit: 'MiB',
+        key: 'moe-cache-mib',
+        label: t('preset-moe-cache'),
+        hint: t('preset-moe-cache-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'n-cpu-ffn',
+        label: t('preset-dense-ffn-cpu-layers'),
+        hint: t('preset-dense-ffn-cpu-layers-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'op-offload',
+        options: TRISTATE,
+        absent: 'default',
+        label: t('preset-op-offload'),
+        hint: t('preset-op-offload-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'repack',
+        options: TRISTATE,
+        absent: 'default',
+        label: t('preset-repack'),
+        hint: t('preset-repack-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'no-host',
+        options: OFF_ON,
+        absent: 'false',
+        label: t('preset-no-host-buffer'),
+        hint: t('preset-no-host-buffer-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'lazy-mode',
+        options: LAZY_MODES,
+        absent: 'default',
+        label: t('preset-lazy-tensors'),
+        hint: t('preset-lazy-tensors-hint'),
+      },
+      {
+        kind: 'select',
+        key: 'load-mode',
+        options: LOAD_MODES,
+        absent: 'default',
+        normalize: true,
+        label: t('preset-load-mode'),
+        hint: t('preset-load-mode-hint'),
+      },
+      {
+        kind: 'checkbox',
+        key: 'fit',
+        toggle: t('preset-fit-allowed'),
+        absent: false,
+        allowed: {
+          needsAbsent: ['ctx-size', 'n-gpu-layers'],
+          notAllowed: t('preset-fit-not-allowed'),
+        },
+        label: t('preset-fit-to-vram'),
+        hint: t('preset-fit-to-vram-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'fit-ctx',
+        label: t('preset-fit-min-context'),
+        hint: t('preset-fit-min-context-hint'),
+      },
+      {
+        kind: 'text',
+        unit: 'MiB',
+        key: 'fit-target',
+        label: t('preset-fit-free-vram'),
+        hint: t('preset-fit-free-vram-hint'),
+      },
+      {
+        kind: 'device',
+        key: 'device-draft',
+        empty: t('preset-device-same-as-model'),
+        label: t('preset-draft-device'),
+        hint: t('preset-draft-device-hint'),
+      },
+      {
+        kind: 'number',
+        integer: true,
+        key: 'n-gpu-layers-draft',
+        label: t('preset-draft-gpu-layers'),
+        hint: t('preset-draft-gpu-layers-hint'),
+      },
+    ],
+  },
   {
     title: t('preset-resource-context'),
     rows: [
@@ -447,6 +591,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'device',
         key: 'mmproj-device',
+        empty: t('preset-device-follows-model'),
         label: t('preset-vision-gpu'),
         hint: t('preset-vision-gpu-hint'),
       },
@@ -492,7 +637,8 @@ function parseBool(value: string): boolean | undefined {
 
 /** A select's options and its selected value. A value no option carries
  * becomes one extra last option holding it as its value and its text, selected
- * (criterion 87). */
+ * (criterion 87). A row that normalizes matches an option ignoring case and
+ * surrounding space, and the extra option still carries the value as written. */
 function shown(
   row: SelectRow,
   value: string | undefined,
@@ -501,8 +647,9 @@ function shown(
   value: string
 } {
   if (value === undefined) return { options: row.options, value: row.absent }
-  if (row.options.some((o) => o.value === value))
-    return { options: row.options, value }
+  const match = row.normalize ? value.trim().toLowerCase() : value
+  const hit = row.options.find((o) => o.value === match)
+  if (hit !== undefined) return { options: row.options, value: hit.value }
   return {
     options: [...row.options, { value, text: value }],
     value,
@@ -512,12 +659,24 @@ function shown(
 /** A device select's options and selected value (criterion 103): the empty
  * option first, then the device the file names as its own option, selected.
  * The page has no device list to add, so it lists no device of its own. */
-function shownDevice(value: string | undefined): {
+function shownDevice(
+  row: DeviceRow,
+  value: string | undefined,
+): {
   options: Option[]
   value: string
 } {
-  if (value === undefined) return { options: [DEVICE_NONE], value: '' }
-  return { options: [DEVICE_NONE, { value, text: value }], value }
+  const none = { value: '', text: row.empty }
+  if (value === undefined) return { options: [none], value: '' }
+  return { options: [none, { value, text: value }], value }
+}
+
+/** The state of a box the configurator only allows under a rule (criterion
+ * 108): the file's value is on for the two spellings the configurator reads as
+ * on, ignoring case and surrounding space (`from_keys`). */
+function allowedOn(value: string | undefined): boolean {
+  const text = value?.trim().toLowerCase() ?? ''
+  return text === 'on' || text === 'true'
 }
 
 /** The full-value line's limits, in characters (criterion 119): the number
@@ -580,11 +739,23 @@ function PresetField({
     )
   }
   if (row.kind === 'checkbox') {
+    // A box the configurator only allows under a rule (108) says so in its own
+    // text and, where it is not allowed, shows the file's value as off: the
+    // configurator would write it off at its next save.
+    const rule = row.allowed
+    const allowed =
+      rule === undefined ||
+      rule.needsAbsent.every((key) => held(values, key) === undefined)
     return (
       <CheckboxField
         {...common}
-        toggle={row.toggle}
-        checked={parseBool(value ?? '') ?? row.absent}
+        toggle={rule === undefined || allowed ? row.toggle : rule.notAllowed}
+        checked={
+          allowed &&
+          (rule === undefined
+            ? (parseBool(value ?? '') ?? row.absent)
+            : allowedOn(value))
+        }
         onChange={() => undefined}
       />
     )
@@ -597,13 +768,15 @@ function PresetField({
       <TextField
         {...common}
         value={text}
+        unit={row.unit}
         full={fullValue(row, text)}
         placeholder=""
         onChange={() => undefined}
       />
     )
   }
-  const select = row.kind === 'device' ? shownDevice(value) : shown(row, value)
+  const select =
+    row.kind === 'device' ? shownDevice(row, value) : shown(row, value)
   // What the user reads for a select is the selected option's text, which for
   // an unlisted value is the value itself (criterion 87). A device select
   // reads the file's device, and has nothing to repeat when the file names

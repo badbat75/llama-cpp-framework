@@ -352,11 +352,14 @@ export function TextField({
   full,
   value,
   placeholder,
+  unit,
   disabled,
   onChange,
 }: Common & {
   value: string
   placeholder: string
+  /** The literal unit after the input (5.2), where the caller gives one. */
+  unit?: string
   /** Omitted: the input is enabled. */
   disabled?: boolean
   onChange: (value: string) => void
@@ -373,6 +376,7 @@ export function TextField({
         onChange={(e) => onChange(e.target.value)}
         {...invalid(id, error)}
       />
+      {unit !== undefined && <span className="unit">{unit}</span>}
     </LabelField>
   )
 }

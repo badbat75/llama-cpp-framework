@@ -497,11 +497,19 @@ td {
 
 /* A note between a card's fields (DESIGN.md 5.2, 02e-preset-cards.md 90): the
    GUI's muted text, drawn as the card's intro is, at the place the GUI gives
-   it. Its padding keeps the fields' rhythm around it. */
+   it. The space above it is wider than the space below, so it sits with the
+   fields it introduces: the note takes the wider space above and a little
+   below, and the field that follows it drops the top padding every field
+   takes, so the note and its fields read as one block. A field that follows
+   anything else keeps its own padding. */
 .card .note {
-  padding: var(--space-2) 0;
+  padding: var(--space-4) 0 var(--space-1);
   color: var(--muted);
   font-size: 0.875rem;
+}
+
+.card .note + .field {
+  padding-top: 0;
 }
 
 .subgroup {

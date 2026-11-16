@@ -406,6 +406,53 @@ export const EN: Record<string, string> = {
   'preset-max-image-tokens-hint':
     'The most tokens each image is encoded to, on vision models with dynamic resolution. Lower it to limit the prefill cost and VRAM of large images.\nDefault: read from the model.\nFlag: --image-max-tokens',
   'preset-device-follows-model': '(default: follows device)',
+  'preset-hardware-config': 'Hardware config',
+  'preset-gpu-layers': 'GPU layers',
+  'preset-gpu-layers-hint':
+    "How many of the model's layers run on the GPU. The rest stay on the CPU: less VRAM, slower.\nDefault: all layers on the GPU. A model too big for it fails to load, unless Fit to VRAM is on.\nFlag: --n-gpu-layers",
+  'preset-moe-cpu-layers': 'MoE CPU layers',
+  'preset-moe-cpu-layers-hint':
+    "Frees VRAM by keeping the experts of this many layers on the CPU; generation gets slower. Only for MoE models: on a dense model use 'Dense FFN CPU layers' below.\nDefault: 0, every expert stays on the GPU with its layer.\nFlag: --n-cpu-moe",
+  'preset-moe-cache': 'MoE cache',
+  'preset-moe-cache-hint':
+    "VRAM set aside for recently used experts kept in RAM, so a token that needs them reads them from the card instead of over PCIe. Experimental.\nIt only acts on layers whose experts are ALL in RAM (MoE CPU layers above, or an exps=CPU Tensor placement rule); with none, llama.cpp runs without a cache.\nWith several GPUs the budget is split like the layers: by Tensor split, or by free VRAM when that is blank.\nThe model FAILS TO LOAD under Split mode tensor, and below the experts of one token.\nThe draft model never uses it, and the synthetic benchmark cannot measure it.\nDefault: 0, no cache (llama.cpp's own).\nFlag: --moe-cache-mib",
+  'preset-dense-ffn-cpu-layers': 'Dense FFN CPU layers',
+  'preset-dense-ffn-cpu-layers-hint':
+    "Frees VRAM by keeping the feed-forward weights (most of a layer's size) of the first N layers on the CPU; attention stays on the GPU. For dense models: on a MoE model it reaches only the dense layers such a model may have, never the experts.\nDefault: every feed-forward weight stays on the GPU with its layer.\nFlag: --n-cpu-ffn",
+  'preset-op-offload': 'Op offload',
+  'preset-op-offload-hint':
+    "Whether work on weights kept in RAM is still sent to the GPU. Worth trying when experts or other tensors are in RAM and the card sits on a narrow PCIe link: off then prefills faster, because those weights are no longer copied to the card on every prefill batch (the Qwen3.8-Flash-Next guide has the figures). Decode does not change.\nDefault: on (llama.cpp's own); off is the one value that changes anything. No effect when every weight is in VRAM.\nFlags: --op-offload, --no-op-offload",
+  'preset-repack': 'Repack',
+  'preset-repack-hint':
+    "When loading, rearranges weights kept in RAM into the layout the CPU's fast kernels use, for the types it has them for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512).\nOnly matters without a GPU, or with No host buffer on: with a GPU, weights in RAM go to its host buffer and this does nothing.\nDefault: on (llama.cpp's own); off is the one value that changes anything. No effect when no weight is in RAM.\nFlags: --repack, --no-repack",
+  'preset-no-host-buffer': 'No host buffer',
+  'preset-no-host-buffer-hint':
+    "Keeps weights left in RAM in ordinary memory instead of the GPU's pinned host buffer (RAM locked in place, which the GPU reads directly).\nOff (default, llama.cpp's own): pinned.\nOn: ordinary, pageable RAM, and the CPU repacks the types it can (see Repack). The copies Op offload makes then come from pageable memory, and repacked experts leave the MoE cache.\nNo effect when no weight is in RAM.\nFlag: --no-host",
+  'preset-lazy-tensors': 'Lazy tensors',
+  'preset-lazy-tensors-hint':
+    "Saves RAM on models with very large tables: reads them from disk as needed, a row per token, instead of keeping them in memory. Only a few architectures have such tables (such as gemma4 and qwen4exp); no effect on others. Keep the GGUF on an SSD.\nDefault: auto (llama.cpp's own): lazy only for a table over 4 GiB, and off if one of the model's devices cannot memory-map (an integrated GPU).\non = lazy whatever the size and the devices; off = always in RAM (no disk reads, but all of the RAM).\nWorks whatever Load mode says.\nFlag: --lazy-mode",
+  'preset-load-mode': 'Load mode',
+  'preset-load-mode-hint':
+    "How this model's weights get into memory. Pick one: the modes do not combine.\nDefault: auto (llama.cpp's own).\nauto: memory-maps the file (reads it on demand) unless a device can't; fastest to load.\nnone: reads the weights into RAM up front: slower, uses the model's size in RAM, but nothing can be dropped back to the file.\nmmap: always memory-maps.\nmlock: locks the weights in physical RAM WITHOUT memory-mapping: steady latency, needs room for the whole model.\nmmap+mlock: memory-maps and locks what it maps.\ndio: Direct I/O where the platform offers it.\nLazy tensors stay mapped whatever this says.\nFlag: --load-mode",
+  'preset-fit-to-vram': 'Fit to VRAM',
+  'preset-fit-to-vram-hint':
+    "Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.\nAvailable only with Context size and GPU layers at default. Off by default here, though llama.cpp's own default is on.\nWhen on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.\nFlag: -fit",
+  'preset-fit-allowed':
+    'auto-fit context and layers to device memory (-fit on)',
+  'preset-fit-not-allowed': 'needs Context size and GPU layers at default',
+  'preset-fit-min-context': 'Fit min context',
+  'preset-fit-min-context-hint':
+    "The smallest context Fit to VRAM may cut down to. Only used with Fit to VRAM on.\nDefault: 4096 (llama.cpp's own).\nFlag: --fit-ctx",
+  'preset-fit-free-vram': 'Fit free VRAM',
+  'preset-fit-free-vram-hint':
+    "How much VRAM Fit to VRAM leaves free, in MiB: one number for every device, or a comma-separated list in device order (such as 2048,1024). Only used with Fit to VRAM on.\nBlank = 1024 per device (llama.cpp's own).\nFlag: --fit-target",
+  'preset-draft-device': 'Draft device',
+  'preset-draft-device-hint':
+    "The GPU for a separate draft model file. Pin it to ONE device: MTP heads crash on an automatic multi-GPU split.\nA full-vocabulary DFlash or DSpark drafter under a layer split must sit on the GPU with the last layers, or it aborts at load; picking the file pins it there for you.\nDisabled with built-in MTP heads, which share the main model's GPU.\nBlank = automatic, same as the model.\nFlag: --device-draft",
+  'preset-draft-gpu-layers': 'Draft GPU layers',
+  'preset-draft-gpu-layers-hint':
+    'How many layers of a separate draft model file run on the GPU.\nFor an MTP head file, which has no layers, 99 puts the draft on the GPU and 0 on the CPU.\nPin a device above: MTP heads crash on an automatic multi-GPU split.\nDisabled with built-in MTP heads.\nDefault: all draft layers on the GPU.\nFlag: --n-gpu-layers-draft',
+  'preset-device-same-as-model': '(auto / same as model)',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
