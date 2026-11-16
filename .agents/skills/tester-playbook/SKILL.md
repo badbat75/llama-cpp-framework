@@ -31,6 +31,14 @@ Lessons only: the rules are in `AGENTS.md`.
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
 - A fake holds whatever you write; the real system can answer differently. A green on a fake is no
   proof about the real thing.
+- An assert message is a format string: a `{:?}` in it with no argument is a compile error ("1 positional
+  argument in format string, but no arguments were given"). Write `{{:?}}` to name Rust's quoting in the
+  message.
+- `let got: Vec<&str> = log_of_the_call().iter().map(String::as_str).collect();` is E0716 (the cloned Vec
+  is a temporary, freed while `got` borrows it): bind it first (`let recs = log_of_the_call();`).
+- A seam the core does not call yet: a private field only ever written (`action_log` behind a `with_log`
+  setter) raises NO `dead_code`/clippy red in a lib crate (checked: `clippy --all-targets -D warnings`
+  clean), so an unwired setter has no stub red to report and the reds are the assertions.
 - A `cases: [(&str, fn(&dyn ManagerClient) -> Option<ClientError>, Value); N]` table trips
   `clippy::type_complexity`: alias it (`type Case<'a> = (...)`), and rustfmt wants that alias written
   multi-line.
@@ -96,6 +104,13 @@ Lessons only: the rules are in `AGENTS.md`.
   `#[cfg(test)]`). A needle the test counts or forbids is split with `concat!` and kept out of the
   comment and assertion message. A top-level fn's body is found by `"\npub fn <name>("` (test fns are
   indented; presets.rs has test items before production fns).
+- A pin that a record/line format is "literal text, not a strings-file text" (the manager's log): in the
+  phase, `std::include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/<file>.rs"))`, cut at
+  `"\n#[cfg(test)]\n"` (that is where `mod fakes` starts, so the phases and this test are off the check),
+  then require each field needle (`action=`, `target=`, `caller=`, `principal=`, `outcome=`) and forbid
+  `strings::t(` / `strings::fill(`. The require-needles red today (no renderer yet); the forbid-needles
+  are green by construction (the file has no strings call), so report them as guards, not reds. Check the
+  counts with a `python3` one-off before claiming either.
 - A build script, a GitHub workflow or a `.wxs` cannot run in a test: pin its text with comment lines
   dropped first. When a workflow step checks reply fields, confirm names and values against the producer
   by hand (`/api/instances` in `crates/bff/src/lib.rs`, states in `crates/core/src/client.rs`).
@@ -148,11 +163,28 @@ Lessons only: the rules are in `AGENTS.md`.
   hides every later one. To see later phases or blocks red, on a backup copy replace the other calls with
   `{}` (deleting leaves `#[cfg(..)]` lines dangling) or turn the red block into `if false {`, then
   restore. The same holds for `manager_checks_e2e`.
+- Proving EVERY block of a multi-block phase reds for its own reason: a `python3` pass that finds the
+  phase's top-level blocks (the lines equal to `    {`, one per `// ──` header plus any inner block the
+  header opens) and, for each block, prefixes ALL THE OTHERS with `if false ` (valid: a statement block
+  becomes an `if` statement, no brace added), runs the filtered test, prints the panic line. The
+  CUMULATIVE prefix (disable the first `i`) proves only the first block: a disabled block never runs, so
+  every later run reports block 1's panic. A block that asserts "nothing was recorded" passes on a stub
+  by design: report it as a guard, not a red. Restore by `cp` and `sha256sum` against the backup, and
+  restore in a `finally` (an exception mid-loop leaves the tree patched; `git diff --stat` after each run
+  shows the patch is gone).
+- Blocks of ONE phase share its data root, so a later block's read expects what an earlier block wrote
+  (a presets file written in block 1): say so in a comment. The cumulative probe then shows a LATER block
+  red on the fixture (`left: Ok(Some(<older text>))`), not on its point: read the red, do not chase it; the
+  throwaway candidate greens the phase in order.
 - Functions that take the directory as a parameter, manager calls refused at authorization or asking
   only `Status`, and pure helpers are plain `#[test]`s.
 - A unit test whose expectation is a `paths::` default races the e2e redirect on another thread: assert
   the shape (`ends_with("state")`) and pin the exact value in an e2e phase. Reproduce such a race by
   looping `cargo test -p <crate> -- <unit> data_root_e2e`.
+- A phase that `set_current_dir`s (the cwd is PROCESS-global) makes every relative path a race with a test
+  running in parallel: read what you wrote by absolute path (`root.path().join("logs/x")`,
+  `env!("CARGO_MANIFEST_DIR")`). It shows as `left: []` in the FULL crate run and passes filtered, so the
+  candidate check runs the whole crate, not only the phase.
 - Needing the variable UNSET: re-run one ignored test in a child (`current_exe() --exact <path>
   --include-ignored --test-threads 1`, a marker env var, `env_remove` the redirect, a deadline, `"1
   passed"` in stdout; `system_connect_never_dials_from_a_test_binary`).
@@ -294,6 +326,18 @@ Lessons only: the rules are in `AGENTS.md`.
 - The manager's principal refusals are all `ManagerError::NotAuthorized`, whichever check failed (not
   the bff, ill-formed name, no member): pipe tests pin `error("NotAuthorized", ..)`, the client's
   `NotAdministrator` is its own reading of that name.
+- The manager's log of who acted (`ActionLog` / `Manager::with_log`): pin the record as the fake log's
+  whole lines (`action=".." target=".." caller=".." principal=".." outcome=..`, values `{:?}`-quoted, `-`
+  for no caller/principal, `ok`/`refused` bare, a failure's kind quoted). One hostile-name table where
+  EACH case gets its own manager and its own fake log, so "exactly one record" is provable; pin Rust's own
+  escaping by formatting the same value in the test (`format!("{:?}", caller.0)`), never by hand-writing
+  escapes. A candidate that greens it: each guarded method becomes a wrapper over a `*_inner(&Requester)`
+  plus one `log_call(action, target, who: Option<&Requester>, outcome: Option<&ManagerError>)` (the
+  `Option<&ManagerError>` shape takes both `Result<(), _>` and a `Result<Option<..>, _>` via
+  `.as_ref().err()`); the full crate green with that candidate proves the wrappers are behaviour-preserving.
+  The `log_call` helper goes in `impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R>` (a
+  bare `impl Manager` is E0107: the struct is generic). A failure's outcome: `format!("{e:?}")` cut at the
+  first `(`, then `{:?}`-quoted, so `Service(_)` and `AddressInUse(..)` both give the bare kind name.
 - In a plain `#[test]` of `manager/pipe.rs` (no data root) `Stop` is the only verb that may succeed:
   `start`, `restart` and `set_boot_enabled` ask `existing_id`, a file on disk. A refusal by a pure check
   carries any verb (id `../x` is InvalidId, name `server.ini` is BadFileName). A success that needs a

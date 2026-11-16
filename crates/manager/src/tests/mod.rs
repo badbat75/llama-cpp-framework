@@ -72,4 +72,7 @@ fn data_root_e2e() {
     // ── pai-core's D-Bus client, acting for a signed-in user ─────────────
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_principal_e2e();
+
+    // ── Manager core: the log of who acted (one record per guarded call) ──
+    crate::manager::service::manager_action_log_e2e();
 }

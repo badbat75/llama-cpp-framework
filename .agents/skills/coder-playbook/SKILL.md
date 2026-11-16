@@ -451,3 +451,21 @@ Lessons only: the rules are in `AGENTS.md`.
   the sender it saw, the test expectation is the stale part; report it.
 - `crates/core/src/client/dbus.rs` is `cfg(target_os = "linux")` (`client.rs`), so the windows-gnu
   clippy of `pai-core` does not compile it; say so in the report.
+- Each guarded manager method (start, stop, restart, read_file, write_file, set_boot_enabled) wraps
+  its body in a NAMED closure (`let run = || -> Result<(), ManagerError> { .. }; let answer = run();`),
+  then hands `(action, target, who, &answer)` to `Manager::record_action` and returns the answer.
+  `record_action` is generic over the Ok type, so `read_file`'s `Option<ManagerFile>` shares the one
+  helper, and its `who` is `Option<&Requester>` (`read_file` passes `who.as_ref()`: the bare
+  `caller=- principal=-` of a request with no requester is pinned). An immediately-invoked
+  `(|| { .. })()` of a 3-line body is `clippy::redundant_closure_call`'s pattern; the named closure
+  (what `write_served_file` already does) is not.
+- The action record's words are literal text in `service.rs` BEFORE the first `#[cfg(test)]`: the
+  e2e phase slices the source at `"\n#[cfg(test)]\n"` and wants `action=`, `target=`, `caller=`,
+  `principal=`, `outcome=` there and `strings::t(`/`strings::fill(` nowhere in the file, so the
+  renderer stays in this file and asks no strings file. The failure name of the outcome comes from
+  the private `error_kind` match beside `error_reply` (the same words); `ok` and `refused` are bare,
+  any other name is `{:?}`-quoted, and `format!("{:?}", s)` escaping a quote, a newline or a NUL is
+  what makes one record per call unforgeable.
+- An edit that inserts before a function must carry that function's whole body in BOTH oldString and
+  newString: an oldString of the signature plus one body line and a newString of only the signature
+  deleted that line, and the file read back broken.

@@ -228,6 +228,23 @@ pub fn error_reply(e: &ManagerError) -> (String, String) {
     (format!("org.privateai.Manager1.Error.{kind}"), message)
 }
 
+/// The error's own kind name, the same word `error_reply` puts in the
+/// transport's error name, and the one an action record writes (quoted) for a
+/// failed guarded call.
+fn error_kind(e: &ManagerError) -> &'static str {
+    match e {
+        ManagerError::NotAuthorized => "NotAuthorized",
+        ManagerError::InvalidId => "InvalidId",
+        ManagerError::NoInstance => "NoInstance",
+        ManagerError::BadFileName => "BadFileName",
+        ManagerError::AddressInUse(_) => "AddressInUse",
+        ManagerError::UnresolvableHost(_) => "UnresolvableHost",
+        ManagerError::Service(_) => "Service",
+        ManagerError::Io(_) => "Io",
+        ManagerError::Invalid(_) => "Invalid",
+    }
+}
+
 /// The lowercase name `Status` answers for a unit state.
 pub fn state_name(state: UnitState) -> &'static str {
     match state {
@@ -237,6 +254,29 @@ pub fn state_name(state: UnitState) -> &'static str {
         UnitState::Activating => "activating",
         UnitState::Deactivating => "deactivating",
     }
+}
+
+/// The log of who acted: the manager renders one record per guarded call
+/// (start, stop, restart, read_file, write_file, set_boot_enabled), done or
+/// refused, and hands the whole line to this seam. The record names the
+/// action, the target (instance id or file name), the caller, the principal
+/// (`-` when none) and the outcome, with every name written with Rust's
+/// `{:?}` quoting, so nothing a name carries can forge a second record.
+/// Never a password, never file contents. The format is literal text, not
+/// a strings-file text: administrators and scripts read the records, like
+/// the comments written into the served files.
+pub trait ActionLog {
+    /// Write one whole record line.
+    fn record(&self, line: &str);
+}
+
+/// The log [`Manager::new`] starts with: records nothing. The service entry
+/// installs the OS's writer (stderr on Linux, the appended file on Windows)
+/// with [`Manager::with_log`].
+struct NoActionLog;
+
+impl ActionLog for NoActionLog {
+    fn record(&self, _line: &str) {}
 }
 
 /// A file of the system config directory the manager serves.
@@ -433,6 +473,8 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     group: Box<dyn FileGroup + Send + Sync>,
     /// Checks the passwords [`Manager::authenticate`] is given.
     passwords: Box<dyn PasswordChecker + Send + Sync>,
+    /// Records every guarded call, done or refused, through [`ActionLog`].
+    action_log: Box<dyn ActionLog + Send + Sync>,
     /// Held by a write from its address check to its rename, so a check
     /// sees every write before it (and `write_served_file`'s one temp
     /// name per file is never shared). Taken only after the authorization:
@@ -448,6 +490,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             resolver,
             group: Box::new(SystemGroup),
             passwords: Box::new(SystemPasswords),
+            action_log: Box::new(NoActionLog),
             writing: std::sync::Mutex::new(()),
         }
     }
@@ -466,6 +509,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         passwords: impl PasswordChecker + Send + Sync + 'static,
     ) -> Self {
         self.passwords = Box::new(passwords);
+        self
+    }
+
+    /// This manager recording every guarded call, done or refused, through
+    /// `log`, in place of the silent [`NoActionLog`].
+    pub fn with_log(mut self, log: impl ActionLog + Send + Sync + 'static) -> Self {
+        self.action_log = Box::new(log);
         self
     }
 
@@ -494,21 +544,39 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     }
 
     pub fn start<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
-        self.authorize_as(&who.as_requester(), Action::Control)?;
-        existing_id(id)?;
-        self.service.start(id).map_err(ManagerError::Service)
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Control)?;
+            existing_id(id)?;
+            self.service.start(id).map_err(ManagerError::Service)
+        };
+        let answer = run();
+        self.record_action("start", id, Some(&who), &answer);
+        answer
     }
 
     pub fn stop<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
-        self.authorize_as(&who.as_requester(), Action::Control)?;
-        valid_id(id)?;
-        self.service.stop(id).map_err(ManagerError::Service)
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Control)?;
+            valid_id(id)?;
+            self.service.stop(id).map_err(ManagerError::Service)
+        };
+        let answer = run();
+        self.record_action("stop", id, Some(&who), &answer);
+        answer
     }
 
     pub fn restart<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
-        self.authorize_as(&who.as_requester(), Action::Control)?;
-        existing_id(id)?;
-        self.service.restart(id).map_err(ManagerError::Service)
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Control)?;
+            existing_id(id)?;
+            self.service.restart(id).map_err(ManagerError::Service)
+        };
+        let answer = run();
+        self.record_action("restart", id, Some(&who), &answer);
+        answer
     }
 
     /// The contents of file `name`, None when it does not exist. An instance
@@ -525,37 +593,42 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         name: &str,
     ) -> Result<Option<pai_core::client::ManagerFile>, ManagerError> {
         let who = who.map(AsRequester::as_requester);
-        // A request naming a principal is gated first, whatever the file: the
-        // pair (the bff's account, a current member) is its only right.
-        if let Some(who) = &who {
-            self.gate_principal(who)?;
-        }
-        let file = config_file(name).ok_or(ManagerError::BadFileName)?;
-        let mut may_configure = true;
-        if let ConfigFile::Instance(_) = file {
-            match &who {
-                // Gated above: polkit is asked for neither action, and a
-                // member of `pai` may configure, so nothing is withheld.
-                Some(who) if who.principal.is_some() => {}
-                Some(who) => {
-                    self.authorize(&who.caller, Action::Control)?;
-                    may_configure = self
-                        .authority
-                        .is_authorized_quietly(&who.caller, Action::Configure);
-                }
-                None => return Err(ManagerError::NotAuthorized),
+        let run = || -> Result<Option<pai_core::client::ManagerFile>, ManagerError> {
+            // A request naming a principal is gated first, whatever the file:
+            // the pair (the bff's account, a current member) is its only right.
+            if let Some(who) = &who {
+                self.gate_principal(who)?;
             }
-        }
-        let path = file_path(name)?;
-        match std::fs::read_to_string(path) {
-            Ok(text) if may_configure => Ok(Some(pai_core::client::ManagerFile {
-                text,
-                withheld: false,
-            })),
-            Ok(text) => Ok(Some(withhold_api_key(&text))),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(ManagerError::Io(e.kind())),
-        }
+            let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+            let mut may_configure = true;
+            if let ConfigFile::Instance(_) = file {
+                match &who {
+                    // Gated above: polkit is asked for neither action, and a
+                    // member of `pai` may configure, so nothing is withheld.
+                    Some(who) if who.principal.is_some() => {}
+                    Some(who) => {
+                        self.authorize(&who.caller, Action::Control)?;
+                        may_configure = self
+                            .authority
+                            .is_authorized_quietly(&who.caller, Action::Configure);
+                    }
+                    None => return Err(ManagerError::NotAuthorized),
+                }
+            }
+            let path = file_path(name)?;
+            match std::fs::read_to_string(path) {
+                Ok(text) if may_configure => Ok(Some(pai_core::client::ManagerFile {
+                    text,
+                    withheld: false,
+                })),
+                Ok(text) => Ok(Some(withhold_api_key(&text))),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(ManagerError::Io(e.kind())),
+            }
+        };
+        let answer = run();
+        self.record_action("read_file", name, who.as_ref(), &answer);
+        answer
     }
 
     /// Replace file `name` atomically, creating the directory; a new
@@ -569,38 +642,44 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         contents: &str,
         keep_api_key: bool,
     ) -> Result<(), ManagerError> {
-        self.authorize_as(&who.as_requester(), Action::Configure)?;
-        let file = config_file(name).ok_or(ManagerError::BadFileName)?;
-        // A poisoned lock is taken over: it guards no data of its own.
-        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
-        let kept;
-        let contents = match &file {
-            ConfigFile::Instance(_) if keep_api_key => {
-                // An unreadable file says nothing about the key: refused,
-                // since writing the text as sent could erase it.
-                let held = match std::fs::read_to_string(file_path(name)?) {
-                    Ok(t) => crate::server_cfg::from_text(&t).opencode_api_key,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(ManagerError::Io(e.kind())),
-                };
-                match held {
-                    Some(key) => {
-                        kept = keep_held_api_key(contents, &key);
-                        kept.as_str()
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let kept;
+            let contents = match &file {
+                ConfigFile::Instance(_) if keep_api_key => {
+                    // An unreadable file says nothing about the key: refused,
+                    // since writing the text as sent could erase it.
+                    let held = match std::fs::read_to_string(file_path(name)?) {
+                        Ok(t) => crate::server_cfg::from_text(&t).opencode_api_key,
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => return Err(ManagerError::Io(e.kind())),
+                    };
+                    match held {
+                        Some(key) => {
+                            kept = keep_held_api_key(contents, &key);
+                            kept.as_str()
+                        }
+                        None => contents,
                     }
-                    None => contents,
                 }
+                _ => contents,
+            };
+            check_contents(&file, contents).map_err(ManagerError::Invalid)?;
+            if let ConfigFile::Instance(id) = &file {
+                self.check_address(id, contents)?;
             }
-            _ => contents,
+            let dir = crate::paths::engine_config_dir();
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            std::fs::create_dir_all(&dir).map_err(io)?;
+            write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
         };
-        check_contents(&file, contents).map_err(ManagerError::Invalid)?;
-        if let ConfigFile::Instance(id) = &file {
-            self.check_address(id, contents)?;
-        }
-        let dir = crate::paths::engine_config_dir();
-        let io = |e: std::io::Error| ManagerError::Io(e.kind());
-        std::fs::create_dir_all(&dir).map_err(io)?;
-        write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
+        let answer = run();
+        self.record_action("write_file", name, Some(&who), &answer);
+        answer
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
@@ -619,11 +698,17 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         id: &str,
         enabled: bool,
     ) -> Result<(), ManagerError> {
-        self.authorize_as(&who.as_requester(), Action::Configure)?;
-        existing_id(id)?;
-        self.service
-            .set_boot_enabled(id, enabled)
-            .map_err(ManagerError::Service)
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            existing_id(id)?;
+            self.service
+                .set_boot_enabled(id, enabled)
+                .map_err(ManagerError::Service)
+        };
+        let answer = run();
+        self.record_action("set_boot_enabled", id, Some(&who), &answer);
+        answer
     }
 
     /// Whether `password` is `user`'s, and whether that user may configure:
@@ -648,6 +733,42 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             Ok(false) => Ok((false, false)),
             Err(PasswordError(message)) => Err(ManagerError::Service(ServiceError(message))),
         }
+    }
+
+    /// The log of one guarded call: renders the record and hands the whole
+    /// line to [`ActionLog::record`], once per call, done or refused. The
+    /// record names the `action` (the method's own name), the `target` (the
+    /// instance id or file name as it was asked for), the caller, the principal
+    /// (a bare `-` when absent) and `answer`'s outcome: `ok` when the call ran,
+    /// `refused` for [`ManagerError::NotAuthorized`], the error's own name for
+    /// any other failure. Each name is written with Rust's `{:?}` quoting, so a
+    /// caller or principal carrying a quote, a newline or a NUL forges no second
+    /// record. Never a password, never file contents: a write names only the
+    /// file it wrote.
+    fn record_action<T>(
+        &self,
+        action: &str,
+        target: &str,
+        who: Option<&Requester>,
+        answer: &Result<T, ManagerError>,
+    ) {
+        let quoted = |name: Option<&str>| match name {
+            Some(name) => format!("{name:?}"),
+            None => "-".to_string(),
+        };
+        let outcome = match answer {
+            Ok(_) => "ok".to_string(),
+            Err(ManagerError::NotAuthorized) => "refused".to_string(),
+            Err(e) => format!("{:?}", error_kind(e)),
+        };
+        let caller = quoted(who.map(|who| who.caller.0.as_str()));
+        let principal = quoted(
+            who.and_then(|who| who.principal.as_ref())
+                .map(|principal| principal.0.as_str()),
+        );
+        self.action_log.record(&format!(
+            "action={action:?} target={target:?} caller={caller} principal={principal} outcome={outcome}"
+        ));
     }
 
     fn authorize(&self, caller: &Caller, action: Action) -> Result<(), ManagerError> {
@@ -1181,6 +1302,25 @@ pub(crate) mod fakes {
                 Some(kind) => Err(kind.into()),
                 None => Ok(()),
             }
+        }
+    }
+
+    /// An action log that keeps every record line the manager renders, so a
+    /// test pins the records whole: one per guarded call, refusals included.
+    #[derive(Default)]
+    pub struct FakeActionLog {
+        pub lines: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakeActionLog {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl ActionLog for FakeActionLog {
+        fn record(&self, line: &str) {
+            self.lines.lock().unwrap().push(line.to_string());
         }
     }
 
@@ -3645,6 +3785,432 @@ pub(crate) fn manager_principal_e2e() {
             vec!["alice".to_string()],
             "the read that is answered is the one that looked the membership up"
         );
+    }
+}
+
+/// E2E phase for the log of who acted: every guarded call (start, stop,
+/// restart, read_file, write_file, set_boot_enabled), done or refused,
+/// writes exactly one record through the `ActionLog` seam installed with
+/// `Manager::with_log`, naming the action, the target (instance id or file
+/// name), the caller, the principal (`-` when none) and the outcome. Values
+/// are written with Rust's `{:?}` quoting, so a caller or principal
+/// carrying a quote, a newline or a NUL cannot forge a second record. Never
+/// a password, never file contents. Unguarded calls record nothing. The
+/// record format is literal text, as the comments written into the served
+/// files: administrators and scripts read it.
+#[cfg(test)]
+pub(crate) fn manager_action_log_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+    let presets = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
+    let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
+    std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
+    std::fs::write(sys.join("presets.ini"), presets).expect("presets file");
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+
+    let bff = Caller(":1.9".into());
+    let alice = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let bob = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+
+    // A manager wired to a fresh fake log: the records land in the `lines`
+    // handle the test keeps beside it.
+    let core = |allow: bool, passwords: FakePasswords, service: FakeService, log: FakeActionLog| {
+        Manager::new(
+            service,
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+
+    // ── One record per guarded call done, in the pinned format ──────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), FakeService::new(), log);
+        assert_eq!(m.start(&alice, "default"), Ok(()));
+        assert_eq!(m.stop(&alice, "default"), Ok(()));
+        assert_eq!(m.restart(&alice, "default"), Ok(()));
+        assert_eq!(
+            m.set_boot_enabled(&alice, "default", true),
+            Ok(()),
+            "start at boot is a guarded call too"
+        );
+        assert_eq!(m.write_file(&alice, "presets.ini", other, false), Ok(()));
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Ok(Some(plain(ini)))
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "presets.ini"),
+            Ok(Some(plain(other))),
+            "the preset file needs no right, yet the read of it is recorded"
+        );
+        let recs = records(&lines);
+        let got: Vec<&str> = recs.iter().map(String::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                r#"action="start" target="default" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="stop" target="default" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="restart" target="default" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="set_boot_enabled" target="default" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="read_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+            ],
+            "one record per guarded call: action, target (id or file name), caller, principal, outcome, in this order, all values {{:?}}-quoted, ok unquoted"
+        );
+        for line in records(&lines) {
+            assert!(!line.contains('\n'), "a record is one line: {line:?}");
+            assert!(!line.contains('\0'), "a record carries no NUL: {line:?}");
+        }
+    }
+
+    // ── Refusals and failures: one record each, refused or the error name ─
+    {
+        let mut service = FakeService::new();
+        service.failing = vec!["default".into()];
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), service, log);
+        assert_eq!(m.start(&bob, "default"), Err(ManagerError::NotAuthorized));
+        assert_eq!(
+            m.write_file(&bob, "presets.ini", presets, false),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            m.read_file(Some(&bob), "server@default.ini"),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            m.start(&alice, "ghost"),
+            Err(ManagerError::NoInstance),
+            "a valid id with no server@ghost.ini"
+        );
+        assert_eq!(
+            m.start(&alice, "../x"),
+            Err(ManagerError::InvalidId),
+            "not an id at all"
+        );
+        assert_eq!(
+            m.write_file(&alice, "nope.ini", presets, false),
+            Err(ManagerError::BadFileName)
+        );
+        let failed = m
+            .start(&alice, "default")
+            .expect_err("the fake service fails");
+        assert!(
+            matches!(failed, ManagerError::Service(_)),
+            "the service manager's own failure: {failed:?}"
+        );
+        assert_eq!(
+            m.write_file(&alice, "server@logtest.ini", ini, false),
+            Err(ManagerError::AddressInUse("default".into())),
+            "the new instance collides with default on 127.0.0.1:8080"
+        );
+        assert_eq!(
+            m.read_file(None::<&Caller>, "server@default.ini"),
+            Err(ManagerError::NotAuthorized),
+            "a request with no requester reads nothing"
+        );
+        let recs = records(&lines);
+        let got: Vec<&str> = recs.iter().map(String::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                r#"action="start" target="default" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="write_file" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="read_file" target="server@default.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="start" target="ghost" caller=":1.9" principal="alice" outcome="NoInstance""#,
+                r#"action="start" target="../x" caller=":1.9" principal="alice" outcome="InvalidId""#,
+                r#"action="write_file" target="nope.ini" caller=":1.9" principal="alice" outcome="BadFileName""#,
+                r#"action="start" target="default" caller=":1.9" principal="alice" outcome="Service""#,
+                r#"action="write_file" target="server@logtest.ini" caller=":1.9" principal="alice" outcome="AddressInUse""#,
+                r#"action="read_file" target="server@default.ini" caller=- principal=- outcome=refused"#,
+            ],
+            "a refusal is recorded too: `refused` for NotAuthorized, the error's own name (quoted) for a failure, with the target as requested and `caller=-` for a request with no requester"
+        );
+    }
+
+    // ── The caller's own call: recorded with `principal=-` ───────────────
+    // The files here are as the blocks above left them: `presets.ini` holds
+    // `other`, the text the first block wrote (this block runs after it, in
+    // this one phase).
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), FakeService::new(), log);
+        assert_eq!(m.start(&desktop, "default"), Ok(()));
+        assert_eq!(m.stop(&desktop, "default"), Ok(()));
+        assert_eq!(
+            m.read_file(Some(&desktop), "server@default.ini"),
+            Ok(Some(plain(ini))),
+            "a desktop reader here may configure, so nothing is withheld"
+        );
+        assert_eq!(
+            m.read_file(Some(&desktop), "presets.ini"),
+            Ok(Some(plain(other))),
+            "a preset file needs no right, yet it is recorded like any guarded call"
+        );
+        let recs = records(&lines);
+        let got: Vec<&str> = recs.iter().map(String::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                r#"action="start" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="stop" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="read_file" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="read_file" target="presets.ini" caller=":1.42" principal=- outcome=ok"#,
+            ],
+            "a call with no principal is recorded with `principal=-`"
+        );
+    }
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), FakeService::new(), log);
+        assert_eq!(
+            m.start(&desktop, "default"),
+            Err(ManagerError::NotAuthorized),
+            "polkit refuses this caller"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="start" target="default" caller=":1.42" principal=- outcome=refused"#
+                    .to_string()
+            ],
+            "the refused call of a caller with no principal is recorded, refused"
+        );
+    }
+
+    // ── Never a password, never file contents ────────────────────────────
+    // The text written and read here carries a marker: the write really
+    // lands (the file on disk proves the record below exists for a real
+    // write), and no record names the marker.
+    {
+        let secret = "sk-LOG-NEVER-9d21";
+        let secret_presets = format!("[Qwen3.8-27B]\nmodel = /m/{secret}.gguf\n");
+        let secret_ini = ini.replace("sk-local-3f9a", secret);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), FakeService::new(), log);
+        assert_eq!(
+            m.write_file(&alice, "presets.ini", &secret_presets, false),
+            Ok(())
+        );
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", &secret_ini, false),
+            Ok(())
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "server@default.ini"),
+            Ok(Some(plain(&secret_ini)))
+        );
+        assert_eq!(
+            m.write_file(&bob, "presets.ini", &secret_presets, false),
+            Err(ManagerError::NotAuthorized),
+            "the refused write of a secret is a record as well"
+        );
+        assert!(
+            text_of("server@default.ini").contains(secret),
+            "the write of the secret landed: its record is below"
+        );
+        let recs = records(&lines);
+        let got: Vec<&str> = recs.iter().map(String::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                r#"action="write_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
+            ]
+        );
+        for line in records(&lines) {
+            assert!(
+                !line.contains(secret),
+                "a record carries the target and the outcome, never the text: {line:?}"
+            );
+        }
+    }
+
+    // ── A record cannot be forged: names are written {:?}-quoted ─────────
+    // Each hostile value runs ONE guarded call on a manager of its own: the
+    // fake log must hold exactly one record, on one line, with the value
+    // written whole (Rust's own escaping, pinned by formatting the same
+    // value here).
+    {
+        let cases: Vec<(Caller, Option<Principal>, &str)> = vec![
+            (bff.clone(), Some(Principal("ali\"ce".into())), "refused"),
+            (bff.clone(), Some(Principal("ali\nce".into())), "refused"),
+            (bff.clone(), Some(Principal("ali\u{0}ce".into())), "refused"),
+            (Caller(":1.9\"x".into()), None, "ok"),
+            (Caller(":1.9\nx".into()), None, "ok"),
+            (Caller(":1.9\u{0}x".into()), None, "ok"),
+        ];
+        for (caller, principal, outcome) in cases {
+            let who = Requester {
+                caller: caller.clone(),
+                principal: principal.clone(),
+            };
+            let log = FakeActionLog::new();
+            let lines = log.lines.clone();
+            let m = core(true, FakePasswords::new(), FakeService::new(), log);
+            let answer = m.start(&who, "default");
+            if outcome == "ok" {
+                assert_eq!(answer, Ok(()), "{who:?}: the call itself runs");
+            } else {
+                assert_eq!(
+                    answer,
+                    Err(ManagerError::NotAuthorized),
+                    "{who:?}: the principal gate refuses"
+                );
+            }
+            let recs = records(&lines);
+            assert_eq!(
+                recs.len(),
+                1,
+                "{who:?}: exactly one record, a hostile name forged no second"
+            );
+            let line = &recs[0];
+            assert!(!line.contains('\n'), "{who:?}: one line: {line:?}");
+            assert!(!line.contains('\0'), "{who:?}: no raw NUL: {line:?}");
+            assert!(
+                line.contains(&format!("caller={:?}", caller.0)),
+                "the caller written {{:?}}-quoted in: {line}"
+            );
+            if let Some(named) = &principal {
+                assert!(
+                    line.contains(&format!("principal={:?}", named.0)),
+                    "the principal written {{:?}}-quoted in: {line}"
+                );
+            }
+            assert!(
+                line.ends_with(&format!("outcome={outcome}")),
+                "the record ends with the outcome: {line}"
+            );
+        }
+        // The quote is no control character: that principal is a well formed
+        // name, so the refusal is the account lookup, and the record shows
+        // the name exactly as asked, escaped inside the quoted value.
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, p, FakeService::new(), log);
+        assert_eq!(
+            m.start(
+                &Requester {
+                    caller: bff.clone(),
+                    principal: Some(Principal("ali\"ce".into())),
+                },
+                "default"
+            ),
+            Err(ManagerError::NotAuthorized)
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["ali\"ce".to_string()],
+            "refused as an unknown account, not as an illegible name"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="start" target="default" caller=":1.9" principal="ali\"ce" outcome=refused"#
+                    .to_string()
+            ],
+            "the quote is escaped inside the quoted value: one line, one record"
+        );
+    }
+
+    // ── Unguarded calls record nothing ───────────────────────────────────
+    // The list, the reads, the sign-in: no record, so the sign-in password
+    // is nowhere in the log. `Version` is answered by the transport faces
+    // (manager/pipe.rs, manager/dbus.rs), not by the core, and reaches no
+    // record.
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), FakeService::new(), log);
+        assert_eq!(m.list_instances(), vec!["default".to_string()]);
+        assert_eq!(m.status("default"), Ok(UnitState::Active));
+        assert_eq!(m.status("../x"), Err(ManagerError::InvalidId));
+        assert_eq!(m.boot_enabled("default"), Ok(false));
+        assert_eq!(
+            m.authenticate(&bff, "alice", "s3cret-Pw"),
+            Ok((true, true)),
+            "the sign-in that succeeds"
+        );
+        assert_eq!(
+            m.authenticate(&desktop, "alice", "s3cret-Pw"),
+            Err(ManagerError::NotAuthorized),
+            "the sign-in refused to a caller that is not the bff"
+        );
+        assert_eq!(
+            records(&lines),
+            Vec::<String>::new(),
+            "no record for a call that is not guarded, so no password ever reaches the log"
+        );
+        for line in records(&lines) {
+            assert!(
+                !line.contains("s3cret-Pw"),
+                "the sign-in password is never in a record: {line:?}"
+            );
+        }
+    }
+
+    // ── A literal format, not a strings-file text ────────────────────────
+    // Administrators and scripts read the records, like the comments written
+    // into the served files, so the rendering is literal text in this file's
+    // production code (before the first `#[cfg(test)]`: the fakes, the phases
+    // and this test are cut away) and asks no strings file.
+    {
+        let source = std::include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/manager/service.rs"
+        ));
+        let production = source
+            .split("\n#[cfg(test)]\n")
+            .next()
+            .expect("production text of service.rs");
+        for field in [
+            concat!("act", "ion="),
+            concat!("tar", "get="),
+            concat!("call", "er="),
+            concat!("prin", "cipal="),
+            concat!("outc", "ome="),
+        ] {
+            assert!(
+                production.contains(field),
+                "the record renders {field:?} as literal text, in the code that builds the line"
+            );
+        }
+        for call in [concat!("strings", "::t("), concat!("strings", "::fill(")] {
+            assert!(
+                !production.contains(call),
+                "the record is not a strings-file text: {call:?} has no place in this file"
+            );
+        }
     }
 }
 
