@@ -258,6 +258,42 @@ export const EN: Record<string, string> = {
   'preset-drafter': 'Drafter',
   'preset-ngram-drafters': 'N-gram drafters',
   'preset-value-none': '(none)',
+  // Slice 2e.1 (fe/briefs/02e-preset-cards.md, criterion 95): the read-only
+  // Notice, the Resource / context and Embeddings cards, and the pooling
+  // options the shared texts of 1.3 lack. The hints are the GUI's tooltips
+  // (en_US.toml), unchanged except preset-context-size-hint, whose web text
+  // criterion 92 gives.
+  'preset-read-only':
+    "Read-only for now: this page cannot change a preset's settings yet. Change them in pai-config on the server machine.",
+  'preset-resource-context': 'Resource / context',
+  'preset-context-size': 'Context size',
+  'preset-context-size-hint':
+    "How many tokens of conversation the model can hold. Bigger = longer history, more VRAM for the KV cache. It can be divided among requests: see Parallel slots.\nDefault: 0 (llama.cpp's own), meaning the context the model was trained with.\nFlag: --ctx-size",
+  'preset-parallel-slots': 'Parallel slots',
+  'preset-parallel-slots-hint':
+    "How many requests can run at once. A number you set DIVIDES the context among them: 2 leaves each request half of Context size.\nDefault: auto (llama-server's own), 4 slots sharing one KV cache, so one request can use the WHOLE context. Leave it at default to give one request the model's full context.\nFlag: --parallel",
+  'preset-unified-kv': 'Unified KV',
+  'preset-unified-kv-hint':
+    'One KV cache shared by all parallel slots, so any request can grow into the WHOLE context instead of its own share.\nOn pays off when requests are uneven (one long, others short). Off gives each slot a fixed share, so one long request cannot starve the others.\nDefault: off with Parallel slots set. With Parallel slots at default, llama-server turns it on anyway, so this is disabled.\nFlags: --kv-unified, --no-kv-unified',
+  'preset-per-slot-context': 'Per-slot context',
+  'preset-per-slot-context-hint':
+    "Limits every slot to this many tokens. Works with Unified KV on or off.\nWith Context size at default it also sizes the KV cache as Parallel slots × this value, instead of the model's trained context: 4 slots at 32768 allocate 128k tokens.\nDefault: no limit.\nFlag: --kv-unified-per-slot",
+  'preset-batch-size': 'Batch size',
+  'preset-batch-size-hint':
+    "How many tokens of a prompt are handled per step. Higher speeds up prefill (reading the prompt) and uses more VRAM.\nDefault: 2048 (llama.cpp's own).\nFlag: --batch-size",
+  'preset-u-batch-size': 'U-Batch size',
+  'preset-u-batch-size-hint':
+    "How many tokens are actually computed at once. Must not exceed Batch size.\nDefault: 512 (llama.cpp's own).\nFlag: --ubatch-size",
+  'preset-embeddings': 'Embeddings',
+  'preset-embedding-mode': 'Embedding mode',
+  'preset-embedding-mode-hint':
+    'Serves this model as an embedding model, turning on /v1/embeddings (without it, llama-server answers 501 "This server does not support embeddings"). Only for dedicated embedding models.\nEvery input must fit in one batch: set Batch size and U-Batch size above to at least your longest text, or the request fails with "input is too large" (U-Batch size defaults to 512 tokens).\nDefault: off.\nFlag: --embeddings',
+  'preset-pooling': 'Pooling',
+  'preset-pooling-hint':
+    "How a text's token vectors become ONE embedding. Only used in embedding mode.\nDefault: the model's own, read from its GGUF.\nnone = one vector per token; mean = their average; cls = the first token's; last = the last token's (Qwen3-Embedding); rank = the reranker head.\nA wrong choice gives no error, only vectors of the right size that search worse.\nFlag: --pooling",
+  'option-mean': 'mean',
+  'option-last': 'last',
+  'option-rank': 'rank',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */

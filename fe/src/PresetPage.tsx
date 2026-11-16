@@ -2,13 +2,16 @@
 // list, the id as the heading, and the preset read once each time the page
 // opens from GET /api/presets/<id>, or the message saying why it is not there
 // (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
-// Engine field and the Assets card as text, with nothing to save (2d.5 to
-// 2d.7): the settings arrive with the pickers that will change them.
+// Engine field, the Assets card as text and the plain cards of the settings
+// (fe/briefs/02e-preset-cards.md, section 1): every control of a card is
+// disabled, the page shows the file and cannot change it yet, so there is
+// nothing to save.
 import { Fragment, useEffect, useState } from 'react'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Card from './Card.tsx'
 import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
+import PresetCards from './PresetCards.tsx'
 import { presetIdUnreadable } from './route.ts'
 import { t } from './strings.ts'
 
@@ -188,6 +191,7 @@ function Content({ doc }: { doc: PresetDoc }) {
       {!doc.enabled && <p>{t('preset-off')}</p>}
       <section>
         <h2>{t('preset-settings-title')}</h2>
+        <p className="notice">{t('preset-read-only')}</p>
         {!doc.engineAvailable && (
           <p className="notice">{t('preset-engine-unavailable', doc.engine)}</p>
         )}
@@ -199,19 +203,20 @@ function Content({ doc }: { doc: PresetDoc }) {
           value={doc.engine}
           onChange={() => undefined}
         />
+        <Card title={t('preset-assets')}>
+          <dl className="assets">
+            {assetRows(doc).map((row) => (
+              <Fragment key={row.label}>
+                <dt>{row.label}</dt>
+                <dd className={row.value === '' ? 'muted' : 'mono'}>
+                  {row.value === '' ? t('preset-value-none') : row.value}
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+        </Card>
+        <PresetCards values={doc.values} />
       </section>
-      <Card title={t('preset-assets')}>
-        <dl className="assets">
-          {assetRows(doc).map((row) => (
-            <Fragment key={row.label}>
-              <dt>{row.label}</dt>
-              <dd className={row.value === '' ? 'muted' : 'mono'}>
-                {row.value === '' ? t('preset-value-none') : row.value}
-              </dd>
-            </Fragment>
-          ))}
-        </dl>
-      </Card>
     </>
   )
 }

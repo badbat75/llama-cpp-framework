@@ -164,6 +164,7 @@ export function DefaultBoxField({
   text,
   numeric = false,
   unit,
+  disabled,
   onTick,
   onText,
 }: Common & {
@@ -172,12 +173,20 @@ export function DefaultBoxField({
   text: string
   numeric?: boolean
   unit?: string
+  /** Omitted: the box is enabled and the input follows it. */
+  disabled?: boolean
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
   return (
     <GroupField id={id} label={label} hint={hint} error={error}>
-      <Check id={`${id}-box`} text={box} checked={ticked} onChange={onTick} />
+      <Check
+        id={`${id}-box`}
+        text={box}
+        checked={ticked}
+        disabled={disabled}
+        onChange={onTick}
+      />
       <input
         id={`${id}-control`}
         type="text"
@@ -185,7 +194,7 @@ export function DefaultBoxField({
         inputMode={numeric ? 'numeric' : undefined}
         aria-labelledby={`${id}-label`}
         value={text}
-        disabled={ticked}
+        disabled={disabled || ticked}
         onChange={(e) => onText(e.target.value)}
         {...invalid(id, error)}
       />

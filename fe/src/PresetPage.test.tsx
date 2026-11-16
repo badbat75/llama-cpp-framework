@@ -893,14 +893,29 @@ test('2d.67: the preset is read once on open and once on each route change to it
   const { bff, main } = open()
   await flush()
   expect(presetReads(bff)).toBe(1)
-  // Criterion 67: no refresh button. Criterion 70: the loaded page's Engine
-  // field carries its About toggle, so that toggle is the only button here.
+  // Criterion 67: no refresh button. Criterion 70 and 88: the loaded page's
+  // buttons are exactly the Engine About toggle and one About toggle per 2e
+  // field, in DOM order, so no other button (a refresh, a save) is in main.
+  const fieldLabels = [
+    en('preset-context-size'),
+    en('preset-parallel-slots'),
+    en('preset-unified-kv'),
+    en('preset-per-slot-context'),
+    en('preset-batch-size'),
+    en('preset-u-batch-size'),
+    en('preset-embedding-mode'),
+    en('preset-pooling'),
+  ]
   expect(
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'the only button in main is the Engine About toggle',
-  ).toEqual([`${en('field-about')} ${en('preset-engine')}`])
+    'main holds the Engine About toggle and one About toggle per field, nothing else',
+  ).toEqual(
+    [en('preset-engine'), ...fieldLabels].map(
+      (label) => `${en('field-about')} ${label}`,
+    ),
+  )
   await advance(60_000)
   expect(presetReads(bff), 'no polling').toBe(1)
   navigate(OFF_HASH)
