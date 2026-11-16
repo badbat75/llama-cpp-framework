@@ -16,8 +16,26 @@ exist yet. Change this file first when a shape changes.
   refused value without its reason (`api-other`), since the status already says a check refused it.
 - **401** means not signed in (no session, or it ended), on any route that needs one.
 - **403** `client-not-authorized` means the manager refused the call for this user, on a route that
-  acts for the signed-in user. On a route that needs no sign-in (`GET /api/instances`) the same key
-  comes with **502**: there the manager refused the bff itself, not a user.
+  acts for the signed-in user; the session lives on. On a route that needs no sign-in
+  (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
+  the bff itself, not a user.
+- **403** `session-not-administrator` on any route but `POST /api/session` (**proposed**, S1 of
+  [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
+  of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
+  session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
+  sends this key exactly when it ends a session on a refusal, and `client-not-authorized` only when
+  the session lives on, so the fe needs no second read of `GET /api/session` to tell them apart.
+  Today's bff (2d69d2f, `server.rs` `read`, `control.rs` `action_failure`) ends the session but still
+  sends `client-not-authorized`: the fe then shows the plain refusal and meets the 401 at its next
+  request, which is correct but one step late.
+- **The guard's keys**, each 403 or 413 with `args: []`, answered before any session is looked at
+  (`crates/bff/src/origin.rs`): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
+  is not this bff), `request-bad-host` (a `Host` that is not `localhost`, `127.x.x.x` or `[::1]`),
+  `payload-too-large` (413, a body over 64 KiB). The fe's own requests never get them: the guard
+  stands in front of `/` and `/assets/*` too, so a page opened under another name never loads, and
+  the fe's bodies are a few dozen bytes. The fe shows them as the generic failure of the place.
+- **Idle deadline**: every request with a valid session moves it, except the session-free reads
+  `GET /api/instances` and `GET /api/instances/{id}/boot`; the `POST`s and `PUT`s move it.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
 - **404** `client-no-instance` means the instance id does not exist.
@@ -34,9 +52,9 @@ exist yet. Change this file first when a shape changes.
 | `DELETE /api/session` | signed in | 1a, proposed | 204 |
 | `GET /api/instances/{id}/server` | administrator | 1a, proposed | the server document below |
 | `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, proposed | `{"revision", "running"}` |
-| `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, proposed | 204 |
-| `GET /api/instances/{id}/boot` | anyone | 1c, proposed | `{"enabled"}` |
-| `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, proposed | `{"enabled"}` |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
+| `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
+| `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
 | `GET /api/presets` | administrator | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
@@ -125,20 +143,25 @@ Body `{"revision", "values"}`.
 - `POST /api/instances/{id}/start`, `/stop` and `/restart` take no body and answer 204 once the
   service manager has accepted the job; the state read just after can still be the previous one, so
   the fe polls `GET /api/instances` (any 2xx counts as accepted). Errors: 401; 403
-  `client-not-authorized`; 404 `client-no-instance`; 503 `client-unavailable`; 502
-  `client-service-failed` (proposed key) with empty `args` when the service manager refused or the
-  unit failed (its message stays in the bff's log); 502 `client-other` for anything else.
-- A stop or a restart with `SaveStateOnShutdown` on saves the slot snapshots first, on the server
-  (the GUI does this itself today, `slot_state::save_all`).
+  `client-not-authorized`; 403 `session-not-administrator` (proposed, above: the session ended);
+  404 `client-no-instance`; 503 `client-unavailable`; 502 `client-service-failed` with
+  `args: []` when the service manager refused or the unit failed (its message stays in the bff's
+  log); 502 `client-other` for anything else.
+- **Not yet**: a stop or a restart from the web does not save the slot snapshots, even with
+  `SaveStateOnShutdown` on (the GUI saves them itself, `slot_state::save_all`). `PLAN.md` step 9b
+  moves the save into the instance's own stop, so every stop path saves, before the MVP's run; the
+  fe says nothing of it meanwhile (01-server.md S1).
 - `GET /api/instances/{id}/boot` answers 200 `{"enabled": <bool>}`. Errors: 503
   `client-unavailable`, 502 `client-not-authorized` (a route that needs no sign-in, like
   `GET /api/instances`), 404 `client-no-instance`, 502 `client-other`.
 - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
-  state read back after the write. Errors: 401, 403 `client-not-authorized`, 404, 503, 502
-  `client-service-failed` or `client-other`.
+  state read back after the write. Errors: 401, 403 `client-not-authorized`, 403
+  `session-not-administrator` (proposed), 404, 503, 502 `client-service-failed` or `client-other`
+  (each with `args: []`), 400 `boot-malformed` for a body that is not `{"enabled": <bool>}` (the fe
+  never sends one), 413 `payload-too-large`.
 - `GET /api/instances` and `GET /api/instances/{id}/boot` do not move a session's idle deadline:
   the fe reads the instances every 5 s while an instance page is open, and an open tab must not
-  keep a session alive.
+  keep a session alive. The `POST`s and the `PUT` do move it.
 
 ### `GET /api/engines`
 

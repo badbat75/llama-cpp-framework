@@ -128,8 +128,11 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 | Signed in (an administrator) | `GET /api/session` answers 200 `{"user"}` | every page, editable, with the save bar | start, stop, restart, save files, set start at boot |
 
 - The fe does not read a role from the session. The manager still decides each request; a refusal
-  is shown as `not-authorized` wherever it lands (for example an administrator removed from the
-  group after signing in).
+  that keeps the session is shown as `not-authorized` wherever it lands.
+- **Removed from the group after signing in** (user, 2026-11-16): the bff ends the session and says
+  so with 403 `session-not-administrator` (`fe/briefs/01-server.md` S1). Where an action or edits
+  are at stake the page takes the session-ended state below with the message `session-revoked`; on
+  a read the app signs out, the sign-in form showing that message.
 - A signed-out user who opens any page but the Overview sees the sign-in form in its place, and
   returns to that page after signing in.
 - The session can end while a page is open (any request answers 401). The page keeps what

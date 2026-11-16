@@ -871,6 +871,99 @@ testing at that length is a preference, since names made by other means can be l
 
 Out of scope: truncating the name with an ellipsis (it would hide part of who is signed in).
 
+## 4c. Later slice S1: the real bff's new answers, and a session ended by the manager
+
+Written 2026-11-16 against the bff on main (2d69d2f and after: `crates/bff/src/control.rs`,
+`server.rs`, `origin.rs`) and `fe/briefs/api-contract.md` as updated the same day. No new pattern,
+component or token: every message goes in an alert the page already has, and the session-ended
+state of 36a, 43a, 45e and 2c's 49 is reused as it is. **One new string** (S1.10).
+
+**The signal for "removed from `pai`"** (designer's decision, for the bff's coordinator). User
+decision (2026-11-16): when the manager refuses the session's user, the bff ends the session. The fe
+asks the bff to say so with its own key: **403 `session-not-administrator`** on the session routes,
+the key the sign-in already sends for the same fact (contract, "Rules for every route"), and
+`client-not-authorized` only for a refusal after which the session lives on. Why not "on a 403
+`client-not-authorized`, read `GET /api/session` again": that is a second request at every refusal
+place (seven), with its own failures to handle (a 503 or a time-out on the re-read says nothing
+either way); and a refusal that is not about the user (the bff's own account lacking a right on a
+shipped install, before a later bff slice) must keep the plain `api-client-not-authorized` and the
+session, which only the bff knows. The fe picks by key (contract), so one key per meaning is the
+smallest correct design. Not a cookie clear: the fe never reads the cookie (it is HttpOnly).
+**Until the bff sends the key** nothing in S1.3 to S1.9 triggers: the page shows
+`api-client-not-authorized` as today and meets the 401 at its next request (36, 43a, 45e, 49),
+correct but one step late.
+
+S1.1. **The guard's keys and `boot-malformed`** (`request-cross-origin` 403, `request-bad-host` 403,
+    `payload-too-large` 413, `boot-malformed` 400, each `args: []`) are the generic failure of the
+    place where they land, with no new string: run actions `request-failed` (43); the boot write
+    `request-failed`, then the state read again (45e); the Server save `save-failed`, edits kept
+    (37); the preset switch `request-failed`, then the row read again (2c's 48); sign-in
+    `signin-failed` (14); the reads: `server-load-failed` (24), `presets-load-failed` (2a's 17),
+    `preset-load-failed` (2d's 66), `boot-load-failed` (45a), `instances-failed` on the Overview.
+    Why no message for `request-bad-host` (asked by the coordinator): the fe can never show it.
+    The guard stands in front of the whole router, `/` and `/assets/*` included
+    (`crates/bff/src/lib.rs` `router_with_session`, the `origin::guard` layer), so a page opened
+    under a host name alias gets the 403 JSON body in place of the page and no fe code runs. Telling
+    that user to open `http://localhost:<port>/` is the bff's own answer to a `GET /` with a bad
+    `Host` (report). Tests: one per row is enough for run, boot write, save and sign-in.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
+S1.2. **`client-service-failed` with `args: []`** shows `api-client-service-failed` as it is (it has
+    no `{N}`), in the run alert (43) and the boot alert (45e); no placeholder text is left.
+S1.3. **Which answer means "signed out by the manager"**: 403 with the key
+    `session-not-administrator` from any route but `POST /api/session`. By key, as every rule
+    (contract); a 403 `client-not-authorized` keeps today's handling in every place, the session
+    taken as alive. The session-free reads (`GET /api/instances`, `GET .../boot`) never send it; if
+    one did, it is that read's generic failure (S1.1's list).
+S1.4. **Run controls** (43): exactly the 401 row of 43 and 43a, with `session-revoked` in the run
+    alert in place of `session-ended-retry`: the status emptied, the buttons per 40a, focus stays
+    on the clicked button, the **Sign in** button after the alert, the idle poll resumes (it needs
+    no session).
+S1.5. **Start at boot write** (45e): the 401 row, with `session-revoked` in the field's alert; the
+    box shows the state read again with `GET .../boot` (a session-free read, so it still answers);
+    focus stays on the checkbox; the Sign in button after the alert.
+S1.6. **Server save** (36, 36a): as a 401, with `session-revoked` in the bar's alert in place of
+    `session-ended`: the edits stay, the form stays dirty and the status reads `save-unsaved` (30a),
+    focus stays on Save changes, the bar's Sign in button follows the alert. The banner and nav stay
+    as they were (36a); Sign out works as 15 with the discard dialog when dirty.
+S1.7. **Preset switch** (2c's 48, 49): as the 401 row, with `session-revoked` in the page's alert: the
+    switch shows its value before the change, nothing is read again, focus stays on the switch, the
+    Sign in button after the alert.
+S1.8. **The Sign in dialog** opened from any of S1.4 to S1.7 is 43a's, unchanged: Escape or Cancel
+    returns focus to that Sign in button with the alert kept; a sign-in follows 43b (and 2c's 49).
+    Signing in again as the same account gets 403 `session-not-administrator` from
+    `POST /api/session`, which is 14b inside the dialog: `api-session-not-administrator`, password
+    cleared, focus on the user name field, the dialog stays open. Another administrator: 43b's other
+    branch (the Server form reads again, `server-edits-dropped` when it was dirty). One test pins
+    the same-account path.
+S1.9. **On a read** (the server read 24, the presets list 2a's 16, the preset page 2d's 66): the
+    whole app becomes signed out, exactly as a 401 on that read (2.6), except that the paragraph
+    above the sign-in fields reads `session-revoked`, as a `role="alert"` (14's alert paragraph), in
+    place of `signin-required`. It stays until a sign-in succeeds or the route changes; focus does
+    as for a 401 read. Nothing is lost: these reads run only when nothing is unsaved (35's Reload
+    asks first). After a sign-in by another administrator the page reads again (as 2.6).
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages), [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion))
+S1.10. **Strings, slice S1.** New: `session-revoked` | You have been signed out: this account is no
+    longer a member of the pai group. Ask whoever administers this computer to add it again; you can
+    still see the overview without signing in. (Not `api-session-not-administrator` itself: that one
+    speaks of signing in, and a user who was signed in must first hear that they no longer are,
+    [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion); `pai` left literal as in 14b.) Reused,
+    unchanged: `request-failed`, `save-failed`, `signin-failed`, `server-load-failed`,
+    `presets-load-failed`, `preset-load-failed`, `boot-load-failed`, `instances-failed`,
+    `api-client-service-failed`, `api-session-not-administrator`, `session-sign-in`.
+
+**Decided, no criterion.**
+- **Snapshots at a web Stop or Restart** (the bff does not save them yet, contract): the fe says
+  nothing. The gap is the bff's and temporary: `PLAN.md` step 9b moves the save into the instance's
+  own stop before the MVP's run (user, 2026-11-16), and today a `systemctl stop` skips it as well. A
+  note would be a string added now and removed at 9b, on a page only administrators open
+  **(preference)**. 44b is unchanged.
+- **The idle deadline** (`GET .../boot` does not move it, the writes do): nothing for the fe, which
+  keeps no idle timer of its own; the next request after 30 minutes is a 401 as before.
+
+**Out of S1**: a message for `request-bad-host` served by the bff on `GET /` (bff side, report); an
+explicit sign-out of the banner on S1.4 to S1.7 (36a keeps the page as it was, whatever ended the
+session).
+
 ## 5. The Server form
 
 ### 5.1 Cards and fields, in order
