@@ -16,6 +16,16 @@ Lessons only: the rules are in `AGENTS.md`.
   y.clone());`) and `move` them in; the originals stay for the asserts after it.
 - Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
   did not exist yet). Recheck such tests once the code exists.
+- Read the file you are extending before writing against it; never work from a remembered or summarised
+  API. A context summary recites names (`App::app_writing`, `Outcome::Err(..)`, `rich_cfg()` in a route
+  test) that the file does not have, and a whole `read` of a region can render lines that are not there
+  at all: the helpers of the inline `mod tests` of a `src/` file are not the helpers of its
+  `tests/<name>.rs`. Grep for the helper and the constant names you plan to use and read their bodies;
+  a failed `edit` match is the signal to re-read, not to retype.
+- A `#[tokio::test]` runtime is one thread: a fake that sleeps on the async path stops the test, not the
+  route. A sleep inside a fake's method is safe when the route runs that method inside `spawn_blocking`
+  (the bff's save: connect, read, write, status in one blocking task). The bff's session routes
+  (`/api/session`, sign-in) never connect, so a connect hook is inert for them.
 - An independent rerun of cargo commands that prints `Finished ... in 0.0xs` is cargo replaying a cached
   pass (its fingerprint does match the current sources: `cargo check -v` prints `Fresh <pkg>`). To compile
   the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
@@ -29,15 +39,19 @@ Lessons only: the rules are in `AGENTS.md`.
   chained `cargo ...; echo exit=$?; ...; grep -c ...` prints a trailing `Exit code: 1` after green runs:
   report the per-command `exit=$?` lines, not the chain's. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
-  A clean rerun IS fast (0.4 s for every pai-bff target on 24 cores, deps cached): to prove it checked
-  them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff today: 15
-  lines, 14 of them its own: lib and bin each with a test twin (4), 9 integration binaries, the build
-  script and its test twin; the 15th is the dependency `pai_core`). To prove a green
+  A clean rerun IS fast (0.6 s for every pai-bff target on 24 cores, deps cached), and its own log is the
+  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` (not `Checking`). The `-v`
+  count of `--crate-name <target>` works only on a run that really checks: a `Fresh` run prints NO
+  `--crate-name` line at all (checked: 0 after a clean run), so from `-v` take the `Fresh <own pkg>` /
+  `Dirty <own pkg>` line, which says the previous run's fingerprint matches the current sources. To prove a green
   `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
   (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
 - A `cargo test` rerun always runs the test binary; only its compile can be a replay. `-v` (before
   `--`) shows `Fresh <pkg>` (fingerprint checked against the current sources) or `Dirty`/`Compiling`.
   For the independent check after a coder, `cargo clean -p <pkg>` and rerun when in doubt.
+  One probe for both facts when a run's log has 0 `Compiling` lines: `cargo test -p <pkg> --test <a>
+  --test <b> --lib -v -- --list > file` writes to the file, then grep it for `Fresh <pkg>` (current
+  sources) AND for the slice's test names (they are in the binary that ran).
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
   captured from the real system; a name-prefix match is tested with every real name sharing the prefix
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
@@ -168,12 +182,63 @@ Lessons only: the rules are in `AGENTS.md`.
   pair "405 for this app's own page, 403 for a foreign page, same verb" is what pins a guard that runs
   before the router; when a guard checks a verb list (`writes`) rather than the method, pin that half
   and report the list as the scope question.
+- A pure body-to-value step: build every failure body from the FULL well-typed body with ONE key
+  changed, so the refusal cannot come from a key the test left absent (an absent key has no JSON type,
+  the design leaves it open, a coder reading it as 400 reds a 422 test for the wrong reason).
+  Pin `render_for(cfg, true)` against `false` with the blank-dirs case only: with both dirs set the two
+  renders are identical, so the equality of the whole file cannot tell the flag.
+- A `pub(crate)` stub in a PRIVATE module, reached only from tests: `-D warnings` fails `dead_code` on
+  the function, the enum and its variants (3 messages, lib and lib test). `pub` does not clear it (the
+  module is private, so the item is still unreachable), and the caller that clears it is a later slice:
+  report the three, add no `allow`.
 - A rule about the `Host` name touches no bff test that sends no `Host` (the `App` helper sends one only
   when an extra names it): pin the no-Host path as accepted (HTTP/1.0, `curl`), and give every refusal a
   shape where only that rule can answer (a non-text `Host` with no origin header, a non-text `Origin`
   with no `Host`), else one red hides behind the other.
 - `App::sign_in` asks the fake authenticator: after it, compare `asked()` with the baseline taken right
   after the sign-in, never with `is_empty()`.
+- The bff's save replies `{"revision", "running"}` only, so a SECOND save in one test builds its body by
+  hand: the `revision` from the 200, the `values` from the read (`values_with(&read_doc, ..)`). A body
+  built from the 200's document panics in the helper (`expect("values")`).
+- The bff's fakes: `FakeManager::refused()` gates `read_file` only, so a read-refusal list refuses reads
+  and leaves the writes free (that is what pins "the read refused ends the session, nothing is written").
+  A list of principals there, not a flag: `Live::write_refused` and `Live::read_refused` are both
+  `Vec<String>` read with `.contains(&principal)`.
+ - The `tests/server.rs` fake answers a save at three points, one pair of cells each (`write_outcome` +
+   `write_pause_ms`, `read_outcome` + `read_pause_ms`, `connect_outcome` + `connect_pause_ms`, all inert
+   by default so adding them greens everything): the 503 and 504 of a save turn on which call was
+   reached, so a test sets the cell AFTER the form's own read, letting the read that carries the
+   revision succeed. Its call log records the trait methods only (`read <name>`,
+   `write-if <principal> <name>`, `status <id>`): the `As` methods are not logged, and the route's own
+   re-read adds a SECOND `read server@default.ini` after the GET's, so the log of a save stopped at its
+   read holds two reads, and one stopped at the connect holds one.
+- The race "the route answered and the blocking task went on": dropping the `JoinHandle` of a
+  `spawn_blocking` task does NOT stop it, so a save cut off at the connect or the read answers 503 and
+  its task writes when its parked call returns. A fixed sleep cannot test it (the write lands when the
+  read returns, not after a known delay): give the fake a one-shot GATE (an `AtomicBool` armed by the
+  test and consumed by the next call, which parks in a 5 ms poll loop bounded by a `GATE_LIMIT`, counting
+  `gated` on entry and `released` on exit). The test arms it after the form's read, awaits the 503,
+  asserts `gated == 1` and nothing written, releases, polls the `released` counter with a deadline, then
+  polls `writes()` for a bounded `GRACE` and asserts it empty. Keep the gate OUT of the shared calls log
+  (a `record` there breaks the exact-log asserts of the sibling tests); give it its own counters. Parking
+  inside the fake's method is safe because the save's connect/read/write run in `spawn_blocking`, and a
+  `tokio::time::sleep` poll loop after the route answered is safe (the single-thread runtime gets to poll
+  the task's completion). `GRACE` is a heuristic bound: a fixed task writes nothing at all, so a green
+  burns the whole `GRACE`; 500 ms against a 200 ms timeout is enough on this machine, and the red exits
+  the loop at once (the write lands ~1 ms after the release).
+- `serde_json::Value` maps in this repo sort keys, so an object's key order in a reply is not the
+  contract: a "the keys are these names, in this order" pin must sort BOTH sides (the `json!` literal
+  arrives alphabetical, a `Vec<&str>` of field names does not).
+- A unit expectation of "the machine's CPU count" is red by construction (dev box 24, the test module's
+  `CPUS` 16): pin the wiring in the unit test (the bound it is handed) and the machine's count through
+  the public API in the integration test (the `limits` maximum accepted, `max + 1` refused naming the key).
+- A test the coder reports as unpassable: check it against the design and the fake's behaviour, and when
+  the expectation is simply wrong, do not just delete the assert, cover an uncovered path of the same rule
+  (the write-refusal 403 was pinned, the read-refusal 403 was not).
+- `-D warnings` scans `tests/*.rs` and `#[cfg(test)]` too: `.iter().any(|u| *u == x)` is
+  `clippy::manual_contains` (write `.contains(&x)`), and a field added to a fake that nothing reads is a
+  `dead_code` red. The lib test binary of the crate a slice is writing often does not compile until the
+  module's helpers are fixed, so its unit tests only run after that: report that they did not run before.
 
 ## Text pins and source lints
 
@@ -1067,6 +1132,47 @@ Lessons only: the rules are in `AGENTS.md`.
   failing OS random source, so report them as untested, and say that "a restart makes every open form
   stale" is pinned only indirectly (two test-supplied keys, not two `try_router()` routers).
 
+- A live shared tree (the coder rewriting the same crate while you write): append your section at the
+  file tail and your helpers INSIDE the existing blocks (`impl App`, `impl Reply`, the fake's cells);
+  a parallel merge silently adopts your harness and rewrites the tests around it, so re-read the whole
+  file before every edit and recompile against the CURRENT trait (`read_file_as` with a principal and
+  `write_file_if` with 5 parameters were HEAD fictions; the trait's identity rides the connect).
+- A CAS fake that must model a save: record the write, THEN pause, THEN compare-and-swap against the
+  live file (shipped text as fallback): a pause before the record cannot show "504, the write reached
+  the manager"; a CAS with no live file cannot show 409 Changed. A `status` that reads a `running` cell
+  pins the contract's running-after-write rule (true also when the status read fails: a separate
+  outcome cell, not the write's).
+- Multi-line `app.put(Some(&c), &save_body(&doc, &[("Port", json!(N))]))` call sites: do not hand-balance
+  the closers across many tests (five of them, `)]` order, three repair rounds). Add `App::save(cookie,
+  doc, overrides)` so each call site is one balanced call, and build the balanced tail by scanning the
+  save_body span, never by counting parens by eye.
+
+## Web UI (fe/) navigation and CSS pins
+
+- The browser's Forward is testable after the guard's Keep editing: a typed hash adds a history entry
+  and the guard puts the address back with a traversal, so the history is `[Models, preset, Models]`
+  and `window.history.forward()` (in a task, like `back()`, as `LeaveGuard.test.tsx`'s `pressForward`)
+  re-asks a dirty form. A page reached by `startAt(<hash>)` has no forward entry, so build the history
+  with a typed hash, never with a second render.
+- A rule that lives only in CSS (a sticky save bar, D4's `scroll-padding-bottom`) is pinned by reading
+  `index.css` (`readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')`, comments stripped, then
+  match the selector and the declaration). It is green the day it is written: report it as a guard,
+  not a red, and say which half of the criterion it cannot reach (jsdom has no layout).
+- "Any answer that is not a shaped 200" is one test with a table of answer cases (204, a 200 missing
+  `running`, a 200 missing `revision`, a 200 with a non-string `revision`, a 200 that is not JSON, a
+  500 with a key, a `Promise.reject(new TypeError('Failed to fetch'))`): one page per row and
+  `cleanup(); vi.unstubAllGlobals()` at the end of each iteration, so each row reports its own label.
+  A fe time limit is the one row to leave out when the code has no clock to control (fake timers on a
+  fetch the stub owns pin the stub): report it untested.
+- A 5xx whose body names a secret (`{ key: 'secret-detail' }`) is the fixture that makes "the bar's
+  alert cleared" testable in a slice with no client checks and no keyed answers yet: the alert exists
+  to clear, and the same row asserts the key never reaches `document.body`.
+- A test file past ~900 lines splits into `<Name>1` / `<Name>2` with the helpers COPIED: a test file
+  imports no other test file, and the copy keeps each file runnable on its own. Splitting one back
+  means hand-reverting the setup edits (imports, `beforeEach`, `afterEach`): a file the slice created
+  is untracked, so `git checkout` cannot restore it. Truncate at a known line and edit the header,
+  the import list and the hooks by hand, then re-run the file to show it reds on its own criteria.
+
 ## Windows service glue (the manager, cfg(windows) entry)
 
 - `crates/manager/src/manager/windows.rs` is the OS-neutral module (no `cfg(windows)` gate): its tests,
@@ -1090,3 +1196,8 @@ Lessons only: the rules are in `AGENTS.md`.
   listing names: prove the FIRST run compiled the coder's files by checking the fingerprint dirs
   (`.fingerprint/pai-manager-*`) predate his mtimes, and that the run's `Running unittests ...` binary
   hash equals a new fingerprint dir.
+
+- Web UI tests (`fe/`, relayed by the web UI session, 2026-11-16): a big fake-clock jump stalls a
+  poll that is rescheduled in a React commit, so advance in 1 s steps; in a sampled loop the a11y
+  role query is the cost, not the poll, so take the node once and read `textContent`; query a group
+  by its `aria-labelledby` target, and scope queries to the group when labels repeat.

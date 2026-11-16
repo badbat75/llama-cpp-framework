@@ -77,8 +77,8 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 8 (save the server
-file, keyed revision first), slices 11, 11c, 11e, 11b and 11d (presets); then the user's run on their machine.
+presets and switches them on or off. Left for it, in order: slice 11 (the preset
+list) and 11b (the on/off switch); then the user's run on their machine. After it: 11c, 11e, 11d, 11f.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -849,22 +849,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set
    (done). Optional: refuse an id
    failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
-8. **Write it.** `PUT /api/instances/{id}/server` with the revision, designed in `ARCHITECTURE.md`
-   "Saving the server file from the web (step 10 slice 8)" (2026-11-16), six slices there, in order:
-   (1, built) the revision a SipHash-2-4 keyed by a secret drawn at each bff start (it stops being a
-   key oracle; user, 2026-11-16: an open form gets one 409 and a Reload after a bff restart), (2)
-   `server_cfg::check` moved to `pai-core` (built), (3, built) the manager's `write_file_if` (compare and write
-   under its `writing` lock, `Changed` otherwise), (4, built) its pipe and D-Bus faces, protocol 2 (seen in its rerun, not this slice's:
-   pai-bff's `pai_bff_binary` failed once of 13 runs, likely its `free_port` bind-release-rebind race), (5) the body to
-   the file text or 400/422, (6) the route: 200 `{revision, running}`, 409 `server-changed-elsewhere`,
-   422 `{key, args, field}`, 403 `session-not-administrator`, and 504 `client-timeout` when the
-   time limit runs out after the write was sent (the file may or may not be saved; asked by the web UI
-   session, 2026-11-16), 503 `client-unavailable` staying for a manager never reached. `running` is true only for `active` and `activating` (a
-   llama-server already launched with the old file); `deactivating`, `inactive` and `failed` are false,
-   since the next start, a Restart's start half included, reads the file when its process starts
-   (`run-instance` builds the command line then; asked by the web UI session, 2026-11-16). The save creates no folder (user,
-   2026-11-16: the default ModelsDir and StateDir exist on both systems; a custom one is the
-   administrator's to create).
+8. (Done, 2026-11-17: `PUT /api/instances/{id}/server`, `ARCHITECTURE.md` "Saving the server file from
+   the web". Left from it: the docs pass (`crates/bff/README.md`, "Through the manager", the pipe
+   client's header and `ARCHITECTURE.md`'s protocol 1 lines; the contract is the web UI session's);
+   the control verbs and the boot write (`control.rs`) answer 503 at their time limit without
+   cancelling the blocking task, which may still act afterwards: give them the save's
+   Idle/Asked/Cancelled state; pai-bff's `pai_bff_binary` failed once of 13 runs, likely its
+   `free_port` bind-release-rebind race; a status read slower than the limit after a done write
+   answers 504 though the file is saved.)
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so

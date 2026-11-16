@@ -1,17 +1,20 @@
 //! `GET /api/instances/{id}/server`: an instance's `server@<id>.ini` read
 //! through the manager for a signed-in user, with the defaults, limits and
-//! interfaces the web UI's Server form shows.
+//! interfaces the web UI's Server form shows, and the form's `PUT` body to the
+//! whole file's text.
 
-use crate::session::{error, Sessions};
+use crate::origin::body_refusal;
+use crate::session::{error, json_body, Sessions};
 use crate::Connect;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::{ClientError, ManagerFile};
+use pai_core::client::{ClientError, InstanceState, ManagerFile};
 use pai_core::server_cfg::{self, ServerConfig};
 use pai_core::{checks, net_ifaces, paths};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use siphasher::sip::SipHasher;
 use std::hash::Hasher;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,27 +85,7 @@ fn document(file: &ManagerFile, key: [u8; 16]) -> Value {
         .collect();
     let mut doc = json!({
         "revision": revision(text, &key),
-        "values": {
-            "Port": cfg.port,
-            "Hostname": cfg.hostname,
-            "Threads": cfg.threads,
-            "ThreadsBatch": cfg.threads_batch,
-            "ModelsMax": cfg.models_max,
-            "ModelsMemoryMargin": cfg.models_memory_margin,
-            "ModelsDir": cfg.models_dir,
-            "RocblasUseHipblaslt": cfg.rocblas_use_hipblaslt.map(|on| if on { "on" } else { "off" }),
-            "CudaAllreduce": cfg.cuda_allreduce,
-            "CudaDisableGraphs": cfg.cuda_disable_graphs,
-            "AttnRotDisable": cfg.attn_rot_disable,
-            "RocprofAttach": cfg.rocprof_attach,
-            "Webui": cfg.webui,
-            "WebuiMcpProxy": cfg.webui_mcp_proxy,
-            "LogVerbosity": cfg.log_verbosity,
-            "SaveStateOnShutdown": cfg.save_state_on_shutdown,
-            "StateDir": cfg.state_dir,
-            "OpencodeBaseUrl": cfg.opencode_base_url,
-            "OpencodeApiKey": cfg.opencode_api_key,
-        },
+        "values": values(&cfg),
         "defaults": {
             "Port": server_cfg::DEFAULT_PORT,
             "ModelsMax": server_cfg::DEFAULT_MODELS_MAX,
@@ -126,6 +109,281 @@ fn document(file: &ManagerFile, key: [u8; 16]) -> Value {
     doc
 }
 
+/// The `values` object of the read's document: every key of [`FIELDS`], each as
+/// the JSON type the read gives it. The save reads a body against the same
+/// list, so the read and the body cannot name different keys.
+fn values(cfg: &ServerConfig) -> Value {
+    let mut out = Map::new();
+    for field in FIELDS {
+        out.insert(field.key.to_string(), (field.read)(cfg));
+    }
+    Value::Object(out)
+}
+
+/// One key of the Server form: its name in the server file (the key
+/// `server_cfg::render_for` writes), the JSON type the read gives its value,
+/// the value the read sends, and how a body's value lands in the config.
+struct Field {
+    key: &'static str,
+    kind: Kind,
+    read: fn(&ServerConfig) -> Value,
+    write: fn(&mut ServerConfig, Option<&Value>),
+}
+
+/// The JSON type of a key's value; `null`, the key unset, is allowed for every
+/// one of them, as the read sends it.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// A whole number: `Port`, the thread counts, `ModelsMax`.
+    Int,
+    /// A switch: `true`/`false`.
+    Bool,
+    /// Free text: a host list, a path, a URL, a mode, an API key.
+    Text,
+    /// The tri-state's `"on"`/`"off"`, the one key with a third state.
+    Tri,
+}
+
+impl Kind {
+    /// True when `value` is the key unset (the read's `null`, which it sends
+    /// for every kind) or a value of this kind. A number that is not a whole
+    /// number `i32` can hold is not the type the read gives.
+    fn reads(self, value: Option<&Value>) -> bool {
+        let Some(value) = value.filter(|value| !value.is_null()) else {
+            return true;
+        };
+        match self {
+            Kind::Int => whole(value).is_some(),
+            Kind::Bool => value.as_bool().is_some(),
+            Kind::Text => value.is_string(),
+            Kind::Tri => matches!(value.as_str(), Some("on") | Some("off")),
+        }
+    }
+}
+
+/// Every key of the Server form, in the order the read sends them.
+const FIELDS: &[Field] = &[
+    Field {
+        key: "Port",
+        kind: Kind::Int,
+        read: |c| json!(c.port),
+        write: |c, v| c.port = int(v),
+    },
+    Field {
+        key: "Hostname",
+        kind: Kind::Text,
+        read: |c| json!(c.hostname),
+        write: |c, v| c.hostname = text(v),
+    },
+    Field {
+        key: "Threads",
+        kind: Kind::Int,
+        read: |c| json!(c.threads),
+        write: |c, v| c.threads = int(v),
+    },
+    Field {
+        key: "ThreadsBatch",
+        kind: Kind::Int,
+        read: |c| json!(c.threads_batch),
+        write: |c, v| c.threads_batch = int(v),
+    },
+    Field {
+        key: "ModelsMax",
+        kind: Kind::Int,
+        read: |c| json!(c.models_max),
+        write: |c, v| c.models_max = int(v),
+    },
+    Field {
+        key: "ModelsMemoryMargin",
+        kind: Kind::Int,
+        read: |c| json!(c.models_memory_margin),
+        write: |c, v| c.models_memory_margin = int(v),
+    },
+    Field {
+        key: "ModelsDir",
+        kind: Kind::Text,
+        read: |c| json!(c.models_dir),
+        write: |c, v| c.models_dir = text(v),
+    },
+    Field {
+        key: "RocblasUseHipblaslt",
+        kind: Kind::Tri,
+        read: |c| {
+            json!(c
+                .rocblas_use_hipblaslt
+                .map(|on| if on { "on" } else { "off" }))
+        },
+        write: |c, v| c.rocblas_use_hipblaslt = tri_state(v),
+    },
+    Field {
+        key: "CudaAllreduce",
+        kind: Kind::Text,
+        read: |c| json!(c.cuda_allreduce),
+        write: |c, v| c.cuda_allreduce = text(v),
+    },
+    Field {
+        key: "CudaDisableGraphs",
+        kind: Kind::Bool,
+        read: |c| json!(c.cuda_disable_graphs),
+        write: |c, v| c.cuda_disable_graphs = switch(v).unwrap_or(false),
+    },
+    Field {
+        key: "AttnRotDisable",
+        kind: Kind::Bool,
+        read: |c| json!(c.attn_rot_disable),
+        write: |c, v| c.attn_rot_disable = switch(v).unwrap_or(false),
+    },
+    Field {
+        key: "RocprofAttach",
+        kind: Kind::Bool,
+        read: |c| json!(c.rocprof_attach),
+        write: |c, v| c.rocprof_attach = switch(v).unwrap_or(false),
+    },
+    Field {
+        key: "Webui",
+        kind: Kind::Bool,
+        read: |c| json!(c.webui),
+        write: |c, v| c.webui = switch(v),
+    },
+    Field {
+        key: "WebuiMcpProxy",
+        kind: Kind::Bool,
+        read: |c| json!(c.webui_mcp_proxy),
+        write: |c, v| c.webui_mcp_proxy = switch(v),
+    },
+    Field {
+        key: "LogVerbosity",
+        kind: Kind::Int,
+        read: |c| json!(c.log_verbosity),
+        write: |c, v| c.log_verbosity = int(v),
+    },
+    Field {
+        key: "SaveStateOnShutdown",
+        kind: Kind::Bool,
+        read: |c| json!(c.save_state_on_shutdown),
+        write: |c, v| c.save_state_on_shutdown = switch(v),
+    },
+    Field {
+        key: "StateDir",
+        kind: Kind::Text,
+        read: |c| json!(c.state_dir),
+        write: |c, v| c.state_dir = text(v),
+    },
+    Field {
+        key: "OpencodeBaseUrl",
+        kind: Kind::Text,
+        read: |c| json!(c.opencode_base_url),
+        write: |c, v| {
+            c.opencode_base_url = v
+                .and_then(Value::as_str)
+                .and_then(server_cfg::normalize_base_url);
+        },
+    },
+    Field {
+        key: "OpencodeApiKey",
+        kind: Kind::Text,
+        read: |c| json!(c.opencode_api_key),
+        write: |c, v| c.opencode_api_key = text(v),
+    },
+];
+
+/// `value` as the whole number a numeric key holds, None for a fraction or a
+/// number past `i32` (the read never gives one).
+fn whole(value: &Value) -> Option<i32> {
+    value.as_i64().and_then(|n| i32::try_from(n).ok())
+}
+
+/// The body's value for a numeric key: `int`, `null` the key unset.
+fn int(value: Option<&Value>) -> Option<i32> {
+    whole(value?)
+}
+
+/// The body's value for a switch: `null` the key unset.
+fn switch(value: Option<&Value>) -> Option<bool> {
+    value?.as_bool()
+}
+
+/// The body's value for a text key: blank left unset, as the INI read leaves a
+/// blank line unset (`server_cfg::opt_nonblank`).
+fn text(value: Option<&Value>) -> Option<String> {
+    server_cfg::opt_nonblank(value?.as_str().map(str::to_string))
+}
+
+/// The body's value for the tri-state, as the read sends it.
+fn tri_state(value: Option<&Value>) -> Option<bool> {
+    match value?.as_str() {
+        Some("on") => Some(true),
+        Some("off") => Some(false),
+        _ => None,
+    }
+}
+
+/// What the server form's `PUT` body answers: the whole file's text, or the
+/// bff's refusal of the body (400, its shape) or of one of its values (422,
+/// naming the INI key the form marks). The manager is not asked: this is the
+/// step that turns the body into the text the compare-and-swap then writes.
+#[derive(Debug)]
+pub(crate) enum BodyAnswer {
+    /// The whole file, as `server_cfg::render_for(cfg, true)` renders it.
+    File(String),
+    /// 400 `server-malformed`: the body is not `{revision, values}` with every
+    /// value of the JSON type the read gives it.
+    Malformed,
+    /// 422 `{"key", "args", "field"}`: `key` and `args` are the check's
+    /// refusal, `field` the INI key the form marks.
+    Refused {
+        key: String,
+        args: Vec<String>,
+        field: String,
+    },
+}
+
+/// The server form's body to the whole file's text: the values to a
+/// `ServerConfig` (the base URL normalized, a blank directory left unset, a
+/// null `OpencodeApiKey` no key), `server_cfg::check` with `cpus` (this
+/// machine's logical CPU count), `server_cfg::render_for(cfg, true)`.
+pub(crate) fn body_to_file(body: &Value, cpus: usize) -> BodyAnswer {
+    let Some(values) = body
+        .as_object()
+        .filter(|top| matches!(top.get("revision"), Some(Value::String(_))))
+        .and_then(|top| top.get("values"))
+        .and_then(Value::as_object)
+    else {
+        return BodyAnswer::Malformed;
+    };
+    if !FIELDS
+        .iter()
+        .all(|field| field.kind.reads(values.get(field.key)))
+    {
+        return BodyAnswer::Malformed;
+    }
+    let mut cfg = ServerConfig::default();
+    for field in FIELDS {
+        (field.write)(&mut cfg, values.get(field.key));
+    }
+    if let Err(refusal) = server_cfg::check(&cfg, cpus) {
+        return BodyAnswer::Refused {
+            field: field_of(refusal.key, &refusal.values),
+            key: refusal.key.to_string(),
+            args: refusal.values,
+        };
+    }
+    BodyAnswer::File(server_cfg::render_for(&cfg, true))
+}
+
+/// The INI key a refusal belongs to, the control the form marks: the key the
+/// refusal names in its first value, and for the checks that name none, the key
+/// they are about. The `PUT` route hands it the manager's `Invalid` refusals
+/// too, which add the load-on-startup pair (`ModelsMax`, the key they are
+/// about) to the refusals of the bff's own `server_cfg::check`.
+pub(crate) fn field_of(key: &str, args: &[String]) -> String {
+    match key {
+        "bind-all-with-others" => "Hostname".to_string(),
+        "load-on-startup-over-max" | "load-on-startup-unlimited" => "ModelsMax".to_string(),
+        _ => args.first().cloned().unwrap_or_default(),
+    }
+}
+
 /// The file's revision: SipHash-2-4 of its whole text under `key`, the
 /// router's secret, printed as 16 hex digits. A change detector, not an
 /// oracle: the same text through one router gives the same revision, any
@@ -138,4 +396,713 @@ fn revision(text: &str, key: &[u8; 16]) -> String {
     hasher.write(text.as_bytes());
     let hash = hasher.finish();
     format!("{hash:016x}")
+}
+
+/// The state of one save's write, in one atomic shared by the handler and its
+/// blocking task: `WRITE_IDLE` while the write has not been asked,
+/// `WRITE_ASKED` from the moment the task sends it, `WRITE_CANCELLED` when the
+/// handler's time limit ran out with the write still unasked. Each side moves
+/// Idle to its own state with a compare and exchange, so the pair settles the
+/// write once: a task that finds the state Cancelled sends no write, a handler
+/// that finds it Asked answers 504, the outcome of the sent write unknown.
+const WRITE_IDLE: u8 = 0;
+const WRITE_ASKED: u8 = 1;
+const WRITE_CANCELLED: u8 = 2;
+
+/// `PUT /api/instances/{id}/server` `{"revision", "values"}`: the Server
+/// form's save of the whole file, as the signed-in user. The answer is
+/// `{"revision", "running"}`, the revision of the text the file holds now and
+/// whether the instance's process runs; with no session the manager is not
+/// even connected to, and a body over `origin::MAX_BODY` is refused by the
+/// extractor before the session is read (413, as the boot write).
+///
+/// The session, the body and the bff's own check answer first, so a body
+/// nothing can be made of reaches no manager. The file is then read as the
+/// session's user, and its revision compared with the one the form sends:
+/// another one is 409 `server-changed-elsewhere` and nothing is written, the
+/// session staying signed in. The read text is what the compare and swap
+/// expects, so a write that lands between the read and the write is refused
+/// by the manager and answered with the same 409. The read, the write and the
+/// status that answers `running` are three calls of one connect: a file the
+/// manager does not have is `client-no-instance`, and a status it cannot
+/// answer leaves `running` true, the save having succeeded. The 503 and the
+/// 504 turn on one fact: while the write was never asked, a time limit that
+/// runs out or a stream that dies is 503 `client-unavailable`, the manager
+/// not reached; from the moment the write was sent its outcome is unknown,
+/// and the answer is 504 `client-timeout`.
+///
+/// A time limit does not stop the blocking task: the handler and that task
+/// share one atomic state (the `WRITE_` constants) and settle that fact
+/// together with a compare and exchange, so the answer is the state's last
+/// word. A task parked in the connect or the read when the limit runs out
+/// finds the state Cancelled and sends no write: the 503 stands, the file is
+/// what it was.
+pub(crate) async fn save(
+    connect: Connect,
+    timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+    key: [u8; 16],
+    body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "server-malformed"),
+    };
+    let Some(body) = json_body(&headers, &body) else {
+        return error(StatusCode::BAD_REQUEST, "server-malformed", &[]);
+    };
+    let Some(sent) = body.get("revision").and_then(Value::as_str) else {
+        return error(StatusCode::BAD_REQUEST, "server-malformed", &[]);
+    };
+    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let text = match body_to_file(&body, cpus) {
+        BodyAnswer::File(text) => text,
+        BodyAnswer::Malformed => return error(StatusCode::BAD_REQUEST, "server-malformed", &[]),
+        BodyAnswer::Refused { key, args, field } => return refused(&key, &args, &field),
+    };
+    let user = identity.user;
+    let sent = sent.to_string();
+    let written = revision(&text, &key);
+    let name = format!("server@{id}.ini");
+    // The write's state. It moves Idle -> Asked just before the write is sent
+    // and Idle -> Cancelled when the time limit runs out first: from the
+    // moment the write is sent its outcome is unknown, and every answer that
+    // cannot see it is 504, never 503.
+    let state = Arc::new(AtomicU8::new(WRITE_IDLE));
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        let Some(file) = client.read_file(&name)? else {
+            return Err(ClientError::NoInstance);
+        };
+        let current = file.text;
+        if revision(&current, &key) != sent {
+            return Err(ClientError::Changed);
+        }
+        // Idle -> Asked is the only way to the write. Lost, the handler ran
+        // out of time and answered 503, so this save is over and its file is
+        // left as the browser was told; the value returned is never read.
+        if mine
+            .compare_exchange(WRITE_IDLE, WRITE_ASKED, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(true);
+        }
+        client.write_file_if(&name, &text, &current)?;
+        Ok(match client.status(&id) {
+            Ok(running) => runs(running),
+            Err(_) => true,
+        })
+    });
+    match tokio::time::timeout(timeout, ask).await {
+        Ok(Ok(Ok(running))) => axum::Json(json!({
+            "revision": written,
+            "running": running,
+        }))
+        .into_response(),
+        Ok(Ok(Err(failure))) => save_failure(
+            &sessions,
+            &session,
+            failure,
+            state.load(Ordering::SeqCst) == WRITE_ASKED,
+        ),
+        // The answer cannot see the write, and the task keeps running. Idle ->
+        // Cancelled settles it with the task: won, the write was never asked
+        // and the task will never ask it, so 503 `client-unavailable`, the
+        // manager not reached; lost, the state is Asked, the write is sent and
+        // its outcome unknown, so 504 `client-timeout`.
+        Err(_) => {
+            if state
+                .compare_exchange(
+                    WRITE_IDLE,
+                    WRITE_CANCELLED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+            } else {
+                error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+            }
+        }
+        Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// Whether the instance's process runs in this state, the one the save's
+/// `running` answers with.
+fn runs(state: InstanceState) -> bool {
+    matches!(state, InstanceState::Active | InstanceState::Activating)
+}
+
+/// The 422 answer to a value the checks refused: the check's key, its values,
+/// and `field`, the INI key the form marks.
+fn refused(key: &str, args: &[String], field: &str) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        axum::Json(json!({ "key": key, "args": args, "field": field })),
+    )
+        .into_response()
+}
+
+/// The answer to a save the manager could not do. The compare and swap
+/// refused: 409 `server-changed-elsewhere`, the file is not the one the form
+/// read. A content check the manager ran, its own or an address check, is 422
+/// with its key, its values and the field the form marks; the manager's detail
+/// stays out of the body. The manager refused the signed-in user: 403
+/// `session-not-administrator` (the sign-in's key for the same fact) and the
+/// session ends with the right that authorized it. The other answers are the
+/// bff's news, not a refusal of the user, so the session lives on: no such
+/// instance 404, anything else 502. `Unavailable` (the pipe and the bus answer
+/// a broken stream or a missing reply with it) is 504 `client-timeout` when
+/// `write_asked` says the state reached `WRITE_ASKED`, the write sent and its
+/// outcome unknown, and 503 `client-unavailable` when it stayed Idle: the
+/// connect or the read never reached a manager. Only a handler that stopped
+/// waiting sets Cancelled, so the state a task hands back is Idle or Asked.
+fn save_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
+    match failure {
+        ClientError::Changed => error(StatusCode::CONFLICT, "server-changed-elsewhere", &[]),
+        ClientError::Invalid(refusal) => refused(
+            refusal.key,
+            &refusal.values,
+            &field_of(refusal.key, &refusal.values),
+        ),
+        ClientError::AddressInUse(id) => refused("client-address-in-use", &[id], "Port"),
+        ClientError::UnresolvableHost(host) => {
+            refused("client-unresolvable-host", &[host], "Hostname")
+        }
+        ClientError::NotAuthorized => {
+            sessions.end(session);
+            error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
+        }
+        ClientError::NoInstance | ClientError::InvalidId | ClientError::BadFileName => {
+            error(StatusCode::NOT_FOUND, "client-no-instance", &[])
+        }
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+        }
+        ClientError::Unavailable => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+        }
+        _ => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The CPU count the step is handed. The test picks it, so the bound a
+    /// refusal pins does not move with the machine running the test.
+    const CPUS: usize = 16;
+
+    /// A form body's revision: an opaque string this step never reads.
+    const REV: &str = "0123456789abcdef";
+
+    /// A config with a non-default value in every field, each of them a value
+    /// the body hands back unchanged (a base URL already stored without the
+    /// `/v1` suffix, an AllReduce mode already canonical), so the file
+    /// `render_for` gives for it is the file its body must render.
+    fn rich_cfg() -> ServerConfig {
+        ServerConfig {
+            port: Some(8580),
+            hostname: Some("127.0.0.1".into()),
+            threads: Some(8),
+            threads_batch: Some(4),
+            models_max: Some(2),
+            models_memory_margin: Some(1024),
+            models_dir: Some("/srv/models".into()),
+            rocblas_use_hipblaslt: Some(false),
+            cuda_allreduce: Some("nccl".into()),
+            cuda_disable_graphs: true,
+            attn_rot_disable: true,
+            rocprof_attach: true,
+            webui: Some(false),
+            webui_mcp_proxy: Some(true),
+            log_verbosity: Some(2),
+            save_state_on_shutdown: Some(true),
+            state_dir: Some("/srv/state".into()),
+            opencode_base_url: Some("http://127.0.0.1:4096".into()),
+            opencode_api_key: Some("sk-secret".into()),
+        }
+    }
+
+    /// The body the form sends for `cfg`: every key of the read, with the JSON
+    /// type the read gives it (a number, a bool, `"on"`/`"off"`, a string,
+    /// `null` for an unset key), as `document` writes them.
+    fn body_of(cfg: &ServerConfig) -> Value {
+        json!({
+            "revision": REV,
+            "values": {
+                "Port": cfg.port,
+                "Hostname": cfg.hostname,
+                "Threads": cfg.threads,
+                "ThreadsBatch": cfg.threads_batch,
+                "ModelsMax": cfg.models_max,
+                "ModelsMemoryMargin": cfg.models_memory_margin,
+                "ModelsDir": cfg.models_dir,
+                "RocblasUseHipblaslt": cfg
+                    .rocblas_use_hipblaslt
+                    .map(|on| if on { "on" } else { "off" }),
+                "CudaAllreduce": cfg.cuda_allreduce,
+                "CudaDisableGraphs": cfg.cuda_disable_graphs,
+                "AttnRotDisable": cfg.attn_rot_disable,
+                "RocprofAttach": cfg.rocprof_attach,
+                "Webui": cfg.webui,
+                "WebuiMcpProxy": cfg.webui_mcp_proxy,
+                "LogVerbosity": cfg.log_verbosity,
+                "SaveStateOnShutdown": cfg.save_state_on_shutdown,
+                "StateDir": cfg.state_dir,
+                "OpencodeBaseUrl": cfg.opencode_base_url,
+                "OpencodeApiKey": cfg.opencode_api_key,
+            },
+        })
+    }
+
+    /// The rich body, with the value of the one key `key` replaced by `value`:
+    /// every other key keeps the rich config's own value, so the answer can
+    /// only be about the key the test changed.
+    fn body_with(key: &str, value: Value) -> Value {
+        let mut body = body_of(&rich_cfg());
+        values_of(&mut body).insert(key.to_string(), value);
+        body
+    }
+
+    /// The same, for a key of the body itself (`revision`, `values`).
+    fn body_top(key: &str, value: Value) -> Value {
+        let mut body = body_of(&rich_cfg());
+        body.as_object_mut()
+            .expect("the body is an object")
+            .insert(key.to_string(), value);
+        body
+    }
+
+    fn values_of(body: &mut Value) -> &mut serde_json::Map<String, Value> {
+        body["values"]
+            .as_object_mut()
+            .expect("the body's values are an object")
+    }
+
+    /// The file `body_to_file` renders, panicking on any other answer.
+    fn file(body: Value) -> String {
+        match body_to_file(&body, CPUS) {
+            BodyAnswer::File(text) => text,
+            other => panic!("expected the rendered file, got {other:?}"),
+        }
+    }
+
+    /// The 422 `body_to_file` answers, as `{key, args, field}`, panicking on any
+    /// other answer.
+    fn refused(body: Value) -> (String, Vec<String>, String) {
+        match body_to_file(&body, CPUS) {
+            BodyAnswer::Refused { key, args, field } => (key, args, field),
+            other => panic!("expected 422, got {other:?}"),
+        }
+    }
+
+    /// The 400 `body_to_file` answers for `why`, panicking on any other answer.
+    fn assert_malformed(body: Value, why: &str) {
+        match body_to_file(&body, CPUS) {
+            BodyAnswer::Malformed => {}
+            other => panic!("expected 400 server-malformed for {why}, got {other:?}"),
+        }
+    }
+
+    /// The form's whole body, well typed, is the file `render_for(cfg, true)`
+    /// renders for the same config: every value lands in the config, and the
+    /// text is the renderer's, never the body's.
+    #[test]
+    fn body_to_file_renders_the_file_render_for_gives() {
+        let cfg = rich_cfg();
+        let got = file(body_of(&cfg));
+        assert_eq!(
+            got,
+            server_cfg::render_for(&cfg, true),
+            "a well-typed body renders exactly render_for(cfg, true)"
+        );
+    }
+
+    /// A `Port` of a type the read never gives (a JSON string, not a number) is
+    /// a body the bff cannot read: 400, nothing rendered, the manager not asked.
+    #[test]
+    fn body_to_file_refuses_a_string_port_as_malformed() {
+        assert_malformed(body_with("Port", json!("8580")), "a string Port");
+    }
+
+    /// Every body shape the bff cannot read is 400: the document it expects is
+    /// `{revision: string, values: object}`, with every value the JSON type the
+    /// read gives it.
+    #[test]
+    fn body_to_file_refuses_every_body_shape_it_cannot_read() {
+        assert_malformed(json!([]), "a body that is not an object");
+        assert_malformed(json!("values"), "a body that is a string");
+        assert_malformed(json!(null), "a body that is null");
+        let mut no_revision = body_of(&rich_cfg());
+        no_revision
+            .as_object_mut()
+            .expect("the body")
+            .remove("revision");
+        assert_malformed(no_revision, "a body with no revision");
+        assert_malformed(
+            body_top("revision", json!(7)),
+            "a revision that is not a string",
+        );
+        assert_malformed(body_top("revision", Value::Null), "a null revision");
+        let mut no_values = body_of(&rich_cfg());
+        no_values
+            .as_object_mut()
+            .expect("the body")
+            .remove("values");
+        assert_malformed(no_values, "a body with no values");
+        assert_malformed(
+            body_top("values", json!([])),
+            "values that is not an object",
+        );
+        assert_malformed(body_top("values", json!("x")), "values that is a string");
+        // A value of the wrong JSON type, one for each type the read gives.
+        assert_malformed(
+            body_with("Hostname", json!(true)),
+            "a bool where a string is read",
+        );
+        assert_malformed(
+            body_with("ModelsDir", json!(4)),
+            "a number where a string is read",
+        );
+        assert_malformed(
+            body_with("Port", json!(true)),
+            "a bool where a number is read",
+        );
+        assert_malformed(
+            body_with("Threads", json!(4.5)),
+            "a fraction where a whole number is read",
+        );
+        assert_malformed(
+            body_with("Webui", json!("on")),
+            "a string where a bool is read",
+        );
+        assert_malformed(
+            body_with("SaveStateOnShutdown", json!(1)),
+            "a number where a bool is read",
+        );
+        assert_malformed(
+            body_with("RocblasUseHipblaslt", json!(true)),
+            "a bool where the tri-state's on/off string is read",
+        );
+    }
+
+    /// `Threads` above this machine's CPU count is a check the bff runs itself
+    /// (the manager cannot): 422 with the check's key and args, and `field` the
+    /// key it refuses. The bound is the `cpus` argument, not the test's machine.
+    #[test]
+    fn body_to_file_refuses_threads_above_the_cpu_count() {
+        let over = (CPUS + 1) as i64;
+        let (key, args, field) = refused(body_with("Threads", json!(over)));
+        assert_eq!(key, "not-whole-number-in-range");
+        assert_eq!(field, "Threads", "the 422 marks the control it refuses");
+        let want = vec![
+            "Threads".to_string(),
+            over.to_string(),
+            "1".to_string(),
+            CPUS.to_string(),
+        ];
+        assert_eq!(args, want, "the 422 carries the check's own args");
+        let (_, _, field) = refused(body_with("ThreadsBatch", json!(over)));
+        assert_eq!(field, "ThreadsBatch", "the same rule on the batch count");
+        let text = file(body_with("Threads", json!(CPUS as i64)));
+        assert!(
+            text.contains("Threads = 16"),
+            "Threads AT the CPU count is written: {text}"
+        );
+    }
+
+    /// A `;` in `ModelsDir`, or a `#` in any of the free-text keys (the INI
+    /// format has no escaping): 422 `comment-markers`, `field` the key the
+    /// refusal names, which is its `args[0]`.
+    #[test]
+    fn body_to_file_refuses_comment_markers_in_a_text_value() {
+        let (key, args, field) = refused(body_with("ModelsDir", json!("/srv/mod;els")));
+        assert_eq!(key, "comment-markers");
+        assert_eq!(
+            field, "ModelsDir",
+            "field is args[0], the key the refusal names"
+        );
+        assert_eq!(args, vec!["ModelsDir".to_string()]);
+        let (key, args, field) = refused(body_with("StateDir", json!("/srv/st#ate")));
+        assert_eq!(key, "comment-markers");
+        assert_eq!(field, "StateDir");
+        assert_eq!(args, vec!["StateDir".to_string()]);
+        let (key, _, field) = refused(body_with("OpencodeApiKey", json!("sk-;secret")));
+        assert_eq!(key, "comment-markers");
+        assert_eq!(field, "OpencodeApiKey", "the same mapping on the API key");
+    }
+
+    /// The base URL is stored as the GUI stores it: a trailing `/` and a
+    /// trailing `/v1` are dropped, so a typed `/v1` is never appended twice.
+    #[test]
+    fn body_to_file_stores_the_base_url_without_its_v1_suffix() {
+        let want = server_cfg::render_for(&rich_cfg(), true);
+        for suffix in ["/v1", "/v1/", "/"] {
+            let url = format!("http://127.0.0.1:4096{suffix}");
+            let got = file(body_with("OpencodeBaseUrl", json!(url)));
+            assert_eq!(got, want, "a base URL ending {suffix} is stored without it");
+        }
+    }
+
+    /// A blank `ModelsDir` or `StateDir` is left unset: the file carries the
+    /// commented hint, never a folder of the bff's own account (an instance
+    /// whose file leaves them unset uses the engine's folders).
+    #[test]
+    fn body_to_file_leaves_a_blank_directory_unset() {
+        let mut cfg = rich_cfg();
+        cfg.models_dir = None;
+        cfg.state_dir = None;
+        let mut body = body_with("ModelsDir", json!("   "));
+        values_of(&mut body).insert("StateDir".to_string(), json!(""));
+        let got = file(body);
+        assert_eq!(
+            got,
+            server_cfg::render_for(&cfg, true),
+            "a blank ModelsDir or StateDir is left unset"
+        );
+        for key in ["ModelsDir", "StateDir"] {
+            let named: Vec<&str> = got.lines().filter(|l| l.starts_with(key)).collect();
+            assert!(
+                named.is_empty(),
+                "{key} stays out of the file, its hint is a comment: {named:?}"
+            );
+        }
+    }
+
+    /// `OpencodeApiKey: null` writes no key (the line stays a commented hint, so
+    /// the file reloads with no key); a string writes that key.
+    #[test]
+    fn body_to_file_writes_the_api_key_only_when_the_body_carries_one() {
+        let got = file(body_with("OpencodeApiKey", Value::Null));
+        let lines: Vec<&str> = got
+            .lines()
+            .filter(|l| l.starts_with("OpencodeApiKey"))
+            .collect();
+        assert!(lines.is_empty(), "a null key writes no key line: {lines:?}");
+        assert!(
+            got.lines().any(|l| l.starts_with("; OpencodeApiKey")),
+            "the key stays commented, so it reloads unset"
+        );
+        let set = file(body_of(&rich_cfg()));
+        assert!(
+            set.lines().any(|l| l == "OpencodeApiKey = sk-secret"),
+            "a string sets the key"
+        );
+    }
+
+    /// A key the body does not carry at all is read as the body's `null` for it: the setting
+    /// is left unset, its line rendered as the commented hint. The form sends every key of the
+    /// read, so this is the shape of a body written by hand: it must neither keep a setting by
+    /// accident, nor clear one silently. Pinned as the code stands today: a `read_setting` that
+    /// reads a missing key as "leave the file alone", which is the design's intent
+    /// (ARCHITECTURE.md, the saving step), has to show up here as a deliberate change.
+    #[test]
+    fn body_to_file_treats_a_key_absent_from_the_body_as_unset() {
+        let mut missing = body_of(&rich_cfg());
+        values_of(&mut missing).remove("Port");
+        let got = file(missing);
+        assert_eq!(
+            got,
+            file(body_with("Port", Value::Null)),
+            "a key the body does not carry renders as the body's null for it"
+        );
+        assert!(
+            !got.lines().any(|l| l.starts_with("Port")),
+            "a Port the body does not carry is not set: {got}"
+        );
+        assert!(
+            got.lines().any(|l| l.starts_with("; Port")),
+            "an unset Port renders the commented hint, so the file reloads at the default"
+        );
+
+        let mut missing = body_of(&rich_cfg());
+        values_of(&mut missing).remove("OpencodeApiKey");
+        let got = file(missing);
+        assert!(
+            !got.lines().any(|l| l.starts_with("OpencodeApiKey")),
+            "an OpencodeApiKey the body does not carry writes no key: {got}"
+        );
+        assert!(
+            got.lines().any(|l| l.starts_with("; OpencodeApiKey")),
+            "an absent key leaves the hint commented, so the file reloads with no key"
+        );
+    }
+
+    /// `0.0.0.0` bound with another address is the bff's check (the manager runs
+    /// it again): 422, with `field` the design maps this key to, `Hostname`.
+    #[test]
+    fn body_to_file_refuses_a_bind_all_with_another_address() {
+        let (key, args, field) = refused(body_with("Hostname", json!("0.0.0.0,127.0.0.1")));
+        assert_eq!(key, "bind-all-with-others");
+        assert_eq!(args, Vec::<String>::new(), "this refusal carries no args");
+        assert_eq!(field, "Hostname", "the design maps this key to Hostname");
+    }
+
+    /// An integer out of its range is 422 with `field` the key the refusal
+    /// names, as on `Threads`: the mapping is `args[0]`, not one field per key.
+    #[test]
+    fn body_to_file_refuses_an_integer_out_of_range_on_its_own_field() {
+        for (key, value) in [
+            ("Port", json!(70000)),
+            ("ModelsMemoryMargin", json!(-1)),
+            ("LogVerbosity", json!(6)),
+        ] {
+            let (refusal_key, args, field) = refused(body_with(key, value));
+            assert_eq!(
+                refusal_key, "not-whole-number-in-range",
+                "{key} out of range"
+            );
+            assert_eq!(field, key, "field is args[0] of the refusal, naming {key}");
+            assert_eq!(args.first().map(String::as_str), Some(key));
+        }
+    }
+
+    /// The bounds of the thread check are the CPU count the step is handed,
+    /// not one it computes: fed `CPUS`, it refuses `CPUS + 1` and names `CPUS`
+    /// as the bound. Which count the route hands it (this machine's) is pinned
+    /// by `a_value_the_bff_check_refuses_is_422_naming_its_field` in
+    /// `tests/server.rs`, through the `limits` of the read the form saved.
+    #[test]
+    fn the_thread_bound_of_the_check_is_the_cpu_count_it_is_handed() {
+        let mut cfg = rich_cfg();
+        cfg.threads = Some(CPUS as i32 + 1);
+        let (key, args, field) = refused(body_of(&cfg));
+        assert_eq!(key, "not-whole-number-in-range");
+        assert_eq!(
+            args.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["Threads", &(CPUS + 1).to_string(), "1", &CPUS.to_string()],
+            "the refusal's bounds are the check's own"
+        );
+        assert_eq!(field, "Threads");
+    }
+
+    /// The shapes that cannot name a setting, each with the body's own
+    /// `revision` so the refusal is about the shape and not about a missing
+    /// member: no `values`, a `values` that is a string, a `values` that is an
+    /// array, and a field value that is an object. Every one is malformed, and
+    /// the route refuses them before any manager call.
+    #[test]
+    fn body_to_file_refuses_a_body_that_cannot_name_a_setting() {
+        assert_malformed(json!({ "revision": REV }), "no values member");
+        assert_malformed(
+            json!({ "revision": REV, "values": "Threads = 4" }),
+            "values not an object",
+        );
+        assert_malformed(
+            json!({ "revision": REV, "values": [{ "Threads": 4 }] }),
+            "values an array",
+        );
+        assert_malformed(
+            json!({ "revision": REV, "values": { "Threads": { "nested": 4 } } }),
+            "a value that is an object",
+        );
+        assert_malformed(
+            json!({ "revision": 4, "values": { "Threads": 4 } }),
+            "a revision that is no string",
+        );
+    }
+
+    /// A key the bff has no rule for is not a setting it writes: the file is
+    /// rendered from the known fields alone, so an extra key, of any name and
+    /// any type, leaves the file byte for byte what the same body without it
+    /// renders. The manager only ever sees the rendered text.
+    #[test]
+    fn body_to_file_writes_nothing_for_a_key_that_is_not_a_known_setting() {
+        let plain = body_of(&rich_cfg());
+        let want = file(plain.clone());
+        for (key, value) in [
+            ("Threads of the future", json!(4)),
+            ("", json!(4)),
+            ("  Threads", json!(4)),
+            ("threads", json!(4)),
+            ("ModelDir", json!({ "nested": 4 })),
+        ] {
+            let mut body = plain.clone();
+            values_of(&mut body).insert(key.to_string(), value);
+            assert_eq!(file(body), want, "the key {key:?} writes nothing");
+        }
+    }
+
+    /// A number that is not the whole number the read gives is malformed, and
+    /// so is a float that is a whole number: the read sends an integer for a
+    /// numeric key, never a float, and the body sends back what it read. The
+    /// whole number itself renders.
+    #[test]
+    fn body_to_file_refuses_a_number_that_is_not_whole_for_an_integer_setting() {
+        assert_malformed(body_with("Threads", json!(1.5)), "a fraction");
+        assert_malformed(body_with("Threads", json!(4.0)), "a whole float");
+        let text = file(body_with("Threads", json!(4)));
+        assert!(text.contains("Threads = 4"), "{text}");
+    }
+
+    /// `null` clears a setting, and the blank and the all-blank string clear
+    /// it the same way: no line of the file starts with the key (the hint of
+    /// an unset one is a comment, and so starts with `;`).
+    #[test]
+    fn body_to_file_takes_the_blank_string_as_a_clear() {
+        for blank in [Value::Null, json!(""), json!("   ")] {
+            let text = file(body_with("ModelsDir", blank.clone()));
+            assert!(
+                !text.lines().any(|l| l.starts_with("ModelsDir")),
+                "the blank {blank} leaves ModelsDir out of the file: {text}"
+            );
+        }
+    }
+
+    /// Every field name the web's body uses is a setting the bff knows, and
+    /// all of them are there: this is what the route hands the manager for the
+    /// manager's own check, and what `field_of` reads back, so a rename on one
+    /// side is a break on both. The names are compared as a set: the order of
+    /// a JSON object here is the bff's map's (the read's `values` and the
+    /// body's are both sorted by it) and the form reads by name. Which names
+    /// the read sends is pinned on the read side by
+    /// `unset_keys_are_null_in_the_shipped_file` in `tests/server.rs`.
+    #[test]
+    fn the_values_keys_are_the_web_s_field_names() {
+        let body = body_of(&rich_cfg());
+        let values = body["values"]
+            .as_object()
+            .expect("the body carries an object");
+        let mut keys: Vec<&str> = values.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![
+                "AttnRotDisable",
+                "CudaAllreduce",
+                "CudaDisableGraphs",
+                "Hostname",
+                "LogVerbosity",
+                "ModelsDir",
+                "ModelsMax",
+                "ModelsMemoryMargin",
+                "OpencodeApiKey",
+                "OpencodeBaseUrl",
+                "Port",
+                "RocblasUseHipblaslt",
+                "RocprofAttach",
+                "SaveStateOnShutdown",
+                "StateDir",
+                "Threads",
+                "ThreadsBatch",
+                "Webui",
+                "WebuiMcpProxy",
+            ]
+        );
+    }
 }

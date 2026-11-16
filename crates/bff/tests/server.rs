@@ -1,9 +1,9 @@
-//! `GET /api/instances/{id}/server`: an instance's `server@<id>.ini` read
-//! through the manager, for a signed-in user, through
-//! `pai_bff::router_with_session` with a fake manager client and a fake
-//! authenticator (never the real bus, pipe, PAM or LogonUser). Each request
-//! runs under a deadline, so a bff that waits on the manager fails instead of
-//! hanging.
+//! `GET /api/instances/{id}/server` and `PUT /api/instances/{id}/server`:
+//! an instance's `server@<id>.ini` read and saved through the manager, for a
+//! signed-in user, through `pai_bff::router_with_session` with a fake manager
+//! client and a fake authenticator (never the real bus, pipe, PAM or
+//! LogonUser). Each request runs under a deadline, so a bff that waits on the
+//! manager fails instead of hanging.
 //!
 //! The contract (fe/briefs/api-contract.md) and the choices made here:
 //! - A session is needed: none, or an unknown one, is 401 `session-required`
@@ -58,6 +58,31 @@
 //!   manager re-checks the user's membership of `pai` at every call. The
 //!   session-free routes connect with no principal, as sign-in does:
 //!   `tests/instances.rs` and `tests/authenticator.rs` pin those.
+//! - The `PUT` of the form (`{"revision", "values"}`): the bff re-reads the
+//!   file as the session's user, answers 409 `server-changed-elsewhere` when
+//!   the body's revision is no longer the file's, runs `server_cfg::check`
+//!   with this machine's CPU count, and hands the manager the whole file as
+//!   `server_cfg::render_for` of the values through the compare and swap,
+//!   expecting the text it read. 200 is `{"revision", "running"}`: the new
+//!   file's revision, and the state of the instance read after the write
+//!   (`true` also when that read fails, `false` for `inactive` and the
+//!   other not-running states). 400 `server-malformed` for a body that is
+//!   not the form's shape, 422 `{"key", "args", "field"}` for a refused
+//!   value (the bff's own check, the manager's, `client-address-in-use`
+//!   marking `Port` and `client-unresolvable-host` marking `Hostname`),
+//!   404 `client-no-instance`, 502 `client-other`, and the two answers of a
+//!   manager that does not answer the save: 503 `client-unavailable` for as
+//!   long as it has not been asked to write (it was never reached, it refuses
+//!   at the read, or the time limit runs out on the connect or on the read),
+//!   504 `client-timeout` from the moment the write was asked and its outcome
+//!   is unknown (the write never comes back, or the stream dies with the
+//!   manager at the write: the client reports that as `Unavailable` too, and
+//!   the route must not read it as a manager that was never reached). A save
+//!   the time limit cut off at the connect or at the read ends with that 503:
+//!   the blocking task the route left behind must not write, so the file keeps
+//!   the text the form read. A blank `ModelsDir` or `StateDir` is left unset
+//!   in the file; the key the body names is written and never sent in an
+//!   answer.
 //! - A 403 refusal for the signed-in user ends their session at once
 //!   (user, 2026-11-16): the same cookie is 401 `session-required`
 //!   afterwards, so the page returns to the sign-in form. Only that
@@ -73,10 +98,12 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
+use pai_core::checks::Refusal;
 use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
@@ -86,6 +113,15 @@ const TIMEOUT: Duration = Duration::from_millis(200);
 
 /// How long a test waits for the bff's answer before failing.
 const DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long a test waits, after the manager call it stopped has returned, for a
+/// blocking task that was not cut off to reach its write.
+const GRACE: Duration = Duration::from_millis(500);
+
+/// How long a stopped call in the fake holds at most. The test releases it; a
+/// gate nobody releases lets the call through, so a test fails, it does not
+/// hang.
+const GATE_LIMIT: Duration = Duration::from_secs(5);
 
 const CLIENT: &str = "127.0.0.1:51000";
 
@@ -152,6 +188,140 @@ struct FakeManager {
     log: Log,
     as_user: Option<String>,
     refuse: Vec<String>,
+    live: Live,
+}
+
+/// What a `write_file_if` answers when the test asks it to fail: the manager's
+/// own failures, the ones a save can meet between reading and writing.
+#[derive(Clone)]
+enum Outcome {
+    /// The compare and swap: the file no longer holds what the bff read.
+    Changed,
+    NoInstance,
+    Unavailable,
+    Other,
+    Invalid {
+        key: &'static str,
+        values: Vec<String>,
+    },
+    AddressInUse(String),
+    UnresolvableHost(String),
+}
+
+impl Outcome {
+    fn into_error(self) -> ClientError {
+        match self {
+            Outcome::Changed => ClientError::Changed,
+            Outcome::NoInstance => ClientError::NoInstance,
+            Outcome::Unavailable => ClientError::Unavailable,
+            Outcome::Other => ClientError::Other("the manager failed".into()),
+            Outcome::Invalid { key, values } => ClientError::Invalid(Refusal { key, values }),
+            Outcome::AddressInUse(id) => ClientError::AddressInUse(id),
+            Outcome::UnresolvableHost(host) => ClientError::UnresolvableHost(host),
+        }
+    }
+}
+
+/// The files a manager keeps live for the write tests: the current text of
+/// each, the writes it was asked for (`name`, `contents`, `expected`), the
+/// principals whose write it refuses (the member of `pai` removed between the
+/// read and the write), the principals whose read it refuses (a read refused
+/// for a signed-in user, before the route reaches the write), the failure to
+/// answer a write with, how long a write takes, and whether the instance's
+/// process runs. Shared by every connect of one app, so a test can read a
+/// file, change it behind the form, refuse a call, and save.
+///
+/// The connect and the read take the same two cells as the write: the failure
+/// to answer them with, and how long they take. The 503 and 504 of a save
+/// turn on which call was reached, so a test has to be able to stop the save
+/// inside the connect, inside the read, and inside the write.
+#[derive(Clone, Default)]
+struct Live {
+    files: Arc<Mutex<HashMap<String, String>>>,
+    writes: Arc<Mutex<Vec<(String, String, String)>>>,
+    write_refused: Arc<Mutex<Vec<String>>>,
+    read_refused: Arc<Mutex<Vec<String>>>,
+    write_outcome: Arc<Mutex<Option<Outcome>>>,
+    write_pause_ms: Arc<AtomicU64>,
+    read_outcome: Arc<Mutex<Option<Outcome>>>,
+    read_pause_ms: Arc<AtomicU64>,
+    /// A read stopped inside the manager call until the test releases it:
+    /// `read_gate_armed` stops the next read, `read_gate_released` lets it go,
+    /// `reads_gated` counts the reads that stopped and `reads_released` those
+    /// the test let go (see `gate`).
+    read_gate_armed: Arc<AtomicBool>,
+    read_gate_released: Arc<AtomicBool>,
+    reads_gated: Arc<AtomicUsize>,
+    reads_released: Arc<AtomicUsize>,
+    connect_outcome: Arc<Mutex<Option<Outcome>>>,
+    connect_pause_ms: Arc<AtomicU64>,
+    /// The same gate for the connect.
+    connect_gate_armed: Arc<AtomicBool>,
+    connect_gate_released: Arc<AtomicBool>,
+    connects_gated: Arc<AtomicUsize>,
+    connects_released: Arc<AtomicUsize>,
+    status_outcome: Arc<Mutex<Option<Outcome>>>,
+    status_pause_ms: Arc<AtomicU64>,
+    running: Arc<Mutex<bool>>,
+}
+
+/// A call a test stops: armed for the next one, it holds there until the test
+/// releases it, counting the calls that stopped in `gated` and the ones the
+/// test let go in `released_calls`. This is how a test stops the save inside
+/// the connect or inside the read with no fixed sleep: the route answers past
+/// its time limit, the test then lets the parked call return and watches
+/// whether the task goes on to write. A call holds at most `GATE_LIMIT`, so a
+/// gate nobody releases lets the call through.
+///
+/// The save runs its connect, read and write in one `spawn_blocking` task, so a
+/// parked call holds a blocking-pool thread and not the route; a route parking
+/// a call on the async path (the session routes) would be stopped by it,
+/// because `#[tokio::test]` runs the test on a single thread.
+fn gate(
+    armed: &AtomicBool,
+    released: &AtomicBool,
+    gated: &AtomicUsize,
+    released_calls: &AtomicUsize,
+) {
+    if !armed.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    gated.fetch_add(1, Ordering::SeqCst);
+    let deadline = Instant::now() + GATE_LIMIT;
+    while !released.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    released_calls.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The connect as the fake answers it: it takes the principal, stops for
+/// `Live::connect_pause_ms`, and refuses with `Live::connect_outcome` when one is set. Both
+/// cells are inert by default, so every test that does not touch them is untouched.
+///
+/// Set them from a test of the save only. The save runs its connect, read and write in one
+/// blocking task, so a sleeping connect stops that task and not the route; a route that
+/// connects on the async path (the session routes) would be stopped by a sleeping connect,
+/// because `#[tokio::test]` runs the test on a single thread.
+fn connect_hook(live: &Live) -> Result<(), ClientError> {
+    gate(
+        &live.connect_gate_armed,
+        &live.connect_gate_released,
+        &live.connects_gated,
+        &live.connects_released,
+    );
+    let pause = live.connect_pause_ms.load(Ordering::SeqCst);
+    if pause > 0 {
+        std::thread::sleep(Duration::from_millis(pause));
+    }
+    let outcome = live
+        .connect_outcome
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    match outcome {
+        Some(outcome) => Err(outcome.into_error()),
+        None => Ok(()),
+    }
 }
 
 impl FakeManager {
@@ -161,16 +331,138 @@ impl FakeManager {
             .unwrap_or_else(|e| e.into_inner())
             .push(call);
     }
+
+    /// The refusal of the principal this connect was handed, the kind every
+    /// principal refusal carries: the user is no longer a member of `pai`.
+    /// A principal in `Live::read_refused` is refused the reads too, which is
+    /// a refusal of a member who is still a member.
+    fn refused(&self) -> bool {
+        if self
+            .refuse
+            .iter()
+            .any(|u| Some(u.as_str()) == self.as_user.as_deref())
+        {
+            return true;
+        }
+        let principal = self.as_user.clone().unwrap_or_default();
+        self.live
+            .read_refused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&principal)
+    }
 }
 
 impl ManagerClient for FakeManager {
+    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
+        self.record(format!("read {name}"));
+        if self.refused() {
+            return Err(ClientError::NotAuthorized);
+        }
+        std::thread::sleep(self.delay);
+        // A read stopped until the test releases it: the save parked inside it.
+        gate(
+            &self.live.read_gate_armed,
+            &self.live.read_gate_released,
+            &self.live.reads_gated,
+            &self.live.reads_released,
+        );
+        // A read that takes past the route's time limit: the save that waits
+        // on it never reaches its write.
+        let pause = self.live.read_pause_ms.load(Ordering::SeqCst);
+        if pause > 0 {
+            std::thread::sleep(Duration::from_millis(pause));
+        }
+        let outcome = self
+            .live
+            .read_outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(outcome) = outcome {
+            return Err(outcome.into_error());
+        }
+        if let Some(text) = self
+            .live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+        {
+            return Ok(Some(whole(text)));
+        }
+        self.file.clone()
+    }
+    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+        let principal = self.as_user.clone().unwrap_or_default();
+        self.record(format!("write-if {principal} {name}"));
+        self.live
+            .writes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((name.to_string(), contents.to_string(), expected.to_string()));
+        let refused = self
+            .live
+            .write_refused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&principal);
+        if refused {
+            return Err(ClientError::NotAuthorized);
+        }
+        let outcome = self
+            .live
+            .write_outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(outcome) = outcome {
+            return Err(outcome.into_error());
+        }
+        // The compare and swap, as the real manager's is: the file must still
+        // hold what the caller read. The pause runs inside the call, so a
+        // write that never comes back is a write the bff must cut off.
+        let pause = self.live.write_pause_ms.load(Ordering::SeqCst);
+        if pause > 0 {
+            std::thread::sleep(Duration::from_millis(pause));
+        }
+        let mut files = self.live.files.lock().unwrap_or_else(|e| e.into_inner());
+        let current = files
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| SHIPPED.to_string());
+        if current != expected {
+            return Err(ClientError::Changed);
+        }
+        files.insert(name.to_string(), contents.to_string());
+        Ok(())
+    }
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         self.record("list".into());
         Ok(vec!["default".into()])
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
-        Ok(InstanceState::Active)
+        let pause = self.live.status_pause_ms.load(Ordering::SeqCst);
+        if pause > 0 {
+            std::thread::sleep(Duration::from_millis(pause));
+        }
+        let outcome = self
+            .live
+            .status_outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(outcome) = outcome {
+            return Err(outcome.into_error());
+        }
+        Ok(
+            if *self.live.running.lock().unwrap_or_else(|e| e.into_inner()) {
+                InstanceState::Active
+            } else {
+                InstanceState::Inactive
+            },
+        )
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {
         self.record(format!("start {id}"));
@@ -183,18 +475,6 @@ impl ManagerClient for FakeManager {
     fn restart(&self, id: &str) -> Result<(), ClientError> {
         self.record(format!("restart {id}"));
         Ok(())
-    }
-    fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
-        self.record(format!("read {name}"));
-        if self
-            .refuse
-            .iter()
-            .any(|u| Some(u.as_str()) == self.as_user.as_deref())
-        {
-            return Err(ClientError::NotAuthorized);
-        }
-        std::thread::sleep(self.delay);
-        self.file.clone()
     }
     fn write_file(
         &self,
@@ -244,6 +524,7 @@ struct App {
     log: Log,
     connects: Arc<AtomicUsize>,
     principals: Principals,
+    live: Live,
 }
 
 fn app_with(
@@ -277,19 +558,23 @@ fn app_for(
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
     let principals = Principals::default();
+    let live = Live::default();
     let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let shared = live.clone();
     let connect: Connect = Arc::new(move |principal: Option<&str>| {
         c.fetch_add(1, Ordering::SeqCst);
         p.lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(principal.map(str::to_string));
         connect_result.clone()?;
+        connect_hook(&shared)?;
         Ok(Box::new(FakeManager {
             file: file.clone(),
             delay,
             log: l.clone(),
             as_user: principal.map(str::to_string),
             refuse: refuse.clone(),
+            live: shared.clone(),
         }) as Client)
     });
     let start = Instant::now();
@@ -305,6 +590,7 @@ fn app_for(
         log,
         connects,
         principals,
+        live,
     }
 }
 
@@ -351,9 +637,204 @@ fn app_reading(file: Result<Option<ManagerFile>, ClientError>) -> App {
     app_with(Ok(()), file, Duration::ZERO)
 }
 
+/// A manager that keeps `text` as `server@default.ini` and takes writes: the
+/// `PUT` tests read through it, save through it, and read again. The files,
+/// the writes, the refusals and the instance state are shared cells, set
+/// through the `App` methods.
+fn app_writing(text: &str) -> App {
+    let live = Live::default();
+    live.files
+        .lock()
+        .unwrap()
+        .insert("server@default.ini".to_string(), text.to_string());
+    *live.running.lock().unwrap() = true;
+    let log = Log::default();
+    let connects = Arc::new(AtomicUsize::new(0));
+    let principals = Principals::default();
+    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let shared = live.clone();
+    let connect: Connect = Arc::new(move |principal: Option<&str>| {
+        c.fetch_add(1, Ordering::SeqCst);
+        p.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
+        connect_hook(&shared)?;
+        Ok(Box::new(FakeManager {
+            file: Ok(None),
+            delay: Duration::ZERO,
+            log: l.clone(),
+            as_user: principal.map(str::to_string),
+            refuse: Vec::new(),
+            live: shared.clone(),
+        }) as Client)
+    });
+    let start = Instant::now();
+    let router = pai_bff::router_with_session(
+        connect,
+        TIMEOUT,
+        Arc::new(FakeAuth),
+        Arc::new(move || start),
+        KEY_A,
+    );
+    App {
+        router,
+        log,
+        connects,
+        principals,
+        live,
+    }
+}
+
 impl App {
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The `write_file_if` calls the manager was asked for: name, contents,
+    /// the text the compare and swap expected.
+    fn writes(&self) -> Vec<(String, String, String)> {
+        self.live
+            .writes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The file the manager holds now.
+    fn file_text(&self) -> String {
+        self.live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get("server@default.ini")
+            .expect("the file")
+            .clone()
+    }
+
+    /// Change the file behind the bff: the form read a revision of the old text.
+    fn set_file(&self, text: &str) {
+        self.live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("server@default.ini".to_string(), text.to_string());
+    }
+
+    /// Answer every coming write with `outcome`, the manager's own failures
+    /// between the read and the write.
+    fn set_write_outcome(&self, outcome: Outcome) {
+        *self.live.write_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// Answer every coming status read with `outcome`.
+    fn set_status_outcome(&self, outcome: Outcome) {
+        *self.live.status_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// Refuse the write of `user`: the member of `pai` removed after the read.
+    fn set_write_refused(&self, user: &str) {
+        self.live
+            .write_refused
+            .lock()
+            .unwrap()
+            .push(user.to_string());
+    }
+
+    /// Refuse the reads of `user`, leaving the writes alone: the read refused
+    /// for a signed-in user, before the route reaches the write.
+    fn set_read_refused(&self, user: &str) {
+        self.live
+            .read_refused
+            .lock()
+            .unwrap()
+            .push(user.to_string());
+    }
+
+    /// A write that takes `ms` milliseconds: the manager busy at the moment
+    /// the save arrives.
+    fn set_write_pause_ms(&self, ms: u64) {
+        self.live.write_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Answer every coming read with `outcome`, the manager refusing before
+    /// the save reaches its write.
+    fn set_read_outcome(&self, outcome: Outcome) {
+        *self.live.read_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// A read that takes `ms` milliseconds: the time limit runs out with the
+    /// write not asked.
+    fn set_read_pause_ms(&self, ms: u64) {
+        self.live.read_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Stop the next read inside the manager call, until `release_read_gate`
+    /// lets it go. A test of the save only (see `gate`).
+    fn arm_read_gate(&self) {
+        self.live.read_gate_armed.store(true, Ordering::SeqCst);
+    }
+
+    /// Let the read stopped by `arm_read_gate` return.
+    fn release_read_gate(&self) {
+        self.live.read_gate_released.store(true, Ordering::SeqCst);
+    }
+
+    /// How many reads stopped in the gate.
+    fn reads_gated(&self) -> usize {
+        self.live.reads_gated.load(Ordering::SeqCst)
+    }
+
+    /// How many stopped reads the test let go, so the task that was parked in
+    /// one is on its way to its write.
+    fn reads_released(&self) -> usize {
+        self.live.reads_released.load(Ordering::SeqCst)
+    }
+
+    /// Answer every coming connect with `outcome`, the manager not reached at
+    /// all. A test of the save only (see `connect_hook`).
+    fn set_connect_outcome(&self, outcome: Outcome) {
+        *self.live.connect_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// A connect that takes `ms` milliseconds: the time limit runs out before
+    /// the manager is reached. A test of the save only (see `connect_hook`).
+    fn set_connect_pause_ms(&self, ms: u64) {
+        self.live.connect_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Stop the next connect inside the manager call, until
+    /// `release_connect_gate` lets it go. A test of the save only (see `gate`).
+    fn arm_connect_gate(&self) {
+        self.live.connect_gate_armed.store(true, Ordering::SeqCst);
+    }
+
+    /// Let the connect stopped by `arm_connect_gate` return.
+    fn release_connect_gate(&self) {
+        self.live
+            .connect_gate_released
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// How many connects stopped in the gate.
+    fn connects_gated(&self) -> usize {
+        self.live.connects_gated.load(Ordering::SeqCst)
+    }
+
+    /// How many stopped connects the test let go, so the task that was parked
+    /// in one is on its way to its read and its write.
+    fn connects_released(&self) -> usize {
+        self.live.connects_released.load(Ordering::SeqCst)
+    }
+
+    /// A status read that takes `ms` milliseconds: the manager busy after the
+    /// write landed.
+    fn set_status_pause_ms(&self, ms: u64) {
+        self.live.status_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Whether the instance's process runs.
+    fn set_running(&self, running: bool) {
+        *self.live.running.lock().unwrap() = running;
     }
 
     /// Sign `alice` in and return the cookie the browser sends back.
@@ -410,6 +891,35 @@ impl App {
             builder = builder.header(*name, *value);
         }
         let request = builder.body(Body::empty()).expect("request");
+        self.send(request).await
+    }
+
+    /// `PUT /api/instances/default/server` with `body` as JSON, saving.
+    async fn put(&self, cookie: Option<&str>, body: &Value) -> Reply {
+        self.put_with(cookie, &body.to_string(), &[]).await
+    }
+
+    /// The same with the body as given (not JSON, oversized) and extra
+    /// headers (an `Origin` from elsewhere).
+    async fn put_with(&self, cookie: Option<&str>, body: &str, extra: &[(&str, &str)]) -> Reply {
+        let mut builder = Request::builder()
+            .method(Method::PUT)
+            .uri("/api/instances/default/server")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(c) = cookie {
+            builder = builder.header(header::COOKIE, c);
+        }
+        for (name, value) in extra {
+            builder = builder.header(*name, *value);
+        }
+        let request = builder.body(Body::from(body.to_string())).expect("request");
+        self.send(request).await
+    }
+
+    /// One request through the router, with the deadline every request runs
+    /// under: a bff that never answers fails the test instead of hanging it.
+    async fn send(&self, request: Request<Body>) -> Reply {
+        let uri = request.uri().clone();
         let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
             .await
             .unwrap_or_else(|_| panic!("no answer to {uri} within {DEADLINE:?}"))
@@ -475,6 +985,21 @@ impl Reply {
             "{}",
             self.body
         );
+    }
+
+    /// A 422 value refusal: `{"key", "args", "field"}`, the INI key the form
+    /// marks beside the check's key and values.
+    fn assert_refused(&self, key: &str, args: &[&str], field: &str) {
+        assert_eq!(
+            self.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            self.body
+        );
+        let doc = self.json();
+        assert_eq!(doc["key"], json!(key), "{}", self.body);
+        assert_eq!(doc["args"], json!(args), "{}", self.body);
+        assert_eq!(doc["field"], json!(field), "{}", self.body);
     }
 
     /// The 200 document.
@@ -1212,4 +1737,817 @@ async fn nothing_is_withheld_when_the_file_has_no_key() {
         .document();
     assert_eq!(doc["values"]["OpencodeApiKey"], Value::Null);
     assert!(doc.get("withheld").is_none(), "{doc}");
+}
+
+// ── Saving: `PUT /api/instances/{id}/server` ────────────────────────────
+
+/// The read's `values` with these overrides: the form sends every key back as
+/// the read gave it, changed where the user typed.
+fn values_with(doc: &Value, overrides: &[(&str, Value)]) -> Value {
+    let mut values = doc["values"].as_object().expect("values").clone();
+    for (key, value) in overrides {
+        values.insert(key.to_string(), value.clone());
+    }
+    Value::Object(values)
+}
+
+/// The form's save body for this read: `{"revision", "values"}`.
+fn save_body(doc: &Value, overrides: &[(&str, Value)]) -> Value {
+    json!({ "revision": doc["revision"], "values": values_with(doc, overrides) })
+}
+
+/// The save's 200: exactly `{"revision", "running"}`.
+fn assert_saved(reply: &Reply) -> Value {
+    let doc = reply.document();
+    let mut members: Vec<&str> = doc
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    members.sort();
+    assert_eq!(members, ["revision", "running"]);
+    doc
+}
+
+/// No session: 401 `session-required`, the manager not even connected to.
+#[tokio::test]
+async fn a_save_without_a_session_is_session_required() {
+    let app = app_writing(WITH_KEY);
+    let doc = app.read_default().await.document();
+    let r = app.put(None, &save_body(&doc, &[])).await;
+    r.assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    assert!(app.writes().is_empty(), "nothing written");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+/// A `PUT` from a foreign origin is refused before anything: the save writes
+/// nothing and the manager is not asked beyond the form's own read.
+#[tokio::test]
+async fn a_save_from_a_foreign_origin_is_refused() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let connects = app.connects.load(Ordering::SeqCst);
+    app.put_with(Some(&cookie), "{}", &[("origin", "https://evil.example")])
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "request-cross-origin");
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        connects,
+        "no new connect"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+}
+
+/// A body that is not the form's shape: no JSON, no `revision`, `values` that
+/// is no object, a value not of the JSON type the read gives it. 400
+/// `server-malformed`, the manager not asked beyond the form's own read.
+#[tokio::test]
+async fn a_body_that_is_not_the_forms_shape_is_server_malformed() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let connects = app.connects.load(Ordering::SeqCst);
+    let revision = doc["revision"].as_str().expect("a revision").to_string();
+    let bodies = [
+        "not json at all".to_string(),
+        String::new(),
+        "{}".to_string(),
+        json!({ "values": doc["values"] }).to_string(),
+        json!({ "revision": 1, "values": doc["values"] }).to_string(),
+        json!({ "revision": revision, "values": "Port" }).to_string(),
+        json!({ "revision": revision, "values": { "Port": "abc" } }).to_string(),
+        json!({ "revision": revision, "values": { "Webui": "true" } }).to_string(),
+        json!({ "revision": revision, "values": { "RocblasUseHipblaslt": true } }).to_string(),
+        json!({ "revision": revision, "values": { "Port": 8.5 } }).to_string(),
+    ];
+    for body in bodies {
+        let r = app.put_with(Some(&cookie), &body, &[]).await;
+        r.assert_error(StatusCode::BAD_REQUEST, "server-malformed");
+    }
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        connects,
+        "no new connect"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+/// A body over the bff's size limit is 413 `payload-too-large`, before the
+/// route reads it.
+#[tokio::test]
+async fn a_body_larger_than_the_limit_is_payload_too_large() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let connects = app.connects.load(Ordering::SeqCst);
+    let body = save_body(&doc, &[("Hostname", json!("a".repeat(70 * 1024)))]);
+    app.put(Some(&cookie), &body)
+        .await
+        .assert_error(StatusCode::PAYLOAD_TOO_LARGE, "payload-too-large");
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        connects,
+        "no new connect"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+}
+
+/// The save on a running instance: 200 `{"revision", "running"}`, and the
+/// file the manager holds afterwards is `server_cfg::render_for` of the
+/// body's values. The save reads the file itself (read, compare, write): the
+/// compare and swap expects exactly the text of that read, the write is the
+/// manager call for the session's user, the new `revision` is the one the next
+/// read answers, `running` true, and the answer sends no API key.
+#[tokio::test]
+async fn a_save_writes_the_file_the_body_holds_as_the_signed_in_user() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let reply = app
+        .put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await;
+    let saved = assert_saved(&reply);
+    assert_eq!(saved["running"], json!(true), "{}", reply.body);
+
+    let writes = app.writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    let (name, contents, expected) = &writes[0];
+    assert_eq!(name, "server@default.ini");
+    assert_eq!(expected, WITH_KEY, "the CAS expects the text the bff read");
+    assert!(contents.contains("Port = 8642"), "{contents}");
+    assert!(
+        contents.contains("OpencodeApiKey = sk-test"),
+        "the key survives the save: {contents}"
+    );
+    let cfg = pai_core::server_cfg::from_text(contents);
+    assert_eq!(cfg.port, Some(8642));
+    assert_eq!(
+        pai_core::server_cfg::render_for(&cfg, true),
+        *contents,
+        "the file is exactly the render of the values"
+    );
+    assert!(!reply.body.contains("sk-test"), "no key in the answer");
+
+    // The save reads the file itself: the text it reads is the revision it
+    // compares and the `expected` of the compare and swap. So the calls are
+    // the form's own read, the save's read, the write and the status.
+    assert_eq!(
+        app.calls(),
+        [
+            "read server@default.ini".to_string(),
+            "read server@default.ini".to_string(),
+            "write-if alice server@default.ini".to_string(),
+            "status default".to_string(),
+        ],
+        "the form's read, the save's read, the write, then the status for running"
+    );
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("alice".to_string()); 2],
+        "every connect acts for the session's user"
+    );
+
+    let after = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    assert_eq!(
+        after["revision"], saved["revision"],
+        "the answer's revision is the one the file has now"
+    );
+    assert_eq!(after["values"]["Port"], json!(8642));
+    assert_eq!(after["values"]["OpencodeApiKey"], json!("sk-test"));
+}
+
+/// The save acts for the session's user, not the request's: the write is the
+/// call of the signed-in `root`, and the save of `alice`'s session is `alice`'s.
+/// Each form holds the revision of its own read, so `alice` reads again after
+/// `root` saved: her save is fresh and lands, over his.
+#[tokio::test]
+async fn the_save_of_each_session_is_the_call_of_that_user() {
+    let app = app_writing(WITH_KEY);
+    let alice = app.sign_in_as("alice").await;
+    let root = app.sign_in_as("root").await;
+    let doc = app
+        .get("/api/instances/default/server", Some(&root))
+        .await
+        .document();
+    assert_saved(
+        &app.put(Some(&root), &save_body(&doc, &[("Port", json!(8642))]))
+            .await,
+    );
+    let doc = app
+        .get("/api/instances/default/server", Some(&alice))
+        .await
+        .document();
+    assert_saved(
+        &app.put(Some(&alice), &save_body(&doc, &[("Port", json!(8643))]))
+            .await,
+    );
+    let writes: Vec<String> = app
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("write-if"))
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            "write-if root server@default.ini".to_string(),
+            "write-if alice server@default.ini".to_string(),
+        ],
+        "each save is the call of its own session's user"
+    );
+    assert!(
+        app.file_text().contains("Port = 8643"),
+        "the last save is the one the file holds: {}",
+        app.file_text()
+    );
+}
+
+/// The key the body names is the key the file gets, and it never appears in
+/// the save's answer.
+#[tokio::test]
+async fn the_saved_file_keeps_the_api_key_the_body_names() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let reply = app
+        .put(
+            Some(&cookie),
+            &save_body(&doc, &[("OpencodeApiKey", json!("sk-rotated"))]),
+        )
+        .await;
+    assert_saved(&reply);
+    assert!(!reply.body.contains("sk-rotated"), "no key in the answer");
+    let writes = app.writes();
+    assert!(
+        writes[0].1.contains("OpencodeApiKey = sk-rotated"),
+        "{writes:?}"
+    );
+    let after = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    assert_eq!(after["values"]["OpencodeApiKey"], json!("sk-rotated"));
+}
+
+/// A blank `ModelsDir` or `StateDir` is left unset in the file, on every OS:
+/// the save writes no line for it (the file keeps the key's commented hint,
+/// which starts with `;`), and names no folder of the bff's account.
+#[tokio::test]
+async fn a_blank_directory_is_left_unset_in_the_file() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    app.put(
+        Some(&cookie),
+        &save_body(
+            &doc,
+            &[
+                ("ModelsDir", json!("/mnt/data/models")),
+                ("StateDir", json!("/var/lib/state")),
+            ],
+        ),
+    )
+    .await;
+    let set = app.file_text();
+    assert!(set.contains("ModelsDir = /mnt/data/models"), "{set}");
+    assert!(set.contains("StateDir = /var/lib/state"), "{set}");
+
+    let doc = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("ModelsDir", json!("")), ("StateDir", json!(""))]),
+    )
+    .await;
+    let cleared = app.file_text();
+    for key in ["ModelsDir", "StateDir"] {
+        let lines: Vec<&str> = cleared.lines().filter(|l| l.starts_with(key)).collect();
+        assert!(
+            lines.is_empty(),
+            "{key} is left unset: the file keeps its hint commented, never a line of its own: {lines:?}"
+        );
+    }
+    let own_models = pai_core::server_cfg::default_models_dir();
+    let own_state = pai_core::slot_state::default_state_dir()
+        .to_string_lossy()
+        .into_owned();
+    assert!(!cleared.contains(own_models.as_str()), "{cleared}");
+    assert!(!cleared.contains(own_state.as_str()), "{cleared}");
+}
+
+/// The form's revision is stale (the file changed behind it): 409
+/// `server-changed-elsewhere` and the manager is never asked to write. The
+/// session stays signed in: this is not a refusal of the user.
+#[tokio::test]
+async fn a_stale_revision_is_409_and_the_manager_is_not_asked_to_write() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_file(&format!("{WITH_KEY}# a save from elsewhere\n"));
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::CONFLICT, "server-changed-elsewhere");
+    assert!(app.writes().is_empty(), "nothing written");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The file changed between the bff's read and its write: the manager answers
+/// the compare and swap with its refusal and the bff says the same 409.
+#[tokio::test]
+async fn a_file_changed_under_the_save_is_409_server_changed_elsewhere() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_outcome(Outcome::Changed);
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::CONFLICT, "server-changed-elsewhere");
+    assert_eq!(app.file_text(), WITH_KEY, "the manager wrote nothing");
+}
+
+/// `running`: true while the instance's process runs (active), false while it
+/// does not (inactive): the next start reads the saved file, so a save while
+/// stopped needs no restart.
+#[tokio::test]
+async fn running_is_true_only_while_the_process_runs() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_running(false);
+    let stopped = assert_saved(&app.put(Some(&cookie), &save_body(&doc, &[])).await);
+    assert_eq!(stopped["running"], json!(false));
+
+    let doc = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    app.set_running(true);
+    let running = assert_saved(&app.put(Some(&cookie), &save_body(&doc, &[])).await);
+    assert_eq!(running["running"], json!(true));
+}
+
+/// A status read that fails after a good write still answers 200 with
+/// `running` true: the save succeeded and the bff cannot know the state.
+#[tokio::test]
+async fn running_is_true_when_the_status_read_after_the_write_fails() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_status_outcome(Outcome::Unavailable);
+    let saved = assert_saved(&app.put(Some(&cookie), &save_body(&doc, &[])).await);
+    assert_eq!(saved["running"], json!(true));
+}
+
+/// The member of `pai` removed between the read and the write: the manager
+/// refuses the write, the answer is 403 `session-not-administrator` and the
+/// session ends; the file is untouched.
+#[tokio::test]
+async fn a_write_refused_for_the_signed_in_user_ends_the_session() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_refused("alice");
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+/// The read refused for the signed-in user, before the route reaches the
+/// write: 403 `session-not-administrator`, the session ends, and the manager
+/// is never asked to write.
+#[tokio::test]
+async fn a_save_whose_read_is_refused_ends_the_session_and_never_writes() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_read_refused("alice");
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    assert!(app.writes().is_empty(), "no write was asked for");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+    let calls = app.calls();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("write-if")),
+        "the manager's calls: {calls:?}"
+    );
+}
+
+/// The manager says the instance is not there: 404 `client-no-instance`.
+#[tokio::test]
+async fn the_managers_no_instance_is_404() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_outcome(Outcome::NoInstance);
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+// The 503 and 504 of a save turn on one thing (PLAN.md step 10 item 8): as long as the
+// manager has not been asked to write, the bff reports 503 `client-unavailable`; from the
+// moment the write was asked and its outcome is unknown, it reports 504 `client-timeout`. A
+// stream that dies between the read and the write reaches the bff as the very same
+// `ClientError::Unavailable` a manager that was never reached does, so the route cannot tell
+// the two from the error alone: it has to ask whether the call was sent.
+//
+// The tests below set the fake's cells, or arm its gate, AFTER the form's own read, so the read that
+// carries the revision number succeeds: the save stops at the connect, at the read, or at the
+// write, and the answer has to place itself accordingly. The two that arm a gate release it
+// afterwards, to show what a save the route answered must not do: write.
+
+/// The time limit runs out while the bff is reading the file: the manager was never asked to
+/// write, so 503 `client-unavailable`, and the session is kept (the manager's absence is no
+/// refusal of the user, and it may come back).
+#[tokio::test]
+async fn a_time_limit_that_runs_out_at_the_read_is_503() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    // Stop the save inside the read, well past the bff's own time limit.
+    app.set_read_pause_ms(3 * TIMEOUT.as_millis() as u64);
+
+    let started = Instant::now();
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    assert!(
+        started.elapsed() < DEADLINE,
+        "the bff answered within its own limit, not the request deadline"
+    );
+    assert_eq!(
+        app.calls(),
+        // The form's own read, then the save's: the save stops at its read and
+        // is never asked to write.
+        ["read server@default.ini", "read server@default.ini"],
+        "the save stops at the read: the manager is never asked to write"
+    );
+    assert!(app.writes().is_empty(), "no write may be recorded");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The time limit runs out before the bff even reaches the manager (here it stalls opening
+/// the connection): the same 503, and nothing at all is asked of the manager.
+#[tokio::test]
+async fn a_time_limit_that_runs_out_before_the_manager_is_reached_is_503() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    // Stop the save while the connection is being opened, past the time limit.
+    app.set_connect_pause_ms(3 * TIMEOUT.as_millis() as u64);
+
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    assert_eq!(
+        app.calls(),
+        // Only the form's own read: nothing is asked of a manager that was
+        // never reached.
+        vec!["read server@default.ini"],
+        "nothing is asked of a manager that was never reached"
+    );
+    assert!(app.writes().is_empty(), "no write may be recorded");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The time limit runs out while the save is parked inside its read, and the test then lets
+/// that read return. The route has answered 503 `client-unavailable`, saying the manager was
+/// never asked to write, so the save is over: the task it left behind must not write. A route
+/// that only stops waiting for the blocking task answers the 503 and lets the task run on: its
+/// read comes back, the file is still the one the form read so the revision matches, and the
+/// task writes the file the browser was told was not written.
+#[tokio::test]
+async fn a_time_limit_that_runs_out_at_the_read_writes_nothing_after_the_503() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    // Park the save inside its read, past the route's time limit.
+    app.arm_read_gate();
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    assert_eq!(app.reads_gated(), 1, "the save stopped inside its read");
+    assert!(app.writes().is_empty(), "nothing while the read is parked");
+
+    // Let the parked read return: the task is free to go on.
+    app.release_read_gate();
+    let waited = Instant::now();
+    while app.reads_released() < 1 && waited.elapsed() < DEADLINE {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(app.reads_released(), 1, "the parked read came back");
+
+    // The read is back and the file is the one the form read, so a task that was not cut
+    // off goes straight to its write: GRACE is the time it needs to get there.
+    let grace = Instant::now();
+    while app.writes().is_empty() && grace.elapsed() < GRACE {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        app.writes().is_empty(),
+        "a save answered 503 asked to write {} times",
+        app.writes().len()
+    );
+    assert!(
+        !app.calls().iter().any(|c| c.starts_with("write-if")),
+        "the manager's calls: {:?}",
+        app.calls()
+    );
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The same for a save parked while the connection is being opened: the route answers 503
+/// before the manager is reached, and a task that is not cut off opens the connection after
+/// the test releases it, reads the file, finds the revision the form sent, and writes.
+#[tokio::test]
+async fn a_time_limit_that_runs_out_at_the_connect_writes_nothing_after_the_503() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    // Park the save while its connection is being opened, past the time limit.
+    app.arm_connect_gate();
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    assert_eq!(
+        app.connects_gated(),
+        1,
+        "the save stopped opening its connection"
+    );
+    assert!(
+        app.writes().is_empty(),
+        "nothing while the connect is parked"
+    );
+
+    // Let the parked connect return: the task is free to read and write.
+    app.release_connect_gate();
+    let waited = Instant::now();
+    while app.connects_released() < 1 && waited.elapsed() < DEADLINE {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(app.connects_released(), 1, "the parked connect came back");
+
+    // The connect is back, the read that follows it reads the unchanged file, so a task
+    // that was not cut off goes on to its write.
+    let grace = Instant::now();
+    while app.writes().is_empty() && grace.elapsed() < GRACE {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        app.writes().is_empty(),
+        "a save answered 503 asked to write {} times",
+        app.writes().len()
+    );
+    assert!(
+        !app.calls().iter().any(|c| c.starts_with("write-if")),
+        "the manager's calls: {:?}",
+        app.calls()
+    );
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The manager refuses with `Unavailable` where nothing has been sent yet: at the connect, and
+/// at the read. 503 `client-unavailable` in both, the same answer as a manager that was never
+/// reached. This stays 503 when the route learns whether it sent the call: only a write that
+/// was asked turns the answer into 504.
+#[tokio::test]
+async fn a_manager_unavailable_before_the_write_is_503() {
+    for stop in ["connect", "read"] {
+        let app = app_writing(WITH_KEY);
+        let cookie = app.sign_in().await;
+        let doc = app.read_default().await.document();
+
+        if stop == "connect" {
+            app.set_connect_outcome(Outcome::Unavailable);
+        } else {
+            app.set_read_outcome(Outcome::Unavailable);
+        }
+
+        app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+            .await
+            .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+        assert!(
+            !app.calls().iter().any(|c| c.starts_with("write-if")),
+            "{stop}: the manager is never asked to write: {:?}",
+            app.calls()
+        );
+        assert!(app.writes().is_empty(), "{stop}: no write may be recorded");
+        assert_eq!(app.file_text(), WITH_KEY, "{stop}: the file as it was");
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// The write reaches the manager and the stream dies with it, before any reply: the manager
+/// may have applied the change, so the answer is 504 `client-timeout`, not 503. A 503 here
+/// tells the user to look at the server, decide for themselves whether the write happened and
+/// repeat it, which is the one thing that must not be suggested when the write may be
+/// applied.
+#[tokio::test]
+async fn a_manager_lost_at_the_write_is_504() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    // The write is sent and the reply never comes back.
+    app.set_write_outcome(Outcome::Unavailable);
+
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+    assert_eq!(
+        app.calls()
+            .iter()
+            .filter(|c| c.starts_with("write-if"))
+            .count(),
+        1,
+        "the write is sent: its outcome is unknown, so the answer is 504: {:?}",
+        app.calls()
+    );
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The write landed and the status read that follows it never comes back: the time limit runs
+/// out with the write asked, so 504 `client-timeout`, and the file holds the new value. A fix
+/// keyed on "the call that failed is not the write" gets this one wrong: the write asked is
+/// what makes the answer 504, whichever call times out after it.
+#[tokio::test]
+async fn a_time_limit_that_runs_out_after_the_write_is_504() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    app.set_status_pause_ms(3 * TIMEOUT.as_millis() as u64);
+
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+    assert_eq!(app.writes().len(), 1, "the write was asked");
+    assert!(
+        app.file_text().contains("Port = 8642"),
+        "the write landed, the answer only says the state is unknown: {}",
+        app.file_text()
+    );
+}
+
+/// Any other failure: 502 `client-other`, never the manager's detail.
+#[tokio::test]
+async fn any_other_manager_failure_is_502() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_outcome(Outcome::Other);
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::BAD_GATEWAY, "client-other");
+}
+
+/// The bff's own check refuses a value (threads above this machine's CPU
+/// count): 422 with the check's key, its values, and `field` the INI key of
+/// `args[0]`. The manager is not asked to write. The thread maximum is the
+/// one the read's `limits` named, in the refusal's values too: the maximum
+/// itself is accepted, one above it refused.
+#[tokio::test]
+async fn a_value_the_bff_check_refuses_is_422_naming_its_field() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let cpus = doc["limits"]["Threads"][1].as_i64().expect("the CPU count");
+    let at_max = cpus.to_string();
+    let above_max = (cpus + 1).to_string();
+    let connects = app.connects.load(Ordering::SeqCst);
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("Threads", json!(100_000))]),
+    )
+    .await
+    .assert_refused(
+        "not-whole-number-in-range",
+        &["Threads", "100000", "1", &at_max],
+        "Threads",
+    );
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        connects,
+        "no new connect"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+    // The range's boundary is the machine's count the read named: it is
+    // accepted, one above it is refused naming Threads. The second save
+    // carries the revision the first one returned, as the form does.
+    let saved = assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Threads", json!(cpus))]))
+            .await,
+    );
+    let body = json!({
+        "revision": saved["revision"],
+        "values": values_with(&doc, &[("Threads", json!(cpus + 1))]),
+    });
+    app.put(Some(&cookie), &body).await.assert_refused(
+        "not-whole-number-in-range",
+        &["Threads", &above_max, "1", &at_max],
+        "Threads",
+    );
+}
+
+/// The manager's check refuses a value the bff's let through: the save passes
+/// the refusal on, 422 with its key, its values and `field` the INI key.
+#[tokio::test]
+async fn the_managers_value_refusal_is_422_naming_its_field() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_outcome(Outcome::Invalid {
+        key: "not-whole-number-in-range",
+        values: vec!["Port".into(), "70000".into(), "1".into(), "65535".into()],
+    });
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_refused(
+            "not-whole-number-in-range",
+            &["Port", "70000", "1", "65535"],
+            "Port",
+        );
+    assert_eq!(app.file_text(), WITH_KEY, "nothing was written");
+}
+
+/// The address checks answer 422 with their client key and the field the form
+/// marks: the address in use marks `Port`, the host that does not resolve
+/// marks `Hostname`.
+#[tokio::test]
+async fn an_address_in_use_fields_the_port_and_an_unresolvable_host_the_hostname() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    app.set_write_outcome(Outcome::AddressInUse("llama.cpp@zz".into()));
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(9999))]))
+        .await
+        .assert_refused("client-address-in-use", &["llama.cpp@zz"], "Port");
+
+    app.set_write_outcome(Outcome::UnresolvableHost("nope.invalid".into()));
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("Hostname", json!("nope.invalid"))]),
+    )
+    .await
+    .assert_refused("client-unresolvable-host", &["nope.invalid"], "Hostname");
+    assert_eq!(app.file_text(), WITH_KEY, "nothing was written");
+}
+
+/// The write was sent and the manager does not come back: 504 `client-timeout`
+/// with no args, the bff's own answer within its time limit. The file may or
+/// may not be saved: the write reached the manager.
+#[tokio::test]
+async fn a_write_that_never_returns_is_answered_504() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_pause_ms(3 * TIMEOUT.as_millis() as u64);
+    let started = Instant::now();
+    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+        .await
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+    assert!(
+        started.elapsed() < DEADLINE,
+        "the bff answered within its own limit, not the request deadline"
+    );
+    assert_eq!(app.writes().len(), 1, "the write was sent to the manager");
 }

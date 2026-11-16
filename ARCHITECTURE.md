@@ -508,8 +508,9 @@ Errors: a refusal (`ClientError::Invalid`, or the bff's own check) is 422 `{key,
 field `Hostname`; `NotAuthorized` 403 `session-not-administrator`, the session ended (slice 9e);
 `NoInstance`, `InvalidId`, `BadFileName` 404 `client-no-instance`; unavailable or past the 5 s
 `MANAGER_TIMEOUT` 503 `client-unavailable`; anything else 502 `client-other`. A write is a small file
-plus at most one name lookup, so the read timeout fits; a timeout after the manager wrote reports 503
-for a saved file, and the fe's Reload shows the truth. The PUT moves the session's idle deadline; the
+plus at most one name lookup, so the read timeout fits; once the write was asked, a timeout or a lost
+manager answers 504 `client-timeout` (the file may or may not be saved; `PLAN.md` item 8), before
+that 503, and the fe's Reload shows the truth. The PUT moves the session's idle deadline; the
 same-origin guard and the 64 KiB body cap already cover it.
 
 **ModelsDir after a save.** What exists: the instances' default folders are made by packaging (Linux

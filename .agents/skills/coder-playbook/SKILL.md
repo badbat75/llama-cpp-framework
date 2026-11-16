@@ -756,3 +756,54 @@ Lessons only: the rules are in `AGENTS.md`.
   nothing). `npm --prefix fe run typecheck` is `tsc -b`: it prints nothing when clean, so the exit
   status is the result. Format before the checks with `cd fe && npx prettier --write <files>`, since
   the npm scripts run in `fe/` (that is where `.prettierignore` lives).
+- The Server form's two routes share their keys in `crates/bff/src/server.rs` `FIELDS`: a
+  `Field { key, kind, read, write }` table (the INI key, the `Kind` of JSON type the read gives, a
+  `fn(&ServerConfig) -> Value` and a `fn(&mut ServerConfig, Option<&Value>)`). The GET builds
+  `values` from `read`, the save validates against `kind` and assembles with `write`: a new server
+  key of the web form goes in that ONE table, never in a second list.
+- That body-to-file chain (`BodyAnswer`, `body_to_file`, `field_of`, `Kind::reads`, `Field`'s `kind`
+  and `write`) is dead code until the `PUT` route calls it: `clippy -p pai-bff --all-targets
+  -D warnings` reports exactly 5 `never used`/`never read` hits, all of them that chain. To show
+  nothing hides behind them: widen the items to `pub` and append a `pub fn` in `lib.rs` that calls
+  `body_to_file`, run plain clippy (zero output), then restore `lib.rs` from a `/tmp` copy and the
+  `pub(crate)`s with `sed`. No `allow` attribute.
+- serde_json's `as_i64()` is None for `4.5` and Some(4) for `4.0`, and `as_bool`/`as_str` refuse the
+  other JSON types: one `Kind` per key plus those accessors IS the "the value is of the type the read
+  gives it" check; put `i32::try_from` inside it so a huge number cannot truncate into a range check.
+  A blank text is unset via `server_cfg::opt_nonblank` (the same rule the INI read uses), a base URL
+  via `server_cfg::normalize_base_url` (its `and_then` chain takes `as_str` directly).
+- `checks::Refusal` is `{ key: &'static str, values: Vec<String> }`: a struct literal that moves
+  `values` into one field and borrows it in another must write the BORROWING field FIRST (a literal's
+  fields are evaluated in the order they are written, the other order is E0382).
+- `ServerConfig` derives `Default` (the plain switches land `false`), and `server_cfg::check(cfg,
+  cpus)` is in `pai-core`, so the bff runs every content check without linking `pai-app`.
+- The server save (`server::save`) answers in that order: session (401, no connect), body
+  (`Result<Bytes, BytesRejection>` for `origin::body_refusal`'s 413, then `session::json_body`, then
+  `revision` as a string, then `body_to_file` with `available_parallelism`), then ONE
+  `spawn_blocking` over ONE `connect(Some(user))` reading, comparing, `write_file_if`ing and asking
+  `status`. Compute the answer's `revision` from the rendered text BEFORE the closure: the closure
+  moves the text, and the same key hashes both.
+- The `running` rule is folded INSIDE that closure (`Err(_) => true`), so a status that fails after
+  a write that landed is a 200 with `running: true`, never an error answer; the 200 body is exactly
+  `{"revision", "running"}`.
+- A save test's `calls` list cannot omit the route's own read next to its own
+  `expected == WITH_KEY` CAS assert: the revision is a keyed one-way hash, so the expected text can
+  only come from a read in that request; the same test's `principals == [Some(user); 2]` (the form's
+  GET plus the save) pins ONE connect for read + write + status. Report the exact list the fake
+  records, never split the write over two connects.
+- A save test that reuses a document read before another session's save pins a stale revision: the
+  409-writes-nothing rule of its own green sibling leaves one write where it expects two, so the
+  test must re-read between saves.
+- `!text.contains("ModelsDir = ")` cannot pin an unset key: `render_for(cfg, true)` writes the
+  mandated hint `; ModelsDir = /srv/llm  ; ..`, which carries that substring. The check is on the
+  line head (`lines().any(|l| l.starts_with("ModelsDir = "))`).
+- The save's 503/504 rule keys on ONE `Arc<AtomicU8>` state (server.rs `WRITE_IDLE`,
+  `WRITE_ASKED`, `WRITE_CANCELLED`), each side moving Idle to its own value with a
+  `compare_exchange`: the blocking task just before `write_file_if` (a lost CAS means the handler
+  already answered 503, so the task returns without writing), the handler in its timeout arm (won:
+  503, the write was never asked and the task will never ask it; lost: the state is Asked, the
+  write is in flight, 504). A `store(true)` flag is the race: a task parked at the connect or the
+  read wakes after the 503, the revision still matches, and it writes the file the browser was told
+  was untouched. The flag read alone cannot close that, only the CAS can, so `save_failure` keeps a
+  bool (`state.load() == WRITE_ASKED`: a task that answered cannot hold Cancelled) with the guard
+  arm `Unavailable if write_asked` for a stream that died on a SENT write.
