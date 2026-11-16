@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9 (control and boot), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9 (control and boot; 9c the same-origin guard), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -856,14 +856,25 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    file, key included, sent to non-administrators too, so a short key can be guessed offline against
    it; key the hash with a secret (per process, a restart then reads as a stale revision: 409 and
    Reload) or leave the key's value out of it.
-9. **Control and boot.** `POST start|stop|restart` (a stop or restart with `SaveStateOnShutdown` saves
-   the slot snapshots first, server side), `GET`/`PUT /api/instances/{id}/boot`, as the contract's
+9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
+   `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop or restart with `SaveStateOnShutdown` saves the slot snapshots first,
+   server side (the GUI's `slot_state::save_all` is in `pai-app`, which neither the bff nor the
+   manager links), with the longer limit below. The routes: `GET`/`PUT /api/instances/{id}/boot`, as the contract's
    "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
    session-free reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
    or restart that saves GiB-sized slot snapshots first, need their own limit, chosen from a measured
    snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
+9c. **Same-origin guard** (review of 9a, 2026-11-16; before the MVP's run). `SameSite=Strict` compares
+   the site, not the port: a page of another local web app (`http://localhost:<other port>`) is
+   same-site, its body-less `fetch` POST carries the cookie and needs no preflight, so start, stop,
+   restart and sign-out go through. The bff refuses a state-changing request (POST, PUT, DELETE) whose
+   `Origin` does not match its `Host`, or whose `Sec-Fetch-Site` is neither `same-origin` nor `none`,
+   with 403 and a key; GETs stay open. With it: a small body limit on the JSON routes (axum reads
+   2 MB before the session check), and the `Service` message the contract says "stays in the bff's
+   log" is logged (today it is dropped), or the contract and `control.rs` reworded; the manager-error
+   table is in both `server.rs` and `control.rs`: one helper.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 11b. **A preset's on/off.** `PUT /api/presets/{id}/enabled` (administrator), as worded in
    `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,

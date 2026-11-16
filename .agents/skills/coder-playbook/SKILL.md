@@ -510,3 +510,28 @@ Lessons only: the rules are in `AGENTS.md`.
   binds the client per OS with `acting_for(user)` (both `DbusClient` and `PipeClient` return `Self`), so
   the `match` inside each `cfg` block casts each arm to `Client`; the macOS branch needs
   `let _ = principal;`, plain clippy (not the windows-gnu one) shows the unused parameter.
+- The bff's control routes (`crates/bff/src/control.rs`) take the verbs as fn values, not an enum:
+  `type Verb = fn(&Client, &str) -> Result<(), ClientError>`, so one handler calls `verb(&client, id)`
+  for start/stop/restart and `set_boot_enabled` (which takes `&bool`; the handler maps the body flag to
+  it and maps its own error: boot has no "no such instance"). The module exports ONE `routes(connect,
+  timeout, sessions)` merged in `router_with_session`, so the route paths and the `sessions`-ends rules
+  stay in the module the tests cite. Boot is a write plus a `boot_enabled` read-back on the SAME client
+  inside one `spawn_blocking`; the reply is the read's value, and a read-back failure is answered with
+  the read rule (`NotAuthorized` = 502, no session end), never the write's.
+- The bff's PUT boot parses its body AFTER the session check, so 401/404 (no session) beat 400
+  (malformed body) for the same request; the JSON-body rule (content-type essence, `application/json`
+  and `+json`) is `session::json_body`, which the sign-in body now shares (one rule, one place).
+  A 0 ms `tokio::time::timeout` over a `JoinHandle` is an exhausted budget, not "no bound": the handler
+  must answer in the first poll. The bff's tests use 100 ms, which a 50 ms blocking fake outlives and a
+  200 ms one survives (mock timers: `tokio::time::sleep` in the test, not real sleeps).
+- When the tester's fake answers each operation from its own field (`Answer.verb` / `.set_boot` /
+  `.boot`), a test asserting on the boot route driven from `app_verbs(Err(..))` (which sets `verb`
+  alone) can never fire: the boot write answers `Ok` and the read-back replies the state, 200. Four
+  `tests/control.rs` failures were that (a 404 and three 502 expectations on PUT boot). Send them back
+  with the field name; `app_boot_write` is the helper that drives them.
+- A test that counts `fake.principals` counts CONNECTS, and a route that writes and reads back on one
+  client adds one entry for two calls. `an_action_connects_as_the_signed_in_user` expects five entries
+  for `[start, stop, restart, boot write, boot read]`, while
+  `the_boot_write_answers_the_state_read_back` pins the same two calls as one connect: no
+  implementation satisfies both, and the brief's "reads back over the same client" is the tie-break.
+  Report the exact count the fake records (4), do not add a second connect for the read.

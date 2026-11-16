@@ -2,6 +2,7 @@
 //! core (`pai-core`).
 
 pub mod bff;
+mod control;
 pub mod listen;
 pub mod serve;
 mod server;
@@ -27,7 +28,9 @@ const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
 /// system's manager, `/api/session` through the system's authenticator,
-/// `GET /api/instances/{id}/server`, the web UI's page at `/` and its files under `/assets/`.
+/// `GET /api/instances/{id}/server`, the control verbs
+/// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
+/// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its files under `/assets/`.
 pub fn router() -> axum::Router {
     router_with_session(
         std::sync::Arc::new(system_connect),
@@ -64,7 +67,11 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 
 /// The routes of [`router_with`] plus the session routes, signing in
 /// through `auth` and reading the time from `clock`, and those that need a
-/// session: `GET /api/instances/{id}/server`. One sign-in's check is given
+/// session: `GET /api/instances/{id}/server`, the control verbs
+/// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
+/// `PUT /api/instances/{id}/boot`. The boot read
+/// `GET /api/instances/{id}/boot` needs none, so it is served beside them.
+/// One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
 /// `session::routes_with_sign_in_timeout` is what a test hands its own
 /// bound to).
@@ -82,9 +89,10 @@ pub fn router_with_session(
             server::read(connect.clone(), timeout, sessions.clone(), id, headers)
         }
     };
-    router_with(connect, timeout)
-        .merge(session::routes(sessions))
+    router_with(connect.clone(), timeout)
+        .merge(session::routes(sessions.clone()))
         .route("/api/instances/{id}/server", axum::routing::get(read))
+        .merge(control::routes(connect, timeout, sessions))
 }
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on

@@ -385,15 +385,22 @@ async fn sign_out(State(s): State<Arc<Sessions>>, headers: HeaderMap) -> Respons
     }
 }
 
-/// The user name and password of a JSON body `{"username": <non-empty
-/// text>, "password": <text>}`, or None.
-fn credentials(headers: &HeaderMap, body: &[u8]) -> Option<(String, String)> {
+/// The JSON value of a body whose content type is JSON, or None: the routes
+/// read the body themselves, so they answer a body they cannot read with a
+/// key of their own instead of the manager's.
+pub(crate) fn json_body(headers: &HeaderMap, body: &[u8]) -> Option<serde_json::Value> {
     let content_type = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     let essence = content_type.split(';').next().unwrap_or("").trim();
     if !essence.eq_ignore_ascii_case("application/json") {
         return None;
     }
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    serde_json::from_slice(body).ok()
+}
+
+/// The user name and password of a JSON body `{"username": <non-empty
+/// text>, "password": <text>}`, or None.
+fn credentials(headers: &HeaderMap, body: &[u8]) -> Option<(String, String)> {
+    let value = json_body(headers, body)?;
     let user = value.get("username")?.as_str()?;
     let password = value.get("password")?.as_str()?;
     if user.is_empty() || user.len() > MAX_USER_BYTES {

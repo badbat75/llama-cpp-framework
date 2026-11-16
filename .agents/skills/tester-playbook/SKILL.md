@@ -657,6 +657,29 @@ Lessons only: the rules are in `AGENTS.md`.
   report). Pin the negatives too, since they are the rule's edge: the same cookie after a 503
   (`Unavailable`) and after a 502 (`Io`) is still 200, and a 403 on the session-free `/api/instances`
   ends nothing (that route has no session, and it is where a 403 from the bff's own rule lands).
+- bff idle deadline: `Sessions::current` refreshes the session's `used` stamp on EVERY cookie-bearing
+   request, so a probe (`GET /api/session`) moves the deadline: a "the poll must not keep a session
+   alive" rule is pinned with one app per point and the probe LAST (sign in, advance just under the
+   timeout, run the request under test, land the clock exactly on the sign-in's deadline, probe alive; a
+   second app lands one second past it, probe 401). Never probe mid-test, the probe greens the next
+   point for the wrong reason. The control is the same steps with an action, which does move it. The
+   check is `> IDLE`, so the boundary sits one second past the timeout, and a Duration step is
+   `IDLE - SHORT + Duration::from_secs(1)` (no `+ 1`).
+- bff read-back is not an echo: keep the manager's state in an `Arc<Mutex<bool>>` cell shared by every
+   connect of one app, and let a scripted write leave it at `after_write`, which may differ from the body.
+   Assert the reply against the cell for divergent pairs (asked `true`, left `false`) and pin the calls log
+   as `["set_boot_enabled <id> <asked>", "boot_enabled <id>"]` with ONE principal: the read ran after the
+   write, on the same connect, so a reply that echoes the body, a skipped read and a second
+   session-carrying connect all red.
+- `let app = app();` twice in one test shadows the builder fn: the second call is `E0618: expected
+   function, found App`. Name the apps (`alive`, `gone`). A fake holding a `Result` field cannot
+   `match self.answer.field { Err(e) => .. }` (E0507, moves out of a shared reference): `.as_ref()` plus
+   `e.clone()`.
+- The request helper of a bff test file takes `extra: &[(&str, &str)]` and parses each name with
+   `name.parse::<HeaderName>()`: that is how "a name in the request is never the principal" is pinned for
+   a header (`x-user: root`) as well as a query parameter, one builder for both. The sign-in helper posts
+   `{"username", "password"}` and inserts `ConnectInfo` into the request's extensions (the session route
+   needs it, a control route does not).
 - A stub that keeps the old `connect(None)` call greens the session-free routes (the instances route,
   sign-in) and reds only the principal and session-end asserts: `left: [None], right: [Some("alice")]`
   for the principal, `left: 200, right: 403` for the refusal (the stub connects an unrefused principal),
@@ -668,3 +691,15 @@ Lessons only: the rules are in `AGENTS.md`.
   every dependency; pai-bff needs no `pai-manager` dependency and its `build.rs` falls back to
   `crates/bff/fe-fixture` when `fe/dist` is missing, so a bff probe compiles in two minutes. Clean up with
   `git worktree remove --force` (the config you wrote is untracked).
+- bff connects are per ROUTE, not per manager call (ARCHITECTURE.md: "every route behind a session
+  connects as the session's user"): the boot write and its read-back are two calls of ONE connect
+  (`control.rs`'s `boot_write`), so start + stop + restart + `PUT .../boot` is 4 entries in
+  `principals_of` and 5 in the calls log; count routes in the connect assert, the read-back belongs to
+  the calls log. A fake that returns `self.act(..)?` on the write logs no read, so the calls log also
+  pins "no read-back after a failed write".
+- A bff fake whose `verb` fails and whose `set_boot` answers OK makes a `PUT .../boot` answer 200
+  `{"enabled": <state>}`: a test driving the boot route's failure needs `set_boot: Err(..)` as well
+  (builder `app_failing(failure)`: verb and set_boot). A `for app in [app_verbs(..), app_boot_write(..)]`
+  loop that asks every URI on each app is a latent bug: the first app's red stops the loop, the second
+  app's broken half (a verb answered 200) never runs; one app failing both verb and set_boot covers both
+  URI groups in one pass.
