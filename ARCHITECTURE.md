@@ -267,10 +267,11 @@ leftovers); a size cap or rotation for the Windows log file.
 ### Slot snapshots at a stop (step 10 slice 9b)
 
 Designed 2026-11-16, accepted by the user the same day (before the MVP's run; the 5-minute budget
-below; the restore at start as slice 9d). Requirement: with `SaveStateOnShutdown` on, a stop or restart saves the
+below; the restore at start as slice 9d); built the same day (commits 05a315f to 17a66a0, "As built"
+below). Requirement: with `SaveStateOnShutdown` on, a stop or restart saves the
 slot snapshots first, whoever asks (the web UI, `pai`, `pai-config`, `systemctl`, the SCM, a reboot).
 
-**Today** (read in the code): only the client saves. `pai-app` `slot_state::save_all` asks the router's
+**Before 9b** (read in the code): only the client saved. `pai-app` `slot_state::save_all` asks the router's
 `GET /models` on `127.0.0.1:<Port>` for the loaded models and posts `/slots/0?action=save` per model
 (the router proxies it; llama-server itself writes the file into its `--slot-save-path`), then prunes
 the other dumps; the GUI (`gui.rs`, stop worker) and `pai server stop` (`cli.rs`
@@ -364,23 +365,55 @@ restore in the clients, the protocol, the bff's limits. Moved: `save_all` and th
 Windows preshutdown handling and timeout, the asynchronous Windows restart. Removed: the clients' save
 under the manager.
 
-**Slices**, in order (2 and 3 before 4, so no build loses the save):
+**As built** (reviewed 2026-11-16 against the code; Linux and the core tested, every Windows part
+type-checked only, never run on Windows, and the save never run against a real llama-server).
 
-1. **The core save.** Done when, against a fake loopback listener: `save_all` posts
-   `/slots/0?action=save` with `<stem>.llamastate-partial` per loaded model and the file ends as
-   `<stem>.llamastate`; a listener that never answers ends within the budget with an error and the
-   previous dump intact; `slot_target` gives `None` without `--slot-save-path` and `DEFAULT_PORT`
-   without `--port`; the GUI and CLI tests of the save still pass through the `pai-app` wrapper.
-2. **Linux.** Done when: `instance_unit()` holds `ExecStop=<manager> save-slots %i` and
-   `TimeoutStopSec=300` (the `system_files.rs` tests); `parse_args` reads `save-slots <id>`;
-   `save-slots` with `MAINPID` unset exits 0 without connecting; the cmdline of a fixture (NUL-separated
-   bytes) yields the launched port and folder.
-3. **Windows** (type-checked only). Done when: the checkpoint schedule and the "save or not" decision
-   from the spawned `Command` are pure functions with tests; `instance_main` accepts `PRESHUTDOWN`
-   and saves before the kill; the service creation and the sync set the preshutdown timeout (a test of
-   the value passed); `restart` returns after the stop is accepted.
-4. **The clients.** Done when: under a manager backend, `pai server stop` and the GUI's stop send no
-   request to a fake llama-server listener; on the local backend they still save first.
+1. **Core** (`pai-core` `slot_save.rs`, `http.rs`): `save_all(port, dir, budget)` with one deadline
+   for the whole run (each request's connect, write and every read get what is left), the
+   `<stem>.llamastate-partial` name renamed on success and removed on failure, `slot_target(args)`
+   reading the last `--slot-save-path` and `--port` in their space form. `SAVE_BUDGET` (240 s) is the
+   one constant every caller passes, `pai-app`'s wrapper included. A missing state folder saves
+   nothing. The prune keeps the dump of every model the server reports loaded, saved or not.
+2. **Linux**: the unit has `ExecStop=<manager> save-slots %i` and `TimeoutStopSec=300`
+   (`xtask/src/linux/system_files.rs` `instance_unit`). `save-slots` reads `$MAINPID` and its
+   `/proc/<pid>/cmdline` (`manager.rs` `save_slots_target`), writes one stderr line per model saved or
+   failed (the unit's journal), always exits 0; off Linux it refuses.
+3. **Windows instance** (`windows/entry.rs` `instance_main`): accepts Stop and Preshutdown while
+   running (`controls_accepted`, `ends_instance`), reports `StopPending`, saves on a worker thread
+   with the target from the spawned `Command`'s args, raises `dwCheckPoint` every `STOP_TICK` (2 s)
+   under a `STOP_WAIT_HINT` of 10 s, writes one line per model to `llama-server@<id>.log`, then kills
+   the child. The manager's own service accepts Stop only (`manager_controls_accepted`,
+   `ends_manager`): it has nothing to save and is simply ended at a shutdown.
+4. **Windows preshutdown timeout**: `PRESHUTDOWN_TIMEOUT` (300 s, `ChangeServiceConfig2W`) is set at
+   creation and at each sync (a refusal is that instance's sync failure), and again at every start,
+   where a refusal is ignored so an older service still starts.
+5. **Windows restart** (`windows/scm.rs` `restart`): it answers once the stop is accepted; a
+   detached thread polls the state up to `RESTART_STOP_WAIT` (300 s) and starts the service. A
+   per-instance `RestartGate` (a generation counter, `windows.rs`) keeps it honest: `stop` raises the
+   generation before `ControlService`, `restart` takes a new one after its own stop, and the thread
+   starts only while its generation is current, so a Stop or a newer Restart during the wait stands
+   and the stale thread records nothing. A start that fails, or a stop that outlasts the wait, is one
+   line `action="restart_start" target=.. outcome=..` on the manager's action log (the same
+   `FileActionLog` as the manager's records, shared by `Arc`; its own action name, since the `restart`
+   call was already recorded). The thread dies with the manager process: a manager stop (an
+   upgrade, `Stop-Service`) during the wait leaves the instance stopped, with no record.
+6. **Clients**: `server_control::client_saves_snapshots` is true only for `Backend::Direct`; the
+   GUI's stop worker and `pai server stop|restart|stop-and-close` save only then. The restore after a
+   start is unchanged (slice 9d).
+
+Departures, all accepted: the timeout set again at start (harmless redundancy for services an
+older build created); the action log as the sink of the deferred failure; the manager service's
+Stop-only rule, which the design left unsaid.
+
+**Open after 9b.** (i) Under the Windows manager `restart` now returns while the old llama-server is
+still saving, and `pai server restart` then restores at once (`cli.rs` `snapshot_after_start`):
+`wait_listening` finds the old server still listening and asks it to load the previous dump, which
+users can read in `state\`. Wasted I/O only (the server is killed after its save), never run; slice
+9d removes the client restore under the manager. On Linux the same race finds no dump (the folder is
+unreadable). (ii) The MSIs stop instances with `Stop-Service` (`installer/msi-stop-instances.ps1`,
+`msi-remove-instances.ps1`), which waits for the stop, so a repair, upgrade or uninstall can now
+wait up to the budget while snapshots are written. (iii) The first real run times a save and sets
+`SAVE_BUDGET` and the 300 s limits from it.
 
 Then the docs agent updates "Conversation snapshots" and "Through the manager" in
 `crates/config/README.md`, `installer/AGENTS.md` (the preshutdown timeout) and the contract line.

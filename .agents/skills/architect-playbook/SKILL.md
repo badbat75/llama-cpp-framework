@@ -50,3 +50,7 @@ description: What the architect has learned about this project's components, int
   to a desktop user on Linux.
 - Windows service timeouts: preshutdown default 10 s since build 15063 (SERVICE_PRESHUTDOWN_INFO),
   plain shutdown about 20 s, control handler back within 30 s (HandlerEx remarks).
+- Since slice 9b a stop can last minutes (the snapshot save): any caller that stops and then acts on
+  the instance (client restore after a restart, the MSIs' `Stop-Service`, the Windows `restart`
+  thread) must be checked for a race with a server that is still saving. Windows `restart` is
+  asynchronous (`scm.rs`, `RestartGate`); systemd's `RestartUnit` is a queued job.

@@ -77,8 +77,8 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop: built; left: the architect's review against its design), slice 8 (save the server
-file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
+presets and switches them on or off. Left for it, in order: slice 9e (the session's end key), slice 8 (save the server
+file, keyed revision first), slices 11, 11b, 11c and 11d (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -863,8 +863,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `pai-core` (05a315f, d1234fa) and Linux `ExecStop=pai-manager save-slots %i`; Windows `run-instance` saving at Stop and Preshutdown (3a) and the SCM side (3b: each instance
    service's preshutdown timeout of 300 s, `restart` answering once the stop is accepted, a per-instance
    `RestartGate` so a Stop during the delayed start's wait stands); and the clients saving only on their own
-   llama-server (slice 4: `server_control::client_saves_snapshots`, macOS). Left: the architect's review of
-   9b against its design (to record the gate and that the delayed start's thread dies with the manager).
+   llama-server (slice 4: `server_control::client_saves_snapshots`, macOS). The architect's review found every
+   design point met (ARCHITECTURE.md, "As built"). Left from it: 9d drops the client's restore under the
+   manager (on Windows `pai server restart` now returns while the old server still saves, and its restore
+   asks that server to load the previous dump); the docs (an MSI repair, upgrade or uninstall stops the
+   instances and can now wait minutes; `crates/config/README.md` "Conversation snapshots" and "Through
+   the manager"); and the first real run times a save and sets the 240 s and 300 s values from it.
    Seen in a rerun, not this slice's: xtask `the_engine_prerm_records_the_running_instances_and_stops_them`
    failed once (fixture root shared by its loop), green alone and in four reruns. The
    user decided (2026-11-16): before the MVP's run; a stop may wait 5 minutes in all (240 s for the
