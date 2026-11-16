@@ -164,7 +164,12 @@ Lessons only: the rules are in `AGENTS.md`.
   `installer/AGENTS.md` product table, ACL table, defines line, scripts bullet, the test plan's log
   list and `icacls` step, and reread the removal dialog's text in `llama.cpp.wxs` (it names what
   `DeleteEngineData` deletes, and lagged `state\`). "Text-checked" there means xtask's tests read
-  the `.wxs` and evaluate its conditions (`msi/tests/engine_lifecycle.rs`), never a WiX compile.
+  the `.wxs` and evaluate its conditions (`msi/tests/engine_lifecycle.rs`), never a WiX compile. A
+  folder a service creates at run time (the manager's `logs\` under `%ProgramData%\private-ai`): the
+  MSI does not know it, so say it inherits the parent's DACL, outlives the uninstall and has no size
+  cap (an open check), and add the test plan checks that show it: a fresh install has no such folder,
+  the first guarded save makes it, a standard user reads the file (the manager records every guarded
+  call, done or refused).
 - Windows-style paths written through a Python script need a raw string: `"docs\build-macos.md"` puts a
   backspace byte in the file (one sat in `AGENTS.md` as `docs\x08uild-macos.md`). `grep -c $'\x08'`
   the files after such an edit.
@@ -219,6 +224,13 @@ Lessons only: the rules are in `AGENTS.md`.
   of `crates/config/README.md` (D-Bus signature and pipe JSON); `installer/AGENTS.md`'s pipe bullet and
   `crates/bff/README.md` point there. Check per-call authorization in `manager/service.rs` itself:
   the README said "reads need none" long after 7af81f4 made an instance file's read need `control`.
+- The client module headers carry the transport's shape as soon as the coder builds it
+  (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`: the `As` forms, `Version`,
+  `acting_for`, what an older manager answers): read them before planning a comment edit, they usually
+  need none, and keep the manager's own rules (who is checked, when, what is recorded) out of a client
+  file. A design's parenthetical is not an assertion: ARCHITECTURE.md's "(today the parser ignores
+  unknown fields)" left the pipe's answer to a `principal` on a plain method undecidable with no test
+  open, so that rule stayed out of the docs and was reported.
 - The server.ini rules (`checks::server_file`, plus `pai-app` `server_cfg::check`'s thread bound) are
   listed once, in the "manager runs every content check" bullet of `crates/config/README.md`; the
   `pai server set` paragraph under its command block and the root README's headless line point there.

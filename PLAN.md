@@ -814,8 +814,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    U+2028 in a caller would pin the quoting; the Windows log
    `%ProgramData%\private-ai\logs\private-ai-manager.log` grows without a cap (about 100 bytes a
    record; a cap later), is readable by Users like the engine's logs (kept so, 2026-11-16), and
-   outlives an uninstall with `config\`: `installer\AGENTS.md` and the CI's uninstall checks still say
-   `config\` only. From
+   outlives an uninstall with `config\` (documented in `installer\AGENTS.md`; CI runs no guarded call, so
+   it cannot see the file). From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

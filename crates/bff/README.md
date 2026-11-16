@@ -99,8 +99,10 @@ redirect, or a machine with the manager down).
 ## The instances from the manager
 
 `GET /api/instances` asks `private-ai-manager` for `ListInstances`, then `Status` of each instance:
-the two calls the manager answers without authorization; the bff's third call to it,
-`Authenticate`, is what sign-in makes ([below](#the-session)) (`crates/bff/src/lib.rs`).
+the two calls the manager answers without authorization. What the bff calls beyond them is
+`Authenticate`, what sign-in makes ([below](#the-session)), and the `As` form of a guarded method
+naming the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance))
+(`crates/bff/src/lib.rs`).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -122,9 +124,12 @@ the two calls the manager answers without authorization; the bff's third call to
   `control` (`auth_admin`). On Windows the pipe `\\.\pipe\private-ai-manager`, whose SDDL gives
   `NT SERVICE\private-ai-bff` the interactive client's rights; its token is neither interactive, nor an
   administrator's, nor a member of `pai`, so the manager refuses it `control` and `configure`
-  ([installer/AGENTS.md](../../installer/AGENTS.md)). The two calls of `/api/instances` passed the
-  pipe in CI (run 43651545466); `Authenticate`, sign-in's call, has not crossed it, and the refusals
-  are type-checked only.
+  ([installer/AGENTS.md](../../installer/AGENTS.md)): the bff has no right of its own on either OS.
+  A guarded call of a signed-in route goes as the `As` form of the method naming that user, which the
+  manager answers for this account alone and for a user it finds a member of `pai` at that call
+  ("Through the manager" in [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)).
+  The two calls of `/api/instances` passed the pipe in CI (run 43651545466); `Authenticate`,
+  sign-in's call, and an `As` call have not crossed it, and the refusals are type-checked only.
 
 ## The session
 
@@ -170,26 +175,36 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 
 `GET /api/instances/{id}/server` (`crates/bff/src/server.rs`) first needs a session: with no cookie,
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
-connect to the manager. Then it asks the manager for `ReadFile("server@<id>.ini")`, through the same
-connect and 5 s timeout as `/api/instances`. The manager acting for the signed-in user does not exist
-yet: the bff reads the file as itself, so the session is only checked to exist. The bff keeps no role
-per session, and withholds nothing on its own: every session is a member of the group `pai`, sign-in
-refuses anyone else 403. The API key is the manager's to keep: it withholds it from a reader allowed
-`control` but not `configure` ("Through the manager" in
-[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)), and the bff nulls
-the key and marks it withheld exactly when the manager's read says so, even when the text it sent
-still names a key (`server.rs` `document`).
-The bff's own account gets no `control` today ([above](#the-instances-from-the-manager)), so the
-manager refuses its read (403).
+connect to the manager. Then it asks the manager for `ReadFileAs("server@<id>.ini")` naming the
+session's user, through the same connect and 5 s timeout as `/api/instances` (3de9283): the route
+connects as `Sessions::current`, never a name taken from the request. The manager answers a
+principal for the bff's account alone, checks that user's membership of `pai` at every call (its own
+lookup, never polkit, never a cached answer) and never withholds a principal's read
+("Through the manager" in
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)). So on a shipped
+install the read is no longer refused for the bff's own account, which has no right of its own: the
+right is the pair (the bff's account, a current `pai` member). The bff keeps no role per session and
+withholds nothing on its own: every session is a member of the group `pai`, sign-in refuses anyone
+else 403. The API key stays the manager's to keep: it withholds it from a reader allowed `control`
+but not `configure`, and the bff nulls the key and marks it withheld exactly when the manager's read
+says so, even when the text it sent still names a key (`server.rs` `document`); on this route the
+read arrives unwithheld. **When the manager refuses that user**, typically one removed from `pai`
+since signing in, the route answers 403 `client-not-authorized` and the bff ends the session
+(`Sessions::end`, shared with sign-out): the same cookie is then 401 `session-required`, so the page
+signs out at its next call. Only the manager's refusal ends a session: an unavailable or slow
+manager, an unknown instance and every other failure keep it, being the bff's news and not a refusal
+of the user. The manager records every guarded call, this one included: the action, the target, the
+caller, the principal and the outcome, never a password and never the file's contents (the same
+guide).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read |
+| 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read. A principal's read is never withheld, so on this route `"withheld"` is absent and `OpencodeApiKey` carries the saved key |
 | 401 | `{"key": "session-required", "args": []}` | No session |
-| 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read |
+| 403 | `{"key": "client-not-authorized", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
-| 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
 
 - **`values`**: the 19 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
@@ -198,8 +213,9 @@ manager refuses its read (403).
   `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` is `null` exactly when the
   manager's read reported the key withheld, the key in the file's text included.
 - **`withheld`**: `["OpencodeApiKey"]` exactly when the manager's read reported the key withheld, so
-  the web UI can say a key is saved without showing it; absent otherwise. The bff never withholds on
-  its own: every session is a `pai` member, it keeps no role per session.
+  the web UI can say a key is saved without showing it; absent otherwise, and on this route always
+  absent: the manager never withholds a principal's read. The bff never withholds on its own: every
+  session is a `pai` member, it keeps no role per session.
 - **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
   `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
   the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file
@@ -239,7 +255,8 @@ its data once when it opens and never shows a reply's text.
   role field signs in the same way, the field ignored: 1827023), any other reply or failure leaves it
   signed out.
   Sign out is `DELETE /api/session`, signed out whatever it answers; a 401 from the server read
-  signs the page out too.
+  signs the page out too, and a 403 from it ends the session at the bff, so the page's next call
+  answers 401 ([above](#the-server-file-of-an-instance)).
 - **A save** sends the file's revision and the typed values. Before it the form runs the client
   checks and marks the failing fields; the reply is read by its key: a refusal under the field it
   names, a stale revision (`server-changed-elsewhere`) with a Reload button, a 401 with a sign-in
@@ -253,8 +270,9 @@ its data once when it opens and never shows a reply's text.
   shipped bff a save, a run control and start at boot fail and the Models page shows "The presets
   could not be read.". The bff
   serves `/api/session` and the manager checks the sign-in, so the pages behind it open: on a
-  shipped install an instance page's server read runs as the bff's own account and is refused (403
-  `client-not-authorized`, [above](#the-server-file-of-an-instance)), and its run controls and boot
+  shipped install an instance page's server read is answered for a signed-in `pai` member, the
+  manager having checked them at that call ([above](#the-server-file-of-an-instance)), and its run
+  controls and boot
   switch sit on the routes above, not served; by the code that is what a signed-in `pai` member
   sees, and no sign-in has been run against a real manager.
 - **Errors are `{"key", "args"}`** (`apiError` in `fe/src/api.ts`, the bff's shape since

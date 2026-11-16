@@ -137,7 +137,8 @@ both transports:
 
 `ListInstances`, `Status`, `BootEnabled` and `Authenticate` get no `As` form: they need no right, or
 answer the bff alone. On the pipe a `principal` field on any other method is `BadRequest`, and an `As`
-method without one is `BadRequest` too (today the parser ignores unknown fields).
+method without one is `BadRequest` too (a manager older than protocol 1 ignores unknown fields, which is
+why the principal travels in the method's name).
 
 | Option for the principal | Cost | Risk | Verdict |
 | --- | --- | --- | --- |
