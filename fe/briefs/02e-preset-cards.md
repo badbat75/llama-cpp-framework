@@ -18,6 +18,7 @@ settles every shared rule; 2e.2 to 2e.5 are mostly field tables applying it. A t
 |---|---|---|
 | **2e.1** | 83-95 | The shared rules (read-only Notice, every control `disabled`, how each kind of field shows a value, absent keys, unknown values, units, hints), the section fix from the 2d review, and the cards Resource / context and Embeddings |
 | 2e.2 | 96-100 | KV cache, Sampling overrides, Advanced |
+| 2e.2b | 118-121 | The full-value line: a long value stays readable under its disabled control (added 2026-11-16 after the 2e.1 review; applies to every field built so far and, through the shared renderer, to 2e.3 to 2e.5) |
 | 2e.3 | 101-106 | Chat / reasoning, Vision |
 | 2e.4 | 107-111 | Hardware |
 | 2e.5 | 112-117 | Speculative decoding |
@@ -140,7 +141,10 @@ the page does not have. The Engine select stays as 2d made it (enabled, one opti
     control's role, its value and "unavailable" (or the reader's word), the default box as "default,
     checkbox, checked, unavailable". Nothing is announced when the page loads apart from the loading
     status going away. Width: the D4 field grid as on the Server page; at 320 px and at 400 % zoom
-    no horizontal scroll, long values wrap inside their input's box, checked in review, not in jsdom.
+    no horizontal scroll: a long value never widens the page, it is cut off inside its control's
+    box (an `<input>` or a `<select>` cannot wrap, and a disabled one cannot be scrolled). It is
+    shown in full by the full-value line, which sub-slice 2e.2b adds (criteria 118 to 121): not
+    part of 2e.1 or 2e.2. Checked in review, not in jsdom.
     ([2.1.1](https://www.w3.org/TR/WCAG22/#keyboard), [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
     [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value), [1.4.10](https://www.w3.org/TR/WCAG22/#reflow))
 
@@ -270,9 +274,63 @@ Applies criteria 83 to 91. Cards at their place of criterion 83.
     `preset-advanced` "Advanced" (toml 351); `preset-load-on-startup`, `preset-chat-kwargs` and
     their hints (table 98). Every English is the toml line named, unchanged, except `preset-cache-ram`.
 
+## 2e.2b. The full-value line
+
+Added 2026-11-16 after the 2e.1 review, which rendered a 40-digit Context size cut to its first 8
+digits and a long unlisted Pooling value cut at 320 px, with no way to see the rest. Applies
+criteria 83 to 91. Built once in the shared field renderer (`fe/src/PresetCards.tsx`), so every
+field of 2e.1 and 2e.2 gets it here and 2e.3 to 2e.5 get it without new work. Lands after 2e.2 and
+before 2e.3.
+
+**Decided: when a value is longer than its control shows, the field repeats it in full as text
+under the control.** Weighed against:
+
+- **`readonly` text inputs** (focusable, so the value can be scrolled with the arrow keys and
+  selected): one more tab stop per number and text field, about 55 of the ~70 fields, so ~80 tab
+  stops become ~135. A sighted user still sees the value cut off until they focus the input and
+  scroll it, and the page then mixes focusable and unfocusable inert controls (section 0).
+- **Full-width inputs**: no help at 320 px or 400 % zoom, where the column is about 240 px, and no
+  help for a select.
+- **Measuring overflow** (`scrollWidth > clientWidth`): exact, but it needs a resize observer and
+  cannot be tested in jsdom, which lays nothing out.
+
+The line costs **no tab stop**. Sighted users read the value without doing anything. Screen-reader
+users already get the whole value from the control (4.1.2), so the line is hidden from them and
+nothing is read twice.
+
+118. **The full-value line.** Under a disabled field's control (after the unit, before the hint), a
+    paragraph `preset-full-<key>` holds the shown value as written. A number or text field shows
+    the input's value; a select shows the selected option's text. It is drawn in `--muted` and
+    the monospace font, 0.875rem, and wraps anywhere (`overflow-wrap: anywhere`), so a value with
+    no spaces breaks inside the column
+    ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). It shows only when the value is longer than
+    the limit of criterion 119. An absent key never shows it: the input is `""`, and a select shows
+    a short option text.
+119. **The limits**, by character count, so the rule is the same at every width and testable
+    without layout: **Number** more than **8** characters (the input is `10ch` wide,
+    `fe/src/index.css` `input.number`; 8 digits were what the review saw fit); **Text** and
+    **Select** more than **20** characters (about what a text input or a select holds in the
+    ~240 px field column at 320 px, the narrowest case, after its padding and arrow). A value at
+    or under the limit has no line. At 1280 px a value of 21 to about 60 characters therefore shows
+    both in its box and on the line: accepted, since such values (JSON kwargs, an unknown option)
+    are the ones worth reading in full **(preference)**.
+120. **Accessibility.** The line has `aria-hidden="true"`: the control's value is already exposed
+    in full ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)), and reading it twice in
+    browse mode adds nothing. It takes no focus, so criterion 91's tab order is unchanged. It is
+    not the control's description (no `aria-describedby`). Contrast is `--muted` on the card,
+    which passes [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum) as text (6.1:1 light,
+    7.6:1 dark, D5.1). In review at 320 px: no sideways scroll with a 200-character value.
+121. **Tests and strings.** No new string: the line is data. Stub values: `ctx-size` `172032000`
+    (9 characters: line `172032000`) and `17203200` (8: no line); `values` `{}` (no line anywhere);
+    `pooling` a 21-character unlisted value (line holds it) and a 20-character one (no line);
+    `kv-unified` `auto` (no line); `chat-template-kwargs` `{"enable_thinking":false}` (24: line).
+    Each line found by its id, with `aria-hidden="true"` and its text equal to the value.
+
 ## 2e.3. Chat / reasoning, Vision
 
-Applies criteria 83 to 91.
+Applies criteria 83 to 91, and 118 to 121 through the shared renderer: `reasoning-budget-message`
+is the first Text field built after 2e.2b, so 2e.3's tests add one case to criterion 104's stub:
+a 21-character budget message shows the full-value line, a 20-character one does not.
 
 101. **Chat / reasoning** (MP 863-970), `h3` `preset-chat-reasoning`. Reasoning-effort options (MP
     917-918): `default` (`option-default`), `minimal` (`option-minimal`), `low` (`option-low`),
@@ -447,8 +505,14 @@ Applies criteria 83 to 91. Cache-type options as 2e.2's criterion 96.
     `preset-ngram-map-values-lookup-hint`, `preset-ngram-map-values-draft-hint`. Every English is
     the toml line named, unchanged.
 117. **Out of 2e.5**: the drafter's own picks (Assets, 2i), the prunes of unused keys at save (2k).
+    A list of links to the cards (the page will be ~5000 px long at 1280 px with ~80 About tab
+    stops) is to be designed with 2h, not before (2e.1 review).
 
 ## 3. Notes for 2h (not tested in 2e)
+
+- The full-value line (criteria 118 to 121) is for disabled controls: an enabled input can be
+  scrolled. 2h decides whether it stays on the fields that are still disabled (dependent fields,
+  ticked default boxes) and goes from the enabled ones.
 
 - The enable rules are the tables' last column. Rules on "the model is MoE" and "the model embeds
   MTP heads" need 2g; before it, 2h can only use the file's half (`model-draft` present).

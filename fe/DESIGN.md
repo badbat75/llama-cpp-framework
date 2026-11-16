@@ -216,6 +216,12 @@ Each is one React component, reused by every page.
   the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
   saving slice only enables them. Not `readonly` (text inputs only in HTML) and not `aria-disabled`
   (dozens of inert tab stops). The About toggles stay operable.
+  - **Full-value line**: a disabled input or select cuts off a long value and cannot be scrolled,
+    so a value longer than its control shows (more than 8 characters in a number input, more than
+    20 in a text input or a select) is repeated in full under the control: `--muted`, monospace,
+    0.875rem, wrapping anywhere, `aria-hidden="true"` (the control already exposes the value) and
+    no tab stop. A count of characters, not a measure of the box, so it is the same at every width
+    and testable without layout **(preference)**. Brief 02e, criteria 118 to 121.
 - **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
