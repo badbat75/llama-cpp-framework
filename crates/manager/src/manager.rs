@@ -1,7 +1,9 @@
 //! The command line of `pai-manager`, the runtime service binary that
 //! runs llama-server instances as services. `run-instance <id>` is what the
 //! unit `llama.cpp@<id>` runs: it launches instance `id`
-//! (`launch::instance_command`). `serve` is the manager's own service: the
+//! (`launch::instance_command`). `save-slots <id>` is that unit's `ExecStop=`
+//! on Linux: it saves the conversation snapshots of the instance being
+//! stopped. `serve` is the manager's own service: the
 //! D-Bus interface on the system bus (`manager::dbus`, Linux only).
 
 #[cfg(target_os = "linux")]
@@ -20,6 +22,9 @@ pub mod windows;
 pub enum ManagerCommand {
     /// `run-instance <id>`.
     RunInstance(String),
+    /// `save-slots <id>`: the instance unit's `ExecStop=` on Linux, saving
+    /// the conversation snapshots of the instance being stopped.
+    SaveSlots(String),
     /// `serve`: the D-Bus / named-pipe service entry.
     Serve,
     /// `uninstall-services`: stop and delete every instance's service (the
@@ -34,7 +39,7 @@ pub enum ArgsError {
     NoCommand,
     /// A subcommand that does not exist.
     UnknownCommand(String),
-    /// `run-instance` without its id.
+    /// `run-instance` or `save-slots` without its id.
     MissingId,
     /// The first argument past a complete command.
     ExtraArgument(String),
@@ -54,6 +59,13 @@ pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
             return Err(ArgsError::ExtraArgument(arg.clone()));
         }
         return Ok(ManagerCommand::UninstallServices);
+    }
+    if command == "save-slots" {
+        let (id, extra) = rest.split_first().ok_or(ArgsError::MissingId)?;
+        if let Some(arg) = extra.first() {
+            return Err(ArgsError::ExtraArgument(arg.clone()));
+        }
+        return Ok(ManagerCommand::SaveSlots(id.clone()));
     }
     if command != "run-instance" {
         return Err(ArgsError::UnknownCommand(command.clone()));
@@ -80,6 +92,44 @@ pub fn sync_failure_message(failure: &windows::SyncFailure) -> String {
     }
 }
 
+/// The argv bytes of a process, as Linux writes them: `/proc/<pid>/cmdline`,
+/// NUL after every argument.
+#[cfg(target_os = "linux")]
+fn proc_cmdline(pid: u32) -> std::io::Result<Vec<u8>> {
+    let path = std::path::Path::new("/proc")
+        .join(pid.to_string())
+        .join("cmdline");
+    std::fs::read(path)
+}
+
+/// The port and state folder of the instance being stopped, read out of the
+/// main process's own `/proc/<pid>/cmdline` (Linux, the unit's `ExecStop=`).
+///
+/// `$MAINPID` is systemd's: unset when it knows the main process is already
+/// gone, so a crash leaves nothing to save. A pid that is not a number, or one
+/// whose `/proc` entry cannot be read (it exited in between), is no process to
+/// read either: nothing is read and there is no target. The state folder of
+/// `server.ini` is never a fallback, it is not where a running engine writes.
+/// The target is the launch itself (`slot_target`): the port and folder the
+/// instance was started with, and a launch without `--slot-save-path` had
+/// snapshots off, whatever `server.ini` says now.
+#[cfg(target_os = "linux")]
+fn save_slots_target(
+    mainpid: Option<&str>,
+    read_cmdline: impl Fn(u32) -> std::io::Result<Vec<u8>>,
+) -> Option<(u16, std::path::PathBuf)> {
+    let pid: u32 = mainpid?.parse().ok()?;
+    let bytes = read_cmdline(pid).ok()?;
+    // `/proc/<pid>/cmdline` is the argv, NUL after every argument: split on
+    // the NULs and drop the empty fields (the separators and the trailer).
+    let args: Vec<String> = bytes
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .collect();
+    crate::slot_save::slot_target(&args)
+}
+
 /// The `pai-manager` entry point, returning the exit code: on Unix
 /// the process becomes llama-server and returns only on failure; on Windows
 /// it waits for llama-server and returns its code. A failure prints one
@@ -98,6 +148,8 @@ pub fn main() -> i32 {
 /// What `main` does, its failure as an exit code and a message.
 fn run(args: &[String]) -> Result<i32, (i32, String)> {
     use crate::launch::LaunchError;
+    #[cfg(target_os = "linux")]
+    use crate::slot_save;
     use crate::strings;
 
     let command = parse_args(args).map_err(|e| {
@@ -130,6 +182,33 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         #[cfg(not(windows))]
         ManagerCommand::UninstallServices => {
             return Err((1, strings::t("manager-uninstall-services-unavailable")))
+        }
+        // The unit's `ExecStop=`: the instance's own stop writes the
+        // snapshots, within the core's one budget, against the port and the
+        // folder of the launch. The journal gets one line per model saved and
+        // one per error. Always success: a stop that fails is a stop that
+        // does not happen, and the dump of a save that did not complete is
+        // the previous one, untouched.
+        #[cfg(target_os = "linux")]
+        ManagerCommand::SaveSlots(_id) => {
+            let target = save_slots_target(std::env::var("MAINPID").ok().as_deref(), proc_cmdline);
+            let Some((port, dir)) = target else {
+                return Ok(0);
+            };
+            let (saved, errors) = slot_save::save_all(port, &dir, slot_save::SAVE_BUDGET);
+            for t in &saved {
+                eprintln!("{}", strings::fill("snapshot-saved-row", &[&t.describe()]));
+            }
+            for e in &errors {
+                eprintln!("{}", strings::fill("snapshot-failed-row", &[&e]));
+            }
+            return Ok(0);
+        }
+        // Windows takes the snapshots inside `run-instance`, at the
+        // service's own stop: the command exists for the Linux unit.
+        #[cfg(not(target_os = "linux"))]
+        ManagerCommand::SaveSlots(_) => {
+            return Err((1, strings::t("manager-save-slots-unavailable")))
         }
         #[cfg(target_os = "linux")]
         ManagerCommand::Serve => {
@@ -440,6 +519,255 @@ mod tests {
         assert_eq!(
             parse(&["run-instance", "lan-2"]),
             Ok(ManagerCommand::RunInstance("lan-2".into()))
+        );
+    }
+
+    /// `save-slots <id>` is the instance unit's `ExecStop=`: the same instance
+    /// the unit started, so the snapshots land for the instance being stopped.
+    #[test]
+    fn parse_args_reads_save_slots() {
+        assert_eq!(
+            parse(&["save-slots", "default"]),
+            Ok(ManagerCommand::SaveSlots("default".into()))
+        );
+        assert_eq!(
+            parse(&["save-slots", "lan-2"]),
+            Ok(ManagerCommand::SaveSlots("lan-2".into()))
+        );
+    }
+
+    /// The id is the unit's `%i`, so a `save-slots` on its own names no
+    /// instance and saves nothing.
+    #[test]
+    fn parse_args_refuses_save_slots_without_id() {
+        assert_eq!(parse(&["save-slots"]), Err(ArgsError::MissingId));
+    }
+
+    /// One instance per call, and only the subcommand and its id: a
+    /// port or a folder from the command line would be a target the unit
+    /// did not launch.
+    #[test]
+    fn parse_args_refuses_save_slots_with_extra_arguments() {
+        assert_eq!(
+            parse(&["save-slots", "default", "lan-2"]),
+            Err(ArgsError::ExtraArgument("lan-2".into()))
+        );
+        assert_eq!(
+            parse(&["save-slots", "default", "--port", "8080"]),
+            Err(ArgsError::ExtraArgument("--port".into()))
+        );
+        for cmd in ["Save-Slots", "save_slots", "--save-slots"] {
+            assert_eq!(
+                parse(&[cmd, "default"]),
+                Err(ArgsError::UnknownCommand(cmd.into())),
+                "subcommand {cmd:?}"
+            );
+        }
+    }
+
+    /// The usage text names the command a failing `ExecStop=` prints into the
+    /// journal, so an administrator reading it sees the stop's own job.
+    #[test]
+    fn usage_text_names_save_slots() {
+        let cli = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
+        for key in ["manager-usage", "manager-unknown-command"] {
+            let text = &cli[key];
+            assert!(
+                text.contains("pai-manager save-slots <id>"),
+                "{key}: {text:?}"
+            );
+        }
+    }
+
+    /// The budget of the save is the core's one constant, the same one the
+    /// clients' wrapper hands over, so the stop's save and a client's save
+    /// share one deadline. The unit's `TimeoutStopSec=` is read in the unit's
+    /// own test (`xtask` `system_files.rs`).
+    #[test]
+    fn the_save_slots_save_uses_the_cores_budget() {
+        let source = include_str!("manager.rs");
+        let code = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("the code");
+        assert!(
+            code.contains("SAVE_BUDGET"),
+            "save-slots must save within slot_save::SAVE_BUDGET, the design's one budget"
+        );
+        assert!(
+            !code.contains(concat!("from_secs(", "240)")),
+            "the budget is the core's constant, not a copy of its seconds here"
+        );
+    }
+
+    /// The `/proc/<pid>/cmdline` bytes of a launch, NUL after every argument
+    /// including the last, as Linux writes them.
+    #[cfg(target_os = "linux")]
+    fn cmdline(args: &[&str]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for arg in args {
+            out.extend_from_slice(arg.as_bytes());
+            out.push(0);
+        }
+        out
+    }
+
+    /// A `/proc/<pid>/cmdline` reader with a canned answer, logging the pids it
+    /// was asked for. The log is shared so the test can check a read that must
+    /// never happen.
+    #[cfg(target_os = "linux")]
+    struct Reader {
+        asked: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
+        bytes: Vec<u8>,
+        fails: bool,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Reader {
+        fn answers(&self, pid: u32) -> std::io::Result<Vec<u8>> {
+            self.asked.lock().expect("the read log").push(pid);
+            if self.fails {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "the process is gone",
+                ))
+            } else {
+                Ok(self.bytes.clone())
+            }
+        }
+        fn asked(&self) -> Vec<u32> {
+            self.asked.lock().expect("the read log").clone()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn reader(bytes: Vec<u8>, fails: bool) -> Reader {
+        Reader {
+            asked: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            bytes,
+            fails,
+        }
+    }
+
+    /// `$MAINPID` is systemd's own: unset when it knows the main process is
+    /// already gone (systemd.service(5) `ExecStop=`), so a crash leaves nothing
+    /// to save. No pid means no read of `/proc`, and so no target: the state
+    /// folder of `server.ini` is never a fallback, it is not where a running
+    /// engine writes.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn no_main_process_id_gives_no_target_and_reads_nothing() {
+        let r = reader(Vec::new(), false);
+        for mainpid in [None, Some(""), Some("abc"), Some("-3"), Some("42x")] {
+            assert_eq!(
+                save_slots_target(mainpid, |pid| r.answers(pid)),
+                None,
+                "MAINPID {mainpid:?} is no process to read"
+            );
+        }
+        assert_eq!(
+            r.asked(),
+            Vec::<u32>::new(),
+            "a MAINPID that is not a number must not be read"
+        );
+    }
+
+    /// A pid systemd names that is no process (it exited in between, its
+    /// `/proc` entry gone): no target, nothing to save, the stop goes on.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_main_process_that_cannot_be_read_gives_no_target() {
+        let r = reader(Vec::new(), true);
+        assert_eq!(save_slots_target(Some("4242"), |pid| r.answers(pid)), None);
+        assert_eq!(r.asked(), vec![4242], "the read is the pid systemd named");
+    }
+
+    /// The launched argv is the target: a `--slot-save-path` is the folder the
+    /// running engine writes to, `--port` the port it answers on. A launch
+    /// without `--slot-save-path` had snapshots off, whatever `server.ini`
+    /// says now.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_cmdline_of_the_main_process_gives_the_launch_target() {
+        let r = reader(
+            cmdline(&[
+                "--model",
+                "/models/qwen.gguf",
+                "--slot-save-path",
+                "/state/dir",
+                "--port",
+                "8081",
+            ]),
+            false,
+        );
+        assert_eq!(
+            save_slots_target(Some("4242"), |pid| r.answers(pid)),
+            Some((8081, std::path::PathBuf::from("/state/dir"))),
+            "the port and folder the instance was launched with"
+        );
+        assert_eq!(r.asked(), vec![4242], "the read is the MAINPID's");
+    }
+
+    /// The engine's own default port when the launch named none: the same
+    /// reading `slot_target` gives an argument list, never a port read out of
+    /// the file.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_cmdline_without_a_port_gives_the_default_port() {
+        let r = reader(cmdline(&["--slot-save-path", "/state/dir"]), false);
+        assert_eq!(
+            save_slots_target(Some("4242"), |pid| r.answers(pid)),
+            Some((
+                crate::server_cfg::DEFAULT_PORT as u16,
+                std::path::PathBuf::from("/state/dir")
+            ))
+        );
+    }
+
+    /// Snapshots off at launch, or an empty argv (a read that answered
+    /// nothing): no target.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_cmdline_with_no_slot_save_path_gives_no_target() {
+        let r = reader(
+            cmdline(&["--model", "/models/qwen.gguf", "--port", "8081"]),
+            false,
+        );
+        assert_eq!(
+            save_slots_target(Some("4242"), |pid| r.answers(pid)),
+            None,
+            "the launch had snapshots off"
+        );
+        assert_eq!(r.asked(), vec![4242]);
+
+        let empty = reader(Vec::new(), false);
+        assert_eq!(
+            save_slots_target(Some("4242"), |pid| empty.answers(pid)),
+            None,
+            "an empty cmdline names no folder"
+        );
+    }
+
+    /// The stop's own save, with no `$MAINPID` in the environment: the run
+    /// answers 0, asking for nothing. systemd runs `ExecStop=` after a start
+    /// that succeeded, also when the process ended on its own, and a stop that
+    /// fails is a stop that does not happen: a save with no target is success.
+    ///
+    /// A plain unit test: the manager crate's e2e (`src/tests/mod.rs`) owns the
+    /// process-wide data root, so this path must touch no `paths::`, and
+    /// `MAINPID` is set only by systemd for a unit's stop commands, never in a
+    /// test process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn save_slots_with_no_mainpid_exits_zero_asking_nothing() {
+        assert!(
+            std::env::var_os("MAINPID").is_none(),
+            "MAINPID is set in this environment: the unset case cannot be pinned here"
+        );
+        assert_eq!(
+            run(&["save-slots".into(), "default".into()]),
+            Ok(0),
+            "no target is not a failure, the stop goes on"
         );
     }
 }

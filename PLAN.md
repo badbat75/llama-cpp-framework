@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop, four slices), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop: its slices 3, Windows, and 4, the clients, are left), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -859,8 +859,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so
-   every stop path does (the web, `pai`, systemctl or the SCM, a reboot); four slices there (the save in
-   `pai-core`, Linux `ExecStop=`, Windows preshutdown, the clients stop saving under the manager). The
+   every stop path does (the web, `pai`, systemctl or the SCM, a reboot); four slices there; built: the save in
+   `pai-core` (05a315f, d1234fa) and Linux `ExecStop=pai-manager save-slots %i`; left: Windows preshutdown, then the
+   clients stop saving under the manager (until then a stop from the GUI or `pai` under the manager saves twice).
+   Seen in a rerun, not this slice's: xtask `the_engine_prerm_records_the_running_instances_and_stops_them`
+   failed once (fixture root shared by its loop), green alone and in four reruns. The
    user decided (2026-11-16): before the MVP's run; a stop may wait 5 minutes in all (240 s for the
    save; set from the first measured save); and every instance start restores the newest snapshot,
    as slice 9d after 9b (it also mends the Linux restore, which by the code cannot read

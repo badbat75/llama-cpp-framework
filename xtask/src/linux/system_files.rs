@@ -169,6 +169,9 @@ pub fn instance_unit() -> String {
          StateDirectory=private-ai private-ai/.local/share/private-ai\n\
          StateDirectoryMode=0750\n\
          ExecStart={MANAGER_EXE} run-instance %i\n\
+         # The stop first saves the conversation snapshots; this bounds that save.\n\
+         ExecStop={MANAGER_EXE} save-slots %i\n\
+         TimeoutStopSec=300\n\
          Restart=on-abnormal\n\
          RestartSec=5\n\
          \n\
@@ -1038,7 +1041,11 @@ mod tests {
     /// journal). Restart=on-abnormal: a crash (an unclean signal, a timeout)
     /// restarts it, a clean refusal of the launcher (exit code 1 on a missing
     /// config) does not, so a broken config does not loop (systemd.service(5)
-    /// Table 1). Its start at boot is pinned below.
+    /// Table 1). Its start at boot is pinned below. At the stop systemd runs
+    /// the launcher's `save-slots` for the same instance, as the unit's `User=`
+    /// (systemd.service(5) ExecStop=), and bounds that command with
+    /// `TimeoutStopSec=`: a save that hangs is killed and the stop goes on, so
+    /// the snapshot is never what stands between an instance and a stop.
     #[test]
     fn the_instance_unit_runs_the_launcher_as_the_service_user_in_the_gpu_groups() {
         let unit = instance_unit();
@@ -1061,6 +1068,8 @@ mod tests {
             "ExecStart=/usr/libexec/private-ai/pai-manager run-instance %i",
             "Restart=on-abnormal",
             "RestartSec=5",
+            "ExecStop=/usr/libexec/private-ai/pai-manager save-slots %i",
+            "TimeoutStopSec=300",
         ] {
             assert!(service.contains(&want), "{want} missing:\n{unit}");
         }

@@ -42,6 +42,13 @@ use crate::strings;
 /// looks for the same one.
 pub const STATE_EXT: &str = "llamastate";
 
+/// The one deadline every caller hands to [`save_all`]: the whole run, requests
+/// included. It is the deadline of a save at a stop, so the instance's own stop
+/// and the clients' wrapper cannot end up with two different waits. The stop's
+/// own bound (the unit's `TimeoutStopSec=`, the Windows preshutdown timeout)
+/// sits above it, leaving the server time to exit after the save.
+pub const SAVE_BUDGET: Duration = Duration::from_secs(240);
+
 /// The suffix a running save writes under. The engine answers only once the
 /// whole state has hit the disk, so the name without the suffix is the promise
 /// that the bytes behind it are complete.
@@ -709,6 +716,16 @@ mod tests {
                 "--port {garbage} cannot be a port to talk to"
             );
         }
+    }
+
+    /// The one budget every caller hands to `save_all`: the instance's own stop
+    /// and the clients' wrapper must give the same deadline, so a stop cannot
+    /// wait longer than a save anyone else was ready to wait for. The stop's
+    /// own bound (the unit's `TimeoutStopSec=`, the Windows preshutdown
+    /// timeout) sits above it and is pinned with the files that ship it.
+    #[test]
+    fn the_save_budget_is_the_designs_one_deadline() {
+        assert_eq!(SAVE_BUDGET, Duration::from_secs(240));
     }
 
     #[test]

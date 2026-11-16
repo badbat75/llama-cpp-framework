@@ -3,6 +3,9 @@
 
 // The core modules this crate uses, under the names its sources use.
 use pai_core::{launch, net_ifaces, paths, server_cfg, strings};
+// The save leg of the instance unit's `ExecStop=`: the Linux command only.
+#[cfg(target_os = "linux")]
+use pai_core::slot_save;
 
 pub mod manager;
 // The end-to-end test that runs every phase redirecting the data root

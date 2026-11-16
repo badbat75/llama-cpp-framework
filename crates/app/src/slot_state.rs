@@ -71,12 +71,6 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_secs(900);
 /// is not answering in five seconds is not going to restore anything either.
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The deadline of a whole save run: one budget for the model list and for every
-/// save in it, not one per model. A per-model timeout would let a run with
-/// several models last several budgets, and a stop that waits that long is a
-/// stop that never happens (`pai_core::slot_save`).
-const SAVE_BUDGET: Duration = Duration::from_secs(240);
-
 /// How long a restore waits for the router to open its port after a start.
 ///
 /// The router listens only once it has measured the memory of every preset it
@@ -260,8 +254,9 @@ fn transfer_from_json(model: &str, parsed: &serde_json::Value) -> Transfer {
 /// The saving is the core's (`pai_core::slot_save`), the same code the
 /// instance's own stop runs, so the client and the service write the same dumps.
 /// This is the seam the GUI and the command line call: it reads the port and the
-/// state folder out of `cfg` and hands over [`SAVE_BUDGET`], the one deadline for
-/// the whole run. The core writes each dump under a `-partial` name and renames
+/// state folder out of `cfg` and hands over the core's `SAVE_BUDGET`, the one
+/// deadline for the whole run. The core writes each dump under a `-partial`
+/// name and renames
 /// it only once the server has answered the whole save.
 ///
 /// The prune is what keeps the directory meaningful: it makes the state dir a
@@ -280,7 +275,8 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
         Ok(d) => d,
         Err(e) => return (Vec::new(), vec![strings::fill("state-dir-failed", &[&e])]),
     };
-    let (done, errors) = pai_core::slot_save::save_all(port, &dir, SAVE_BUDGET);
+    let (done, errors) =
+        pai_core::slot_save::save_all(port, &dir, pai_core::slot_save::SAVE_BUDGET);
     (
         done.into_iter()
             .map(|t| Transfer {
@@ -859,8 +855,9 @@ mod tests {
 
     /// The save leg lives in the core, so the instance's own stop (the Linux
     /// unit's `ExecStop=`, the Windows service's stop) reaches the same code as
-    /// the clients, and the wrapper is what carries the 240 s budget of the
-    /// design to it.
+    /// the clients, and the wrapper is what carries the design's one budget to
+    /// it: the core owns that constant, so the stop and the client cannot end
+    /// up with two different deadlines.
     #[test]
     fn the_save_leg_delegates_to_the_core() {
         let src = std::fs::read_to_string(
@@ -874,8 +871,12 @@ mod tests {
             "the wrapper must call the core's save: this file is where the GUI and the CLI ask for a snapshot"
         );
         assert!(
-            code.contains("from_secs(240)"),
-            "the whole save gets the design's budget, one deadline for every request"
+            code.contains("slot_save::SAVE_BUDGET"),
+            "the wrapper hands over the core's budget, one deadline for every request of the run"
+        );
+        assert!(
+            !code.contains(concat!("from_secs(", "240)")),
+            "the budget is the core's constant, not seconds copied here"
         );
         let posts_a_save = regex::Regex::new(r#"slot_action\(\s*port,\s*"save""#).expect("regex");
         assert!(
