@@ -856,7 +856,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `server_cfg::check` moved to `pai-core`, (3) the manager's `write_file_if` (compare and write under
    its `writing` lock, `Changed` otherwise), (4) its pipe and D-Bus faces, protocol 2, (5) the body to
    the file text or 400/422, (6) the route: 200 `{revision, running}`, 409 `server-changed-elsewhere`,
-   422 `{key, args, field}`, 403 `session-not-administrator`. The save creates no folder (user,
+   422 `{key, args, field}`, 403 `session-not-administrator`, and 504 `client-timeout` when the
+   time limit runs out after the write was sent (the file may or may not be saved; asked by the web UI
+   session, 2026-11-16), 503 `client-unavailable` staying for a manager never reached. The save creates no folder (user,
    2026-11-16: the default ModelsDir and StateDir exist on both systems; a custom one is the
    administrator's to create).
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
