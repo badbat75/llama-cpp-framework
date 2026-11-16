@@ -263,6 +263,11 @@ pub struct ServiceSpec {
     pub service_type: u32,
     /// Given to `CreateServiceW` only: a new instance starts disabled.
     pub start_type: u32,
+    /// The preshutdown timeout in milliseconds, the
+    /// `SERVICE_CONFIG_PRESHUTDOWN_INFO`'s `dwPreshutdownTimeout`: how long
+    /// the SCM leaves the service for the snapshot save of a reboot,
+    /// [`PRESHUTDOWN_TIMEOUT`] in the SCM's unit.
+    pub preshutdown_timeout_ms: u32,
 }
 
 /// The service of instance `id` run by `exe` (`pai-manager.exe`), None for an
@@ -277,6 +282,7 @@ pub fn service_spec(id: &str, exe: &Path) -> Option<ServiceSpec> {
         service_type: SERVICE_WIN32_OWN_PROCESS,
         start_type: boot_start_type(false),
         name,
+        preshutdown_timeout_ms: PRESHUTDOWN_TIMEOUT.as_millis() as u32,
     })
 }
 
@@ -420,6 +426,80 @@ pub fn stop_checkpoint(tick: u32) -> u32 {
 /// (`pai_core::slot_save::SAVE_BUDGET`), so llama-server keeps time to
 /// exit after a save that runs to the end of its budget.
 pub const PRESHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How long a restart's delayed start waits for the service to stop before
+/// starting it again: the stop saves the snapshots first, so this must
+/// outlast the save's one budget (`pai_core::slot_save::SAVE_BUDGET`) and
+/// never be shorter than the preshutdown timeout ([`PRESHUTDOWN_TIMEOUT`])
+/// that bounds the same save on the reboot path (ARCHITECTURE.md, "Budget").
+pub const RESTART_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The record a restart's delayed start hands to the log of who acted when
+/// the start fails: the action, the instance and the failure, every name
+/// written with Rust's `{:?}` quoting, so nothing a name carries can forge
+/// a second record. The manager's own records of who acted
+/// (`manager/service.rs`) are the same shape, without caller and principal:
+/// the delayed thread carries no request. Its own action name,
+/// `restart_start`: the manager has already recorded the `restart` call it
+/// answered, so a delayed start that fails must not read as a second
+/// restart of the same instance.
+pub fn restart_failure_line(id: &str, detail: &str) -> String {
+    format!(r#"action="restart_start" target={id:?} outcome={detail:?}"#)
+}
+
+/// The restarts asked of the SCM, per instance, so a stop of an instance is
+/// not undone by a restart of it that is still waiting to start it again.
+/// One generation per instance: [`RestartGate::begin`] opens a restart,
+/// [`RestartGate::cancel`] (a stop) makes every restart of that instance
+/// stale, and the delayed start of a restart calls
+/// [`RestartGate::is_current`] with the generation it was given, before it
+/// starts the service. Held as an `Arc` by the SCM glue, so the manager's
+/// calls and the thread of a delayed start ask the same generations.
+#[derive(Default)]
+pub struct RestartGate {
+    generations: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+}
+
+impl RestartGate {
+    /// A restart of instance `id` begins: the id's generation goes up, and
+    /// the new one is returned for the delayed start to ask about later.
+    pub fn begin(&self, id: &str) -> u64 {
+        self.bump(id)
+    }
+
+    /// Instance `id` was stopped: its generation goes up, so every restart
+    /// of it that is still waiting is no longer current.
+    pub fn cancel(&self, id: &str) {
+        self.bump(id);
+    }
+
+    /// Whether `generation` is still the current generation of instance
+    /// `id`: only a current restart may start the service again. An id with
+    /// no generation was never restarted, so nothing is current for it.
+    pub fn is_current(&self, id: &str, generation: u64) -> bool {
+        self.generations()
+            .get(id)
+            .is_some_and(|current| *current == generation)
+    }
+
+    /// The id's generation, one higher than it was.
+    fn bump(&self, id: &str) -> u64 {
+        let mut generations = self.generations();
+        let next = *generations.get(id).unwrap_or(&0) + 1;
+        generations.insert(id.to_string(), next);
+        next
+    }
+
+    /// The generations. A panic that poisoned the lock is taken over: the
+    /// map holds `u64`s and keeps no invariant to break, and a gate that
+    /// refuses to answer would leave a restart hanging on a stop that is
+    /// already over.
+    fn generations(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>> {
+        self.generations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
 
 /// The snapshot target of the arguments `run-instance` spawned
 /// llama-server with (`Command::get_args`): the port and the folder of
@@ -1475,6 +1555,7 @@ mod tests {
                 account: r"NT SERVICE\llama.cpp_lan-2".into(),
                 service_type: SERVICE_WIN32_OWN_PROCESS,
                 start_type: SERVICE_DEMAND_START,
+                preshutdown_timeout_ms: PRESHUTDOWN_TIMEOUT.as_millis() as u32,
             }
         );
     }
@@ -1504,6 +1585,18 @@ mod tests {
             image_path(&spec),
             r#""D:\pai\pai-manager.exe" run-instance lan-2"#
         );
+    }
+
+    /// The preshutdown timeout carried into the spec, in milliseconds:
+    /// `ChangeServiceConfig2` with `SERVICE_CONFIG_PRESHUTDOWN_INFO` is
+    /// given `dwPreshutdownTimeout` in milliseconds
+    /// (learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_preshutdown_info),
+    /// the design's 300 s (ARCHITECTURE.md, "Budget"). The delegation to
+    /// `PRESHUTDOWN_TIMEOUT` is pinned by the full spec comparison above.
+    #[test]
+    fn the_service_spec_carries_the_preshutdown_timeout() {
+        let spec = service_spec("default", Path::new(EXE)).expect("a valid id");
+        assert_eq!(spec.preshutdown_timeout_ms, 300_000);
     }
 
     // ── SCM states and errors ────────────────────────────────────────────
@@ -2230,6 +2323,158 @@ mod tests {
         );
     }
 
+    /// A restart's delayed start waits for the stop before starting the
+    /// service again: the stop now saves the snapshots first, so the wait
+    /// must outlast the save's one budget, and the preshutdown timeout that
+    /// bounds the same save on the reboot path is its floor
+    /// (ARCHITECTURE.md, "Budget").
+    #[test]
+    fn the_restart_stop_wait_outlasts_the_save_and_the_preshutdown() {
+        assert!(
+            RESTART_STOP_WAIT > pai_core::slot_save::SAVE_BUDGET,
+            "the stop saves first: RESTART_STOP_WAIT {RESTART_STOP_WAIT:?} \
+             must exceed SAVE_BUDGET {} s",
+            pai_core::slot_save::SAVE_BUDGET.as_secs()
+        );
+        assert!(
+            RESTART_STOP_WAIT >= PRESHUTDOWN_TIMEOUT,
+            "the same save is bounded on both paths: RESTART_STOP_WAIT \
+             {RESTART_STOP_WAIT:?} must not be shorter than \
+             PRESHUTDOWN_TIMEOUT {} s",
+            PRESHUTDOWN_TIMEOUT.as_secs()
+        );
+    }
+
+    /// The record line of a delayed start that failed: the manager's record
+    /// shape (`manager/service.rs`), action, target and outcome, every name
+    /// `{:?}`-quoted. Its own action name, `restart_start`: the manager has
+    /// already recorded the `restart` call it answered, so a delayed start
+    /// that fails must not read as a second restart of the same instance.
+    #[test]
+    fn the_restart_failure_line_is_one_quoted_record() {
+        assert_eq!(
+            restart_failure_line("default", "Service"),
+            r#"action="restart_start" target="default" outcome="Service""#,
+            "the line follows the manager's record shape, values {{:?}}-quoted"
+        );
+    }
+
+    /// The ids and failure names this line carries come from the caller and
+    /// from the SCM: a quote, a newline or a NUL forges no second record.
+    /// The expectation is Rust's own quoting, formatted in the test.
+    #[test]
+    fn the_restart_failure_line_forges_no_second_record() {
+        for (id, detail) in [
+            (r#"lan"2"#, r#"Io("C:\tmp")"#),
+            ("a\nb", "start failed\nagain"),
+            ("nul\0id", "NUL\0detail"),
+        ] {
+            let line = restart_failure_line(id, detail);
+            assert_eq!(
+                line,
+                format!(r#"action="restart_start" target={id:?} outcome={detail:?}"#),
+                "the values are Rust-quoted, id {id:?}"
+            );
+            assert_eq!(line.lines().count(), 1, "one record per line, id {id:?}");
+        }
+    }
+
+    // ── A restart a stop cancels ─────────────────────────────────────────
+    // `restart` answers once the stop is accepted and starts the service
+    // again from a thread, after the save that stop makes (the wait,
+    // [`RESTART_STOP_WAIT`]). A Stop of the same instance, or a newer
+    // Restart, asked while that thread waits must stand: the gate keeps one
+    // generation per instance, and the delayed start starts only while the
+    // generation its restart took is still the current one.
+
+    /// The gate is asked by the manager's calls and by the thread of a
+    /// delayed start, on different threads, so it must cross one.
+    fn gate_is_send_sync<T: Send + Sync>() {}
+
+    /// A restart is current until a stop of that instance makes it stale:
+    /// the user's Stop stands, the delayed start must not start the service
+    /// again.
+    #[test]
+    fn a_restart_is_current_until_a_stop_makes_it_stale() {
+        gate_is_send_sync::<RestartGate>();
+        let gate = RestartGate::default();
+        let generation = gate.begin("default");
+        assert!(
+            gate.is_current("default", generation),
+            "a restart that began, and was not cancelled, is current"
+        );
+        gate.cancel("default");
+        assert!(
+            !gate.is_current("default", generation),
+            "a stop of the instance makes the restart that is still waiting \
+             stale"
+        );
+    }
+
+    /// A newer Restart of the same instance replaces the pending one: only
+    /// the newest generation is current, so at most one delayed start runs
+    /// for an instance.
+    #[test]
+    fn a_newer_restart_makes_the_one_it_replaces_stale() {
+        let gate = RestartGate::default();
+        let first = gate.begin("default");
+        let second = gate.begin("default");
+        assert!(
+            !gate.is_current("default", first),
+            "the restart a newer one replaces is stale"
+        );
+        assert!(
+            gate.is_current("default", second),
+            "the newest restart of the instance is current"
+        );
+    }
+
+    /// One instance's stop cancels that instance's restarts only: another
+    /// instance's pending restart stays current until its own stop.
+    #[test]
+    fn each_instance_has_its_own_generation() {
+        let gate = RestartGate::default();
+        let (default, lan2) = (gate.begin("default"), gate.begin("lan-2"));
+        gate.cancel("default");
+        assert!(!gate.is_current("default", default), "its own stop");
+        assert!(
+            gate.is_current("lan-2", lan2),
+            "another instance's stop cancels nothing"
+        );
+        gate.cancel("lan-2");
+        assert!(!gate.is_current("lan-2", lan2), "until its own stop");
+    }
+
+    /// The gate travels as an `Arc`: the thread of a delayed start asks the
+    /// same gate the manager's calls answer, so a stop asked on another
+    /// thread (a caller served on its own connection) is seen by the thread
+    /// that is waiting.
+    #[test]
+    fn the_gate_shared_across_threads_answers_the_same() {
+        let gate = std::sync::Arc::new(RestartGate::default());
+        let generation = gate.begin("default");
+        let seen = {
+            let gate = std::sync::Arc::clone(&gate);
+            std::thread::spawn(move || gate.is_current("default", generation))
+                .join()
+                .expect("thread")
+        };
+        assert!(
+            seen,
+            "the thread of a delayed start sees its own restart as current"
+        );
+        {
+            let gate = std::sync::Arc::clone(&gate);
+            std::thread::spawn(move || gate.cancel("default"))
+                .join()
+                .expect("thread");
+        }
+        assert!(
+            !gate.is_current("default", generation),
+            "a stop asked on another thread reaches the thread that is waiting"
+        );
+    }
+
     /// The glue is type-checked only, so pin its decisions from its text,
     /// narrowly: `instance_main` takes the target from the arguments it
     /// spawned llama-server with, saves within the core's one budget on the
@@ -2427,6 +2672,420 @@ mod tests {
         assert!(
             !instance.contains("manager_controls_accepted"),
             "instance_main reports the manager's accept mask"
+        );
+    }
+
+    // ── The SCM glue (scm.rs) ────────────────────────────────────────────
+    // scm.rs is cfg(windows): cross-compiled and checked, never run here, so
+    // its wiring is pinned from its text, whole-line comments left out by
+    // `scm_code` (as the entry.rs pins do). Trailing comments are kept:
+    // a required needle spelled in one greens falsely, and a forbidden one
+    // named in any comment reds, so the glue must not name these needles in
+    // comments. The pins name code shapes in the source: they cannot catch
+    // a value that lands in the wrong argument slot, a closure that borrows
+    // what it may not (the cross target's own check), the record reaching
+    // the real log file, or what the SCM does.
+
+    /// The text of `fn <name>` in scm.rs, from its signature to the brace
+    /// that closes it (at column 0 for a top-level fn, at column 4 for an
+    /// impl method), comments left out.
+    fn scm_fn(name: &str) -> String {
+        let code = scm_code();
+        let at = [format!("\nfn {name}("), format!("\n    fn {name}(")]
+            .into_iter()
+            .find_map(|open| code.find(&open))
+            .unwrap_or_else(|| panic!("scm.rs has no `fn {name}`"));
+        let body = &code[at..];
+        let end = [body.find("\n}\n"), body.find("\n    }\n")]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or_else(|| panic!("the end of `fn {name}` in scm.rs"));
+        body[..end].to_string()
+    }
+
+    /// Where `fn <name>` in scm.rs sets the preshutdown timeout: the text
+    /// that carries the `ChangeServiceConfig2W` call (the body when it calls
+    /// it directly, else the body of the scm.rs helper it calls for it) and
+    /// the call needle that sits in the body.
+    fn preshutdown_set(name: &str) -> (String, String) {
+        let body = scm_fn(name);
+        if body.contains("ChangeServiceConfig2W(") {
+            return (body, "ChangeServiceConfig2W(".to_string());
+        }
+        let helpers: Vec<String> = scm_code()
+            .lines()
+            .filter_map(|l| l.strip_prefix("fn ").and_then(|r| r.split('(').next()))
+            .filter(|n| *n != name)
+            .map(|n| n.to_string())
+            .collect();
+        for helper in helpers {
+            let call = format!("{helper}(");
+            if body.contains(&call) && scm_fn(&helper).contains("ChangeServiceConfig2W(") {
+                return (scm_fn(&helper), call);
+            }
+        }
+        panic!(
+            "`fn {name}` in scm.rs calls neither ChangeServiceConfig2W \
+                nor a helper that does"
+        );
+    }
+
+    /// A service the manager creates (start, boot, sync) must carry the
+    /// preshutdown timeout: the SCM's default is 10 s
+    /// (SERVICE_PRESHUTDOWN_INFO,
+    /// learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_preshutdown_info),
+    /// far too short for the reboot save. `CreateServiceW`'s `dwAccess` is
+    /// the access of the handle it returns, so the handle the create hands
+    /// on needs `SERVICE_CHANGE_CONFIG` for the `ChangeServiceConfig2W` call
+    /// (learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-createservicew).
+    #[test]
+    fn create_sets_the_preshutdown_timeout_on_the_new_service() {
+        let body = scm_fn("create");
+        let (set, call) = preshutdown_set("create");
+        for needle in [
+            "ChangeServiceConfig2W(",
+            "SERVICE_CONFIG_PRESHUTDOWN_INFO",
+            "dwPreshutdownTimeout",
+            "preshutdown_timeout_ms",
+        ] {
+            assert!(
+                set.contains(needle),
+                "create never sets {needle}: a new instance service keeps \
+                 the SCM's short preshutdown default"
+            );
+        }
+        let created = body
+            .find("CreateServiceW(")
+            .expect("create keeps calling CreateServiceW");
+        let set_at = body
+            .find(&call)
+            .expect("create keeps setting the preshutdown timeout");
+        assert!(
+            created < set_at,
+            "the timeout is set on the handle CreateServiceW returned, \
+             after it"
+        );
+        let args = call_arguments(&body, "CreateServiceW");
+        assert!(
+            args.contains("access | SERVICE_CHANGE_CONFIG")
+                || args.contains("SERVICE_CHANGE_CONFIG | access"),
+            "create must OR SERVICE_CHANGE_CONFIG into the access it opens \
+             with, so the handle it hands on may call ChangeServiceConfig2W: \
+             {args}"
+        );
+    }
+
+    /// The sync applies the spec again to every kept service: the
+    /// preshutdown timeout too, so a service created by an earlier build
+    /// gets the longer window.
+    #[test]
+    fn reconfigure_sets_the_preshutdown_timeout() {
+        let body = scm_fn("reconfigure");
+        let (set, call) = preshutdown_set("reconfigure");
+        for needle in [
+            "ChangeServiceConfig2W(",
+            "SERVICE_CONFIG_PRESHUTDOWN_INFO",
+            "dwPreshutdownTimeout",
+            "preshutdown_timeout_ms",
+        ] {
+            assert!(
+                set.contains(needle),
+                "reconfigure never sets {needle}: a kept service keeps the \
+                 timeout it was created with"
+            );
+        }
+        let config = body
+            .find("ChangeServiceConfigW(")
+            .expect("reconfigure keeps calling ChangeServiceConfigW");
+        let set_at = body
+            .find(&call)
+            .expect("reconfigure keeps setting the preshutdown timeout");
+        assert!(
+            config < set_at,
+            "the timeout is set on the handle ChangeServiceConfigW retook, \
+             after it"
+        );
+    }
+
+    /// `start` opens the service, or creates it when it is missing, so it
+    /// sets the preshutdown timeout on the handle it got: a service created
+    /// earlier, whose timeout was never set (a create that could not set it,
+    /// or an install before the timeout existed), would otherwise keep the
+    /// SCM's short default until the next `sync`. Two parts:
+    ///
+    /// - the open's access carries `SERVICE_CHANGE_CONFIG`, the access
+    ///   `ChangeServiceConfig2W` needs on the handle (`create` adds it to
+    ///   the handle it returns on its own),
+    /// - a service that cannot carry the window is still started: starting
+    ///   the instance is what the caller asked for, the window is the reboot
+    ///   path's, so the result is ignored (`let _ =`),
+    /// - the write names `SERVICE_PRESHUTDOWN_INFO` and lands on the handle
+    ///   the open returned, not on a handle opened for something else.
+    #[test]
+    fn start_sets_the_preshutdown_timeout_on_the_service_it_opened() {
+        let body = scm_fn("start");
+        let (set, call) = preshutdown_set("start");
+        for needle in [
+            "ChangeServiceConfig2W(",
+            "SERVICE_CONFIG_PRESHUTDOWN_INFO",
+            "dwPreshutdownTimeout",
+        ] {
+            assert!(
+                set.contains(needle),
+                "start never sets {needle}: a service it opens keeps the \
+                 SCM's short preshutdown default"
+            );
+        }
+        assert!(
+            body.contains("preshutdown_timeout_ms"),
+            "start sets no timeout of the spec, so an instance can be left \
+             with a window that is not the save's: {body}"
+        );
+        let set_at = body
+            .find(&call)
+            .expect("start keeps setting the preshutdown timeout");
+        let started = body
+            .find("StartServiceW(")
+            .expect("start keeps calling StartServiceW");
+        assert!(
+            set_at < started,
+            "the window is set on the handle the open returned, before the \
+             service starts"
+        );
+        let before = body[..set_at].trim_end();
+        assert!(
+            before.ends_with("let _ ="),
+            "a service that cannot carry the window must still start: ignore \
+             the result, `let _ = {call}(..)`"
+        );
+        let args = call_arguments(&body, "open_service");
+        let access = body
+            .lines()
+            .find(|l| l.contains("let access"))
+            .unwrap_or_default();
+        assert!(
+            args.contains("SERVICE_CHANGE_CONFIG") || access.contains("SERVICE_CHANGE_CONFIG"),
+            "start opens the service without SERVICE_CHANGE_CONFIG, so the \
+             preshutdown change is refused on a service it did not create: \
+             {args}"
+        );
+        assert!(
+            set.contains("SERVICE_PRESHUTDOWN_INFO"),
+            "the write names no SERVICE_PRESHUTDOWN_INFO: the preshutdown \
+             window is set as SERVICE_CONFIG_PRESHUTDOWN_INFO carrying that \
+             structure"
+        );
+        let open_line = body
+            .lines()
+            .find(|l| l.contains("open_service("))
+            .unwrap_or_default();
+        let handle = open_line
+            .split('=')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches("let ")
+            .trim()
+            .to_string();
+        assert!(
+            !handle.is_empty(),
+            "start opens the service to no variable, so the window cannot be \
+             pinned to the handle it opened"
+        );
+        let set_args = call_arguments(&body, call.trim_end_matches('('));
+        assert!(
+            set_args.contains(&format!("&{handle}")),
+            "the window is set on something other than the handle the open \
+             returned (`{handle}`): {set_args}"
+        );
+    }
+
+    /// The restart answers once the stop is accepted: `stop(id)` stays at
+    /// the top and its `?` stays, the wait and the start move to a spawned
+    /// thread (the stop's save can run to the whole budget, ARCHITECTURE.md
+    /// "Budget"). The delayed start waits `RESTART_STOP_WAIT`, not the old
+    /// 30 s, and a failed start records one line, built by
+    /// `restart_failure_line`, on the log of who acted.
+    #[test]
+    fn restart_answers_once_the_stop_is_accepted() {
+        let body = scm_fn("restart");
+        let stop = body
+            .find("stop(id)")
+            .expect("restart keeps asking for the stop first");
+        let spawn = body.find("thread::spawn").expect(
+            "the wait and the start must move to a spawned thread: \
+                     restart must answer once the stop is accepted",
+        );
+        assert!(
+            stop < spawn,
+            "the stop must be asked, and accepted, before restart answers"
+        );
+        for call in [
+            "RESTART_STOP_WAIT",
+            ".start(",
+            ".record(",
+            "restart_failure_line(",
+        ] {
+            assert!(
+                body.find(call).is_some_and(|at| at > spawn),
+                "{call} must be used on the spawned side of restart, after \
+                 thread::spawn"
+            );
+        }
+        let no_old_wait = body.replace("RESTART_STOP_WAIT", "");
+        assert!(
+            !no_old_wait.contains("STOP_WAIT"),
+            "restart still waits with the old 30 s STOP_WAIT"
+        );
+    }
+
+    /// The delayed start's failure must reach the log of who acted:
+    /// `ScmService` is given that log as an `Arc` the spawned closure can
+    /// clone and record through (`ActionLog`, `manager/service.rs`).
+    #[test]
+    fn the_scm_service_is_given_the_action_log() {
+        let code = scm_code();
+        assert!(
+            code.contains("fn with_log("),
+            "ScmService has no with_log setter: the delayed start's failure \
+             has no log to record on"
+        );
+        assert!(
+            code.contains("dyn ActionLog"),
+            "the log is not an Arc<dyn ActionLog + Send + Sync> the closure \
+             can own across the thread"
+        );
+    }
+
+    /// The gate lives in the glue: `ScmService` holds it as an `Arc`, so
+    /// every clone of it (the one the delayed start owns, the one the
+    /// manager calls) asks and raises the same generations.
+    #[test]
+    fn the_scm_service_holds_the_gate_the_delayed_start_asks() {
+        let code = scm_code();
+        assert!(
+            code.contains("Arc<RestartGate>"),
+            "ScmService holds no Arc<RestartGate>: the thread of a delayed \
+             start has no gate to ask, and a stop on another clone of the \
+             service would cancel nothing"
+        );
+    }
+
+    /// A stop raises the instance's generation, and does it before the stop
+    /// is asked of the SCM: the thread of a delayed start starts the service
+    /// as soon as the status is no longer active, so a generation raised
+    /// after `ControlService` returns can arrive after that start.
+    #[test]
+    fn stop_cancels_the_pending_restart_of_its_instance() {
+        let body = scm_fn("stop");
+        let cancel = body
+            .find(".cancel(")
+            .expect("stop cancels the restart of its instance that is waiting");
+        let control = body
+            .find("ControlService(")
+            .expect("stop keeps asking the SCM for the stop");
+        assert!(
+            cancel < control,
+            "the generation goes up before the stop is asked, so the thread \
+             that is waiting is stale by the time it sees the service stop"
+        );
+        let args = call_arguments(&body, ".cancel");
+        assert!(
+            args.contains("id"),
+            "stop cancels the pending restart of an id that is not its own: \
+             {args}"
+        );
+    }
+
+    /// The text before a call, with the call's receiver (`scm.gate`) taken
+    /// off, so what is left is the construct the call sits in.
+    fn without_receiver(text: &str) -> &str {
+        let mut rest = text.trim_end();
+        loop {
+            let no_ident = rest.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
+            if no_ident.len() < rest.len() {
+                rest = no_ident.trim_end();
+            }
+            match rest.strip_suffix('.') {
+                Some(before_dot) => rest = before_dot.trim_end(),
+                None => break,
+            }
+        }
+        rest
+    }
+
+    /// The restart takes its generation from the gate after the stop (the
+    /// stop cancels, so a generation taken before it would be cancelled by
+    /// the restart's own stop) and before the thread is spawned; the delayed
+    /// start asks the gate, as the condition of the start, before it starts.
+    /// The generation it asks about is the one that restart took.
+    #[test]
+    fn the_delayed_start_checks_its_generation_before_it_starts() {
+        let body = scm_fn("restart");
+        let stop = body
+            .find("stop(id)")
+            .expect("restart keeps asking for the stop first");
+        let begin = body
+            .find(".begin(")
+            .expect("restart takes a generation from the gate");
+        let spawn = body
+            .find("thread::spawn")
+            .expect("the wait and the start stay on a spawned thread");
+        assert!(
+            stop < begin,
+            "`stop` cancels, so restart must take its generation after the \
+             stop: one taken before it is made stale by the restart's own stop"
+        );
+        assert!(
+            begin < spawn,
+            "the generation is taken before the thread is spawned, and owned \
+             by it"
+        );
+        let current = body
+            .find(".is_current(")
+            .expect("the delayed start asks the gate before it starts");
+        let start = body
+            .find(".start(")
+            .expect("the delayed start keeps starting the service");
+        assert!(
+            current < start,
+            "the gate is asked after the start: a stop asked during the wait \
+             would be undone"
+        );
+        let guard = without_receiver(&body[..current]);
+        assert!(
+            guard.ends_with("if") || guard.ends_with("if !"),
+            "the gate's answer must be the condition of the start, not a \
+             value computed and left: {guard}"
+        );
+        let between = &body[current..start];
+        assert!(
+            between.matches(';').count() <= 1 && !between.contains(".record("),
+            "nothing but the guard's own return sits between the gate's \
+             answer and the start: {between}"
+        );
+        let line = body
+            .lines()
+            .find(|l| l.contains(".begin("))
+            .expect("the begin call");
+        let names: Vec<String> = line
+            .split('=')
+            .next()
+            .unwrap_or_default()
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| !w.is_empty() && *w != "let")
+            .map(|w| w.to_string())
+            .collect();
+        let begin_args = call_arguments(&body, ".begin");
+        let asked = call_arguments(&body, ".is_current");
+        assert!(
+            names
+                .iter()
+                .any(|n| asked.contains(n) && !begin_args.contains(n)),
+            "the generation the delayed start asks about is not the one this \
+             restart took: begin's result must be bound and carried into the \
+             thread (begin {begin_args:?}, asked {asked:?})"
         );
     }
 }

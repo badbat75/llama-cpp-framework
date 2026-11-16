@@ -11,7 +11,7 @@ use super::{
     ERROR_SERVICE_SPECIFIC_ERROR, STOP_TICK, STOP_WAIT_HINT,
 };
 use crate::manager::action_log::{manager_log_path, FileActionLog};
-use crate::manager::service::{Manager, SystemResolver};
+use crate::manager::service::{ActionLog, Manager, SystemResolver};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::Command;
@@ -94,11 +94,18 @@ fn foreground(cmd: Result<Command, String>, launch_failed: &LaunchFailed) -> Res
 /// ones whose start type is automatic.
 fn run_manager(report: Report) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
+    // The service has no console, so its records go to the file under the
+    // framework's machine-wide directory. The service glue gets the same
+    // sink: a restart's delayed start, which runs after its call was
+    // answered and so renders no record of its own, writes its failure there.
+    let log: Arc<dyn ActionLog + Send + Sync> = Arc::new(FileActionLog::new(manager_log_path()));
     let manager: Arc<WinManager> = Arc::new(
-        Manager::new(ScmService::new(exe), TokenAuthority, SystemResolver)
-            // The service has no console, so its records go to the file under
-            // the framework's machine-wide directory.
-            .with_log(FileActionLog::new(manager_log_path())),
+        Manager::new(
+            ScmService::new(exe).with_log(log.clone()),
+            TokenAuthority,
+            SystemResolver,
+        )
+        .with_log(log),
     );
     for failure in manager.service().sync(&manager.list_instances()) {
         report(&failure);

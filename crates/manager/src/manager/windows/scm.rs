@@ -4,26 +4,28 @@
 //! only the Win32 calls.
 
 use super::{
-    boot_enabled_of, boot_start_type, image_path, scm_error, scm_wide_error, service_name,
-    service_plan, service_spec, start_failure, status_failure, stop_failure, unit_state,
-    ServiceSpec, SyncFailure,
+    boot_enabled_of, boot_start_type, image_path, restart_failure_line, scm_error, scm_wide_error,
+    service_name, service_plan, service_spec, start_failure, status_failure, stop_failure,
+    unit_state, RestartGate, ServiceSpec, SyncFailure, RESTART_STOP_WAIT,
 };
-use crate::manager::service::{ServiceControl, ServiceError, UnitState};
-use std::ffi::OsStr;
+use crate::manager::service::{ActionLog, NoActionLog, ServiceControl, ServiceError, UnitState};
+use std::ffi::{c_void, OsStr};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA};
 use windows_sys::Win32::Storage::FileSystem::DELETE;
 use windows_sys::Win32::System::Services::{
-    ChangeServiceConfigW, CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
-    EnumServicesStatusExW, OpenSCManagerW, OpenServiceW, QueryServiceConfigW, QueryServiceStatus,
-    StartServiceW, ENUM_SERVICE_STATUS_PROCESSW, QUERY_SERVICE_CONFIGW, SC_ENUM_PROCESS_INFO,
-    SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE,
-    SERVICE_CHANGE_CONFIG, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_NO_CHANGE,
-    SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_START, SERVICE_STATE_ALL, SERVICE_STATUS,
-    SERVICE_STOP, SERVICE_WIN32,
+    ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ControlService,
+    CreateServiceW, DeleteService, EnumServicesStatusExW, OpenSCManagerW, OpenServiceW,
+    QueryServiceConfigW, QueryServiceStatus, StartServiceW, ENUM_SERVICE_STATUS_PROCESSW,
+    QUERY_SERVICE_CONFIGW, SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT,
+    SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE, SERVICE_CHANGE_CONFIG,
+    SERVICE_CONFIG_PRESHUTDOWN_INFO, SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_NO_CHANGE,
+    SERVICE_PRESHUTDOWN_INFO, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_START,
+    SERVICE_STATE_ALL, SERVICE_STATUS, SERVICE_STOP, SERVICE_WIN32,
 };
 
 /// `ERROR_SERVICE_DOES_NOT_EXIST`: open the service to create it.
@@ -32,17 +34,36 @@ const NO_SERVICE: u32 = 1060;
 const INVALID: u32 = 87;
 /// `ERROR_SERVICE_REQUEST_TIMEOUT`: a restart whose stop never ended.
 const TIMEOUT: u32 = 1053;
-/// How long a restart waits for the service to stop.
-const STOP_WAIT: Duration = Duration::from_secs(30);
 
 /// The SCM, its instance services run by `exe` (`pai-manager.exe`).
+#[derive(Clone)]
 pub struct ScmService {
     exe: PathBuf,
+    /// The log of who acted, shared with the manager (`Arc`, so a restart's
+    /// delayed start owns a handle to it across its thread).
+    log: Arc<dyn ActionLog + Send + Sync>,
+    /// The restarts asked, shared by every clone (`Arc`, so the thread of a
+    /// delayed start asks the same generations the manager's calls raise):
+    /// a stop of an instance is not undone by that instance's restart that
+    /// is still waiting to start it again.
+    gate: Arc<RestartGate>,
 }
 
 impl ScmService {
     pub fn new(exe: PathBuf) -> Self {
-        Self { exe }
+        Self {
+            exe,
+            log: Arc::new(NoActionLog),
+            gate: Arc::new(RestartGate::default()),
+        }
+    }
+
+    /// The log of who acted to record on: a restart's delayed start, running
+    /// after its call was answered, has no request to render a record from,
+    /// so it writes the one line of its failure here.
+    pub fn with_log(mut self, log: Arc<dyn ActionLog + Send + Sync>) -> Self {
+        self.log = log;
+        self
     }
 
     /// Match the services to `instances` (the ids on disk): create the
@@ -101,12 +122,17 @@ impl ServiceControl for ScmService {
         let spec = self.spec(id)?;
         let scm = open_scm(SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE)
             .map_err(|c| scm_error(id, c))?;
-        let access = SERVICE_START | SERVICE_QUERY_STATUS;
+        let access = SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_CHANGE_CONFIG;
         let service = match open_service(&scm, &spec.name, access) {
             Err(NO_SERVICE) => create(&scm, &spec, access),
             opened => opened,
         }
         .map_err(|c| scm_error(id, c))?;
+        // The window of a service created before it existed (an install of an
+        // older build, or a create that could not set it) is the SCM's short
+        // default: the start is what the caller asked for, the window belongs
+        // to the reboot path, so a service that cannot carry it is started.
+        let _ = set_preshutdown_timeout(&service, spec.preshutdown_timeout_ms);
         // SAFETY: a valid service handle, no arguments.
         match ok(unsafe { StartServiceW(service.0, 0, null()) }) {
             Ok(()) => Ok(()),
@@ -116,6 +142,11 @@ impl ServiceControl for ScmService {
 
     fn stop(&self, id: &str) -> Result<(), ServiceError> {
         let name = service_name(id).ok_or_else(|| scm_error(id, INVALID))?;
+        // The generation goes up before the stop is asked of the SCM: the
+        // thread of a delayed start starts the service as soon as its status
+        // is no longer active, so a generation raised once the stop returns
+        // can arrive after that start.
+        self.gate.cancel(id);
         let stopped = open_scm(SC_MANAGER_CONNECT)
             .and_then(|scm| open_service(&scm, &name, SERVICE_STOP))
             .and_then(|service| {
@@ -129,20 +160,43 @@ impl ServiceControl for ScmService {
         }
     }
 
-    /// Stop, wait until the service has stopped, start.
+    /// Stop, answer once the stop is accepted, then start the service again
+    /// from a thread: the stop saves the slot snapshots first, so it can
+    /// outlast every caller's limit (ARCHITECTURE.md, "Budget"). A start that
+    /// never happens is recorded on the log of who acted, as the manager
+    /// records the calls it answers.
+    ///
+    /// The start is the gate's: it takes the instance's generation after the
+    /// stop (the stop cancels, so a generation taken before it would be made
+    /// stale by this restart's own stop) and starts only while that
+    /// generation is still the current one. A Stop of the instance, or a
+    /// newer Restart, asked while this thread waits stands: the delayed start
+    /// it makes stale starts nothing and records nothing, the caller's own
+    /// record already says what was asked.
     fn restart(&self, id: &str) -> Result<(), ServiceError> {
         self.stop(id)?;
-        let deadline = Instant::now() + STOP_WAIT;
-        while matches!(
-            self.status(id)?,
-            UnitState::Active | UnitState::Activating | UnitState::Deactivating
-        ) {
-            if Instant::now() >= deadline {
-                return Err(scm_error(id, TIMEOUT));
+        let generation = self.gate.begin(id);
+        let (id, scm) = (id.to_string(), self.clone());
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + RESTART_STOP_WAIT;
+            while matches!(
+                scm.status(&id),
+                Ok(UnitState::Active) | Ok(UnitState::Activating) | Ok(UnitState::Deactivating)
+            ) {
+                if Instant::now() >= deadline {
+                    scm.log
+                        .record(&restart_failure_line(&id, &scm_error(&id, TIMEOUT).0));
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(250));
             }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        self.start(id)
+            if scm.gate.is_current(&id, generation) {
+                if let Err(e) = scm.start(&id) {
+                    scm.log.record(&restart_failure_line(&id, &e.0));
+                }
+            }
+        });
+        Ok(())
     }
 
     fn status(&self, id: &str) -> Result<UnitState, ServiceError> {
@@ -255,18 +309,22 @@ fn open_service(scm: &Handle, name: &str, access: u32) -> Result<Handle, u32> {
     handle(unsafe { OpenServiceW(scm.0, name.as_ptr(), access) })
 }
 
-/// `CreateServiceW` with `spec`: the virtual account takes no password.
+/// `CreateServiceW` with `spec`: the virtual account takes no password. The
+/// handle is opened for `access` and `SERVICE_CHANGE_CONFIG`, so the
+/// preshutdown timeout is set on the service before its handle closes; a
+/// service that cannot carry it is the failure of this instance, as any
+/// other setting the SCM refused.
 fn create(scm: &Handle, spec: &ServiceSpec, access: u32) -> Result<Handle, u32> {
     let (name, display) = (wide(&spec.name), wide(&spec.display_name));
     let (path, account) = (wide(image_path(spec)), wide(&spec.account));
     // SAFETY: a valid SCM handle; every string NUL-terminated and alive
     // for the call; the optional ones null.
-    handle(unsafe {
+    let service = handle(unsafe {
         CreateServiceW(
             scm.0,
             name.as_ptr(),
             display.as_ptr(),
-            access,
+            access | SERVICE_CHANGE_CONFIG,
             spec.service_type,
             spec.start_type,
             SERVICE_ERROR_NORMAL,
@@ -276,6 +334,26 @@ fn create(scm: &Handle, spec: &ServiceSpec, access: u32) -> Result<Handle, u32> 
             null(),
             account.as_ptr(),
             null(),
+        )
+    })?;
+    set_preshutdown_timeout(&service, spec.preshutdown_timeout_ms)?;
+    Ok(service)
+}
+
+/// `ChangeServiceConfig2W` with `SERVICE_CONFIG_PRESHUTDOWN_INFO`: how long
+/// the SCM leaves the service to stop at a shutdown. The SCM's own default
+/// is much shorter than the snapshot save of a reboot needs.
+fn set_preshutdown_timeout(service: &Handle, preshutdown_timeout_ms: u32) -> Result<(), u32> {
+    let info = SERVICE_PRESHUTDOWN_INFO {
+        dwPreshutdownTimeout: preshutdown_timeout_ms,
+    };
+    // SAFETY: a valid service handle; a pointer to the structure, alive for
+    // the call.
+    ok(unsafe {
+        ChangeServiceConfig2W(
+            service.0,
+            SERVICE_CONFIG_PRESHUTDOWN_INFO,
+            &info as *const _ as *const c_void,
         )
     })
 }
@@ -303,7 +381,8 @@ fn reconfigure(service: &Handle, spec: &ServiceSpec) -> Result<(), u32> {
             null(),
             display.as_ptr(),
         )
-    })
+    })?;
+    set_preshutdown_timeout(service, spec.preshutdown_timeout_ms)
 }
 
 /// The service's start type (`QueryServiceConfigW`, asked first for the

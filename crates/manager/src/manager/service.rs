@@ -270,10 +270,20 @@ pub trait ActionLog {
     fn record(&self, line: &str);
 }
 
+/// A shared sink is a log: the entry hands the same sink to the manager and
+/// to the service glue (an `Arc`, so a thread can own a handle to it), and
+/// both record through it.
+impl<T: ActionLog + ?Sized> ActionLog for std::sync::Arc<T> {
+    fn record(&self, line: &str) {
+        (**self).record(line)
+    }
+}
+
 /// The log [`Manager::new`] starts with: records nothing. The service entry
 /// installs the OS's writer (stderr on Linux, the appended file on Windows)
-/// with [`Manager::with_log`].
-struct NoActionLog;
+/// with [`Manager::with_log`]; the SCM glue starts with it too
+/// (`ScmService::new`), its writer set by `ScmService::with_log`.
+pub struct NoActionLog;
 
 impl ActionLog for NoActionLog {
     fn record(&self, _line: &str) {}
