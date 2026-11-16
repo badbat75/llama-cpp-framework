@@ -31,16 +31,30 @@ const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// system's manager, `/api/session` through the system's authenticator,
 /// `GET /api/instances/{id}/server`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
-/// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its files under `/assets/`.
+/// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its
+/// files under `/assets/`. The revision secret is drawn from the OS, and a
+/// bff that cannot draw one has no revision to hand out: the service builds
+/// itself with [`try_router`], which answers that as an error.
 pub fn router() -> axum::Router {
-    router_with_session(
+    try_router().expect("the OS random source")
+}
+
+/// The routes of [`router`], with the revision secret drawn from the OS
+/// here. The error is the OS's random source: the bff must not start
+/// without a secret, a secret fixed in the code would let anyone who reads
+/// the binary check a guess about a file they are not allowed to read.
+pub fn try_router() -> Result<axum::Router, std::io::Error> {
+    let mut key = [0u8; 16];
+    getrandom::fill(&mut key)?;
+    Ok(router_with_session(
         std::sync::Arc::new(system_connect),
         MANAGER_TIMEOUT,
         std::sync::Arc::new(session::SystemAuthenticator::new(std::sync::Arc::new(
             system_connect,
         ))),
         std::sync::Arc::new(std::time::Instant::now),
-    )
+        key,
+    ))
 }
 
 /// The routes of [`router`], the manager reached through `connect`, each
@@ -78,19 +92,25 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// bound to). Every route answers through the same-origin guard
 /// (`origin::guard`), and every body a route reads is capped at
 /// `origin::MAX_BODY` by the one layer that stands in front of the whole
-/// router, so a route added later is capped before it reads anything.
+/// router, so a route added later is capped before it reads anything. `key`
+/// is this router's revision secret: the server read's `revision` is
+/// SipHash-2-4 of the file text keyed by it, so one router answers the same
+/// revision for the same text and another router answers another one; the
+/// service draws it at each start ([`try_router`]), which leaves every open
+/// form stale after a restart.
 pub fn router_with_session(
     connect: Connect,
     timeout: std::time::Duration,
     auth: std::sync::Arc<dyn session::Authenticator>,
     clock: session::Clock,
+    key: [u8; 16],
 ) -> axum::Router {
     use axum::extract::Path;
     let sessions = session::sessions(auth, clock);
     let read = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
-            server::read(connect.clone(), timeout, sessions.clone(), id, headers)
+            server::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
         }
     };
     router_with(connect.clone(), timeout)

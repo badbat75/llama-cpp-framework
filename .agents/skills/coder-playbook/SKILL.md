@@ -89,6 +89,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - Every start, stop and run probe of llama-server goes through `server_control::backend()`
   (`control_lint`); only `runstate.rs` and `server_control.rs` may call `runstate::{start,stop,is_running}`.
   Under the test redirect the Linux backend never dials D-Bus (`system_connect` is `Unavailable`).
+- The snapshot-gate lint (`crates/app/src/tests/gate_lint.rs`, included by `#[path]` into pai-cli's
+  and pai-config's tests) pins the spellable shapes: the gate's argument must START with an
+  identifier (`client_saves_snapshots(&server)` reads as no backend: the `&` leaves the head empty),
+  so bind `let server = &crate::server_control::backend();` and pass `server` (a `&Backend` binding
+  answers `server.stop()` too); pai-cli's test pins the literal `snapshot_before_stop(server)`, so
+  the parameter name is `server`. A gate whose answer is bound to a name needs an `if` testing it
+  between the gate and the call; the guard clause `if !gate(..) { return; }` is the other shape.
 - server.ini, presets.ini and presets.ini.disabled are read and written only through
   `server_control::backend()` (`read_config`, `write_config`, `config_path`; `read_sections`,
   `read_section` for parsed reads), enforced by `control_lint`. An edit is read-modify-write over
@@ -195,6 +202,14 @@ Lessons only: the rules are in `AGENTS.md`.
   Likewise a handler that extracts `ConnectInfo<SocketAddr>` (the sign-in lockout) needs `serve.rs`
   to serve `into_make_service_with_connect_info::<SocketAddr>()`, or it answers 500: the router
   tests insert `ConnectInfo` into the request's extensions by hand and cannot see it.
+- The bff's revision secret: `getrandom` 0.3 has NO default `std` feature, so
+  `std::io::Error: From<getrandom::Error>` (the only way a missing draw reaches `ServeError` and the
+  error line) needs `features = ["std"]` in `crates/bff/Cargo.toml`. `siphasher` 1.0.4's
+  `sip::SipHasher::new_with_key(&[u8; 16])` hashes through `std::hash::Hasher::write`: import that
+  trait and write two statements, because `io::Write` is implemented too and chaining
+  `write(..).finish()` does not type. `tests/router.rs` and `tests/fe.rs` pin `pai_bff::router()` as
+  infallible (`.oneshot(request)`), so the service's fallible builder is a second `pub fn
+  try_router()` that `serve.rs` calls, `router()` staying the tests' wrapper.
 - A limit checked under a mutex before an `.await` (the sign-in lockout around `spawn_blocking`) must
   reserve its slot under that same lock, or concurrent requests all pass the check. Give the slot back
   from a `Drop` guard (`session.rs` `InFlight`): axum drops the handler future when the client goes
@@ -516,8 +531,15 @@ Lessons only: the rules are in `AGENTS.md`.
   it and maps its own error: boot has no "no such instance"). The module exports ONE `routes(connect,
   timeout, sessions)` merged in `router_with_session`, so the route paths and the `sessions`-ends rules
   stay in the module the tests cite. Boot is a write plus a `boot_enabled` read-back on the SAME client
-  inside one `spawn_blocking`; the reply is the read's value, and a read-back failure is answered with
-  the read rule (`NotAuthorized` = 502, no session end), never the write's.
+  inside one `spawn_blocking`; the reply is the read's value, and a read-back failure goes through the
+  SAME `action_failure` as the write (the boot write has no read rule of its own). Only `boot_read` and
+  `instances` are session-free, so only there `NotAuthorized` is 502 `client-not-authorized`.
+- The bff's two keys, one rule: `session-not-administrator` goes out EXACTLY when the bff ends a
+  session because the manager refused its user (`server::read`, `control::action_failure`, each with a
+  `sessions.end` beside it); `client-not-authorized` is the manager refusing the bff's OWN account on a
+  session-free read, always 502 (`lib.rs` `instances`, `control::read_failure`), where no session lives
+  to end. Renaming the first never touches `read_failure`/`instances`; the fe maps both keys and needs
+  no second session read to tell them apart.
 - The bff's PUT boot parses its body AFTER the session check, so 401/404 (no session) beat 400
   (malformed body) for the same request; the JSON-body rule (content-type essence, `application/json`
   and `+json`) is `session::json_body`, which the sign-in body now shares (one rule, one place).
@@ -624,3 +646,67 @@ Lessons only: the rules are in `AGENTS.md`.
 - A lib-root `use pai_core::x` used only inside `cfg(target_os = "linux")` code is an
   `unused_imports` hit on windows-gnu: gate the root `use` with the same cfg (the fn-local `use`
   inside `run` needs it too).
+- `Command::get_args()` yields `&OsStr`, not `&OsString`: `.cloned()` fails (the glue is
+  cfg(windows): only the windows-gnu check shows it). Collect with `.map(OsStr::to_os_string)`.
+- windows-service 0.8.1: `ServiceControl::Preshutdown` exists; the raw code of a control is
+  `control.raw_service_control_type()` (not `raw_value()`); `ServiceControlAccept::from_bits_truncate(u32)`
+  maps the OS-neutral accept bits (bitflags 2).
+- The text-pinned glue tests slice `fn name(` to the first column-0 `\n}\n` and want literal
+  needles inside that slice: keep `instance_save_target(`, `save_all(`, `SAVE_BUDGET` and
+  `child.kill()` literally inside `instance_main` (extracting the save loop into a helper fails
+  them). Their `entry_code()` drops only WHOLE-LINE comments: a needle in a trailing `code // ..`
+  counts, one in a `///` doc comment does not, and `register` must contain no `ends_instance(` /
+  `ends_manager(` at all (it takes `ends: fn(u32) -> bool` and calls it on
+  `control.raw_service_control_type()`). Same for the accept mask: `set` takes
+  `accept: fn(bool) -> u32` and fills `controls_accepted:` from `accept(state == Running)` (5
+  params, the mask name not `controls_accepted`, no `controls_accepted(` in its body); each main
+  passes its own rule by BARE name, because `instance_mask_asks` counts every `controls_accepted`
+  that is not part of `manager_controls_accepted` (serve_main must read 0, instance_main > 0).
+- A key of cli.toml alone used in `manager/windows/entry.rs` (not a CLI_ONLY_FNS fn) trips
+  binding_lint's `alone` check: put it in en_US.toml with the identical cli.toml value; the
+  include_str! strings tests of core then pass too.
+- rustfmt joins a call onto ONE line only when its argument list has NO trailing comma (and its
+  args fit `fn_call_width` 75): write every `set(..)` / `register(..)` call you want kept
+  one-argument-per-line with a trailing comma and `cargo fmt -p <crate> --check` accepts it.
+- `SERVICE_ACCEPT_SHUTDOWN` is 0x4 and `SERVICE_ACCEPT_PAUSE_CONTINUE` 0x2 (SERVICE_STATUS,
+  learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status); the windows-sys
+  0.61 names match. A `from_bits_truncate` of a wrong 0x2 reports the service as pausable.
+- scm.rs's pins (`scm_fn`) cut a body at the MIN of the first `\n}\n` and `\n    }\n`: no inner block
+  of a pinned fn may close at 4 indent (it truncates the slice). Every needle of
+  `restart_answers_once_the_stop_is_accepted` must sit INSIDE `fn restart` (a helper doing the wait
+  and the start fails the `at > spawn` test), while the preshutdown set may be a helper:
+  `preshutdown_set` follows ONE top-level `fn` called from the body (first match in file order wins)
+  and needs the four needles (`ChangeServiceConfig2W(`, `SERVICE_CONFIG_PRESHUTDOWN_INFO`,
+  `dwPreshutdownTimeout`, `preshutdown_timeout_ms`, the last in the helper's own parameter) in it.
+- `call_arguments(hay, name)` appends its own `(`, so pass a BARE name ("open_service", ".cancel").
+  `start_sets_the_preshutdown_timeout_on_the_service_it_opened` passes `preshutdown_set`'s needle,
+  which always ends with `(`, so it searches `set_preshutdown_timeout((`: no call with the handle as
+  its first argument can match, and the only shape that does is a helper taking ONE tuple parameter
+  (`set_preshutdown_timeout((&service, spec.preshutdown_timeout_ms))`). The needle is the test's slip
+  (every sibling passes a bare name): report it with the one-line fix
+  `call_arguments(&body, call.trim_end_matches('('))`, and prove that fix in a /tmp copy of the tree.
+- windows-sys 0.61 preshutdown: `ChangeServiceConfig2W(SC_HANDLE, SERVICE_CONFIG, *const c_void) -> BOOL`
+  with `SERVICE_CONFIG` a plain `u32` newtype const (`SERVICE_CONFIG_PRESHUTDOWN_INFO` = 7) and
+  `SERVICE_PRESHUTDOWN_INFO { dwPreshutdownTimeout: u32 }`. `CreateServiceW`'s `dwAccess` must carry
+  `SERVICE_CHANGE_CONFIG` or the returned handle cannot call `ChangeServiceConfig2W`.
+- One sink shared by `Manager::with_log` (`impl ActionLog + Send + Sync + 'static`) and
+  `ScmService::with_log` (`Arc<dyn ActionLog + Send + Sync>`) needs the blanket
+  `impl ActionLog for Arc<T>` (service.rs); `NoActionLog` is `pub` so `ScmService::new` defaults to it.
+  A record rendered by a thread with no request has no caller/principal: pass the failure text
+  (`ServiceError(pub String)`'s `.0`, e.g. `scm_error(id, TIMEOUT).0`) to `restart_failure_line`.
+- Web UI: a new strings key must land in `fe/src/strings/en_US.json` with the EXACT text the tester
+  pinned in the `EN` table of `fe/src/test/bff.ts` (App.test.tsx compares the two files). Never retype
+  it: eval that object literal out of the test file (it is an `export const` starting at column 0) and
+  append only the keys missing from the JSON.
+- Web UI: a card page's full-page tests read the card and field order from the shared list
+  `fe/src/test/presetCards.ts`, so a new card goes where that list puts it (for the preset page, right
+  after Assets), and a field's label is matched as a substring, so labels that contain each other
+  ("n-gpu-layers" in "tensor-split") must be asserted by the exact `<label>` text, not `includes`.
+- Web UI: in `fe/src/index.css` the later `.card .note { padding: 0 }` (0,2,0) beats a bare `.note`
+  (0,1,0): card note spacing goes on `.card .note`, taking `--space-*` tokens (the gap below a card
+  comes from the grid, so `margin-bottom: 0` keeps it).
+- Web UI: the hints are copied verbatim from the GUI's strings (`crates/core/strings/en_US.toml`) and
+  pinned in the `EN` table, so the fit-to-vram hint carries the word `tensor-split` and a hidden
+  (`.hidden`, `display: none`) element stays in `textContent`. A card test that asserts a field name is
+  NOT in `card.textContent` cannot pass while the mandated hint is in that card: report the test, never
+  drop or reword the mandated hint.

@@ -13,9 +13,13 @@ pub enum ServeError {
     Bind(std::io::Error),
     /// Serving failed.
     Serve(std::io::Error),
+    /// The OS gave no bytes for the revision secret, so there is no router
+    /// to serve: the service does not start on a secret it cannot keep
+    /// secret.
+    Key(std::io::Error),
 }
 
-/// Serve [`crate::router`] on `addr` until `stop` resolves, then let the
+/// Serve [`crate::try_router`] on `addr` until `stop` resolves, then let the
 /// open requests finish and return. Each request carries the client's
 /// address (`ConnectInfo`), which the sign-in lockout reads.
 pub fn serve(
@@ -33,9 +37,10 @@ pub fn serve(
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(ServeError::Bind)?;
+        let app = crate::try_router().map_err(ServeError::Key)?;
         axum::serve(
             listener,
-            crate::router().into_make_service_with_connect_info::<SocketAddr>(),
+            app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(stop)
         .await
@@ -144,9 +149,12 @@ pub mod windows {
         };
         let exit = match serve(addr, stop) {
             Ok(()) => ServiceExitCode::NO_ERROR,
-            Err(ServeError::Runtime(e) | ServeError::Bind(e) | ServeError::Serve(e)) => {
-                ServiceExitCode::Win32(e.raw_os_error().unwrap_or(1) as u32)
-            }
+            Err(
+                ServeError::Runtime(e)
+                | ServeError::Bind(e)
+                | ServeError::Serve(e)
+                | ServeError::Key(e),
+            ) => ServiceExitCode::Win32(e.raw_os_error().unwrap_or(1) as u32),
         };
         set(&status, ServiceState::Stopped, exit);
     }

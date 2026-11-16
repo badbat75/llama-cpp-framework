@@ -74,6 +74,10 @@ const HANG: Duration = Duration::from_millis(400);
 
 const CLIENT: &str = "127.0.0.1:51000";
 
+/// The revision secret these routers are built with: the session routes
+/// never read it.
+const REVISION_KEY: [u8; 16] = [0; 16];
+
 // ── Fakes ───────────────────────────────────────────────────────────────
 
 /// One account the fake knows: what is typed, what the fake answers for it
@@ -236,6 +240,7 @@ fn app_with(auth: FakeAuth) -> App {
         Duration::from_millis(200),
         auth.clone(),
         clock.clock(),
+        REVISION_KEY,
     );
     App {
         router,
@@ -1030,6 +1035,7 @@ async fn guesses_sent_at_once_do_not_overrun_the_lock() {
         Duration::from_millis(200),
         auth.clone(),
         FakeClock::new().clock(),
+        REVISION_KEY,
     );
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..4 * MAX_FAILURES {

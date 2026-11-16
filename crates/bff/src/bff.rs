@@ -64,6 +64,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
     serve::serve(addr, serve::stop_signal()).map_err(|e| {
         let text = match e {
             ServeError::Bind(e) => strings::fill("bff-bind-failed", &[&addr, &e]),
+            ServeError::Key(e) => strings::fill("bff-revision-key-failed", &[&e]),
             ServeError::Runtime(e) | ServeError::Serve(e) => {
                 strings::fill("bff-serve-failed", &[&e])
             }

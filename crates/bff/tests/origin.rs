@@ -98,6 +98,10 @@ const DEADLINE: Duration = Duration::from_secs(5);
 
 const CLIENT: &str = "127.0.0.1:51000";
 
+/// The revision secret these routers are built with: the routes tested here
+/// never read it.
+const REVISION_KEY: [u8; 16] = [0; 16];
+
 /// The session idle timeout chosen for the bff (`session.rs`'s own).
 const IDLE: Duration = Duration::from_secs(30 * 60);
 
@@ -309,7 +313,8 @@ fn new_app() -> App {
     let auth = Arc::new(FakeAuth {
         calls: Arc::new(Mutex::new(Vec::new())),
     });
-    let router = pai_bff::router_with_session(connect, TIMEOUT, auth.clone(), clock.clock());
+    let router =
+        pai_bff::router_with_session(connect, TIMEOUT, auth.clone(), clock.clock(), REVISION_KEY);
     App {
         router,
         clock,

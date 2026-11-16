@@ -27,8 +27,13 @@
 //!     checks with (`checks::server_int_range`); Threads and ThreadsBatch 1
 //!     to this machine's logical CPU count.
 //!   - `interfaces`: `net_ifaces::interfaces()` as `{value, label}`.
-//!   - `revision`: opaque text, the same for the same file text, another for
-//!     any other text (a comment included).
+//!   - `revision`: 16 lowercase hex digits, SipHash-2-4 of the whole file
+//!     text under a 16-byte secret the router holds (drawn from the OS at
+//!     `router()`'s build, handed in by these tests): the same for the same
+//!     text through one router, another for any other text (a comment, the
+//!     API key, included) and another for another secret. It is never the
+//!     unkeyed hash of the text, so reading a revision is no oracle for a
+//!     guess about the file.
 //! - `OpencodeApiKey`: the bff sends the key to every signed-in session,
 //!   since a session is a member of the administrators' group `pai` already
 //!   (sign-in refuses anyone else 403): the bff has no session to keep the
@@ -83,6 +88,19 @@ const TIMEOUT: Duration = Duration::from_millis(200);
 const DEADLINE: Duration = Duration::from_secs(5);
 
 const CLIENT: &str = "127.0.0.1:51000";
+
+/// The revision secret a router is built with here, `00 01 .. 0f`: the key of
+/// the published SipHash-2-4 test vectors (Appendix A of the SipHash paper,
+/// the same list the `siphasher` crate's own test carries), so the revision a
+/// read must answer is a vector of the algorithm and not a value computed
+/// from the code under test.
+const KEY_A: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+/// A second secret, `10 11 .. 1f`, for the rule that the revision depends on
+/// the secret and not on the text alone.
+const KEY_B: [u8; 16] = [
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+];
 
 /// The engine's shipped `server@default.ini`, the file the manager holds
 /// after a fresh install on Linux.
@@ -233,7 +251,7 @@ fn app_with(
     file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
 ) -> App {
-    app_for(connect_result, file, delay, Vec::new())
+    app_for(connect_result, file, delay, Vec::new(), KEY_A)
 }
 
 /// A manager holding `text` as every file, refusing the read for the
@@ -245,6 +263,7 @@ fn app_refusing(refused: &[&str], text: &str) -> App {
         Ok(Some(whole(text))),
         Duration::ZERO,
         refused.iter().map(|u| u.to_string()).collect(),
+        KEY_A,
     )
 }
 
@@ -253,6 +272,7 @@ fn app_for(
     file: Result<Option<ManagerFile>, ClientError>,
     delay: Duration,
     refuse: Vec<String>,
+    key: [u8; 16],
 ) -> App {
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
@@ -278,6 +298,7 @@ fn app_for(
         TIMEOUT,
         Arc::new(FakeAuth),
         Arc::new(move || start),
+        key,
     );
     App {
         router,
@@ -304,9 +325,21 @@ fn withheld(text: &str) -> ManagerFile {
     }
 }
 
+/// A manager holding `text` as every file, sent whole, under the router
+/// secret `key`.
+fn app_holding_keyed(key: [u8; 16], text: &str) -> App {
+    app_for(
+        Ok(()),
+        Ok(Some(whole(text))),
+        Duration::ZERO,
+        Vec::new(),
+        key,
+    )
+}
+
 /// A manager holding `text` as every file, sent whole.
 fn app_holding(text: &str) -> App {
-    app_with(Ok(()), Ok(Some(whole(text))), Duration::ZERO)
+    app_holding_keyed(KEY_A, text)
 }
 
 /// A manager holding `text` as every file and reporting the key withheld.
@@ -994,27 +1027,112 @@ async fn interfaces_are_the_machines() {
     assert_eq!(doc["interfaces"], Value::Array(expected));
 }
 
-/// `revision`: a string, the same for the same text read twice, another as
-/// soon as the text changes, even only in a comment.
+/// The 64-bit FNV-1a of `text` in hex, the unkeyed revision the read used to
+/// send. Recomputed here, from the code it replaces, so a test can say the
+/// read no longer sends it.
+fn fnv1a(text: &str) -> String {
+    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// A revision is 16 lowercase hex digits: the opaque text the web UI sends
+/// back unchanged.
+fn assert_revision_shape(value: &Value, what: &str) {
+    let got = value
+        .as_str()
+        .unwrap_or_else(|| panic!("{what}: {value} is not a string"));
+    assert_eq!(got.len(), 16, "{what}: {got}");
+    assert!(
+        got.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "{what}: {got} is not 16 lowercase hex digits"
+    );
+}
+
+/// `revision`: 16 hex digits, the same for the same text read twice through
+/// one router, another as soon as the text changes, even only in a comment,
+/// and never the unkeyed FNV-1a of the text.
 #[tokio::test]
 async fn the_revision_follows_the_file_text() {
     let a = "[Server]\nPort = 8580\n";
     let commented = "; edited by hand\n[Server]\nPort = 8580\n";
     let other = "[Server]\nPort = 8581\n";
-    let first = app_holding(a).read_default().await.document();
-    let again = app_holding(a).read_default().await.document();
+    let app = app_holding(a);
+    let first = app.read_default().await.document();
+    let again = app.read_default().await.document();
     let with_comment = app_holding(commented).read_default().await.document();
     let changed = app_holding(other).read_default().await.document();
-    assert!(first["revision"].is_string(), "{}", first["revision"]);
-    assert_eq!(first["revision"], again["revision"], "same text");
+    assert_revision_shape(&first["revision"], "the shape");
+    assert_eq!(first["revision"], again["revision"], "one router, twice");
     assert_ne!(first["revision"], with_comment["revision"], "a comment");
     assert_ne!(first["revision"], changed["revision"], "a value");
+    for text in [a, commented, other] {
+        let doc = app_holding(text).read_default().await.document();
+        assert_ne!(
+            doc["revision"],
+            json!(fnv1a(text)),
+            "the unkeyed hash of {text:?}"
+        );
+    }
+}
+
+/// `revision` is SipHash-2-4 of the file text under the router's secret,
+/// printed as 16 hex digits: the published vectors for the secret
+/// `00 01 .. 0f`, all 64 of which the `siphasher` implementation reproduces.
+/// The empty file is vector 0 of that list.
+#[tokio::test]
+async fn the_revision_is_the_keyed_hash_of_the_text() {
+    let cases: [(&str, &str); 4] = [
+        ("", "726fdb47dd0e0e31"),
+        (SHIPPED, "b5c74895c1989291"),
+        (WITH_KEY, "188192ef2476e7f0"),
+        ("[Server]\nPort = 8580\n", "5124e870d1b0bbad"),
+    ];
+    for (text, want) in cases {
+        let doc = app_holding_keyed(KEY_A, text)
+            .read_default()
+            .await
+            .document();
+        assert_eq!(doc["revision"], json!(want), "the text {text:?}");
+    }
+}
+
+/// The secret is part of the function: the same file read through a router
+/// built with another 16 bytes answers another revision, and that one is the
+/// hash of the text under the new secret. A bff restart, which draws a new
+/// secret, makes every open form stale, it does not make two files look
+/// alike.
+#[tokio::test]
+async fn the_revision_depends_on_the_secret_of_the_router() {
+    let under_a = app_holding_keyed(KEY_A, WITH_KEY)
+        .read_default()
+        .await
+        .document();
+    let under_b = app_holding_keyed(KEY_B, WITH_KEY)
+        .read_default()
+        .await
+        .document();
+    assert_revision_shape(&under_b["revision"], "the other router");
+    assert_ne!(
+        under_a["revision"], under_b["revision"],
+        "two routers, one file"
+    );
+    assert_eq!(
+        under_b["revision"],
+        json!("8cb593f214fcdeb2"),
+        "the secret 10 11 .. 1f"
+    );
 }
 
 // ── The API key ─────────────────────────────────────────────────────────
 
 /// A file that sets the API key, as the configurator saves it.
 const WITH_KEY: &str = "[Server]\nPort = 8580\nOpencodeApiKey = sk-test\n";
+
+/// The same file with only the key's value changed.
+const WITH_OTHER_KEY: &str = "[Server]\nPort = 8580\nOpencodeApiKey = sk-other\n";
 
 /// The same file as the manager sends it when it withheld the key: its own
 /// blanking of the value (`service.rs` writes `OpencodeApiKey =`).
@@ -1031,6 +1149,20 @@ async fn a_file_the_manager_did_not_withhold_sends_the_key_to_every_session() {
         assert_eq!(doc["values"]["OpencodeApiKey"], json!("sk-test"), "{user}");
         assert!(doc.get("withheld").is_none(), "{user}: {doc}");
     }
+}
+
+/// A file whose only difference is the secret it carries is another
+/// revision: the keyed hash covers the whole text, so a form opened before
+/// another administrator saved a new key is refused rather than writing the
+/// old key back.
+#[tokio::test]
+async fn a_file_differing_only_in_the_api_key_has_another_revision() {
+    let with_key = app_holding(WITH_KEY).read_default().await.document();
+    let with_other = app_holding(WITH_OTHER_KEY).read_default().await.document();
+    assert_ne!(
+        with_key["revision"], with_other["revision"],
+        "the key's value alone"
+    );
 }
 
 /// The manager's own flag reaches the reply: the key is `null`, the document

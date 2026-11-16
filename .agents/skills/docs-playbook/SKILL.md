@@ -262,6 +262,12 @@ Lessons only: the rules are in `AGENTS.md`.
   Grep `canConfigure`, `role`, `withheld`, `administrat` there (296165f dropped `canConfigure`). The
   API key's withholding sits in three of them: when the rule moves (6217308: the manager's
   `read_file` flag alone, never the session), fix all three and name who decides.
+- The bff README carries the manager's refusal as two keys, one per kind of route, and grep both there
+  before writing one: `session-not-administrator` (403) is a signed-in route's answer when the manager
+  refuses its user, and the session ends with it (5f0d405: the sign-in's own key, so the web UI tells an
+  ended session from a live one without a second read); `client-not-authorized` (502) is what a
+  session-free read answers when the bff's own account is refused (the instances list, `GET boot`:
+  `control.rs` `read_failure`, `lib.rs`).
 - When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
   fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
   case): cite the sha, and paraphrase a string rather than quoting it, its text living in

@@ -851,8 +851,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    failing `valid_instance_id` before connecting; a test for `..%2Fx`.)
 8. **Write it.** `PUT /api/instances/{id}/server` with the revision, designed in `ARCHITECTURE.md`
    "Saving the server file from the web (step 10 slice 8)" (2026-11-16), six slices there, in order:
-   (1) the revision a SipHash-2-4 keyed by a secret drawn at each bff start (it stops being a key
-   oracle; user, 2026-11-16: an open form gets one 409 and a Reload after a bff restart), (2)
+   (1, built) the revision a SipHash-2-4 keyed by a secret drawn at each bff start (it stops being a
+   key oracle; user, 2026-11-16: an open form gets one 409 and a Reload after a bff restart), (2)
    `server_cfg::check` moved to `pai-core`, (3) the manager's `write_file_if` (compare and write under
    its `writing` lock, `Changed` otherwise), (4) its pipe and D-Bus faces, protocol 2, (5) the body to
    the file text or 400/422, (6) the route: 200 `{revision, running}`, 409 `server-changed-elsewhere`,

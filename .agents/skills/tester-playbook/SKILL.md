@@ -60,6 +60,8 @@ Lessons only: the rules are in `AGENTS.md`.
   code, so there is no dead-code red to report. A new parameter on a core method: a stub that takes it
   and keeps the old body gives assertion reds in every phase, where a `todo!` stops the e2e at its first
   call.
+- `pub const X: Duration = todo!()` is NOT a stub: const-eval panics at the definition (`E0080`) and
+  stops the crate. Stub a constant with today's behaviour's value; the red is the assertion.
 - To pin a field a variant lacks without breaking the build, match `Variant(p, ..)` / `Variant { .. }`
   and check the new field through `{:?}`; tell the coder the intended shape. Naming a stub after a local
   of the caller makes the call `E0618` (the local shadows the fn): rename one and say which.
@@ -158,6 +160,30 @@ Lessons only: the rules are in `AGENTS.md`.
 - A text pin on a file the coder will rewrite: prove it greens on a candidate edit in a temp copy, so
   the red is not a broken helper. A "no old text left" pin must be narrow (pin the code shape, e.g.
   `"+llama.cpp.{"`): doc comments legitimately describe the old format.
+- Before writing a pin, list the test module's existing helpers and tests (`grep -n "    fn "`): a slice
+  that adds a rule usually lands beside a previous slice's pin of the same file (the preshutdown-at-`start`
+  test was already there, its name one word from the new one). Extend the existing test's asserts, do not
+  add a twin: two tests of one rule make the coder satisfy the looser one.
+- `rustfmt` reflows a multi-line assert message you just wrote, so re-read the region before a follow-up
+  edit: the exact text you wrote is not in the file.
+- A pin of the form "this call is the condition of the start" (`body[..find(".is_current(")]` ends with
+  `if`): the text before the needle ends with the RECEIVER (`if !scm.gate`), not the `if`. Strip the
+  receiver: loop { take trailing identifiers; if what remains ends with `.`, take it and continue, else
+  stop }. A keyword (`if`) is eaten as an identifier if the loop keeps going past a dot-less stop, so the
+  stop is the whole rule. Trace the helper on `if gate`, `if !scm.gate`, `if self.gate`, `let stale = gate`,
+  `debug_assert!(!gate` before trusting the green.
+- A pin "the generation this restart took is the one its thread asks" (a name bound at `.begin(` must
+  reach `.is_current(`): the tolerant reading accepts `let (id, scm, generation) = (.., self.gate.begin(id))`,
+  and needs the begin args and the ask args separately, so `call_arguments(hay, name)` (the manager's helper
+  takes the name WITHOUT `(`) must not be handed a needle with the paren: it appends `(` and starts after it.
+  A `preshutdown_set`-style helper returns a needle that ENDS with `(`, so pass it as `call.trim_end_matches('(')`;
+  the pre-fix search `X((` panics, so a green of such a test also proves the binary carries the fix.
+- A Python mirror of a Rust test helper is the cheapest way to check a set of text pins can all go green at
+  once (patch the glue in a /tmp copy, print ok/RED per pin). Transcribe the helper exactly: a mirror that
+  starts its paren count at the `(` of the call off-balances every needle and reports a false RED.
+- A stub struct whose field no `todo!` body reads fails `-D warnings` with `field <x> is never read` (the
+  only lint red: `clippy::todo` did not fire on `todo!("RestartGate::begin")` in this crate, checked). Say
+  so, add no `allow`: the wiring clears it.
 - A pin on a file that also holds the test reads only the code before `#[cfg(test)]\nmod tests` (in
   xtask `main.rs`: before `#[cfg(test)]\nmod cli_tests {`, since `mod names_lint;` sits under an earlier
   `#[cfg(test)]`). A needle the test counts or forbids is split with `concat!` and kept out of the
@@ -173,6 +199,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - A build script, a GitHub workflow or a `.wxs` cannot run in a test: pin its text with comment lines
   dropped first. When a workflow step checks reply fields, confirm names and values against the producer
   by hand (`/api/instances` in `crates/bff/src/lib.rs`, states in `crates/core/src/client.rs`).
+- A `body.contains("Word")` lint greens on a comment naming the word (the handler's `Preshutdown`
+  lint is green today on a comment alone, the code routes through `ends_instance`): require the call
+  shape (`name(`) and the routing (the guard call and the send target), not the bare word.
+- An order pin `find(call) < find(kill)` pins text order, not the executed path: relocating the block
+  into a sibling branch whose text precedes the kill needles greens while the save is skipped at
+  runtime; pin the branch condition around the call. The `.expect("keeps killing the child")` on the
+  kill needle is what stops gaming by removing the kill (keep it).
 - A source lint that ignores test code uses `production_lines` (`tests/control_lint.rs`): it drops
   `#[cfg(test)]` / `#[cfg(all(test ..` items by brace counting (not `any(test, ..)`, compiled in
   production). "Only the seam may name X" is one more scan there with a `*_hits(line)` helper and its
@@ -184,6 +217,19 @@ Lessons only: the rules are in `AGENTS.md`.
   `CLI_PRINT_PATHS`; `cli_print_paths_hold_no_language` reads only those files. The scans see a key only
   as `strings::t(` / `strings::fill(` (a bare imported `fill(` is missed; `env!` inside `println!` is
   flagged as a literal).
+- `strings_t_keys_and_the_language_file_match` derives the used keys from the sources at run time (no
+  key list to edit in `binding_lint.rs`), so a new `cli.toml` key greens with the lint UNTOUCHED, and it
+  also refuses a key in `cli.toml` no CLI-reachable source uses and a `{N}` the call does not fill. A
+  green of that lint is a guard only if the three lists cover the crate: `src_dirs` is
+  `["app", "bff", "cli", "config", "core", "manager"]` in all three lints, `CLI_ONLY_FNS` and
+  `CLI_PRINT_PATHS` match by path tail (`path.ends_with(file)`, so `bff.rs` is a whole crate's stem:
+  keep it unique).
+- `only_the_framework_s_own_files_are_in_its_system_directory` scans every crate's `src` (paths are
+  `crates/<pkg>/src/...` tails, slashes on Windows too: the lint rewrites `\` to `/`), so a file that
+  legitimately names `paths::system_config_dir` for the framework's OWN file goes in `SYSTEM_DIR_ALLOWED`
+  with its reason (today: `paths.rs`, the bff's `listen.rs`, the manager's `action_log.rs`: its log sits
+  in `logs` beside the framework's config dir, so it takes that dir's parent). The scan is
+  production-lines only.
 - `binding_lint` (`rust_fns`) skips only what follows a `mod tests {` line: an e2e phase (a top-level
   `#[cfg(test)] pub(crate) fn ..._e2e`) counts as production, so calling a `CLI_ONLY_FNS` fn there
   (`sweep::run`) fails `cli_only_code_is_not_called_from_elsewhere`. Call it from a `#[test]` in the
@@ -216,7 +262,37 @@ Lessons only: the rules are in `AGENTS.md`.
   them, never `lib.rs`.
 - Cargo.lock lists dev and build deps of every target, one per line: a walk over it over-reports, never
   misses (`crates/app/src/tests/deps_lint.rs`). A helper two crates need goes in a test-free file
-  included with `#[path = "..."] mod` (`tests/lock_walk.rs`).
+  included with `#[path = "..."] mod` (`tests/lock_walk.rs`). The include is relative to the MODULE's
+  directory and resolved on the filesystem: `mod tests` inside `crates/cli/src/cli.rs` has base
+  `crates/cli/src/cli/tests/`, which does not exist, so any include with `..` from there fails
+  (`couldn't find file`, E0583). Declare the include in a module backed by a real directory
+  (`crates/cli/src/tests/mod.rs`: `#[path = "../../../app/src/tests/<x>.rs"] pub(crate) mod <x>;`) and
+  `use crate::tests::<x>;` where needed.
+- Gate lints ("the call sits behind the decision") share one scanner (`crates/app/src/tests/gate_lint.rs`,
+  used by pai-cli's `snapshot_before_stop` and pai-config's `the_stop_worker_saves_snapshots_only_on_the_local_backend`).
+  Two traps: a call needle includes its `(`, so an argument-text walk starts right after the needle at
+  depth 1 (requiring a `(` there fails on the real code); and a gate found inside an `if`-condition whose
+  block holds neither the call nor a `return` must `return false`, NOT fall through to the bound-name
+  fallback: the fallback's "an `if` between gate and call" is satisfied by the gate's own `if`, so a gate
+  guarding only another call would green.
+- No "any `if` between the gate and the call" fallback at all: it greens on the `if` inside `verify` and
+  `modify`, and on an `if` whose condition names nothing of the gate (the GUI worker with its `saves &&`
+  deleted). Enumerate the `if`s (whole-word `if`, condition to the `{` at paren depth 0, block by brace
+  count) and require the gate call, or the name a `let` bound its answer to, as a whole identifier in the
+  condition of the `if` whose block holds the call, un-negated there; negated in a block that returns and
+  holds no call (a guard clause). A name needle is bounded on the right, a call needle is not: a call
+  needle ends with `(`, so its right side is the first argument char (`saves(b)`), and a right-boundary
+  check there fails on the real code (`on_the_fly` is the case the right check must refuse).
+- A scan of the text BEFORE a call must skip a qualified path and keep the stop character: the gate of
+  `if !crate::server_control::gate(..)` is governed by the `!` past the path, of `let on = crate::..::gate(..)`
+  by the `=`. `head[..i]` drops the `!`; taking the name from `head[i..]` keeps the separator space
+  (`" on"`), which matches a plain `if on` by accident and fails the negated guard, so the red names a
+  shape that never existed.
+- Probe the shape table with `rustc --edition 2021` over a `include!` of the helper (its `//!` header must
+  become `//`: E0753 outside a module root): 2 s per run, no Slint link. Run the same table against a copy
+  of the helper taken BEFORE the rewrite: every refusal printing `old=true` is the teeth of the new test.
+- `gate_lint.rs` reaches the crates that use it by `#[path]` and is NOT declared in `crates/app/src/tests/mod.rs`,
+  so `cargo fmt -p pai-app` leaves it alone: the fmt check must name pai-config and pai-cli.
 - A clap doc comment is pinned on what the user reads: `Cli::command().find_subcommand(..)`,
   `.get_arguments().find(..)`, `.get_help()` (derive joins doc lines with spaces).
 - `benchmarks/schema.sql` is `include_str!`ed by pai-app (`bench/db.rs`) and
@@ -507,10 +583,23 @@ Lessons only: the rules are in `AGENTS.md`.
   only Win32 glue is `cfg(windows)`. Numeric Win32 values come from the local windows-sys source
   (`~/.cargo/registry/src/*/windows-sys-*/src`), meanings from learn.microsoft.com, a crate's behaviour
   from its `.crate` on static.crates.io. `SID_NAME_USE` (i32) counts `SidTypeDomain` (3), so
-  `SidTypeAlias` is 4, not 3. A registry test's guard restores every value in `Drop` (no panic there).
-  The SCM reports states on its own: never-started reads `SERVICE_STOPPED` with exit code 1077. A service
-  SID (`NT SERVICE\<name>`) is computable per [MS-LSAT] 3.1.1.1.2 (SHA-1 of the upper-case UTF-16LE name;
-  `service_sid`).
+  `SidTypeAlias` is 4, not 3. Check a Win32 IDENTIFIER the same way before pinning it: the preshutdown
+  window is `SERVICE_CONFIG_PRESHUTDOWN_INFO` with a `SERVICE_PRESHUTDOWN_INFO` (the `PRESHUTDOWN_SERVICE_STATUS`
+  named in a brief is no such name: that pin would never green, so `grep -rn` the crate for the identifier
+  first). A per-instance state that a delayed-start thread shares goes in `ScmService` behind an `Arc`
+  (the service is built once in `entry.rs` and cloned, so a plain field is a per-clone copy; `ScmService`
+  is `Send + Sync`). The Win32 glue a pin reads lives in the submodule `manager/windows/scm.rs`, its text
+  read by `scm_code()` / `scm_fn(name)` in `manager/windows.rs::tests`. A registry test's guard restores
+  every value in `Drop` (no panic there). The SCM reports states on its own: never-started reads
+  `SERVICE_STOPPED` with exit code 1077. A service SID (`NT SERVICE\<name>`) is computable per [MS-LSAT]
+  3.1.1.1.2 (SHA-1 of the upper-case UTF-16LE name; `service_sid`).
+- A seam handed over as pure compile red (no stubs, coordinator's order): prove the test code's own hygiene
+  with `cargo check -p <crate> --all-targets --target x86_64-pc-windows-gnu`: the error list must name ONLY
+  the missing items (E0425), the site counts differing by exactly the `#[cfg(unix)]` test's share; anything
+  else is a typo in the tests. No `running N tests` line in the filtered `cargo test` proves the crate's
+  other tests did not run. A `&[OsString]` seam (from `Command::get_args`) takes lossy UTF-8 internally;
+  build an invalid-UTF-8 `OsString` in a `#[cfg(unix)]` test with `OsStringExt::from_vec` (bytes with
+  0xff), expect U+FFFD in the answer.
 - A token holds the local groups (aliases) its user was in at logon, as SIDs: a check by group name
   looks the SID up (`LookupAccountNameW`) and compares it whole; a change of membership counts at the
   next logon. Unverified (fetch failed): UAC sets only the admin groups deny-only, a custom group stays enabled.
@@ -730,6 +819,24 @@ Lessons only: the rules are in `AGENTS.md`.
   root as `npm --prefix fe run ..`. `typecheck` before the suite: it reports an unused helper (TS6133)
   that Vitest ignores. Keep a run's output small through
   `grep -E "✓|×|Tests |Test Files |Error|expected|Unable" | cut -c1-200 | head -50`.
+- Web UI: the reds of a big table-driven file are read as a population, not one by one:
+  `grep -E "AssertionError|TestingLibraryElementError" | sort | uniq -c` over the run's output shows in one
+  pass that every red names a missing control and no red is a helper typo (`TypeError`) or an unhandled
+  rejection. Prettier reformats a fresh test file and the fixtures it edited: run
+  `npx prettier --write <files>` from `fe/` before `format:check`, then re-run the file (the format pass
+  must not be trusted to keep the reds).
+- Web UI: `fe/src/test/presetCards.ts` is the shared source of the whole-page assertions, so adding a card
+  to `PRESET_CARDS` for a new slice reds, by design, the earlier slices' tests that list the page:
+  PresetContent's heading-order and tab-order, PresetPage's "one About toggle per field", PresetCards1's
+  card order / tab order / strings, PresetCards2's tab order. They read as "the page has 27 of the 40
+  expected" (`expected [ Array(27) ] to deeply equal [ Array(40) ]`, `expected '1 2 3 3' to be
+  '1 2 3 3 3 3'`), the shape that names the shared list, so report them as the slice's shared-fixture reds
+  and do not touch those files. Prove a red is yours from its assertion shape, never with `git stash`
+  (shared tree, see General).
+- Web UI: a checkbox field is a `role=group` (so `fieldControl()` and the name queries work on it), but its
+  input carries no `aria-describedby`, so `descriptions` is empty: the "the hint text is not on the control"
+  assert is vacuous there, and the hint's presence is pinned only by opening it. `fieldControl()` throws for
+  a control that is not a group (a range), so a table with a range row needs its own query.
 - Web UI: in jsdom an `<option>` has no `checked` (it reads `undefined`, only `selected` exists), so a
   select's current choice is pinned by `select.selectedIndex` (its option's text, the thing the user
   reads) or by `.value`, never `input.checked`; note `selectedIndex` is 0 by default, so the
@@ -825,3 +932,104 @@ Lessons only: the rules are in `AGENTS.md`.
   a `Host` naming no port (`localhost`, the Origin carries `:3000`). `Sec-Fetch-Site` is pinned as a
   table: `same-origin` and `none` pass, `same-site` and `cross-site` are refused, a bare `null` (the
   literal Firefox sends for a non-HTTP origin) and anything else are refused.
+
+- fe: the type check that sees test files is `npm --prefix fe run typecheck` (`tsc -b tsconfig.json
+  tsconfig.test.json`); `npx tsc --noEmit -p tsconfig.json` checks the app only, so a test file's own type
+  errors reach only the npm script. `npm --prefix fe run test -- <file>` does not filter (vitest reads the
+  positional as its start command: "command 'start' not found"): run
+  `cd fe && npx vitest run src/<file>.test.tsx`. For per-file counts over the whole suite use
+  `npx vitest run --reporter=json --outputFile=<file>` and read `numFailedTests` with node
+  (`--reporter=basic` is gone in vitest 3.2.4: `reporter.getEntries is not a function`). Format with
+  `npx prettier --write <file>`, then `npm --prefix fe run format:check` from the repo root.
+- fe: a card added to the shared `PRESET_CARDS` list (`fe/src/test/presetCards.ts`) reds EVERY whole-page
+  test of the suite, not only the new file: the card-order and tab-path tests of each cards file, the card
+  count / strings-parity / card-order test of the content test, the page test's tab path, the heading-order
+  and About-list tests, and `App.test.tsx`'s strings test (the key list the coder has to land). Count them
+  in the report as collateral reds of the shared list, with one line per file.
+- fe: inside a card there is no group and no note per field: only the card's group and the card's note (a
+  note per field was the draft card's shape, the preset cards have none), so a structural page test can
+  assert a card is the region's first child and that every row is a group with its legend. A checkbox whose
+  text the brief gives in two states (the Fit toggle: allowed and not allowed) is found as the group's only
+  checkbox (`[role="group"]` + `queryAllByRole("checkbox")`, expect one), never by name.
+  `container.querySelector("main")` is an `HTMLElement` (no `.main`): use `container.querySelector('[role="main"]')`.
+- fe: pin a "the hint shows no extra text" rule (the slider maxima, a switch that is not offered) only after
+  proving the needles are absent from the pinned strings themselves: a python pass over the strings table
+  prints the offenders, else the red names the strings table and not the card. Extract the pinned EN texts
+  from `crates/core/strings/en_US.toml` in the same pass: `{0}` is literal there (the tests' `en()` compares
+  exactly), and the GUI strips the " (MiB)" a Slint widget adds, so the table text is the bare sentence.
+- fe: when one card's state depends on the document (the Fit toggle reads the doc's context), give the
+  render helper a handler parameter and a section builder that sends the values EXACTLY (no
+  normalisation, no added keys): "shown exactly" and "an absent key stays absent" are untestable through a
+  builder that rewrites the document. A card whose row table drives three `test.each` blocks needs one
+  helper taking the field kind (`range`, `checkbox`, `select`, `text`, `device select`): the device selects
+  share one list of option texts, so "its option is selected" is the only select assertion that pins a value.
+
+- bff: a route's answer is `{"key", "args": []}` and the test binaries share a local `assert_error(status,
+  key)` helper, so a slice that changes only the KEY reds on its `assert_eq!(json!, ..)` (the status assert
+  greens) and the panic prints the whole body: `left: {..."key": String("client-not-authorized")}`,
+  `right: ...String("session-not-administrator")`. Read that pair before chasing: it names which half moved.
+  The key split to keep straight: 403 `session-not-administrator` is what the bff sends exactly when it ends
+  a session on a refusal (`NotAuthorized` on a call made as the signed-in user: the server read, the control
+  verbs, the boot write); 502 `client-not-authorized` is the session-free reads (`GET /api/instances`,
+  `GET .../boot`), where the manager refused the bff itself. The guard for the second lives in
+  `tests/instances.rs` and `tests/control.rs`: run those two tests by name and report them as guards.
+- A long cargo log: `tail -70` of a two-binary run cuts the second binary's failure block (the first
+  binary's summary looks like the whole result). Write it to a file, then grep `test result|Running|^error`
+  for the map and `sed -n '<a>,<b>p'` for each block.
+- `cargo test -p <crate> --no-fail-fast` runs NOTHING when one target fails to compile (cargo stops after
+  the compile step, `--no-fail-fast` only unrolls the run): report which binaries did not run, and run the
+  untouched binaries in a second invocation (`--lib --test a --test b`) to show them green.
+- A keyed hash the code must match: the published SipHash-2-4 vectors are offline in the vendored crate
+  (`~/.cargo/registry/src/*/siphasher-1.0.4/src/tests.rs`, 64 of them: key `00 01 .. 0f`, input the first
+  n of those same bytes, output little-endian). A reference program is two `rustc` lines (build the rlib
+  from that registry source, then `--extern siphasher=...rlib`), no cargo and no network; reproducing all
+  64 is the check, because a hand-written Python SipHash goes wrong in the round: `v1 ^= v0` uses the
+  ROTATED `v0` (`v1 = ROTL(v1,13); v0 = ROTL(v0,32); v1 ^= v0`).
+- Pin the printing convention with the vector: `format!("{:016x}", SipHasher::new_with_key(&key).finish())`
+  of the empty text under `00 01 .. 0f` is the published `726fdb47dd0e0e31`, so one assert pins the
+  algorithm, the key bytes and the hex format at once. Say in the report that the coder's `finish()` must
+  be printed as `{:016x}` (the same `{hash:016x}` shape the FNV revision used).
+- A parameter added to a public router builder: the test call sites are the tester's, so add it LAST and
+  give each test file one `const REVISION_KEY: [u8; 16]` (its value is free for a route that never reads
+  it): the coder then touches only `lib.rs`. Inside the callee the new name must not clash with an
+  existing local (`let (status, key) = ..`): rename the LOCAL in the throwaway candidate and tell the
+  coder which name is free.
+- A byte alphabet check on a `bytes()` closure is `(b'a'..=b'f').contains(&b)`: a `char` range there is
+  E0308 ("expected `u8`, found `char`").
+- Checking a pinned digest of a file's text (a revision of the shipped `server@default.ini`): feed the
+  file's exact bytes through the authors' reference C (`curl` `siphash.c`/`siphash.h`/`vectors.h` from
+  `veorq/SipHash`, CC0; the entry point is `siphash(in, inlen, k, out, outlen)`, the older `siphash24(..)`
+  name is gone), and GATE the program by reproducing all 64 `vectors_sip64` first: a reference that
+  self-validates is a check, a hand-transcribed one is not (mine reds on every value). The `out` bytes
+  are the word little-endian, so `%016llx` of the LE word is the shape `{:016x}` prints.
+- `/tmp/opencode/<name>` is shared with the other agents: a scratch dir of a common name (`sipref`) was
+  already full of the coder's rlib and program built FROM the crate under test. Pick a name of your own;
+  a reference built from the code under test proves nothing.
+- The bff's key-draw failure has no test and none is cheap: `try_router()` (the `getrandom::fill` of the
+  revision secret), `ServeError::Key` and its `bff-revision-key-failed` text have no seam to inject a
+  failing OS random source, so report them as untested, and say that "a restart makes every open form
+  stale" is pinned only indirectly (two test-supplied keys, not two `try_router()` routers).
+
+## Windows service glue (the manager, cfg(windows) entry)
+
+- `crates/manager/src/manager/windows.rs` is the OS-neutral module (no `cfg(windows)` gate): its tests,
+  the `#[cfg(unix)]` ones included, run in `cargo test -p pai-manager` on Linux, so the rerun covers the
+  slice's Windows decisions. The Win32 glue (`windows/entry.rs`) is `cfg(windows)` and is compiled by
+  nobody on Linux: pin its wiring with source lints over the text, comments dropped (a comment naming a
+  needle never greens it), one `entry_fn(name)` extractor (signature to the `\n}\n` at column 0).
+- Glue shared by the two services (the control handler, the status report) must take the service's rule
+  as a parameter: pin the signature shape (`fn(u32)` + `-> bool` before the body's `{`), require the
+  parameter be READ (`raw_service_control_type()`), and forbid each caller's rule NAME in the body
+  (`ends_instance(` / `ends_manager(`), so one rule fixed inside greens red. Pin each caller's wiring by
+  reading the arguments of `register(` inside ITS function text, both ways (contains its rule, not the
+  other's). A mask name that is a SUFFIX of the other's (`controls_accepted` of
+  `manager_controls_accepted`) needs a count that subtracts the prefixed variant; forbid the shared fn's
+  mask parameter being NAMED like one caller's rule, and assert the parameter count (`params.split(',').count() > N`)
+  so a missing mask parameter reds.
+- Verify "every test of the slice ran" from the run's own output: write the FULL output to a file
+  (`cargo test -p pai-manager > file 2>&1`, never piped through `grep`, the SIGPIPE trap), then one
+  `grep -c "manager::windows::tests::<name> "` per name printed with `echo` in a loop; each count must
+  be 1. A second run of the same command (`Finished in 0.0xs`) is a replay of the test binary, fine for
+  listing names: prove the FIRST run compiled the coder's files by checking the fingerprint dirs
+  (`.fingerprint/pai-manager-*`) predate his mtimes, and that the run's `Running unittests ...` binary
+  hash equals a new fingerprint dir.

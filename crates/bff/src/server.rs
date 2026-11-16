@@ -10,6 +10,8 @@ use pai_core::client::{ClientError, ManagerFile};
 use pai_core::server_cfg::{self, ServerConfig};
 use pai_core::{checks, net_ifaces, paths};
 use serde_json::{json, Value};
+use siphasher::sip::SipHasher;
+use std::hash::Hasher;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,13 +23,15 @@ use std::time::Duration;
 /// call, so a member removed since the sign-in is refused: 403
 /// `session-not-administrator` (the sign-in's key for the same fact) and the
 /// session ends with the right that authorized it. The other answers keep the
-/// session: they are the bff's news, not a refusal of the user.
+/// session: they are the bff's news, not a refusal of the user. `key` is the
+/// router's revision secret, which only the document's `revision` uses.
 pub(crate) async fn read(
     connect: Connect,
     timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
+    key: [u8; 16],
 ) -> Response {
     let Some((session, identity)) = sessions.current(&headers) else {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
@@ -35,8 +39,8 @@ pub(crate) async fn read(
     let name = format!("server@{id}.ini");
     let user = identity.user;
     let ask = tokio::task::spawn_blocking(move || connect(Some(user.as_str()))?.read_file(&name));
-    let (status, key) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file)).into_response(),
+    let (status, code) = match tokio::time::timeout(timeout, ask).await {
+        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file, key)).into_response(),
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
             ClientError::NoInstance | ClientError::BadFileName | ClientError::InvalidId,
@@ -50,7 +54,7 @@ pub(crate) async fn read(
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "client-other"),
     };
-    error(status, key, &[])
+    error(status, code, &[])
 }
 
 /// The 200 document of the file. `values.OpencodeApiKey` is `null` and the
@@ -58,7 +62,8 @@ pub(crate) async fn read(
 /// manager's `withheld` flag is set, even when the text it sent still names
 /// a key: every signed-in session is a member of the administrators' group
 /// (sign-in refuses anyone else 403), so the bff keeps nothing on its own.
-fn document(file: &ManagerFile) -> Value {
+/// `revision` is the keyed hash of the text under `key`.
+fn document(file: &ManagerFile, key: [u8; 16]) -> Value {
     let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
     if file.withheld {
@@ -76,7 +81,7 @@ fn document(file: &ManagerFile) -> Value {
         .map(|i| json!({ "value": i.value, "label": i.label }))
         .collect();
     let mut doc = json!({
-        "revision": revision(text),
+        "revision": revision(text, &key),
         "values": {
             "Port": cfg.port,
             "Hostname": cfg.hostname,
@@ -121,11 +126,16 @@ fn document(file: &ManagerFile) -> Value {
     doc
 }
 
-/// The file's revision: the 64-bit FNV-1a hash of its text in hex, the same
-/// for the same text across runs and builds.
-fn revision(text: &str) -> String {
-    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
+/// The file's revision: SipHash-2-4 of its whole text under `key`, the
+/// router's secret, printed as 16 hex digits. A change detector, not an
+/// oracle: the same text through one router gives the same revision, any
+/// other text (a comment, the API key, included) gives another, and because
+/// the function is keyed nobody who holds a revision and not the file can
+/// check a guess about its text. A bff start draws a new secret, so every
+/// open form is stale after it and reloads once.
+fn revision(text: &str, key: &[u8; 16]) -> String {
+    let mut hasher = SipHasher::new_with_key(key);
+    hasher.write(text.as_bytes());
+    let hash = hasher.finish();
     format!("{hash:016x}")
 }

@@ -3540,6 +3540,7 @@ dependencies = [
  "http-body-util",
  "pai-core",
  "serde_json",
+ "siphasher",
  "tempfile",
  "tokio",
  "tower",

@@ -29,9 +29,14 @@ axum = "0.8.9"
 tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros", "signal", "sync", "time"] }
 # The `/api/version` body; axum's `json` feature already links it.
 serde_json = "1"
-# The session ids (session.rs): the OS's random source, as std has no stable
-# one; the version already in the lock.
-getrandom = "0.3.4"
+# The random bytes of this crate (session.rs's session ids, lib.rs's revision
+# secret): the OS's source, as std has no stable one; the version already in
+# the lock. `std` for `std::io::Error: From<getrandom::Error>`, which is how
+# the missing bytes reach `ServeError` and the error line.
+getrandom = { version = "0.3.4", features = ["std"] }
+# The server file's revision (server.rs): SipHash-2-4, keyed by the secret
+# drawn above; the version already in the lock.
+siphasher = "1.0.4"
 
 # `pai-bff service` under the Windows service dispatcher (serve.rs), as
 # pai-manager's services.
