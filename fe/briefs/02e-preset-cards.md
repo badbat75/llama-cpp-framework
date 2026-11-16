@@ -404,7 +404,10 @@ clone: for a **flag** (an option without a value), `common_preset::to_args`
 `common_arg_utils::is_falsey` (`common/arg.cpp` 1309-1311: exactly `off`, `disabled`, `false`,
 `0`, case-sensitive), and the plain flag for any other value, `""` included. The INI grammar
 drops the spaces and tabs before and after a value (`common/preset.cpp` 200-208: `value` stops
-before `eol-start`), so the page compares the value trimmed. The configurator keeps writing `true` / `false`; it moves to this rule later. Applies to every
+before `eol-start`; `ws = [ \t]`), so the page compares the value trimmed of spaces (U+0020) and
+tabs (U+0009) only, not of every Unicode space (not JavaScript's `trim()`): `off` followed by a
+non-breaking space (U+00A0) is not falsey for the engine, so the page shows it on. Every key of
+table 122 is trimmed this way, the valued ones included. The configurator keeps writing `true` / `false`; it moves to this rule later. Applies to every
 field built so far and to 2e.4 and 2e.5 through the shared renderer.
 
 122. **Three readings, by key** (`fe/src/PresetCards.tsx`; each key checked in `common/arg.cpp`):
@@ -438,6 +441,21 @@ field built so far and to 2e.4 and 2e.5 through the shared renderer.
     not expose the spelling, so this is the only place it is read; no focus, read in browse order
     after the control ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)). Not shown for
     `true` or `false`: they are what the configurator writes.
+    124a. **A valued key's extra option** (`flash-attn` with a value in neither list, e.g. `auto`,
+    `-1`, `weird`): **no** written-as line, since the select's selected option already shows the
+    value. The option's value and text are the value trimmed as above (` auto ` shows the option
+    `auto`, selected). When that text is longer than criterion 119's limit for a select (more than
+    20 characters), it gets the full-value line `preset-full-<key>` (`aria-hidden`) of criteria 118
+    to 120, as any select does, and still no written-as line.
+    124b. **Tied to its control**: the control that shows the value (the checkbox
+    `<id>-control` of a checkbox row, the `<select>` of a select row) has `aria-describedby`
+    containing the written-as line's id `preset-written-<key>`, beside any id already there (the
+    error's, space-separated), so a user moving from control to control hears the spelling after
+    the control's name and state ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). With no written-as line, the control
+    names no `preset-written-` id. Criterion 120 is unchanged: the full-value line is named by no
+    `aria-describedby`, because the control already exposes that value; the written-as line is,
+    because the control does not expose the spelling.
 125. **Tri-state and off / on selects** (decision b): a flag's select shows `on` or `off` by table
     122, no extra option, the spelling on the written-as line. Reason: the extra option showed the
     file but hid what the engine does (`kv-unified` `auto` read as a third state, while llama-server
@@ -451,6 +469,8 @@ field built so far and to 2e.4 and 2e.5 through the shared renderer.
     | `jinja` | `yes`, `1`, `FALSE`, `Off` | checked (case-sensitive) | "Written as yes" etc. |
     | `jinja` | `""` | checked | "Written with no value" |
     | `jinja` | ` 0 ` (spaces) | unchecked (trimmed) | "Written as 0" |
+    | `jinja` | `" "` (one space) | checked (trimmed to the empty value) | "Written with no value" |
+    | `jinja` | `off` + U+00A0 (non-breaking space) | checked (not trimmed: not falsey) | "Written as off" + U+00A0 |
     | `jinja` | absent (`values` `{}`) | checked (default) | none |
     | `kv-unified` (tri-state) | `auto` | `on` | "Written as auto" |
     | `kv-unified` | `0` | `off` | "Written as 0" |
@@ -460,8 +480,12 @@ field built so far and to 2e.4 and 2e.5 through the shared renderer.
     | `load-on-startup` | `1` | `on` | "Written as 1" |
     | `flash-attn` (tri-state) | `0` | `off` | "Written as 0" |
     | `flash-attn` | `auto` | extra option `auto` | none |
+    | `flash-attn` | ` auto ` (spaces) | extra option `auto` (trimmed) | none |
+    | `flash-attn` | a value of 21+ characters in neither list | extra option, that value | none; full-value line `preset-full-flash-attn` (124a) |
 
-    The line is found by its id, without `aria-hidden`. Strings (2 new): `preset-written-as`
+    For each row with a line, the control's `aria-describedby` includes `preset-written-<key>`; for
+    each row without one, it includes no `preset-written-` id (124b). The line is found by its id,
+    without `aria-hidden`. Strings (2 new): `preset-written-as`
     "Written as {0}", `preset-written-empty` "Written with no value". **Out of 2e.3b**: the
     configurator's reading and writing (later, `PLAN.md` step 10 slice 11d); keys written in their
     negative form (`no-jinja`), which the page does not read.

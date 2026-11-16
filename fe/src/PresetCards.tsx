@@ -28,12 +28,27 @@ import { t } from './strings.ts'
 /** A select's option: the value the file holds, the text the user reads. */
 type Option = { value: string; text: string }
 
+/** How a key's value is read as a boolean, the way llama-server reads it
+ * (criterion 122):
+ * - `flag`: an option without a value. The engine passes the negative flag for
+ *   the four falsey words and the plain flag for any other value, the empty one
+ *   included (`common_preset::to_args` and `common_arg_utils::is_falsey`).
+ * - `truthy`: a preset-only key the router reads as truthy only, so on is the
+ *   short list of words and every other value, the empty one included, is off
+ *   (`is_truthy`, `tools/server/server-models.cpp`).
+ * - `valued`: `[on|off|auto]`: its handler reads both lists and keeps any other
+ *   value as the extra option of criterion 87. */
+type Reading = 'flag' | 'truthy' | 'valued'
+
 /** What every row carries: the key and the strings keys of its texts. */
 type RowBase = {
   /** The key of the read's `values`. */
   key: string
   label: string
   hint: string
+  /** The reading of a checkbox or select row whose key is a boolean. Absent for
+   * every other row: its value is not a boolean, so it keeps criterion 87. */
+  reading?: Reading
 }
 
 /** A number: the default box and a text input showing the string as it is. The
@@ -206,6 +221,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'op-offload',
+        reading: 'flag',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-op-offload'),
@@ -214,6 +230,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'repack',
+        reading: 'flag',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-repack'),
@@ -222,6 +239,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'no-host',
+        reading: 'flag',
         options: OFF_ON,
         absent: 'false',
         label: t('preset-no-host-buffer'),
@@ -306,6 +324,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'kv-unified',
+        reading: 'flag',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-unified-kv'),
@@ -340,6 +359,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'embeddings',
+        reading: 'flag',
         options: OFF_ON,
         absent: 'false',
         label: t('preset-embedding-mode'),
@@ -386,6 +406,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'flash-attn',
+        reading: 'valued',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-flash-attention'),
@@ -428,6 +449,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'checkbox',
         key: 'jinja',
+        reading: 'flag',
         toggle: t('preset-chat-template-toggle'),
         absent: true,
         label: t('preset-chat-template'),
@@ -436,6 +458,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'checkbox',
         key: 'prefill-assistant',
+        reading: 'flag',
         toggle: t('preset-prefill-assistant-toggle'),
         absent: true,
         label: t('preset-prefill-assistant'),
@@ -468,6 +491,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'reasoning-preserve',
+        reading: 'flag',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-keep-past-thinking'),
@@ -551,6 +575,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'backend-sampling',
+        reading: 'flag',
         options: TRISTATE,
         absent: 'default',
         label: t('preset-backend-sampling'),
@@ -564,6 +589,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'select',
         key: 'load-on-startup',
+        reading: 'truthy',
         options: OFF_ON,
         absent: 'false',
         label: t('preset-load-on-startup'),
@@ -583,6 +609,7 @@ const CARDS: CardFields[] = [
       {
         kind: 'checkbox',
         key: 'mmproj-offload',
+        reading: 'flag',
         toggle: t('preset-vision-offload-toggle'),
         absent: true,
         label: t('preset-vision-on-gpu'),
@@ -626,6 +653,73 @@ function held(values: Record<string, string>, key: string): string | undefined {
   return raw === undefined || raw === '' ? undefined : raw
 }
 
+/** The string a row reads. For a flag the key is present when the file holds it,
+ * the empty value included, because llama-server then passes the plain flag
+ * (criterion 123). Every other row keeps criterion 86: an empty value is
+ * absent. */
+function heldFor(
+  row: RowBase,
+  values: Record<string, string>,
+): string | undefined {
+  const raw = values[row.key]
+  if (raw === undefined) return undefined
+  return row.reading === 'flag' || row.reading === 'truthy'
+    ? raw
+    : raw === ''
+      ? undefined
+      : raw
+}
+
+/** The words llama-server reads as off for a flag (`common_arg_utils::is_falsey`),
+ * and the words the router reads as on for a key it reads as truthy only
+ * (`is_truthy`). Compared trimmed, since the INI grammar drops the space around
+ * a value, and case-sensitive, as both are (`common/arg.cpp`, criterion 122). */
+const FALSEY = ['off', 'disabled', 'false', '0']
+const TRUTHY = ['on', 'enabled', 'true', '1']
+
+/** The trim of the INI grammar the engine reads a value with (`common/preset.cpp`,
+ * criterion 122's intro): the spaces (U+0020) and tabs (U+0009) around the value,
+ * and nothing else, so `off` followed by a non-breaking space stays itself. Not
+ * JavaScript's `trim()`, which drops every Unicode space. */
+function iniTrim(value: string): string {
+  return value.replace(/^[ \t]+|[ \t]+$/g, '')
+}
+
+/** The written-as line's text (criterion 124): the value as the file writes it,
+ * trimmed, or the words for a key written with no value. */
+function writtenText(trimmed: string): string {
+  return trimmed === ''
+    ? t('preset-written-empty')
+    : t('preset-written-as', trimmed)
+}
+
+/** A key's value read as llama-server reads it (criterion 122), with the
+ * spelling to show under the control (124).
+ *
+ * `on` is the state the engine acts as. It is `undefined` only for a `valued`
+ * key whose value is in neither list: the engine is given that value, so the
+ * control shows it as the extra option of criterion 87.
+ *
+ * `written` is the line's text for a value the configurator would not write: the
+ * configurator keeps `true` and `false`, so those two show no line. */
+function readAs(
+  reading: Reading,
+  raw: string,
+): { on: boolean | undefined; written: string | undefined } {
+  const trimmed = iniTrim(raw)
+  const falsey = FALSEY.includes(trimmed)
+  const truthy = TRUTHY.includes(trimmed)
+  if (reading === 'valued' && !falsey && !truthy)
+    return { on: undefined, written: undefined }
+  return {
+    on: reading === 'flag' ? !falsey : truthy,
+    written:
+      trimmed === 'true' || trimmed === 'false'
+        ? undefined
+        : writtenText(trimmed),
+  }
+}
+
 /** A value as the configurator reads a boolean: `ini::parse_bool`
  * (crates/core/src/ini.rs) answers only for `true` and `false`, trimmed, and
  * gives nothing for the rest. A checkbox row decides what that nothing shows
@@ -637,8 +731,10 @@ function parseBool(value: string): boolean | undefined {
 
 /** A select's options and its selected value. A value no option carries
  * becomes one extra last option holding it as its value and its text, selected
- * (criterion 87). A row that normalizes matches an option ignoring case and
- * surrounding space, and the extra option still carries the value as written. */
+ * (criterion 87). A row whose key is a boolean of table 122 holds it trimmed as
+ * the INI grammar trims it (criterion 124a). A row that normalizes matches an
+ * option ignoring case and surrounding space, and the extra option still
+ * carries the value as written. */
 function shown(
   row: SelectRow,
   value: string | undefined,
@@ -650,9 +746,10 @@ function shown(
   const match = row.normalize ? value.trim().toLowerCase() : value
   const hit = row.options.find((o) => o.value === match)
   if (hit !== undefined) return { options: row.options, value: hit.value }
+  const extra = row.reading === undefined ? value : iniTrim(value)
   return {
-    options: [...row.options, { value, text: value }],
-    value,
+    options: [...row.options, { value: extra, text: extra }],
+    value: extra,
   }
 }
 
@@ -721,7 +818,13 @@ function PresetField({
     hint: row.hint,
     disabled: true,
   }
-  const value = held(values, row.key)
+  const value = heldFor(row, values)
+  // A row whose key is a boolean: the reading gives the state the engine acts as
+  // and the spelling the file holds (criterion 122).
+  const state =
+    row.reading === undefined || value === undefined
+      ? undefined
+      : readAs(row.reading, value)
   if (row.kind === 'number') {
     const text = value ?? ''
     return (
@@ -752,9 +855,17 @@ function PresetField({
         toggle={rule === undefined || allowed ? row.toggle : rule.notAllowed}
         checked={
           allowed &&
-          (rule === undefined
-            ? (parseBool(value ?? '') ?? row.absent)
-            : allowedOn(value))
+          (state !== undefined
+            ? // A checkbox row's reading is a flag, which has no third state.
+              state.on === true
+            : rule === undefined
+              ? (parseBool(value ?? '') ?? row.absent)
+              : allowedOn(value))
+        }
+        written={
+          state?.written === undefined
+            ? undefined
+            : { id: `preset-written-${row.key}`, text: state.written }
         }
         onChange={() => undefined}
       />
@@ -776,7 +887,14 @@ function PresetField({
     )
   }
   const select =
-    row.kind === 'device' ? shownDevice(row, value) : shown(row, value)
+    row.kind === 'device'
+      ? shownDevice(row, value)
+      : // A flag's select shows on or off by the reading and lists no extra
+        // option (criterion 125). A valued key whose value is in neither list
+        // keeps criterion 87: the extra option carries it.
+        state !== undefined && state.on !== undefined
+        ? { options: row.options, value: state.on ? 'true' : 'false' }
+        : shown(row, value)
   // What the user reads for a select is the selected option's text, which for
   // an unlisted value is the value itself (criterion 87). A device select
   // reads the file's device, and has nothing to repeat when the file names
@@ -786,12 +904,25 @@ function PresetField({
       ? (value ?? '')
       : (select.options.find((o) => o.value === select.value)?.text ??
         select.value)
+  const full = fullValue(row, text)
+  // The written-as line of criterion 124: the control shows what the engine does
+  // with the value, the line what the file holds. A flag's control shows on or
+  // off, so any value the configurator would not write needs the line. A valued
+  // key whose value is in neither list is the extra option, so the select shows
+  // it itself and needs no line (124a): what the select clips, the full-value
+  // line of 118 repeats.
+  const written = state?.written
   return (
     <SelectField
       {...common}
       options={select.options}
       value={select.value}
-      full={fullValue(row, text)}
+      full={full}
+      written={
+        written === undefined
+          ? undefined
+          : { id: `preset-written-${row.key}`, text: written }
+      }
       onChange={() => undefined}
     />
   )

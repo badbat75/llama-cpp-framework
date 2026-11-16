@@ -686,8 +686,9 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the cards (81, 86) ────────────────────
 
-test('2e.86, 2e.104: a key of 101 or 102 whose value is the empty string reads as absent, for every key of 2e.3', async () => {
+test('2e.86, 2e.104: a key of 101 or 102 whose value is the empty string reads as absent, for every key of 2e.3 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
   for (const f of FIELDS) {
+    if (f.key === 'reasoning-preserve') continue
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
@@ -733,15 +734,16 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
 
 // ── The checkbox field, the kind 2e.3 brings (87, 101, 102, 104) ───────
 
-test('2e.87, 2e.101, 2e.102: a checkbox field is a group named by its label holding one checkbox whose text is the table toggle, and it is checked per the table: absent checked, false unchecked, true and anything else checked as the GUI reads it, true and false read trimmed as ini.rs trims', async () => {
+test('2e.87, 2e.101, 2e.102, 2e.122: a checkbox field is a group named by its label holding one checkbox whose text is the table toggle, and it is checked per the table: absent checked, the falsey words unchecked, any other value checked (case-sensitive, 2e.3b), true and false read trimmed as ini.rs trims', async () => {
   const boxes = FIELDS.filter((f) => f.kind === 'checkbox')
   expect(
     boxes.map((f) => f.key),
     'the checkbox fields of 101 and 102',
   ).toEqual(['jinja', 'prefill-assistant', 'mmproj-offload'])
   for (const f of boxes) {
-    // The GUI reads anything it cannot parse as true for these three (form.rs
-    // 258, 296, 160: unwrap_or(true)), and the table says the page checks it.
+    // 2e.3b (criterion 122): a flag is off for exactly the falsey words, and on
+    // for every other value, "" included. The GUI's reading (form.rs 258, 296,
+    // 160: unwrap_or(true)) holds for a value that is not falsey.
     for (const [value, checked] of [
       [undefined, true],
       ['false', false],
@@ -751,7 +753,7 @@ test('2e.87, 2e.101, 2e.102: a checkbox field is a group named by its label hold
       ['yes', true],
       ['True', true],
       ['False', true],
-      ['0', true],
+      ['0', false],
       [' ', true],
     ] as [string | undefined, boolean][]) {
       const { main } = await loaded({
@@ -937,7 +939,7 @@ test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 91
   }
 })
 
-test('2e.101, 2e.1.3: Keep past thinking is the shared tri-state of 1.3: default, on, off; absent shows default, true on, false off, and a value the mapping does not list is one extra option, not default', async () => {
+test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking is the shared tri-state of 1.3: default, on, off; absent shows default, true on, false off, and a flag value the mapping does not list is on with no extra option (2e.3b)', async () => {
   const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
   for (const [value, shown] of [
     ['true', en('option-on')],
@@ -960,13 +962,13 @@ test('2e.101, 2e.1.3: Keep past thinking is the shared tri-state of 1.3: default
     preset: () => reply(200, exactOf({ [f.key]: 'yes' })),
   })
   const select = selectOf(main, f.label)
-  expect(optionsOf(select).length, `${f.key}: the three options plus one`).toBe(
-    TRISTATE.length + 1,
-  )
   expect(
-    selectedTextExact(select),
-    `${f.key}: yes is its own option, not default`,
-  ).toBe('yes')
+    optionTexts(select),
+    `${f.key}: a flag select keeps exactly the options of 1.3`,
+  ).toEqual(TRISTATE)
+  expect(selectedText(select), `${f.key}: yes is on, not an extra option`).toBe(
+    en('option-on'),
+  )
   cleanup()
   vi.unstubAllGlobals()
   const { main: absent } = await loaded({

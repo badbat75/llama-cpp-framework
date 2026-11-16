@@ -16,13 +16,28 @@ type Common = {
    * the control and its unit and before the hint (the full-value line). Only a
    * read-only page passes it: an editable control can be scrolled. */
   full?: { id: string; text: string }
+  /** The spelling a value of the file holds, under the control (the written-as
+   * line). A read-only page passes it for a control that shows what the engine
+   * does with the value instead of the spelling, as a checkbox and a select can
+   * only do: unlike the full-value line it stays in the accessibility tree,
+   * being the only place that spelling is read. */
+  written?: { id: string; text: string }
 }
 
-/** What marks a control invalid and names its error. */
-function invalid(id: string, error: string | undefined) {
-  return error === undefined
+/** What a control's accessibility tree names: in `aria-describedby` the error
+ * first and then the written-as line, keeping the ids already there and their
+ * order; `aria-invalid` only when there is an error. The full-value line is
+ * named by no control, since the control already exposes that value. */
+function describes(id: string, error: string | undefined, writtenId?: string) {
+  const ids: string[] = []
+  if (error !== undefined) ids.push(`${id}-error`)
+  if (writtenId !== undefined) ids.push(writtenId)
+  return ids.length === 0
     ? {}
-    : { 'aria-invalid': true, 'aria-describedby': `${id}-error` }
+    : {
+        ...(error === undefined ? {} : { 'aria-invalid': true }),
+        'aria-describedby': ids.join(' '),
+      }
 }
 
 /** The About button after the label; its name carries the label. */
@@ -72,6 +87,17 @@ function FullValue({ id, text }: { id: string; text: string }) {
   )
 }
 
+/** The written-as line: the value as the file writes it, under the control,
+ * styled as the full-value line. Not `aria-hidden`, since the control does not
+ * expose the spelling. It is a paragraph, so it takes no tab stop. */
+function WrittenValue({ id, text }: { id: string; text: string }) {
+  return (
+    <p id={id} className="full-value">
+      {text}
+    </p>
+  )
+}
+
 /** A field of one control named by its label, `<id>-control`. */
 function LabelField({
   id,
@@ -79,6 +105,7 @@ function LabelField({
   hint,
   error,
   full,
+  written,
   children,
 }: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -95,6 +122,9 @@ function LabelField({
       </div>
       <div className="field-control">{children}</div>
       {full !== undefined && <FullValue id={full.id} text={full.text} />}
+      {written !== undefined && (
+        <WrittenValue id={written.id} text={written.text} />
+      )}
       <Hint id={`${id}-hint`} text={hint} open={open} />
       {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </div>
@@ -111,6 +141,7 @@ export function GroupField({
   hint,
   error,
   full,
+  written,
   children,
 }: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -127,6 +158,9 @@ export function GroupField({
       </legend>
       <div className="field-control">{children}</div>
       {full !== undefined && <FullValue id={full.id} text={full.text} />}
+      {written !== undefined && (
+        <WrittenValue id={written.id} text={written.text} />
+      )}
       <Hint id={`${id}-hint`} text={hint} open={open} />
       {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </fieldset>
@@ -151,7 +185,7 @@ function Check({
   /** aria-disabled: focusable, the caller ignores changes. */
   inactive?: boolean
   onChange: (checked: boolean) => void
-  aria?: ReturnType<typeof invalid>
+  aria?: ReturnType<typeof describes>
 }) {
   return (
     <label className="check">
@@ -216,7 +250,7 @@ export function DefaultBoxField({
         value={text}
         disabled={disabled || ticked}
         onChange={(e) => onText(e.target.value)}
-        {...invalid(id, error)}
+        {...describes(id, error)}
       />
       {unit !== undefined && <span className="unit">{unit}</span>}
     </GroupField>
@@ -257,7 +291,7 @@ export function SecretField({
         value={value}
         disabled={ticked}
         onChange={(e) => onText(e.target.value)}
-        {...invalid(id, error)}
+        {...describes(id, error)}
       />
       <button
         type="button"
@@ -278,6 +312,7 @@ export function CheckboxField({
   label,
   hint,
   error,
+  written,
   toggle,
   checked,
   disabled,
@@ -294,7 +329,13 @@ export function CheckboxField({
   children?: ReactNode
 }) {
   return (
-    <GroupField id={id} label={label} hint={hint} error={error}>
+    <GroupField
+      id={id}
+      label={label}
+      hint={hint}
+      error={error}
+      written={written}
+    >
       <Check
         id={`${id}-control`}
         text={toggle}
@@ -302,7 +343,7 @@ export function CheckboxField({
         disabled={disabled}
         inactive={inactive}
         onChange={onChange}
-        aria={invalid(id, error)}
+        aria={describes(id, error, written?.id)}
       />
       {children}
     </GroupField>
@@ -335,7 +376,7 @@ export function CheckListField({
             checked={r.checked}
             disabled={r.disabled}
             onChange={() => onToggle(i)}
-            aria={r.checked ? invalid(id, error) : undefined}
+            aria={r.checked ? describes(id, error) : undefined}
           />
         ))}
       </div>
@@ -374,7 +415,7 @@ export function TextField({
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        {...invalid(id, error)}
+        {...describes(id, error)}
       />
       {unit !== undefined && <span className="unit">{unit}</span>}
     </LabelField>
@@ -388,6 +429,7 @@ export function SelectField({
   hint,
   error,
   full,
+  written,
   options,
   value,
   disabled,
@@ -400,13 +442,20 @@ export function SelectField({
   onChange: (value: string) => void
 }) {
   return (
-    <LabelField id={id} label={label} hint={hint} error={error} full={full}>
+    <LabelField
+      id={id}
+      label={label}
+      hint={hint}
+      error={error}
+      full={full}
+      written={written}
+    >
       <select
         id={`${id}-control`}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        {...invalid(id, error)}
+        {...describes(id, error, written?.id)}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

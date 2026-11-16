@@ -334,5 +334,7 @@
   "preset-draft-device-hint": "The GPU for a separate draft model file. Pin it to ONE device: MTP heads crash on an automatic multi-GPU split.\nA full-vocabulary DFlash or DSpark drafter under a layer split must sit on the GPU with the last layers, or it aborts at load; picking the file pins it there for you.\nDisabled with built-in MTP heads, which share the main model's GPU.\nBlank = automatic, same as the model.\nFlag: --device-draft",
   "preset-draft-gpu-layers": "Draft GPU layers",
   "preset-draft-gpu-layers-hint": "How many layers of a separate draft model file run on the GPU.\nFor an MTP head file, which has no layers, 99 puts the draft on the GPU and 0 on the CPU.\nPin a device above: MTP heads crash on an automatic multi-GPU split.\nDisabled with built-in MTP heads.\nDefault: all draft layers on the GPU.\nFlag: --n-gpu-layers-draft",
-  "preset-device-same-as-model": "(auto / same as model)"
+  "preset-device-same-as-model": "(auto / same as model)",
+  "preset-written-as": "Written as {0}",
+  "preset-written-empty": "Written with no value"
 }

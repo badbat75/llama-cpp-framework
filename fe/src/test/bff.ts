@@ -406,6 +406,9 @@ export const EN: Record<string, string> = {
   'preset-max-image-tokens-hint':
     'The most tokens each image is encoded to, on vision models with dynamic resolution. Lower it to limit the prefill cost and VRAM of large images.\nDefault: read from the model.\nFlag: --image-max-tokens',
   'preset-device-follows-model': '(default: follows device)',
+  // Slice 2e.3b (criterion 124): the line naming how the file spells a flag.
+  'preset-written-as': 'Written as {0}',
+  'preset-written-empty': 'Written with no value',
   'preset-hardware-config': 'Hardware config',
   'preset-gpu-layers': 'GPU layers',
   'preset-gpu-layers-hint':

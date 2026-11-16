@@ -615,8 +615,9 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the cards (81, 86) ────────────────────
 
-test('2e.86, 2e.99: a key of 96, 97 or 98 whose value is the empty string reads as absent, for every key of 2e.2', async () => {
+test('2e.86, 2e.99: a key of 96, 97 or 98 whose value is the empty string reads as absent, for every key of 2e.2 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
   for (const f of FIELDS) {
+    if (f.key === 'backend-sampling' || f.key === 'load-on-startup') continue
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })

@@ -720,8 +720,9 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the card (81, 86) ─────────────────────
 
-test('2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card', async () => {
+test('2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
   for (const f of FIELDS) {
+    if (['op-offload', 'repack', 'no-host'].includes(f.key)) continue
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
@@ -950,7 +951,7 @@ test('2e.107: Load mode lists default, auto, none and the literals mmap, mlock, 
   )
 })
 
-test('2e.107, 2e.1.3: Op offload and Repack are the shared tri-state (absent default, true on, false off, an unlisted value one extra option as written), No host buffer is off / on (absent and false off, true on)', async () => {
+test('2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack are the shared tri-state (absent default, true on, false off, an unlisted flag value on with no extra option: 2e.3b), No host buffer is off / on (absent and false off, true on)', async () => {
   for (const key of ['op-offload', 'repack']) {
     const f = FIELDS.find((x) => x.key === key)!
     expect(f.options, `${key}: the tri-state of 1.3`).toEqual(TRISTATE)
@@ -977,13 +978,13 @@ test('2e.107, 2e.1.3: Op offload and Repack are the shared tri-state (absent def
       preset: () => reply(200, exactOf({ [key]: 'yes' })),
     })
     const select = selectOf(main, f.label)
-    expect(optionsOf(select).length, `${key}: the three options plus one`).toBe(
-      TRISTATE.length + 1,
-    )
     expect(
-      selectedTextExact(select),
-      `${key}: yes is its own option, not default`,
-    ).toBe('yes')
+      optionTexts(select),
+      `${key}: a flag select keeps exactly the options of 1.3`,
+    ).toEqual(TRISTATE)
+    expect(selectedText(select), `${key}: yes is on, not an extra option`).toBe(
+      en('option-on'),
+    )
     cleanup()
     vi.unstubAllGlobals()
   }

@@ -224,8 +224,11 @@ Each is one React component, reused by every page.
     and testable without layout **(preference)**. Brief 02e, criteria 118 to 121.
   - **A boolean shows what the engine will do**: a llama-server flag is off only for `off`,
     `disabled`, `false`, `0` and on for any other value, `""` included; a value other than `true`
-    or `false` adds a "Written as ..." line (not `aria-hidden`) so the file's spelling stays
-    visible. Each key's reading (flag, truthy only, valued) is in brief 02e, criteria 122 to 126.
+    or `false` adds a "Written as ..." line (not `aria-hidden`, named by the control's
+    `aria-describedby`) so the file's spelling stays visible; a value shown as a select's extra
+    option gets no such line, only the full-value line when it is long. Values are trimmed of
+    spaces and tabs only, as llama-server's INI grammar does. Each key's reading (flag, truthy
+    only, valued) is in brief 02e, criteria 122 to 126.
 - **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the

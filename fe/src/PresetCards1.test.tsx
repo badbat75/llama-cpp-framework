@@ -496,8 +496,9 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
     ).toBe(true)
 })
 
-test('2e.86: a key whose value is the empty string reads as absent, for every key of 92 and 93', async () => {
+test('2e.86: a key whose value is the empty string reads as absent, for every key of 92 and 93 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
   for (const f of FIELDS) {
+    if (f.key === 'kv-unified' || f.key === 'embeddings') continue
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
@@ -604,9 +605,8 @@ test('2e.87, 2e.94: a number shows the reply string exactly, with no parsing and
   }
 })
 
-test('2e.87, 2e.94: a value the mapping does not list becomes one extra last option carrying the reply string as its value and its text, selected: kv-unified auto, pooling weird', async () => {
+test('2e.87, 2e.94: a value the mapping does not list becomes one extra last option carrying the reply string as its value and its text, selected: pooling weird (2e.3b: a flag select has no extra option, criterion 125, and kv-unified auto shows on with the line of 126)', async () => {
   for (const [f, value] of [
-    [FIELDS.find((x) => x.key === 'kv-unified')!, 'auto'],
     [FIELDS.find((x) => x.key === 'pooling')!, 'weird'],
   ] as [Row, string][]) {
     const { main } = await loaded({
