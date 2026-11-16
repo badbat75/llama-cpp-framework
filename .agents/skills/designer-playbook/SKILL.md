@@ -49,3 +49,6 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   unset (`ini::parse_bool` takes only `true` / `false`); the web shows the file as written.
 - Hash routes keep `.` and `..` (the URL parser resolves dot segments in the path only), but the
   same id in an API path does not survive: `new URL('/api/presets/..', base)` is `/api/`.
+- Playwright's WebKit does not scroll a control into view on a script `focus()` (checkbox and text
+  input alike, 2026-11-16); Chromium does. A focus-after-refusal check at 320 px must read the focused
+  element's rect per engine; whether real Safari behaves the same is unverified.

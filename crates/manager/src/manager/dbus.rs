@@ -58,6 +58,9 @@ pub enum Error {
     Io(String),
     /// The message is `Refusal::encode`'s string: the client decodes it.
     Invalid(String),
+    /// A compare-and-swap write found the file no longer holding the text it
+    /// was given to expect; its message is the kind's own word.
+    Changed(String),
 }
 
 /// The message is `service::error_reply`'s, the same on every transport.
@@ -74,6 +77,7 @@ impl From<ManagerError> for Error {
             ManagerError::Service(_) => Error::Service(message),
             ManagerError::Io(_) => Error::Io(message),
             ManagerError::Invalid(_) => Error::Invalid(message),
+            ManagerError::Changed => Error::Changed(message),
         }
     }
 }

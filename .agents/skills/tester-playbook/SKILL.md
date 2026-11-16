@@ -81,7 +81,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - Format one file with `rustfmt --edition 2021 <file>`, then `cargo fmt -p <crate> --check`.
 - Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
   (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
-  compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`).
+  compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`); a `///` on a `let`
+  (a closure helper inside an e2e fn) is `unused_doc_comments`, use `//`.
+- `cargo test` takes ONE filter as its positional; further names are "unexpected argument". Several
+  filters go after `--` (above); a filter that matches only bins prints "0 tests" noise: add `--lib`.
 - `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
   `Vec::<String>::new()`, the pattern this repo already uses.
 - A `[(label, |c| ..); N]` table of setters: `as fn(Cfg) -> Cfg` on the first element fixes the element
@@ -446,6 +449,14 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## Manager, D-Bus, pipe
 
+- A new `ManagerError` variant breaks the exhaustive matches the faces hold over it: `From<ManagerError>`
+  in `dbus.rs` and the expected-mapping in pipe.rs's `every_error_has_its_name_and_reads_back` test.
+  Arm both with `todo!("..: slice N")` naming the faces' slice that owns the mapping; do NOT add the
+  variant to `every_error()` in the core-method slice: the round-trip needs the client's variant, a
+  later slice's, and the error tests stay green on the untouched list.
+- A phase can give every block its own data root: a local `fn root(files)` that calls
+  `paths::redirect_for_tests` on a fresh tempdir and seeds the served dir; no coupling between blocks,
+  and the "the directory is not there" case gets a root that never saw a `create_dir_all`.
 - A seam called through `&self` gets a fake with `Mutex` logs (seams must be `Sync`), read through an
   accessor; pin "nothing happened" on a refusal by empty logs plus the error kind.
 - The manager's `FakeService` records every `ServiceControl` call, `status` (the probe) included: a
@@ -530,6 +541,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - The manager's principal refusals are all `ManagerError::NotAuthorized`, whichever check failed (not
   the bff, ill-formed name, no member): pipe tests pin `error("NotAuthorized", ..)`, the client's
   `NotAdministrator` is its own reading of that name.
+- A shared asked-seam log (`asked_admin`) over an e2e block counts one entry per call that REACHES that
+  seam: a call refused at an earlier gate (a non-bff caller stopped by `is_bff` in `check_principal`)
+  adds none. Trace every call of the block through the gate order before writing the expected list, and
+  say the order in the assert message, so the list pins the gate order, not a call count.
 - The manager's log of who acted (`ActionLog` / `Manager::with_log`): pin the record as the fake log's
   whole lines (`action=".." target=".." caller=".." principal=".." outcome=..`, values `{:?}`-quoted, `-`
   for no caller/principal, `ok`/`refused` bare, a failure's kind quoted). One hostile-name table where

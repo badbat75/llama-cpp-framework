@@ -205,6 +205,9 @@ pub enum ManagerError {
     Io(std::io::ErrorKind),
     /// The contents fail a check of `pai_core::checks`; nothing was written.
     Invalid(pai_core::checks::Refusal),
+    /// A compare-and-swap write found the file no longer holding the text it
+    /// was given to expect, or not there at all; nothing was written.
+    Changed,
 }
 
 /// The error name and message `e` replies with, on every transport
@@ -224,6 +227,7 @@ pub fn error_reply(e: &ManagerError) -> (String, String) {
         ManagerError::Io(kind) => ("Io", kind.to_string()),
         // `Refusal::encode`'s string: the client decodes it.
         ManagerError::Invalid(refusal) => ("Invalid", refusal.encode()),
+        ManagerError::Changed => ("Changed", "Changed".to_string()),
     };
     (format!("org.privateai.Manager1.Error.{kind}"), message)
 }
@@ -242,6 +246,7 @@ fn error_kind(e: &ManagerError) -> &'static str {
         ManagerError::Service(_) => "Service",
         ManagerError::Io(_) => "Io",
         ManagerError::Invalid(_) => "Invalid",
+        ManagerError::Changed => "Changed",
     }
 }
 
@@ -652,14 +657,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         contents: &str,
         keep_api_key: bool,
     ) -> Result<(), ManagerError> {
-        let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
-            self.authorize_as(&who, Action::Configure)?;
-            let file = config_file(name).ok_or(ManagerError::BadFileName)?;
-            // A poisoned lock is taken over: it guards no data of its own.
-            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        self.write_guarded(who, name, "write_file", |file| {
             let kept;
-            let contents = match &file {
+            let contents = match file {
                 ConfigFile::Instance(_) if keep_api_key => {
                     // An unreadable file says nothing about the key: refused,
                     // since writing the text as sent could erase it.
@@ -678,18 +678,91 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 }
                 _ => contents,
             };
-            check_contents(&file, contents).map_err(ManagerError::Invalid)?;
-            if let ConfigFile::Instance(id) = &file {
-                self.check_address(id, contents)?;
+            self.check_and_write(file, name, contents)
+        })
+    }
+
+    /// Replace file `name` only while it still holds `expected`, the whole
+    /// text its caller read, byte for byte: equal bytes run `write_file`'s
+    /// checks and write, a file that is missing or holds other bytes is
+    /// [`ManagerError::Changed`] with nothing written. No `keep_api_key`: the
+    /// caller sent the file as it read it, key line included. The principal and
+    /// `configure` gates run first, as `write_file`'s, and the compare runs
+    /// under the same `writing` lock as the write.
+    ///
+    pub fn write_file_if<W: AsRequester>(
+        &self,
+        who: &W,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<(), ManagerError> {
+        self.write_guarded(who, name, "write_file_if", |file| {
+            // The compare is the first thing under the lock, before any check
+            // of `contents`: `expected` is the whole text the caller read, so
+            // other bytes mean its read is stale and the write is refused.
+            match std::fs::read_to_string(file_path(name)?) {
+                Ok(text) if text == expected => self.check_and_write(file, name, contents),
+                Ok(_) => Err(ManagerError::Changed),
+                // A file that is not there is the same refusal: the caller's
+                // read has nothing to match. A read that failed for another
+                // reason says nothing about the bytes, so it is refused as
+                // `write_file`'s read of the held key is: writing blind could
+                // replace text the caller never saw.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ManagerError::Changed),
+                Err(e) => Err(ManagerError::Io(e.kind())),
             }
-            let dir = crate::paths::engine_config_dir();
-            let io = |e: std::io::Error| ManagerError::Io(e.kind());
-            std::fs::create_dir_all(&dir).map_err(io)?;
-            write_served_file(&dir.join(name), &file, contents, &*self.group).map_err(io)
+        })
+    }
+
+    /// The shape every write of a served file has, the one `write_file` and
+    /// `write_file_if` share: the `configure` gate of `who` (its principal
+    /// first, polkit only for a call of the caller's own), the name, `body`
+    /// with that file under the `writing` lock, and one action record under
+    /// `action` for the whole call, done or refused. A refused gate or name
+    /// reads nothing, so it writes nothing.
+    fn write_guarded<W: AsRequester, F>(
+        &self,
+        who: &W,
+        name: &str,
+        action: &str,
+        body: F,
+    ) -> Result<(), ManagerError>
+    where
+        F: FnOnce(&ConfigFile) -> Result<(), ManagerError>,
+    {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            body(&file)
         };
         let answer = run();
-        self.record_action("write_file", name, Some(&who), &answer);
+        self.record_action(action, name, Some(&who), &answer);
         answer
+    }
+
+    /// The checks `contents` must pass for `file`, and the atomic write of it:
+    /// [`check_contents`], the address check of an instance file, then the
+    /// write, creating the directory. Taken under the `writing` lock, by the
+    /// body of [`Self::write_guarded`], so the compare of a compare-and-swap
+    /// and the write it authorizes are one atomic step.
+    fn check_and_write(
+        &self,
+        file: &ConfigFile,
+        name: &str,
+        contents: &str,
+    ) -> Result<(), ManagerError> {
+        check_contents(file, contents).map_err(ManagerError::Invalid)?;
+        if let ConfigFile::Instance(id) = file {
+            self.check_address(id, contents)?;
+        }
+        let dir = crate::paths::engine_config_dir();
+        let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        write_served_file(&dir.join(name), file, contents, &*self.group).map_err(io)
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
@@ -4330,6 +4403,541 @@ pub(crate) fn manager_action_log_e2e() {
     }
 }
 
+/// E2E phase for the compare-and-swap write (`write_file_if`), for this
+/// crate's e2e test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT`
+/// redirect, `src/tests/mod.rs`). `expected` is the whole text the caller
+/// read: equal bytes run `write_file`'s checks and its write; a file that is
+/// missing, or holds any other bytes, is `Changed` with nothing written. Each
+/// block redirects a data root of its own, so it reads only the files it
+/// wrote. The seams are fakes: no D-Bus, systemd, polkit or DNS.
+#[cfg(test)]
+pub(crate) fn manager_write_file_if_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService, Gate,
+        GateResolver, GATE_WAIT,
+    };
+    use pai_core::checks::Refusal;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let bff = Caller(":1.9".into());
+    let desktop = Caller(":1.42".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n";
+    let other = "[Qwen3.8-32B]\nmodel = /models/Qwen3.8-32B-Q4_K_M.gguf\n";
+    let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n";
+    let invalid = |key: &'static str, values: &[&str]| {
+        Err(ManagerError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+
+    /// A data root of its own, holding `files`: a block never reads another
+    /// block's writes.
+    fn root(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        std::fs::create_dir_all(&sys).expect("engine config dir");
+        for (name, text) in files {
+            std::fs::write(sys.join(name), text).expect("fixture file");
+        }
+        (dir, sys)
+    }
+    /// The names in the directory, sorted: a refused write leaves it as it was,
+    /// with no temp file added.
+    fn listing(sys: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+    fn text_of(sys: &std::path::Path, name: &str) -> String {
+        std::fs::read_to_string(sys.join(name)).expect("file on disk")
+    }
+    fn records(lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> Vec<String> {
+        lines.lock().unwrap().clone()
+    }
+    // A manager whose caller's own calls are gated by polkit `allow`, with
+    // a fake password checker for the principal checks and a fake log.
+    let core = |allow: bool, passwords: FakePasswords, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+
+    // ── The gates run first, as write_file's: the read is never reached ──
+    // The served files here are directories: a read of one fails, so a
+    // compare that ran before the gate would answer `Io`, not the refusal.
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let names = ["presets.ini", "server@default.ini"];
+        for name in names {
+            std::fs::create_dir_all(sys.join(name)).expect("unreadable fixture");
+        }
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), log);
+        for name in names {
+            assert_eq!(
+                m.write_file_if(&desktop, name, other, presets),
+                Err(ManagerError::NotAuthorized),
+                "{name}: the refusal write_file gives a caller without configure"
+            );
+        }
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(desktop.clone(), Action::Configure); 2],
+            "configure is asked once per call, before anything is read"
+        );
+        assert!(
+            m.authority().asked_quietly.lock().unwrap().is_empty(),
+            "a write never asks the question made without a prompt"
+        );
+        assert_eq!(
+            records(&lines),
+            names
+                .iter()
+                .map(|name| format!(
+                    "action=\"write_file_if\" target={name:?} caller=\":1.42\" principal=- outcome=refused"
+                ))
+                .collect::<Vec<String>>(),
+            "one record per refused call, naming the file as it was asked for"
+        );
+        assert!(
+            m.service().calls.lock().unwrap().is_empty(),
+            "a refused write reaches no service manager"
+        );
+        for name in names {
+            assert!(
+                std::fs::read_to_string(sys.join(name)).is_err(),
+                "the fixture is still the unreadable directory: {name}"
+            );
+        }
+        assert_eq!(
+            listing(&sys),
+            names,
+            "the refused calls added nothing, no temp file"
+        );
+    }
+
+    // ── Equal bytes: written, and checked as write_file checks ───────────
+    {
+        let (_dir, sys) = root(&[
+            ("presets.ini", presets),
+            ("server@default.ini", default_ini),
+        ]);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        // A marker in the text written and one in the text expected: the
+        // record names the file, never what is in it.
+        let marker = "sk-CAS-NEVER-4b71";
+        let newer = format!("{default_ini}OpencodeApiKey = {marker}\n");
+        assert_eq!(
+            m.write_file_if(&desktop, "server@default.ini", &newer, default_ini),
+            Ok(()),
+            "the file holds the text the caller expected: written"
+        );
+        assert_eq!(
+            text_of(&sys, "server@default.ini"),
+            newer,
+            "the write landed as sent"
+        );
+        assert_eq!(
+            m.read_file(Some(&desktop), "server@default.ini"),
+            Ok(Some(plain(&newer))),
+            "the write reads back whole"
+        );
+        assert_eq!(
+            listing(&sys),
+            ["presets.ini", "server@default.ini"],
+            "exactly the files written, no temp file left"
+        );
+        assert!(
+            m.service().calls.lock().unwrap().is_empty(),
+            "a write calls no service manager"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![
+                (desktop.clone(), Action::Configure),
+                (desktop.clone(), Action::Control),
+            ],
+            "configure for the write, control for the read of the instance file"
+        );
+        // The checks of write_file run on the text written: an equal
+        // expected does not skip them, and the old file is kept.
+        assert_eq!(
+            m.write_file_if(
+                &desktop,
+                "server@default.ini",
+                "[Server]\nPort = 0\nHostname = 127.0.0.1\n",
+                &newer
+            ),
+            invalid("not-whole-number-in-range", &["Port", "0", "1", "65535"]),
+            "an equal expected does not skip the content checks"
+        );
+        assert_eq!(
+            text_of(&sys, "server@default.ini"),
+            newer,
+            "the refused text left the file"
+        );
+        let bad_presets = format!(
+            "{presets}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
+        );
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini", &bad_presets, presets),
+            invalid("moe-cache-with-tensor-split", &[]),
+            "the preset file's checks run too"
+        );
+        assert_eq!(
+            text_of(&sys, "presets.ini"),
+            presets,
+            "the refused text left the file"
+        );
+        // The compare is the first thing under the writing lock: a stale
+        // expected is Changed, whatever the contents would have failed on.
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini", &bad_presets, default_ini),
+            Err(ManagerError::Changed),
+            "the compare answers before any check runs"
+        );
+        assert_eq!(
+            text_of(&sys, "presets.ini"),
+            presets,
+            "nothing written for a stale expected"
+        );
+        let recs = records(&lines);
+        let got: Vec<&str> = recs.iter().map(String::as_str).collect();
+        assert_eq!(
+            got,
+            vec![
+                r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="read_file" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome="Invalid""#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Invalid""#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Changed""#,
+            ],
+            "one record per call, under the method's own name, the outcome the error's own name"
+        );
+        for line in records(&lines) {
+            assert!(
+                !line.contains(marker),
+                "a record never carries the text written: {line:?}"
+            );
+            assert!(
+                !line.contains("Qwen3.8-27B"),
+                "a record never carries the text expected: {line:?}"
+            );
+            assert!(!line.contains('\n'), "a record is one line: {line:?}");
+        }
+    }
+
+    // ── Any other bytes: Changed, nothing written ────────────────────────
+    {
+        let (_dir, sys) = root(&[
+            ("presets.ini", presets),
+            ("server@default.ini", default_ini),
+        ]);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let before = listing(&sys);
+        // Every one of these is the file's own text with a byte added,
+        // dropped, moved or translated: the compare is byte for byte, not a
+        // comparison of a normalized form.
+        let stale: Vec<String> = vec![
+            other.to_string(),
+            presets.trim_end().to_string(),
+            format!("{presets} "),
+            presets[..presets.len() - 1].to_string(),
+            format!("; note\n{presets}"),
+            presets.replace('\n', "\r\n"),
+            presets.replace("172032", "172033"),
+            presets.to_uppercase(),
+        ];
+        for expected in &stale {
+            assert_eq!(
+                m.write_file_if(&desktop, "presets.ini", other, expected),
+                Err(ManagerError::Changed),
+                "expected {expected:?} against the file on disk"
+            );
+        }
+        assert_eq!(
+            text_of(&sys, "presets.ini"),
+            presets,
+            "the refused writes changed nothing"
+        );
+        assert_eq!(listing(&sys), before, "nothing added, no temp file");
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![(desktop.clone(), Action::Configure); stale.len()],
+            "the gate is asked for every call, before the read"
+        );
+        let recs = records(&lines);
+        assert_eq!(
+            recs.first().map(String::as_str),
+            Some(
+                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Changed""#
+            ),
+            "the record of a refused compare-and-swap: the outcome is Changed"
+        );
+        assert_eq!(
+            recs.iter().filter(|line| line.contains("Changed")).count(),
+            stale.len(),
+            "one record per refused call"
+        );
+        // The file's own bytes are accepted: the table above is not green
+        // because every compare refuses.
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini", other, presets),
+            Ok(()),
+            "the expected text is the file's own: written"
+        );
+        assert_eq!(text_of(&sys, "presets.ini"), other, "the write landed");
+    }
+
+    // ── A missing file: Changed, and nothing is created ──────────────────
+    {
+        let (_dir, sys) = root(&[("presets.ini", presets)]);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let disabled = "[Old]\nmodel = /models/old.gguf\n";
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini.disabled", disabled, presets),
+            Err(ManagerError::Changed),
+            "the caller expects a file that is not there"
+        );
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini.disabled", disabled, disabled),
+            Err(ManagerError::Changed),
+            "an expected equal to the contents does not make the file exist"
+        );
+        assert!(
+            !sys.join("presets.ini.disabled").exists(),
+            "a refused compare-and-swap creates no file"
+        );
+        assert_eq!(listing(&sys), ["presets.ini"], "nothing created");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="write_file_if" target="presets.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                    .to_string(),
+                r#"action="write_file_if" target="presets.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                    .to_string(),
+            ],
+            "a missing file is recorded as Changed, not as a failure"
+        );
+    }
+    // The directory is not there at all: the compare reads, it creates nothing.
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        assert_eq!(
+            m.write_file_if(&desktop, "presets.ini", presets, presets),
+            Err(ManagerError::Changed),
+            "no file to compare with"
+        );
+        assert!(!sys.exists(), "the refused write created no directory");
+    }
+
+    // ── The principal form: the pair is the right, the compare is byte for byte
+    {
+        let ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
+        let (_dir, sys) = root(&[("presets.ini", presets), ("server@default.ini", ini)]);
+        let passwords = FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        // This bff has no polkit right of its own: the pair does the work.
+        let m = core(false, passwords, log);
+        let read = m
+            .read_file(Some(&member), "server@default.ini")
+            .expect("a member's read")
+            .expect("the file exists");
+        assert_eq!(
+            read.text, ini,
+            "a member's read carries the key, so the text to expect is the file's own"
+        );
+        assert_eq!(
+            m.write_file_if(
+                &member,
+                "server@default.ini",
+                &format!("{ini}ModelsMax = 2\n"),
+                &read.text
+            ),
+            Ok(()),
+            "the text a member read, unblanked, is what the compare accepts"
+        );
+        assert!(
+            text_of(&sys, "server@default.ini").contains("sk-local-3f9a"),
+            "the key line the caller sent is written as sent, with no key flag"
+        );
+        assert_eq!(
+            m.write_file_if(&member, "presets.ini", other, presets),
+            Ok(()),
+            "a member's compare-and-swap lands with the caller allowed nothing"
+        );
+        assert_eq!(text_of(&sys, "presets.ini"), other, "the write landed");
+        assert_eq!(
+            m.write_file_if(
+                &member,
+                "presets.ini",
+                presets,
+                "[Qwen3.8-9B]\nmodel = /m/x.gguf\n"
+            ),
+            Err(ManagerError::Changed),
+            "a member's stale expected is refused as anyone's"
+        );
+        assert_eq!(
+            text_of(&sys, "presets.ini"),
+            other,
+            "the refused write changed no file"
+        );
+        assert_eq!(
+            m.write_file_if(&outsider, "presets.ini", presets, other),
+            Err(ManagerError::NotAuthorized),
+            "a non-member is refused as write_file refuses it"
+        );
+        assert_eq!(
+            text_of(&sys, "presets.ini"),
+            other,
+            "nothing written for a non-member"
+        );
+        // A caller that is not the bff, naming a member: refused, and the
+        // compare never runs (the expected text is the file's own, so a
+        // compare that ran would write).
+        assert_eq!(
+            m.write_file_if(
+                &Requester {
+                    caller: desktop.clone(),
+                    principal: Some(Principal("alice".into())),
+                },
+                "presets.ini",
+                presets,
+                other
+            ),
+            Err(ManagerError::NotAuthorized),
+            "only the bff's account vouches for a user"
+        );
+        assert_eq!(text_of(&sys, "presets.ini"), other, "nothing written");
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            Vec::<(Caller, Action)>::new(),
+            "polkit decides nothing about a principal"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec![
+                "alice".to_string(),
+                "alice".to_string(),
+                "alice".to_string(),
+                "alice".to_string(),
+                "bob".to_string()
+            ],
+            "the membership is asked once per call the bff vouches for, of the \
+             principal named; the caller that is not the bff is refused before \
+             the lookup (check_principal asks is_bff first)"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file_if" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="alice" outcome="Changed""#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal="alice" outcome=refused"#,
+            ],
+            "a principal's compare-and-swap is recorded with its caller and its principal"
+        );
+    }
+
+    // ── The compare runs under the writing lock ──────────────────────────
+    // The first write is held inside the lock at a slow host lookup. The
+    // second is a compare-and-swap whose expected is the file as it is on disk
+    // now: it must wait for the lock, find the text it expected gone and
+    // answer Changed, leaving the first write on disk. A compare outside the
+    // lock writes over the first.
+    {
+        let held = "[Server]\nPort = 9000\nHostname = slow-box\n";
+        let moved = "[Server]\nPort = 9002\nHostname = slow-box\n";
+        let late = "[Server]\nPort = 9003\nHostname = slow-box\n";
+        let (_dir, sys) = root(&[("server@slow.ini", held)]);
+        let gate = Gate::new();
+        let resolver = GateResolver::new(
+            FakeResolver::new(&[("slow-box", &["10.0.0.7"])]),
+            "slow-box",
+            &gate,
+        );
+        let m = Arc::new(
+            Manager::new(FakeService::new(), FakeAuthority::new(true), resolver)
+                .with_group(FakeGroup::new()),
+        );
+        let first = {
+            let (m, who) = (m.clone(), desktop.clone());
+            on_thread(move || m.write_file(&who, "server@slow.ini", moved, false))
+        };
+        assert!(
+            gate.arrived(1),
+            "the first write's address check reached the slow lookup"
+        );
+        let second = {
+            let (m, who) = (m.clone(), desktop.clone());
+            on_thread(move || m.write_file_if(&who, "server@slow.ini", late, held))
+        };
+        // Time enough for the second to write, if it compared before the lock.
+        let early = second.recv_timeout(Duration::from_millis(500));
+        gate.open();
+        let first = first
+            .recv_timeout(GATE_WAIT)
+            .expect("the first write returns once the lookup answers");
+        let second = second
+            .recv_timeout(GATE_WAIT)
+            .expect("the compare-and-swap returns once it has the lock");
+        assert!(
+            !matches!(early, Ok(Ok(()))),
+            "the compare-and-swap finished while the first write held the lock: {early:?}"
+        );
+        assert_eq!(first, Ok(()), "the first write lands");
+        assert_eq!(
+            second,
+            Err(ManagerError::Changed),
+            "the write it waited for made its expected text stale"
+        );
+        assert_eq!(
+            text_of(&sys, "server@slow.ini"),
+            moved,
+            "the first write is what stands on disk"
+        );
+        assert_eq!(listing(&sys), ["server@slow.ini"], "no temp file left");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::fakes::FakeResolver;
@@ -4503,6 +5111,66 @@ mod tests {
             );
         }
         assert_eq!(asked(&m), vec![]);
+    }
+
+    // ── Compare-and-swap writes: gates first, as write_file's ───────────
+    // These resolve no path: every refusal lands before a path is built,
+    // as write_file's do, so these unit tests never reach `paths::`.
+
+    /// A caller without the configure right gets write_file's own refusal,
+    /// asked once for configure, never the question made without a prompt,
+    /// and the call reaches nothing past the gate.
+    #[test]
+    fn a_compare_and_swap_write_without_configure_is_the_same_refusal() {
+        let alice = Caller(":1.42".into());
+        let m = core(false);
+        assert_eq!(
+            m.write_file_if(&alice, "presets.ini", "[X]\n", "[Y]\n"),
+            Err(ManagerError::NotAuthorized),
+            "the same refusal write_file gives"
+        );
+        assert_eq!(
+            asked(&m),
+            vec![(alice.clone(), Action::Configure)],
+            "configure is asked once, before the expected text is read"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "a write never asks the question made without a prompt"
+        );
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
+    }
+
+    /// A name that is no served file is refused as one, the gate asked
+    /// first: NotAuthorized where write_file is refused, BadFileName where
+    /// the gate allows, the gate asked once per call either way.
+    #[test]
+    fn a_compare_and_swap_write_of_a_bad_name_is_refused_as_write_files() {
+        let alice = Caller(":1.42".into());
+        let m = core(false);
+        for name in ["server.ini", "../presets.ini", "presets.ini.tmp"] {
+            assert_eq!(
+                m.write_file_if(&alice, name, "[X]\n", "[Y]\n"),
+                Err(ManagerError::NotAuthorized),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            asked(&m),
+            vec![(alice.clone(), Action::Configure); 3],
+            "the gate runs before the name is looked at"
+        );
+        let m = core(true);
+        for name in ["server.ini", "../presets.ini", "presets.ini.tmp"] {
+            assert_eq!(
+                m.write_file_if(&alice, name, "[X]\n", "[Y]\n"),
+                Err(ManagerError::BadFileName),
+                "{name}"
+            );
+        }
+        assert_eq!(asked(&m), vec![(alice.clone(), Action::Configure); 3]);
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
     }
 
     // ── Start at boot ───────────────────────────────────────────────────
@@ -5455,5 +6123,93 @@ mod tests {
             "asked as a name, and unknown as an account"
         );
         assert_eq!(asked(&m), vec![]);
+    }
+    /// The bff naming a non-member, and a caller that is not the bff naming
+    /// a member: `write_file_if` is refused exactly as the other guarded
+    /// calls are, with the membership of the name asked (or not) and the
+    /// file never read.
+    #[test]
+    fn a_compare_and_swap_write_answers_to_the_principal_gates() {
+        let (p, logs) = passwords();
+        let m = auth_core(true, p);
+        assert_eq!(
+            m.write_file_if(&request(&bff(), "bob"), "presets.ini", "[X]\n", "[Y]\n"),
+            Err(ManagerError::NotAuthorized),
+            "a non-member is refused as the other guarded calls refuse it"
+        );
+        assert_eq!(
+            asked_admin(&logs),
+            vec!["bob".to_string()],
+            "the membership is asked once, of the principal named"
+        );
+        assert_eq!(
+            m.write_file_if(
+                &request(&Caller(":1.42".into()), "alice"),
+                "presets.ini",
+                "[X]\n",
+                "[Y]\n"
+            ),
+            Err(ManagerError::NotAuthorized),
+            "only the bff's account vouches for a user"
+        );
+        assert_eq!(
+            asked_admin(&logs),
+            vec!["bob".to_string()],
+            "a caller that is not the bff gets no account looked up"
+        );
+        assert_eq!(
+            asked(&m),
+            vec![],
+            "polkit decides nothing about a principal"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            vec![bff(), Caller(":1.42".into())],
+            "the caller is checked against the bff, once per call"
+        );
+        assert_eq!(*m.service().calls.lock().unwrap(), vec![]);
+    }
+
+    /// `Changed` answers with its own transport name and the kind's own
+    /// word as message, and `error_kind` gives the same word the action
+    /// record writes: the bff and the logs pin it.
+    #[test]
+    fn the_changed_refusal_has_its_own_error_name() {
+        let e = ManagerError::Changed;
+        assert_eq!(
+            error_reply(&e),
+            (
+                "org.privateai.Manager1.Error.Changed".to_string(),
+                "Changed".to_string()
+            )
+        );
+        assert_eq!(error_kind(&e), "Changed");
+    }
+
+    /// The method's shape, pinned in the production text: the caller's
+    /// whole text to compare (`expected`) and the text to write
+    /// (`contents`), and no `keep_api_key`: the caller sent the file as it
+    /// read it, key line included.
+    #[test]
+    fn write_file_if_takes_expected_and_contents_and_no_key_flag() {
+        let source = std::include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/manager/service.rs"
+        ));
+        let production = source
+            .split("\n#[cfg(test)]\n")
+            .next()
+            .expect("production text of service.rs");
+        let at = production
+            .find("pub fn write_file_if")
+            .expect("the method is there to be tested");
+        let signature = &production[at..at + production[at..].find('{').expect("a body")];
+        for param in ["who: &W", "name: &str", "contents: &str", "expected: &str"] {
+            assert!(signature.contains(param), "the signature lacks {param:?}");
+        }
+        assert!(
+            !signature.contains("keep_api_key"),
+            "the compare-and-swap takes no key flag"
+        );
     }
 }

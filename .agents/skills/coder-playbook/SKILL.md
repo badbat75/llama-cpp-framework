@@ -712,3 +712,19 @@ Lessons only: the rules are in `AGENTS.md`.
   (`.hidden`, `display: none`) element stays in `textContent`. A card test that asserts a field name is
   NOT in `card.textContent` cannot pass while the mandated hint is in that card: report the test, never
   drop or reword the mandated hint.
+- `clippy::todo` is a restriction lint, ALLOW by default (clippy 0.1.100, rustc 1.100): a `todo!()` the
+  tester left in a test-only match arm does NOT fail `cargo clippy -p <crate> --all-targets --
+  -D warnings`. Proof: the same run with `-W clippy::todo` prints it. So a slice can go green with a
+  stub in place; name the stub and the slice that fills it in the report.
+- The manager's principal gate refuses a caller that is not the bff's account BEFORE
+  `PasswordChecker::is_admin`, so a test that counts `asked_admin` once per call must not count a
+  non-bff call: `check_principal` asks the account only for the bff's (`service.rs`, the same order
+  `read_file` and `write_file_as` pin in their green tests).
+- A file can be rewritten under you while you read it (the tester replaced a whole test module between
+  my `read` and my `grep`: same lines, different text, `grep` found nothing for a name `read` had just
+  shown). A `grep` that misses text you read a moment ago means the file MOVED, not a look-alike glyph:
+  re-read the exact region right before each edit, and edit surgically, never rewrite a file.
+- One stale expectation in the crate's single `data_root_e2e` hides every phase that runs after it. To
+  check the rest without editing a test as a fix: make the minimal temporary edit, run the test, then
+  restore it with the exact inverse edit and re-read the lines to prove it. Report both the run and the
+  temporary edit; the tester owns the expectation.

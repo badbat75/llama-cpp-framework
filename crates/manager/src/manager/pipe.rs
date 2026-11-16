@@ -777,6 +777,9 @@ mod tests {
                 ManagerError::Service(s) => ClientError::Service(s.0.clone()),
                 ManagerError::Io(k) => ClientError::Io(k.to_string()),
                 ManagerError::Invalid(r) => ClientError::Invalid(r.clone()),
+                // The client's `Changed` is the faces' step (PLAN step 10,
+                // slice 4); no `every_error` entry before then.
+                ManagerError::Changed => todo!("the Changed client error: slice 4"),
             };
             assert_eq!(ClientError::from_reply(&name, &message), expected, "{e:?}");
         }

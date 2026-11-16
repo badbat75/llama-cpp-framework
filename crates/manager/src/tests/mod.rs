@@ -75,4 +75,7 @@ fn data_root_e2e() {
 
     // ── Manager core: the log of who acted (one record per guarded call) ──
     crate::manager::service::manager_action_log_e2e();
+
+    // ── Manager core: a write that swaps only on the text it expected ────
+    crate::manager::service::manager_write_file_if_e2e();
 }
