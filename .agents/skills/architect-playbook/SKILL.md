@@ -60,3 +60,14 @@ description: What the architect has learned about this project's components, int
   the instance (client restore after a restart, the MSIs' `Stop-Service`, the Windows `restart`
   thread) must be checked for a race with a server that is still saving. Windows `restart` is
   asynchronous (`scm.rs`, `RestartGate`); systemd's `RestartUnit` is a queued job.
+- Preset files as llama-server reads them (v1.0.0, checked 2026-11-16): the last line of a key wins,
+  keys are exact case, a repeated `[X]` header starts the section afresh (`common/preset.cpp`
+  `parse_ini_from_file`); every arg spelling is a key (`c` and `ctx-size` are one option), which no
+  reader of ours models. `ini::text::replace_key` edits the FIRST line, any case: an edit that leaves
+  a later duplicate changes nothing llama-server reads. The router re-reads `presets.ini` at
+  `GET /models?reload=1` and after a finished download (`need_reload`), not only at start.
+- The manager's preset checks (`checks::presets_file`) run only on sections whose lines changed, so a
+  section-scoped revision in the bff loses no check; the switch's two writes rely on
+  `presets_disabled_file`/`preset_ids_free` letting an unchanged twin through, destination first.
+- `WriteFileIf` refuses a missing file (`Changed`): a design that may create a file needs the plain
+  write for that case.

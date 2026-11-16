@@ -78,7 +78,7 @@ as not checked, and the step stays open.
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
 presets and switches them on or off. Left for it, in order: slice 8 (save the server
-file, keyed revision first), slices 11, 11b, 11c and 11d (presets); then the user's run on their machine.
+file, keyed revision first), slices 11, 11c, 11e, 11b and 11d (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -906,7 +906,21 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
    revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method
    (`ReadFile` plus `ini::parse_sections`); the `; url =` comment reader moves from `pai-app` to
-   `pai-core` so the bff can read `projectUrl`. After slices 11 and 11b.
+   `pai-core` so the bff can read `projectUrl`. After slices 11 and 11b. Its `revision` is the section revision of
+   `ARCHITECTURE.md` "Saving a preset from the web" (SipHash under the bff's key over the file name and
+   the section), not the file's hash.
+11e. **Save a preset from the web.** `PUT /api/presets/{id}` (`fe/briefs/02h-preset-save.md`), designed in
+   `ARCHITECTURE.md` "Saving a preset from the web" (2026-11-16): the edit applied in place (only the
+   changed lines; user, 2026-11-16: in place, or the whole section if in place proved too costly; the
+   architect chose in place), duplicates of an edited key cleaned up, a fixed list of keys the web may
+   set, the manager checking the edited section whole; Fit to VRAM editable on the web, MoE CPU layers
+   and MoE cache read-only (user, 2026-11-16). Slices there: `ini::text::remove_key` and `set_key`, the
+   section revision (in 11c), the body to the new text, the route; then 11b's switch as two
+   compare-and-swap writes, destination first. Reload of llama-server after a save: a later design;
+   until then `running` drives "restart to apply".
+11f. **The configurator's "Saved preset" says when a restart is needed** (from the architect,
+   2026-11-16): when the preset is in `presets.ini` and the instance is active, the GUI's `preset-saved`
+   message adds "restart to apply" (one status read, one string).
 11d. **A preset flag reads as llama-server reads it** (found by the web UI session's designer,
    2026-11-16; checked in the v1.0.0 clone: `common/preset.cpp` turns a flag whose value is one of
    `off`, `disabled`, `false`, `0` into its `--no-` form, any other value into the plain flag,

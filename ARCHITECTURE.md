@@ -572,6 +572,203 @@ revision), the contract (409 and 400 keys; `bind-all-with-others` is not among t
 knows, so it shows as `api-other` until the fe adds it), "Through the manager" (the new methods) and
 the pipe client's header.
 
+### Saving a preset from the web (step 10 items 11b, 11c, 11d, 2h)
+
+Designed 2026-11-16, proposed. `PUT /api/presets/{id}` as `fe/briefs/api-contract.md` proposes it,
+for the web UI's brief `fe/briefs/02h-preset-save.md`; with it the switch `PUT /api/presets/{id}/enabled`
+(item 11b). The user decided (2026-11-16): the save changes only the edited lines and keeps the rest
+of the preset files byte for byte; body `{revision, values}` with only the changed keys (a string
+sets, `null` removes), 200 `{revision, running}`; Fit to VRAM stays editable (the fe checks its value,
+the manager does not); MoE CPU layers and MoE cache stay read-only on the web. The user also allowed
+(same day) rewriting the whole section, as the configurator does, if in place is too costly: weighed
+below.
+
+**What exists.** No preset route in the bff yet (items 11 and 11c are open). `pai-core` `ini::text`
+has `replace_key` (first occurrence, key matched in any letter case, the line rewritten as
+`key = value` with its own line ending; a missing key appended after the section's last non-blank
+line), `section_text`, `replace_section` and `delete_section`, but no key removal. The readers
+(`ini::parse_sections`, `checks.rs` `RawSection::get`) take the LAST line of a key, exact case;
+llama-server does the same (`parsed[section][key] = value`, `common/preset.cpp:243` in the v1.0.0
+clone), treats keys as exact case (an unknown spelling is "not recognized", `:326-330`) and starts a
+section afresh at a repeated header (`parsed[current_section] = {}`, `:238`). The configurator's save
+renders the whole section from its `Preset` struct (`pai-app` `presets::render_section`, about 400
+lines with the reader and `validate_for_save`); the struct has no slot for a key it does not model.
+The manager's `check_contents` (`manager/service.rs`) runs `checks::presets_file` (or
+`presets_disabled_file`) and `preset_ids_free` against the files on disk, under the `writing` lock,
+for `WriteFileIf` as for `WriteFile`; `presets_file` checks every section that is
+not in the old file with identical lines, so an edited section is checked whole and the untouched
+ones are not.
+
+**In place or the whole section.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. Edit the changed lines in place** | Two `ini::text` helpers (about 60 lines with the duplicate rule below) and one pure bff function applying `values` | An edited line is rewritten whole, so an inline comment on that line goes (said in the docs); nothing else moves | **Chosen** |
+| B. Render the whole section, as `pai-config` | The `Preset` reader, `render_section` and the prunes must reach the bff: move about 1000 lines from `pai-app` to `pai-core`, or link `pai-app` (whose build script needs a llama.cpp clone); the fe would send a whole document instead of changes | Drops comments and every key the struct does not model (a llama-server option set by hand is lost silently), rewrites spellings the page shows ("Written as 0"), so untouched values change; breaks the user's first decision | Rejected |
+
+A is both the smaller change and the one that keeps the user's decision; B is no fallback worth
+keeping open.
+
+**(a) The revision covers the section, not the file.** The manager's compare-and-swap compares whole
+files, but that is the bff's guard for the window between its own read and its write; the revision is
+the guard for the window between the page's read and the save. They can differ:
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **Section: SipHash-2-4 under the bff's per-start key of `<file name> LF <section text, trailing blank lines cut>`** | The same function as the server file's, over `ini::text::section_text`; the file name in the input so a switch between the page's read and the save is a change | None found: the bff applies the edit to the file as it reads it at the PUT, and the manager re-checks the section and the file-wide rules (the load-on-startup count, unique ids) against the files at the write | **Chosen** |
+| File text, as `server.rs` | Nothing new | Every save of another preset in the same file, or a switch of another preset, gives this page a 409 and a Reload: spurious with many presets in one file | Rejected |
+
+Trailing blank lines are cut because `replace_section` appending a new section after the last one
+rewrites the blank lines before it. A bff restart still makes every open page stale (one 409, as for
+the server file). Item 11c's GET sends this revision; 11c's "hash of the file text" is replaced.
+
+**(b) The key-removal helper and the duplicate rule.** Two transforms in `pai-core` `ini::text`,
+both matching a key line as `replace_key` does (`line_starts_with_key`: any letter case, never a
+comment line, never a longer key such as `ctx-size-draft` for `ctx-size`), only inside the named
+section:
+
+- `remove_key(content, section, key) -> String`: every line of that key removed, its line ending with
+  it; every other byte kept. No line of the key: the text unchanged.
+- `set_key(content, section, key, value) -> String`: every line of the key after the first removed,
+  then `replace_key`, so exactly one line remains, at the first occurrence's place.
+
+Which occurrence an edit touches: the first keeps its place, every other goes, so the value written
+is the one every reader takes. The bff normalizes, it does not refuse: a duplicate is a hand-edit
+the web cannot otherwise mend, and llama-server already reads only the last line, so removing the
+earlier ones changes nothing it reads, and the user saw the last value on the page. A line of the key
+in another letter case (`CTX-SIZE = 1`) counts as an occurrence and goes too; llama-server refuses it
+anyway (`:326-330`). A section repeated in the file (two `[X]` headers, any case) is not mended: the
+bff edits the first, and the manager refuses the write with `preset-name-taken` (`preset_sections`),
+a 422 without `field`.
+
+**The body and what the bff refuses before the manager.** 400 `presets-malformed` when the body is not
+`{revision: string, values: object}`, a value is neither a string nor `null`, a set value is empty
+after trimming spaces and tabs (removing is `null`), holds a control character other than tab (CR and
+LF included: they would end the line), or a key is not in the bff's list of web-editable keys. The
+list (a constant in the bff, tested against brief 02h's table 133) is the keys of every control 2h.1
+to 2h.9 enables, so the route is built once for all of 2h; it leaves out `model`, `mmproj`,
+`model-draft`, `spec-type`, the MoE keys (`n-cpu-moe`, `moe-cache-mib`) and anything else until a slice
+enables it. Why a list rather than the contract's key syntax: the manager does not check unknown keys
+and llama-server refuses to start on one, so a syntax rule would let any web caller stop the next
+start; the list fails closed, and it also answers the contract's open point on `model: null` (400,
+never sent by the fe). A `[` at a value's start needs no rule: the value never starts a line. Then
+each set value goes through `checks::comment_markers(key, value)`, for every key, not only the text
+keys the manager checks, since `;` and `#` cut a value silently for every reader: 422 `comment-markers`
+field the key.
+
+**(c) The manager checks the edited section whole: confirmed** (`presets_file`, above). An untouched
+hand-edited bad value in that section is refused too; other sections are not checked. The 422 is
+`{key, args, field}`, `field` given by one rule per key, in one bff table beside the server file's:
+`args[0]` for `not-whole-number-in-range`, `comment-markers`, `not-a-number`, `not-one-of`,
+`not-json-object` and `min-above-max` (its minimum key); `fit-target` for `fit-target-format`;
+`moe-cache-mib` for `moe-cache-with-tensor-split`; `load-on-startup` for both `load-on-startup-*`;
+`model` for `preset-no-model`; `override-tensor` for both `override-no-*`; no `field` for
+`invalid-preset-id` and `preset-name-taken`. A field the page does not show as an enabled control is
+the fe's business (brief 02h, 143 and 144).
+
+**(d) The keys and `running`.** `presets-malformed` (400) and `preset-changed-elsewhere` (409) are
+accepted, on the pattern of `server-malformed` and `server-changed-elsewhere`. `running` is true when
+the section was written to `presets.ini` and any instance serving it is `active` or `activating`.
+Which instances serve a preset: every instance of the engine whose file holds it, since each
+instance's llama-server gets the engine's one `presets.ini` (`launch::server_args`, `--models-preset`)
+and the manager already counts load-on-startup against every instance's `ModelsMax` for that reason.
+With one engine today, that is every instance: `list_instances`, then `status` of each until one is
+active or activating. A failed status read after a done write gives `running: true`, as for the server
+file. When engines arrive (item 10) the list is filtered by the engine.
+
+**The bff's steps for a PUT**, each failure answered before the next: session (401); the body (400,
+then the comment-marker 422); read `presets.ini` as the user (`ReadFileAs`) and find the section
+(`id` matched in any letter case), else read `presets.ini.disabled`, else 404 `no-preset-named`; the
+section revision compare (409); apply the edits in body order, `null` by `remove_key`, a string by
+`set_key` with the value trimmed; a text equal to the one read is 200 with the current revision and no
+write (so `{}` with a fresh revision is 200; a stale one is 409 first); else `WriteFileIfAs` with the
+text read as `expected` (`Changed` is 409), the manager re-running its checks (422); then `running`;
+200 `{revision of the section as written, running}`. The other answers, the write's own time limit
+and 504 `client-timeout` are the server file's (slice 8), shared code. The id is only matched against
+section headers; the two file names are fixed, so no path comes from the URL.
+
+**(e) Reloading llama-server after a save: later, not now.** The v1.0.0 router re-reads its preset
+file at `GET /models?reload=1` (any non-empty value, `tools/server/server-models.cpp:2166-2169`) and
+unloads each running model whose preset changed or was removed (`:947-965`); it also reloads by itself
+at the next request after a download finishes (`need_reload`, `:1124-1128`, `:1498`). Calling it from
+the bff is a new boundary: bff to llama-server over HTTP, with the instance's address and, when one is
+set, its API key; and it unloads a model mid-conversation. It needs its own design and a user choice
+(apply now or on restart), so today `running` drives "restart to apply". Note for the docs: a running
+router can pick up a saved preset before a restart, at its next reload.
+
+**(f) The configurator's "Saved preset [id]".** It omits that a running router keeps the old preset
+(until a restart or the reload above). Recommended as a small plan item, not part of this design: under
+the manager the GUI already reads the instance's state, so "saved, restart to apply" when the preset is
+in `presets.ini` and the instance is active is one status read and one string.
+
+**The switch on and off (item 11b).** Two files cannot be replaced atomically together. Options:
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **The bff makes two compare-and-swap writes, destination first, as `presets::move_between`** | No manager change: read both files, `WriteFileIfAs` the destination with the section added (`text::replace_section` of the raw `section_text`), then `WriteFileIfAs` the source without it | A failure or `Changed` between the two leaves the preset in both files: read as enabled (`load_listed`'s rule), and the next switch mends it (the destination's twin is replaced, the source's deleted) | **Chosen** |
+| A manager `MovePreset(As)` doing both writes under `writing` | Two methods per face, protocol 3 | Still not crash-atomic: the same two-file state after a crash; gains only that no other manager write lands between the two, which the two compares already detect | Not now |
+
+The manager's checks were made for this order: switching off adds the section unchanged to the
+disabled file, where `presets_disabled_file` and `preset_ids_free` let a section `presets.ini` holds
+unchanged through, so it is never refused; switching on adds a section new to `presets.ini`, checked
+whole with the load-on-startup count, and `preset_ids_free` lets it through because the disabled file
+holds it unchanged. The switch takes no revision (it moves the section unchanged). A missing disabled
+file is created with the configurator's header text; `WriteFileIf` refuses a missing file
+(`Changed`), so the first switch off uses `WriteFileAs` for that one file only when the read found
+none (a race there is two creators of the same header, harmless). Answers: 200 `{enabled, running}`,
+already there 200 with no write, 409 `preset-changed-elsewhere` on `Changed` with "reload the list"
+(new for the contract), 422 as the save, 404, 401, 403, 503, 504. A per-bff lock is not needed: the
+compares catch every interleaving, the losing tab gets 409.
+
+**Trust boundaries.** As the server file's: browser to bff, the session and the same-origin guard;
+bff to manager, the kernel's peer identity and the principal re-checked in `pai`. A `pai` member (or a
+compromised bff) can write any listed key with any one-line value, which can stop the engine's next
+start (a bad `fit`, a flag value llama-server refuses): the same power the GUI and `pai` give that
+user, no more. Fails closed: a bad body, an unlisted key, a stale section, a changed file, any check;
+nothing is written.
+
+**Order.** After slice 8 (its route gives the shared error and time-limit code), item 11 (the list)
+and item 11c (the read, with the section revision); 11d is independent.
+
+**Slices**, each test first, in order:
+
+1. **`ini::text::remove_key` and `set_key` (pai-core).** Done when: removing a key drops every line of
+   it in the named section, in any letter case, and only there (the same key in another section, a
+   comment naming it and `ctx-size-draft` stay), each other byte equal, LF and CRLF files alike; an
+   absent key leaves the text equal; setting a key with three lines leaves one, at the first's place,
+   with the new value, the parsers reading it; setting a new key appends it as `replace_key` does.
+2. **The section revision (bff, in item 11c's read).** Done when: the same section read twice gives the
+   same revision; a change in another section, or a section appended after it, does not change it; a
+   change in the section does; the same text in the other file gives another; two routers give
+   different ones.
+3. **The body to the new text (bff, pure, no manager).** A function from the body and the file text to
+   the text to write or a 400/422. Done when: `{}` gives the text unchanged; a set key replaces only
+   its line (the file's other bytes equal, a comment above it kept); `null` removes every line of the
+   key; an unlisted key (`model`, `n-cpu-moe`, `foo`) is 400; a value with LF, CR or another control
+   character, an empty value, a number, a missing `revision` are 400; `a;b` is 422 `comment-markers`
+   field the key.
+4. **The route `PUT /api/presets/{id}`.** Done when, against the fake manager: a fresh revision writes
+   through `write_file_if` with the text read as `expected` and answers 200 with the revision the GET
+   then returns; a stale revision, the section moved to the other file, and the manager's `Changed`
+   are 409 with no write; an id in neither file 404; a switched-off preset is written to
+   `presets.ini.disabled` and answers `running: false`; each refusal key maps to its `field` (table
+   above, one test per rule); `running` true for an enabled preset with an instance active or
+   activating, false when every one is inactive, true when the status read fails after the write; no
+   session 401 with no connect; the same text 200 with no write.
+5. **The switch `PUT /api/presets/{id}/enabled` (item 11b).** Done when: switching off writes the
+   disabled file first, then `presets.ini`, the section's bytes equal in its new file; a missing
+   disabled file is created with the header; a `Changed` on the second write leaves the preset in both
+   files and answers 409, and a second switch mends it; switching on a load-on-startup preset past
+   `ModelsMax` is 422 with nothing written; already there is 200 with no write.
+
+Then the docs agent updates the contract (the section revision and its 409 wording, the key list
+instead of the key syntax, `presets-malformed` for an empty value, the switch's 409),
+`crates/bff/README.md` and `ini.rs`'s header (the two transforms and the duplicate rule).
+
+**For the user to decide.** Nothing blocks the slices. Two choices are recommendations the user may
+overrule: (1) the section revision rather than the file's (recommended); (2) reloading llama-server
+after a save stays a later design (recommended), with "restart to apply" meanwhile.
+
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
