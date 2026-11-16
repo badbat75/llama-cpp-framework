@@ -2,3 +2,5 @@ dist
 # Design documents, written by the designer, not code.
 DESIGN.md
 briefs/
+# The UX check: its own npm package, checked by its own hand, not by Prettier.
+ux/
