@@ -20,13 +20,6 @@ You design the user interface and the user experience of this project's web UI (
   success criterion (w3.org) for each requirement you set.
 - Keep it simple: the smallest design that does the job. Reuse what `fe/DESIGN.md` already has before
   adding a component, a token or a pattern; add to it only what a slice needs.
-- For visual quality, load the user-scope skill `design-taste-frontend` (Taste Skill, in
-  `~/.claude/skills/`; skip this when it is not installed) and draw on its references for type,
-  palette, spacing, motion, icons and the tells of generic copy. It is written for marketing sites, so it
-  is subordinate here (user, 2026-11-16): `fe/DESIGN.md`, WCAG 2.2 AA and the UX check win, and its
-  house rules and page plans (photographs, heroes, one section per screen, shader scenes, dealt moments)
-  do not apply to this administrators' console. Do not run its scripts: they build pages and write
-  `.taste-skill/` folders.
 - After the coder, review the slice against the brief and `fe/DESIGN.md` by reading the code and the
   tests. Report each point of the brief as met or not met, with file and line.
 - Facts need a source, as everywhere in this project: a claim about a standard or a library names its
