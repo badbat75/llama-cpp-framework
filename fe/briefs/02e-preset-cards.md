@@ -323,7 +323,7 @@ nothing is read twice.
 121. **Tests and strings.** No new string: the line is data. Stub values: `ctx-size` `172032000`
     (9 characters: line `172032000`) and `17203200` (8: no line); `values` `{}` (no line anywhere);
     `pooling` a 21-character unlisted value (line holds it) and a 20-character one (no line);
-    `kv-unified` `auto` (no line); `chat-template-kwargs` `{"enable_thinking":false}` (24: line).
+    `kv-unified` `auto` (no line); `chat-template-kwargs` `{"enable_thinking":false}` (25: line).
     Each line found by its id, with `aria-hidden="true"` and its text equal to the value.
 
 ## 2e.3. Chat / reasoning, Vision

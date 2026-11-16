@@ -12,6 +12,10 @@ type Common = {
   hint: string
   /** The error shown under the control, when there is one. */
   error?: string
+  /** A value longer than the control shows, repeated in full under it, after
+   * the control and its unit and before the hint (the full-value line). Only a
+   * read-only page passes it: an editable control can be scrolled. */
+  full?: { id: string; text: string }
 }
 
 /** What marks a control invalid and names its error. */
@@ -57,12 +61,24 @@ function Hint({ id, text, open }: { id: string; text: string; open: boolean }) {
   )
 }
 
+/** The full-value line: the value as the reply has it, under the control. The
+ * control already exposes it, so it is hidden from assistive technology and
+ * named by no `aria-describedby`. It is a paragraph, so it takes no tab stop. */
+function FullValue({ id, text }: { id: string; text: string }) {
+  return (
+    <p id={id} className="full-value" aria-hidden="true">
+      {text}
+    </p>
+  )
+}
+
 /** A field of one control named by its label, `<id>-control`. */
 function LabelField({
   id,
   label,
   hint,
   error,
+  full,
   children,
 }: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -78,6 +94,7 @@ function LabelField({
         />
       </div>
       <div className="field-control">{children}</div>
+      {full !== undefined && <FullValue id={full.id} text={full.text} />}
       <Hint id={`${id}-hint`} text={hint} open={open} />
       {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </div>
@@ -93,6 +110,7 @@ export function GroupField({
   label,
   hint,
   error,
+  full,
   children,
 }: Common & { children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -108,6 +126,7 @@ export function GroupField({
         />
       </legend>
       <div className="field-control">{children}</div>
+      {full !== undefined && <FullValue id={full.id} text={full.text} />}
       <Hint id={`${id}-hint`} text={hint} open={open} />
       {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
     </fieldset>
@@ -159,6 +178,7 @@ export function DefaultBoxField({
   label,
   hint,
   error,
+  full,
   box,
   ticked,
   text,
@@ -179,7 +199,7 @@ export function DefaultBoxField({
   onText: (text: string) => void
 }) {
   return (
-    <GroupField id={id} label={label} hint={hint} error={error}>
+    <GroupField id={id} label={label} hint={hint} error={error} full={full}>
       <Check
         id={`${id}-box`}
         text={box}
@@ -329,6 +349,7 @@ export function TextField({
   label,
   hint,
   error,
+  full,
   value,
   placeholder,
   disabled,
@@ -341,7 +362,7 @@ export function TextField({
   onChange: (value: string) => void
 }) {
   return (
-    <LabelField id={id} label={label} hint={hint} error={error}>
+    <LabelField id={id} label={label} hint={hint} error={error} full={full}>
       <input
         id={`${id}-control`}
         type="text"
@@ -362,6 +383,7 @@ export function SelectField({
   label,
   hint,
   error,
+  full,
   options,
   value,
   disabled,
@@ -374,7 +396,7 @@ export function SelectField({
   onChange: (value: string) => void
 }) {
   return (
-    <LabelField id={id} label={label} hint={hint} error={error}>
+    <LabelField id={id} label={label} hint={hint} error={error} full={full}>
       <select
         id={`${id}-control`}
         value={value}

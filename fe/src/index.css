@@ -544,6 +544,19 @@ legend.field-label {
   margin: 0 0 var(--space-1);
 }
 
+/* Full-value line (DESIGN.md 5.2): a disabled input or select cannot scroll,
+   so a value longer than its control shows is repeated under it. Monospace,
+   like the control, and wrapping anywhere: a JSON value has no space to break
+   at, and the column is ~240 px at 320 px (02e-preset-cards.md 118). */
+.full-value {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
 @media (min-width: 720px) {
   .field {
     grid-template-columns: 200px minmax(0, 1fr);
@@ -556,6 +569,7 @@ legend.field-label {
   }
 
   .field-control,
+  .full-value,
   .field-hint,
   .field-error {
     grid-column: 2;

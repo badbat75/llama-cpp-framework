@@ -322,6 +322,26 @@ function shown(
   }
 }
 
+/** The full-value line's limits, in characters (criterion 119): the number
+ * input is 10ch wide (`input.number`), a text input or a select holds about 20
+ * in the field column at 320 px, the narrowest case. A count and not a
+ * measure, so the rule is the same at every width and needs no layout. */
+const FULL_LIMIT: Record<Row['kind'], number> = {
+  number: 8,
+  text: 20,
+  select: 20,
+}
+
+/** The full-value line of criterion 118: a value longer than its control shows
+ * is repeated in full under it, since a disabled control cannot be scrolled or
+ * wrapped. `undefined` when the control shows all of the value: nothing to add.
+ */
+function fullValue(row: Row, text: string) {
+  return text.length <= FULL_LIMIT[row.kind]
+    ? undefined
+    : { id: `preset-full-${row.key}`, text }
+}
+
 /** One field of a card, in the form its row names. */
 function PresetField({
   row,
@@ -333,6 +353,7 @@ function PresetField({
   const id = `preset-${row.key}`
   const value = held(values, row.key)
   if (row.kind === 'number') {
+    const text = value ?? ''
     return (
       <DefaultBoxField
         id={id}
@@ -342,7 +363,8 @@ function PresetField({
         numeric={row.integer}
         unit={row.unit}
         ticked={value === undefined}
-        text={value ?? ''}
+        text={text}
+        full={fullValue(row, text)}
         disabled
         onTick={() => undefined}
         onText={() => undefined}
@@ -352,12 +374,14 @@ function PresetField({
   if (row.kind === 'text') {
     // No placeholder: an example in a field nobody can type into reads as a
     // value (criterion 87).
+    const text = value ?? ''
     return (
       <TextField
         id={id}
         label={row.label}
         hint={row.hint}
-        value={value ?? ''}
+        value={text}
+        full={fullValue(row, text)}
         placeholder=""
         disabled
         onChange={() => undefined}
@@ -365,6 +389,10 @@ function PresetField({
     )
   }
   const select = shown(row, value)
+  // What the user reads for a select is the selected option's text, which for
+  // an unlisted value is the value itself (criterion 87).
+  const text =
+    select.options.find((o) => o.value === select.value)?.text ?? select.value
   return (
     <SelectField
       id={id}
@@ -372,6 +400,7 @@ function PresetField({
       hint={row.hint}
       options={select.options}
       value={select.value}
+      full={fullValue(row, text)}
       disabled
       onChange={() => undefined}
     />
