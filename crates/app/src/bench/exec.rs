@@ -44,10 +44,11 @@ use super::record::Recorder;
 use super::{Mode, Plan, Point, RunMeta};
 use crate::{http, paths, presets, proc, runstate, server_cfg};
 
-/// Read timeout for one live request. Generous for the same reason the snapshot
-/// transfer's is: a cold prefill of a long prompt on a big model runs into
-/// minutes, and the cost of guessing low is a completed measurement reported as
-/// a timeout.
+/// Deadline of one live request: connect, write and every read share it. The
+/// base `live_timeout` extends for the output cap. Generous for the same reason
+/// the snapshot transfer's is: a cold prefill of a long prompt on a big model
+/// runs into minutes, and the cost of guessing low is a completed measurement
+/// reported as a timeout.
 const LIVE_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// How often the synthetic runner looks up from the output pipe to notice a

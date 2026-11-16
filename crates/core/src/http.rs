@@ -82,10 +82,13 @@ pub fn request(
             // side ends the body.
             Ok(0) => break,
             Ok(n) => raw.extend_from_slice(&buf[..n]),
-            // A blocking read that reaches its timeout answers `WouldBlock`: the
-            // deadline is spent.
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Err(timed_out()),
-            Err(e) => return Err(err_str(e)),
+            Err(e) => match read_error_step(e.kind()) {
+                // The read was cut short by something that is not the deadline;
+                // the timeout set above still bounds the loop.
+                ReadStep::Retry => continue,
+                ReadStep::TimedOut => return Err(timed_out()),
+                ReadStep::Fail => return Err(err_str(e)),
+            },
         }
     }
     parse_response(&String::from_utf8_lossy(&raw))
@@ -97,6 +100,27 @@ pub fn request(
 fn remaining(deadline: Instant) -> Option<Duration> {
     let left = deadline.checked_duration_since(Instant::now())?;
     (!left.is_zero()).then_some(left)
+}
+
+/// What the read loop does with a failed read.
+enum ReadStep {
+    /// Read again: the read was cut short by something other than the deadline.
+    Retry,
+    /// The read timeout was reached, so the request's deadline is spent.
+    TimedOut,
+    /// A plain I/O failure.
+    Fail,
+}
+
+/// Map a failed read to its step. A blocking read that reaches its timeout
+/// answers `WouldBlock` on Unix and `TimedOut` on Windows: one event, two kinds
+/// (`TcpStream::set_read_timeout`).
+fn read_error_step(kind: std::io::ErrorKind) -> ReadStep {
+    match kind {
+        std::io::ErrorKind::Interrupted => ReadStep::Retry,
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => ReadStep::TimedOut,
+        _ => ReadStep::Fail,
+    }
 }
 
 /// The report for a request whose deadline passed before the answer arrived.
@@ -158,7 +182,9 @@ fn dechunk(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::parse_response;
+    use super::read_error_step;
     use super::request;
+    use super::ReadStep;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
@@ -259,5 +285,57 @@ mod tests {
             outcome.is_err(),
             "a reply that never completed is an error, got: {outcome:?}"
         );
+    }
+
+    // The four tests below cover what a read error answers: retry
+    // (`Interrupted`: a signal, not the deadline, the loop must not end on
+    // it), the deadline (`WouldBlock` on Unix and `TimedOut` on Windows are
+    // the same reached read timeout), or a plain failure.
+    #[test]
+    fn an_interrupted_read_is_retried() {
+        assert!(
+            matches!(
+                read_error_step(std::io::ErrorKind::Interrupted),
+                ReadStep::Retry
+            ),
+            "Interrupted must be retried, not end the request"
+        );
+    }
+
+    #[test]
+    fn a_wouldblock_read_is_the_deadline() {
+        assert!(
+            matches!(
+                read_error_step(std::io::ErrorKind::WouldBlock),
+                ReadStep::TimedOut
+            ),
+            "WouldBlock (the read timeout on Unix) must end the request as timed out"
+        );
+    }
+
+    #[test]
+    fn a_timedout_read_is_the_deadline() {
+        // The same reached timeout on Windows answers `TimedOut`: the user
+        // must get the `request-timed-out` key, not the raw OS message.
+        assert!(
+            matches!(
+                read_error_step(std::io::ErrorKind::TimedOut),
+                ReadStep::TimedOut
+            ),
+            "TimedOut (the read timeout on Windows) must end the request as timed out"
+        );
+    }
+
+    #[test]
+    fn any_other_read_error_fails_the_request() {
+        for kind in [
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            assert!(
+                matches!(read_error_step(kind), ReadStep::Fail),
+                "{kind:?} is neither the deadline nor interruptible"
+            );
+        }
     }
 }
