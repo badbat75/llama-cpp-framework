@@ -307,6 +307,8 @@ function refusalText(key: string, args: string[]): string | undefined {
       return t('api-client-address-in-use', ...args)
     case 'client-unresolvable-host':
       return t('api-client-unresolvable-host', ...args)
+    case 'bind-all-with-others':
+      return t('api-bind-all-with-others', ...args)
     default:
       return undefined
   }
@@ -324,6 +326,7 @@ function fallbackField(key: string, args: string[]): string | undefined {
     case 'client-address-in-use':
       return 'Port'
     case 'client-unresolvable-host':
+    case 'bind-all-with-others':
       return 'Hostname'
     default:
       return undefined
@@ -378,6 +381,9 @@ async function sendSave(
       return failed(t('api-client-unavailable'))
     case 'client-no-instance':
       return failed(t('instance-not-found', id))
+    case 'client-timeout':
+      // The service's own time-out may have written the file too (4.8).
+      return failed(t('save-timeout'))
   }
   const text = refusalText(error.key, error.args)
   if (text !== undefined) {

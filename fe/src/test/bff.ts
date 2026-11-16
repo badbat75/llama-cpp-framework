@@ -170,8 +170,12 @@ export const EN: Record<string, string> = {
     'Another instance, {0}, already uses that address and port.',
   'api-client-unresolvable-host':
     'The host name {0} does not resolve to an address.',
+  // Slice S3 (section 4e): a save of a hand-edited file that binds 0.0.0.0
+  // with other addresses. The English is the en_US.toml line, verbatim.
+  'api-bind-all-with-others':
+    'Hostname lists 0.0.0.0 with other addresses; 0.0.0.0 already covers every address, so bind it alone.',
   'api-server-changed-elsewhere':
-    'These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost.',
+    'These settings changed elsewhere, or the web service restarted, after you opened them. Reload to see them; your edits here will be lost.',
   'api-other': 'The request was refused ({0}).',
   'server-edits-dropped':
     'Your unsaved changes were dropped: you signed in with a different account. The form shows the saved settings.',

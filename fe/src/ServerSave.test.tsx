@@ -2612,3 +2612,262 @@ test('1b.30, 31: Discard clears the errors of failed client checks as well as th
   ).toBeNull()
   expectNoAlert(main, 'after Discard')
 })
+
+// ── Slice S3: the save's answers as the bff will send them (4e) ─────────
+
+/** A hand-edited file binding 0.0.0.0 with another address (4e). */
+const BIND_ALL = { Hostname: '0.0.0.0,10.0.0.9' }
+/** The refusal's text, the en_US.toml line (S3.7). */
+const BIND_TEXT = en('api-bind-all-with-others')
+/** The answer a bff with the check sends: 422, no args, naming Bind to. */
+const BIND_REFUSAL = {
+  key: 'bind-all-with-others',
+  args: [],
+  field: 'Hostname',
+}
+
+/** Bind to's fieldset (5.2). */
+function bindTo(main: HTMLElement) {
+  return within(main).getByRole('group', { name: 'Bind to' })
+}
+
+/** The Bind to rows of a form loaded with `BIND_ALL`. */
+function bindRows(main: HTMLElement) {
+  return within(bindTo(main)).getAllByRole('checkbox') as HTMLInputElement[]
+}
+
+test('S3.1: a 422 bind-all-with-others fills save-refused with api-bind-all-with-others', async () => {
+  const { bff, main } = await loaded({
+    server: () => reply(200, serverDoc(BIND_ALL)),
+    save: () => reply(422, BIND_REFUSAL),
+  })
+  editPort(main)
+  await save(main, bff)
+  await within(main).findByText(en('save-refused', BIND_TEXT))
+  expectAlert(main, en('save-refused', BIND_TEXT), 'the bar reads the new text')
+  expect(
+    main.textContent,
+    'not the unknown-key sentence of an answer the fe does not know',
+  ).not.toContain(en('api-other', 'bind-all-with-others'))
+})
+
+test('S3.2: a 422 bind-all-with-others marks every checked Bind to row and focuses the first, named and by fallback', async () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ['the answer names field Hostname', BIND_REFUSAL],
+    // No field: the fallback for this key is Bind to too (S3.2).
+    ['no field, the fallback', { key: 'bind-all-with-others', args: [] }],
+  ]
+  for (const [what, body] of cases) {
+    const { bff, main } = await loaded({
+      server: () => reply(200, serverDoc(BIND_ALL)),
+      save: () => reply(422, body),
+    })
+    editPort(main)
+    await save(main, bff)
+    await within(main).findByText(en('save-refused', BIND_TEXT))
+    const rows = bindRows(main)
+    const checked = rows.filter((r) => r.checked)
+    expect(checked.length, `${what}: the fixture has checked rows`).toBe(2)
+    // Exactly the checked rows carry the refusal: they are the value refused.
+    expect(
+      rows.map((r) => r.getAttribute('aria-invalid') === 'true'),
+      `${what}: the checked rows are marked, the others are not`,
+    ).toEqual(rows.map((r) => r.checked))
+    for (const row of checked) expectError(row, BIND_TEXT, what)
+    const bind = bindTo(main)
+    const error = within(bind).getByText(BIND_TEXT)
+    expect(isHidden(error), `${what}: the error is shown`).toBe(false)
+    expect(
+      before(rows[rows.length - 1]!, error),
+      `${what}: the error sits after the last row`,
+    ).toBe(true)
+    expect(
+      document.activeElement,
+      `${what}: focus on the first checked row`,
+    ).toBe(checked[0])
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('S3.3: a Bind to edit clears the bind-all-with-others error and leaves the bar alert', async () => {
+  const { bff, main } = await loaded({
+    server: () => reply(200, serverDoc(BIND_ALL)),
+    save: () => reply(422, BIND_REFUSAL),
+  })
+  editPort(main)
+  await save(main, bff)
+  await within(main).findByText(en('save-refused', BIND_TEXT))
+  const bind = bindTo(main)
+  expect(
+    bindRows(main).filter((r) => r.getAttribute('aria-invalid') === 'true')
+      .length,
+    'rows marked before the edit',
+  ).toBe(2)
+  // 0.0.0.0 is the only row the user can act on: while it is checked the
+  // others are disabled (5.3).
+  fireEvent.click(
+    within(bind).getByRole('checkbox', { name: en('server-bind-all') }),
+  )
+  expect(within(bind).queryByText(BIND_TEXT), 'the error is gone').toBeNull()
+  expect(
+    bindRows(main).filter((r) => r.getAttribute('aria-invalid') === 'true'),
+    'no row marked',
+  ).toEqual([])
+  expectAlert(main, en('save-refused', BIND_TEXT), 'the alert after the edit')
+  expect(status(main).textContent, 'the form is still dirty').toBe(
+    en('save-unsaved'),
+  )
+})
+
+test('S3.4: a 409 server-changed-elsewhere shows the new text with Reload; the edits and the reload flow are unchanged', async () => {
+  let reads = 0
+  const { bff, main } = await loaded({
+    server: () =>
+      ++reads === 1
+        ? reply(200, serverDoc())
+        : reply(200, { ...serverDoc({ Port: 9000 }), revision: 'r-9' }),
+    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+  })
+  editPort(main)
+  await save(main, bff)
+  await within(main).findByText(en('api-server-changed-elsewhere'))
+  expectAlert(
+    main,
+    en('api-server-changed-elsewhere'),
+    'the bar reads the new text',
+  )
+  expect(
+    main.textContent,
+    'the old sentence is gone: it named no web service restart',
+  ).not.toContain(
+    'These settings were changed elsewhere after you opened them.',
+  )
+  expect(box(main, 'Port').value, 'the edit is kept').toBe('8581')
+  expect(
+    within(main).queryByRole('button', { name: en('session-sign-in') }),
+    'no Sign in',
+  ).toBeNull()
+  // Reload asks first, then reads the file again: unchanged (35).
+  fireEvent.click(within(main).getByRole('button', { name: en('save-reload') }))
+  const ask = dialog(en('discard-title'))
+  fireEvent.click(
+    within(ask).getByRole('button', { name: en('discard-confirm') }),
+  )
+  await waitFor(() =>
+    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+  )
+  await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
+  expectNoAlert(main, 'after Reload')
+})
+
+test('S3.5: the bind-all-with-others answer is a role="alert" and every marked row names its error', async () => {
+  const { bff, main } = await loaded({
+    server: () => reply(200, serverDoc(BIND_ALL)),
+    save: () => reply(422, BIND_REFUSAL),
+  })
+  editPort(main)
+  await save(main, bff)
+  const line = status(main)
+  const shown = await within(main).findByText(en('save-refused', BIND_TEXT))
+  const alert = shown.closest('[role="alert"]')
+  expect(alert, 'the announcement is a role="alert"').not.toBeNull()
+  expect(before(line, alert!), 'and it is the bar alert').toBe(true)
+  for (const row of bindRows(main).filter((r) => r.checked))
+    expectError(row, BIND_TEXT, 'a marked row names its error')
+})
+
+test('S3.6: a 504 client-timeout reads as the fe save time-out: save-timeout, no button, edits kept, the held revision unchanged', async () => {
+  const { bff, main } = await loaded({
+    // The 502 that follows pins that the reading is keyed on the key:
+    // client-other keeps save-failed (4e, out of S3).
+    save: (_body, n) =>
+      n === 1
+        ? reply(504, { key: 'client-timeout', args: [] })
+        : reply(502, { key: 'client-other', args: [] }),
+  })
+  editPort(main)
+  await save(main, bff)
+  await within(main).findByText(en('save-timeout'))
+  expectAlert(main, en('save-timeout'), 'the bar reads save-timeout')
+  expect(within(main).queryByText(en('save-failed')), 'not "Not saved"').toBe(
+    null,
+  )
+  expect(
+    within(main)
+      .queryAllByRole('alert')
+      .flatMap((a) => [...a.querySelectorAll('button')]),
+    'no Reload and no Sign in in the alert',
+  ).toEqual([])
+  // The bar's answer buttons are siblings of the role="alert" paragraph, so
+  // the check above cannot see them: pin them by role too.
+  for (const name of [en('save-reload'), en('session-sign-in')])
+    expect(
+      within(main).queryByRole('button', { name }),
+      `no ${name} in the bar`,
+    ).toBeNull()
+  expect(box(main, 'Port').value, 'the edit is kept').toBe('8581')
+  expect(status(main).textContent, 'the form stays dirty').toBe(
+    en('save-unsaved'),
+  )
+  expect(
+    [...main.querySelectorAll('[aria-invalid="true"]')].map((e) => e.outerHTML),
+    'no field marked',
+  ).toEqual([])
+  // The revision the page holds did not move: the next Save sends it again.
+  await save(main, bff, 2)
+  expect(bff.to(...PUT)[1]!.body, 'the same revision').toMatchObject({
+    revision: REVISION,
+    values: { Port: 8581 },
+  })
+  await within(main).findByText(en('save-failed'))
+  expect(
+    within(main).queryByText(en('save-timeout')),
+    'the 504 sentence is replaced',
+  ).toBeNull()
+})
+
+test('S3.6: the time-out reading is keyed on client-timeout, not on the 504: another key keeps its own message', async () => {
+  // 4e S3.6 names 504 client-timeout only; the contract (api-contract.md, the
+  // save's answers) sends client-unavailable at 503 and client-other at 502,
+  // and 1b.37 pins that the key picks the message. So a 504 carrying another
+  // key is read by that key: never the time-out sentence.
+  const answers: [string, () => Response, string][] = [
+    [
+      '504 carrying client-unavailable',
+      () => reply(504, { key: 'client-unavailable', args: [] }),
+      en('api-client-unavailable'),
+    ],
+    [
+      '504 carrying client-other',
+      () => reply(504, { key: 'client-other', args: [] }),
+      en('save-failed'),
+    ],
+    [
+      '504 with a key the fe does not know',
+      () => reply(504, { key: 'manager-fizzed', args: [] }),
+      en('save-failed'),
+    ],
+  ]
+  for (const [what, answer, text] of answers) {
+    const { bff, main } = await loaded({ save: answer })
+    editPort(main)
+    await save(main, bff)
+    await within(main).findByText(text)
+    expectAlert(main, text, what)
+    expect(
+      main.textContent,
+      `${what}: not read as the save time-out`,
+    ).not.toContain(en('save-timeout'))
+    expect(box(main, 'Port').value, `${what}: the edit is kept`).toBe('8581')
+    expect(
+      [...main.querySelectorAll('[aria-invalid="true"]')].map((e) => e.id),
+      `${what}: no field marked`,
+    ).toEqual([])
+    expect(status(main).textContent, `${what}: still dirty`).toBe(
+      en('save-unsaved'),
+    )
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})

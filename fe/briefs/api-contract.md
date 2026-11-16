@@ -139,7 +139,11 @@ not served yet (bff slice 8, sub-slice 6).
   own comments are not kept, as in the GUI's save.
 - 200 `{"revision", "running"}`: `revision` is the new file's, the one a `GET` now returns;
   `running` chooses between "Saved." and "Saved: restart llama-server to apply." (`true` also when
-  the status read after the write failed).
+  the status read after the write failed). Decided, not served yet (platform coordinator): `running`
+  is true only when the instance is `active` or `activating` (a llama-server already launched with
+  the old file); `deactivating`, `inactive` and `failed` give false, since the instance reads its
+  server file when its process starts, so the next start, a Restart's start half included, reads a
+  file saved during the stop.
 - 422 `{"key", "args", "field"}`: a refused value; `field` is the INI key it belongs to: `args[0]`
   for `not-whole-number-in-range` and `comment-markers`, `ModelsMax` for `load-on-startup-over-max`
   and `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
