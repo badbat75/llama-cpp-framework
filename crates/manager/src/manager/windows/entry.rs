@@ -5,10 +5,14 @@
 
 use super::pipe_server::{self, WinManager};
 use super::scm::ScmService;
-use super::{exit_report, service_name, SyncFailure, TokenAuthority, ERROR_SERVICE_SPECIFIC_ERROR};
+use super::{
+    controls_accepted, ends_instance, ends_manager, exit_report, instance_save_target,
+    manager_controls_accepted, service_name, stop_checkpoint, SyncFailure, TokenAuthority,
+    ERROR_SERVICE_SPECIFIC_ERROR, STOP_TICK, STOP_WAIT_HINT,
+};
 use crate::manager::action_log::{manager_log_path, FileActionLog};
 use crate::manager::service::{Manager, SystemResolver};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
@@ -113,10 +117,16 @@ enum End {
 fn serve_main(_arguments: Vec<OsString>) {
     let report = lock(&SERVE_REPORT).take().unwrap_or(|_| {});
     let (tx, rx) = mpsc::channel();
-    let Ok(status) = register(super::MANAGER_SERVICE, tx.clone()) else {
+    let Ok(status) = register(super::MANAGER_SERVICE, tx.clone(), ends_manager) else {
         return;
     };
-    set(&status, ServiceState::Running, ServiceExitCode::NO_ERROR);
+    set(
+        &status,
+        ServiceState::Running,
+        ServiceExitCode::NO_ERROR,
+        0,
+        manager_controls_accepted,
+    );
     std::thread::spawn(move || {
         let failed = run_manager(report).err();
         let code = failed.and_then(|e| e.raw_os_error()).unwrap_or(1) as u32;
@@ -126,7 +136,13 @@ fn serve_main(_arguments: Vec<OsString>) {
         Ok(End::Failed(code)) => ServiceExitCode::Win32(code),
         Ok(End::Stop) | Err(_) => ServiceExitCode::NO_ERROR,
     };
-    set(&status, ServiceState::Stopped, exit);
+    set(
+        &status,
+        ServiceState::Stopped,
+        exit,
+        0,
+        manager_controls_accepted,
+    );
 }
 
 fn instance_main(_arguments: Vec<OsString>) {
@@ -137,11 +153,17 @@ fn instance_main(_arguments: Vec<OsString>) {
         return;
     };
     let (tx, rx) = mpsc::channel();
-    let Ok(status) = register(&name, tx) else {
+    let Ok(status) = register(&name, tx, ends_instance) else {
         return;
     };
     let failed = |status: &ServiceStatusHandle| {
-        set(status, ServiceState::Stopped, exit_code(false, None));
+        set(
+            status,
+            ServiceState::Stopped,
+            exit_code(false, None),
+            0,
+            controls_accepted,
+        );
     };
     // The log first, so a launch that fails says why in it.
     let opened = pai_core::paths::instance_log(&id)
@@ -150,6 +172,12 @@ fn instance_main(_arguments: Vec<OsString>) {
     let Ok(mut log) = opened else {
         return failed(&status);
     };
+    // The snapshot target is read from the arguments this run spawns
+    // llama-server with: the port and the folder of the engine that
+    // runs, never a `server.ini` that may be ahead of it.
+    let target = cmd.as_ref().ok().and_then(|cmd| {
+        instance_save_target(&cmd.get_args().map(OsStr::to_os_string).collect::<Vec<_>>())
+    });
     let spawned = cmd.and_then(|mut cmd| {
         let (out, err) = (log.try_clone(), log.try_clone());
         out.and_then(|out| cmd.stdout(out).stderr(err?).spawn())
@@ -164,7 +192,13 @@ fn instance_main(_arguments: Vec<OsString>) {
             return failed(&status);
         }
     };
-    set(&status, ServiceState::Running, ServiceExitCode::NO_ERROR);
+    set(
+        &status,
+        ServiceState::Running,
+        ServiceExitCode::NO_ERROR,
+        0,
+        controls_accepted,
+    );
     let (requested, code) = loop {
         if let Ok(Some(exit)) = child.try_wait() {
             break (false, exit.code());
@@ -174,13 +208,68 @@ fn instance_main(_arguments: Vec<OsString>) {
                 &status,
                 ServiceState::StopPending,
                 ServiceExitCode::NO_ERROR,
+                0,
+                controls_accepted,
             );
+            // The snapshots first, before the kill: the save runs on a
+            // worker thread, within the core's one budget, while this
+            // thread raises a checkpoint every STOP_TICK so the SCM
+            // sees progress within every announced hint. The model
+            // rows go to the instance's log, as the launch's output
+            // does.
+            if let Some((port, dir)) = target {
+                let (done, progress) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = done.send(pai_core::slot_save::save_all(
+                        port,
+                        &dir,
+                        pai_core::slot_save::SAVE_BUDGET,
+                    ));
+                });
+                let mut tick = 0u32;
+                let (saved, errors) = loop {
+                    match progress.recv_timeout(STOP_TICK) {
+                        Ok(answer) => break answer,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            tick += 1;
+                            set(
+                                &status,
+                                ServiceState::StopPending,
+                                ServiceExitCode::NO_ERROR,
+                                stop_checkpoint(tick),
+                                controls_accepted,
+                            );
+                        }
+                        // The worker died: nothing to report, the stop
+                        // goes on.
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            break (Vec::new(), Vec::new())
+                        }
+                    }
+                };
+                for t in &saved {
+                    let _ = writeln!(
+                        log,
+                        "{}",
+                        crate::strings::fill("snapshot-saved-row", &[&t.describe()])
+                    );
+                }
+                for e in &errors {
+                    let _ = writeln!(log, "{}", crate::strings::fill("snapshot-failed-row", &[e]));
+                }
+            }
             let _ = child.kill();
             let code = child.wait().ok().and_then(|exit| exit.code());
             break (true, code);
         }
     };
-    set(&status, ServiceState::Stopped, exit_code(requested, code));
+    set(
+        &status,
+        ServiceState::Stopped,
+        exit_code(requested, code),
+        0,
+        controls_accepted,
+    );
 }
 
 /// The SCM's exit code for [`exit_report`].
@@ -191,33 +280,56 @@ fn exit_code(requested: bool, child: Option<i32>) -> ServiceExitCode {
     }
 }
 
-/// The control handler of service `name`: a stop is sent on `tx`.
-fn register(name: &str, tx: mpsc::Sender<End>) -> windows_service::Result<ServiceStatusHandle> {
-    service_control_handler::register(name, move |control| match control {
-        ServiceControl::Stop => {
+/// The control handler of service `name`: `ends` says which controls end its
+/// run, and such a control is sent on `tx`. The rule comes from the caller
+/// because the two services part there: an instance ends on the
+/// Preshutdown of a system shutdown and saves then, the manager's own
+/// service ends on the Stop only. The handler only signals, the SCM wants
+/// it back at once (at the most 30 s, HandlerEx Remarks); the work belongs
+/// to the service main.
+fn register(
+    name: &str,
+    tx: mpsc::Sender<End>,
+    ends: fn(u32) -> bool,
+) -> windows_service::Result<ServiceStatusHandle> {
+    service_control_handler::register(name, move |control| {
+        if ends(control.raw_service_control_type()) {
+            // Every control the caller counts as the end of the run
+            // signals the same stop.
             let _ = tx.send(End::Stop);
             ServiceControlHandlerResult::NoError
+        } else {
+            match control {
+                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+                _ => ServiceControlHandlerResult::NotImplemented,
+            }
         }
-        ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-        _ => ServiceControlHandlerResult::NotImplemented,
     })
 }
 
-/// Report `state` to the SCM; only a running service takes a stop.
-fn set(status: &ServiceStatusHandle, state: ServiceState, exit_code: ServiceExitCode) {
+/// Report `state` to the SCM, `checkpoint` while a stop is pending: a
+/// long stop must raise it within every announced hint. The
+/// `controls_accepted` of a running service are the caller's `accept`
+/// (the instance's and the manager's differ), and a service that is not
+/// running reports none.
+fn set(
+    status: &ServiceStatusHandle,
+    state: ServiceState,
+    exit_code: ServiceExitCode,
+    checkpoint: u32,
+    accept: fn(bool) -> u32,
+) {
     let pending = state == ServiceState::StopPending;
     let _ = status.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: state,
-        controls_accepted: if state == ServiceState::Running {
-            ServiceControlAccept::STOP
-        } else {
-            ServiceControlAccept::empty()
-        },
+        controls_accepted: ServiceControlAccept::from_bits_truncate(accept(
+            state == ServiceState::Running,
+        )),
         exit_code,
-        checkpoint: 0,
+        checkpoint: if pending { checkpoint } else { 0 },
         wait_hint: if pending {
-            Duration::from_secs(10)
+            STOP_WAIT_HINT
         } else {
             Duration::ZERO
         },

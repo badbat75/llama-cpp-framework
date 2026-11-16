@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop: its slices 3, Windows, and 4, the clients, are left), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop: left: 3b, the Windows preshutdown timeout and restart, and 4, the clients), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -860,7 +860,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so
    every stop path does (the web, `pai`, systemctl or the SCM, a reboot); four slices there; built: the save in
-   `pai-core` (05a315f, d1234fa) and Linux `ExecStop=pai-manager save-slots %i`; left: Windows preshutdown, then the
+   `pai-core` (05a315f, d1234fa) and Linux `ExecStop=pai-manager save-slots %i`; Windows `run-instance` saving at Stop and Preshutdown (3a); left: 3b, each
+   instance service's preshutdown timeout set to `PRESHUTDOWN_TIMEOUT` (until then Windows' default, about
+   180 s, is below the 240 s save) and `ScmService::restart` answering once the stop is accepted; then the
    clients stop saving under the manager (until then a stop from the GUI or `pai` under the manager saves twice).
    Seen in a rerun, not this slice's: xtask `the_engine_prerm_records_the_running_instances_and_stops_them`
    failed once (fixture root shared by its loop), green alone and in four reruns. The

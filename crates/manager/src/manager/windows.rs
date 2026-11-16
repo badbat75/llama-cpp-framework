@@ -334,6 +334,106 @@ pub fn exit_report(requested: bool, child: Option<i32>) -> (u32, u32) {
     }
 }
 
+// ── Snapshots at the instance's own stop ───────────────────────────────
+// `run-instance` writes the slot snapshots before it kills llama-server,
+// on a Stop and on a Preshutdown. The values below and their meanings:
+// SERVICE_STATUS (learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status);
+// the shutdown timings come from the HandlerEx Remarks
+// (learn.microsoft.com/en-us/windows/win32/api/winsvc/nc-winsvc-lphandler_function_ex).
+
+/// `dwControlsAccepted`: the service may be stopped.
+pub const SERVICE_ACCEPT_STOP: u32 = 0x1;
+/// `dwControlsAccepted`: the service is notified at system shutdown. Not
+/// accepted: it is not the save path (see [`controls_accepted`]). The
+/// shutdown bit is 0x4, 0x2 is the pause/continue bit, which no service
+/// here takes.
+pub const SERVICE_ACCEPT_SHUTDOWN: u32 = 0x4;
+/// `dwControlsAccepted`: the service takes part in the system shutdown
+/// before the shutdown begins, on its own timeout.
+pub const SERVICE_ACCEPT_PRESHUTDOWN: u32 = 0x100;
+/// The control code for a stop.
+pub const SERVICE_CONTROL_STOP: u32 = 0x1;
+/// The control code for a status poll.
+pub const SERVICE_CONTROL_INTERROGATE: u32 = 0x4;
+/// The control code for the shutdown notification.
+pub const SERVICE_CONTROL_SHUTDOWN: u32 = 0x5;
+/// The control code for the pre-shutdown notification.
+pub const SERVICE_CONTROL_PRESHUTDOWN: u32 = 0xF;
+
+/// The `dwControlsAccepted` of an instance service: a running instance
+/// accepts the Stop, and the Preshutdown that saves the snapshots of a
+/// reboot. Plain shutdown is not accepted: the SCM gives it about 20 s
+/// (HandlerEx Remarks), too short for a snapshot write, so the reboot
+/// path is the preshutdown, bounded by the service's own timeout
+/// ([`PRESHUTDOWN_TIMEOUT`]). A service that is not running accepts
+/// nothing.
+pub fn controls_accepted(running: bool) -> u32 {
+    if running {
+        SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_PRESHUTDOWN
+    } else {
+        0
+    }
+}
+
+/// Whether control `control` ends the instance's run: the Stop, and the
+/// Preshutdown of a system shutdown. An ended run must save the snapshots
+/// before it kills llama-server.
+pub fn ends_instance(control: u32) -> bool {
+    control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_PRESHUTDOWN
+}
+
+/// The `dwControlsAccepted` of the manager's own service: a running one
+/// accepts the Stop and nothing else. The Preshutdown is the instances'
+/// save path only ([`controls_accepted`]): a manager service that takes it
+/// is stopped at a reboot, before or while the instances write their
+/// snapshots. A service that is not running accepts nothing.
+pub fn manager_controls_accepted(running: bool) -> u32 {
+    if running {
+        SERVICE_ACCEPT_STOP
+    } else {
+        0
+    }
+}
+
+/// Whether control `control` ends the manager's own run: the Stop only, not
+/// the Preshutdown that ends an instance ([`ends_instance`]).
+pub fn ends_manager(control: u32) -> bool {
+    control == SERVICE_CONTROL_STOP
+}
+
+/// The `dwWaitHint` announced while the save runs: the SCM may expect a
+/// new checkpoint within every hint announced ([`stop_checkpoint`]).
+pub const STOP_WAIT_HINT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The moment of a new checkpoint while the save runs: well inside the
+/// announced hint ([`STOP_WAIT_HINT`]), so progress lands in time.
+pub const STOP_TICK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The `dwCheckPoint` at tick `tick`: it must strictly grow, a value that
+/// stands still reads as a service that stopped making progress.
+pub fn stop_checkpoint(tick: u32) -> u32 {
+    tick.saturating_add(1)
+}
+
+/// The preshutdown timeout (`SERVICE_CONFIG_PRESHUTDOWN_INFO`) of the
+/// instance services: above the save's one budget
+/// (`pai_core::slot_save::SAVE_BUDGET`), so llama-server keeps time to
+/// exit after a save that runs to the end of its budget.
+pub const PRESHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The snapshot target of the arguments `run-instance` spawned
+/// llama-server with (`Command::get_args`): the port and the folder of
+/// the running engine, through `pai_core::slot_save::slot_target`. The
+/// read is lossy: an `OsString` may hold bytes that are not UTF-8, and
+/// the replacement character stands for them.
+pub fn instance_save_target(args: &[std::ffi::OsString]) -> Option<(u16, PathBuf)> {
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    pai_core::slot_save::slot_target(&args)
+}
+
 /// An SCM failure of instance `id`'s service as the core's error: the
 /// service name, the Win32 error's name and its code. Protocol data, not
 /// user text.
@@ -1832,6 +1932,501 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(previous_log(&log)).expect("previous"),
             "the crash\n"
+        );
+    }
+
+    // ── Saving snapshots at the instance's own stop ─────────────────────
+    // The instance service (`run-instance`) writes the slot snapshots at
+    // its own stop, on a Stop and on a Preshutdown, before killing
+    // llama-server. The decisions are OS-neutral here; the Win32 glue
+    // (windows/entry.rs) is type-checked only, so its call order is pinned
+    // from its text, narrowly.
+
+    /// Arguments as `Command::get_args` yields them, collected.
+    fn os_args(v: &[&str]) -> Vec<std::ffi::OsString> {
+        v.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    /// The arguments the instance spawned llama-server with are the save's
+    /// target, through the core's `slot_target` (lossy UTF-8): the port and
+    /// the folder the running engine uses, never a port or folder read out
+    /// of `server.ini`.
+    #[test]
+    fn the_spawned_arguments_give_the_snapshot_target() {
+        let a = os_args(&[
+            "--model",
+            "/models/qwen.gguf",
+            "--slot-save-path",
+            r"C:\state\default",
+            "--port",
+            "8081",
+        ]);
+        assert_eq!(
+            instance_save_target(&a),
+            Some((8081, PathBuf::from(r"C:\state\default")))
+        );
+    }
+
+    /// No `--slot-save-path` means the snapshots were off at the launch,
+    /// whatever `server.ini` says now: no target, no save. A flag with
+    /// nothing usable after it (end of the list, empty, a flag) names no
+    /// folder either.
+    #[test]
+    fn a_launch_without_a_snapshot_folder_gives_no_target() {
+        for a in [
+            os_args(&[]),
+            os_args(&["--model", "/models/qwen.gguf", "--port", "8081"]),
+            os_args(&["--slot-save-path"]),
+            os_args(&["--slot-save-path", ""]),
+            os_args(&["--slot-save-path", "--model"]),
+        ] {
+            assert_eq!(instance_save_target(&a), None, "{a:?}");
+        }
+    }
+
+    /// No `--port`: the engine's own default, the same reading
+    /// `slot_target` gives, never the file's.
+    #[test]
+    fn a_launch_without_a_port_gives_the_default_port() {
+        let a = os_args(&["--slot-save-path", r"C:\state\default"]);
+        assert_eq!(
+            instance_save_target(&a),
+            Some((
+                pai_core::server_cfg::DEFAULT_PORT as u16,
+                PathBuf::from(r"C:\state\default")
+            ))
+        );
+    }
+
+    /// An argument that is not valid UTF-8 (an `OsString` is what the
+    /// spawn's command line carries): the target is taken through lossy
+    /// UTF-8, the replacement character standing for the unreadable bytes,
+    /// so the folder the engine writes to is read as close as Rust gets.
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_of_a_lossy_argument_survives_the_conversion() {
+        use std::os::unix::ffi::OsStringExt;
+        let dir = OsStringExt::from_vec(b"C:\\state\\bin\xff".to_vec());
+        let a = vec![std::ffi::OsString::from("--slot-save-path"), dir];
+        assert_eq!(
+            instance_save_target(&a),
+            Some((
+                pai_core::server_cfg::DEFAULT_PORT as u16,
+                PathBuf::from("C:\\state\\bin\u{FFFD}")
+            ))
+        );
+    }
+
+    /// The `dwControlsAccepted` bits and the control codes, from
+    /// SERVICE_STATUS and ServiceCtrlAccepted
+    /// (learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status):
+    /// stop is 0x1, shutdown 0x4 and 0x5, interrogate 0x4, preshutdown
+    /// 0x100 and 0xF.
+    #[test]
+    fn the_control_accept_and_control_codes_are_the_windows_ones() {
+        assert_eq!(SERVICE_ACCEPT_STOP, 0x1);
+        assert_eq!(SERVICE_ACCEPT_SHUTDOWN, 0x4);
+        assert_eq!(SERVICE_ACCEPT_PRESHUTDOWN, 0x100);
+        assert_eq!(SERVICE_CONTROL_STOP, 0x1);
+        assert_eq!(SERVICE_CONTROL_INTERROGATE, 0x4);
+        assert_eq!(SERVICE_CONTROL_SHUTDOWN, 0x5);
+        assert_eq!(SERVICE_CONTROL_PRESHUTDOWN, 0xF);
+    }
+
+    /// A running instance answers a Stop and a Preshutdown, and nothing
+    /// else. Plain shutdown (`SERVICE_ACCEPT_SHUTDOWN`) is not accepted:
+    /// the SCM gives a shutdown about 20 s, too short for a snapshot write,
+    /// so the reboot path is the preshutdown, bounded by the service's own
+    /// timeout (HandlerEx Remarks,
+    /// learn.microsoft.com/en-us/windows/win32/api/winsvc/nc-winsvc-lphandler_function_ex).
+    #[test]
+    fn a_running_instance_accepts_stop_and_preshutdown_only() {
+        assert_eq!(controls_accepted(true), 0x1 | 0x100);
+        assert_eq!(
+            controls_accepted(true),
+            SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_PRESHUTDOWN
+        );
+        assert_eq!(
+            controls_accepted(true) & SERVICE_ACCEPT_SHUTDOWN,
+            0,
+            "shutdown is not the save path"
+        );
+    }
+
+    /// A service that is not running accepts no control: a stop asked of a
+    /// stopped service is nothing to save.
+    #[test]
+    fn an_instance_that_is_not_running_accepts_nothing() {
+        assert_eq!(controls_accepted(false), 0);
+    }
+
+    /// The two controls that end the instance's run, and so must save
+    /// first: the SCM's Stop, and the Preshutdown of a system shutdown.
+    #[test]
+    fn stop_and_preshutdown_end_the_instance() {
+        for control in [SERVICE_CONTROL_STOP, SERVICE_CONTROL_PRESHUTDOWN] {
+            assert!(ends_instance(control), "{control}");
+        }
+    }
+
+    /// Nothing else: Interrogate is a status poll, Shutdown is not the save
+    /// path, and the rest the service does not implement.
+    #[test]
+    fn no_other_control_ends_the_instance() {
+        for control in [
+            SERVICE_CONTROL_INTERROGATE,
+            SERVICE_CONTROL_SHUTDOWN,
+            0x0,
+            0x2,
+            0x3,
+            0x6,
+            0x7,
+            0x8,
+            0x9,
+            0xA,
+            0xB,
+            0xC,
+            0x10,
+            0x20,
+            u32::MAX,
+        ] {
+            assert!(!ends_instance(control), "{control}");
+        }
+    }
+
+    /// The manager's own service is not the save path: running, it accepts
+    /// the Stop (0x1) and nothing else. The masks are pinned as literals:
+    /// SERVICE_ACCEPT_PRESHUTDOWN is 0x100 and SERVICE_ACCEPT_SHUTDOWN 0x4
+    /// (SERVICE_STATUS,
+    /// learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status),
+    /// so this test does not lean on the constants of this file.
+    #[test]
+    fn the_manager_service_accepts_the_stop_only() {
+        assert_eq!(manager_controls_accepted(true), 0x1, "stop only");
+        assert_eq!(
+            manager_controls_accepted(true) & 0x100,
+            0,
+            "the preshutdown is the instances' path"
+        );
+        assert_eq!(
+            manager_controls_accepted(true) & 0x4,
+            0,
+            "the shutdown notification is not the save path"
+        );
+        assert_eq!(
+            manager_controls_accepted(true) & !controls_accepted(true),
+            0,
+            "the manager accepts no control an instance does not accept"
+        );
+    }
+
+    /// A manager service that is not running accepts no control: a stop
+    /// asked of a stopped service is nothing to save.
+    #[test]
+    fn a_manager_that_is_not_running_accepts_nothing() {
+        assert_eq!(manager_controls_accepted(false), 0);
+    }
+
+    /// Only the Stop ends the manager's run. The Preshutdown is never asked
+    /// of it, so a reboot cannot take the manager down while the instances
+    /// are saving; the Shutdown notification and the Interrogate poll are
+    /// not a stop either.
+    #[test]
+    fn only_the_stop_ends_the_manager() {
+        assert!(ends_manager(SERVICE_CONTROL_STOP), "stop");
+        for control in [
+            SERVICE_CONTROL_PRESHUTDOWN,
+            SERVICE_CONTROL_SHUTDOWN,
+            SERVICE_CONTROL_INTERROGATE,
+            0x0,
+            0x2,
+            0x3,
+            0x6,
+            0x7,
+            0x8,
+            0x9,
+            0xA,
+            0xB,
+            0xC,
+            0x10,
+            0x20,
+            u32::MAX,
+        ] {
+            assert!(!ends_manager(control), "{control}");
+        }
+    }
+
+    /// The two services part at exactly the Preshutdown: both end on a Stop
+    /// and accept it; an instance also ends on a Preshutdown and accepts it,
+    /// the manager does neither.
+    #[test]
+    fn the_preshutdown_belongs_to_the_instances_not_the_manager() {
+        assert!(ends_manager(SERVICE_CONTROL_STOP), "the manager stops");
+        assert!(ends_instance(SERVICE_CONTROL_STOP), "the instance stops");
+        assert!(
+            ends_instance(SERVICE_CONTROL_PRESHUTDOWN),
+            "an instance saves at a reboot"
+        );
+        assert!(
+            !ends_manager(SERVICE_CONTROL_PRESHUTDOWN),
+            "the manager must stay up while the instances save"
+        );
+        assert_eq!(
+            controls_accepted(true) & SERVICE_ACCEPT_PRESHUTDOWN,
+            SERVICE_ACCEPT_PRESHUTDOWN,
+            "an instance accepts the preshutdown"
+        );
+        assert_eq!(
+            manager_controls_accepted(true) & SERVICE_ACCEPT_PRESHUTDOWN,
+            0,
+            "the manager does not accept it"
+        );
+    }
+
+    /// While the save runs the service reports `StopPending` with a wait
+    /// hint and raises `dwCheckPoint` within every hint it announced, or
+    /// the SCM may take the service for failed (SERVICE_STATUS docs). So
+    /// the tick, the moment of a new checkpoint, sits well inside the hint.
+    #[test]
+    fn the_stop_wait_hint_gives_time_for_a_checkpoint_every_tick() {
+        assert!(
+            STOP_TICK > std::time::Duration::ZERO,
+            "a zero tick is no progress"
+        );
+        assert!(
+            STOP_TICK * 2 < STOP_WAIT_HINT,
+            "a checkpoint every tick must land inside the announced hint: \
+             {STOP_TICK:?} vs {STOP_WAIT_HINT:?}"
+        );
+    }
+
+    /// The checkpoint starts at 1 and strictly increases with every tick:
+    /// a value that stands still reads as a service that stopped making
+    /// progress.
+    #[test]
+    fn the_stop_checkpoint_starts_at_one_and_only_grows() {
+        assert_eq!(stop_checkpoint(0), 1);
+        let mut last = stop_checkpoint(0);
+        for tick in 1..64u32 {
+            let cp = stop_checkpoint(tick);
+            assert!(cp > last, "tick {tick}: {cp} after {last}");
+            last = cp;
+        }
+    }
+
+    /// The preshutdown timeout the instance services are created with, the
+    /// value of `SERVICE_CONFIG_PRESHUTDOWN_INFO`: the design's 300 s, so
+    /// it outlasts the save's one budget by the minute llama-server needs
+    /// to exit after it (ARCHITECTURE.md, "Budget").
+    #[test]
+    fn the_preshutdown_timeout_leaves_the_server_time_to_exit() {
+        assert_eq!(PRESHUTDOWN_TIMEOUT, std::time::Duration::from_secs(300));
+        let margin = PRESHUTDOWN_TIMEOUT.checked_sub(pai_core::slot_save::SAVE_BUDGET);
+        assert!(
+            margin.is_some_and(|m| m >= std::time::Duration::from_secs(60)),
+            "PRESHUTDOWN_TIMEOUT {} must exceed SAVE_BUDGET {} by at least 60 s",
+            PRESHUTDOWN_TIMEOUT.as_secs(),
+            pai_core::slot_save::SAVE_BUDGET.as_secs()
+        );
+    }
+
+    /// The glue is type-checked only, so pin its decisions from its text,
+    /// narrowly: `instance_main` takes the target from the arguments it
+    /// spawned llama-server with, saves within the core's one budget on the
+    /// stop the SCM asked for, and only then kills the child. The save is
+    /// pinned inside the arm for `End::Stop`: the same needles moved into
+    /// the arm that watches the child exit on its own would keep this test
+    /// green while a stop never reaches them. The worker thread, the kill
+    /// itself and the checkpoint reporting are the glue's, not pinned.
+    #[test]
+    fn instance_main_saves_the_snapshots_before_it_kills_the_child() {
+        let body = entry_fn("instance_main");
+        for call in ["instance_save_target(", "save_all(", "SAVE_BUDGET"] {
+            assert!(body.contains(call), "instance_main never uses {call}");
+        }
+        let kill = body
+            .find("child.kill()")
+            .expect("instance_main keeps killing the child");
+        for call in ["instance_save_target(", "save_all(", "SAVE_BUDGET"] {
+            assert!(
+                body.find(call).expect("the call") < kill,
+                "{call} must come before child.kill(): the snapshots first"
+            );
+        }
+        let stop = body
+            .find("End::Stop")
+            .expect("instance_main keeps the arm for the SCM's stop");
+        for call in ["save_all(", "SAVE_BUDGET"] {
+            assert!(
+                body.find(call).expect("the call") > stop,
+                "{call} must sit in the arm for the SCM's stop, not in the arm \
+                 that watches the child exit: a stop would skip the save"
+            );
+        }
+    }
+
+    // ── Which service takes which control ───────────────────────────────
+    // `register` (the control handler) and `set` (the status report) are
+    // shared by the instance's service and the manager's own, so the rule
+    // of what ends a run and of what is accepted must arrive from the
+    // caller: an instance saves the snapshots on a Preshutdown, the manager
+    // service must not take it at all. The glue is type-checked only, so the
+    // routing is pinned from its text, whole-line comments left out: a
+    // comment naming a needle never greens it. It pins names and wiring in
+    // the source, not behaviour: it cannot catch a parameter the glue
+    // ignores once it has it, a call through a path these needles do not
+    // name, or what the SCM really sends.
+
+    /// entry.rs with the whole-line comments left out.
+    fn entry_code() -> String {
+        include_str!("windows/entry.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The text of `fn <name>` in entry.rs, from its signature to the brace
+    /// that closes it at column 0, comments left out. The search starts the
+    /// line, so a `define_windows_service!` of the same name is not it.
+    fn entry_fn(name: &str) -> String {
+        let entry = entry_code();
+        let open = format!("\nfn {name}(");
+        let at = entry
+            .find(&open)
+            .unwrap_or_else(|| panic!("entry.rs has no `{open}`"));
+        let body = &entry[at..];
+        let end = body
+            .find("\n}\n")
+            .unwrap_or_else(|| panic!("the end of `fn {name}`"));
+        body[..end].to_string()
+    }
+
+    /// The arguments of the first call of `name(...)` in `hay`, up to that
+    /// call's own closing paren: a nested call is counted, not followed.
+    fn call_arguments(hay: &str, name: &str) -> String {
+        let open = format!("{name}(");
+        let at = hay
+            .find(&open)
+            .unwrap_or_else(|| panic!("`{name}(` is never called:\n{hay}"));
+        let rest = &hay[at + open.len()..];
+        let mut depth = 1usize;
+        for (i, c) in rest.char_indices() {
+            if c == '(' {
+                depth += 1;
+            } else if c == ')' {
+                depth -= 1;
+                if depth == 0 {
+                    return rest[..i].to_string();
+                }
+            }
+        }
+        panic!("`{name}(` is never closed:\n{hay}");
+    }
+
+    /// How often `hay` names the instance's accept mask. The manager's own
+    /// mask is a different name that ends with the instance's, so each of
+    /// its namings is taken back out.
+    fn instance_mask_asks(hay: &str) -> usize {
+        hay.matches("controls_accepted").count() - hay.matches("manager_controls_accepted").count()
+    }
+
+    /// The shared control handler decides with a function it is given, so
+    /// the two services can route apart; it must not pick one service's rule
+    /// itself, and it keeps reading the control code it is handed.
+    #[test]
+    fn the_control_handler_decides_with_the_function_it_is_given() {
+        let body = entry_fn("register");
+        let sig = &body[..body.find('{').expect("the body of register")];
+        assert!(
+            sig.contains("fn(u32)") || sig.contains("Fn(u32)"),
+            "register takes no control -> bool function, so one rule is fixed \
+             inside it:\n{sig}"
+        );
+        assert!(
+            sig.contains("-> bool"),
+            "register's deciding parameter is not control -> bool:\n{sig}"
+        );
+        assert!(
+            !body.contains("ends_instance(") && !body.contains("ends_manager("),
+            "register names a service's rule itself, so the manager's handler \
+             takes the instance's preshutdown:\n{body}"
+        );
+        assert!(
+            body.contains("raw_service_control_type()"),
+            "the handler no longer reads the control code it is sent:\n{body}"
+        );
+    }
+
+    /// Each service main hands the handler its own rule: the instance the
+    /// one that ends on a Preshutdown, the manager the one that ends on a
+    /// Stop only. entry.rs imports both names, so the pin is the call, not
+    /// a naming anywhere in the file.
+    #[test]
+    fn each_service_main_registers_its_own_rule() {
+        let args = call_arguments(&entry_fn("instance_main"), "register");
+        assert!(
+            args.contains("ends_instance"),
+            "instance_main does not register ends_instance: {args}"
+        );
+        assert!(
+            !args.contains("ends_manager"),
+            "instance_main registers the manager's rule, so a reboot skips the \
+             snapshots: {args}"
+        );
+        let args = call_arguments(&entry_fn("serve_main"), "register");
+        assert!(
+            args.contains("ends_manager"),
+            "serve_main does not register ends_manager: {args}"
+        );
+        assert!(
+            !args.contains("ends_instance"),
+            "serve_main registers the instance's rule, so the manager stops \
+             while the instances save: {args}"
+        );
+    }
+
+    /// The accept mask a running service reports is its caller's: `set`
+    /// takes it (the mask, or the function that computes it) and never
+    /// chooses one, `serve_main` hands over the manager's and `instance_main`
+    /// the instance's. The mask parameter of `set` must not be named
+    /// `controls_accepted`: this test reads that name as the instance's rule.
+    #[test]
+    fn the_accept_mask_is_the_caller_s() {
+        let set = entry_fn("set");
+        let sig = &set[..set.find('{').expect("the body of set")];
+        let params = call_arguments(sig, "fn set");
+        assert!(
+            params.split(',').filter(|p| !p.trim().is_empty()).count() > 4,
+            "set takes no accept mask, so it reports one rule for both \
+             services: {params}"
+        );
+        assert!(
+            !set.contains("controls_accepted("),
+            "set chooses the accept mask itself:\n{set}"
+        );
+        assert!(
+            set.contains("controls_accepted:"),
+            "set no longer reports a mask to the SCM:\n{set}"
+        );
+        let manager = entry_fn("serve_main");
+        assert!(
+            manager.contains("manager_controls_accepted"),
+            "serve_main never names the manager's accept mask"
+        );
+        assert_eq!(
+            instance_mask_asks(&manager),
+            0,
+            "serve_main reports the instance's accept mask"
+        );
+        let instance = entry_fn("instance_main");
+        assert!(
+            instance_mask_asks(&instance) > 0,
+            "instance_main never names the instance's accept mask"
+        );
+        assert!(
+            !instance.contains("manager_controls_accepted"),
+            "instance_main reports the manager's accept mask"
         );
     }
 }
