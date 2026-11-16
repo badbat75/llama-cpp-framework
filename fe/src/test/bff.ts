@@ -43,6 +43,8 @@ export const EN: Record<string, string> = {
     'Signing in is not available on this server right now. You can still see the overview without signing in.',
   'api-session-not-administrator':
     'Only members of the pai group can sign in, and this account is not one. Ask whoever administers this computer to add it; you can still see the overview without signing in.',
+  'session-revoked':
+    'You have been signed out: this account is no longer a member of the pai group. Ask whoever administers this computer to add it again; you can still see the overview without signing in.',
   'overview-title': 'Overview',
   'instances-column-engine': 'Engine',
   'instance-engine': '{0} instance',

@@ -25,12 +25,15 @@ function failureText(error: ApiError | null): string {
 
 export default function SignIn({
   required,
+  revoked = false,
   inDialog = false,
   onSignedIn,
   onCancel,
 }: {
   /** True in place of a protected page. */
   required: boolean
+  /** True in place of a protected page after the manager ended the session. */
+  revoked?: boolean
   /** True inside a Dialog, which holds the title: no h1, no focus taken. */
   inDialog?: boolean
   onSignedIn: (session: Session) => void
@@ -87,7 +90,13 @@ export default function SignIn({
     <>
       {!inDialog && <PageHeading text={t('signin-title')} />}
       <p>{t('signin-intro')}</p>
-      {required && <p className="notice">{t('signin-required')}</p>}
+      {revoked ? (
+        <p role="alert" className="notice">
+          {t('session-revoked')}
+        </p>
+      ) : (
+        required && <p className="notice">{t('signin-required')}</p>
+      )}
       <form className="signin" onSubmit={submit} noValidate>
         {failure !== null && (
           <p role="alert" className="form-error">

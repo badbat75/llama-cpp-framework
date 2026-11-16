@@ -2,7 +2,7 @@
 // 2.5 and 3): the server file read from /api/instances/{id}/server, shown as
 // the form, or the message saying why not.
 import { useEffect, useState } from 'react'
-import { apiError, call, isRecord } from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import ServerForm, {
   type Runs,
   type ServerDoc,
@@ -22,6 +22,7 @@ type Answer =
         | 'failed'
     }
   | 'signed-out'
+  | 'revoked'
 
 function isServerDoc(value: unknown): value is ServerDoc {
   if (!isRecord(value)) return false
@@ -43,6 +44,7 @@ async function readServer(id: string): Promise<Answer> {
   try {
     const reply = await call(`/api/instances/${encodeURIComponent(id)}/server`)
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     if (!reply.ok) {
       const key = apiError(reply.body)?.key
       switch (key) {
@@ -79,7 +81,7 @@ export default function ServerSection({
   /** Raised by every sign-in that kept the page (43b). */
   renewals: number
   runs: Runs
-  onSignedOut: () => void
+  onSignedOut: (byManager: boolean) => void
   /** A sign-in in the save's dialog: true when the edits stay with it. */
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
@@ -98,7 +100,7 @@ export default function ServerSection({
     let live = true
     readServer(id).then((a) => {
       if (!live) return
-      if (a === 'signed-out') onSignedOut()
+      if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
       else setAnswer(a)
     })
     return () => {
@@ -145,7 +147,7 @@ function Body({
   onReload: () => void
   onRenewed: (session: Session) => boolean
 }) {
-  if (answer === undefined || answer === 'signed-out') {
+  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
     return <p role="status">{t('server-loading')}</p>
   }
   if ('doc' in answer) {

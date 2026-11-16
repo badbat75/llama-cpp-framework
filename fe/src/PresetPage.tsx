@@ -5,7 +5,7 @@
 // Engine field and the Assets card as text, with nothing to save (2d.5 to
 // 2d.7): the settings arrive with the pickers that will change them.
 import { Fragment, useEffect, useState } from 'react'
-import { apiError, call, isRecord } from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Card from './Card.tsx'
 import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
@@ -30,6 +30,7 @@ type Answer =
         'client-not-authorized' | 'client-unavailable' | 'not-found' | 'failed'
     }
   | 'signed-out'
+  | 'revoked'
 
 function isPresetDoc(value: unknown): value is PresetDoc {
   return (
@@ -95,6 +96,7 @@ async function readPreset(id: string): Promise<Answer> {
   try {
     const reply = await call(`/api/presets/${encodeURIComponent(id)}`)
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     if (!reply.ok) {
       const key = apiError(reply.body)?.key
       switch (key) {
@@ -119,7 +121,7 @@ export default function PresetPage({
 }: {
   /** The id from the address, while the read has not answered. */
   id: string
-  onSignedOut: () => void
+  onSignedOut: (byManager: boolean) => void
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -131,7 +133,7 @@ export default function PresetPage({
     let live = true
     readPreset(id).then((a) => {
       if (!live) return
-      if (a === 'signed-out') onSignedOut()
+      if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
       else setAnswer(a)
     })
     return () => {
@@ -161,7 +163,7 @@ function Body({ id, answer }: { id: string; answer: Answer | undefined }) {
   if (presetIdUnreadable(id)) {
     return <p>{t('preset-not-found', id)}</p>
   }
-  if (answer === undefined || answer === 'signed-out') {
+  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
     return <p role="status">{t('preset-loading')}</p>
   }
   if ('doc' in answer) return <Content doc={answer.doc} />

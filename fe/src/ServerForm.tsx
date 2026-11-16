@@ -5,7 +5,7 @@
 // them typed (5.4) and shows the answer by its key.
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord } from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Card from './Card.tsx'
 import Dialog, { DiscardDialog } from './Dialog.tsx'
 import {
@@ -334,6 +334,7 @@ function fallbackField(key: string, args: string[]): string | undefined {
 type SaveAnswer =
   | { kind: 'saved'; revision: string; running: boolean }
   | { kind: 'signed-out' }
+  | { kind: 'revoked' }
   | { kind: 'changed-elsewhere' }
   | { kind: 'refused'; text: string; field?: string }
   | { kind: 'failed'; text: string }
@@ -357,6 +358,7 @@ async function sendSave(
     return failed(timedOut ? t('save-timeout') : t('save-failed'))
   }
   if (reply.status === 401) return { kind: 'signed-out' }
+  if (sessionRevoked(reply)) return { kind: 'revoked' }
   const body = reply.body
   if (reply.ok) {
     return isRecord(body) &&
@@ -598,6 +600,13 @@ export default function ServerForm({
       case 'signed-out':
         setAlert({
           text: t('session-ended'),
+          action: 'sign-in',
+          at: renewalsNow.current,
+        })
+        return
+      case 'revoked':
+        setAlert({
+          text: t('session-revoked'),
           action: 'sign-in',
           at: renewalsNow.current,
         })

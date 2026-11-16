@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord } from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { CheckboxField, GroupField } from './Field.tsx'
 import {
@@ -98,6 +98,7 @@ async function sendAction(id: string, action: Action): Promise<string> {
     )
     if (reply.ok) return 'ok'
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     return apiError(reply.body)?.key ?? 'failed'
   } catch {
     return 'failed'
@@ -109,6 +110,8 @@ function failureText(id: string, key: string): string {
   switch (key) {
     case 'signed-out':
       return t('session-ended-retry')
+    case 'revoked':
+      return t('session-revoked')
     case 'client-not-authorized':
       return t('api-client-not-authorized')
     case 'client-no-instance':
@@ -142,7 +145,7 @@ export default function InstancePage({
 }: {
   id: string
   store: InstancesStore
-  onSignedOut: () => void
+  onSignedOut: (byManager: boolean) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
 }) {
@@ -268,7 +271,10 @@ export default function InstancePage({
     }
     setBusy(null)
     setStatus('')
-    setAlert({ text: failureText(id, result), signIn: result === 'signed-out' })
+    setAlert({
+      text: failureText(id, result),
+      signIn: result === 'signed-out' || result === 'revoked',
+    })
     setNext({ delay: IDLE_MS, run: null })
   }
 
@@ -426,6 +432,7 @@ async function writeBoot(
     })
     if (reply.ok) return enabledIn(reply.body) ?? 'failed'
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     return apiError(reply.body)?.key ?? 'failed'
   } catch {
     return 'failed'
@@ -529,7 +536,7 @@ function Boot({
     }
     setAlert({
       text: failureText(id, result),
-      signIn: result === 'signed-out',
+      signIn: result === 'signed-out' || result === 'revoked',
       at: renewalsNow.current,
     })
     const again = await readBoot(id)

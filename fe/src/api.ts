@@ -42,6 +42,19 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * The bff ended this session: 403 with `session-not-administrator`, the key it
+ * answers when the manager refuses the session's user (it left the group pai).
+ * Every route but POST /api/session sends it for that, where the same key keeps
+ * its sign-in meaning (the form shows api-session-not-administrator).
+ */
+export function sessionRevoked(reply: Reply): boolean {
+  return (
+    reply.status === 403 &&
+    apiError(reply.body)?.key === 'session-not-administrator'
+  )
+}
+
 /** The key and args of an error body, or null when the body is not one. */
 export function apiError(body: unknown): ApiError | null {
   if (typeof body !== 'object' || body === null) return null

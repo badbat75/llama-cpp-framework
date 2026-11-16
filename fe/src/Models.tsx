@@ -3,7 +3,13 @@
 // filter over them (slice 2b), and each row's on/off switch (slice 2c).
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord, type ApiError } from './api.ts'
+import {
+  apiError,
+  call,
+  isRecord,
+  sessionRevoked,
+  type ApiError,
+} from './api.ts'
 import Dialog from './Dialog.tsx'
 import PageHeading from './PageHeading.tsx'
 import { presetHref, presetIdUnreadable } from './route.ts'
@@ -24,6 +30,7 @@ type Answer =
   | Preset[]
   | { error: 'client-not-authorized' | 'client-unavailable' | 'failed' }
   | 'signed-out'
+  | 'revoked'
 
 function isPreset(value: unknown): value is Preset {
   return (
@@ -40,6 +47,7 @@ async function readPresets(): Promise<Answer> {
   try {
     const reply = await call('/api/presets')
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     if (!reply.ok) {
       const key = apiError(reply.body)?.key
       switch (key) {
@@ -62,6 +70,7 @@ async function readPresets(): Promise<Answer> {
 type Written =
   | { enabled: boolean; running: boolean }
   | 'signed-out'
+  | 'revoked'
   | (ApiError & { status: number })
   | 'failed'
 
@@ -81,6 +90,7 @@ async function writeEnabled(id: string, enabled: boolean): Promise<Written> {
         : 'failed'
     }
     if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
     const error = apiError(reply.body)
     return error === null ? 'failed' : { ...error, status: reply.status }
   } catch {
@@ -94,6 +104,7 @@ function failureText(
   result: Exclude<Written, { running: boolean }>,
 ): string {
   if (result === 'signed-out') return t('session-ended-retry')
+  if (result === 'revoked') return t('session-revoked')
   if (result === 'failed') return t('request-failed')
   switch (result.key) {
     case 'client-not-authorized':
@@ -134,7 +145,7 @@ export default function Models({
   /** The text kept by the shell, for the tab's life (02-models.md, 62). */
   filterText: string
   onFilterText: (text: string) => void
-  onSignedOut: () => void
+  onSignedOut: (byManager: boolean) => void
   onRenewed: (session: Session) => boolean
 }) {
   // undefined while the reply is awaited.
@@ -146,7 +157,7 @@ export default function Models({
     let live = true
     readPresets().then((a) => {
       if (!live) return
-      if (a === 'signed-out') onSignedOut()
+      if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
       else setAnswer(a)
     })
     return () => {
@@ -194,7 +205,7 @@ function Body({
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
-  if (answer === undefined || answer === 'signed-out') {
+  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
     return <p role="status">{t('presets-loading')}</p>
   }
   if (!Array.isArray(answer)) {
@@ -292,9 +303,9 @@ function Filtered({
     }
     setAlert({
       text: failureText(p.id, result),
-      signIn: result === 'signed-out',
+      signIn: result === 'signed-out' || result === 'revoked',
     })
-    if (result === 'signed-out') {
+    if (result === 'signed-out' || result === 'revoked') {
       setEnabled(i, previous)
       setBusy(false)
       return

@@ -42,6 +42,10 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   // The page holds unsaved changes.
   const [dirty, setDirty] = useState(false)
+  // The session ended because the manager refused its user (a read answered
+  // 403 session-not-administrator): the sign-in form says that, not the plain
+  // "sign in to see this page".
+  const [revoked, setRevoked] = useState(false)
   // Leaving asked about: where to (none: Sign out) and what to give the
   // focus back to (the link or control that asked, or what had it when the
   // browser moved the address).
@@ -107,6 +111,7 @@ export default function App() {
         return
       }
       setHash(next)
+      setRevoked(false)
       setFocus((n) => n + 1)
       setMenuOpen(false)
     }
@@ -116,6 +121,7 @@ export default function App() {
 
   const signedIn = (s: Session) => {
     setSession(s)
+    setRevoked(false)
     // The kept filter belongs to the one who typed it: another user starts
     // empty (62a).
     if (filter !== null && filter.owner !== s.user) setFilter(null)
@@ -137,9 +143,13 @@ export default function App() {
     return kept
   }
 
-  // Stable: the server section reads again when it changes.
-  const signedOut = useCallback(() => {
+  /**
+   * Stable: the pages sign the app out when a read is refused. `byManager` tells
+   * a read the manager refused from any other sign-out.
+   */
+  const signedOut = useCallback((byManager: boolean) => {
     setSession(null)
+    setRevoked(byManager)
     setFocus((n) => n + 1)
   }, [])
 
@@ -155,7 +165,7 @@ export default function App() {
     await signOut()
     // Sign out empties the kept filter: the next sign-in may be someone else.
     setFilter(null)
-    signedOut()
+    signedOut(false)
     go('#/')
   }
 
@@ -288,6 +298,7 @@ export default function App() {
             route={route}
             store={store}
             session={session}
+            revoked={revoked}
             filterText={filter?.text ?? ''}
             onFilterText={typedFilter}
             onSignedIn={signedIn}
@@ -389,6 +400,7 @@ function Page({
   route,
   store,
   session,
+  revoked,
   filterText,
   onFilterText,
   onSignedIn,
@@ -399,10 +411,12 @@ function Page({
   route: Route
   store: InstancesStore
   session: Session | null | undefined
+  /** The last read was refused by the manager: the sign-in form says so. */
+  revoked: boolean
   filterText: string
   onFilterText: (text: string) => void
   onSignedIn: (session: Session) => void
-  onSignedOut: () => void
+  onSignedOut: (byManager: boolean) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
 }) {
@@ -419,7 +433,7 @@ function Page({
     return <NotFound />
   }
   if (session === null) {
-    return <SignIn required onSignedIn={onSignedIn} />
+    return <SignIn required revoked={revoked} onSignedIn={onSignedIn} />
   }
   if (route.page === 'models') {
     return (
