@@ -19,7 +19,7 @@ exist yet. Change this file first when a shape changes.
   acts for the signed-in user; the session lives on. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (**proposed**, S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (**accepted** as bff slice 9e, not served yet; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
@@ -143,7 +143,7 @@ Body `{"revision", "values"}`.
 - `POST /api/instances/{id}/start`, `/stop` and `/restart` take no body and answer 204 once the
   service manager has accepted the job; the state read just after can still be the previous one, so
   the fe polls `GET /api/instances` (any 2xx counts as accepted). Errors: 401; 403
-  `client-not-authorized`; 403 `session-not-administrator` (proposed, above: the session ended);
+  `client-not-authorized`; 403 `session-not-administrator` (accepted, above: the session ended);
   404 `client-no-instance`; 503 `client-unavailable`; 502 `client-service-failed` with
   `args: []` when the service manager refused or the unit failed (its message stays in the bff's
   log); 502 `client-other` for anything else.
@@ -156,7 +156,7 @@ Body `{"revision", "values"}`.
   `GET /api/instances`), 404 `client-no-instance`, 502 `client-other`.
 - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
   state read back after the write. Errors: 401, 403 `client-not-authorized`, 403
-  `session-not-administrator` (proposed), 404, 503, 502 `client-service-failed` or `client-other`
+  `session-not-administrator` (accepted), 404, 503, 502 `client-service-failed` or `client-other`
   (each with `args: []`), 400 `boot-malformed` for a body that is not `{"enabled": <bool>}` (the fe
   never sends one), 413 `payload-too-large`.
 - `GET /api/instances` and `GET /api/instances/{id}/boot` do not move a session's idle deadline:
