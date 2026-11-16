@@ -4,6 +4,7 @@
 pub mod bff;
 mod control;
 pub mod listen;
+mod origin;
 pub mod serve;
 mod server;
 pub mod session;
@@ -74,7 +75,10 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
 /// `session::routes_with_sign_in_timeout` is what a test hands its own
-/// bound to).
+/// bound to). Every route answers through the same-origin guard
+/// (`origin::guard`), and every body a route reads is capped at
+/// `origin::MAX_BODY` by the one layer that stands in front of the whole
+/// router, so a route added later is capped before it reads anything.
 pub fn router_with_session(
     connect: Connect,
     timeout: std::time::Duration,
@@ -93,6 +97,8 @@ pub fn router_with_session(
         .merge(session::routes(sessions.clone()))
         .route("/api/instances/{id}/server", axum::routing::get(read))
         .merge(control::routes(connect, timeout, sessions))
+        .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
+        .layer(axum::middleware::from_fn(origin::guard))
 }
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on

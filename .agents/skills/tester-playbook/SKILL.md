@@ -118,6 +118,24 @@ Lessons only: the rules are in `AGENTS.md`.
   tag.gpgsign=false`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`.
 - Review of a check: one that re-observes what was already true before the action proves nothing;
   mutate first, then check the action undid or kept it.
+- `cargo test -p <crate> --test <name> -- --list` type-checks one integration test binary (and its
+  helpers) without running a test: the cheapest way to see the whole file compile.
+- bff oneshot: `Request::builder().header(name, value)` appends (`http-1.5.0/src/request.rs:899`), so
+  the same name twice reaches the router as two values; `HeaderName::from_static` wants the lowercase
+  name. A header the bff cannot read: `HeaderValue::from_bytes` accepts `>= 0x20` except `0x7F`, plus
+  tab (`http-1.5.0/src/header/value.rs:563`) and `to_str` fails on any byte `>= 0x80` (`:249`): that
+  value is on the wire and unreadable, which is the shape a guard must fail closed on.
+- axum 0.8: `get(handler)` answers `HEAD` as well (axum strips the body, so "the body is empty" proves
+  nothing for `HEAD`); a method the path does not route is the router's 405 with an empty body. So the
+  pair "405 for this app's own page, 403 for a foreign page, same verb" is what pins a guard that runs
+  before the router; when a guard checks a verb list (`writes`) rather than the method, pin that half
+  and report the list as the scope question.
+- A rule about the `Host` name touches no bff test that sends no `Host` (the `App` helper sends one only
+  when an extra names it): pin the no-Host path as accepted (HTTP/1.0, `curl`), and give every refusal a
+  shape where only that rule can answer (a non-text `Host` with no origin header, a non-text `Origin`
+  with no `Host`), else one red hides behind the other.
+- `App::sign_in` asks the fake authenticator: after it, compare `asked()` with the baseline taken right
+  after the sign-in, never with `is_empty()`.
 
 ## Text pins and source lints
 
@@ -543,6 +561,11 @@ Lessons only: the rules are in `AGENTS.md`.
   next request 429, and the 429 check runs first) is pinned in `tests/session.rs` with the `Account`
   fake holding `answer: Result<Identity, AuthError>`, so the fake models the seam's mapped outcome,
   not the pair.
+- A "the authenticator was never asked" pin in a test that signs in first compares a baseline taken
+  after the sign-in (`let before = app.asked();` ... `assert_eq!(app.asked(), before, ..)`), never
+  `is_empty()`: `App::sign_in` asks it once by design (the red lands on the assert's own line, as in
+  `tests/origin.rs`). `assert_asks_nothing` keeps its empty checks (connects, calls, principals):
+  sign-in reaches none of those seams, only the authenticator.
 - A counter rule is pinned as `N` sequential requests of that kind (each asked and answered), then the
   next request 429 without asking, then the same after the window moved (the count expires), then the
   two counters apart (4 of one + 4 of the other: the 5th of each is asked, and locks). Every pin needs
@@ -703,3 +726,22 @@ Lessons only: the rules are in `AGENTS.md`.
   loop that asks every URI on each app is a latent bug: the first app's red stops the loop, the second
   app's broken half (a verb answered 200) never runs; one app failing both verb and set_boot covers both
   URI groups in one pass.
+- "The refusal asked the manager for nothing" on a log the test's own helpers also fill (a sign-in, a
+  fake authenticator that never reaches the manager at all): pin it as the log UNCHANGED across the
+  refused request (`let before = app.calls(); .. assert_eq!(app.calls(), before)`). An absolute
+  `vec!["set_boot_enabled ..", "boot_enabled .."]` there is the helper's shape, not the refusal's, and
+  reds on its own.
+- A request that must be refused by one of two rules whose ORDER the design fixes nowhere (a cross-origin
+  body over the cap): pin it as "one of the two codes, and both fakes' logs empty", and write in the file
+  header that the order is not pinned. An axum body-limit layer (`DefaultBodyLimit`) answers before a
+  middleware guard, so a code-pair assert is the only shape that greens either way.
+- A refusal assert on a 204 (`No Content`) prints nothing when its message is the body: write
+  `assert_eq!(status, code, "the body was {:?}", body)`, and in a table loop put the case label on the
+  "nothing was asked" assert that runs after it, since the first refusal reds and stops the loop.
+- The port edge of a same-origin rule comes from `SameSite=Strict` comparing the SITE (scheme, host,
+  registrable domain), never the port: a page of another local app on `http://localhost:<other>` sends the
+  cookie. So pin `Origin` against `Host` in the three shapes a browser really sends: same host with
+  another port, the scheme's DEFAULT port written bare (`http://localhost` against `localhost:3000`), and
+  a `Host` naming no port (`localhost`, the Origin carries `:3000`). `Sec-Fetch-Site` is pinned as a
+  table: `same-origin` and `none` pass, `same-site` and `cross-site` are refused, a bare `null` (the
+  literal Firefox sends for a non-HTTP origin) and anything else are refused.

@@ -535,3 +535,57 @@ Lessons only: the rules are in `AGENTS.md`.
   `the_boot_write_answers_the_state_read_back` pins the same two calls as one connect: no
   implementation satisfies both, and the brief's "reads back over the same client" is the tie-break.
   Report the exact count the fake records (4), do not add a second connect for the read.
+- The body cap is `DefaultBodyLimit::max(N)` as a layer: a handler that takes `Bytes` never sees a body
+  over it, and the layer's own rejection is axum's plain-text 413, not the route's JSON shape. When a
+  test pins the shape, take `Result<Bytes, BytesRejection>` and map it:
+  `FailedToBufferBody::LengthLimitError` is the cap (413 `payload-too-large`), everything else the
+  extractor found is the route's own `malformed` key. The limit counts the bytes the stream delivers,
+  not a `Content-Length` header. Exactly at the cap passes: `http_body_util::Limited` errors only when a
+  frame exceeds the remaining budget, so `max(N)` reads N bytes and refuses N+1.
+- A `middleware::from_fn` guard wraps the layers under it on the way in and sees the answer on the way
+  out, so every layer ABOVE it runs for a refusal too. A guard that must not touch shared state (the
+  session middleware ends a session on an expired idle deadline) goes on the OUTERMOST layer, and checks
+  the method first: a `GET` answers with no header work at all. `from_fn` needs a `Clone`able request
+  body (`axum::body::Body` is), and hands the request to `next.run` untouched.
+- `http::uri::Authority::from_str` is tolerant in ways a guard cannot accept: `user@localhost:3000`
+  parses with host `localhost` and port 3000, and `localhost:99999` parses with NO port at all (`port()`
+  and `port_u16()` are `None`). So require `authority.as_str() == text` (a path,
+  a query, a fragment, a trailing dot all fail it), reject a `@`, and read the port out of the text after
+  the host (`authority.host()` keeps the brackets of an IPv6 literal, so `&text[host.len()..]` is the
+  port) so a port that is not a number is refused where the parser drops it. `Uri` is worse for this:
+  `Uri::from_str("http://localhost:3000")` gives `path() == ""` where the same URI with a `/` gives
+  `"/"`, and there is no `Uri::fragment()` accessor. Lowercase the header value before comparing: an
+  `Origin`'s host is ASCII (punycode), so `to_ascii_lowercase` is enough.
+- The bff's route tests drive `axum::ServiceExt::oneshot` on the router: `Request::builder().uri(path)`
+  leaves no authority in the request URI, so a same-origin guard reads the `Origin` and `Host` HEADERS
+  (the tests pass `("host", ..)` pairs), never `request.uri()`. `serve` is `axum::serve`, which needs a
+  `Host` header on every HTTP/1.1 request, so the header is there in the real service too.
+- Two `tests/origin.rs` assertions were unsatisfiable by any code: `assert!(app.asked().is_empty())`
+  after the test's own `app.sign_in()`, which is itself one authenticator ask. The tester has since
+  rewritten that file to snapshot `app.asked()` after the sign-in and compare, so an `asked()` assert
+  in a test that signs in first means the snapshot helper; the guard cannot fix it. Say so, do not
+  bend the guard, and do not touch the test file.
+- `HeaderMap::get_all` in http 1.x returns `GetAll`, which has no `len()` and no indexing, only
+  `IntoIterator`: to tell "missing" from "one" from "two or more", `let mut it = v.into_iter();`
+  then one `next()` for presence and a second for the duplicate. The `HeaderValue::to_str()` failure
+  (non-ASCII) and the count are the whole check: a header that is not text is as unusable as a
+  foreign one, so the guard answers 403, never 400.
+- Reading a `Host` name: `Uri::host_str()` and `http::uri::Authority::host()` are `None` for an IPv6
+  literal (`[::1]:3000`), so a loopback test parses the text as `Ipv4Addr`/`Ipv6Addr` (strip the
+  brackets first). `Ipv4Addr::is_loopback()` is all of 127.0.0.0/8 and `Ipv6Addr::is_loopback()` is
+  `::1` only. The bff reads the `Host` HEADER (its route tests pass `("host", ..)` pairs, and
+  hyper's HTTP/1.1 parser requires the header), so the same `host_and_port` helper the `Origin`
+  guard uses works for both, with the port tolerant (`OURS = false`).
+- `SameSite=Strict` does not pin a port: `http://localhost:9999` is the same SITE as the bff on 3000
+  and the browser sends the cookie there. So a Host check is not redundant with the cookie: the
+  cookie makes a rebinding attack reach the session's `user` (not the session id), and the Host rule
+  is what stops the sign-in POST, where the attacker chooses the name. The `Origin`-absent rule that
+  covers a browser's same-origin POST (`curl -X POST` sends none) is `Sec-Fetch-Site: same-origin`.
+- Layer order under a `from_fn` guard: `.layer(cap).layer(from_fn(guard))` puts the guard
+  OUTERMOST, so a guard refusal is answered before the body cap touches the request. Put the
+  `DefaultBodyLimit` on the final router (one cap, in `router_with_session`) rather than one per
+  module, and then the module layers must go, and with them their `DefaultBodyLimit` imports.
+- The guard's keys (`request-cross-origin`, `request-bad-host`) are served as the JSON body's `key`,
+  so they are not `strings::t` calls and `binding_lint` never sees them; the text lives in the fe's
+  strings file, so a new guard key needs an entry there (a bff-side coder cannot write it: the fe is
+  another session's tree).

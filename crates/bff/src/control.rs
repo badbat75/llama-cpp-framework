@@ -17,8 +17,10 @@
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
 //! detail: the service manager's message stays in the bff's log.
 
+use crate::origin::body_refusal;
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
+use axum::extract::rejection::BytesRejection;
 use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -31,7 +33,9 @@ use std::time::Duration;
 type Verb = fn(&Client, &str) -> Result<(), ClientError>;
 
 /// The control routes over the seams: the three verbs, the boot flag read
-/// without a session, and its write through one.
+/// without a session, and its write through one. The body of the route that
+/// reads one, the boot write, is capped by the one layer in front of the whole
+/// router (`lib.rs`).
 pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions>) -> axum::Router {
     let verb = |v: Verb| {
         let (connect, sessions) = (connect.clone(), sessions.clone());
@@ -45,7 +49,9 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
     };
     let set_boot = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
-        move |Path(id): Path<String>, headers: HeaderMap, body: axum::body::Bytes| {
+        move |Path(id): Path<String>,
+              headers: HeaderMap,
+              body: Result<axum::body::Bytes, BytesRejection>| {
             boot_write(
                 connect.clone(),
                 timeout,
@@ -125,17 +131,23 @@ async fn boot_read(connect: Connect, timeout: Duration, id: String) -> Response 
 /// `{"enabled"}`. The write and the read-back that answers are two calls of
 /// one connect, and the reply is what the read answered, never what the body
 /// asked. A body the bff cannot read is 400 and the manager is not asked; the
-/// session check runs first, so with no session such a body is 401.
+/// session check runs first, so with no session such a body is 401. A body
+/// over `origin::MAX_BODY` is refused by the extractor, before the session is
+/// read: 413, and the manager is not connected to.
 async fn boot_write(
     connect: Connect,
     timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    body: Result<axum::body::Bytes, BytesRejection>,
 ) -> Response {
     let Some((session, identity)) = sessions.current(&headers) else {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "boot-malformed"),
     };
     let Some(enabled) = flag(&headers, &body) else {
         return error(StatusCode::BAD_REQUEST, "boot-malformed", &[]);

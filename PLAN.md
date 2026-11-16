@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9 (control and boot; 9c the same-origin guard), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save before a stop), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -866,15 +866,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's
    `JobRemoved`, so the first read after a restart is not stale.
-9c. **Same-origin guard** (review of 9a, 2026-11-16; before the MVP's run). `SameSite=Strict` compares
-   the site, not the port: a page of another local web app (`http://localhost:<other port>`) is
-   same-site, its body-less `fetch` POST carries the cookie and needs no preflight, so start, stop,
-   restart and sign-out go through. The bff refuses a state-changing request (POST, PUT, DELETE) whose
-   `Origin` does not match its `Host`, or whose `Sec-Fetch-Site` is neither `same-origin` nor `none`,
-   with 403 and a key; GETs stay open. With it: a small body limit on the JSON routes (axum reads
-   2 MB before the session check), and the `Service` message the contract says "stays in the bff's
-   log" is logged (today it is dropped), or the contract and `control.rs` reworded; the manager-error
-   table is in both `server.rs` and `control.rs`: one helper.
+9c. **Left from the same-origin guard** (built with 9a's review; the bff refuses a foreign `Origin` or
+   `Sec-Fetch-Site` on every method but GET, HEAD and OPTIONS, and any request whose `Host` is not a
+   loopback name, which stops DNS rebinding; one 64 KiB body cap): the `Service` message the contract
+   says "stays in the bff's log" is dropped (log it, or reword the contract and `control.rs`); the
+   manager-error table is in both `server.rs` and `control.rs`: one helper. Before any non-loopback
+   bind the `Host` rule must change with it.
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
 11b. **A preset's on/off.** `PUT /api/presets/{id}/enabled` (administrator), as worded in
    `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,

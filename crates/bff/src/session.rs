@@ -1,7 +1,9 @@
 //! Signing in to the web UI: the authenticator seam the session routes call
 //! (`POST`, `GET`, `DELETE /api/session`).
 
+use crate::origin::body_refusal;
 use crate::Connect;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{ConnectInfo, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -212,7 +214,9 @@ pub fn routes_with_sign_in_timeout(
     routes(sessions_with(auth, clock, sign_in_timeout))
 }
 
-/// `POST`, `GET` and `DELETE /api/session` over `state`.
+/// `POST`, `GET` and `DELETE /api/session` over `state`. The sign-in's body is
+/// capped by the one layer in front of the whole router (`lib.rs`): it is the
+/// one body an anonymous caller may send.
 pub(crate) fn routes(state: Arc<Sessions>) -> axum::Router {
     axum::Router::new()
         .route(
@@ -222,13 +226,19 @@ pub(crate) fn routes(state: Arc<Sessions>) -> axum::Router {
         .with_state(state)
 }
 
-/// `POST /api/session` `{"username", "password"}`.
+/// `POST /api/session` `{"username", "password"}`. A body over
+/// `origin::MAX_BODY` is refused by the extractor, so the manager is never
+/// connected to for it.
 async fn sign_in(
     State(s): State<Arc<Sessions>>,
     ConnectInfo(client): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    body: Result<axum::body::Bytes, BytesRejection>,
 ) -> Response {
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "session-malformed"),
+    };
     let Some((user, password)) = credentials(&headers, &body) else {
         return error(StatusCode::BAD_REQUEST, "session-malformed", &[]);
     };
