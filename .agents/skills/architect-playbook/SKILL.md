@@ -42,3 +42,11 @@ description: What the architect has learned about this project's components, int
 - Reviewing a slice: `git show <commit> -- <path>` per commit and `git diff HEAD -- crates/<x>` for the
   working tree; the core's guarded methods are in `service.rs` around `authorize_as`,
   `check_principal`, `record_action`, the pipe parser in `manager/pipe.rs` `Request::parse`.
+- Instance lifecycle facts (checked 2026-11-16): on Linux `run-instance` execs llama-server (no parent
+  left; code at stop needs `ExecStop=`, which gets `$MAINPID`), on Windows `instance_main`
+  (`windows/entry.rs`) stays the parent and kills the child on `Stop`. A value the running server
+  uses (port, `--slot-save-path`) is in its argv; `server@<id>.ini` may already be ahead of it (saved,
+  not applied). The client restore of snapshots lists `/var/lib/private-ai/...` (0750), unreadable
+  to a desktop user on Linux.
+- Windows service timeouts: preshutdown default 10 s since build 15063 (SERVICE_PRESHUTDOWN_INFO),
+  plain shutdown about 20 s, control handler back within 30 s (HandlerEx remarks).

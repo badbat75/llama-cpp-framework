@@ -77,7 +77,7 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save before a stop), slice 8 (save the server
+presets and switches them on or off. Left for it, in order: slice 9b (the snapshot save at a stop, four slices), slice 8 (save the server
 file, keyed revision first), slices 11 and 11b (presets); then the user's run on their machine.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -857,9 +857,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    it; key the hash with a secret (per process, a restart then reads as a stale revision: 409 and
    Reload) or leave the key's value out of it.
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
-   `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop or restart with `SaveStateOnShutdown` saves the slot snapshots first,
-   server side (the GUI's `slot_state::save_all` is in `pai-app`, which neither the bff nor the
-   manager links), with the longer limit below. The routes: `GET`/`PUT /api/instances/{id}/boot`, as the contract's
+   `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
+   `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so
+   every stop path does (the web, `pai`, systemctl or the SCM, a reboot); four slices there (the save in
+   `pai-core`, Linux `ExecStop=`, Windows preshutdown, the clients stop saving under the manager). The
+   user decided (2026-11-16): before the MVP's run; a stop may wait 5 minutes in all (240 s for the
+   save; set from the first measured save); and every instance start restores the newest snapshot,
+   as slice 9d after 9b (it also mends the Linux restore, which by the code cannot read
+   `/var/lib/private-ai`). The bff keeps its 5 s limit: stop and restart stay job submissions. The routes: `GET`/`PUT /api/instances/{id}/boot`, as the contract's
    "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
    session-free reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
    or restart that saves GiB-sized slot snapshots first, need their own limit, chosen from a measured
