@@ -592,3 +592,35 @@ Lessons only: the rules are in `AGENTS.md`.
 - From the web UI's UX check (2026-11-16): a check script proves each page rendered before it reports
   "0 failing", and binds port 0 rather than probing a fixed port; React 19 `useId` ids look like
   `_r_0_-Port`, so a stable selector is `[id$="-Port-label"]`.
+- `binding_lint`'s `strings_t_keys_and_the_language_file_match` pins the VALUES too, in test code: a
+  key whose text is `{0}{1}{2}` read as `strings::t("key")` fails it ("values passed do not match the
+  text's {N}"), so a test that reads a filled key must call `strings::fill("key", &[&a, &b, &c])`
+  with exactly that many. Report it to the tester (it is their test), and prove the fix in a copy:
+  the file can be restored byte-identically (md5) afterwards.
+- A message shared by two callers needs its OWN key in both strings files: `binding_lint` finds keys
+  only at a literal `strings::t`/`fill`, so a helper in a module the CLI and the GUI both reach cannot
+  borrow a caller's key (`curl-timed-out` is not the http client's).
+- A blocking `TcpStream::read` that reaches its `set_read_timeout` answers `WouldBlock` on Unix and
+  may answer `TimedOut` on Windows (std docs): treat both as the deadline. Never arm a zero duration:
+  it makes the socket non-blocking, so a spent deadline ends the request instead.
+- Widening a timeout's meaning to the WHOLE request: read every caller's budget before claiming no
+  regression (`bench::live_timeout` is 900 s + 100 ms per token, a whole-generation budget; the probe's
+  5 s is a whole-request budget), and say in the report that a caller with a per-read reading would
+  now be cut earlier.
+- After changing `crates/core`, a Windows GNU check of its dependents can answer `Finished` in
+  seconds from cache: `touch crates/core/src/*.rs` and rerun to see `Checking pai-manager` /
+  `Checking pai-bff` really print.
+- A file the `edit` tool touches next to an insertion can LOSE a line (an oldString spanning into the
+  next line, newString not carrying it): after every `crates/core/strings/*.toml` edit,
+  `git diff <file>` must show exactly the intended insertions and nothing else.
+- The generated (gitignored) `.cargo/config.toml` on this machine pins `target-dir = "build/windows/cargo-target"` on EVERY OS:
+  a bare `cargo test`/`clippy` here writes there, not into `build/linux/cargo-target` (that is what
+  `xtask configure` sets through `CARGO_TARGET_DIR`). Look for a debug binary under
+  `build/windows/cargo-target/debug/` on Linux too.
+- `cli_print_paths_hold_no_language` scans EVERY print/format literal of a file listed in
+  `CLI_PRINT_PATHS` (manager.rs's flag includes `format!`), not just `main`/`run`: a
+  `format!("/proc/{pid}/cmdline")` in manager.rs is a hit (proc/pid/cmdline read as words). Build
+  such a path with `Path::new("/proc").join(..).join("cmdline")` outside any print/format macro.
+- A lib-root `use pai_core::x` used only inside `cfg(target_os = "linux")` code is an
+  `unused_imports` hit on windows-gnu: gate the root `use` with the same cfg (the fn-local `use`
+  inside `run` needs it too).

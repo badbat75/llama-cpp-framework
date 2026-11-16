@@ -21,7 +21,9 @@ Lessons only: the rules are in `AGENTS.md`.
   clippy driver records `CLIPPY_ARGS`, so any `-v` run reports `Dirty <own pkg>: the environment variable
   CLIPPY_ARGS changed` and re-checks (that run is proof too, it re-runs every target). Write the `-v` log to a file and grep
   that file: piped through `head`/`grep -c` the pipe closes early (SIGPIPE), the log truncates, and the
-  `Fresh <own pkg>` line (late in the dep list) reads as missing. Bare cargo commands here land in
+  `Fresh <own pkg>` line (late in the dep list) reads as missing. A `grep -c` that counts 0 exits 1, so a
+  chained `cargo ...; echo exit=$?; ...; grep -c ...` prints a trailing `Exit code: 1` after green runs:
+  report the per-command `exit=$?` lines, not the chain's. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
   A clean rerun IS fast (0.4 s for every pai-bff target on 24 cores, deps cached): to prove it checked
   them all, `cargo clippy -p <pkg> --all-targets -v` and count `--crate-name <target>` (pai-bff today: 15
@@ -29,6 +31,9 @@ Lessons only: the rules are in `AGENTS.md`.
   script and its test twin; the 15th is the dependency `pai_core`). To prove a green
   `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
   (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
+- A `cargo test` rerun always runs the test binary; only its compile can be a replay. `-v` (before
+  `--`) shows `Fresh <pkg>` (fingerprint checked against the current sources) or `Dirty`/`Compiling`.
+  For the independent check after a coder, `cargo clean -p <pkg>` and rerun when in doubt.
 - One fixture per test: an id from one temp fixture will not match another. Use real names and values
   captured from the real system; a name-prefix match is tested with every real name sharing the prefix
   (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
@@ -46,7 +51,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `clippy::type_complexity`: alias it (`type Case<'a> = (...)`), and rustfmt wants that alias written
   multi-line.
 - Prefer `todo!("<fn>")` stubs to a compile error, which hides every other test in the binary, lints
-  included. A `todo!` body does NOT excuse the parameters: `-D warnings` fails `unused_variables`, so
+  included. The exception the coordinator may order for a small pure helper: tests importing a not-yet
+  private `super::` fn/enum red as `E0432: no <name> in <module>`; the whole test binary stops
+  compiling, so say the existing tests in the crate did not run. Assert with `matches!` so the enum
+  needs no `PartialEq`/`Debug` derive. A `todo!` body does NOT excuse the parameters: `-D warnings` fails `unused_variables`, so
   underscore-prefix them and tell the coder to strip the prefixes. A stub reached only from tests fails
   clippy with dead code until wired in: say so, add no `allow`; a `pub` stub in a lib crate is not dead
   code, so there is no dead-code red to report. A new parameter on a core method: a stub that takes it
@@ -107,6 +115,14 @@ Lessons only: the rules are in `AGENTS.md`.
   check with `--nocapture`), restore the mode before asserting; check old content and an unchanged
   listing (no temp file left).
 - Force a copy fallback by injecting the rename (`&dyn Fn(&Path, &Path)`) and failing it for one path.
+- To make a real rename fail: a DIRECTORY at the target name (a file cannot be renamed onto one,
+  `EISDIR` on Linux, checked with python3's `os.rename`; empty is enough, non-empty is the firmer fixture).
+- A "one deadline bounds the WHOLE request, not one read" pin: a fake that writes its reply one byte
+  every 300 ms (`for byte in text.as_bytes()`, `if write_all(&[*byte]).is_err() { break }` then sleep: a
+  broken pipe is the client giving up, so the fake thread dies with it, no leak). Run the call on a
+  thread with a `recv_timeout` channel: the red reads "did not return within N s", never a hang.
+- A `format!` with no placeholder (a fake's canned reply body) is `clippy::useless_format` under
+  `-D warnings`: write `.to_string()` on the raw string, with single braces.
 - A real chown(2) seam works without root: an owner may give a file any group it is in (`id -Gn`).
 - A fake one-shot runner's `ExitStatus` on Unix: `ExitStatusExt::from_raw(code << 8)`, under
   `#[cfg(unix)]` (the user's Windows `cargo test --workspace` compiles these tests too).
@@ -175,6 +191,15 @@ Lessons only: the rules are in `AGENTS.md`.
   stops it before anything real).
 - `strings::t`/`fill` return the KEY when missing: assert the message's content and
   `!text.starts_with("<key>")`, never only equality with `strings::fill("<key>", ..)`.
+- Pin "the text is the strings file's, not built inline": `assert_ne!` the message against the inline
+  `format!` shape FIRST (so the red names that inline text), then require it to start with the template
+  read through the strings API, `strings::t("<key>").split('{').next()` (a missing key reads as the key,
+  so the same assert reds on it). A template that fills the HALF-WRITTEN name greens the file-name
+  contains (the final name is its prefix): pin `!msg.contains("-partial")` too, to pin the final name.
+- A `pai-core` test reads the REAL strings file: `paths::strings_dir()` takes `<exe>/../../share` only
+  when it exists, else `CARGO_MANIFEST_DIR/strings`, so no redirect is needed. A key used by code the
+  CLI reaches goes in `cli.toml` as well as `en_US.toml` (binding_lint), and `fill`'s arity must match
+  the template's placeholders exactly (`mistuned`: `{0}..{N-1}`, no gap, no extra).
 - The names lints (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flag old names in
   code lines (doc comments skipped). In tests split them with `concat!`: `concat!("llama-cpp",
   "-config")`, `concat!("llama", ".cpp")` for `join("llama.cpp")`, `concat!(r"C:\ProgramData\llama",
@@ -256,6 +281,22 @@ Lessons only: the rules are in `AGENTS.md`.
   `os_backend()` is the real choice.
 - To order a llama-server call against a fake's, share one log: `server_control::fake::http_stub(&log)`
   answers `/models`, `/health` and a slot restore on a loopback port; point `Port` at it in an e2e phase.
+- A raw-socket HTTP fake (`TcpListener` on 127.0.0.1:0, `listener.accept()` yields the tuple
+  `(stream, addr)`): record the request BEFORE answering a step that waits (a `Hang`), else a caller that
+  dies on its deadline reads as "no request was sent" and the red cannot tell the two failures apart.
+  Record the ask once per request, not once per request and once per step (a double record shows as two
+  saves per model). Its own file write is `let _ = std::fs::write(..)`: a panic kills the listener thread
+  and every later call fails "Connection refused" / "the server closed the connection", so the red names a
+  dead fake instead of the behaviour.
+- A "one deadline for the whole run" rule: N models where ONE hangs for the fake's `HANG` (5 s) under a
+  budget of 1 s, and `assert!(took < 4 s)` - a per-model budget would need N x HANG and greens.
+- Moving a leg's logic into `pai-core`: leave the old crate's behaviour tests in place (they drive the
+  public entry, so they keep pinning it through the wrapper) and pin the delegation itself - a source lint
+  over the code half (split at `"\n#[cfg(test)]\n"`) that requires the core call and forbids the old inline
+  shape - plus ONE end-to-end through the public entry. Do not re-test the core's rules in the wrapper.
+- To pin a refusal of a value that looks like a flag (`--port -1`), parse the port raw and filter only the
+  path-like value on `starts_with('-')`: filtering both makes `-1` a missing flag, so a fallback-to-default
+  implementation greens for the wrong reason.
 - The GUI's Server save re-reads the file at once (`refresh_server_snapshot`): fake state meant to change
   "after the first save" must change before it.
 - A preset range test over `checks::PRESET_INT_KEYS` builds each Preset with `Preset::from_keys` and
@@ -290,6 +331,17 @@ Lessons only: the rules are in `AGENTS.md`.
 - A new argument on a method with many test call sites: a small Python pass that walks each call to its
   matching paren (skipping string literals and `fn ` definitions) inserting the argument, then `cargo
   fmt -p`; bump `[(..); N]` array lengths by hand.
+
+- One constant two crates use (the save's budget): pin the VALUE in the owning crate with
+  `assert_eq!(CONST, Duration::from_secs(N))`, a missing const is `E0425` and stops that crate's whole
+  test binary (report which tests did not run); pin each USER's delegation with a source lint over the code
+  half: require the core's path (`slot_save::SAVE_BUDGET`, a needle any of `use pai_core::slot_save::…`,
+  `pai_core::slot_save::…` or `slot_save::…` satisfies) and forbid the copied literal
+  (`concat!("from_secs(", "240)")`, narrow enough not to hit the file's other timeouts).
+- A unit line added to a shipped systemd unit is pinned by appending the exact line to the existing unit
+  test's `for want in [..]` list (`section(&unit, "[Service]")` yields trimmed lines, no leading space:
+  the `format!`'s `\` continuations strip them). The loop reports only the FIRST missing line, so one red
+  pins the whole list: the coder must land every entry.
 
 ## Manager, D-Bus, pipe
 
@@ -338,6 +390,11 @@ Lessons only: the rules are in `AGENTS.md`.
   deadlock). A cancelled request leaves its `spawn_blocking` running.
 - A per-connection identity behind a shared `Authority` is a thread-local set around the call
   (`TokenAuthority::with_caller`): pin it cleared on return and on panic, unseen by other threads.
+- `$MAINPID` exists only for a unit's `ExecStop=` and is unset when systemd knows the main process exited
+  (man 5 systemd.service, `ExecStop=`): pin the unset case through `run(&["save-slots", "default"])` in a
+  plain unit test, first `assert!(std::env::var_os("MAINPID").is_none(), ..)` (a systemd-only name, so the
+  assert never fires in a test, and the run must touch no `paths::`: `data_root_e2e` owns the process-wide
+  data root). A candidate arm that drops the id shows as `unused_variables`: tell the coder to prefix it.
 - zbus 5 without a bus (`zbus::blocking`): `UnixStream::pair()`; server
   `Builder::async_io_unix_stream(s0).server(Guid::generate())?.p2p().serve_at(..)?.build()` on its own
   thread; client `.p2p().method_timeout(..)`. Stamp a sender with `client.inner().set_unique_name(":1.42")`
@@ -504,6 +561,11 @@ Lessons only: the rules are in `AGENTS.md`.
   fakes. `run_chroot` refuses any `/etc` path not under `$DPKG_ROOT`. Enabled template instances exist
   only as `multi-user.target.wants` links (`systemctl list-unit-files` lists the template alone): pin
   the links. rpm scriptlets run the same way, `$1` as argument.
+- The xtask suite is flaky in its parallel run: `the_engine_prerm_records_the_running_instances_and_stops_them`
+  failed once in six full runs (the recorded list short of `llama.cpp@gpu1.service`) and is green alone,
+  in four further full runs and with `--test-threads=1`; its `Sandbox::new("engine-prerm")` root is
+  `temp_dir()/xtask-scripts-<name>-<pid>`, so the loop's iterations share one directory. Report it as a
+  pre-existing flake, with the reruns that came back green, never as the slice's defect.
 - Packaging facts (this machine): local rpmbuild has no `%systemd_post` (write scriptlets by hand); rpm 6
   turns a sysusers.d `m` line into `Requires: group(..)`; debhelper snippets to mirror are in
   `/usr/share/debhelper/autoscripts/`; dbus' trigger is `interest-noawait` (the policy may not be
@@ -658,6 +720,24 @@ Lessons only: the rules are in `AGENTS.md`.
   and "no status" tests break by design; update them in place and cite both criteria.
 - Web UI: `input type="password"` is found by `getByLabelText(.., { selector: "input" })`, not by
   `getByRole("textbox")` (dom-accessibility-api gives it no role here).
+- Web UI: the `EN` table in `fe/src/test/bff.ts` is the mirror App.test.tsx's "1a strings" test compares
+  with `fe/src/strings/en_US.json`, so adding a new key there reds that test (`keys missing or with other
+  text: ['<key>']`) until the coder adds it to `en_US.json`. That is the new string's own red, report it
+  as such. `strings.test.ts` (the "every key the code uses" scan) skips test files, so a test-only EN key
+  never trips it.
+- Web UI: run Vitest from `fe/` (`cd fe && npx vitest run <file>`); `npx`/`npm exec` from the repo root
+  resolves no local vitest. The three checks (`typecheck`, `lint`, `format:check`) do run from the repo
+  root as `npm --prefix fe run ..`. `typecheck` before the suite: it reports an unused helper (TS6133)
+  that Vitest ignores. Keep a run's output small through
+  `grep -E "✓|×|Tests |Test Files |Error|expected|Unable" | cut -c1-200 | head -50`.
+- Web UI: in jsdom an `<option>` has no `checked` (it reads `undefined`, only `selected` exists), so a
+  select's current choice is pinned by `select.selectedIndex` (its option's text, the thing the user
+  reads) or by `.value`, never `input.checked`; note `selectedIndex` is 0 by default, so the
+  "an option is selected" guard is weak and the text compare carries the test.
+- Web UI: the full fe suite has pre-existing flakes in `PresetPage.test.tsx` (2d.56, 2d.63) when the
+  suite is loaded: they pass in their own run. Check a suspect test in its own run before blaming the
+  slice (files are isolated, so one file cannot pollute another); a clean-tree stash of a shared helper
+  only proves what the file-alone run does not.
 - Web UI: to hand a handler a null `document.activeElement`, define an own getter on the `document`
   instance (shadows the prototype), delete it in `finally`, and probe with your own `hashchange`
   listener that the stub held when the handlers ran.
