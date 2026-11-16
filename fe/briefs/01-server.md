@@ -995,6 +995,37 @@ more than Stopping **(preference)**: the Save on shutdown hint (`server-snapshot
 says stopping waits for the write. **Out of S2**: a status that clears when an idle read later shows
 the expected state after a timeout (true of Start today as well).
 
+## 4e. Later slice S3: the save's answers as the bff will send them
+
+Written 2026-11-16 against `ARCHITECTURE.md`, "Saving the server file from the web" (contract,
+`PUT .../server`). The save of 1b already sends what the design reads; two answers read wrong.
+`ServerForm.tsx` `refusalText` and `fallbackField` (lines 296 to 331) do not know
+`bind-all-with-others`, so a hand-edited file listing `0.0.0.0` with another address (which
+`fromValues` loads as is) is refused at every save as "The request was refused
+(bind-all-with-others)." with no field marked. And since the revision does not survive a bff
+restart, the 409 text "changed elsewhere" can name a change that did not happen. No new pattern,
+component or token.
+
+S3.1. **Text.** A 422 `{key: "bind-all-with-others", args: [], field: "Hostname"}` shows
+    `save-refused` filled with `api-bind-all-with-others` in the bar's alert.
+S3.2. **Field.** The same answer marks Bind to (`Hostname`) with `api-bind-all-with-others` as its
+    error and moves the focus to it, as `client-unresolvable-host` does (34b); without `field` the
+    fallback is `Hostname` too.
+S3.3. **Edit clears it.** Changing a Bind to row removes the error, as for every field (33a).
+S3.4. **409 text.** A 409 `server-changed-elsewhere` shows the new English text below, with Reload,
+    as before; nothing else of the 409 changes.
+S3.5. **Announcement**: unchanged: the alert is `role="alert"`
+    ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)), the marked field names its error
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification)).
+S3.6. **Strings, slice S3.** New: `api-bind-all-with-others` | Hostname lists 0.0.0.0 with other
+    addresses; 0.0.0.0 already covers every address, so bind it alone. (verbatim from
+    `crates/core/strings/en_US.toml` line 1010). Changed: `api-server-changed-elsewhere` | These
+    settings changed elsewhere, or the web service restarted, after you opened them. Reload to see
+    them; your edits here will be lost.
+
+**Out of S3**: a client check for `0.0.0.0` with other rows (the rows already prevent making one);
+`server-malformed` (400) and `client-other` (502), which keep `save-failed`.
+
 ## 5. The Server form
 
 ### 5.1 Cards and fields, in order

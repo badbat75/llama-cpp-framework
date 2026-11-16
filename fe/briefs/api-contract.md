@@ -113,7 +113,10 @@ manager's detail never reaches the body).
   instance's own defaults, never a folder of the bff's account.
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
 - `interfaces` are the server machine's network interfaces (`net_ifaces::interfaces()`).
-- `revision` is opaque; the fe sends it back on a save.
+- `revision` is opaque (16 lowercase hex digits today: SipHash-2-4 of the whole text under a key the
+  bff draws at each start, `crates/bff/src/server.rs` `revision`); the fe sends it back on a save and
+  never compares or parses it. It does not survive a bff restart: a form opened before one gets 409
+  `server-changed-elsewhere` at its next save, and a Reload (user, 2026-11-16).
 - **`withheld`**: a document read without the right to see `OpencodeApiKey` has
   `values.OpencodeApiKey` `null` and `"withheld": ["OpencodeApiKey"]` when the file has a key
   (`withheld` absent or `[]` otherwise). Every web session is an administrator's, so the fe never
@@ -123,20 +126,31 @@ manager's detail never reaches the body).
 
 ### `PUT /api/instances/{id}/server`
 
-Body `{"revision", "values"}`.
+Body `{"revision", "values"}`, `values` keyed and typed as the read gives them (`null` unsets a key);
+every key of the read is sent. Designed in `ARCHITECTURE.md`, "Saving the server file from the web";
+not served yet (bff slice 8, sub-slice 6).
 
-- The bff (or the manager behind it) runs every check again, including the ones that today exist
-  only in the GUI layer: the number ranges, the log level kept in 0..5, a trailing `/` and `/v1`
-  stripped from the base URL, threads at most the CPU count.
-- A blank `ModelsDir` or `StateDir` is left unset in the file, on every OS.
-- 200 `{"revision", "running"}`: `running` chooses between "Saved." and "Saved: restart
-  llama-server to apply."
-- 422 `{"key", "args", "field"?}`: a refused value; `field` is the INI key it belongs to, absent for
-  a form-level refusal. Keys the fe knows: `not-whole-number-in-range`, `comment-markers`,
-  `load-on-startup-over-max`, `load-on-startup-unlimited`, `client-address-in-use`,
-  `client-unresolvable-host`.
-- 409 `server-changed-elsewhere` (proposed key): the revision is stale, the file changed since it
-  was read.
+- The bff runs `server_cfg::check` (the number ranges, `LogVerbosity` 0..5, threads at most the CPU
+  count, `0.0.0.0` alone in `Hostname`), strips a trailing `/` and `/v1` from the base URL, then the
+  manager runs `checks::server_file` and the address check again.
+- A blank `ModelsDir` or `StateDir` is left unset in the file, on every OS; the save creates no folder.
+- `OpencodeApiKey`: a string sets it, `null` unsets it.
+- The file is rendered whole from the values (`server_cfg::render_for`): unknown keys and the file's
+  own comments are not kept, as in the GUI's save.
+- 200 `{"revision", "running"}`: `revision` is the new file's, the one a `GET` now returns;
+  `running` chooses between "Saved." and "Saved: restart llama-server to apply." (`true` also when
+  the status read after the write failed).
+- 422 `{"key", "args", "field"}`: a refused value; `field` is the INI key it belongs to: `args[0]`
+  for `not-whole-number-in-range` and `comment-markers`, `ModelsMax` for `load-on-startup-over-max`
+  and `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
+  `client-unresolvable-host` (`[host]`), `Port` for `client-address-in-use` (`[id]`).
+- 409 `server-changed-elsewhere`: the revision is stale (the file changed, or the bff restarted,
+  since the read), or the manager found the file changed between the bff's read and its write.
+  Nothing is written.
+- Errors, each `{"key", "args"}`: 401 `session-required`; 400 `server-malformed` (a body or a value
+  not of the read's type); 403 `session-not-administrator` (the session is ended); 404
+  `client-no-instance`; 503 `client-unavailable` (also a time-out after the manager may have
+  written); 502 `client-other`.
 
 ### Start, stop, restart, boot
 
@@ -261,7 +275,9 @@ manager's `ReadFile` needs no right for the preset files.
 - **An administrator's save needs no second password** (user, 2026-11-15): the bff vouches for the
   user it authenticated, and the manager grants `configure` to members of the `pai` group. No
   status asks for the password again.
-- **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user).
+- **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user); the design
+  recommends keeping it so, for the user to decide (`ARCHITECTURE.md`, "ModelsDir after a save").
 - **`ModelsMax` accepts negatives today** and the render drops them silently; the fe shows whatever
   `limits` says.
-- **A bind list mixing `0.0.0.0` with other addresses** is checked nowhere today.
+- **A bind list mixing `0.0.0.0` with other addresses** is refused by the save's `server_cfg::check`
+  (422 `bind-all-with-others`, field `Hostname`), once the PUT is served.
