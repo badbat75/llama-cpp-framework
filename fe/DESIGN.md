@@ -37,7 +37,7 @@ only an administrator can be (section 3).
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read), 2e (plain cards, read: `fe/briefs/02e-preset-cards.md`); the rest `fe/briefs/02-models.md` section 0 |
+| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read), 2e (plain cards, read: `fe/briefs/02e-preset-cards.md`), 2h (save of those cards: `fe/briefs/02h-preset-save.md`); the rest `fe/briefs/02-models.md` section 0 |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -218,22 +218,41 @@ Each is one React component, reused by every page.
   after the card's `h3` has none (the `h3`'s bottom margin parts them).
 - **Read-only form**: a form shown before its slice can save (the preset page's plain cards, 2e):
   the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
-  saving slice only enables them. Not `readonly` (text inputs only in HTML) and not `aria-disabled`
+  saving slice only enables them (2h does, card by card). Not `readonly` (text inputs only in HTML) and not `aria-disabled`
   (dozens of inert tab stops). The About toggles stay operable.
   - **Full-value line**: a disabled input or select cuts off a long value and cannot be scrolled,
     so a value longer than its control shows (more than 8 characters in a number input, more than
     20 in a text input or a select) is repeated in full under the control: `--muted`, monospace,
     0.875rem, wrapping anywhere, `aria-hidden="true"` (the control already exposes the value) and
     no tab stop. A count of characters, not a measure of the box, so it is the same at every width
-    and testable without layout **(preference)**. Brief 02e, criteria 118 to 121.
+    and testable without layout **(preference)**. Brief 02e, criteria 118 to 121. Only under a
+    **disabled** control: an enabled input scrolls and an enabled select opens (02h, 134).
   - **A boolean shows what the engine will do**: a llama-server flag is off only for `off`,
     `disabled`, `false`, `0` and on for any other value, `""` included; a value other than `true`
     or `false` adds a "Written as ..." line (not `aria-hidden`, named by the control's
     `aria-describedby`) so the file's spelling stays visible; a value shown as a select's extra
     option gets no such line, only the full-value line when it is long. Values are trimmed of
     spaces and tabs only, as llama-server's INI grammar does. Each key's reading (flag, truthy
-    only, valued) is in brief 02e, criteria 122 to 126.
-- **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them.
+    only, valued) is in brief 02e, criteria 122 to 126. In an editable form the line shows only
+    while the field is unchanged (02h, 134).
+- **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them. The
+  unit has an id and is the first id of the input's `aria-describedby`, so it is read with the
+  input ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships); 02h, 159).
+- **Changed field and partial save** (a file the user may have hand-edited, the presets): a field
+  is changed when its control's state differs from the state it loaded in, so changing it back
+  makes it unchanged; only changed fields are sent, each in the configurator's spelling, and the
+  bff edits those lines in place, so an untouched value keeps its spelling, its comments and its
+  neighbours (02h, D-a, 132, 133). The Server page sends its whole document instead, as the GUI
+  renders that file whole.
+- **Reason line**: a group or card disabled by a rule whose switch is not next to it (a value set in
+  another card) shows one `--muted` paragraph saying what it needs, right after its heading, only
+  while disabled; a plain paragraph in reading order, not a live region and not in any
+  `aria-describedby` (02h, 176 to 181, 192). A dependent field whose switch sits just above it needs
+  none (Snapshot folder, Vision GPU).
+- **Section jump list**: on a form taller than a few screens (the preset page), a `<nav>` after the
+  form's `h2` holds one button per card; a button moves focus to the card's `h3` (`tabindex="-1"`)
+  and scrolls it into view. Buttons, not `#fragment` links, which the hash router would read as a
+  route (02h, 196).
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
     hint and the error.
@@ -264,7 +283,9 @@ Each is one React component, reused by every page.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
-  `1e3` and changes on the wheel **(preference)**). Paths and URLs in monospace.
+  `1e3` and changes on the wheel **(preference)**), except a number that can be negative, which gets
+  no `inputmode`: a phone's numeric keyboard may have no minus key
+  ([MDN, `inputmode`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Global_attributes/inputmode)). Paths and URLs in monospace.
 - **Secret input**: `type="password"`, `autocomplete="off"`, plus a **Show** toggle button
   (`aria-pressed`), disabled while there is nothing to reveal (No key ticked). A document that
   withholds the secret (`withheld` in the reply) is not shown as a form: the read fails, since a save
