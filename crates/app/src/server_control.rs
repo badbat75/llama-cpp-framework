@@ -659,6 +659,15 @@ pub fn backend_kind(os: Os) -> Kind {
     }
 }
 
+/// Whether this process must save the slot snapshots before it asks the
+/// instance to stop. `Direct` runs llama-server itself and kills it, so the
+/// save is the client's; under the manager the instance saves at its own stop
+/// (the unit's `ExecStop=`, the service's `Stop`), and a second save would
+/// write the same gigabytes twice.
+pub fn client_saves_snapshots(backend: &Backend) -> bool {
+    matches!(backend, Backend::Direct)
+}
+
 /// A new backend of `os`: the manager over `system_connect`, or `Direct`.
 // Reached only from a shipped build's `backend()`: a test build takes the fake.
 #[cfg_attr(all(not(test), feature = "test-support"), allow(dead_code))]
@@ -2084,6 +2093,31 @@ mod tests {
             assert_eq!(b.stop(), Err(ClientError::Unavailable.text()), "{os:?}");
         }
         assert!(matches!(os_backend_for(Os::MacOs), Backend::Direct));
+    }
+
+    /// Only the client that kills llama-server saves the slot snapshots:
+    /// `Direct` (macOS) stops the process it spawned, so the save is its job;
+    /// under the manager the instance saves at its own stop, so the client
+    /// saving too would write the same gigabytes twice. The decision is pure:
+    /// it asks the manager nothing.
+    #[test]
+    fn the_client_saves_the_snapshots_only_on_the_local_backend() {
+        assert!(
+            client_saves_snapshots(&Backend::Direct),
+            "Direct kills llama-server: nothing else can save before it"
+        );
+        // The manager backend of this OS, the one a shipped Linux build runs.
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
+        assert!(
+            !client_saves_snapshots(&b),
+            "under the manager the instance saves at its own stop"
+        );
+        assert_eq!(
+            log.lock().unwrap().clone(),
+            Vec::<String>::new(),
+            "the decision asks the manager nothing"
+        );
     }
 
     /// Under the manager the log is the unit's journal on Linux and the

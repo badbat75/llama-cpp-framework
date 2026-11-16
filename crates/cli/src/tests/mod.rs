@@ -9,6 +9,12 @@
 mod deps_lint;
 mod split_lint;
 
+/// The text scan shared with pai-config's lint of the GUI's stop worker
+/// (`crates/app/src/tests/gate_lint.rs`), used by `cli.rs`'s lint of
+/// `snapshot_before_stop`.
+#[path = "../../../app/src/tests/gate_lint.rs"]
+pub(crate) mod gate_lint;
+
 use clap::Parser;
 use pai_core::paths;
 

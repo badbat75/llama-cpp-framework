@@ -1705,8 +1705,9 @@ fn stop_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<Ap
 ///
 /// It exists for the Benchmark tab's synthetic mode, which needs llama-server
 /// down before it may run and must not reach for `runstate::stop` itself: that
-/// would skip the conversation snapshot this path takes first, and would leave
-/// the footer, the tray and the status-generation counter describing a process
+/// would skip the conversation snapshot this path takes on the local backend,
+/// and would leave the footer, the tray and the status-generation counter
+/// describing a process
 /// that is no longer there (the next periodic tick would then report the
 /// deliberate stop as "llama-server is no longer running", in red).
 fn stop_server_async_with(
@@ -1735,11 +1736,16 @@ fn stop_server_async_with(
     bump_run_status_gen();
     std::thread::spawn(move || {
         // Snapshot BEFORE the kill: the KV cache is process memory, so once
-        // taskkill lands there is nothing left to save. This is the slow leg
-        // (a whole KV cache per model), which is why it reports its own progress and why
+        // taskkill lands there is nothing left to save. Only the client that
+        // kills llama-server saves: under the manager the instance service
+        // saves the snapshots at its own stop, so a stop from here asks for
+        // none of its own. This is the slow leg (a whole KV cache per model),
+        // which is why it reports its own progress and why
         // the whole stop path already lives off the UI thread.
+        let server = &crate::server_control::backend();
+        let saves = crate::server_control::client_saves_snapshots(server);
         let cfg = server_cfg::load();
-        let snapshot = if cfg.save_state_on_shutdown_or_default() {
+        let snapshot = if saves && cfg.save_state_on_shutdown_or_default() {
             post_status(&app_weak, strings::t("snapshot-saving"), false);
             let (saved, errors) = crate::slot_state::save_all(&cfg);
             snapshot_summary(&saved, &errors)
@@ -1749,7 +1755,6 @@ fn stop_server_async_with(
 
         // `stop()` waits for the exit itself, up to `runstate::STOP_GRACE`.
         // A stop the backend refused leaves the server as the probe finds it.
-        let server = crate::server_control::backend();
         let stopped = server.stop();
         let running = match &stopped {
             Ok(gone) => !gone,

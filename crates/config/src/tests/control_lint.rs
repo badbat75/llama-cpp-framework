@@ -6,6 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
+/// The scan shared with pai-cli's lint of `snapshot_before_stop`
+/// (`crates/app/src/tests/gate_lint.rs`).
+#[path = "../../../app/src/tests/gate_lint.rs"]
+mod gate_lint;
+
 /// The files allowed to call them: `runstate` itself and the seam.
 const ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
 
@@ -440,6 +445,270 @@ fn the_launch_starts_the_server_only_through_start_at_launch() {
     );
 }
 
+// ── The stop worker saves snapshots only for the server it stops locally ──
+//
+// Under the manager the instance service saves the slot snapshots at its own
+// stop, so a stop from the GUI saves none of its own; the local backend
+// (macOS) keeps the client-side save. The decision is
+// `server_control::client_saves_snapshots(backend)`, and the save (and the
+// progress line printed with it) sits behind it. Checked on the text: the
+// worker runs on a spawned thread (a Direct stop there would SIGTERM a
+// llama-server that is really running, and `fake::scoped` does not reach a
+// spawned thread), and no e2e phase drives the stop path.
+
+/// The body of the GUI's stop worker, comments and test items left out.
+fn stop_worker() -> String {
+    let gui = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui.rs");
+    let text = std::fs::read_to_string(&gui).expect("read gui.rs");
+    let code = gate_lint::strip_comments(
+        &production_lines(&text)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    gate_lint::fn_body(&code, "stop_server_async_with")
+}
+
+/// Whether the gate `gate(..)` asks the backend the worker stops: the call
+/// names `backend()` in its own argument, or an argument bound by a
+/// `let <name> = ...backend();` before the gate. A gate asked of nothing in
+/// particular (a config, a stale local) decides for no backend.
+fn gate_asks_the_backend(body: &str, gate: &str) -> bool {
+    let Some(at) = body.find(gate) else {
+        return false;
+    };
+    // The gate text includes its opening parenthesis: the argument list runs
+    // from there to the closing one that brings the depth back to 0.
+    let rest = &body[at + gate.len()..];
+    let mut depth = 1_i64;
+    let mut end = rest.len();
+    for (i, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let arg = &rest[..end];
+    if arg.contains("backend()") {
+        return true;
+    }
+    let head: String = arg.chars().take_while(|c| is_ident(*c)).collect();
+    !head.is_empty()
+        && body[..at]
+            .rfind(&format!("let {head}"))
+            .is_some_and(|k| body[k..at].contains("backend()"))
+}
+
+#[test]
+fn the_stop_worker_saves_snapshots_only_on_the_local_backend() {
+    let body = stop_worker();
+    const GATE: &str = "client_saves_snapshots(";
+    assert!(
+        body.contains(GATE),
+        "the stop worker never asks who saves the snapshots"
+    );
+    assert!(
+        gate_asks_the_backend(&body, GATE),
+        "the stop worker's decision does not ask the backend it stops: {body}"
+    );
+    for call in ["slot_state::save_all(", "snapshot-saving"] {
+        assert!(
+            gate_lint::call_behind_gate(&body, GATE, call),
+            "the stop worker's {call:?} is not behind the decision: {body}"
+        );
+    }
+    assert!(
+        body.contains("slot_state::save_all("),
+        "the local backend's stop must still save the snapshots"
+    );
+    assert!(
+        body.contains(".stop()"),
+        "the stop worker must still stop the server"
+    );
+}
+
+/// The three sanctioned shapes, each spelled as the two production call sites
+/// spell it and as a plain one, and the shapes that must not read as guarded:
+/// an answer nothing uses, a guard of some other call, a gate after the save,
+/// and both inverted polarities (a guard that returns when the decision says
+/// yes, a block that saves when it says no). The needle is the gate as the
+/// lint passes it, path-qualified in the two real shapes.
+#[test]
+fn the_gate_scan_accepts_the_three_guarded_shapes_and_refuses_the_rest() {
+    for (gate, body, expected) in [
+        // The gate inside the condition of the `if` whose block holds the call.
+        (
+            "saves(",
+            "if saves(b) {\n    slot_state::save_all(&cfg);\n}",
+            true,
+        ),
+        // A guard clause: the call sits below the block that returns.
+        (
+            "saves(",
+            "if !saves(b) {\n    return;\n}\nslot_state::save_all(&cfg);",
+            true,
+        ),
+        // The answer is bound to a name, and an `if` tests it before the call.
+        (
+            "saves(",
+            "let on = saves(b);\nif on {\n    slot_state::save_all(&cfg);\n}",
+            true,
+        ),
+        // The name tested first in a conjunction (the GUI's stop worker).
+        (
+            "client_saves_snapshots(",
+            "let server = backend();\nlet saves = client_saves_snapshots(server);\n\
+             if saves && cfg.save_state_on_shutdown() {\n    \
+             slot_state::save_all(&cfg);\n}",
+            true,
+        ),
+        // The name tested last in a conjunction.
+        (
+            "saves(",
+            "let on = saves(b);\nif cfg.save_state() && on {\n    \
+             slot_state::save_all(&cfg);\n}",
+            true,
+        ),
+        // The bound name in a guard clause.
+        (
+            "saves(",
+            "let on = saves(b);\nif !on {\n    return;\n}\n\
+             slot_state::save_all(&cfg);",
+            true,
+        ),
+        // The guard clause as the CLI writes it.
+        (
+            "client_saves_snapshots(",
+            "if !client_saves_snapshots(server) {\n    return;\n}\n\
+             slot_state::save_all(&cfg);",
+            true,
+        ),
+        // The answer is asked and nothing uses it.
+        (
+            "saves(",
+            "let _ = saves(b);\nslot_state::save_all(&cfg);",
+            false,
+        ),
+        // The gate asks after the save.
+        (
+            "saves(",
+            "slot_state::save_all(&cfg);\nif saves(b) {\n    post();\n}",
+            false,
+        ),
+        // The gate guards only some other call.
+        (
+            "saves(",
+            "if saves(b) {\n    post();\n}\nslot_state::save_all(&cfg);",
+            false,
+        ),
+        // The bound name is asked and never tested: an `if` whose condition
+        // names nothing of the gate holds the call (the GUI's worker with its
+        // `saves &&` deleted).
+        (
+            "client_saves_snapshots(",
+            "let server = backend();\nlet saves = client_saves_snapshots(server);\n\
+             if cfg.save_state_on_shutdown() {\n    \
+             slot_state::save_all(&cfg);\n}",
+            false,
+        ),
+        // The bound name is tested only in an argument, in a condition whose
+        // block holds no call.
+        (
+            "saves(",
+            "let on = saves(b);\nif verify(on) {\n    post();\n}\n\
+             slot_state::save_all(&cfg);",
+            false,
+        ),
+        // No `if` at all: a word carrying the letters `if` is not a condition
+        // (the scan that took any `if` between the gate and the call passed
+        // these two).
+        (
+            "saves(",
+            "let on = saves(b);\nlet ok = verify(on);\n\
+             slot_state::save_all(&cfg);",
+            false,
+        ),
+        (
+            "saves(",
+            "let on = saves(b);\nmodify(cfg);\nslot_state::save_all(&cfg);",
+            false,
+        ),
+        // The name matched only inside a longer name is not the name.
+        (
+            "saves(",
+            "let on = saves(b);\nif on_the_fly {\n    \
+             slot_state::save_all(&cfg);\n}",
+            false,
+        ),
+        // A guard clause with the wrong polarity: it returns when the decision
+        // says the client saves.
+        (
+            "client_saves_snapshots(",
+            "if client_saves_snapshots(server) {\n    return;\n}\n\
+             slot_state::save_all(&cfg);",
+            false,
+        ),
+        // A block that saves when the decision says it must not.
+        (
+            "client_saves_snapshots(",
+            "if !client_saves_snapshots(server) {\n    \
+             slot_state::save_all(&cfg);\n}",
+            false,
+        ),
+        // The bound name negated while its block holds the call.
+        (
+            "saves(",
+            "let on = saves(b);\nif !on {\n    \
+             slot_state::save_all(&cfg);\n}",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            gate_lint::call_behind_gate(body, gate, "slot_state::save_all("),
+            expected,
+            "{body:?}"
+        );
+    }
+}
+
+#[test]
+fn the_gate_ask_scan_needs_the_backend_the_gate_asks() {
+    for (body, expected) in [
+        // The argument is the backend call itself.
+        (
+            "if client_saves_snapshots(crate::server_control::backend()) {\n    a();\n}",
+            true,
+        ),
+        // The argument is a name bound to the backend before the gate.
+        (
+            "let server = crate::server_control::backend();\n\
+             if client_saves_snapshots(server) {\n    a();\n}",
+            true,
+        ),
+        // The argument is a local config: no backend is asked.
+        (
+            "let cfg = server_cfg::load();\nif client_saves_snapshots(cfg) {\n    a();\n}",
+            false,
+        ),
+        // No gate at all.
+        ("a();", false),
+    ] {
+        assert_eq!(
+            gate_asks_the_backend(body, "client_saves_snapshots("),
+            expected,
+            "{body:?}"
+        );
+    }
+}
+
 // ── The instance files are the engine's ────────────────────────────────
 // `server@<id>.ini`, `presets.ini` and `presets.ini.disabled` live in the
 // engine's directory (`paths::engine_config_dir`, `/etc/llama.cpp` on Linux);
@@ -450,7 +719,13 @@ fn the_launch_starts_the_server_only_through_start_at_launch() {
 // code may name it.
 
 /// The files allowed to name `system_config_dir`, relative to `crates/`.
-const SYSTEM_DIR_ALLOWED: [&str; 2] = ["core/src/paths.rs", "bff/src/listen.rs"];
+const SYSTEM_DIR_ALLOWED: [&str; 3] = [
+    "core/src/paths.rs",
+    "bff/src/listen.rs",
+    // The manager's own log sits in `logs` beside the framework's config
+    // directory, so `manager_log_path` takes that directory's parent.
+    "manager/src/manager/action_log.rs",
+];
 
 /// `system_config_dir` named on one line of code, comments left out.
 fn system_dir_hits(line: &str) -> Vec<String> {

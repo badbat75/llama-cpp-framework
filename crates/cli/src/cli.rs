@@ -1572,13 +1572,19 @@ fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
 
 // ── Control commands ────────────────────────────────────────────────────
 
-/// Dump every loaded model's slot before a stop, printing what happened.
+/// Dump every loaded model's slot before a stop, printing what happened. Only
+/// the client that kills llama-server saves: under the manager the instance
+/// service saves the slot snapshots at its own stop, so a stop from the
+/// command line asks for none of its own.
 ///
 /// Deliberately infallible: a snapshot that cannot be written must NOT stop the
 /// stop. Aborting a shutdown over a cache the user can rebuild by prefilling
 /// would trade a recoverable loss for an unusable command. Silent when the
 /// feature is off, which is the default.
-fn snapshot_before_stop() {
+fn snapshot_before_stop(server: &crate::server_control::Backend) {
+    if !crate::server_control::client_saves_snapshots(server) {
+        return;
+    }
     let cfg = crate::server_cfg::load();
     if !cfg.save_state_on_shutdown_or_default() {
         return;
@@ -1658,7 +1664,7 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
             Ok(())
         }
         ControlCmd::Stop => {
-            snapshot_before_stop();
+            snapshot_before_stop(server);
             if !server.stop().map_err(anyhow::Error::msg)? {
                 anyhow::bail!(strings::fill(
                     "stop-failed",
@@ -1669,10 +1675,12 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
             Ok(())
         }
         ControlCmd::Restart => {
-            // The full round trip: the snapshot taken here is the one the start
-            // below puts back, which is what makes a restart cheap on a long
-            // conversation instead of a fresh multi-minute prefill.
-            snapshot_before_stop();
+            // The full round trip: the snapshot the stop writes is the one the
+            // start below puts back, which is what makes a restart cheap on a
+            // long conversation instead of a fresh multi-minute prefill. Under
+            // the manager that save happens in the service's stop, before the
+            // start (this command saves none of its own).
+            snapshot_before_stop(server);
             match server.restart() {
                 Ok(Some(cfg)) => {
                     println!("{}", strings::t("server-restarted"));
@@ -1684,7 +1692,7 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
             Ok(())
         }
         ControlCmd::StopAndClose => {
-            snapshot_before_stop();
+            snapshot_before_stop(server);
             if let Err(e) = server.stop() {
                 eprintln!("{e}");
             }
@@ -1704,6 +1712,7 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
 mod tests {
     use super::*;
     use crate::server_cfg::ServerConfig;
+    use crate::tests::gate_lint;
 
     // The only guard on `server set`'s schema mirror: every other server-field
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
@@ -1724,6 +1733,43 @@ mod tests {
                 .count()
                 >= 2,
             "cli.rs does not resolve both the download and the delete through pai-app's resolver"
+        );
+    }
+
+    /// Under the manager the instance saves the slot snapshots at its own
+    /// stop, so a stop from the command line saves none of its own: the
+    /// decision comes from the backend the command acts on, and the save (and
+    /// the progress line printed with it) sits behind it. Checked on the text:
+    /// a `Direct` stop in a test would send SIGTERM to a llama-server that is
+    /// really running. The local backend's save (macOS) stays.
+    #[test]
+    fn the_cli_saves_snapshots_only_on_the_local_backend() {
+        let code = gate_lint::strip_comments(
+            include_str!("cli.rs")
+                .split("\n#[cfg(test)]\n")
+                .next()
+                .unwrap_or_default(),
+        );
+        const GATE: &str = "client_saves_snapshots(";
+        let save = gate_lint::fn_body(&code, "snapshot_before_stop");
+        assert!(
+            save.contains(GATE),
+            "snapshot_before_stop never asks who saves the snapshots"
+        );
+        for call in ["slot_state::save_all(", "snapshot-saving"] {
+            assert!(
+                gate_lint::call_behind_gate(&save, GATE, call),
+                "the save's {call:?} is not behind the decision: {save}"
+            );
+        }
+        assert!(
+            save.contains("slot_state::save_all("),
+            "the local backend must still save the snapshots"
+        );
+        let control = gate_lint::fn_body(&code, "run_control_with");
+        assert!(
+            control.contains("snapshot_before_stop(server)"),
+            "the stop commands do not give the decision the backend they act on"
         );
     }
 
@@ -2725,10 +2771,12 @@ mod tests {
 }
 
 /// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): the
-/// `control` commands on the manager backend (a recording fake): each asks the
-/// manager for the `default` instance, the conversation snapshot is taken
-/// BEFORE the manager's stop and put back AFTER its start, and the manager's
-/// errors reach the user as their own text.
+/// `control` commands on the manager backend (a recording fake, with a
+/// llama-server stand-in on a loopback port): each asks the manager for the
+/// `default` instance; the command line sends NO snapshot request, because
+/// under the manager the instance saves the slot snapshots at its own stop,
+/// the conversation is put back AFTER the command's own start, and the
+/// manager's errors reach the user as their own text.
 #[cfg(test)]
 pub(crate) fn cli_control_e2e() {
     use crate::server_control::fake::{self, FakeClient};
@@ -2768,15 +2816,26 @@ pub(crate) fn cli_control_e2e() {
     };
     const SNAPSHOT: &str = "GET /models";
     const RESTORE: &str = "POST /slots/0?action=restore";
+    // What reached the llama-server stand-in (the manager's own records hold
+    // no path).
+    let served = |entries: &[String]| -> Vec<String> {
+        entries
+            .iter()
+            .filter(|e| e.contains(" /"))
+            .cloned()
+            .collect()
+    };
 
-    // Stop: snapshot first, then the manager's stop of default.
+    // Stop: the manager's stop of default, and nothing at all sent to
+    // llama-server: the instance saves the snapshots as it stops, a second
+    // save here would write the same gigabytes twice.
     log.lock().unwrap().clear();
     let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
     run_control_with(ControlCmd::Stop, &b).expect("stop");
     let entries = log.lock().unwrap().clone();
     assert!(
-        position(&entries, SNAPSHOT) < position(&entries, "stop default"),
-        "snapshot before the stop: {entries:?}"
+        served(&entries).is_empty(),
+        "no snapshot request under the manager: {entries:?}"
     );
     // What the manager was asked (the stub's requests are `<METHOD> /...`).
     let asked: Vec<String> = fake::actions(&log)
@@ -2810,7 +2869,8 @@ pub(crate) fn cli_control_e2e() {
         "{entries:?}"
     );
 
-    // Restart: snapshot, the manager's restart, restore, in that order.
+    // Restart: the manager's restart, then the restore of the dump the
+    // instance wrote as it stopped. No save request of the command's own.
     log.lock().unwrap().clear();
     let b = fake::backend(
         FakeClient::new(&log, InstanceState::Active).with_file("server@default.ini", &server_text),
@@ -2818,7 +2878,10 @@ pub(crate) fn cli_control_e2e() {
     run_control_with(ControlCmd::Restart, &b).expect("restart");
     let entries = log.lock().unwrap().clone();
     let restart = position(&entries, "restart default");
-    assert!(position(&entries, SNAPSHOT) < restart, "{entries:?}");
+    assert!(
+        !entries.iter().any(|e| e.starts_with(SNAPSHOT)),
+        "no snapshot save under the manager: {entries:?}"
+    );
     assert!(restart < position(&entries, RESTORE), "{entries:?}");
     assert!(
         !entries
@@ -2827,14 +2890,18 @@ pub(crate) fn cli_control_e2e() {
         "one restart, not a stop and a start: {entries:?}"
     );
 
-    // StopAndClose: snapshot, then the manager's stop.
+    // StopAndClose: the manager's stop, nothing sent to llama-server.
     log.lock().unwrap().clear();
     let b = fake::backend(FakeClient::new(&log, InstanceState::Active));
     run_control_with(ControlCmd::StopAndClose, &b).expect("stop-and-close");
     let entries = log.lock().unwrap().clone();
     assert!(
-        position(&entries, SNAPSHOT) < position(&entries, "stop default"),
-        "{entries:?}"
+        served(&entries).is_empty(),
+        "no snapshot request under the manager: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|e| e == "stop default"),
+        "the stop is still asked: {entries:?}"
     );
 
     // The manager's errors: the command fails with the client's own text.
