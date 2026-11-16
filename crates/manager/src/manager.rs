@@ -6,6 +6,8 @@
 
 #[cfg(target_os = "linux")]
 mod accounts;
+// The sinks for the log of who acted, the service installs on `with_log`.
+pub mod action_log;
 #[cfg(target_os = "linux")]
 pub mod dbus;
 pub mod pipe;

@@ -8,6 +8,7 @@
 //! version and [`PROTOCOL`] to anybody. Every [`ManagerError`] replies as a
 //! D-Bus error `org.privateai.Manager1.Error.<Kind>`.
 
+use super::action_log::WriterLog;
 use super::pipe::PROTOCOL;
 pub use super::service::state_name;
 use super::service::{
@@ -518,11 +519,17 @@ pub fn is_bff_uid(caller_uid: Option<u32>, bff_uid: Option<u32>) -> bool {
 /// while serving.
 pub fn serve() -> zbus::Result<Connection> {
     let client = Connection::system()?;
-    let core = Arc::new(Manager::new(
-        SystemdService::new(client.clone()),
-        PolkitAuthority::new(client),
-        SystemResolver,
-    ));
+    let core = Arc::new(
+        Manager::new(
+            SystemdService::new(client.clone()),
+            PolkitAuthority::new(client),
+            SystemResolver,
+        )
+        // Every record goes on stderr, which the unit sends to the journal.
+        .with_log(WriterLog::new(std::sync::Arc::new(std::sync::Mutex::new(
+            std::io::stderr(),
+        )))),
+    );
     zbus::blocking::connection::Builder::system()?
         .serve_at(OBJECT_PATH, ManagerInterface::new(core))?
         .name(BUS_NAME)?

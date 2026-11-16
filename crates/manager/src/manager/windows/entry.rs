@@ -6,6 +6,7 @@
 use super::pipe_server::{self, WinManager};
 use super::scm::ScmService;
 use super::{exit_report, service_name, SyncFailure, TokenAuthority, ERROR_SERVICE_SPECIFIC_ERROR};
+use crate::manager::action_log::{manager_log_path, FileActionLog};
 use crate::manager::service::{Manager, SystemResolver};
 use std::ffi::OsString;
 use std::io::Write;
@@ -89,11 +90,12 @@ fn foreground(cmd: Result<Command, String>, launch_failed: &LaunchFailed) -> Res
 /// ones whose start type is automatic.
 fn run_manager(report: Report) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
-    let manager: Arc<WinManager> = Arc::new(Manager::new(
-        ScmService::new(exe),
-        TokenAuthority,
-        SystemResolver,
-    ));
+    let manager: Arc<WinManager> = Arc::new(
+        Manager::new(ScmService::new(exe), TokenAuthority, SystemResolver)
+            // The service has no console, so its records go to the file under
+            // the framework's machine-wide directory.
+            .with_log(FileActionLog::new(manager_log_path())),
+    );
     for failure in manager.service().sync(&manager.list_instances()) {
         report(&failure);
     }

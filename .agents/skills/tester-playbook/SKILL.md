@@ -58,6 +58,8 @@ Lessons only: the rules are in `AGENTS.md`.
   candidate build), check `git status`. If the permission classifier refuses editing production files,
   leave that layer unproven, order the asserts so the earlier ones run first, and say so. A data file
   pinned by a test is the coder's: check by reading that all assertions can hold at once.
+- A file the current slice created is untracked: `git diff` on it prints nothing, which is no sign your
+  edits were lost (`git status --short` shows `??`).
 - Never `git stash` or `git checkout --` to compare: other sessions edit the same tree. Run one test on
   its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
   the real tree.
@@ -70,6 +72,26 @@ Lessons only: the rules are in `AGENTS.md`.
 - `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
   `Vec::<String>::new()`, the pattern this repo already uses.
 - Comments never cite PLAN.md step or slice numbers; name the feature.
+- rustfmt reorders consecutive `mod` declarations: a new `pub mod x;` goes in the sorted spot, with its
+  own comment line (it travels with the item). A bare `assert_eq!(a, b)` (no message) over ~60 chars of
+  body is split one-per-line by rustfmt; adding a message keeps it one line. Format each file
+  (`rustfmt --edition 2021 <file>`) as you write, `cargo fmt -p <crate> --check` at the end.
+- A helper that reads a generic writer (`fn written<W: Write>(log: &WriterLog<W>)`) needs `W: Clone` for
+  the `.clone()`: pin it to the concrete buffer (`&WriterLog<Vec<u8>>`) and read a custom sink's own field
+  in the test that uses it.
+- "Unwritable path" that also fails for root: a path component that is a regular file (`ENOTDIR`, both for
+  `create_dir_all` and the open), never a chmod (root ignores modes). A `read_dir` listing is unordered:
+  sort before comparing to a `vec!`.
+- Appending file sink ("path cannot be written loses the record"): making the PARENT a directory is NOT an
+  unwritable case, the sink rightly creates the file there (the assert `!path.exists()` reds on its own
+  file). Pin it as the LOG PATH ITSELF being a directory (`create_dir_all(&path)`, the append open fails
+  `EISDIR`): assert `path.is_dir()` (catches a sink that removes the dir and writes a file) and a
+  `read_dir(&path)` that is empty (catches a fallback written inside). The temp root's own listing misses
+  files created inside a subdirectory, so it is not the "nothing was written" check for a nested path.
+- Compile the test binary early and often with `cargo test -p <crate> --lib -- --list`: it type-checks
+  every test without running one. The shared tree moves under a slice (HEAD changed `Caller` into
+  `Requester` + `AsRequester` while these tests were being written): re-read the seam's signatures before
+  finalising asserts, and read the red to see which seam moved.
 - `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
 - A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
   `include_str!` would stop the crate compiling.
@@ -140,7 +162,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `/home/dev/src/pai/...`. Exemptions: only `crates/core/src/migrate.rs` names the old tree
   (`MIGRATION_NAMES`; `hits` matches the path by its tail); a bare `private-ai-manager` only in
   `MANAGER_SERVICE_NAMES` and `WINDOWS_SERVICE_MODULE` (use the constant elsewhere); `/opt/llama.cpp`
-  only in `ENGINE_DIR_SOURCE`. Run the whole crate's tests, not just your filter.
+  only in `ENGINE_DIR_SOURCE`. Run the whole crate's tests, not just your filter. A new name that must
+  CARRY the service name (`private-ai-manager.log`) is spelled `concat!("private-ai", "-manager.log")`
+  in production code and the same in its test; only whole-line comments are skipped, so a comment on a
+  code line is scanned.
 - Since `src/lib.rs` exists, binary roots (`main.rs`, `bin/*.rs`) are separate crates; a lint may exempt
   them, never `lib.rs`.
 - Cargo.lock lists dev and build deps of every target, one per line: a walk over it over-reports, never
@@ -341,7 +366,29 @@ Lessons only: the rules are in `AGENTS.md`.
 - In a plain `#[test]` of `manager/pipe.rs` (no data root) `Stop` is the only verb that may succeed:
   `start`, `restart` and `set_boot_enabled` ask `existing_id`, a file on disk. A refusal by a pure check
   carries any verb (id `../x` is InvalidId, name `server.ini` is BadFileName). A success that needs a
-  real file belongs in `src/tests/pipe_client.rs`.
+  real file belongs in `src/tests/pipe_client.rs`. `stop` is FS-free end to end (authorize, `valid_id`,
+  the fake service), so it is the verb for a plain test of a log sink wired on `with_log`; a sink's
+  red is its own `todo!`, not a stray read of `/etc/llama.cpp`.
+- The sinks of the action log (`manager/action_log.rs`): one line per record is pinned as the sink's whole
+  bytes (`{line}\n`, nothing added), the flush by a `Write` that counts its `flush` calls, the no-mixing
+  rule by N threads x M long self-naming payloads through ONE `Arc<Mutex<W>>` writer with `handle.join()`
+  counted, not propagated (the stub panics on every thread; the count goes in the assert message, so the
+  red says "8 writer threads panicked, 96 records asked for: 0 lines").
+  `WriterLog<W>` over `Arc<Mutex<W>>` is what makes the lock span the write AND the flush: the writer
+  accessor returns the `Arc`, so the test reads it and the threads share one log.
+- The FILE sink's no-mixing rule: one temp path, 12 threads x 24 long self-naming records, a
+  `Barrier::new(threads)` waited after EVERY record so all threads enter `record()` at once: red 10/10
+  today (122-145 empty lines per run) from `writeln!`'s two writes. A candidate fix matters:
+  `write!(f, "{line}\n")` is NOT one write (`write_fmt` emits each format fragment separately), it stays
+  red 10/10; `file.write_all(format!("{line}\n").as_bytes())` is one `write(2)`, atomic under `O_APPEND`
+  on Linux and Windows, greens 10/10. Single-write-per-record is not observable deterministically
+  through the public API (no FIFO/seqpacket over a path sink): the thread test is the pin.
+- A path the service derives from `paths::` is pinned in two parts: a pure `<name>_path_in(root: &Path)`
+  for the shape (a Windows path reads on Linux the same, `Path::join` is separator-agnostic: use slashes)
+  and the exact live value in the ONE phase that already redirects (`data_root_e2e`), asserted
+  `starts_with(<tempdir>)` as well, so a real `%ProgramData%` write cannot hide green. A phase's `core`
+  closure is not generic (a closure cannot be): a block that installs a different sink type builds
+  `Manager::new(..).with_log(..)` itself.
 - Gate order is pinned by the fakes' logs, never by an echo shape invented for the reply:
     `FakePasswords::asked_admin` shows the principal reached the core, and that the gate runs before the
   action's own check (`SetBootEnabledAs` of `../x` asks the membership, then answers InvalidId); an

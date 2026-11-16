@@ -805,7 +805,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    timeout the blocking thread keeps running, so a hung manager piles threads up to tokio's pool
    (the "bound concurrent checks" item above); the session reply is `{user}` (canConfigure dropped); `Identity.can_configure` and the bff's own `OpencodeApiKey` withholding are gone (every session is a `pai` member; the manager's flag alone withholds the key); the bff README still names `canConfigure` in five places. Then 6b
    part 3: the bff calls the manager for the signed-in user, designed in `ARCHITECTURE.md` "Acting for
-   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first (slices 1 to 3 done: the manager's core, then the `As` methods and `Version` on the pipe and on D-Bus; slice 4's record in the core done):
+   a signed-in user" (2026-11-15) and cut into five slices there, with step 14 slice 0 as its first (slices 1 to 3 done: the manager's core, then the `As` methods and `Version` on the pipe and on D-Bus; slice 4, the record of who acted and its sinks, done):
    the manager's `As` methods carry a principal only from the bff's account, re-check the user's `pai`
    membership at each call, never ask polkit for it; `Version`; a log of who acted; the bff connects
    as the session's user. Decided by the user (2026-11-15): when the manager refuses a signed-in user
@@ -817,10 +817,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    `manager/pipe.rs`. From the review of slice 3: `DbusClient::version` matches only
    `zbus::Error::MethodError` for `UnknownMethod`, which zbus 6 reports as `Error::FDO`: match both
    before a zbus bump; the doc comment of `requester_of` (`manager/dbus.rs`) still says the D-Bus face
-   carries no principal. Slice 4 is split: the record in the core is in; next, its sinks (stderr to
-   the journal on Linux, the appended file on Windows, wired in the service entry), with tests. From the
-   review of the core: `error_kind` repeats the table of `error_reply` (`service.rs`); the doc comment of
-   `NoActionLog` names the sinks before they exist; a test with U+2028 in a caller pins the quoting. From
+   carries no principal. From the review of slice 4: `error_kind` repeats the table of `error_reply`
+   (`service.rs`); a test with U+2028 in a caller would pin the quoting; the Windows log
+   `%ProgramData%\private-ai\logs\private-ai-manager.log` grows without a cap (about 100 bytes a
+   record), is readable by Users like the engine's logs (kept so, coordinator 2026-11-16), and outlives
+   an uninstall with `config\`: `installer\AGENTS.md` and the CI's uninstall checks still say `config\`
+   only. From
    the review of 2a, still open: a UPN or `.\user` passes `LogonUserW` but `NetUserGetLocalGroups`
    may not find it (fails closed: refused as not a member; fix with the spellings item above); read
    back `PAM_USER` after `pam_authenticate` (modules may fold case); set `PAM_RHOST`; `PAM_MAXTRIES`

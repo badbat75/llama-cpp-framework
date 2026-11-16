@@ -469,3 +469,31 @@ Lessons only: the rules are in `AGENTS.md`.
 - An edit that inserts before a function must carry that function's whole body in BOTH oldString and
   newString: an oldString of the signature plus one body line and a newString of only the signature
   deleted that line, and the file read back broken.
+- The action log's sinks (`manager/action_log.rs`): `WriterLog::new` takes an `Arc<Mutex<W>>`, so a
+  service entry writes `WriterLog::new(Arc::new(Mutex::new(std::io::stderr())))`; its record holds
+  that lock across the write AND the flush (the tests count one flush per record), and keeps logging
+  on a poisoned writer (`lock().unwrap_or_else(|e| e.into_inner())`; Rust's `Stderr` is unbuffered, so
+  its doc must not call it a buffered pipe, the flush is for the writers that do buffer).
+  `FileActionLog` opens with `OpenOptions::create(true).append(true)` per record (never a held
+  handle) after a `create_dir_all(parent)` it ignores failing, and every error path is `let _ =` /
+  `let Ok(..) = .. else { return }`. `manager_log_path()` is the parent of `paths::system_config_dir()`
+  + `logs` + `MANAGER_LOG_FILE`: under the data-root redirect `system_config_dir` is
+  `<root>/system-config`, so the log lands at `<root>/logs/private-ai-manager.log`, inside the test's tree.
+- One line per record under threads: `FileActionLog` carries an `Arc<Mutex<()>>` (an inner
+  `Mutex<()>` is not `Sync`, so the `Arc`: `with_log` asks for `ActionLog + Send + Sync + 'static`),
+  held from `create_dir_all` to the write, and the record goes out as ONE
+  `write_all(format!("{line}\n")..)`. `writeln!(file, ..)` is TWO writes: it glues lines and leaves
+  empty ones; the single write of an append-mode file keeps other processes' appends whole too. A
+  guard bound to a bare name is an `unused_variable` in the test build: name it `_writing` (a
+  `let _ = ..` drops the guard at once, which is the whole point of taking the lock).
+- `file_log_records_from_several_threads_never_interleave_within_a_line` reproduces that race in ONE
+  run (131 empty lines), so "was it red?" is cheap: rsync the tree (no `build/`, `.git`, `dist/`,
+  `node_modules/`) to `/tmp/opencode/<x>`, patch the sink back to the two-write form there, run with
+  `CARGO_TARGET_DIR=/tmp/opencode/<x>-target` (the repo's target dir is shared with the other agents).
+- A tester's negative-path test can pin an impossible case: the action log's
+  `an_unwritable_path_loses_the_record_and_never_panics` makes the log path's PARENT a directory
+  (`dir/logs`) and asserts `!dir/logs/<file>.exists()`, while its comment says "the file's place
+  holds a directory". Any sink that creates the file (the sibling test pins that, and the e2e block
+  does) creates it there, so no implementation passes. The fix is the tester's:
+  `create_dir_all(&over_a_dir)` (the path itself becomes the directory, append then fails EISDIR)
+  and assert `over_a_dir.is_dir()`, since `!exists()` is false for the directory the test made.

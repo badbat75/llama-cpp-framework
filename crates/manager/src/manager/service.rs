@@ -4212,6 +4212,112 @@ pub(crate) fn manager_action_log_e2e() {
             );
         }
     }
+
+    // ── The file sink under the data root: the path and the records ──────
+    // The Windows service appends its records to a file (Linux writes stderr,
+    // the journal reads that). Its path is derived from the framework's
+    // machine-wide directory, taken through `paths::system_config_dir`, so the
+    // redirect this phase set keeps the file inside this temp tree: the real
+    // machine tree is never touched. One line per guarded call, appended, as
+    // the sinks' own tests pin for a plain `Write`.
+    {
+        use super::action_log::{manager_log_path, FileActionLog, MANAGER_LOG_FILE};
+
+        let path = manager_log_path();
+        assert!(
+            path.starts_with(dir.path()),
+            "the record file is inside the redirected data root, never the real machine \
+             tree: {path:?}"
+        );
+        assert_eq!(
+            path,
+            dir.path().join("logs").join(MANAGER_LOG_FILE),
+            "a `logs` directory beside the framework's machine directory (its config dir \
+             is `<root>/system-config`, so the root is its parent), named after the service"
+        );
+
+        // A manager whose log is the file sink, at the path above.
+        let file_core = |allow: bool| {
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(allow).quietly(true).bff(&bff),
+                FakeResolver::lan(),
+            )
+            .with_log(FileActionLog::new(&path))
+        };
+
+        let m = file_core(true);
+        assert_eq!(m.stop(&desktop, "default"), Ok(()));
+        assert_eq!(m.restart(&desktop, "default"), Ok(()));
+        let text = std::fs::read_to_string(&path).expect("the file the sink created");
+        assert_eq!(
+            text,
+            "action=\"stop\" target=\"default\" caller=\":1.42\" principal=- outcome=ok\n\
+             action=\"restart\" target=\"default\" caller=\":1.42\" principal=- outcome=ok\n",
+            "one record per guarded call, whole lines, appended in order"
+        );
+
+        // A refusal reaches the file too, as the line the core renders for it.
+        let m = file_core(false);
+        assert_eq!(
+            m.stop(&desktop, "default"),
+            Err(ManagerError::NotAuthorized),
+            "polkit refuses this caller"
+        );
+        let text = std::fs::read_to_string(&path).expect("the file after the refusal");
+        assert_eq!(
+            text.lines().count(),
+            3,
+            "the refusal is one more line: {text:?}"
+        );
+        assert_eq!(
+            text.lines().last(),
+            Some(r#"action="stop" target="default" caller=":1.42" principal=- outcome=refused"#),
+            "the refusal is recorded with the answer the caller got: {text:?}"
+        );
+
+        // A later run opens the same path and appends: nothing is truncated.
+        let m = file_core(true);
+        assert_eq!(m.stop(&desktop, "default"), Ok(()));
+        let text = std::fs::read_to_string(&path).expect("the file after the second run");
+        assert_eq!(
+            text.lines().count(),
+            4,
+            "a fresh sink over the same path appends, it never truncates: {text:?}"
+        );
+        assert!(
+            text.starts_with(
+                "action=\"stop\" target=\"default\" caller=\":1.42\" principal=- outcome=ok\n\
+                 action=\"restart\""
+            ),
+            "the first run's lines are still there: {text:?}"
+        );
+        assert!(
+            !text.contains("sk-local-3f9a"),
+            "a record names the file it touched, never its contents: {text:?}"
+        );
+
+        // A record that cannot be written is lost and the action stands: the
+        // path's parent is a regular file, so no log file can be made.
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, "not a directory").expect("write the blocker");
+        let blocked = blocker.join(MANAGER_LOG_FILE);
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_log(FileActionLog::new(&blocked));
+        assert_eq!(
+            m.stop(&desktop, "default"),
+            Ok(()),
+            "the record is lost, the stop stands"
+        );
+        assert!(
+            !blocked.exists() && blocker.is_file(),
+            "the sink created nothing over an unwritable path: {blocker:?}"
+        );
+    }
 }
 
 #[cfg(test)]
