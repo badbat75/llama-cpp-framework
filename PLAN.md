@@ -894,8 +894,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    compare-and-swap writes, destination first. Left from it: `checks::preset_id` refuses `.` and `..`
    (pai-core); `DISABLED_FILE_HEADER` moves to `pai-core` (the bff holds a copy a test keeps equal);
    a missing destination file is created with a plain write, so one created by someone else between
-   the read and the write is overwritten (needs a create-if-absent in the manager); a failed read-back
-   after both writes answers 504 or 502 for a move that stands; the GUI still lists `[*]` (llama-server's
+   the read and the write is overwritten (needs a create-if-absent in the manager); the GUI still lists `[*]` (llama-server's
    global section) as a preset and lets it be switched off, after which its id check refuses to
    switch it back on (the web hides it and answers 404 since 2026-11-17); tests missing: `Unavailable` and the time limit between the two writes, asked on while in both
    files, a read-back that fails after a landed move (200), the ids `**` and ` * `; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
