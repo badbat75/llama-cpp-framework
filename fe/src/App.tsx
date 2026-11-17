@@ -447,7 +447,12 @@ function Page({
   }
   if (route.page === 'preset') {
     return (
-      <PresetPage id={route.id} onSignedOut={onSignedOut} onDirty={onDirty} />
+      <PresetPage
+        id={route.id}
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        onDirty={onDirty}
+      />
     )
   }
   return (

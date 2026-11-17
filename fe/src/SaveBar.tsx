@@ -17,6 +17,8 @@ export type SaveStatus =
 export type SaveAlert = {
   text: string
   action?: 'reload' | 'sign-in'
+  /** A `sign-in` alert: the page's sign-ins kept when it was set. */
+  at?: number
 }
 
 /** The status line's text: empty for `idle`. */
@@ -86,6 +88,36 @@ export function useAsk(
       setAsking(false)
       onGo()
     },
+  }
+}
+
+/** The bar's alert of a save, read the same way by the Server page's form and
+ * the preset page (01's 36, 2h's 151 to 153): a `sign-in` alert set when the
+ * page's sign-ins were at `at` goes when a later sign-in kept the page, which
+ * is what raises `renewals`. */
+export function useSaveAlert(renewals: number): {
+  alert: SaveAlert | null
+  setAlert: (alert: SaveAlert | null) => void
+  /** A save the session ended: 401 (151), or 403 session-not-administrator (153). */
+  sessionEnded: (revoked: boolean) => void
+} {
+  const [stored, setAlert] = useState<SaveAlert | null>(null)
+  const alert =
+    stored?.action === 'sign-in' && stored.at !== renewals ? null : stored
+  // The sign-in count the answer of a save arrives at (01's 43b).
+  const at = useRef(renewals)
+  useEffect(() => {
+    at.current = renewals
+  }, [renewals])
+  return {
+    alert,
+    setAlert,
+    sessionEnded: (revoked: boolean) =>
+      setAlert({
+        text: revoked ? t('session-revoked') : t('session-ended'),
+        action: 'sign-in',
+        at: at.current,
+      }),
   }
 }
 

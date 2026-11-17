@@ -8,7 +8,14 @@
 // what changed (fe/briefs/02h-preset-save.md, sub-slice 2h.1, criteria 130 to
 // 149, read by key in save.ts as the Server page reads its own); every other
 // control stays disabled, and its settings are changed in pai-config.
-import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Card from './Card.tsx'
@@ -27,11 +34,13 @@ import {
   SaveBar,
   useAsk,
   useDirtyReport,
+  useSaveAlert,
   useSaveBarPadding,
   useWarnOnLeave,
-  type SaveAlert,
 } from './SaveBar.tsx'
 import { presetIdUnreadable } from './route.ts'
+import { SignInDialog, useSignInDialog } from './SignIn.tsx'
+import type { Session } from './session.ts'
 import { t } from './strings.ts'
 
 /** One preset as the read gives it, the shape of criterion 81 with the
@@ -143,11 +152,14 @@ async function readPreset(id: string): Promise<Answer> {
 export default function PresetPage({
   id,
   onSignedOut,
+  onRenewed,
   onDirty,
 }: {
   /** The id from the address, while the read has not answered. */
   id: string
   onSignedOut: (byManager: boolean) => void
+  /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
+  onRenewed: (session: Session) => boolean
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
 }) {
@@ -157,6 +169,16 @@ export default function PresetPage({
   // holds the preset the read was asked for.
   const [reads, setReads] = useState(0)
   const asked = useRef<string | null>(null)
+  // The sign-ins in the bar's dialog (152): `rereads` remounts the form and
+  // reads the preset again for the new session, `dropped` says the edits went
+  // with it, `kept` counts the sign-ins that kept the page (ends the alert).
+  const [signIns, setSignIns] = useState({
+    rereads: 0,
+    dropped: false,
+    kept: 0,
+  })
+  // Whether the form on screen has edits to lose (152).
+  const dirty = useRef(false)
 
   useEffect(() => {
     // `.` and `..` are sent to no read at all (59a): the page says there is no
@@ -183,12 +205,38 @@ export default function PresetPage({
     }
   }, [id, onSignedOut, reads])
 
+  const trackDirty = useCallback(
+    (d: boolean) => {
+      dirty.current = d
+      onDirty(d)
+    },
+    [onDirty],
+  )
+
   /** Reads the preset again, the edits discarded: the settings give place to
    * the page's loading status until the read lands (145). */
   function reload() {
     asked.current = id
     setAnswer(undefined)
     setReads((n) => n + 1)
+  }
+
+  /** A sign-in in the bar's dialog (152): the form stays for the same user;
+   * for another one its edits are dropped and the preset is read again, and
+   * the app gives the focus to the h1. */
+  function renewed(session: Session) {
+    const dropped = dirty.current
+    const kept = onRenewed(session)
+    setSignIns((s) =>
+      kept
+        ? { ...s, kept: s.kept + 1 }
+        : { ...s, rereads: s.rereads + 1, dropped: s.dropped || dropped },
+    )
+    if (!kept) {
+      setAnswer(undefined)
+      setReads((n) => n + 1)
+    }
+    return kept
   }
 
   // The heading is the id from the address, then the file's spelling as the
@@ -203,7 +251,16 @@ export default function PresetPage({
         <a href="#/models">{t('preset-back')}</a>
       </p>
       <PageHeading text={shown} />
-      <Body id={id} answer={answer} onDirty={onDirty} onReload={reload} />
+      <Body
+        key={signIns.rereads}
+        id={id}
+        answer={answer}
+        dropped={signIns.dropped}
+        renewals={signIns.kept}
+        onDirty={trackDirty}
+        onReload={reload}
+        onRenewed={renewed}
+      />
     </>
   )
 }
@@ -212,13 +269,21 @@ export default function PresetPage({
 function Body({
   id,
   answer,
+  dropped,
+  renewals,
   onDirty,
   onReload,
+  onRenewed,
 }: {
   id: string
   answer: Answer | undefined
+  /** The edits were dropped by a sign-in as another session (152). */
+  dropped: boolean
+  /** Raised by every sign-in that kept the page: a session-ended alert goes. */
+  renewals: number
   onDirty: (dirty: boolean) => void
   onReload: () => void
+  onRenewed: (session: Session) => boolean
 }) {
   if (presetIdUnreadable(id)) {
     return <p>{t('preset-not-found', id)}</p>
@@ -227,7 +292,16 @@ function Body({
     return <p role="status">{t('preset-loading')}</p>
   }
   if ('doc' in answer)
-    return <Content doc={answer.doc} onDirty={onDirty} onReload={onReload} />
+    return (
+      <Content
+        doc={answer.doc}
+        dropped={dropped}
+        renewals={renewals}
+        onDirty={onDirty}
+        onReload={onReload}
+        onRenewed={onRenewed}
+      />
+    )
   if (answer.error === 'client-not-authorized') {
     return <p>{t('api-client-not-authorized')}</p>
   }
@@ -382,13 +456,22 @@ function focusField(key: string) {
  * changed keys (criteria 130 to 141). */
 function Content({
   doc,
+  dropped,
+  renewals,
   onDirty,
   onReload,
+  onRenewed,
 }: {
   doc: PresetDoc
+  /** The edits were dropped by a sign-in as another session (152). */
+  dropped: boolean
+  /** Raised by every sign-in that kept the page: a session-ended alert goes. */
+  renewals: number
   onDirty: (dirty: boolean) => void
   /** Reads the preset again, the edits discarded (145). */
   onReload: () => void
+  /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
+  onRenewed: (session: Session) => boolean
 }) {
   const fid = useId()
   const [loaded, setLoaded] = useState<Loaded>({
@@ -399,12 +482,16 @@ function Content({
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
-  const [alert, setAlert] = useState<SaveAlert | null>(null)
+  const alerts = useSaveAlert(renewals)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
   // A second Save while one runs sends nothing (137).
   const saving = useRef(false)
   const bar = useSaveBarPadding()
+  // The bar's Sign in, and the dialog it opens (151).
+  const saveId = 'preset-save'
+  const signInId = `${fid}-sign-in`
+  const askSignIn = useSignInDialog(signInId)
 
   // 132: a field is changed when its control's state is not the state the read
   // gave it, so picking the same option, or the extra option of 87 that a read
@@ -454,7 +541,7 @@ function Content({
     const values = changed()
     saving.current = true
     setPhase('saving')
-    setAlert(null)
+    alerts.setAlert(null)
     fields.set({})
     const answer = await sendPresetSave(doc.id, loaded.revision, values)
     saving.current = false
@@ -472,13 +559,16 @@ function Content({
     }
     setPhase('idle')
     switch (answer.kind) {
-      // The session's own answers come with 2h.3; today they read as 139.
+      // The session's answers: the bar's alert with Sign in after it, the
+      // edits kept (151, 153).
       case 'signed-out':
+        alerts.sessionEnded(false)
+        return
       case 'revoked':
-        setAlert({ text: t('save-failed') })
+        alerts.sessionEnded(true)
         return
       case 'changed-elsewhere':
-        setAlert({
+        alerts.setAlert({
           text: t('api-preset-changed-elsewhere'),
           action: 'reload',
         })
@@ -492,15 +582,24 @@ function Content({
             : undefined
         // Rendered first, so the focused control is announced with its error.
         flushSync(() => {
-          setAlert({ text: t('save-refused', answer.text) })
+          alerts.setAlert({ text: t('save-refused', answer.text) })
           if (field !== undefined) fields.set({ [field]: answer.text })
         })
         if (field !== undefined) focusField(field)
         return
       }
       case 'failed':
-        setAlert({ text: answer.text })
+        alerts.setAlert({ text: answer.text })
     }
+  }
+
+  /** A sign-in in the bar's dialog (152): the dialog closes, the alert goes,
+   * focus on Save changes, the edits stay. For another session the page reads
+   * the preset again and this form goes with it. */
+  function signedIn(session: Session) {
+    if (!onRenewed(session)) return
+    alerts.setAlert(null)
+    askSignIn.close(saveId)
   }
 
   /** Discard: the controls back to the loaded state, the alert and the status
@@ -508,7 +607,7 @@ function Content({
   function discard() {
     if (saving.current || !dirty) return
     setDraft(loaded.values)
-    setAlert(null)
+    alerts.setAlert(null)
     fields.set({})
     setPhase('idle')
   }
@@ -518,6 +617,11 @@ function Content({
       {!doc.enabled && <p>{t('preset-off')}</p>}
       <section>
         <h2>{t('preset-settings-title')}</h2>
+        {dropped && (
+          <p role="alert" className="alert">
+            {t('server-edits-dropped')}
+          </p>
+        )}
         <p className="notice">{t('preset-partly-editable')}</p>
         {!doc.engineAvailable && (
           <p className="notice">{t('preset-engine-unavailable', doc.engine)}</p>
@@ -551,18 +655,27 @@ function Content({
         <SaveBar
           bar={bar}
           status={status}
-          alert={alert}
+          alert={alerts.alert}
           dirty={dirty}
           saving={phase === 'saving'}
           reloadId={reloadId}
-          onReload={alert?.action === 'reload' ? askReload.press : undefined}
-          saveId="preset-save"
+          onReload={
+            alerts.alert?.action === 'reload' ? askReload.press : undefined
+          }
+          signInId={signInId}
+          onSignIn={
+            alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+          }
+          saveId={saveId}
           onDiscard={discard}
           onSave={save}
         />
       </section>
       {askReload.asking && (
         <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
+      )}
+      {askSignIn.asking && (
+        <SignInDialog onSignedIn={signedIn} onClose={() => askSignIn.close()} />
       )}
     </>
   )

@@ -5,11 +5,11 @@
 // them typed (5.4) and shows the answer by its key. The answer is read in
 // save.ts, shared with the preset page; this file keeps the keys of its own
 // (section 3) and the tables of its check keys.
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { call, isRecord } from './api.ts'
 import Card from './Card.tsx'
-import Dialog, { DiscardDialog } from './Dialog.tsx'
+import { DiscardDialog } from './Dialog.tsx'
 import {
   CheckboxField,
   CheckListField,
@@ -24,11 +24,12 @@ import {
   SaveBar,
   useAsk,
   useDirtyReport,
+  useSaveAlert,
   useSaveBarPadding,
   useWarnOnLeave,
 } from './SaveBar.tsx'
 import type { Session } from './session.ts'
-import SignIn from './SignIn.tsx'
+import { SignInDialog, useSignInDialog } from './SignIn.tsx'
 import { t } from './strings.ts'
 
 /** Values by INI key name, typed JSON. */
@@ -376,14 +377,6 @@ async function sendSave(
   return saveAnswer(reply, (key) => serverKey(id, key), REFUSALS)
 }
 
-/** The bar's alert, with the button that answers it when there is one. */
-type Alert = {
-  text: string
-  action?: 'reload' | 'sign-in'
-  /** A session-ended alert: the page's sign-ins kept when it was set. */
-  at?: number
-}
-
 /**
  * The page's run actions: how many started, and the number (from 1) of the
  * last one that settled, 0 for none.
@@ -422,23 +415,19 @@ export default function ServerForm({
     fromValues(doc.values, doc.defaults, rows),
   )
   const { errors, set: setErrors, clear: clearError } = useFieldErrors<Key>()
-  const [stored, setAlert] = useState<Alert | null>(null)
-  const alert =
-    stored?.action === 'sign-in' && stored.at !== renewals ? null : stored
+  const alerts = useSaveAlert(renewals)
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
   // The run actions started when the last save-saved-restart answered.
   const [restartAt, setRestartAt] = useState(0)
-  const [asking, setAsking] = useState<'sign-in' | null>(null)
   // A second Save while one runs sends nothing.
   const saving = useRef(false)
   const bar = useSaveBarPadding()
-  // The sign-in count when a save's answer arrives (43b).
-  const renewalsNow = useRef(renewals)
-  useEffect(() => {
-    renewalsNow.current = renewals
-  }, [renewals])
+  // The bar's Sign in, and the dialog it opens (36, 43a).
+  const signInId = `${fid}-sign-in`
+  const saveId = `${fid}-save`
+  const askSignIn = useSignInDialog(signInId)
 
   const values = toValues(draft, rows)
   const dirty =
@@ -518,7 +507,7 @@ export default function ServerForm({
     if (!dirty || saving.current) return
     setDraft(fromValues(loaded.values, doc.defaults, rows))
     setErrors({})
-    setAlert(null)
+    alerts.setAlert(null)
     setPhase('idle')
   }
 
@@ -529,14 +518,14 @@ export default function ServerForm({
       // Rendered first, so the focused control is announced with its error.
       flushSync(() => {
         setErrors(Object.fromEntries(failures))
-        setAlert({ text: t('save-invalid') })
+        alerts.setAlert({ text: t('save-invalid') })
       })
       focusField(failures[0]![0])
       return
     }
     saving.current = true
     setErrors({})
-    setAlert(null)
+    alerts.setAlert(null)
     setPhase('saving')
     const sent = draft
     const answer = await sendSave(id, loaded.revision, values)
@@ -551,22 +540,18 @@ export default function ServerForm({
     }
     setPhase('idle')
     switch (answer.kind) {
+      // The session's answers: the bar's alert with Sign in after it (36, 36b).
       case 'signed-out':
-        setAlert({
-          text: t('session-ended'),
-          action: 'sign-in',
-          at: renewalsNow.current,
-        })
+        alerts.sessionEnded(false)
         return
       case 'revoked':
-        setAlert({
-          text: t('session-revoked'),
-          action: 'sign-in',
-          at: renewalsNow.current,
-        })
+        alerts.sessionEnded(true)
         return
       case 'changed-elsewhere':
-        setAlert({ text: t('api-server-changed-elsewhere'), action: 'reload' })
+        alerts.setAlert({
+          text: t('api-server-changed-elsewhere'),
+          action: 'reload',
+        })
         return
       case 'refused': {
         const field =
@@ -574,30 +559,23 @@ export default function ServerForm({
             ? answer.field
             : undefined
         flushSync(() => {
-          setAlert({ text: t('save-refused', answer.text) })
+          alerts.setAlert({ text: t('save-refused', answer.text) })
           if (field !== undefined) setErrors({ [field]: answer.text })
         })
         if (field !== undefined) focusField(field)
         return
       }
       case 'failed':
-        setAlert({ text: answer.text })
+        alerts.setAlert({ text: answer.text })
     }
   }
 
-  /** Closes the bar's dialog, then puts the focus on `suffix`'s element. */
-  function closeAsking(suffix: string) {
-    flushSync(() => setAsking(null))
-    element(suffix)?.focus()
-  }
-
+  /** A sign-in in the bar's dialog: the page stays only for the same user;
+   * the dialog closes, the alert goes, focus on Save changes (36). */
   function signedIn(session: Session) {
     if (!onRenewed(session)) return
-    flushSync(() => {
-      setAsking(null)
-      setAlert(null)
-    })
-    element('save')?.focus()
+    alerts.setAlert(null)
+    askSignIn.close(saveId)
   }
 
   const v = draft
@@ -842,34 +820,26 @@ export default function ServerForm({
       <SaveBar
         bar={bar}
         status={status}
-        alert={alert}
+        alert={alerts.alert}
         dirty={dirty}
         saving={phase === 'saving'}
         reloadId={`${fid}-reload`}
-        onReload={alert?.action === 'reload' ? askReload.press : undefined}
-        signInId={`${fid}-sign-in`}
-        onSignIn={
-          alert?.action === 'sign-in' ? () => setAsking('sign-in') : undefined
+        onReload={
+          alerts.alert?.action === 'reload' ? askReload.press : undefined
         }
-        saveId={`${fid}-save`}
+        signInId={signInId}
+        onSignIn={
+          alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+        }
+        saveId={saveId}
         onDiscard={discard}
         onSave={save}
       />
       {askReload.asking && (
         <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
       )}
-      {asking === 'sign-in' && (
-        <Dialog
-          title={t('signin-title')}
-          onClose={() => closeAsking('sign-in')}
-        >
-          <SignIn
-            required={false}
-            inDialog
-            onSignedIn={signedIn}
-            onCancel={() => closeAsking('sign-in')}
-          />
-        </Dialog>
+      {askSignIn.asking && (
+        <SignInDialog onSignedIn={signedIn} onClose={() => askSignIn.close()} />
       )}
     </>
   )

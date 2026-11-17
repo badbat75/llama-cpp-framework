@@ -1,7 +1,10 @@
-// The sign-in form (fe/briefs/01-server.md, section 2.2): at #/sign-in, and
-// in place of a protected page while signed out.
+// The sign-in form (fe/briefs/01-server.md, section 2.2): at #/sign-in, in
+// place of a protected page while signed out, and in the dialog a page's bar
+// opens over the page (01's 36, 2h's 151).
 import { useId, useRef, useState, type FormEvent } from 'react'
+import { flushSync } from 'react-dom'
 import type { ApiError } from './api.ts'
+import Dialog from './Dialog.tsx'
 import { FieldError } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
 import { signIn, type Session } from './session.ts'
@@ -155,5 +158,47 @@ export default function SignIn({
         </div>
       </form>
     </>
+  )
+}
+
+/** The Sign in whose dialog is open (01's 43a, 2h's 151): `open` shows it,
+ * `close` hides it and gives the focus to `focusId`, the control that answers
+ * the alert. Escape and Cancel both close it with the focus back on `fromId`,
+ * the Sign in that opened it. */
+export function useSignInDialog(fromId: string): {
+  asking: boolean
+  open: () => void
+  close: (focusId?: string) => void
+} {
+  const [asking, setAsking] = useState(false)
+  return {
+    asking,
+    open: () => setAsking(true),
+    close: (focusId = fromId) => {
+      flushSync(() => setAsking(false))
+      document.getElementById(focusId)?.focus()
+    },
+  }
+}
+
+/** The sign-in of `useSignInDialog`, in the Dialog of DESIGN.md 5.2: the page
+ * stays behind it, with its own h1. */
+export function SignInDialog({
+  onSignedIn,
+  onClose,
+}: {
+  onSignedIn: (session: Session) => void
+  /** Escape, Cancel, and the close that follows a sign-in. */
+  onClose: () => void
+}) {
+  return (
+    <Dialog title={t('signin-title')} onClose={onClose}>
+      <SignIn
+        required={false}
+        inDialog
+        onSignedIn={onSignedIn}
+        onCancel={onClose}
+      />
+    </Dialog>
   )
 }

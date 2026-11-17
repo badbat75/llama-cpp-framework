@@ -14,7 +14,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
   before,
@@ -259,95 +259,100 @@ test('2h.142: the field of the reply wins over the fallback table: it marks and 
   expectAlert(main, en('save-refused', text), 'the reply field wins')
 })
 
-test('2h.150: each check key of the table marks the field its row names, with that row text; only an enabled control takes the focus', async () => {
-  const cases: [
-    string,
-    Record<string, unknown>,
-    'select' | 'text',
-    string,
-    boolean,
-  ][] = [
-    [
-      'not-whole-number-in-range: args[0]',
-      {
-        key: 'not-whole-number-in-range',
-        args: ['n-gpu-layers', '-5', '0', '1024'],
-      },
-      'text',
-      en('preset-gpu-layers'),
-      false,
-    ],
-    [
-      'comment-markers: args[0]',
-      { key: 'comment-markers', args: ['chat-template-kwargs'] },
-      'text',
-      en('preset-chat-kwargs'),
-      false,
-    ],
-    [
-      'not-a-number: args[0]',
-      { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
-      'text',
-      en('preset-moe-cpu-layers'),
-      false,
-    ],
-    [
-      'not-json-object: args[0]',
-      { key: 'not-json-object', args: ['chat-template-kwargs'] },
-      'text',
-      en('preset-chat-kwargs'),
-      false,
-    ],
-    [
-      'min-above-max: args[0]',
-      {
-        key: 'min-above-max',
-        args: ['fit-ctx', '8192', 'ctx-size', '4096'],
-      },
-      'text',
-      en('preset-fit-min-context'),
-      false,
-    ],
-    [
-      'fit-target-format: fit-target',
-      { key: 'fit-target-format', args: ['2048,x', 'use'] },
-      'text',
-      en('preset-fit-free-vram'),
-      false,
-    ],
-    [
-      'moe-cache-with-tensor-split: moe-cache-mib',
-      { key: 'moe-cache-with-tensor-split', args: [] },
-      'text',
-      en('preset-moe-cache'),
-      false,
-    ],
-    [
-      'load-on-startup-over-max: load-on-startup',
-      { key: 'load-on-startup-over-max', args: ['3', '2'] },
-      'select',
-      en('preset-load-on-startup'),
-      false,
-    ],
-    [
-      'load-on-startup-unlimited: load-on-startup',
-      { key: 'load-on-startup-unlimited', args: ['2'] },
-      'select',
-      en('preset-load-on-startup'),
-      false,
-    ],
-    [
-      'not-one-of: pooling (the one enabled control)',
-      {
-        key: 'not-one-of',
-        args: ['pooling', 'weird', 'default, none, mean'],
-      },
-      'select',
-      en('preset-pooling'),
-      true,
-    ],
-  ]
-  for (const [what, body, kind, label, enabled] of cases) {
+/** 150: one test per row (a row mounts the page once, so no test mounts ten):
+ * the check key, the 422 body, the kind of its control, the control's label,
+ * and whether that control is enabled (only an enabled one takes the focus). */
+const TABLE_150: [
+  string,
+  Record<string, unknown>,
+  'select' | 'text',
+  string,
+  boolean,
+][] = [
+  [
+    'not-whole-number-in-range: args[0]',
+    {
+      key: 'not-whole-number-in-range',
+      args: ['n-gpu-layers', '-5', '0', '1024'],
+    },
+    'text',
+    en('preset-gpu-layers'),
+    false,
+  ],
+  [
+    'comment-markers: args[0]',
+    { key: 'comment-markers', args: ['chat-template-kwargs'] },
+    'text',
+    en('preset-chat-kwargs'),
+    false,
+  ],
+  [
+    'not-a-number: args[0]',
+    { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
+    'text',
+    en('preset-moe-cpu-layers'),
+    false,
+  ],
+  [
+    'not-json-object: args[0]',
+    { key: 'not-json-object', args: ['chat-template-kwargs'] },
+    'text',
+    en('preset-chat-kwargs'),
+    false,
+  ],
+  [
+    'min-above-max: args[0]',
+    {
+      key: 'min-above-max',
+      args: ['fit-ctx', '8192', 'ctx-size', '4096'],
+    },
+    'text',
+    en('preset-fit-min-context'),
+    false,
+  ],
+  [
+    'fit-target-format: fit-target',
+    { key: 'fit-target-format', args: ['2048,x', 'use'] },
+    'text',
+    en('preset-fit-free-vram'),
+    false,
+  ],
+  [
+    'moe-cache-with-tensor-split: moe-cache-mib',
+    { key: 'moe-cache-with-tensor-split', args: [] },
+    'text',
+    en('preset-moe-cache'),
+    false,
+  ],
+  [
+    'load-on-startup-over-max: load-on-startup',
+    { key: 'load-on-startup-over-max', args: ['3', '2'] },
+    'select',
+    en('preset-load-on-startup'),
+    false,
+  ],
+  [
+    'load-on-startup-unlimited: load-on-startup',
+    { key: 'load-on-startup-unlimited', args: ['2'] },
+    'select',
+    en('preset-load-on-startup'),
+    false,
+  ],
+  [
+    'not-one-of: pooling (the one enabled control)',
+    {
+      key: 'not-one-of',
+      args: ['pooling', 'weird', 'default, none, mean'],
+    },
+    'select',
+    en('preset-pooling'),
+    true,
+  ],
+]
+
+it.each(TABLE_150)(
+  '2h.150: %s marks the field its row names with that row text, and only an enabled control takes the focus',
+  async (what, body, kind, label, enabled) => {
     const { bff, main } = await refused(body)
     saveButton(main).focus()
     await save(main, bff)
@@ -360,33 +365,35 @@ test('2h.150: each check key of the table marks the field its row names, with th
       document.activeElement,
       `${what}: ${enabled ? 'focus on the enabled control' : 'focus stays on Save changes'}`,
     ).toBe(enabled ? el : saveButton(main))
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── 143: the field is not a control of this page, or there is none ──────
 
-test('2h.143: a refusal on a field with no control here, or with no field at all, shows only the bar alert and leaves the focus on Save changes', async () => {
-  const cases: [string, Record<string, unknown>][] = [
-    ['preset-no-model (Assets)', { key: 'preset-no-model', args: [ID] }],
-    ['override-no-pattern (2j)', { key: 'override-no-pattern', args: ['0'] }],
-    [
-      'override-no-device (2j)',
-      { key: 'override-no-device', args: ['0', 'ffn.*'] },
-    ],
-    ['invalid-preset-id', { key: 'invalid-preset-id', args: ['Bad name!'] }],
-    ['preset-name-taken', { key: 'preset-name-taken', args: ['Qwen3-32B'] }],
-    [
-      'a key 2h shows nowhere',
-      {
-        key: 'comment-markers',
-        args: ['override-tensor'],
-        field: 'override-tensor',
-      },
-    ],
-  ]
-  for (const [what, body] of cases) {
+/** 143: one test per row: the field of the refusal is not a control of this
+ * page, or there is none, so only the bar's alert answers. */
+const TABLE_143: [string, Record<string, unknown>][] = [
+  ['preset-no-model (Assets)', { key: 'preset-no-model', args: [ID] }],
+  ['override-no-pattern (2j)', { key: 'override-no-pattern', args: ['0'] }],
+  [
+    'override-no-device (2j)',
+    { key: 'override-no-device', args: ['0', 'ffn.*'] },
+  ],
+  ['invalid-preset-id', { key: 'invalid-preset-id', args: ['Bad name!'] }],
+  ['preset-name-taken', { key: 'preset-name-taken', args: ['Qwen3-32B'] }],
+  [
+    'a key 2h shows nowhere',
+    {
+      key: 'comment-markers',
+      args: ['override-tensor'],
+      field: 'override-tensor',
+    },
+  ],
+]
+
+it.each(TABLE_143)(
+  '2h.143: %s: a refusal on a field with no control here, or with no field at all, shows only the bar alert and leaves the focus on Save changes',
+  async (what, body) => {
     const { bff, main } = await refused(body)
     saveButton(main).focus()
     await save(main, bff)
@@ -402,10 +409,8 @@ test('2h.143: a refusal on a field with no control here, or with no field at all
       saveButton(main),
     )
     expect(status(main).textContent, what).toBe(en('save-unsaved'))
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── 2h.2's preamble: a 422 with a key the fe does not know ──────────────
 
