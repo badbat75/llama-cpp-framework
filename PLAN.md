@@ -843,7 +843,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    delete its model files, as the GUI does (fe slice 2n). `GET /api/instances` gains `engine` and moves its errors to `{key, args}` with the
    `client-*` keys, together with the fe build that reads them.
 7. (Done: `GET /api/instances/{id}/server`, values by INI key, the instance's defaults, limits,
-   interfaces, an FNV-1a revision; the bff reads as itself. Left, before the real sign-in: the
+   interfaces, a revision (a keyed SipHash since slice 8); the bff reads as itself. Left, before the real sign-in: the
    `OpencodeApiKey` goes to every signed-in user, also one with `canConfigure` false, while the
    manager keeps the file at mode 0640 because of that key; decided with the user on 2026-11-15:
    administrators only, anyone else gets null and `withheld: ["OpencodeApiKey"]` when a key is set

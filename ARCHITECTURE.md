@@ -52,9 +52,9 @@ Linux system files in `xtask/src/linux/system_files.rs`.
   body of at most 1 MiB, the D-Bus method and error names (`crates/core/src/client/pipe.rs` header,
   the server in `crates/manager/src/manager/pipe.rs`). Methods: `ListInstances`, `Status`, `Start`,
   `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`, the
-  `<Method>As` forms of the six guarded ones and `Version` (protocol 1; "Acting for a signed-in user"
-  below). Designed, not built: `WriteFileIf` and `WriteFileIfAs` (protocol 2, "Saving the server file
-  from the web" below). The client works over any `Read + Write` stream.
+  `<Method>As` forms of the seven guarded ones and `Version` (protocol 1; "Acting for a signed-in
+  user" below), plus `WriteFileIf` and `WriteFileIfAs`, the compare and swap of a write (protocol 2;
+  "Saving the server file from the web" below). The client works over any `Read + Write` stream.
 - **The bff's HTTP API**: the routes and error shape `{key, args}` in
   [crates/bff/README.md](crates/bff/README.md); the contract the web UI is built against in
   `fe/briefs/api-contract.md`.
@@ -133,8 +133,9 @@ both transports:
 | `StartAs(s principal, s id)`, `StopAs`, `RestartAs` (same) | `{"method":"StartAs","principal":"alice","id":"default"}` | as `Start` |
 | `ReadFileAs(s principal, s name) -> (b exists, s text, b withheld)` | `{"method":"ReadFileAs","principal":..,"name":..}` | as `ReadFile` |
 | `WriteFileAs(s principal, s name, s contents, b keep_api_key)` | `{"method":"WriteFileAs","principal":..,"name":..,"contents":..,"keep_api_key":..}` | as `WriteFile` |
+| `WriteFileIfAs(s principal, s name, s contents, s expected)` | `{"method":"WriteFileIfAs","principal":..,"name":..,"contents":..,"expected":..}` | as `WriteFileIf`: `Changed` when the file's bytes are not `expected` |
 | `SetBootEnabledAs(s principal, s id, b enabled)` | `{"method":"SetBootEnabledAs","principal":..,"id":..,"enabled":..}` | as `SetBootEnabled` |
-| `Version() -> (s version, u protocol)` | `{"method":"Version"}` | `{"ok":{"version":"<framework>","protocol":1}}` |
+| `Version() -> (s version, u protocol)` | `{"method":"Version"}` | `{"ok":{"version":"<framework>","protocol":2}}` |
 
 `ListInstances`, `Status`, `BootEnabled` and `Authenticate` get no `As` form: they need no right, or
 answer the bff alone. On the pipe a `principal` field on any other method is `BadRequest`, and an `As`
@@ -190,7 +191,8 @@ An old manager refuses every `As` method (the bff answers 502 `client-other`); t
 broken install.
 
 **Version.** `Version` needs no right; `version` is the manager's framework version, `protocol` an
-integer that grows with each additive change (1 = the `As` methods and `Version`; the TLS major of
+integer that grows with each additive change (1 = the `As` methods and `Version`; 2 = `WriteFileIf`
+and `WriteFileIfAs`; the TLS major of
 Part 2 rides in ALPN). The client side is an inherent method on `DbusClient` and `PipeClient`, not on
 `ManagerClient`: `version() -> Result<Option<ManagerVersion>, ClientError>`, `None` for a manager
 older than the method (D-Bus `org.freedesktop.DBus.Error.UnknownMethod`; pipe `BadRequest`, after which
@@ -261,6 +263,16 @@ anyone else and never beyond `control`/`configure`; a local user who is not the 
    session alone, every other failure keeping it.
 
 Then the docs agent updates `crates/bff/README.md`, "Through the manager" and the pipe client's header.
+
+**As built** (eff112d closed the slice, the earlier parts ddaa95f, 11fabbf, c092d0e, 86dbcb3): as
+designed, with one correction found in review. The 503/504 line above words a timeout as 504; the
+built rule turns on one fact, settled by one atomic shared by the handler and its blocking task: while
+the write was never asked a time limit or a dead stream is 503 `client-unavailable` (the task then
+never writes, the file is what it was), from the moment the write was sent it is 504
+`client-timeout` (the outcome unknown). `crates/bff/README.md` and `crates/config/README.md` "Through
+the manager" carry the built shapes; `fe/briefs/api-contract.md` keeps two lines the code settled: the
+checks named there are `pai-core` `server_cfg::check`, and a done write with a failed status read is
+a 200 `running: true`.
 Later, not needed now: the manager returning the canonical account name at `Authenticate` (PAM may
 fold case: a mismatch fails closed); renaming `is_admin` and `ADMIN_GROUP` (`PLAN.md` step 10
 leftovers); a size cap or rotation for the Windows log file.
@@ -429,12 +441,12 @@ Designed 2026-11-16, proposed. `PUT /api/instances/{id}/server`, body `{revision
 `fe/briefs/api-contract.md` words it: 200 `{revision, running}`, 422 `{key, args, field}`, 409
 `server-changed-elsewhere`.
 
-**What exists.** The read (`crates/bff/src/server.rs`) sends `revision`, the unkeyed 64-bit FNV-1a of
-the whole text, `OpencodeApiKey` included. The manager's `write_file` (`service.rs`) takes
-`configure`, holds the `writing` mutex, runs `checks::server_file` and the address check, and writes
-atomically; it has no notion of a revision, and the GUI and `pai` write last-writer-wins. The render
-of a whole file from values is in `pai-core` (`server_cfg::render_for`); the thread limit check was in
-`pai-app` (`server_cfg::check`), which the bff does not link; slice 2 moved it to `pai-core`.
+**What exists** (at design time). The read (`crates/bff/src/server.rs`) sends `revision`, the unkeyed
+64-bit FNV-1a of the whole text, `OpencodeApiKey` included. The manager's `write_file` (`service.rs`)
+takes `configure`, holds the `writing` mutex, runs `checks::server_file` and the address check, and
+writes atomically; it has no notion of a revision, and the GUI and `pai` write last-writer-wins. The
+render of a whole file from values is in `pai-core` (`server_cfg::render_for`); the thread limit check
+was in `pai-app` (`server_cfg::check`), which the bff does not link; slice 2 moved it to `pai-core`.
 
 **The key oracle, as it stands.** Every reader of the revision is a signed-in `pai` member whose read is
 never withheld, so the same response already carries the key in `values`: today the hash leaks nothing

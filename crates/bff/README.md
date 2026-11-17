@@ -2,14 +2,15 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
-framework version, the manager's instances with their state and, for a signed-in user, an
-instance's server file, and the manager checks its sign-in: the password and the group `pai`
-(`PLAN.md` step 10). The web UI is for administrators only, members of the group `pai` (user,
-2026-11-15): the Overview (version, instances) shows without sign-in, a right password of a `pai`
-member signs in, a right password of anyone else is 403 `session-not-administrator`
-(`fe/briefs/api-contract.md`). Behind sign-in it already has an instance page (Start, Stop, Restart,
-start at boot and a Server page) and a Models page with an on/off switch per preset, whose routes
-the bff does not serve yet ([below](#the-web-ui-fe)): on the shipped bff they fail.
+framework version, the manager's instances with their state, the run verbs, the start-at-boot flag
+and, for a signed-in user, an instance's server file read and saved; the manager checks its
+sign-in: the password and the group `pai` (`PLAN.md` step 10). The web UI is for administrators
+only, members of the group `pai` (user, 2026-11-15): the Overview (version, instances) shows
+without sign-in, a right password of a `pai` member signs in, a right password of anyone else is
+403 `session-not-administrator` (`fe/briefs/api-contract.md`). Behind sign-in it has an instance
+page (the server file, Start, Stop, Restart, start at boot: all served) and a Models page with an
+on/off switch per preset, whose routes the bff does not serve yet ([below](#the-web-ui-fe)): on the
+shipped bff they fail.
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -71,6 +72,10 @@ runtime (axum).
 | `GET /api/session` | `{"user"}` of the cookie's session |
 | `DELETE /api/session` | Signs out: 204, the cookie cleared |
 | `GET /api/instances/{id}/server` | The instance's `server@<id>.ini` with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
+| `PUT /api/instances/{id}/server` | The form's save of that file, for a signed-in user ([below](#saving-the-server-file)) |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
+| `GET /api/instances/{id}/boot` | `{"enabled"}`, for anyone: the connect carries no principal, the session store is never touched, so the page can poll it; the failures are `/api/instances`' |
+| `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -175,7 +180,8 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 
 `GET /api/instances/{id}/server` (`crates/bff/src/server.rs`) first needs a session: with no cookie,
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
-connect to the manager. Then it asks the manager for `ReadFileAs("server@<id>.ini")` naming the
+connect to the manager. `PUT` of the same path saves it ([below](#saving-the-server-file)).
+Then it asks the manager for `ReadFileAs("server@<id>.ini")` naming the
 session's user, through the same connect and 5 s timeout as `/api/instances` (3de9283): the route
 connects as `Sessions::current`, never a name taken from the request. The manager answers a
 principal for the bff's account alone, checks that user's membership of `pai` at every call (its own
@@ -227,9 +233,52 @@ guide).
   them (`checks::server_int_range`), and of `Threads` and `ThreadsBatch` 1 to this machine's logical
   CPU count.
 - **`interfaces`**: `net_ifaces::interfaces()` as `[{"value", "label"}]`.
-- **`revision`**: the 64-bit FNV-1a hash of the file's text in hex (written in `server.rs`, no
-  dependency): the same for the same text across restarts and builds, another for any change, a
-  comment included.
+- **`revision`**: a keyed SipHash-2-4 of the file's text, printed as 16 hex digits (`server.rs`):
+   the key is a 16-byte secret drawn from the OS's random source at each bff start (`lib.rs`
+   `try_router`). The same text through one bff run gives the same revision, any other text (a
+   comment, the API key, included) gives another; a change detector, not an oracle: with a revision
+   and not the file nobody can check a guess about its text. A bff start draws a new secret, so
+   every open form is stale after it and reloads once.
+
+### Saving the server file
+
+`PUT /api/instances/{id}/server` (`server.rs` `save`) is the Server form's save, as the signed-in
+user. The body is `{"revision", "values"}`: the revision the GET answered and the 19 typed values.
+The body becomes the file's text through the one fields table the GET reads with, and passes
+`pai_core::server_cfg::check` with this machine's CPU count, all before any manager is connected
+to: a body that is not that JSON, or a value of the wrong type, is 400 `server-malformed`; a check
+refusal is 422 `{"key", "args", "field"}`, `field` the INI key the form marks. A body over
+`origin::MAX_BODY` (64 KiB) is refused by the extractor layer in front of the whole router:
+413 `payload-too-large`, before the session is read.
+
+The file is then read as the session's user, its text hashed with the run's secret and compared
+with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
+the file still holds exactly the text read: a write that lands between the read and the write is
+refused by the manager, answered with the same 409, and nothing is written. The read, the write and
+the status that answers `running` are three calls of one connect. The reply is 200
+`{"revision", "running"}`: the revision of the text the file holds now, and whether the instance's
+process runs (`active` or `activating`); a status read that fails after a write that succeeded
+answers `running: true`. The 503 and the 504 turn on one fact: while the write was never asked a
+time limit that runs out or a stream that dies is 503 `client-unavailable` and the file is what it
+was; from the moment the write was sent its outcome is unknown and the answer is 504
+`client-timeout`. A time limit does not stop the blocking task: the handler and that task share one
+atomic (Idle, Asked, Cancelled in `server.rs`) and settle that fact with a compare and exchange, so
+a task parked in the connect or the read finds the state Cancelled and never writes, and a handler
+that finds the state Asked answers 504.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"revision", "running"}` | The file was written; `running` is whether the instance's process runs |
+| 400 | `{"key": "server-malformed", "args": []}` | Not JSON, another content type, `revision` missing or not text, a value of the wrong type; the manager is not connected to |
+| 401 | `{"key": "session-required", "args": []}` | No session; the manager is not connected to |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the connect, the read or the write as this user: the session ends, as the read's 403 (a status it refuses after the write is not a failure: 200, `running: true`) |
+| 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id |
+| 409 | `{"key": "server-changed-elsewhere", "args": []}` | The file is not the one the form read: the sent revision does not match the read text, or the manager's compare and swap found it changed. Nothing is written, the session stays signed in |
+| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
+| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
+| 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out, or a manager lost at the write |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
 
 ## The web UI (`fe/`)
 
@@ -265,18 +314,17 @@ its data once when it opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **The bff does not serve yet** `PUT /api/instances/{id}/server` (`PLAN.md` step 10, slice 8),
-  the start, stop, restart and boot routes (slice 9), nor `GET /api/presets` (slice 11) and `PUT /api/presets/{id}/enabled` (no bff slice in `PLAN.md` yet); `GET` of the server
-  file is served ([above](#the-server-file-of-an-instance)). All are in `fe/briefs/api-contract.md`,
-  and the fe is tested against them with mocked replies only, never against a real bff, so on the
-  shipped bff a save, a run control and start at boot fail and the Models page shows "The presets
-  could not be read.". The bff
-  serves `/api/session` and the manager checks the sign-in, so the pages behind it open: on a
-  shipped install an instance page's server read is answered for a signed-in `pai` member, the
-  manager having checked them at that call ([above](#the-server-file-of-an-instance)), and its run
-  controls and boot
-  switch sit on the routes above, not served; by the code that is what a signed-in `pai` member
-  sees, and no sign-in has been run against a real manager.
+- **The bff does not serve** `GET /api/presets` (slice 11) and `PUT /api/presets/{id}/enabled` (no
+  bff slice in `PLAN.md` yet): the Models page's only calls. The fe is tested against
+  `fe/briefs/api-contract.md` with mocked replies only, never against a real bff, so on the shipped
+  bff that page shows "The presets could not be read.". Everything the instance page makes is
+  served: the server read and its save ([above](#the-server-file-of-an-instance)), the run verbs and
+  the boot read and write ([above](#running-it)); the bff serves `/api/session` and the manager
+  checks the sign-in, so the pages behind it open: on a shipped install an instance page's server
+  read is answered for a signed-in `pai` member, the manager having checked them at that call
+  ([above](#the-server-file-of-an-instance)), and by the code its save, its run controls and its
+  boot switch are answered the same way for that member; no sign-in has been run against a real
+  manager.
 - **Errors are `{"key", "args"}`** (`apiError` in `fe/src/api.ts`, the bff's shape since
   `GET /api/instances` moved to it); the message is picked by the key, never by the status, apart
   from 401. For the instances: `client-unavailable` (the manager is not running or does not
@@ -310,7 +358,7 @@ manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/sessio
 `tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`
 the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
 manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
-`GET /api/instances/{id}/server` the same way, over a fake manager; `tests/pai_bff_binary.rs` runs the binary with
+`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.
