@@ -9,8 +9,8 @@ exist yet. Change this file first when a shape changes.
 
 - Everything is under `/api/`, JSON in and out.
 - **Errors** are `{"key": "<strings key>", "args": [...]}` with a non-2xx status. The key is a
-  configurator strings key where a check already exists (the refusals of `pai-app`
-  `server_control` and `pai-core` `checks.rs`). The fe shows it as its own string `api-<key>`,
+  configurator strings key where a check already exists (the refusals of `pai-core`
+  `server_cfg::check` and `checks.rs`). The fe shows it as its own string `api-<key>`,
   filling `{N}` from `args`; a key it does not know, a malformed body or a network failure is shown
   as one generic failure. The one exception: a 422 with a key the fe does not know is shown as a
   refused value without its reason (`api-other`), since the status already says a check refused it.
@@ -20,13 +20,14 @@ exist yet. Change this file first when a shape changes.
   9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/presets`, `PUT /api/presets/{id}/enabled` and `GET /api/presets/{id}` since they were served, 257147e, 3a63244, 36a892d; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
   sends this key exactly when it ends a session on a refusal, and `client-not-authorized` only when
   the session lives on, so the fe needs no second read of `GET /api/session` to tell them apart.
-  Where: `crates/bff/src/server.rs` `read` and `control.rs` `action_failure`. The session-free reads
+  Where: `crates/bff/src/server.rs` `read` and `save_failure`, `control.rs` `action_failure`,
+  `presets.rs` `read_answer` and `switch_failure`. The session-free reads
   (`GET /api/instances`, `GET .../boot`) keep 502 `client-not-authorized`.
 - **The guard's keys**, each 403 or 413 with `args: []`, answered before any session is looked at
   (`crates/bff/src/origin.rs`): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
@@ -38,6 +39,13 @@ exist yet. Change this file first when a shape changes.
   `GET /api/instances` and `GET /api/instances/{id}/boot`; the `POST`s and `PUT`s move it.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
+- **Writes and their time limit** (the server save and the preset switch since 594e15e; the preset
+  save will share the code): the manager's calls of a write get **15 s** (`lib.rs`
+  `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep **5 s** (`MANAGER_TIMEOUT`).
+  503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
+  sent and its outcome is unknown; a write that **landed** whose following read (the status, the
+  switch's read-back) is slow or fails answers **200 with `running: true`**, never 504
+  (`server.rs` `WriteState`, `TimedOut`).
 - **404** `client-no-instance` means the instance id does not exist.
 - The session is an HttpOnly cookie set by the bff; the fe never reads it.
 
@@ -49,16 +57,16 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances` | anyone | 1a, changed | `[{"id", "engine", "state"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
-| `DELETE /api/session` | signed in | 1a, proposed | 204 |
-| `GET /api/instances/{id}/server` | administrator | 1a, proposed | the server document below |
+| `DELETE /api/session` | signed in | 1a, served | 204 |
+| `GET /api/instances/{id}/server` | administrator | 1a, served | the server document below |
 | `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, served (8) | `{"revision", "running"}` |
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
 | `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
-| `GET /api/presets` | administrator | 2a, 2b, proposed | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
-| `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, proposed | `{"enabled", "running"}` |
-| `GET /api/presets/{id}` | administrator | 2d, proposed | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
+| `GET /api/presets` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
+| `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
+| `GET /api/presets/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
 | `PUT /api/presets/{id}` | administrator (`configure`) | 2h, accepted, not served yet | `{"revision", "running"}` |
 
 ### `GET /api/instances`
@@ -76,7 +84,7 @@ manager's detail never reaches the body).
   `pai` on the server machine. The session reply is `{"user"}`, which is all the bff sends since
   commit 296165f; the fe still accepts a reply that carries `canConfigure` and ignores the field
   (an older bff sent it). The manager still decides
-  every request, and a refusal is 403 `client-not-authorized`.
+  every request; a refusal of the user ends the session (403 `session-not-administrator`, above).
 - `POST /api/session` takes `{"username", "password"}`. Failures:
   - 401 `session-bad-credentials`: the same reply for an unknown user and a wrong password.
   - 403 `session-not-administrator`: the password was right, but the account is not in the `pai`
@@ -156,7 +164,8 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
 - 200 `{"revision", "running"}`: `revision` is the written file's (the hash of the rendered text),
   the one a `GET` now returns and the next `PUT` must send. `running` is true only when the instance
   is `active` or `activating` (a llama-server already launched with the old file), and true too when
-  the status read after a done write failed; `deactivating`, `inactive` and `failed` give false.
+  the status read after a done write failed or outran the time limit (594e15e); `deactivating`,
+  `inactive` and `failed` give false.
 - 422 `{"key", "args", "field"}`: a refused value; `args` are strings; `field` is the INI key it
   belongs to: `args[0]` for `not-whole-number-in-range` (`[key, value, min, max]`) and
   `comment-markers` (`[key]`), `ModelsMax` for `load-on-startup-over-max` and
@@ -170,10 +179,10 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `payload-too-large`; 400 `server-malformed` (the body's type, JSON or shape); 403
   `session-not-administrator` (the PUT's own read or the write refused: the session is ended); 404
   `client-no-instance`; 503 `client-unavailable` only while the write was never asked (no manager, or
-  the time limit ran out in the connect or the read); 504 `client-timeout` once the write was sent
-  (its outcome unknown; also a done write whose status read outran the limit, the file then saved);
-  502 `client-other`; and the guard's 403s. One time limit (5 s, `lib.rs` `MANAGER_TIMEOUT`) covers
-  the connect, the read, the write with the manager's checks, and the status read.
+  the time limit ran out in the connect or the read); 504 `client-timeout` only while the sent
+  write's own outcome is unknown (a write that landed is the 200 above, whatever follows); 502
+  `client-other`; and the guard's 403s. One time limit (15 s, `lib.rs` `WRITE_TIMEOUT`, since
+  594e15e) covers the connect, the read, the write with the manager's checks, and the status read.
 
 ### Start, stop, restart, boot
 
@@ -212,59 +221,82 @@ preset's engine is the engine whose preset file holds it, never a key in the fil
 ### `GET /api/presets`
 
 The one preset list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
-user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`.
+user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`. Served since 257147e
+(`crates/bff/src/presets.rs` `list`, `rows`, `row`); checked against the fe's `Models.tsx` on
+2026-11-17 (02-models.md, "Checked against the bff").
+
+- **llama-server's global section `[*]` is not listed**: it holds the defaults every preset starts
+  from, not a preset (`presets.rs` `is_global`). The switch and the read answer 404 for it.
+- **A missing preset file is an empty group**: no file at all is 200 `[]`, never an error.
 
 - `engine` is the id of the engine whose preset file holds the section. No key in the file names
   it: llama-server refuses a `--models-preset` file with a key it does not know (llama.cpp v1.0.0:
   `common/preset.cpp`, "option not recognized in preset"), so each engine keeps its own preset
   files (llama.cpp's `presets.ini` and `presets.ini.disabled`).
-- `engineAvailable` says whether that engine is in `GET /api/engines`; true for every preset while
-  llama.cpp is the only engine.
+- `engineAvailable` says whether that engine is in `GET /api/engines`; the bff sends true for every
+  row while llama.cpp is the only engine.
 - `enabled` is true for a section of `presets.ini`, false for one of `presets.ini.disabled`.
 - The order is the GUI's (`presets::load_listed`): the switched-on presets, then the switched-off
   ones, each in file order; an id in both files is listed once, as on; a missing file is an empty
   group. The fe does not sort.
-- `model` (slice 2b, for the list's filter) is the value of the section's `model` key as the preset
-  file holds it, a string the bff does not change (no path resolution, no check that the file
-  exists, the server machine's separators kept); `""` when the section has no `model` key or it
-  is empty. The fe treats a row without a string `model` as a malformed reply. Any signed-in user
-  receives it, as the manager already lets any caller read the preset files.
-- Errors, each with empty `args`: 401; 403 `client-not-authorized`; 503 `client-unavailable`; 502
-  `client-other`.
+- `model` (slice 2b, for the list's filter) is the value of the section's `model` key as the INI
+  reader gives it (trimmed, cut at the first `;` or `#`, as for `GET /api/presets/{id}`'s
+  `values`), a string the bff does not otherwise change (no path resolution, no check that the
+  file exists, the server machine's separators kept); `""` when the section has no `model` key or
+  it is empty. The fe treats a row without a string `model` as a malformed reply.
+- Errors, each `{"key", "args": []}`: 401 `session-required`; 403 `session-not-administrator`
+  (the session is ended, rules above; `client-not-authorized` is not sent); 503
+  `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other`.
 
 ### `PUT /api/presets/{id}/enabled`
 
 Switches a preset on or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
 does: the section moves, unchanged, between `presets.ini` and `presets.ini.disabled` (the
 destination written first; a missing disabled file created with the GUI's header). The id is
-matched case-insensitively. Body `{"enabled": <bool>}`.
+matched case-insensitively. Body `{"enabled": <bool>}`. Served since 3a63244, time-outs as now
+since 594e15e (`crates/bff/src/presets.rs` `set_enabled`, `switch`, `switch_failure`, `field_of`,
+`not_found`); checked against the fe's `Models.tsx` on 2026-11-17.
 
-- 200 `{"enabled", "running"}`: `enabled` is read back after the write; `running` is true when an
-  instance of the preset's engine is `active` or `activating` (the fe then says to restart it; the
-  bff restarts nothing). A preset already where it was asked to go answers 200 and nothing is
-  written.
+- 200 `{"enabled", "running"}`: `enabled` is read back after the writes (`presets.ini` read again);
+  `running` is true when any instance is `active` or `activating` (the fe then says to restart it;
+  the bff restarts nothing). A preset already where it was asked to go answers 200 and nothing is
+  written. When both writes landed but the read-back or the states failed or outran the limit,
+  the answer is still 200: `enabled` the value asked for, `running` true.
 - Switching on runs the checks the GUI runs: the load-on-startup presets counted against the lowest
   `ModelsMax` of the instances, and every preset check on the moved section.
 - The bff runs one preset-file write at a time: a move is two compare-and-swap writes (the
   destination first, then the source). An interruption between them leaves the preset in both
   files: it then reads enabled, and the next switch cleans up.
-- 409 `preset-changed-elsewhere` (accepted): a compare-and-swap write found its file changed after
-  the bff's read; the move may be half done (the preset then in both files, read as enabled).
-- Errors: 401; 403 `client-not-authorized`; 404 `no-preset-named` with `args: [id]` when neither
-  file holds the id; 422 `load-on-startup-over-max` `[count, max]` or `load-on-startup-unlimited`
-  `[count]`; 422 with the key of a preset check failing on a hand-edited section (the fe shows a
-  key it does not know as `api-other`); 400 `presets-malformed` (proposed key) for a bad body; 503
-  `client-unavailable`; 502 `client-other`.
+- 409 `preset-changed-elsewhere`, `args: []`: either compare-and-swap write found its file changed
+  after the bff's read; when it was the second, the move is half done (the preset then in both
+  files, read as enabled).
+- 404 `no-preset-named` when neither file holds the id, **and for `*`** (the global section).
+  `args: [id]` only when the id is one a preset can carry (`checks::preset_id`, not only dots);
+  otherwise `args: []`. The fe fills the text with the id it sent, never with `args`.
+- 422 `{"key", "args", "field"?}` from the manager's checks on switching on:
+  `load-on-startup-over-max` `[count, max]` or `load-on-startup-unlimited` `[count]` (`field`
+  `load-on-startup`), any other preset check failing on a hand-edited section (`field` its
+  `args[0]`; the fe shows a key it does not know as `api-other`), and **no `field`** for
+  `invalid-preset-id` and `preset-name-taken`. The page has no field to mark: the fe ignores it.
+- 503 `client-unavailable` only while no write was asked; 504 `client-timeout` once one was sent
+  and its outcome is unknown (the rule at the top, "Writes and their time limit").
+- Other errors, each `{"key", "args": []}`: 401 `session-required` (checked first); 403
+  `session-not-administrator` (the session is ended; `client-not-authorized` is not sent); 400
+  `presets-malformed` for a body that is not `{"enabled": <bool>}` (the fe never sends one); 413
+  `payload-too-large`; 502 `client-other`.
 - A preset id is unique across every engine (user, 2026-11-15), so the id alone names the preset.
   The ids `.` and `..` cannot travel in a URL path (URL Standard, dot path segments); the user
-  decided (2026-11-15) that the common id check refuses them, for the GUI and the CLI too.
+  decided (2026-11-15) that the common id check refuses them, for the GUI and the CLI too. A file
+  edited by hand can still hold one: the fe sends no request for it (02-models.md 59a, 2c-E).
 
-### `GET /api/presets/{id}` (proposed)
+### `GET /api/presets/{id}`
 
 One preset, for its page ([02-models.md](02-models.md), slice 2d, section 2d.12 there with the
-reasons). `{id}` is one percent-decoded path segment, matched case-insensitively; `presets.ini` is
-searched first, so an id in both files is the enabled copy, as in the list. Needs a session; the
-manager's `ReadFile` needs no right for the preset files.
+reasons). Served since 36a892d (`crates/bff/src/presets.rs` `read`, `document`,
+`section_revision`); checked against the fe's `PresetPage.tsx` on 2026-11-17. `{id}` is one
+percent-decoded path segment, matched case-insensitively; `presets.ini` is searched first, so an
+id in both files is the enabled copy, as in the list. Needs a session; read as the signed-in user,
+with the 5 s limit of a read.
 
 ```json
 {
@@ -283,21 +315,30 @@ manager's `ReadFile` needs no right for the preset files.
 ```
 
 - `id` as the file spells it; `engine`, `engineAvailable`, `enabled` as in `GET /api/presets`.
-- `values`: every key of the section, keyed by the preset file's key name, each value the string
-  the file holds after the INI reader's trim (no typing, no path resolution, no defaults); a key the
-  section lacks is absent, never `null`.
-- `projectUrl`: the section's `; url =` comment (`presets::project_url_of`), `""` when none.
+- `values`: every key of the section, keyed by the preset file's key name **in the file's own
+  letter case** (`CTX-SIZE` stays `CTX-SIZE`; the fe reads keys in exact case, as llama-server
+  does), each value a string **as the INI parser reads it, as llama-server reads the file**
+  (`pai-core` `ini::parse_sections`): trimmed, **cut at the first `;` or `#`** (an inline comment
+  is never part of a value, nor is anything after a `#` inside the value), quotes kept; a key
+  repeated in the section gives its last occurrence; the keys sorted (a `BTreeMap`: no file
+  order). No typing, no path resolution, no defaults; a key the section lacks is absent, never
+  `null`.
+- `projectUrl`: the section's `; url =` comment (`pai-core` `ini::project_url_of`), `""` when the
+  section has none.
 - `revision`: opaque, sent back by the save (`PUT`, below); required from 2h on (a read without a
-  string `revision` is a failed read). Accepted: a keyed hash over the name of the file holding the
-  section and the section's text (trailing blank lines cut), so another preset's save does not
-  change it and switching the preset on or off does; like the server's, it does not survive a bff
+  string `revision` is a failed read). A keyed SipHash-2-4 over the name of the file holding the
+  section and the section's raw text (trailing blank lines and the last line's ending cut), so it
+  differs per file, another preset's edit does not change it, and switching the preset on or off,
+  or editing a comment in it, does; the key is drawn at each bff start, so it does not survive a
   restart.
 - It grows without breaking: later slices read more keys from `values`, and add top-level fields
   (a comment such as `; placement =` as `placementNote`, server-computed data) or routes; no field
   is removed or retyped, and the fe ignores fields it does not know.
-- Errors, each `{"key", "args"}`: 401 `session-required`; 404 `no-preset-named` with `args: [id]`
-  when neither file holds the id; 403 `client-not-authorized`; 503 `client-unavailable`; 502
-  `client-other` with empty `args`.
+- Errors, each `{"key", "args"}`: 401 `session-required` (the manager not asked); 404
+  `no-preset-named` for an unknown id, for `*` (the global section) and for an id no preset can
+  carry, `args: [id]` only for an id a preset can carry, else `[]` (as the switch); 403
+  `session-not-administrator` (the session is ended; `client-not-authorized` is not sent); 503
+  `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other` with empty `args`.
 
 ### `PUT /api/presets/{id}` (accepted, not served yet)
 
@@ -318,8 +359,15 @@ key to that value, `null` removes the key. A key not in `values` is not touched.
   configurator's save**, which render the whole section from their struct
   (`presets::render_section`) and so drop comments and unknown keys and rewrite spellings (02h D-a;
   the user chose this, 2026-11-16).
-- **Accepted keys**: a fixed list, the keys 2h.1 to 2h.9 enable. Never `model`, `mmproj`,
-  `model-draft`, `spec-type`, `n-cpu-moe` or `moe-cache-mib` (Assets until 2i; MoE until 2g).
+- **Accepted keys**: a fixed list of **65**, the keys 2h.1 to 2h.9 enable: every key the
+  configurator writes (`render_section`) minus ten; the list, card by card, is in `ARCHITECTURE.md`
+  "Saving a preset from the web" (the constants `checks::WEB_PRESET_KEYS` and
+  `PRESET_KEYS_NOT_ON_WEB`). **The ten answer 400 `presets-malformed`**: `model`, `mmproj`,
+  `model-draft`, `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g),
+  `device`, `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor
+  placement, until 2j). A slice that makes one editable moves it to the list in the same commit.
+  **Body keys match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables
+  spell it.
 - **400 `presets-malformed`**: a body not of that shape, a key outside the list, a value that is
   neither a string nor `null`, an empty string (clearing a key is `null`), or a value holding a
   control character other than tab. **422 `comment-markers`**, `field` the key, for a value holding
@@ -349,10 +397,12 @@ key to that value, `null` removes the key. A key not in `values` is not touched.
   off, or the bff restarted since the read), or the compare-and-swap write found the file changed
   after the bff's read. A save of **another** preset in the same file gives no 409. Nothing is
   written.
-- Errors, each `{"key", "args"}`: 401 `session-required`; 403 `client-not-authorized` (session
-  kept); 403 `session-not-administrator` (session ended); 404 `no-preset-named` `[id]`; 413
-  `payload-too-large`; 503 `client-unavailable` (manager never reached); 504 `client-timeout` (the
-  write was sent, it may or may not have landed); 502 `client-other`.
+- Errors, each `{"key", "args"}`: 401 `session-required`; 403 `session-not-administrator`
+  (session ended; the served routes send no `client-not-authorized`, the fe still handles it); 404
+  `no-preset-named` (`args` as the read's); 413 `payload-too-large`; 503 `client-unavailable` (no
+  write asked); 504 `client-timeout` (the write was sent and its outcome is unknown; a write that
+  landed is the 200, `running` true, whatever follows); 502 `client-other`. The time limit is the
+  writes' 15 s (rules at the top).
 
 ## Open on the bff side
 
@@ -361,11 +411,9 @@ key to that value, `null` removes the key. A key not in `values` is not touched.
   status asks for the password again.
 - **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user); the design
   recommends keeping it so, for the user to decide (`ARCHITECTURE.md`, "ModelsDir after a save").
-- **`ModelsMax` accepts negatives today** and the render drops them silently; the fe shows whatever
-  `limits` says.
 - **A bind list mixing `0.0.0.0` with other addresses** is refused by the save's `server_cfg::check`
   (422 `bind-all-with-others`, field `Hostname`), served since eff112d.
-- **Asked of the platform side (2026-11-17)**: a done write whose status read outruns the time limit
-  answers 504 though the file is saved, so the fe's next save meets a 409 and a Reload; could it
-  answer 200 with `running: true`, as a failed status read already does? And is 5 s enough for a
-  write whose address check resolves a host name?
+- Closed 2026-11-17 (594e15e): a done write whose status read is slow or fails answers 200 with
+  `running: true`, and writes get 15 s ("Writes and their time limit", above). A negative
+  `ModelsMax` is refused by the served `PUT` (422 `not-whole-number-in-range`, field `ModelsMax`,
+  `server_cfg::check`).

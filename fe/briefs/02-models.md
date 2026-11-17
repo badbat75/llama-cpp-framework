@@ -620,6 +620,57 @@ pattern or component; one new string.
     it was being switched. Its switch shows its state as read again; switch it again if that is not
     what you want.
 
+## Checked against the bff (2026-11-17)
+
+The three served preset routes (`crates/bff/src/presets.rs` at 36a892d) against the fe at the same
+commit (`Models.tsx`, `PresetPage.tsx`, `api.ts`). Every 200 field the fe requires is sent with its
+type; the revoked session (403 `session-not-administrator`) is handled on all three
+(`sessionRevoked`); a 404 text is filled with the id the fe sent, never with `args` (the bff sends
+`args: []` for `*` and for ids no preset can carry). Left for the fe: the switch's 409 (2c-C), its
+504 (2c-D) and ids made only of dots (2c-E).
+
+## 2c-D. Later slice 2c-D: the switch is not confirmed (504)
+
+The switch answers 504 `client-timeout` when a write was sent and its outcome is unknown
+(api-contract.md, "Writes and their time limit"); today it falls to `request-failed` ("did not go
+through", Models.tsx 120-123), which can be false: the move may have landed. Same answer for the
+fe's own 120 s limit on the `PUT`. No new pattern; one new string. Criteria go on from 202.
+
+203. **Text.** A reply with the key `client-timeout` (any status), or the `PUT` aborted at the fe's
+    limit (`call()`'s `TimeoutError`), shows in the page's alert (criterion 50)
+    `presets-switch-timeout` filled with the row's id; the status stays empty. A network failure
+    stays `request-failed`.
+204. **Then as every failure** (criterion 48): one `GET /api/presets`, the switch takes that row's
+    `enabled`, the switches `aria-disabled` until that read settles, focus stays on the switch
+    (criterion 52). Nothing is retried by itself.
+205. **Announcement**: `role="alert"` ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)); the
+    text says what to do ([3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)).
+206. **Tests and strings.** A 504 `{key: "client-timeout", args: []}` on switching `a` off: the
+    alert text, one list read, the switch showing the read's value; a fake-timer abort at 120 s
+    gives the same text. **String (1 new)**: `presets-switch-timeout` | The service did not confirm
+    switching {0} in time, so it may or may not have been switched. Its switch shows its state as
+    read again; switch it again if that is not what you want.
+
+## 2c-E. Later slice 2c-E: no switch request for `.` or `..`
+
+A hand-edited file can still hold a section `[.]` or `[..]` (the id check refuses them only for new
+ids). Its row has no link (59a), but its switch sends `PUT /api/presets/./enabled`, which the URL
+parser turns into `/api/presets/enabled` (`..`: `/api/enabled`), another route: a reply that is not
+the error shape, so `request-failed` and a list read for nothing. Criteria go on from 206.
+
+207. **No request.** Changing the switch of a row whose id is exactly `.` or `..`
+    (`presetIdUnreadable`) sends nothing: the switch shows its value before the change at once, the
+    page's alert shows `presets-switch-unreachable` filled with the id, the status is emptied, no
+    list read, focus stays on the switch. The switch stays operable (not `aria-disabled`): the alert
+    is the reason, given where the user acted.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
+    [3.2.2](https://www.w3.org/TR/WCAG22/#on-input))
+208. **Tests and strings.** A list holding `..`: switching it sends no `PUT` and no second `GET`,
+    the alert reads the text, the switch is back to its value. **String (1 new)**:
+    `presets-switch-unreachable` | {0} cannot be switched from the web: its name is made only of
+    dots. Rename it on the server machine. (Not part of the text: whether pai-config's Rename
+    takes such a preset is unchecked; read `presets::rename` before naming pai-config in it.)
+
 ## 2d. Slice 2d: the preset page, read-only
 
 Added on 2026-11-15. Criteria go on from 2c's numbers. Everything in 2a to 2c stays true unless a

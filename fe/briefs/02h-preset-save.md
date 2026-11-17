@@ -4,8 +4,9 @@ Written by the designer on 2026-11-16 for `PLAN.md` step 10, web UI slice 2h (th
 [02-models.md](02-models.md) section 0). Applies `fe/DESIGN.md` ("D5.2" points to its sections),
 builds on 2e ([02e-preset-cards.md](02e-preset-cards.md), criteria 83 to 129a, its field tables)
 and reuses the Server page's save ([01-server.md](01-server.md) section 3, S1, S3; "01's 30a"
-names its criteria). Criteria go on from 130. The bff route is proposed in
-[api-contract.md](api-contract.md), `PUT /api/presets/{id}`.
+names its criteria). Criteria go on from 130. The bff route is accepted, not served yet, in
+[api-contract.md](api-contract.md), `PUT /api/presets/{id}`; the read it builds on,
+`GET /api/presets/{id}`, is served (36a892d).
 
 References: the configurator's save `presets::save` and `render_section`
 (`crates/app/src/presets.rs` 1411-1428, 1754-2167), the editor's enable rules
@@ -43,8 +44,21 @@ the configurator does not model (any llama-server option) would be lost. So the 
 changed keys only, a string to set, `null` to remove; every other line of the file stays byte for
 byte (an edited line is rewritten whole, so an inline comment on that line is lost). Differs from
 the Server PUT (whole document, re-rendered as the GUI does): said in the contract. **Decided by
-the user (2026-11-16, U1).** The bff accepts only the keys 2h.1 to 2h.9 enable and refuses an
-empty string (400): clearing a key is always `null` (table 133 never sends `""`).
+the user (2026-11-16, U1).** The bff accepts only the 65 keys 2h.1 to 2h.9 enable, in exact case,
+and refuses an empty string (400): clearing a key is always `null` (table 133 never sends `""`).
+The ten keys it refuses (400) are never sent by any 2h sub-slice: `model`, `mmproj`, `model-draft`,
+`spec-type` are the Assets card's text (2i), `n-cpu-moe` and `moe-cache-mib` stay disabled with a
+reason line (178), and `device`, `split-mode`, `tensor-split`, `override-tensor` are on no 2e card
+(GPU distribution 2f, Tensor placement 2j), so 2h shows no control for them (checked 2026-11-17).
+
+**D-e. A value is the read's, cut as llama-server cuts it.** The read gives each value after the
+INI parser (trimmed, cut at the first `;` or `#`, the last of a repeated key), which is what
+llama-server reads (api-contract.md, `GET /api/presets/{id}`). No 2h rule needs the untruncated
+text: the written-as line (134) describes the spelling llama-server gets; the invalid-`fit` state
+(185) judges the value llama-server reads (`fit = on # x` is `on`, valid); the full-value line (134)
+shows the whole value llama-server uses (a comment is not part of it); the changed rule (D-b)
+compares control states, and an unchanged field is never sent, so its line, comment included,
+stays byte for byte. A value the fe would send can hold no `;` or `#` (422 `comment-markers`).
 
 **D-b. Changed = the control's state differs from the state it loaded in.** Not "was operated":
 changing a value back makes the field unchanged again (01's 29). An unchanged field is never sent,
