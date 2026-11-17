@@ -43,3 +43,11 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   one rewrote two `fe/` tests on 2026-11-15 before dying at compaction. Every brief says "do not read
   or write fe/" (and any other folder outside the slice), and after each run check `git status`
   for paths outside the allowed list before reading the report.
+- The local model (Strata, PARALLEL=4) is shared with the web UI session's OpenCode agents: when both
+  sessions ran two or three runs each, the other session's runs timed out at 55 minutes with no work
+  done (2026-11-17). Keep one OpenCode run at a time while the other session builds; the reviewer and
+  architect are Claude and do not count.
+- An OpenCode run can lose its task at a compaction: on 2026-11-17 a tester's third compaction summary
+  named an unrelated "retry.test.js" brief that appeared nowhere before it, and the run wrote that file
+  at the repo root. After each run check `git status` for files outside the slice; brief long runs to
+  write their file early, in steps.
