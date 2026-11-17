@@ -449,72 +449,142 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 ## Planned: nodes and instances (PLAN step 10 item 13), not built
 
 **Nothing in this section is served.** It records the routes as designed in `ARCHITECTURE.md`,
-"Nodes and instances" (f) (commit 94632a8; the record is the authority), and the designer's open
-points from reading it against the fe on 2026-11-17. The sections above stay the contract of what is
-built until a slice moves a route here into them.
+"Nodes and instances" (f) and (i) (rewritten at commit 2e4ffc7 for presets as a shared pool; the
+record is the authority), and the designer's reading of it against the fe on 2026-11-17. It replaces
+the earlier version of this section (from 94632a8, presets per instance), which is void: **the preset
+routes do not move**. The sections above stay the contract of what is built until a slice moves a
+route here into them.
 
 ### As designed
 
-- `GET /api/node`, anyone: `{"name": <host name>, "api": "/api"}`. `api` is the path prefix of this
-  node's routes; hub mode (Part 2) answers `GET /api/nodes` with the same objects, `api` =
-  `/api/nodes/<node>`.
-- `GET /api/instances`, anyone: items `{"id", "engine", "state", "port", "tags"}`; `port` the
-  configured one (a running instance may still use the previous port until a restart), `tags` a list
-  of labels (0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no duplicates). Labels only: nothing routes on
-  them (user, 2026-11-17).
-- `POST /api/instances`, administrator: `{"engine", "id", "port", "tags"}`, 201 `{"id"}`. Writes
-  `server@<id>.ini` (port, tags, everything else default, folders unset) and an empty
-  `presets@<id>.ini`; boot start off; starts nothing.
-- `DELETE /api/instances/{id}`, administrator: 204. Removes the service registration, the preset pair,
-  then `server@<id>.ini`; models, snapshots and the Windows log stay.
-- New keys: `client-instance-exists` (409), `client-instance-running` (409, the instance is not
-  `inactive` or `failed`), `client-instance-protected` (409, `default`), `client-no-presets` (409, on
-  start), `server-bad-tags` (422, `args` the tag); `client-address-in-use`, `client-no-instance` and
-  `unknown-engine` as today.
-- The preset routes move: `GET /api/instances/{id}/presets`, `GET` and `PUT
-  /api/instances/{id}/presets/{preset}`, `PUT .../presets/{preset}/enabled`, same bodies, revisions
-  and errors, on `presets@<id>.ini` and its `.disabled`; `running` reads that one instance. A preset id
-  is unique within one instance, not across instances. `/api/presets...` answer for `default` until
-  the web UI reads the new routes, then are removed in the same step.
-- Tags are edited through `PUT /api/instances/{id}/server` (`Tags` a server key; the read gains it).
+- **Node prefix.** `GET /api/node`, anyone: `{"name": <host name>, "api": "/api"}`. Under `api`:
+  `instances` and everything below it, `presets` and everything below it, `engines`. At `/api` in
+  every mode: `version`, `session`, `node`, `nodes` (hub mode answers `GET /api/nodes` with the same
+  objects, `api` = `/api/nodes/<node>`). The fe accepts only a same-origin path equal to `/api` or
+  starting with `/api/`, never a full URL.
+- **`GET /api/instances`**, anyone: items `{"id", "engine", "state", "port", "tags", "removable"}`,
+  sorted by id. `port` is the configured one (a running instance may use the previous one until a
+  restart); `tags` an array of strings, labels only (0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no
+  duplicates); `removable` false for `default`. One failed status read gives that item `"state":
+  "unknown"`; an unreachable manager or a refusal fails the list (errors as today). A never-started
+  instance is `inactive` on both OSes.
+- **`POST /api/instances`**, administrator: body `{"engine": string, "id": string, "port": number,
+  "tags": [string]}`, `tags` optional. Rules: id 1 to 32 of `a-z`, `0-9`, `-`, not starting with
+  `-`; port 1 to 65535. Answers: 400 `instance-malformed`; 422 `{key, args, field}`, `field` the
+  body's name: `instance-bad-id` (`id`), `unknown-engine` (`engine`), `not-whole-number-in-range`
+  (`port`), `client-address-in-use` (`port`, `args` `[id]` of the other instance or
+  `["private-ai-bff"]`), `server-bad-tags` (`tags`); 409 `client-instance-exists`; and every
+  write's 401, 403 `session-not-administrator`, 413, the guard's 403s, 503 before asking, 504
+  `client-timeout` once asked (15 s). The new instance is assigned no preset and starts nothing;
+  boot start off. A port below 1024, or one another program holds, is not refused: it shows at
+  `start` (the instance `failed`).
+- **`DELETE /api/instances/{id}`**, administrator: the same rules; 404 `client-no-instance`; 409
+  `client-instance-running` (not `inactive` or `failed`), `client-instance-protected` (`default`);
+  504 `client-timeout` when the outcome is unknown. Removes the instance's assignments, never a
+  preset; models, snapshots and the Windows log stay.
+- **Start and restart** answer 409 `client-no-presets` (before any stop) when the instance is given
+  no preset in effect (a switched-off preset does not count).
+- **Tags** are `Tags` in `PUT /api/instances/{id}/server`; the bff keeps the file's tags when `Tags`
+  is absent from the body, `[]` clears them, so today's 19-key save is safe.
+- **Any `/api/instances/{id}/...` route** for a missing instance: 404 `client-no-instance`.
+- **The pool stays at `/api/presets`**: the list, `GET`/`PUT /api/presets/{preset}` and `PUT
+  /api/presets/{preset}/enabled` keep their bodies, revisions and errors (sections above), with
+  three changes:
+  - the list rows gain `"assignments": [{"instance", "value"}]`;
+  - `running` (save and switch) is true when an instance **the preset is in effect on** is `active`
+    or `activating` (today: any instance);
+  - the resource refusals below can answer a save or a switch on, 422 with `args` starting
+    `[preset, instance]`.
+- **An instance's Presets tab**:
+  - `GET /api/instances/{id}/presets`: the pool rows, each with this instance's `value` (`none`,
+    `inherit`, `on`, `off`) and `effective` (served by this instance after its next start).
+  - `PUT /api/instances/{id}/presets/{preset}` body `{"value": ...}`: 200 `{"effective",
+    "running"}`; the resource refusals 422; 404 `no-preset-named`; 404 `client-no-instance`.
+  - The meaning, from the record: `none` unassigned; `inherit` assigned, served while the preset's
+    global switch is on; `on` and `off` assigned with an explicit override of the global switch
+    (`on` serves it even while the global switch is off). The manager's `*` key assigns every preset
+    of the pool (shipped as `[default] * = inherit`); an explicit key wins over it.
+- **The resource checks** run only on what a write puts into effect (a new assignment or override in
+  effect on, the global switch on, a preset's save, a lowered `ModelsMax`); a switch off, an
+  unassignment or an override `off` never fails one. New 422 keys: `preset-over-memory` (`args`
+  `[preset, instance, needed MiB, available MiB]`: the full-GPU estimate, model tensors less the
+  input embeddings plus the KV cache for `ctx-size`, against the node's GPUs' total less a reserve
+  each; placement keys and `fit` do not lower it, other instances are not counted),
+  `preset-model-missing`, `preset-engine-mismatch` (unreachable while llama.cpp is the only
+  engine); the `ModelsMax` check now per instance.
+- **Other new keys**: `client-instance-exists`, `client-instance-running`,
+  `client-instance-protected`, `client-no-presets` (409 each), `server-bad-tags`, `instance-bad-id`
+  (422), `instance-malformed` (400).
+
+### The web UI's plan (designer, 2026-11-17; a proposal until the user answers the questions below)
+
+- **Routes.** `#/` Overview (gains Port and Tags columns). `#/instances/<id>` the instance's
+  **Server** tab (today's page, so every existing link stays right); `#/instances/<id>/presets` its
+  **Presets** tab. `#/models` and `#/models/<id>`: **the pool**, today's list and preset page,
+  unchanged, reached from a node-level nav entry. No forward of `#/models`: it already is the pool.
+  Hub mode adds a node segment later (`#/nodes/<node>/...`); not now.
+- **Nav.** The node's `name` (from `GET /api/node`) as the group's heading, then one link per
+  instance, then the pool's entry (label: user question U1), then the rest of the map.
+- **The Presets tab** is an assignment table, one row per pool preset in the pool's order: the
+  preset id (a link to its page in the pool), its model, its global switch (On / Off, read-only
+  here), a select **"On this instance"**, and the result **"Served here"** (Yes / No, from
+  `effective`). The select's options, in plain words: "Not assigned" (`none`), "Follow the
+  preset's switch" (`inherit`), "Always on here" (`on`), "Always off here" (`off`). Changing it
+  saves at once, as 2c's global switch does; a save is not a change of context
+  ([3.2.2 On Input](https://www.w3.org/TR/WCAG22/#on-input)), and the row then announces what
+  changed and whether a restart is needed in a polite live region
+  ([4.1.3 Status Messages](https://www.w3.org/TR/WCAG22/#status-messages)).
+  Wording risk: "Not assigned" and "Always off here" serve nothing alike; they differ only under
+  the `*` assignment and if the global switch is later turned on; see P3.
 
 ### Open points for the platform side
 
-1. **`POST` body and answers.** Is `tags` a JSON array of strings (as the list gives) or the INI's
-   comma string? Is `port` a JSON number? Every refusal with status, key, `args` and `field`: a bad id
-   (which key? `field` `id`), a taken id (`client-instance-exists`, `field` `id`?), a port out of 1 to
-   65535 (`not-whole-number-in-range`, `field` `Port` or `port`?), `client-address-in-use` (`args`
-   `[id]` of the other instance, `field`?), `server-bad-tags` (`field` `Tags` or `tags`?),
-   `unknown-engine`, a malformed body (400, which key?). Do 401, 403 `session-not-administrator`
-   (session ended), 413, the guard's 403s, 503 before the write and 504 after it apply as for every
-   write, with the 15 s limit?
-2. **`DELETE` answers.** The same question for 504: a remove whose outcome is unknown (the fe then
-   re-reads the list). Does a remove of an id the list still shows but whose file is gone answer 404
-   `client-no-instance`?
-3. **Protected before trying.** The fe must not hard-code `default`. Proposed: a `"removable":
-   <bool>` (or `"protected"`) field in each list item, so the Remove control is not offered for it.
-4. **`Tags` in `PUT .../server`.** The rule "a key absent from `values` is unset" means today's fe
-   (19 keys) would erase the tags at every server save once the bff reads `Tags`. Proposed: the read
-   gains `Tags` (as an array or a string: which?) and the fe sends it in the same release as the bff
-   accepts it; or the bff keeps the file's tags when `Tags` is absent.
-5. **A new instance's state.** What does the list say for a created, never-started instance on Windows,
-   where no `llama.cpp_<id>` service exists until `Start`? It must be a state (`inactive`), not a
-   failed list.
-6. **`client-no-presets` exactly.** On `start` only, or on `restart` too (before or after the stop)?
-   Does a preset only in `presets@<id>.ini.disabled`, or only `[*]`, count as none? Note: today's
-   `launch::instance_command` still reads the engine's `presets.ini` (slice 1 changes it).
-7. **The preset routes under a missing instance.** Proposed: 404 `client-no-instance` (not
-   `no-preset-named`), so a page whose instance was removed in another tab says the instance is gone.
-8. **The list.** Ordered by id (`paths::instance_ids` sorts)? Does one instance's failed `Status` fail
-   the whole list, or give that item a state such as `unknown`?
-9. **`api` and the other routes.** Which routes live under `api` (instances, their presets, server,
-   boot, verbs) and which stay at `/api` in hub mode (`version`, `session`, `node`, `engines`)? The
-   fe accepts only a same-origin path starting with `/api/` or equal to `/api`, never a full URL.
-10. **Ports the manager does not see.** `check_address` compares only instances: a port below 1024
-    (the instance runs unprivileged) or one held by another program (the bff's own listen port, another
-    server) is accepted and fails at `start` as `client-service-failed`. Refuse those at create, or
-    leave it to the start?
-11. **No way to add a preset to a new instance.** The new `presets@<id>.ini` has no section, so
-    `start` is `client-no-presets`, and neither the web UI (no preset create yet) nor `pai-config` or
-    `pai` (they address `default` only) can add one. Item 13 needs an answer before the add dialog
-    ships (a user question in the designer's report).
+Answered in the record (i): the old points 1 to 11. Open now:
+
+1. **`*` in the instance rows.** With the shipped `* = inherit`, every row of `default` reads
+   `inherit`; a `PUT ... {"value": "none"}` removes an explicit key that is not there, and the row
+   stays `inherit` (served). The fe cannot offer "Not assigned" that bounces back. Proposed: the
+   reply becomes `{"all": "inherit" | "none", "presets": [rows]}`, each row's `value` the explicit
+   key only (`none` when only `*` covers it) plus `"viaAll": <bool>`; `all` set by `PUT
+   /api/instances/{id}/presets-all` `{"value": "inherit" | "none"}` (a `*` path segment is legal but
+   reads as a glob). While `all` is `inherit` the fe offers each row inherit / on / off only.
+2. **Row shape of `GET /api/instances/{id}/presets`.** Proposed: the pool row's fields (`id`,
+   `engine`, `engineAvailable`, `enabled`, `model`) plus `value`, `effective` (and `viaAll`), in the
+   pool's order (on, then off, file order). Errors as the pool list plus 404 `client-no-instance`.
+   Does it need a session, and does it move the idle deadline (yes, as the pool list)?
+3. **`off` vs `none`.** Is `off` meant for anything but excluding one preset from `*` while
+   inheriting the rest? If not, the fe can show "Always off here" only when `all` is `inherit`, and
+   "Not assigned" only when it is `none`: three options per row instead of four.
+4. **`effective` while the global switch is off**: `inherit` gives false, `on` true (override wins,
+   record (a))? Confirm. The pool's switch then needs to say "still served on `<ids>`, set Always on
+   there": see 6.
+5. **`assignments` in the pool list**: objects `{instance, value}` (the record's words). Does it list
+   the instances covered by `*` (as `inherit`, with `viaAll`), so that the pool row can say where the
+   preset is served? Proposed: yes, plus `"effective": <bool>` per item, sorted by instance id.
+6. **Which instances to restart.** A save or a switch now reaches several instances; "restart
+   llama-server to apply" no longer says which. Proposed: the save's and the switch's 200 gain
+   `"restart": [<instance id>]`, the instances the preset is in effect on (before or after the write)
+   that are `active` or `activating`, sorted; `running` stays (true iff `restart` is non-empty, or
+   the states could not be read: then `restart` is `[]` and the fe says "restart the running
+   instances"). The assignment PUT's `running`: true only when this instance is running **and** its
+   render changed (`inherit` to `on` with the switch on changes nothing)? Otherwise the fe asks for
+   a useless restart.
+7. **Revision of the assignment PUT.** None in the record: last write wins on one value, which the
+   fe accepts (it re-reads the row from the 200). Confirm no 409 can come, and that a pool switch
+   in another tab changes nothing the PUT relies on.
+8. **`preset-over-memory`, exact.** `args` are strings: `needed` and `available` whole MiB as
+   decimal digits? On a preset save, which `field` (none, `ctx-size`, `model`)? Proposed: no field;
+   the fe shows it in the save bar's alert, and on the Presets tab under the row's select
+   (`aria-describedby`). A save that is refused on one of several instances writes nothing: the
+   `args` name the first instance refused only?
+9. **The estimate before trying.** The fe can show the figure only after a refusal. Is a read
+   wanted, e.g. `needMiB` and `availableMiB` per row of the instance's tab (the manager reads each
+   preset's GGUF header, capped at `MAX_HEADER`), or a `GET /api/presets/{preset}/estimate`? The fe
+   needs neither for the first slices.
+10. **`preset-model-missing` and `preset-engine-mismatch`**: `args` beyond `[preset, instance]` (the
+    path for the first?) and `field` on a save (`model`?).
+11. **`load-on-startup-over-max` / `-unlimited` now per instance**: do their `args` stay `[count,
+    max]` and `[count]` (the fe's built strings use them), with the instance unnamed, or gain the
+    instance? A change of `args` order breaks the built 2c and 2h texts: proposed, append the
+    instance as the last arg (`[count, max, instance]`, `[count, instance]`).
+12. **`client-no-presets`**: `args` `[]`? The fe links it to the instance's Presets tab.
