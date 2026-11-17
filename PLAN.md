@@ -961,6 +961,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     is agreed with the web UI session first. Left from the web UI session's UX pass: hashed assets with
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
+13a. **Preset becomes profile** (user, 2026-11-17), right after item 13 slice 4 and before slice 5:
+    a model's settings are its **model profile**, an instance's server settings its **server profile**.
+    Everywhere: displayed text (GUI, CLI, web UI), strings keys, docs, ARCHITECTURE and PLAN, code names,
+    API routes and error keys, CLI commands, and the files: `presets.ini` -> `models.ini`,
+    `presets.ini.disabled` -> `models.ini.disabled`, the rendered `presets@<id>.ini` -> `models@<id>.ini`;
+    `server@<id>.ini` and `assignments.ini` keep their names. No migration (pre-release): the installed
+    files are renamed by hand. What stays: llama.cpp's own words (the `--models-preset` flag, its
+    `docs/preset.md`), the benchmark specs and bench.db's recorded data. The web UI session renames
+    `fe/` in step with the API, at an agreed pause. Strata (13c) also calls its override files
+    "profiles": its design names them so the two are not confused.
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
