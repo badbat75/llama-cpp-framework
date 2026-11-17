@@ -971,6 +971,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     `docs/preset.md`), the benchmark specs and bench.db's recorded data. The web UI session renames
     `fe/` in step with the API, at an agreed pause. Strata (13c) also calls its override files
     "profiles": its design names them so the two are not confused.
+    Then (user, 2026-11-17, same day) the shape changes: the node's menu has **Profiles** with two
+    children, **Server** and **Model**: two shared pools. An instance is given ONE server profile and N
+    model profiles; its page only makes those associations. The server profile holds the port and the
+    tags, so it serves one instance at a time; both kinds are per engine (a llama.cpp profile serves only
+    llama.cpp instances; Strata's come with 13c). So `server@<id>.ini` stops being an instance's own
+    file: the architect revises item 13's record (the server-profile pool and its files, how an instance
+    names its server profile, the checks, protocol and API, what slice 4 keeps) before any rename lands;
+    the file names above stand for the model side.
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
