@@ -953,7 +953,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     names, read at the bff's start: its host name, `<name>.local` and `<name>.<domain>` for each
     `search`/`domain` of `/etc/resolv.conf` (Linux; on Windows the computer name and its DNS domain);
     `[Bff] Hosts` (comma-separated names) in `bff.ini`, when set, replaces those automatic names. Any
-    other name stays refused. A Content-Security-Policy
+    other name stays refused. `localhost` and the loopback addresses are accepted when the bff listens on
+    a loopback or an unspecified address (`0.0.0.0`, `[::]`), not when it is bound to one LAN address
+    only (user, 2026-11-17). A Content-Security-Policy
     is agreed with the web UI session first. Left from the web UI session's UX pass: hashed assets with
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
