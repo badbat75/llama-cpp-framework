@@ -93,8 +93,13 @@ description: What the architect has learned about this project's components, int
   `server@default.ini` sets `StateDir` explicitly; snapshots are named by model stem, so a shared
   state folder collides across instances. `server@<id>.ini` needs `control` to read: anything the
   session-free Overview shows from it needs an unauthenticated manager call.
-- Presets are a pool per node assigned to instances (user, 2026-11-17): the pool is the engine's
-  `presets.ini` pair, the assignments `assignments.ini`, and llama-server gets a render per instance
-  (ARCHITECTURE.md "Nodes and instances"). The GGUF estimate (`hf_fit::local_shape`, `estimate`,
+- Profiles (user, 2026-11-17, supersedes "presets"): two per-engine pools, server profiles
+  (`server@<profile>.ini`, one instance each) and model profiles (`models.ini` pair); an instance is its
+  section of the engine's `instances.ini` (ARCHITECTURE.md "Revision: profiles"). Before that slice
+  lands, `paths::instance_ids` still lists `server@*.ini` and `check_address` compares those files: both
+  move to `instances.ini`. A per-engine directory is the engine (no `Engine` key), so cross-engine
+  mismatch checks are structural. The GGUF estimate (`hf_fit::local_shape`, `estimate`,
   `devices.rs`) lives in `pai-app`, which the manager cannot link: a manager check needing it moves
   it to `pai-core` first.
+- A tester's "red tests in the tree" may be only a `todo!()` stub: `git status --untracked-files=all`
+  and grep the method name before reporting what stands.

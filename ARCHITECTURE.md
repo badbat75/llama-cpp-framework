@@ -943,7 +943,8 @@ after a save stays a later design (recommended), with "restart to apply" meanwhi
 ### Nodes and instances (step 10 item 13)
 
 Designed 2026-11-17, rewritten the same day for the user's requirement change (presets are a shared
-pool per node, assigned to instances); built after the web UI's preset cards (2h.5 to 2h.10).
+pool per node, assigned to instances); built after the web UI's preset cards (2h.5 to 2h.10). Revised again the same evening for profiles: "Revision: profiles" at the end of this
+record wins over (a) to (j).
 
 **The user's decisions (2026-11-17).** The web UI's top level is the node (this machine under its host
 name), its instances inside, each with a Server tab and a Presets tab, no top-level Models entry (an old
@@ -1204,7 +1205,7 @@ instances", open points numbered as there; the architect, 2026-11-17). They refi
     (`crates/core/src/strings.rs` `substitute`).
 12. `client-no-presets` `args` `[instance]`, as `client-instance-exists` names its id.
 
-**Slices**, each test first; Linux, the Windows code type-checked.
+**Slices 1 to 3** (built 2026-11-17 under the old names):
 
 1. **The render** (`pai-core`, pure): pool texts plus an instance's assignment section give
    `presets@<id>.ini`. Done when: `*`, explicit keys over `*`, overrides over the global switch,
@@ -1216,27 +1217,200 @@ instances", open points numbered as there; the architect, 2026-11-17). They refi
    it, a client write of `presets@a.ini` is `BadFileName`.
 3. **Packaging**: the shipped `assignments.ini` (`[default]`, `* = inherit`) in deb, rpm and MSI, copied
    when missing. Done when: `xtask`'s package-content tests name it.
-4. **`SetAssignment`** (protocol 3, D-Bus and pipe) with checks 1 and 4. Done when: each value
-   re-renders, an unknown preset or instance is refused, a non-`configure` caller writes nothing.
-5. **The model-file check** (3). Done when: a missing `model`, a missing shard and a FIFO are refused;
-   an `hf-repo` preset passes.
-6. **The estimate moves to `pai-core`** (no behaviour change: `hf_fit`'s tests pass), then **the
-   memory check** (2) on fixtures of GGUF headers and a fake device list. Done when: each case of (b) 2
-   gives its answer, a preset with `fit` on or `n-cpu-moe` refused over the full-GPU estimate.
-7. **Snapshots per instance** (e). 8. **Tags** (c).
-9. **`Instances`**, `GET /api/instances` with `port`, `tags`, `removable`, `unknown`, and `GET /api/node`.
-10. **The bff's assignment routes** and the pool routes' `running`, `assignments` and resource refusals.
-11. **`CreateInstance`**, then **`RemoveInstance`** (two slices), with `NoPresets` at start.
-12. **The bff's `POST` and `DELETE /api/instances`.**
-13. **The web UI** (the web UI session, designer's brief first).
-14. **The estimate as a read** ((j) 9), when the web UI asks for it.
 
-Then the docs agent: AGENTS.md "Key conventions", "Through the manager", `crates/bff/README.md`,
-`installer/AGENTS.md`, `docs/build-packaging.md`, and Part 1 of this page.
+**Revision: profiles (2026-11-17, step 10 item 13a).** The user's decisions of the same evening replace
+parts of this record; where (a) to (j) above and this block disagree, this block wins, and the words
+"preset" and "presets" above read as "model profile". Slices 1 to 3 (the render, the manager renders
+and launches, `assignments.ini` shipped) are built under the old names; the slice list below replaces
+the old slices 4 to 14.
 
-**Decided by the user (2026-11-17)** on this version's two questions: the memory check refuses anything
-over the full-GPU estimate, even with `fit` on or a CPU placement ((b) 2); every instance sees all the
-node's GPUs and is checked alone against them (a per-instance `Devices` key waits until asked).
+*The decisions (user, 2026-11-17).* (1) "Preset" becomes "profile" everywhere: code, API routes, error
+keys, CLI, strings, docs and files, with no migration (pre-release: the installed files are renamed by
+hand); llama.cpp's own words (`--models-preset`, its `docs/preset.md`), the benchmark specs and
+bench.db's recorded data stay. (2) The node's menu has "Profiles" with two children, "Server" and
+"Model": two shared pools; an instance is given ONE server profile and N model profiles, and the
+instance page only makes those associations. (3) The server profile holds the port and the tags, so
+a server profile serves one instance at a time. (4) Both kinds are per engine (llama.cpp now, Strata
+in 13c, whose own override files Strata also calls "profiles"). So `server@<id>.ini` stops being an
+instance's own file.
+
+*Names.* The table every slice and the web UI session work from:
+
+| Old | New | Where |
+| --- | --- | --- |
+| preset (concept, displayed) | **model profile**; plural "model profiles" | everywhere; displayed in sentence case: "Model profile", "Model profiles" |
+| the instance's server settings | **server profile**; "Server profile", "Server profiles" | everywhere |
+| `presets.ini` | `models.ini` | engine dir (`/etc/llama.cpp`, `%ProgramData%\llama.cpp\config`); per user on macOS |
+| `presets.ini.disabled` | `models.ini.disabled` | the same |
+| `presets@<id>.ini` (render) | `models@<id>.ini` | engine dir, the manager's only |
+| `server@<id>.ini` (the instance) | `server@<profile>.ini` (a server profile; same format, `[Server]`) | engine dir |
+| (none) | `instances.ini` (what an instance is, below) | engine dir, the manager's only |
+| `assignments.ini` | unchanged (model profiles per instance) | engine dir |
+| Rust: `Preset*`, `preset_*`, `ConfigFile::Presets`, `PresetsDisabled`, `Instance(id)` | `ModelProfile*`, `model_profile_*`, `ConfigFile::Models`, `ModelsDisabled`, `ServerProfile(id)` | every crate |
+| `ManagerError::NoPresets`, `LaunchError::NoPresets` | `NoModelProfiles` | manager, core |
+| `pai preset <verb>` | `pai model-profile <verb>` (same verbs); `pai server show/set/boot` unchanged, acting on the server profile of `default` | CLI |
+| strings keys `preset-*`, `presets-*` | `model-profile-*`, `model-profiles-*` (mechanical: `preset` -> `model-profile`) | `en_US.toml`, `cli.toml` |
+| GUI tab "Presets", "Server" | "Model profiles", "Server profile" | GUI |
+
+Never a bare "profile" in code names, routes or keys: always `server`/`model` with it, so Strata's
+override files (13c) keep their own name, "Strata runtime profile" (`strata_runtime_profile` in
+code), and never collide.
+
+*(a') What an instance is now.* Options:
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `instances.ini` per engine dir**: one section per instance, `[<id>]`, key `ServerProfile = <profile>` | one file the manager owns, read like `assignments.ini` | create and remove write two files (instances, then the render; remove the reverse), mended at the next write or start as today | **Chosen**: the engine is the directory that holds the record, as for both pools; the engine package ships its own `default` (no framework coupling to llama.cpp, item 11) |
+| B. A reserved key in `assignments.ini` (`@server = big`) | no new file | a key namespace shared with model profile ids; the file stops meaning one thing | Rejected |
+| C. `Instance = <id>` inside the server profile | no new file | the instance's record spread over profiles; a switch writes two profiles and moves both revisions (409 on open pages) | Rejected |
+| D. One node file `/etc/private-ai/instances.ini` with `Engine =` | ids unique by construction | the framework package would ship llama.cpp's `default` | Rejected |
+
+An instance is its section in its engine's `instances.ini`: id (the section), engine (the directory),
+server profile (`ServerProfile`), model profiles (its section of `assignments.ini`). `paths::instance_ids`
+reads `instances.ini` (valid ids only) instead of listing `server@*.ini`; the Windows `scm.rs` `sync`
+follows it. Ids stay unique across engines (the manager reads every engine's file; one today). Clients
+read `instances.ini` with `ReadFile` (as `assignments.ini`) and never write it (`BadFileName`).
+
+*The server-profile pool.* Options: **one file per profile, `server@<profile>.ini`** (today's file,
+format, `render_for`, whole-file revision, server checks and the bff's server document, unchanged: the
+id simply becomes the profile's name; profile names follow `valid_instance_id`, a safe file name), or
+one `servers.ini` with a section per profile (section-scoped revisions and saves to build, as for model
+profiles, for nothing gained). **Chosen: one file per profile.** Unused profiles are allowed and serve
+nothing.
+
+*The launch* reads the instance's section, then `server@<ServerProfile>.ini` directly (no render: the
+manager owns no copy that could drift), and `models@<id>.ini`. Unset `StateDir` is
+`instance_state_dir()/<id>` (by instance, (e)); `LaunchError::NoConfig` names the missing profile file.
+A profile changed or switched while the instance runs applies at its next start (`running` in replies).
+
+*(b') The checks* (each refusal writes nothing):
+
+1. **Port**: unique among the profiles **in use** by instances (every engine) and against `[Bff] Listen`;
+   two unused profiles may share a port (alternatives for one instance). `check_address` iterates
+   instances and their profiles instead of `server@*.ini`. Run at a save of a profile in use and at
+   `SetServerProfile`. Refusal `AddressInUse(<other instance>)`, key `client-address-in-use` `[instance]`
+   or `["private-ai-bff"]`, unchanged.
+2. **One instance per profile**: `SetServerProfile` and `CreateInstance` refuse a profile another
+   instance uses: `ServerProfileInUse(profile, instance)`, `client-server-profile-in-use`
+   `[profile, instance]`, 409.
+3. **`ModelsMax`** is the profile's; the per-instance `load-on-startup` check reads the profile the
+   instance uses: at a profile save (the instance using it, none when unused), at `SetServerProfile`
+   (the new profile against the instance's render), at a model-profile write or assignment (as before).
+4. **Engine**: structural. A server or model profile is the engine's file, and the manager looks a name
+   up only in the instance's engine directory, so another engine's profile is simply not found
+   (`client-no-server-profile`, `no-model-profile-named`). Check 4 of (b) and the key
+   `preset-engine-mismatch` are dropped.
+5. Model-file and memory checks ((b) 2, 3) unchanged, under the new names.
+
+*(d') Manager protocol 3* (PROTOCOL is 2 on main; 3 ships with the first new method). Every guarded
+method has its `As` form, needs `configure`, runs under the `writing` lock and is recorded:
+
+| Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
+| --- | --- | --- |
+| `Instances()`, no authorization | `-> a(sssqas)`: `(id, engine, server_profile, port, tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, tags}` | none; port 0 and no tags when the profile file is missing |
+| `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (not for `*`), `value` none/inherit/on/off (`*` takes none/inherit), checks 1 and 3 of (b), model file and memory once built |
+| `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `load-on-startup-over-max` |
+| `CreateServerProfile(engine, profile)` | `(ss)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig::default(), true)` (a create-if-absent under the lock, so it never overwrites) |
+| `DeleteServerProfile(engine, profile)` | `(ss)` | `NoServerProfile`, `ServerProfileInUse` |
+| `CreateInstance(engine, id, serverProfile)` (replaces `(engine, id, port, tags)`: port and tags are the profile's) | `(sss)` | `unknown-engine`, `instance-bad-id`, `InstanceExists`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`; writes its `instances.ini` section, then an empty render; assigned no model profile; boot off |
+| `RemoveInstance(id)` | `(s)` | as (d); removes the service, the `assignments.ini` section, the render, then the `instances.ini` section last; the server profile stays in the pool |
+| `ReadFile`/`WriteFile`/`WriteFileIf` | unchanged | names: `server@<profile>.ini` (needs `control` to read, as today), `models.ini`, `models.ini.disabled`; `instances.ini` and `assignments.ini` read only; `models@<id>.ini` `BadFileName` |
+
+New `ManagerError`s: `NoServerProfile(profile)`, `ServerProfileInUse(profile, instance)`,
+`ServerProfileExists(profile)`; `NoPresets` becomes `NoModelProfiles`. Trust: unchanged from (d); a
+compromised bff can, during a member's session, also swap an instance's server profile (its port and
+bind address) and create or delete unused profiles, as it can already rewrite those files.
+
+*(f') The bff.* The routes, every one behind an administrator's session but `GET /api/instances`:
+
+| Route | Body / reply | Errors |
+| --- | --- | --- |
+| `GET /api/profiles/model` (was `/api/presets`) | `[{id, engine, engineAvailable, enabled, model, assignments}]` | as the old list |
+| `GET`/`PUT /api/profiles/model/{id}` (was `/api/presets/{id}`) | unchanged bodies, `revision`, `restart`, `running` | `no-model-profile-named` 404, `model-profile-changed-elsewhere` 409, check keys 422 |
+| `PUT /api/profiles/model/{id}/enabled` | unchanged | as the old switch |
+| `GET /api/profiles/model/{id}/estimate` (later, slice 17) | as (j) 9 | |
+| `GET /api/profiles/server` | `[{id, engine, port, tags, instance}]`, `instance` the id using it or `null`, sorted by id | 503, 401, 403 |
+| `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
+| `POST /api/profiles/server` `{"engine", "id"}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
+| `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
+| `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, removable}` | as (f) |
+| `PUT /api/instances/{id}/profiles/server` `{"id": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use` (`field` `id`), `load-on-startup-over-max` |
+| `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
+| `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value"}` -> 200 `{effective, running}` | as (f), keys renamed |
+| `PUT /api/instances/{id}/profiles/model` `{"all": "inherit" \| "none"}` (was `.../presets-all`) | 200 `{running}` | 404 `client-no-instance` |
+| `POST /api/instances` `{"engine", "id", "serverProfile"}` (port and tags gone: the profile's) | 201 | (i) 1, minus the port and tag fields, plus 404 `client-no-server-profile` (`field` `serverProfile`), 409 `client-server-profile-in-use`, 422 `client-address-in-use` |
+| `DELETE /api/instances/{id}` | unchanged | unchanged |
+
+Renamed error keys (args unchanged unless said): `preset-name-taken` -> `model-profile-name-taken`;
+`preset-no-model` -> `model-profile-no-model`; `invalid-preset-id` -> `invalid-model-profile-id`;
+`no-preset-named` -> `no-model-profile-named`; `preset-changed-elsewhere` ->
+`model-profile-changed-elsewhere`; `presets-malformed` -> `model-profiles-malformed`;
+`preset-over-memory` -> `model-profile-over-memory` `[profile, instance, needed, available]`;
+`preset-model-missing` -> `model-profile-model-missing` `[profile, instance, path]`;
+`client-no-presets` -> `client-no-model-profiles` `[instance]`; `preset-engine-mismatch` dropped.
+New: `client-no-server-profile` `[id]`, `client-server-profile-in-use` `[profile, instance]`,
+`client-server-profile-exists` `[id]`, `server-profile-bad-id` `[id]`. Kept: every `server-*` key
+(`server-malformed`, `server-changed-elsewhere`, `server-bad-tags`), `load-on-startup-*` (instance
+last), `client-address-in-use`, `client-instance-*`, `instance-*`, `unknown-engine`. The tags rule of
+(c) is unchanged, its key on the server profile.
+
+Hash routes (a preference; the web UI session's designer decides): `#/profiles/server`,
+`#/profiles/server/<id>`, `#/profiles/model`, `#/profiles/model/<id>`, `#/instances/<id>`; an old
+`#/models` opens `#/profiles/model`.
+
+*Packaging.* llama.cpp's packages (deb, rpm, MSI) ship, copied only when missing: `models.ini` (empty,
+was `presets.ini`), `server@default.ini` (now the server profile `default`, same content),
+`assignments.ini` (`[default]`, `* = inherit`) and `instances.ini` (`[default]`,
+`ServerProfile = default`). On the installed machine the user renames `presets.ini` and
+`presets.ini.disabled` by hand and deletes `presets@*.ini`; `instances.ini` arrives with the package and
+`server@default.ini` already is the profile. Windows: the same files in `%ProgramData%\llama.cpp\config\`,
+read by the instances through that folder's ACL (all services read, `S-1-5-80-0`); `sync` from
+`instances.ini`; type-checked only. macOS (`Direct`): the per-user `presets.ini` pair becomes
+`models.ini` likewise; `server.ini` stays; no instances.
+
+*(g') GUI and CLI.* They keep acting on `default` only: its server profile is the one `instances.ini`
+names (read through `Instances()`), its model profiles the pool as today; choosing an instance or a
+profile waits until asked.
+
+**Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
+
+4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,
+   `pai-config`, `pai-bff` and `xtask`: files, Rust names, strings keys, error keys, CLI, the bff's
+   routes as in (f') (the server document moves to `/api/profiles/server/{id}`, `default` today), the
+   shipped `models.ini`. The web UI renames `fe/` at the same pause, so the bff and the fe land in
+   one window. Done when: `git grep -i preset crates xtask` finds only llama.cpp's words (`--models-preset`,
+   `docs/preset.md`), bench data and test fixtures quoting them; each crate's tests, clippy and fmt are
+   green; the package-content tests name `models.ini`; an old route answers 404.
+5. **`instances.ini`**: `paths::instance_ids` from it, the launch through `ServerProfile`, `ConfigFile::ServerProfile`,
+   read-only `instances.ini`, the shipped file, Windows `sync`. Done when: an instance whose section names
+   `big` launches with `big`'s port; a `server@x.ini` no section names lists no instance; a client
+   write of `instances.ini` is `BadFileName`; xtask's package tests name it.
+6. **Checks on profiles in use** ((b') 1 to 3). Done when: two unused profiles with one port save; a
+   profile in use colliding with another instance's is refused naming it; `ModelsMax` lowered on a
+   profile in use is refused naming the instance, on an unused one accepted.
+7. **`SetModelProfile`** (old 4; protocol 3, D-Bus and pipe). Done when: each value re-renders, an
+   unknown model profile or instance is refused, a non-`configure` caller writes nothing.
+8. **`SetServerProfile`**. Done when: each refusal of (d') writes nothing; a success rewrites the section
+   and the next launch uses the new profile.
+9. **The model-file check** (old 5). 10. **The estimate to `pai-core`, then the memory check** (old 6).
+11. **Snapshots per instance** (old 7). 12. **Tags in the server profile** (old 8).
+13. **`Instances()`**, `GET /api/instances` and `GET /api/node` (old 9).
+14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
+15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
+    instance, the pool rows' `assignments`, `restart`, resource refusals (old 10).
+16. **`CreateInstance`, then `RemoveInstance`** (two slices, `NoModelProfiles` at start), then the bff's
+    `POST` and `DELETE /api/instances` (old 11, 12).
+17. **The web UI** (the web UI session, designer's brief first), then **the estimate as a read** (old 13, 14).
+
+Then the docs agent: AGENTS.md (the overview, "Key conventions" file names), "Through the manager",
+`crates/bff/README.md`, `installer/AGENTS.md`, `docs/build-packaging.md`, and Part 1 of this page.
+
+**Decided by the user (2026-11-17)** on the earlier version's two questions: the memory check refuses
+anything over the full-GPU estimate, even with `fit` on or a CPU placement ((b) 2); every instance sees
+all the node's GPUs and is checked alone against them (a per-instance `Devices` key waits until asked).
+On the revision's three questions (user, 2026-11-17): server profiles keep the file name
+`server@<profile>.ini`; the CLI is `pai model-profile <verb>`; a server profile created from the web
+starts from the defaults.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
