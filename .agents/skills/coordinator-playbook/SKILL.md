@@ -51,3 +51,7 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   named an unrelated "retry.test.js" brief that appeared nowhere before it, and the run wrote that file
   at the repo root. After each run check `git status` for files outside the slice; brief long runs to
   write their file early, in steps.
+- Do not call the architect for a small change the user has already decided, even when it touches a
+  trust boundary (2026-11-17: opening the bff's `Listen` to the LAN; the user: "there was no need to
+  call the architect for this"). Read the code yourself, decide the minimal rule, and brief the tester.
+  Keep the architect for a new component, protocol or permission model.

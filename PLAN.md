@@ -940,7 +940,24 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 11. (Done, 2026-11-17: `GET /api/presets`, `crates/bff/src/presets.rs`. A `[*]` section lists as a
     preset named `*`, as in the GUI.)
 
-Later slices (not yet written): the presets page, the gateway, the benchmark portal, LAN access.
+12. **LAN access** (user, 2026-11-17, a requirement change: told the sign-in password then crosses the
+    LAN in clear, the user chose plain HTTP over TLS in the bff or an SSH tunnel). `[Bff] Listen`
+    accepts any `ip:port`, all interfaces included; the `Host` guard accepts any IP literal beside the
+    loopback names, a name other than `localhost` still refused (DNS rebinding); then every reply
+    carries `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` (clickjacking, from the web
+    UI session's UX pass). A Content-Security-Policy is agreed with the web UI session first. Left from
+    the same pass, later: hashed assets with no ETag or long max-age; an unknown `/api/<path>` is 404
+    with an empty body, not `{key,args}`; `/index.html` is 404 (only `/` serves the page, unintended).
+13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
+    level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
+    the same page takes more nodes when the super-manager comes (R13, step 14). Then adding and
+    removing instances from the web UI, llama.cpp first, each with its own port (the manager already
+    keeps instances by id: R8); Strata as a second engine in a step of its own (R12).
+14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
+    sends each request to the instance serving the model asked for, across instances and later engines
+    (user, 2026-11-17: after nodes and instances).
+
+Later slices (not yet written): the benchmark portal.
 
 ## Waiting for the user
 
