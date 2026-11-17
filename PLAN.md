@@ -1004,7 +1004,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     read-only inventory of Strata 0.1.60.1's server and model parameters, kept locally (not committed:
     third-party facts, mappings partly guessed) at `build/linux/strata-params.md`; open there: the
     engine's own flag list (its `--help` was not run), the JSON-only run-config keys, health and props
-    endpoints.
+    endpoints. Also (user, 2026-11-17): integrate Strata's build scripts from
+    `/mnt/data/git/strata-framework` (`00`..`04` `.sh`/`.ps1`: the newest Strata release tag, llama.cpp
+    at the commit Strata pins, the engine per backend `hip|cuda`, one at a time, and the Terminal; the
+    `strata-framework-<backend>` `.deb`/`.rpm`; `/opt/strata-<backend>`) into xtask, and split every
+    phase by three product arguments: `llama.cpp`, `strata` and `pai` (today's `framework`), so each
+    builds, packages and installs on its own. The design decides the backend argument, the package
+    names, Strata's licence in the packages and what happens to the strata-framework repo.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances).
