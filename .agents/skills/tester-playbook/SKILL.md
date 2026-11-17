@@ -290,7 +290,69 @@ Lessons only: the rules are in `AGENTS.md`.
    id is `*`, and `checks::preset_id` refuses `*` - a switch of it is 404 `no-preset-named` with EMPTY
    `args` (the id never passes the check to be echoed). Test the id raw, url-encoded (`%2A`) and bracketed
    (`%5B%2A%5D`): axum's `Path` decodes all three to `*`, and the list-exclusion pin needs the section in
-   `presets.ini` with real keys beside a real preset.
+   `presets.ini` with real keys beside a real preset. The same rule answers `.` and `..` with empty args
+   (`preset_id` refuses a path of dots), so a "the id is echoed back" pin takes the plain names.
+ - A preset route reads `presets.ini` and `presets.ini.disabled` through `ManagerClient::read_file` (as
+   `src/presets.rs::list` does), NOT an `As*` method: a new preset read needs no new trait method, and its
+   call log is `read presets.ini` then `read presets.ini.disabled` over ONE connect. Keep the fake's files in
+   an `Arc<Mutex<Vec<(String, String)>>>` shared into the connect hook, with the log closing over it: a test
+   can then change a file between two reads (the mid-read 503) while every other test builds its own app.
+ - A digest the route computes (the section's revision): take the pinned constants from an INDEPENDENT
+   implementation written outside the repo (a `python3` SipHash-2-4 in the scratchpad, validated by
+   reproducing the vectors published in `tests/server.rs`), paste the hex into the test and name in its
+   comment what it is the hash of. In the test recompute the expected value from the same input as a
+   self-check, and refuse the near misses: the whole file, the section text alone, a neighbour section and
+   the unkeyed hash (`fnv1a`, copied from `tests/server.rs`). Pin the digest's INPUT behaviourally, not only
+   by constants: three files that parse to the SAME keys (one key written twice, the same text in CRLF)
+   answer three tokens, and a file with blank lines after the section answers the token of the one without.
+   A digest of a canonical re-render of the parsed keys passes the constants and fails that.
+  - A helper IN THE TEST FILE that recomputes the digest is the weak link: a SipHash-2-4 written from memory can
+    init `v2 = "genersa" ^ "Parvate"` and `v3 = "sbytesd" ^ "Gomoliris"` (no key at all, the four constants
+    XORed in pairs), which reproduces a broken route for EVERY input, so the helper-vs-route assert greens while
+    both disagree with the pinned constants. Validate such a helper against the published vectors (key `00..0f`:
+    `""` = `726fdb47dd0e0e31`, one `00` = `74f839c593dc67fd`, `00..07` = `93f5f5799a932462`, `00..0e` =
+    `a129ca6149be45e5`) and pin four in the file (empty, one byte, a half block, a full block plus 6: each one
+    separates the broken init from the reference one). The init is `v0 ^= k0; v1 ^= k1; v2 ^= k0; v3 ^= k1`.
+    Name every pinned constant with the bytes it digests: a `the_revision_is_stable_across_another_section` that
+    asserts `REV_NEIGHBOUR` (documented as the digest of `[Bigger]`) against a read of `[Zeta]` greens on a route
+    that digests the WHOLE file, and its "differs from the one-section answer" is then the only red. Each test's
+    expectation is the constant of ITS section.
+   - A fixture that appends a section must append the section CONST verbatim: a `ALPHA_PLUS_ZETA_CRLF` whose
+     `[Zeta]` holds ONE key digests something else than `REV_ZETA` (the digest of the two-key `ZETA`), so the
+     read of it reds `left: 0cc070d44f6d02ae right: 06d798fe3318872c` while the route is right. Fix the
+     fixture, and put `revision_of(&KEY, ON, ZETA)` beside the constant as a self-check, so a fixture that
+     drifts from the const reds. Check a claimed digest mismatch by extracting the test file's own helper
+     (`sed -n '<lines>p' tests/x.rs > helper.rs`, `include!("helper.rs")` in a `rustc --edition 2021` probe):
+     it reproduces the published vectors, so its numbers are the reference (a python SipHash written from
+     memory failed every vector).
+  - When the rule CHANGES the digest's input (the section's text: cut its last non-blank line's own ending, so a
+    last section with no final line break stays put when the break is added or a section is appended): write the
+    scratch program so it prints the value of the OLD rule for every fixture and check those against the constants
+    being replaced (all six matched: the scratch model of the input is the route's, so the new constants are the
+    rule's and not a typo). Compute the new ones from the fixtures, and add the rule to the TEST's helper
+    (`hashed_section`), so every existing `revision_of` use needs no edit. A fixture with NO final break greens
+    under both rules (nothing to cut): its test is a guard that the cut does not eat the section, report it as
+    green, and make the red the form that has an ending to cut.
+  - A path below an existing route (`/api/presets/alpha/%2A` when only `/api/presets/{id}` and
+    `/api/presets/{id}/enabled` are routed) is answered by the ROUTER, not the app: 404 with empty Content-Type,
+    empty body, ZERO connects. The router's 404 carries the app's JSON only where a path exists under the prefix
+    (`*`, `%2A`, `%5B%2A%5D`, `..` reach the handler); a path below it is bare, and a GET of a sub-segment
+    (`alpha/enabled`) is a bare 405, so the app cannot serve one without colliding with the method's route. Pin
+    such a form as its own test (status + `content_type() == ""` + body `""` + `connects() == 0`), never as one
+    element of the app's list: its `left: Content-Type ""` red reads the same as a missing route.
+  - The sandbox clock jumps: a `cargo clippy`/`test` log written AFTER your last edit can say `Finished in
+    0.06s` with zero `Compiling` lines (cargo compares mtimes, and the file's moved backwards), i.e. a replay of
+    an older check. A fresh log with 0 `Compiling` lines is no proof: `cargo clean -p <pkg>` first (the real
+    check of pai-bff's 16 targets prints `Compiling pai-bff` once and finishes in 0.6 s, deps cached).
+ - A `Reply` accessor that reads a field of `json()` returns `String`: `json()` hands an owned `Value`, so an
+   `as_str()` of it borrows a temporary (E0716). Read the STATUS before any body field: on the router's 404
+   of an unrouted path the body is empty, so a field read first panics "not JSON (EOF while parsing)", which
+   hides the missing route.
+ - The split marker of a source lint that pins "the app calls the core's fn, it keeps no copy" is
+   `mod tests {`, NOT `#[cfg(test)]`: `crates/app/src/presets.rs` has ten `#[cfg(test)]` items from line 66,
+   so a split at the first reads a header with no calls, and the require-needle goes red for the wrong
+   reason. The require-needle (`"<fn>("`) is green today at the call site, so the red of the move is the
+   forbid-needle (`"fn <fn>("`): report which line reds.
 
 ## Text pins and source lints
 

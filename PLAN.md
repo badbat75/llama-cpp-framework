@@ -78,7 +78,7 @@ as not checked, and the step stays open.
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
 presets and switches them on or off. Built (2026-11-17); left: the user's run on
-their machine. After it: 11c, 11e, 11d, 11f.
+their machine. After it: 11e, 11d, 11f (11c built).
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -898,13 +898,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    global section) as a preset and lets it be switched off, after which its id check refuses to
    switch it back on (the web hides it and answers 404 since 2026-11-17); tests missing: `Unavailable` and the time limit between the two writes, asked on while in both
    files, a read-back that fails after a landed move (200), the ids `**` and ` * `; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
-11c. **A preset's page, read-only.** `GET /api/presets/{id}` as proposed in `fe/briefs/api-contract.md`
-   (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
-   revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method
-   (`ReadFile` plus `ini::parse_sections`); the `; url =` comment reader moves from `pai-app` to
-   `pai-core` so the bff can read `projectUrl`. After slices 11 and 11b. Its `revision` is the section revision of
-   `ARCHITECTURE.md` "Saving a preset from the web" (SipHash under the bff's key over the file name and
-   the section), not the file's hash.
+11c. (Done, 2026-11-17: `GET /api/presets/{id}`, `crates/bff/src/presets.rs` `read`, with the section
+   revision `section_revision` the preset save reuses (header through the last non-blank line, without
+   that line's ending); the `; url =` reader is in `pai-core` (`ini::project_url_of`). Left from it:
+   `values` are the INI parser's, cut at the first `;` or `#` as llama-server reads them, while the
+   contract says raw (told to the web UI session: decide before 11e whether the save needs the
+   untruncated text); a last line ending in a lone `\r` moves the revision when a `\n` is appended;
+   a line `[broken` with no `]` ends the revision's text while the parser reads on; the docs pass.)
 11e. **Save a preset from the web.** `PUT /api/presets/{id}` (`fe/briefs/02h-preset-save.md`), designed in
    `ARCHITECTURE.md` "Saving a preset from the web" (2026-11-16): the edit applied in place (only the
    changed lines; user, 2026-11-16: in place, or the whole section if in place proved too costly; the

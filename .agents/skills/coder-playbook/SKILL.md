@@ -864,3 +864,33 @@ Lessons only: the rules are in `AGENTS.md`.
   `presets.rs` and the compiler saw a file of 84 lines. Verify the text with bash before editing
   (`awk 'NR>=a && NR<=b' file`, `md5sum`, the compiler's own line numbers), prefer `edit` over a
   whole-file `write` for an existing source, and `git checkout -- <path>` restores the file.
+- When a test's keyed hash (the bff's `revision`) disagrees, settle it with an independent
+  implementation checked against a vector the repo already pins: `crates/bff/tests/server.rs` pins
+  the published SipHash-2-4 of `""` (`726fdb47dd0e0e31`) and of the shipped server file, so a script
+  that reproduces those is standard SipHash-2-4 and can rule on every other constant
+  (`/tmp/opencode/check_vectors.py`). A hand-written SipHash in a test file can be non-standard:
+  `preset_read.rs`'s `siphash_2_4` keyed v2/v3 with the literals `7450_6172_7661_7465` and
+  `4d6f_6e67_6f6c_6973` (no key), so its own `KEY_A`/`KEY_B` assertions were the red part while its
+  five pinned `REV_*` constants were the standard hash. The round is
+  `v1 = ROTL(v1,13); v1 ^= v0; v0 = ROTL(v0,32)`: writing `v0 ^= v1` reads the same and hashes
+  something else, so never trust a fresh script before a published vector passes it.
+- matchit's `{id}` is ONE percent-decoded segment: an id with an encoded slash (`alpha/%2A` decodes
+  to `alpha/*`) misses the route and gets the router's own 404 (empty body, content-type `""`, no
+  connect, no reads), which an `assert_key` of a JSON body reports as a content-type panic. A
+  2-segment GET route to catch it also answers `GET /api/presets/{id}/enabled`, which
+  `presets_switch.rs` pins as 405 with no manager call: no route shape satisfies both, report it.
+- `cargo fmt -p <crate>` reformats the whole package: run it, then `git diff --stat -- crates` to
+  show the format pass touched only the files of the slice.
+- The bff's read routes share their failure mapping as one `fn read_answer<T>(sessions, session,
+  outcome, answer)`: `outcome` is `Result<Result<Result<T, ClientError>, tokio::task::JoinError>,
+  tokio::time::error::Elapsed>` (the Elapsed of `tokio::time::timeout` is at `time::error::Elapsed`,
+  NOT `time::Elapsed`: nothing re-exports it), and the success value goes to a `FnOnce(T) -> Response`
+  so the caller keeps its own 200 and its own 404 arms.
+- A test file's pinned digest and its fixture can disagree: `preset_read.rs`'s `REV_ZETA`
+  (`06d798fe3318872c`) is the digest of the `ZETA` const (two keys), while the fixture
+  `ALPHA_PLUS_ZETA_CRLF` appends a `[Zeta]` with ONE key, so the read of `Zeta` there can never answer
+  it (the section text is a prefix of `ZETA`'s). Its own helper agrees with the code (the green
+  `the_revision_is_stable_across_another_section` pins `revision_of(&KEY_A, ON, ZETA)`); the tester's
+  fix is to append the real `ZETA` text to that fixture (its doc comment says that is what it holds).
+  Rule a pinned constant by hashing the fixture's bytes with a script that first passes a published
+  vector, before changing the code.

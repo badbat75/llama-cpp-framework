@@ -37,7 +37,7 @@
 //! the file it LANDS IN written first; see [`set_enabled`].
 
 use crate::origin::body_refusal;
-use crate::server::{runs, TimedOut, WriteState};
+use crate::server::{revision, runs, TimedOut, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
 use axum::extract::rejection::BytesRejection;
@@ -86,10 +86,36 @@ pub(crate) async fn list(
         let off = client.read_file(PRESETS_DISABLED)?;
         Ok(rows(&on, &off))
     });
-    match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(rows))) => axum::Json(rows).into_response(),
+    read_answer(
+        &sessions,
+        &session,
+        tokio::time::timeout(timeout, ask).await,
+        |rows| axum::Json(rows).into_response(),
+    )
+}
+
+/// The answer of a read through the manager: `outcome` is the blocking task
+/// under the deadline, and `answer` is what the page gets from the value the
+/// task read. The list and the section read answer their failures the same way,
+/// on the same rule as the server read (`server.rs`): 503 `client-unavailable`
+/// when there is no manager, it went away, or it answers later than the
+/// deadline; 403 `session-not-administrator` when the manager refused the
+/// signed-in user, which ends that session with the right that authorized it;
+/// 502 `client-other` for anything else, which keeps the session. The manager's
+/// detail stays out of the body.
+fn read_answer<T>(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    outcome: Result<
+        Result<Result<T, ClientError>, tokio::task::JoinError>,
+        tokio::time::error::Elapsed,
+    >,
+    answer: impl FnOnce(T) -> Response,
+) -> Response {
+    match outcome {
+        Ok(Ok(Ok(value))) => answer(value),
         Ok(Ok(Err(ClientError::NotAuthorized))) => {
-            sessions.end(&session);
+            sessions.end(session);
             error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
         }
         Ok(Ok(Err(ClientError::Unavailable))) | Err(_) => {
@@ -451,4 +477,117 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
     json_body(headers, body)?
         .get("enabled")
         .and_then(Value::as_bool)
+}
+
+/// `GET /api/presets/{id}`: the document of one preset, the entry of the
+/// contract (`fe/briefs/api-contract.md`, "the preset page"). The page shows
+/// the keys and the values as the file holds them and runs no check of its own,
+/// so this only reads, over one connect made for the session's user:
+/// `presets.ini` first, then `presets.ini.disabled`, as the list reads them.
+///
+/// A section is matched in any letter case, as the list's ids are, and
+/// llama-server's global `[*]` is never an answer: nothing in either file of
+/// that name is 404 `no-preset-named` ([`not_found`]), the id echoed only when
+/// it is a name a preset can carry. The failures are the list's, on the same
+/// rule as the server read: 401 `session-required` with the manager not even
+/// connected to, 403 `session-not-administrator` when the manager refuses the
+/// signed-in user, which ends that session and stops the read, 503
+/// `client-unavailable` when there is no manager, it goes away, or it answers
+/// later than `timeout`, and 502 `client-other` for anything else, which keeps
+/// the session.
+pub(crate) async fn read(
+    connect: Connect,
+    timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+    key: [u8; 16],
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let user = identity.user;
+    let name = id.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        let on = client.read_file(PRESETS)?;
+        let off = client.read_file(PRESETS_DISABLED)?;
+        Ok(document(&on, &off, &name, &key))
+    });
+    read_answer(
+        &sessions,
+        &session,
+        tokio::time::timeout(timeout, ask).await,
+        |document| match document {
+            // Neither file has a section of that name: no preset, nothing to read.
+            None => not_found(&id),
+            Some(document) => axum::Json(document).into_response(),
+        },
+    )
+}
+
+/// The document of `id` in the two files, the enabled one first: a section in
+/// both is the enabled copy, as the list answers the same id. The seven fields
+/// the page reads: `id` as the file spells it, the list row's engine pair,
+/// `enabled` for the file the section was found in, `values` the section's keys
+/// and values as that file's parser reads them (verbatim: no canonicalization
+/// and no check, so a preset the manager would refuse today is one the page can
+/// still show), `projectUrl` the section's `; url = ` comment, read by the
+/// configurator's reader in `pai-core` (`ini::project_url_of`), empty when the
+/// section has none, and `revision` ([`section_revision`]).
+fn document(
+    on: &Option<ManagerFile>,
+    off: &Option<ManagerFile>,
+    id: &str,
+    key: &[u8; 16],
+) -> Option<Value> {
+    for (file, name, enabled) in [(on, PRESETS, true), (off, PRESETS_DISABLED, false)] {
+        let Some(text) = file.as_ref().map(|file| file.text.as_str()) else {
+            continue;
+        };
+        for section in sections(file) {
+            if is_global(&section.id) || !section.id.eq_ignore_ascii_case(id) {
+                continue;
+            }
+            return Some(json!({
+                "id": section.id,
+                "engine": crate::ENGINE_LLAMA_CPP,
+                "engineAvailable": true,
+                "enabled": enabled,
+                "values": section.keys,
+                "projectUrl": ini::project_url_of(&section.comments),
+                "revision": section_revision(name, text, &section.id, key),
+            }));
+        }
+    }
+    None
+}
+
+/// A section's revision: the server read's keyed hash (`server::revision`),
+/// over the file's name, a newline, and the section's own text as the file
+/// holds it: from its header through its last non-blank line, WITHOUT that last
+/// line's own ending (`\n` or `\r\n`). The endings BETWEEN the lines are the
+/// file's.
+///
+/// The file's name is in it, so the same text in the other file, the preset
+/// switched off, is another preset to the page. The section's text alone is in
+/// it, keys, values and comments in the file's spelling and order: a neighbour
+/// added to the file leaves it where it was, and a key added to the section
+/// moves it at once. The blank lines and the last line's ending are cut because
+/// they belong to no section: a file whose last section has no final break, the
+/// same file with that break added, and that file with a section appended below,
+/// all are the same preset to the page.
+fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String {
+    let section = ini::text::section_text(text, id).unwrap_or_default();
+    let mut end = section.len();
+    for line in section.split_inclusive('\n').rev() {
+        if !line.trim_end().is_empty() {
+            break;
+        }
+        end -= line.len();
+    }
+    let body = &section[..end];
+    let body = body.strip_suffix("\r\n").unwrap_or(body);
+    let body = body.strip_suffix('\n').unwrap_or(body);
+    revision(&format!("{file}\n{body}"), key)
 }

@@ -183,6 +183,12 @@ pub fn router_with_session_and_write_timeout(
             )
         }
     };
+    let read_preset = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
+            presets::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
+        }
+    };
     router_with(connect.clone(), timeout)
         .merge(session::routes(sessions.clone()))
         .route(
@@ -190,6 +196,7 @@ pub fn router_with_session_and_write_timeout(
             axum::routing::get(read).put(save),
         )
         .route("/api/presets", axum::routing::get(presets))
+        .route("/api/presets/{id}", axum::routing::get(read_preset))
         .route("/api/presets/{id}/enabled", axum::routing::put(set_enabled))
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))

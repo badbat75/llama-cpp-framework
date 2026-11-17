@@ -72,7 +72,10 @@ use std::path::PathBuf;
 use crate::ini;
 use crate::server_cfg;
 use crate::server_control::{self, ConfigFile, Os};
+// The project URL is the web service's to answer too, so its reader is the
+// core's: both read one rule (`crates/bff/tests/preset_read.rs`).
 use pai_core::checks;
+use pai_core::ini::project_url_of;
 // The startup-count tests read llama.cpp's default `ModelsMax` from here.
 #[cfg(test)]
 use pai_core::checks::LLAMA_MODELS_MAX_DEFAULT;
@@ -888,7 +891,7 @@ impl Preset {
     fn from_section(s: &ini::Section) -> Self {
         Self {
             project_url: project_url_of(&s.comments),
-            placement_note: comment_value(&s.comments, "placement"),
+            placement_note: ini::comment_value(&s.comments, "placement"),
             ..Self::from_keys(&s.id, &s.keys)
         }
     }
@@ -898,28 +901,6 @@ impl Preset {
 const PROJECT_URL_MARKER: &str = "; url = ";
 /// The comment line that carries `Preset::placement_note`, up to the value.
 const PLACEMENT_MARKER: &str = "; placement = ";
-
-/// The value of the first `url` comment among a section's comments, or empty.
-fn project_url_of(comments: &[String]) -> String {
-    comment_value(comments, "url")
-}
-
-/// The value of the first `<word> = value` comment among a section's
-/// comments, or empty. Read leniently (`;` or `#`, any spacing around `=`),
-/// so a hand-written line counts; `word` must be the whole word, so
-/// `; urls ...` is prose.
-fn comment_value(comments: &[String], word: &str) -> String {
-    comments
-        .iter()
-        .find_map(|c| {
-            let rest = c
-                .strip_prefix([';', '#'])?
-                .trim_start()
-                .strip_prefix(word)?;
-            Some(rest.trim_start().strip_prefix('=')?.trim().to_string())
-        })
-        .unwrap_or_default()
-}
 
 // ── Dead speculative keys (prune at the write boundary) ──────────────────
 
@@ -3006,6 +2987,34 @@ mod tests {
             "first"
         );
         assert_eq!(project_url_of(&[]), "");
+    }
+
+    // ---- the reader lives in the core, the app calls it ----
+    //
+    // The web service answers with the project URL too, and it can only give the
+    // same answer as the configurator if both read it in one place. This reads
+    // the module's own source: the production code, everything before the test
+    // module, must call the core's reader and must not keep its own copy of it.
+    #[test]
+    fn the_app_reads_the_project_url_through_the_core() {
+        let src = include_str!("presets.rs");
+        let production = &src[..src.find("mod tests {").expect("the test module")];
+
+        assert!(
+            production.contains("project_url_of("),
+            "the app must read the project URL through the core's function"
+        );
+        assert!(
+            !production.contains("fn project_url_of("),
+            "the app must not keep its own copy of the project URL reader"
+        );
+
+        // The sibling marker reader is the core's rule too: the app calls it,
+        // it keeps no copy of it.
+        assert!(
+            production.contains("ini::comment_value("),
+            "the reader that also serves `; placement =` is read through the core"
+        );
     }
 
     #[test]

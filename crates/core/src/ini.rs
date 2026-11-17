@@ -165,6 +165,31 @@ pub fn section_text(path: &Path, section_name: &str) -> Option<String> {
     text::section_text(&content, section_name)
 }
 
+/// The value of the first `url` comment among a section's comments, or empty.
+/// The configurator's reader, so the web and the GUI read one URL the same way
+/// (`crates/bff/tests/preset_read.rs`).
+pub fn project_url_of(comments: &[String]) -> String {
+    comment_value(comments, "url")
+}
+
+/// The value of the first `<word> = value` comment among a section's comments,
+/// or empty. Read leniently (`;` or `#`, any spacing around `=`), so a
+/// hand-written line counts; `word` must be the whole word, so `; urls ...` is
+/// prose. What a configurator stores in a comment of `server.ini` or
+/// `presets.ini` (`crates/app/src/presets.rs` writes them).
+pub fn comment_value(comments: &[String], word: &str) -> String {
+    comments
+        .iter()
+        .find_map(|c| {
+            let rest = c
+                .strip_prefix([';', '#'])?
+                .trim_start()
+                .strip_prefix(word)?;
+            Some(rest.trim_start().strip_prefix('=')?.trim().to_string())
+        })
+        .unwrap_or_default()
+}
+
 /// Remove a section entirely; a missing file or section is left alone.
 pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
     let Ok(content) = fs::read_to_string(path) else {
@@ -885,5 +910,58 @@ mod tests {
         let sections = read_all(&path4);
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].id, "b");
+    }
+
+    /// The `; url = ` reader, with the cases the configurator has always
+    /// pinned (`crates/app/src/presets.rs`): the value of the first url
+    /// comment, and empty for anything else. The web's section read answers
+    /// this same value, so the reader is in `pai-core` and both callers call
+    /// it (`crates/bff/tests/preset_read.rs`).
+    #[test]
+    fn project_url_of_reads_the_url_comment() {
+        assert_eq!(
+            project_url_of(&["; url = https://a.b/c".into()]),
+            "https://a.b/c"
+        );
+        // `#` and no spacing around `=`: a hand-written line counts, and a
+        // fragment is part of the URL.
+        assert_eq!(
+            project_url_of(&["#url=https://a.b/c#x".into()]),
+            "https://a.b/c#x"
+        );
+        // Prose about urls is prose; a word starting with `url` is not `url`.
+        assert_eq!(
+            project_url_of(&["; urls are listed below".into(), "; Model: x".into()]),
+            ""
+        );
+        assert_eq!(project_url_of(&["; url-ish = no".into()]), "");
+        // The first url comment is the one, as the configurator shows it.
+        assert_eq!(
+            project_url_of(&["; url = first".into(), "; url = second".into()]),
+            "first"
+        );
+        // No comment, no URL: the empty string, never a missing field.
+        assert_eq!(project_url_of(&[]), "");
+    }
+
+    /// The reader takes the comments `read_all` collects, so a preset file
+    /// read end to end answers its URL: the plumbing the section read uses.
+    #[test]
+    fn project_url_of_takes_the_comments_the_parser_collects() {
+        let (_d, path) = ini_file(
+            "; the file\r\n[alpha]\r\n; the router reads this file at launch\r\n; url = https://a.b/c\r\nmodel = a.gguf\r\n\r\n[b]\r\nmodel = b.gguf\r\n",
+        );
+        let sections = read_all(&path);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(
+            project_url_of(&sections[0].comments),
+            "https://a.b/c",
+            "a prose comment before it is skipped"
+        );
+        assert_eq!(
+            project_url_of(&sections[1].comments),
+            "",
+            "a section without the comment"
+        );
     }
 }

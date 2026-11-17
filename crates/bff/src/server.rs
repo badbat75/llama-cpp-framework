@@ -391,7 +391,7 @@ pub(crate) fn field_of(key: &str, args: &[String]) -> String {
 /// the function is keyed nobody who holds a revision and not the file can
 /// check a guess about its text. A bff start draws a new secret, so every
 /// open form is stale after it and reloads once.
-fn revision(text: &str, key: &[u8; 16]) -> String {
+pub(crate) fn revision(text: &str, key: &[u8; 16]) -> String {
     let mut hasher = SipHasher::new_with_key(key);
     hasher.write(text.as_bytes());
     let hash = hasher.finish();
