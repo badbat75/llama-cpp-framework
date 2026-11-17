@@ -4,9 +4,10 @@ Written by the designer on 2026-11-16 for `PLAN.md` step 10, web UI slice 2h (th
 [02-models.md](02-models.md) section 0). Applies `fe/DESIGN.md` ("D5.2" points to its sections),
 builds on 2e ([02e-preset-cards.md](02e-preset-cards.md), criteria 83 to 129a, its field tables)
 and reuses the Server page's save ([01-server.md](01-server.md) section 3, S1, S3; "01's 30a"
-names its criteria). Criteria go on from 130. The bff route is accepted, not served yet, in
-[api-contract.md](api-contract.md), `PUT /api/presets/{id}`; the read it builds on,
-`GET /api/presets/{id}`, is served (36a892d).
+names its criteria). Criteria go on from 130. The bff route is served (3eb24b2), as
+[api-contract.md](api-contract.md) `PUT /api/presets/{id}` describes it; the read it builds on,
+`GET /api/presets/{id}`, is served (36a892d). Compared with the served route on 2026-11-17: the
+corrections are marked "(2026-11-17)" in 133, 150, 157, 180 and D-a, D-e.
 
 References: the configurator's save `presets::save` and `render_section`
 (`crates/app/src/presets.rs` 1411-1428, 1754-2167), the editor's enable rules
@@ -45,7 +46,9 @@ changed keys only, a string to set, `null` to remove; every other line of the fi
 byte (an edited line is rewritten whole, so an inline comment on that line is lost). Differs from
 the Server PUT (whole document, re-rendered as the GUI does): said in the contract. **Decided by
 the user (2026-11-16, U1).** The bff accepts only the 65 keys 2h.1 to 2h.9 enable, in exact case,
-and refuses an empty string (400): clearing a key is always `null` (table 133 never sends `""`).
+and refuses (400) an empty string, a control character other than tab, and a value that starts or
+ends with Unicode white space: clearing a key is always `null` (table 133 never sends `""`), and
+133's Text row trims every white space (2026-11-17).
 The ten keys it refuses (400) are never sent by any 2h sub-slice: `model`, `mmproj`, `model-draft`,
 `spec-type` are the Assets card's text (2i), `n-cpu-moe` and `moe-cache-mib` stay disabled with a
 reason line (178), and `device`, `split-mode`, `tensor-split`, `override-tensor` are on no 2e card
@@ -59,6 +62,13 @@ text: the written-as line (134) describes the spelling llama-server gets; the in
 shows the whole value llama-server uses (a comment is not part of it); the changed rule (D-b)
 compares control states, and an unchanged field is never sent, so its line, comment included,
 stays byte for byte. A value the fe would send can hold no `;` or `#` (422 `comment-markers`).
+**Limit of the served route (2026-11-17)**: the manager checks the seven text keys (`model`,
+`mmproj`, `model-draft`, `chat-template-kwargs`, `override-tensor`, `reasoning-budget-message`,
+`fit-target`) for `;` and `#` on the raw line, inline comment included, so an untouched
+`model = a.gguf ; Q8` answers every save 422 `comment-markers` with that field: 143 (alert only)
+for a key with no control, 142 for an enabled text field, where the user clears the comment by
+changing the value (an unchanged field is never sent). Asked of the platform side (api-contract,
+"Open on the bff side").
 
 **D-b. Changed = the control's state differs from the state it loaded in.** Not "was operated":
 changing a value back makes the field unchanged again (01's 29). An unchanged field is never sent,
@@ -117,7 +127,7 @@ prunes at save (2k), New, Clone, Rename, Delete (2l to 2n), a raw-key view (2o).
     | Checkbox `prefill-assistant` | checked `null`, unchecked `"false"` (`form.rs` 559) |
     | Checkbox `fit` | checked `"on"`, unchecked `"off"` (`render_section`) |
     | Number | default ticked: `null`; else criterion 157 |
-    | Text | the text trimmed of spaces and tabs; empty after trimming: `null` |
+    | Text | the text trimmed of every white space at both ends (`String.prototype.trim`, which covers every character the bff refuses at an end: U+00A0, U+2028, U+3000 ...; 2026-11-17); empty after trimming: `null` |
 
     A select's extra option (a value the select does not list) can only be the loaded state, so
     picking it again makes the field unchanged: it is never sent.
@@ -223,12 +233,16 @@ fe does not know is `api-other` with the key. Anything else is 139.
     | `fit-target-format` | `fit-target` | fit-target `{0}`: {1} as whole numbers, one value or a comma-separated list per device (1002) |
     | `moe-cache-with-tensor-split` | `moe-cache-mib` | (1001, verbatim) |
     | `load-on-startup-over-max`, `-unlimited` | `load-on-startup` | exist |
-    | `preset-no-model` | none (Assets) | preset `{0}` names no model: every preset needs a `model` path (1007) |
-    | `override-no-pattern` | none (2j) | tensor override {0} has an empty pattern (1008) |
-    | `override-no-device` | none (2j) | (1009, verbatim) |
+    | `preset-no-model` | `model` (no control: 143) | preset `{0}` names no model: every preset needs a `model` path (1007) |
+    | `override-no-pattern` | `override-tensor` (no control: 143) | tensor override {0} has an empty pattern (1008) |
+    | `override-no-device` | `override-tensor` (no control: 143) | (1009, verbatim) |
     | `invalid-preset-id` | none | invalid preset id `{0}`: use letters, digits, '.', '-', '_' (996) |
     | `preset-name-taken` | none | a preset named `{0}` already exists (1006) |
 
+    The served bff sends `field` on every 422 but `invalid-preset-id` and `preset-name-taken`, with
+    the value of the column (2026-11-17: the three rows above named "none", same behaviour);
+    the column is the fallback only for a 422 without it. A `comment-markers` from the bff lists
+    every refused key in `args`, sorted; the text fills `{0}` only, which is `field`.
     The manager checks the whole section, so a hand-edited value the user did not touch (Pooling
     `weird`) is refused too, on its field: the user corrects it or picks another option. Tests: one
     per row of 142 to 149; `not-one-of` on `pooling` marks Pooling and focuses it; `preset-no-model`
@@ -286,6 +300,11 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
     | 0 to 1024 | `spec-ngram-mod-n-min`, `spec-ngram-mod-n-max` | `field-error-number` with 0, 1024 |
     | 1 to 65535 | `spec-ngram-map-k4v-min-hits` | `field-error-number` with 1, 65535 |
     | (not in the table, "whole number" only up to 2147483647) | `n-gpu-layers`, `n-cpu-moe`, `n-cpu-ffn`, `n-gpu-layers-draft` | `field-error-whole-number` |
+
+    `n-gpu-layers` and `n-gpu-layers-draft` also pass the exact texts `auto` and `all`, sent as
+    written: llama.cpp takes both (`common/arg.cpp` 2776-2781, 4294-4299 in the v1.0.0 clone) and
+    neither the bff nor the manager checks these keys, so a file holding `all` must not block the
+    save (2026-11-17; the GUI reads them as unset and its save drops them).
 
     The maximum of every row without one is 2147483647 (`i32`); a value past it fails with the
     row's text. The last row's keys are not in `PRESET_INT_KEYS` (the GUI's sliders bound them);
@@ -369,8 +388,12 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
     Decided by the user (U3). Their values are kept and never sent (the bff refuses both keys).
 179. **A device select** (Vision GPU, Draft device: 2e's criterion 103) offers the empty option and
     the file's value only, until 2f brings the devices: picking the empty option sends `null`.
-180. **Load mode** sends the option's value, lowercase (`MLOCK` loaded selects `mlock`; unchanged it
-    is not sent; picking `mlock` from another option sends `mlock`).
+180. **Load mode** sends the option's value. Once enabled it matches the file's value **exactly**
+    (2026-11-17; 2e's 107 matched ignoring case, which stays for the disabled select until 2h.7):
+    llama.cpp compares `load-mode` exactly (`common/arg.cpp` 2667-2668) and so does the manager's
+    check (422 `not-one-of`), so `MLOCK` loaded is the extra option `MLOCK` (criterion 87), and
+    picking `mlock` is a change that sends `mlock`. Matching it to `mlock` would leave a refused
+    value the user could not change (picking `mlock` again would be no change).
 181. **The reason lines** of 176 to 178 are plain paragraphs in reading order (not live regions, not
     in any `aria-describedby`): a disabled control is not in the tab order, so they are met in
     browse mode with the controls they explain.
@@ -379,7 +402,8 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
 182. **Tests and strings.** `values` without `mmproj`: the four Vision controls disabled and the line
     shown; with `mmproj` and `mmproj-offload` `false`: Vision GPU disabled, the others enabled, no
     line; without `model-draft`: Draft device and Draft GPU layers disabled with their note; MoE
-    fields always disabled with their note. **Strings (3 new)**: `preset-vision-off` | Used only
+    fields always disabled with their note; `load-mode` `MLOCK` lists `MLOCK` last, selected, and
+picking `mlock` sends `{"load-mode":"mlock"}`. **Strings (3 new)**: `preset-vision-off` | Used only
     with an MMProj file, and this preset has none (Assets). `preset-draft-file-off` | Draft device
     and Draft GPU layers apply only to a Draft model file, and this preset has none (Assets).
     `preset-moe-later` | MoE CPU layers and MoE cache stay as the file has them: this page cannot

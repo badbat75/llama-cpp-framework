@@ -20,7 +20,7 @@ exist yet. Change this file first when a shape changes.
   9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/presets`, `PUT /api/presets/{id}/enabled` and `GET /api/presets/{id}` since they were served, 257147e, 3a63244, 36a892d; S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/presets`, `PUT /api/presets/{id}/enabled`, `GET /api/presets/{id}` and `PUT /api/presets/{id}` since they were served, 257147e, 3a63244, 36a892d, 3eb24b2; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
@@ -39,9 +39,10 @@ exist yet. Change this file first when a shape changes.
   `GET /api/instances` and `GET /api/instances/{id}/boot`; the `POST`s and `PUT`s move it.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
-- **Writes and their time limit** (the server save and the preset switch since 594e15e; the preset
-  save will share the code): the manager's calls of a write get **15 s** (`lib.rs`
-  `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep **5 s** (`MANAGER_TIMEOUT`).
+- **Writes and their time limit** (the server save and the preset switch since 594e15e, the preset
+  save since 3eb24b2, which gives its read 5 s and the whole save 15 s): the manager's calls of a
+  write get **15 s** (`lib.rs` `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep
+  **5 s** (`MANAGER_TIMEOUT`).
   503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
   sent and its outcome is unknown; a write that **landed** whose following read (the status, the
   switch's read-back) is slow or fails answers **200 with `running: true`**, never 504
@@ -67,7 +68,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/presets` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
 | `GET /api/presets/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
-| `PUT /api/presets/{id}` | administrator (`configure`) | 2h, accepted, not served yet | `{"revision", "running"}` |
+| `PUT /api/presets/{id}` | administrator (`configure`) | 2h, served (3eb24b2) | `{"revision", "running"}` |
 
 ### `GET /api/instances`
 
@@ -340,75 +341,102 @@ with the 5 s limit of a read.
   `session-not-administrator` (the session is ended; `client-not-authorized` is not sent); 503
   `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other` with empty `args`.
 
-### `PUT /api/presets/{id}` (accepted, not served yet)
+### `PUT /api/presets/{id}`
 
-Saves the edits of one preset's page ([02h-preset-save.md](02h-preset-save.md)). Designed in
-`ARCHITECTURE.md`, "Saving a preset from the web". `{id}` as in the `GET`; the section is edited in
-the file that holds it (`presets.ini` first, as the read), so a switched-off preset stays switched
-off, as `presets::save` does.
+Saves the edits of one preset's page ([02h-preset-save.md](02h-preset-save.md)). Served since
+3eb24b2 (`crates/bff/src/presets.rs` `save`, `parse_body`, `apply`, `field_of`); checked against
+the fe's `PresetPage.tsx` (2h.1) on 2026-11-17. Designed in `ARCHITECTURE.md`, "Saving a preset
+from the web". `{id}` as in the `GET`; the section is edited in the file that holds it
+(`presets.ini` first, as the read), so a switched-off preset stays switched off, as
+`presets::save` does.
 
-Body `{"revision", "values"}`. **`values` holds only the keys the user changed**: a string sets the
-key to that value, `null` removes the key. A key not in `values` is not touched.
+Body `{"revision": <string>, "values": {<key>: <string> | null}}` with `Content-Type:
+application/json` (any other type is 400). **`values` holds only the keys the user changed**: a
+string sets the key, `null` removes it (a key the section lacks: nothing to remove). A key not in
+`values` is not touched.
+
+The answers come in this order: 401 `session-required`; 413 `payload-too-large`; the body (400,
+then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404; the revision
+(409); the write (409, 422 from the manager's checks, 403, 504, 502); 200.
 
 - **Edited in place, not re-rendered.** Only the changed keys' lines are written; an edited line is
-  rewritten whole (`key = value`), so an inline comment on that line is lost. Every other line of
-  both files stays byte for byte: comments, keys the web UI does not show, their order and
-  spelling, the line endings. A new key is appended to the section. **Duplicates of an edited key**
-  (any letter case) are cleaned up, not refused: a set keeps one line, at the first one's place; a
-  removal drops every line of the key. **Differs on purpose from the Server PUT and from the
-  configurator's save**, which render the whole section from their struct
-  (`presets::render_section`) and so drop comments and unknown keys and rewrite spellings (02h D-a;
-  the user chose this, 2026-11-16).
-- **Accepted keys**: a fixed list of **65**, the keys 2h.1 to 2h.9 enable: every key the
-  configurator writes (`render_section`) minus ten; the list, card by card, is in `ARCHITECTURE.md`
-  "Saving a preset from the web" (the constants `checks::WEB_PRESET_KEYS` and
-  `PRESET_KEYS_NOT_ON_WEB`). **The ten answer 400 `presets-malformed`**: `model`, `mmproj`,
-  `model-draft`, `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g),
-  `device`, `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor
-  placement, until 2j). A slice that makes one editable moves it to the list in the same commit.
-  **Body keys match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables
-  spell it.
-- **400 `presets-malformed`**: a body not of that shape, a key outside the list, a value that is
-  neither a string nor `null`, an empty string (clearing a key is `null`), or a value holding a
-  control character other than tab. **422 `comment-markers`**, `field` the key, for a value holding
-  `;` or `#`. `{}` (no change): 200, nothing written, the revision still compared (409 if stale).
+  rewritten whole (`key = value`), so an inline comment on that line is lost; a line that already
+  spells the key and holds the value is left byte for byte. Every other line of both files stays
+  byte for byte: comments, keys the web UI does not show, their order and spelling, the line
+  endings. A new key is appended to the section. **Duplicates of an edited key** are cleaned up,
+  not refused: a set keeps one line, at the first one's place; a removal drops every line of the
+  key. **Differs on purpose from the Server PUT and from the configurator's save**, which render
+  the whole section from their struct (`presets::render_section`) and so drop comments and unknown
+  keys and rewrite spellings (02h D-a; the user chose this, 2026-11-16).
+- **Accepted keys**: a fixed list of **65**, exactly the keys 2h.1 to 2h.9 enable (`pai-core`
+  `checks::WEB_PRESET_KEYS`; checked against 02e's tables on 2026-11-17): every key the
+  configurator writes minus the ten of `PRESET_KEYS_NOT_ON_WEB`: `model`, `mmproj`, `model-draft`,
+  `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g), `device`,
+  `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor placement,
+  until 2j). A slice that makes one editable moves it to the list in the same commit. **Body keys
+  match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables spell it.
+- **400 `presets-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
+  a string or `values` not an object; a key outside the list; a value neither a string nor `null`;
+  a value empty after trimming spaces and tabs (clearing a key is `null`); a value holding a
+  control character other than tab; a value that starts or ends with another Unicode white space
+  (U+00A0, U+2028, U+3000 ...: the file's reader trims those, so it would read back shorter). A
+  value is written trimmed of spaces and tabs.
+- **422 `comment-markers`** for set values holding `;` or `#`: `args` every such key of the body,
+  sorted, `field` the first of them (the strings take `{0}` only). Nothing is written.
+- `{}` (no change), or edits that leave the file's text as it is: 200 with nothing written, the
+  revision still compared (409 if stale), `running` asked as after a write.
 - Then the manager checks the edited section **whole** (`checks::presets_file` or
-  `presets_disabled_file`): integer ranges, floats, enums, JSON object, `fit-target`,
+  `presets_disabled_file`, `preset_section`): integer ranges, floats, enums (compared **exactly**,
+  case included, as llama.cpp does: `load-mode = MLOCK` is refused), JSON object, `fit-target`,
   `override-tensor`, min <= max, `moe-cache-mib` with `split-mode tensor`, a `model`, and, in
   `presets.ini`, the load-on-startup count against `ModelsMax`. So a hand-edited bad value the user
-  did not touch is refused too, on its own field.
-- The write: one preset-file write at a time, by the manager's compare-and-swap write as the
-  signed-in user (`WriteFileIfAs`, protocol 2), given the text the bff read.
-- **200 `{"revision", "running"}`**: `revision` of the section as now written (what a `GET` now
-  returns); `running` is true when the section is in `presets.ini` and any instance is `active` or
-  `activating` (every instance serves the one preset file; it read the file when its llama-server
-  started), and also when the status read after a done write failed; false for a switched-off
-  preset. The fe then says "Saved: restart llama-server to apply." The bff restarts and reloads
-  nothing (no `GET /models?reload=1` for now). Deliberate difference: the configurator's preset save
-  says only "Saved preset [id]".
-- 422 `{"key", "args", "field"}`: `field` is the INI key the refusal names: `args[0]` for
-  `not-whole-number-in-range`, `comment-markers`, `not-a-number`, `not-one-of`, `not-json-object`,
-  `min-above-max` (the minimum's key); `fit-target` for `fit-target-format`; `moe-cache-mib` for
-  `moe-cache-with-tensor-split`; `load-on-startup` for `load-on-startup-over-max` and `-unlimited`;
-  `model` for `preset-no-model`; `override-tensor` for `override-no-pattern` and
-  `override-no-device`; **no field** for `invalid-preset-id` and `preset-name-taken` (the section is
-  present twice in the file). Nothing is written.
-- 409 `preset-changed-elsewhere`: the revision is stale (the section changed, it was switched on or
-  off, or the bff restarted since the read), or the compare-and-swap write found the file changed
-  after the bff's read. A save of **another** preset in the same file gives no 409. Nothing is
-  written.
-- Errors, each `{"key", "args"}`: 401 `session-required`; 403 `session-not-administrator`
-  (session ended; the served routes send no `client-not-authorized`, the fe still handles it); 404
-  `no-preset-named` (`args` as the read's); 413 `payload-too-large`; 503 `client-unavailable` (no
-  write asked); 504 `client-timeout` (the write was sent and its outcome is unknown; a write that
-  landed is the 200, `running` true, whatever follows); 502 `client-other`. The time limit is the
-  writes' 15 s (rules at the top).
+  did not touch is refused too, on its own field. **The text keys** (`model`, `mmproj`,
+  `model-draft`, `chat-template-kwargs`, `override-tensor`, `reasoning-budget-message`,
+  `fit-target`) are checked for `;` and `#` on the **raw line, inline comment included**
+  (`checks.rs` `RawSection`, `preset_section`): an untouched `model = a.gguf ; Q8` makes every web
+  save of that preset 422 `comment-markers`, field `model` (open on the bff side, below). `fit` is
+  not checked.
+- The write: the manager's compare-and-swap write as the signed-in user, given the text the bff
+  read; it is asked only while the answer is still wanted.
+- **200 `{"revision", "running"}`**: `revision` of the section as now written, computed by the same
+  function as the `GET`'s over the text written, so the `GET` that follows returns it and the next
+  save meets no 409; `running` true when the section is in `presets.ini` and any instance is
+  `active` or `activating`, or when that state cannot be read after the write; **false for a
+  switched-off preset** (the states are not even asked). The fe says "Saved: restart llama-server
+  to apply." for true, "Saved." for false. The bff restarts and reloads nothing. Deliberate
+  difference: the configurator's preset save says only "Saved preset [id]".
+- **422 `{"key", "args", "field"}`** from the manager's checks, `field` the INI key to mark:
+  `args[0]` for `not-whole-number-in-range` (args key, value, min, max), `comment-markers` (key),
+  `not-a-number` (key, value), `not-one-of` (key, value, the allowed list joined by `, `),
+  `not-json-object` (key), `min-above-max` (min key, min, max key, max: the minimum's key is
+  marked); `fit-target` for `fit-target-format` (value, `MiB`); `moe-cache-mib` for
+  `moe-cache-with-tensor-split` (no args); `load-on-startup` for `load-on-startup-over-max` (count,
+  max) and `-unlimited` (count); `model` for `preset-no-model` (id); `override-tensor` for
+  `override-no-pattern` (position) and `override-no-device` (position, pattern); **no `field`** for
+  `invalid-preset-id` and `preset-name-taken` (id). `bind-all-with-others` cannot come from a
+  preset. Nothing is written.
+- 409 `preset-changed-elsewhere`, `args: []`: the revision is stale (the section changed, it was
+  switched on or off, or the bff restarted since the read), or the compare-and-swap write found
+  the file changed after the bff's read. A save of **another** preset in the same file gives no
+  409. Nothing is written.
+- Errors, each `{"key", "args"}`: 401 `session-required`; 403 `session-not-administrator` (at the
+  read or the write; the session is ended; `client-not-authorized` is not sent, the fe still
+  handles it); 404 `no-preset-named` (`args` as the read's) for an id neither file holds and for
+  `*`; 413 `payload-too-large`; 503 `client-unavailable` (no write asked: the read failed or ran
+  out of its 5 s, or the 15 s ran out before the write); 504 `client-timeout` (the write was sent
+  and its outcome is unknown; a write that landed is the 200, `running` true, whatever follows);
+  502 `client-other`.
 
 ## Open on the bff side
 
 - **An administrator's save needs no second password** (user, 2026-11-15): the bff vouches for the
   user it authenticated, and the manager grants `configure` to members of the `pai` group. No
   status asks for the password again.
+- **The text keys' `;` / `#` check reads the raw line** (`checks.rs` `preset_section`), so an
+  inline comment the user never touched on `model`, `mmproj`, `model-draft`, `override-tensor`,
+  `chat-template-kwargs`, `reasoning-budget-message` or `fit-target` blocks every web save of that
+  preset (the configurator's save re-renders the line and is not affected). Proposed: check the
+  value as read (`RawSection::get`) for lines the save did not change. Platform's decision.
 - **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user); the design
   recommends keeping it so, for the user to decide (`ARCHITECTURE.md`, "ModelsDir after a save").
 - **A bind list mixing `0.0.0.0` with other addresses** is refused by the save's `server_cfg::check`
