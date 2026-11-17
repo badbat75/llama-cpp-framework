@@ -780,7 +780,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    until the real backend; left for the backend part: an abandoned request's check keeps running
    unrecorded (bound concurrent checks), LogonUser spellings of one account (`.\user`, `HOST\user`,
    `user@host`) need one lock key, a per-address cap across user names (spraying), `Secure` and
-   `__Host-` on the cookie once the bff leaves loopback). 6b part 2a done: the manager's `Authenticate(user, password) -> (authenticated, can_configure)`
+   `__Host-` on the cookie once the bff serves HTTPS: since 2026-11-17 it may listen on the LAN in plain HTTP). 6b part 2a done: the manager's `Authenticate(user, password) -> (authenticated, can_configure)`
    (D-Bus `(ss)->(bb)`, pipe `Authenticate`), answering only the bff's account (Linux: the uid of
    `private-ai-bff`; Windows: its service SID), through PAM service `private-ai` (Linux, root manager:
    `unix_chkpwd(8)` checks only the caller's own password, so the bff cannot) and `LogonUserW` network
@@ -1002,7 +1002,7 @@ Later slices (not yet written): the benchmark portal.
   requires `-cli`: a desktop install gets `pai` too. The MSI's process stopper also stops a `pai`
   running from `bin\` (an interrupted sweep puts its key back at the next start).
 - Step 10, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14: the bff listens on `127.0.0.1:8590` by
-  default, loopback only until authentication exists; it has its own package `private-ai-framework-bff`
+  default (on the LAN only as the administrator's choice, `[Bff] Listen`, since 2026-11-17); it has its own package `private-ai-framework-bff`
   (requires `-core` since step 11), runs as the static system user `private-ai-bff` on Linux (first `DynamicUser=yes`, replaced on 2026-11-14 after the real install: dbus-daemon drops a dynamic user at Hello) and as the virtual account
   `NT SERVICE\private-ai-bff` on Windows, enabled and started at install; macOS has none. Who is acting:
   decided (step 10). `cli.toml` moved to `-llama`, and with step 11 to `-core`, which every package requires (the

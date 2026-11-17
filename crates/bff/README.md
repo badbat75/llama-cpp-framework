@@ -1,17 +1,18 @@
 # pai-bff and the web UI
 
-`pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
-HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
+`pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one
+HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
+built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state, the run verbs, the start-at-boot flag
 and, for a signed-in user, an instance's server file read and saved, the preset list, the preset
-on/off switch and one preset's read; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
+on/off switch and one preset, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
 The web UI is for administrators only, members of the group `pai` (user, 2026-11-15): the Overview
 (version, instances) shows without sign-in, a right password of a `pai` member signs in, a right
 password of anyone else is 403 `session-not-administrator` (`fe/briefs/api-contract.md`). Behind
 sign-in it has an instance page (the server file, Start, Stop, Restart, start at boot: all served)
-and a Models page (the preset list, the on/off switch per preset and a preset page of its own,
-read-only: all served, [below](#the-preset-routes)); the preset's save is not
-([below](#the-web-ui-fe)).
+and a Models page (the preset list, the on/off switch per preset and a preset page of its own, read
+and saved: all served, [below](#the-preset-routes)); on that page four cards are editable and the
+rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
 `build/<os>/cargo-target/release/`; the packaging is in
@@ -51,7 +52,32 @@ Listen = 127.0.0.1:8590
 ```
 
 - The value is an `ip:port` address: a host name (`localhost:8590`) is refused, nothing is resolved.
-- Only a loopback address is accepted. LAN access waits for authentication (a later slice).
+- Any address is accepted, a LAN address and the wildcard (`0.0.0.0`, `[::]`) included, served plain
+  HTTP. The administrator's choice (user, 2026-11-17, a requirement change): told that the sign-in
+  password then crosses the LAN in clear, they chose it over TLS in the bff and over an SSH tunnel.
+  The web UI says so on the sign-in page and dialog when the connection is not encrypted (fe,
+  b6710c7).
+
+**The name a request is addressed at is checked on every request**, the reads and the sign-in
+included (`origin.rs` `guard`), and a `Host` line that is absent is answered (HTTP/1.0 sends none).
+It names this bff when it is one of the machine's names, read at the bff's start (1aac8e1, c919ccd):
+its host name (`gethostname(2)`; on Windows `GetComputerNameExW`, type-checked only), `<name>.local`,
+and `<name>.<domain>` for each `search`/`domain` line of `/etc/resolv.conf`; `[Bff] Hosts`,
+comma-separated, replaces those when it names at least one name. A call of `listen::load_hosts`
+reads it, and a `bff.ini` that cannot be read is no refusal there: the machine's names stand, and
+`load` is the call that reports the file. Beside the names: any IP literal (an IPv4 address, an IPv6
+one in brackets, a zone id is no address), `localhost` and the loopback addresses (`127.0.0.0/8`,
+`[::1]`) only when the listen serves the loopback, bound to a loopback address or to the wildcard,
+never when bound to one LAN address. Matches are exact, in any letter case, one trailing dot ignored
+(the root of the DNS tree), so `aorus.bombicci.local.evil.example` and `aorus.bombicci.local..` are
+out: that is the DNS-rebinding guard. Anything else is 403 `request-bad-host`, and the session cookie
+is bound to the host that set it, never to a port, so a rebinding carries no session. A method that
+is not a read is refused in addition, 403 `request-cross-origin`, when its `Sec-Fetch-Site` is
+neither `same-origin` nor `none`, or its `Origin` is not the `Host`'s host and port.
+
+**Every reply carries `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`** (1aac8e1), the
+guard's 403, the body cap's 413 and the router's own 404 and 405 included: the layer is outside the
+guard and writes with `insert`, so each header stands once. No Content-Security-Policy yet.
 
 | Exit code | When |
 | --- | --- |
@@ -79,6 +105,7 @@ runtime (axum).
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `GET /api/presets` | The preset rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-routes)) |
 | `GET /api/presets/{id}` | One preset for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-preset-page)) |
+| `PUT /api/presets/{id}` | The preset page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
 | `PUT /api/presets/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the preset switched on or off ([below](#the-preset-routes)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
@@ -90,7 +117,10 @@ matches, so `..` reaches nothing else. Content types go by extension: HTML, Java
 Checked by hand on Linux from the debug build (2026-11-14): `--version` exits 0, an unknown argument
 2, `0.0.0.0:8590` and `localhost:8590` exit 1; on `127.0.0.1` it answered `/api/version`, `/` as
 `text/html`, 405 to a `POST` and 404 elsewhere. Under `PRIVATE_AI_DATA_ROOT` `/api/instances`
-answered 503 `{"error":"unavailable"}` (the error shape before `{"key", "args"}`) and a `POST` to it 405.
+answered 503 `{"error":"unavailable"}` (the error shape before `{"key", "args"}`) and a `POST` to it
+405. That bff predates 1aac8e1: `0.0.0.0:8590` is an address it serves now (pinned by
+`parse_accepts_an_address_off_loopback`, `tests/listen.rs`), and nothing here was repeated against a
+LAN address.
 
 Checked by hand on Linux from the debug build with the web UI embedded (2026-11-15, bff at ecdf076,
 fe at 9c2c326, under `PRIVATE_AI_DATA_ROOT`): `/` served the built `index.html`, its two
@@ -170,8 +200,11 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 | 503 | `{"key": "session-unavailable", "args": []}` | No manager to reach, no answer within `SIGN_IN_TIMEOUT`, or no random id could be drawn; none of these records anything, and the check thread of a manager that is slow keeps running after the answer |
 
 - **The cookie** carries an opaque id: 32 bytes from the OS's random source (the `getrandom` crate,
-  since std has no stable one) in hex. No `Secure` while the bff serves plain HTTP on loopback (a
-  browser would not send it back over `http`), no `Domain`. The password is neither kept nor sent back.
+  since std has no stable one) in hex. No `Secure` while the bff serves plain HTTP (a
+  browser would not send it back over `http`), no `Domain`: the browser binds the cookie to the host
+  that set it, never to a port, so a rebinding to another host carries no session, and a move to
+  another port on the same host keeps it ([above](#running-it)). The password is neither kept nor
+  sent back.
 - **`GET` and `DELETE /api/session`** answer 401 `{"key": "session-required", "args": []}` with no
   cookie, an unknown id or an expired one. `DELETE` ends the session (a replayed id is refused) and
   clears the cookie (`Max-Age=0`); the user's other sessions stay.
@@ -294,11 +327,13 @@ Done answers the 200.
 
 ## The preset routes
 
-`GET /api/presets`, `GET /api/presets/{id}` and `PUT /api/presets/{id}/enabled`
-(`crates/bff/src/presets.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b and 11c, the design
-"The switch on and off (item 11b)" in `ARCHITECTURE.md`): the Models page's list and switch, and the
-read of one preset. All three are behind sign-in and all three ask `private-ai-manager` on **one
-connect as the signed-in user**, so it is that user's own membership of `pai`, re-checked by the
+`GET /api/presets`, `GET /api/presets/{id}`, `PUT /api/presets/{id}` and
+`PUT /api/presets/{id}/enabled`
+(`crates/bff/src/presets.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
+designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
+the Models page's list and switch, and the read and the save of one preset. All four are behind
+sign-in and all four ask `private-ai-manager` on **one connect as the signed-in user**, so it is
+that user's own membership of `pai`, re-checked by the
 manager at the call, that answers: 401 `session-required` with no session (the manager is not
 connected to, nothing is written), 403 `session-not-administrator` and the end of the session when
 the manager refuses that user.
@@ -380,7 +415,7 @@ written first, so a refusal leaves both files as they were.
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
 | 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`, not a preset, for which nothing is moved. `args: [id]` when the id is a name a preset can carry at all; `args: []` for one the id check refuses (a newline, a bracket, a path, the global `*`) and for a run of dots |
 | 409 | `preset-changed-elsewhere` | a compare and swap found its file changed, nothing moved. When it answers the second write the preset is in both files: it reads on, and the next switch of that preset mends it |
-| 413 | `payload-too-large` | a body over the bff's limit |
+| 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
 | 422 | `{"key", "args", "field"}` | the manager refused the moved section, nothing written |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were, and one that runs out after both writes landed is the 200 above |
@@ -389,8 +424,8 @@ written first, so a refusal leaves both files as they were.
 ### The preset page
 
 `GET /api/presets/{id}` (`presets.rs` `read`) is the read of one preset, the route
-`#/models/<id>` reads (`fe/src/PresetPage.tsx`, reached from the Models table's id link): the
-read-only page, its save being `PLAN.md` item 11e. This route only reads. One connect as the
+`#/models/<id>` reads (`fe/src/PresetPage.tsx`, reached from the Models table's id link): the page
+whose save is [below](#the-save). This route only reads. One connect as the
 session's user, one read of each file, under the reads'
 5 s `MANAGER_TIMEOUT`. The `{id}` is a section name, matched in any letter case, never a path, and
 the enabled file is read first: a section in both files answers the `presets.ini` copy, as the list
@@ -413,9 +448,9 @@ does the same id. The answer is exactly seven fields:
   own ending (`section_revision`). In it: the section's keys, values and comments in the file's
   spelling and order, and which of the two files holds it, so the preset switched off is another
   preset to the page. Not in it: a section changed beside it, a section appended to the file, the
-  file's final line break, the blank lines after the section's last line. What would consume it is
-  the preset save, a plan: `PLAN.md` item 11e and "Saving a preset from the web" in
-  `ARCHITECTURE.md`. Nothing sends a revision back until that save exists.
+  file's final line break, the blank lines after the section's last line. The save consumes it: the
+  page sends it back at the `PUT` and a revision that is no longer the section's is 409
+  ([below](#the-save)).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -429,6 +464,60 @@ does the same id. The answer is exactly seven fields:
 A read runs no content check and writes nothing. `POST` and `DELETE` on the path are 405, and a path
 below it, `/api/presets/alpha/*`, is the ROUTER's own 404: no body and no content type, no key, and
 no connect to the manager.
+
+### The save
+
+`PUT /api/presets/{id}` (`presets.rs` `save`, 3eb24b2, the design "Saving a preset from the web" in
+`ARCHITECTURE.md`) is the preset page's save: `{"revision", "values"}` in, `{"revision", "running"}`
+out. `values` is an object of the keys the page touched, a string the text to write and `null` the
+key to remove, and the section is rewritten in place: the keys the body does not list, the comments
+and the rest of the file stand.
+
+The body is read in full before a file is opened, and is refused whole:
+
+- Not `application/json`, not JSON, no `revision` string, no `values` object, a value that is
+  neither a string nor `null`, a key outside `checks::WEB_PRESET_KEYS` in its exact spelling:
+  400 `presets-malformed`, the manager not asked.
+- A value empty, holding a control character beyond a tab, or starting or ending with a Unicode
+  space beyond a space or a tab (the writer keeps that byte, the parser reads it away):
+  400 `presets-malformed`. Values arrive trimmed of the spaces and tabs no reader keeps.
+- A value holding a `;` or a `#` (`checks::comment_markers`): 422 `comment-markers`, the keys in
+  `args` sorted, the first of them as `field`.
+
+Then one connect as the signed-in user reads `presets.ini` and `presets.ini.disabled` (the reads'
+5 s), the file order the list's, and answers the first section of that name in the pair; llama-server's
+global `[*]` is no preset, so 404 `no-preset-named` as the switch's. The section's revision
+([above](#the-preset-page)) must equal the body's, else 409 `preset-changed-elsewhere` with nothing
+written: the page's copy is stale.
+
+The edits go to the file sorted by key, so the bytes written do not depend on the order of the
+body's map, through `ini::text::set_key` and `text::remove_key`: the key line in the section's own
+spelling, a line that already holds the value left byte for byte, a key the section holds twice
+collapsed onto its first occurrence. The whole new text goes to the manager as a compare and swap
+against the text that was read, so a file that changed in between is the same 409. The manager runs
+its content checks on the write, and its refusal is the 422 shape of the switch ([above](#the-switch)):
+its key, its args, and `field`, the key for the form to mark. One line is exempt from its
+comment-marker check (26f5413, decision c1): a key line a section of either file holds byte for
+byte, id, key and raw value, so an untouched commented line carried over whole is no refusal. A body
+whose edits leave the text as it is writes nothing and answers 200.
+
+The 200 carries the section's revision as the file now holds it, and `running`: false when the
+section is in the disabled file, which the engine never reads; otherwise whether an instance is up,
+and `true` when that state cannot be read after the write landed, the safe answer, as the switch's.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"revision", "running"}` | the write landed and the manager accepted it, the revision the section as the file now holds it; also a body that asked for the text the file already holds, nothing written; and a limit that ran out after the write landed, `running` true |
+| 400 | `presets-malformed` | the body is not a preset save, the manager not asked |
+| 401 | `session-required` | no session, the manager not asked |
+| 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
+| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
+| 409 | `preset-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
+| 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file |
+| 503 | `client-unavailable` | no manager, with no write asked yet |
+| 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
+| 502 | `client-other` | anything else, never the manager's detail |
 
 ### A preset in both files
 
@@ -453,7 +542,15 @@ Green 2026-11-17 at 594e15e, rerun the same day (23, 48 and 64 tests in the thre
 `tests/preset_read.rs`, over the same fake manager: 32 tests, green 2026-11-17 on the tree at
 36a892d, pinning the document's seven fields, the values as the parser holds them, a repeated key's last line, the
 url comment, the global `*`, the router's own 404 below the path, and the revision stable across a
-neighbour section and a final line break (`cargo test -p pai-bff --test preset_read`). The `; url =`
+neighbour section and a final line break (`cargo test -p pai-bff --test preset_read`). The save adds
+`tests/preset_save.rs`, over the same fake manager: 47 tests (3eb24b2, 26f5413), and the body read on
+its own in `src/tests/preset_body.rs`: 24 tests, pinning the body's shape and its refusals, the key
+set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
+edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
+2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test preset_save --lib`). The listen
+address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (35), green the
+same day on that tree (`cargo test -p pai-bff --test listen --test origin`); the hand check of a
+`0.0.0.0` listen above predates them. The `; url =`
 reader moved with it, into `pai-core`, and its two tests went too
 (`cargo test -p pai-core -- project_url`). In the list and the switch suites: the list
 skipping `[*]` in both files
@@ -486,7 +583,7 @@ its data once when it opens and never shows a reply's text.
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/models` | The presets of every engine (`GET /api/presets`) as a table of preset, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its preset that sends `PUT /api/presets/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/models/<id>` | One preset, read-only: the way back to the list, the id as the heading, the Engine field, the Assets card as text and the settings cards with every control disabled, read once from `GET /api/presets/<id>` on a page that has nothing to save, reached from the row's id link in the Models table (`fe/src/PresetPage.tsx`) | signed in; otherwise the sign-in form in its place |
+| `#/models/<id>` | One preset, read once from `GET /api/presets/<id>`, reached from the row's id link in the Models table (`fe/src/PresetPage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/presets/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
@@ -502,11 +599,10 @@ its data once when it opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **The bff does not serve** `PUT /api/presets/{id}` (the preset's save, `PLAN.md` item 11e): by the
-  code the preset page's read is answered ([above](#the-preset-page)), the save being the one preset
-  call of the contract with no route behind it. The Models page's two calls are
-  served ([above](#the-preset-routes)); the fe is tested against that contract with mocked replies
-  only, never against a real bff, so what those pages show takes a run on a machine. Everything the
+- **Every preset call of the contract is served**: the page's read and its save
+  ([above](#the-save)), and the Models page's list and switch ([above](#the-preset-routes)); what is
+  open is the fe's own save (`PLAN.md` item 2h). The fe is tested against that contract with mocked
+  replies only, never against a real bff, so what those pages show takes a run on a machine. Everything the
   instance page makes is served: the
   server read and its save ([above](#the-server-file-of-an-instance)), the run verbs and
   the boot read and write ([above](#running-it)); the bff serves `/api/session` and the manager
@@ -549,12 +645,18 @@ manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/sessio
 the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
 manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
 `GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/presets.rs`,
-`tests/presets_switch.rs` and `tests/preset_read.rs` drive the preset list, the switch and the
-section read over the same fake manager, whose
+`tests/presets_switch.rs`, `tests/preset_read.rs` and `tests/preset_save.rs` drive the preset list,
+the switch, the section read and the save over the same fake manager, whose
 compare and swap lands only when the `expected` text is what the fake answered for that file in that
 test (a missing file answers `Changed`, as the real manager does) and every write is recorded as
 `(name, contents, expected)`, so the order of the two writes, the whole text of each and the channel
-each used are pinned; `tests/pai_bff_binary.rs` runs the binary with
+each used are pinned; `src/tests/preset_body.rs` reads a save's body on its own, with the file's text
+handed in and no manager; `tests/listen.rs` reads `Listen` and `Hosts` from an INI text and a tempdir
+and builds the machine's names from a host name and a `resolv.conf` fixture, never the real host name
+nor the real `/etc/resolv.conf`, and `tests/origin.rs` drives the `Host` guard and the payload cap
+through `router_with_session` and `router_with_session_and_hosts`
+(the machine's names) with the same fake manager;
+`tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

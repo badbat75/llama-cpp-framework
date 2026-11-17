@@ -13,7 +13,7 @@ super-manager), proposed and waiting for the user's acceptance.
 ### Components
 
 ```text
-  browser ──HTTP (loopback)──> pai-bff ─┐                     ┌─> llama.cpp@<id>  (Linux unit)
+  browser ──HTTP (plain)─────> pai-bff ─┐                     ┌─> llama.cpp@<id>  (Linux unit)
                                 (fe/)   │  D-Bus + polkit     │   llama.cpp_<id>  (Windows service)
   pai-config (GUI) ─────────────────────┼─────────────────> pai-manager ──systemd / SCM──┘
   pai (CLI) ────────────────────────────┘  named pipe + ACL   (root / LocalSystem)
@@ -26,7 +26,7 @@ super-manager), proposed and waiting for the user's acceptance.
 | --- | --- | --- | --- |
 | `pai-manager` (`crates/manager`) | The `private-ai-manager` service: lists, starts, stops the engine instances, reads and writes their files, runs every content check, decides who may do what. Keeps no state of its own: the service manager's state is the truth | root (Linux), LocalSystem (Windows); not on macOS | [crates/config/README.md](crates/config/README.md#through-the-manager-linux-windows) "Through the manager" |
 | Engine instances | One OS service per instance id: `llama.cpp@<id>.service` (template unit shipped by the `llama.cpp` package), `llama.cpp_<id>` on Windows (created by the manager). Each runs `pai-manager run-instance <id>`, which reads `server@<id>.ini` and execs llama-server | `private-ai` (Linux, in `render`, `video`), `NT SERVICE\llama.cpp_<id>` (Windows) | `PLAN.md` step 1, [installer/AGENTS.md](installer/AGENTS.md) |
-| `pai-bff` (`crates/bff`) + `fe/` | The web service: the API and the embedded React web UI. Loopback only until authentication and TLS exist | `private-ai-bff` (static system user, sandboxed), `NT SERVICE\private-ai-bff` | [crates/bff/README.md](crates/bff/README.md), `PLAN.md` step 10 |
+| `pai-bff` (`crates/bff`) + `fe/` | The web service: the API and the embedded React web UI. Plain HTTP on the address `[Bff] Listen`, any ip:port (the administrator's choice, 2026-11-17), every request under a `Host` guard, sign-in checked by the manager | `private-ai-bff` (static system user, sandboxed), `NT SERVICE\private-ai-bff` | [crates/bff/README.md](crates/bff/README.md), `PLAN.md` step 10 |
 | `pai-config` (`crates/config`) | The Slint GUI; a thin client of the manager on Linux and Windows, spawns llama-server itself on macOS | the desktop user | [crates/config/AGENTS.md](crates/config/AGENTS.md) |
 | `pai` (`crates/cli`) | The same operations headless | the user | [crates/config/README.md](crates/config/README.md) |
 | `pai-core`, `pai-app` | Shared libraries: paths, INI, checks (`checks.rs`), the manager client (`client.rs`); the configurator's logic without a GUI | (linked) | [crates/config/README.md](crates/config/README.md) |
@@ -81,10 +81,14 @@ Windows `configure` is a token in `pai` or the local system account, and an Admi
 outside `pai` gets `control` only (`allowed` in `crates/manager/src/manager/windows.rs`). The web UI
 is for administrators only: a sign-in succeeds only for a `pai` member.
 
-Boundaries a call crosses: the browser to the bff (HTTP, a session cookie; loopback only); the bff,
+Boundaries a call crosses: the browser to the bff (plain HTTP, a session cookie, on the address the
+administrator set: the loopback by default, a LAN address and the wildcard served when chosen, with
+every request under a `Host` guard that answers only this bff's names); the bff,
 `pai-config` and `pai` to the manager (the bus or the pipe, the caller identified by the OS, never by
-anything it sends); the manager to systemd or the SCM; the instance to its files and GPUs. Nothing
-crosses the machine today.
+anything it sends); the manager to systemd or the SCM; the instance to its files and GPUs. A browser
+on another machine is the one way a request can come from outside this one, and it is chosen, not
+default: the sign-in password and the cookie cross that wire in clear (no TLS in the bff, no
+`Secure` on the cookie), which is what the administrator accepted when they chose it (2026-11-17).
 
 ### Data and where it lives
 

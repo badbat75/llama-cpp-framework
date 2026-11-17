@@ -123,11 +123,32 @@ Lessons only: the rules are in `AGENTS.md`.
   it answers 503 `unavailable`.
 - A preset route change is repeated in eight spots of `crates/bff/README.md`: the intro's served list,
   the route table's preset rows, the `## The preset routes` lead, its `### The list` / `### The switch`
-  / `### The preset page` sections, `### What has run` (the suite names and test counts), the fe route
-  table's `#/models/<id>` row, the fe "The bff does not serve" bullet, and `## Tests`. Renaming the H2
+  / `### The preset page` / `### The save` sections, `### What has run` (the suite names and test
+  counts), the fe route table's `#/models/<id>` row, the fe "Every preset call of the contract is
+  served" bullet, and `## Tests`. Renaming the H2
   renames its anchor: the root README and `AGENTS.md` carry one sentence each. The `; url =` reader's
   home is `crates/core/src/ini.rs` (`project_url_of` over `comment_value`) since 36a892d, its tests
   `cargo test -p pai-core -- project_url`; `crates/config/README.md`'s source map does not name it.
+- A listen-address or `Host`-guard fact is in five files: `crates/bff/README.md` (intro, "Running it",
+  the dated hand checks, the session cookie bullet), `AGENTS.md` (overview and the Map bullet),
+  `ARCHITECTURE.md` (the diagram's browser arrow, the `pai-bff` row, the "Boundaries a call crosses"
+  paragraph), the root `README.md` (intro and the `crates\bff\` row), and `installer/AGENTS.md` (the
+  web service bullet, and test plan steps that call a `0.0.0.0` listen "refused", true before 1aac8e1
+  and false since: not ours, report it). The cookie binds to the host, never to a port (`session.rs`
+  sets no `Domain`), and the guard's 403 is `request-bad-host`, the cross-origin one
+  `request-cross-origin` (`origin.rs`): both named in `crates/core/strings/cli.toml`, which no longer
+  has `bff-listen-not-loopback`.
+- The bff suites and what reaches them: `tests/preset_save.rs` (47), `tests/preset_read.rs` (32),
+  `tests/listen.rs` (17), `tests/origin.rs` (35), and `src/tests/preset_body.rs` (24), a **lib** test:
+  `cargo test -p pai-bff --lib` reaches it, a `--test <name>` flag does not. The 5 s reads and the 15 s
+  write of the save are counted from the request (`save` takes `write_timeout.saturating_sub(elapsed)`).
+- `tools/site` builds pages from `docs/` only (`tools/site/src/main.rs`), so a change to the root
+  `README.md`, `AGENTS.md`, `ARCHITECTURE.md` or a crate README needs no
+  `cargo run -p docs-site -- --check`. For an anchor, a small Python `re` pass over `](#...)` against
+  the headings of the same file settles it.
+- The count of a preset page's editable cards moves with every fe slice (three at c69511e, four at
+  dc1ff69, the same day): with `fe/` off-limits, run `git log --oneline <last-known>..HEAD` and read
+  the `2h.<n>` messages before writing a count.
 - The fe can run ahead of the bff: a route the fe calls is served only if `router_with` in
   `crates/bff/src/lib.rs` has it (`fe/briefs/api-contract.md` marks the rest "proposed"). Describe
   such a page as built against the contract, and say what today's bff makes of it (404, no JSON body).
