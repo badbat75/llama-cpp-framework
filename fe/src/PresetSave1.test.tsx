@@ -49,10 +49,22 @@ const EXTRA_POOL = 'Last-Attention-Pool-X'
  * full-value line repeats under a disabled input. */
 const LONG_TEXT = '{"enable_thinking":false,"keep_past":true}'
 
-/** The values of the read the 130 test uses: both Embeddings keys, and no key
- * of the Resource / context card, so every box of that card starts ticked
- * (2h.156) and Unified KV sits disabled (2h.155: Parallel slots at default). */
-const VALUES = { embeddings: 'true', pooling: 'mean' }
+/** The values of the read the 130 test uses: both Embeddings keys; the Vision
+ * card's file keys (`mmproj` present and `mmproj-offload` checked, 176) and
+ * `model-draft` (177), so those cards' rules leave their controls enabled; and
+ * `n-gpu-layers`, so its default box is unticked and its input enabled (156).
+ * No key of the Resource / context card besides these, so every box of that
+ * card starts ticked (2h.156) and Unified KV sits disabled (2h.155: Parallel
+ * slots at its default). */
+const VALUES = {
+  embeddings: 'true',
+  pooling: 'mean',
+  mmproj: '/var/lib/private-ai/.llama.cpp/models/mmproj-BF16.gguf',
+  'mmproj-offload': 'true',
+  'model-draft':
+    '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-draft-MTP.gguf',
+  'n-gpu-layers': '99',
+}
 
 /** The fields 2h.1's 130, 2h.4's 155 and 2h.5's 164 made editable, keyed by
  * the id of their field (`preset-<key>`: the box is `<id>-box`, the input
@@ -96,6 +108,26 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-reasoning-budget': 'preset-thinking-budget',
   'preset-reasoning-budget-message': 'preset-budget-message',
   'preset-n-predict': 'preset-max-output',
+  // 2h.7's 176: the Vision card's four, enabled while the read's `mmproj` is
+  // present (Vision GPU also needs Vision on GPU checked). The checkbox's
+  // input is `<id>-control`.
+  'preset-mmproj-offload': 'preset-vision-on-gpu',
+  'preset-mmproj-device': 'preset-vision-gpu',
+  'preset-image-min-tokens': 'preset-min-image-tokens',
+  'preset-image-max-tokens': 'preset-max-image-tokens',
+  // 2h.7's 175: the Hardware card, its seven always-on rows and the draft
+  // pair (177's rule). The Fit trio (`fit`, `fit-ctx`, `fit-target`) and the
+  // two MoE rows (178) stay out of the list, so the test demands them
+  // disabled; `n-cpu-ffn` and `n-gpu-layers` are boxed (156).
+  'preset-n-gpu-layers': 'preset-gpu-layers',
+  'preset-n-cpu-ffn': 'preset-dense-ffn-cpu-layers',
+  'preset-op-offload': 'preset-op-offload',
+  'preset-repack': 'preset-repack',
+  'preset-no-host': 'preset-no-host-buffer',
+  'preset-lazy-mode': 'preset-lazy-tensors',
+  'preset-load-mode': 'preset-load-mode',
+  'preset-device-draft': 'preset-draft-device',
+  'preset-n-gpu-layers-draft': 'preset-draft-gpu-layers',
 }
 
 beforeEach(() => {
@@ -254,7 +286,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card and the Chat / reasoning card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card and the Hardware card (but its Fit trio and its two MoE rows) are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -270,7 +302,10 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170): the Embeddings selects, the Re
     const label = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
     // 155: a box is enabled in an editable card; 156: its input follows the
     // box, which a key the file lacks leaves ticked. 130: the Embeddings
-    // selects are always enabled. 70: the Engine select is untouched.
+    // selects are always enabled. 176: every Vision control while the read's
+    // `mmproj` is there, Vision GPU also while Vision on GPU is checked. 177:
+    // the draft pair while `model-draft` is there. 70: the Engine select is
+    // untouched.
     const enabled =
       el === engine ||
       (label !== undefined &&
@@ -567,7 +602,7 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170): an editable control shows no full-value line, Embeddings, Resource / context, KV cache and Chat / reasoning alike, and the disabled cards keep theirs', async () => {
+test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and the disabled cards keep theirs', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
@@ -579,11 +614,18 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170): an editable control shows no full-v
     // The KV cache card, editable since 2h.5's 164: 134 takes its lines.
     'cache-type-k': EXTRA_POOL,
     'cache-ram': '172032000',
-    // The Hardware / configuration card, still read-only: its three kinds
-    // keep the line of 118 (a select, a text, a number).
+    // The Hardware card, editable since 2h.7's 175: its selects are always
+    // enabled and the key unticks the number's box, so 134 takes its lines.
     'load-mode': EXTRA_POOL,
-    'fit-target': LONG_TEXT,
+    'lazy-mode': EXTRA_POOL,
     'n-gpu-layers': '172032000',
+    // The cards still read-only keep the line of 118: a select, a text and a
+    // number. Fit free VRAM is the Hardware card's text of the Fit trio
+    // (2h.8); the Speculative decoding card is 2h.9's, so a cache-type select
+    // and a draft number are its examples.
+    'spec-draft-type-k': EXTRA_POOL,
+    'fit-target': LONG_TEXT,
+    'spec-draft-n-max': '172032000',
   })
   // An enabled select opens and an enabled input scrolls, so 134 takes the
   // line away from both, and 160 says the Resource card's number never has
@@ -596,28 +638,31 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170): an editable control shows no full-v
     'reasoning-effort',
     'reasoning-budget-message',
     'n-predict',
+    'load-mode',
+    'lazy-mode',
+    'n-gpu-layers',
   ])
     expect(
       fullOf(main, key),
       `${key}: no full-value line under an editable control`,
     ).toBeNull()
   // The read-only card keeps its line: a select, a text and a number.
-  for (const key of ['load-mode', 'fit-target', 'n-gpu-layers'])
+  for (const key of ['spec-draft-type-k', 'fit-target', 'spec-draft-n-max'])
     expect(
       fullOf(main, key),
       `${key}: the disabled control keeps its line`,
     ).toBeTruthy()
 })
 
-test("2h.134 (2h.6 170): a long value the disabled control cannot show keeps its line: the Hardware / configuration card's Load mode select is the disabled half of the pair, Reasoning effort the enabled half (pinned above)", async () => {
+test("2h.134 (2h.6 170, 2h.7 175): a long value the disabled control cannot show keeps its line: the Speculative decoding card's Draft K-cache type select is the disabled half of the pair, Reasoning effort the enabled half (pinned above)", async () => {
   const { main } = await page({
-    'load-mode': EXTRA_POOL,
+    'spec-draft-type-k': EXTRA_POOL,
     'reasoning-effort': EXTRA_POOL,
   })
-  const line = fullOf(main, 'load-mode')!
+  const line = fullOf(main, 'spec-draft-type-k')!
   expect(text(line), 'the line repeats the value as written').toBe(EXTRA_POOL)
   expect(
-    selectOf(main, en('preset-load-mode')).disabled,
+    selectOf(main, en('preset-draft-k-cache-type')).disabled,
     'the field is a disabled select',
   ).toBe(true)
   expect(

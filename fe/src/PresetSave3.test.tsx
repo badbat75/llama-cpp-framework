@@ -73,10 +73,13 @@ async function loaded(
   return { bff, main }
 }
 
-/** The page, dirty: Embedding mode off, and the save answered `body`. */
+/** The page, dirty: Embedding mode off, and the save answered `body`.
+ * `n-gpu-layers` is in the read so the Hardware card's 157 row has an enabled
+ * control to mark and focus (2h.7's 175 made it editable, and the key leaves
+ * its default box unticked, 156). */
 async function refused(body: Record<string, unknown>) {
   const { bff, main } = await loaded(
-    { embeddings: 'true', pooling: 'weird' },
+    { embeddings: 'true', pooling: 'weird', 'n-gpu-layers': '99' },
     () => reply(422, body),
   )
   pick(main, MODE, 'false')
@@ -277,7 +280,9 @@ const TABLE_150: [
     },
     'text',
     en('preset-gpu-layers'),
-    false,
+    // 2h.7's 175 made GPU layers editable and the read has its key, so the
+    // input is enabled and takes the focus (144).
+    true,
   ],
   [
     'comment-markers: args[0]',

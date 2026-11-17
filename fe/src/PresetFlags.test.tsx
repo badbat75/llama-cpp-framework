@@ -936,14 +936,16 @@ test('2e.124b: the checkbox or select names its written-as line in aria-describe
   }
   // 120, unchanged: the full-value line is named by no aria-describedby, on a
   // page where a full-value line and a written-as line sit side by side. The
-  // valued key's example moved: 134 shows no line under an enabled control, so
-  // the line here is Load mode of the read-only Hardware / configuration card.
+  // valued key's example moved twice: 134 shows no line under an enabled
+  // control, and 2h.7's 175 made the Hardware card's Load mode editable, so
+  // the line here is the Draft K-cache type of the read-only Speculative
+  // decoding card.
   const { main } = await page({
-    'load-mode': LONG,
+    'spec-draft-type-k': LONG,
     jinja: 'yes',
   })
   expect(
-    main.querySelector('#preset-full-load-mode'),
+    main.querySelector('#preset-full-spec-draft-type-k'),
     'the page has a full-value line',
   ).toBeTruthy()
   expect(

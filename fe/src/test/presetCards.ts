@@ -195,6 +195,8 @@ function fieldId(field: Label): string {
  * (the Advanced card's two, the off / on select and the text, always enabled),
  * 2h.6's 170 (the Chat / reasoning card's nine, all always enabled),
  * 2h.7's 175 (the Vision card's four, enabled by 176's rule),
+ * 2h.7's 175 (the Hardware card's seven always rows, and the draft pair
+ * enabled by 177's rule; the Fit trio and the two MoE rows stay out),
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
@@ -235,6 +237,15 @@ const EDITABLE_FIELDS: Label[] = [
   'preset-vision-gpu',
   'preset-min-image-tokens',
   'preset-max-image-tokens',
+  'preset-gpu-layers',
+  'preset-dense-ffn-cpu-layers',
+  'preset-op-offload',
+  'preset-repack',
+  'preset-no-host-buffer',
+  'preset-lazy-tensors',
+  'preset-load-mode',
+  'preset-draft-device',
+  'preset-draft-gpu-layers',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
@@ -260,6 +271,9 @@ const BOXED_FIELDS: Record<string, string> = {
   'preset-max-output': 'n-predict',
   'preset-min-image-tokens': 'image-min-tokens',
   'preset-max-image-tokens': 'image-max-tokens',
+  'preset-gpu-layers': 'n-gpu-layers',
+  'preset-dense-ffn-cpu-layers': 'n-cpu-ffn',
+  'preset-draft-gpu-layers': 'n-gpu-layers-draft',
 }
 
 /** The editable fields whose control is a checkbox: the label's strings key
@@ -276,16 +290,20 @@ const CHECKBOX_TOGGLES: Record<string, string> = {
  * `checked`, when set, must read as a checked flag (2e's 122). */
 type Rule = { present: string[]; checked?: string }
 
-/** The editable fields with an enable rule (2h.155, 2h.176): Unified KV is
- * enabled while Parallel slots' box is unticked, which is how a key the file
- * holds starts; every Vision control is enabled while the read's `mmproj` is
- * present and not empty, and Vision GPU also needs Vision on GPU checked. */
+/** The editable fields with an enable rule (2h.155, 2h.176, 2h.177): Unified
+ * KV is enabled while Parallel slots' box is unticked, which is how a key the
+ * file holds starts; every Vision control is enabled while the read's `mmproj`
+ * is present and not empty, and Vision GPU also needs Vision on GPU checked;
+ * Draft device and Draft GPU layers are enabled while the read's
+ * `model-draft` is present and not empty (177). */
 const ENABLE_RULE: Record<string, Rule> = {
   'preset-unified-kv': { present: ['parallel'] },
   'preset-vision-on-gpu': { present: ['mmproj'] },
   'preset-vision-gpu': { present: ['mmproj'], checked: 'mmproj-offload' },
   'preset-min-image-tokens': { present: ['mmproj'] },
   'preset-max-image-tokens': { present: ['mmproj'] },
+  'preset-draft-device': { present: ['model-draft'] },
+  'preset-draft-gpu-layers': { present: ['model-draft'] },
 }
 
 /** The flag spellings 2e's 122 reads as unchecked. Any other value, the empty

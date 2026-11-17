@@ -106,9 +106,7 @@ type NumberRow = RowBase & {
 }
 
 /** A select: its options in the table's order, and the option an absent key
- * shows. `normalize` is the match of a key whose value the configurator reads
- * ignoring case and surrounding space (`normalize_load_mode`), so such a value
- * selects its option instead of becoming an extra one. */
+ * shows. */
 type SelectRow = RowBase & {
   kind: 'select'
   options: Option[]
@@ -118,7 +116,6 @@ type SelectRow = RowBase & {
    * absent one included. The absent option is only what the control shows for a
    * key the file lacks, and picking it back is no change (132). */
   ownValue?: true
-  normalize?: boolean
 }
 
 /** A text: one monospace input showing the string as it is. The unit, when the
@@ -153,8 +150,15 @@ type CheckboxRow = RowBase & {
 type DeviceRow = RowBase & { kind: 'device'; empty: string }
 
 /** A note between fields (criterion 90): the GUI's muted paragraph. Its `key`
- * is only the list's: a note reads no key of the file. */
-type NoteRow = { kind: 'note'; key: string; text: string }
+ * is only the list's: a note reads no key of the file. `shownWithout` is the
+ * key of 177's rule: the note speaks for the controls the `file` rule of 176
+ * disables, so it sits where the rule is not met and goes once it is. */
+type NoteRow = {
+  kind: 'note'
+  key: string
+  text: string
+  shownWithout?: string
+}
 
 /** A group of a card (criterion 90): the GUI's bold sub-heading as an `h4`, and
  * the rows under it in a `role="group"` division named by that heading, so the
@@ -276,6 +280,9 @@ const LOAD_MODES: Option[] = [
 const CARDS: CardFields[] = [
   {
     title: t('preset-hardware-config'),
+    // 2h.7's 175: the seven rows the table enables always, and the draft pair
+    // behind `model-draft` (177), all editable. The MoE pair stays disabled
+    // until 2g reads the model (178), and the Fit trio is 2h.8.
     rows: [
       {
         kind: 'number',
@@ -283,6 +290,13 @@ const CARDS: CardFields[] = [
         key: 'n-gpu-layers',
         label: t('preset-gpu-layers'),
         hint: t('preset-gpu-layers-hint'),
+        editable: true,
+      },
+      // 178: the note of the two rows that stay disabled until 2g.
+      {
+        kind: 'note',
+        key: 'moe-later-note',
+        text: t('preset-moe-later'),
       },
       {
         kind: 'number',
@@ -305,6 +319,7 @@ const CARDS: CardFields[] = [
         key: 'n-cpu-ffn',
         label: t('preset-dense-ffn-cpu-layers'),
         hint: t('preset-dense-ffn-cpu-layers-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -314,6 +329,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-op-offload'),
         hint: t('preset-op-offload-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -323,6 +339,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-repack'),
         hint: t('preset-repack-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -332,6 +349,7 @@ const CARDS: CardFields[] = [
         absent: 'false',
         label: t('preset-no-host-buffer'),
         hint: t('preset-no-host-buffer-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -340,15 +358,17 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-lazy-tensors'),
         hint: t('preset-lazy-tensors-hint'),
+        editable: true,
       },
       {
+        // 180: an enabled load-mode select matches the file's value exactly.
         kind: 'select',
         key: 'load-mode',
         options: LOAD_MODES,
         absent: 'default',
-        normalize: true,
         label: t('preset-load-mode'),
         hint: t('preset-load-mode-hint'),
+        editable: true,
       },
       {
         kind: 'checkbox',
@@ -379,12 +399,22 @@ const CARDS: CardFields[] = [
         label: t('preset-fit-free-vram'),
         hint: t('preset-fit-free-vram-hint'),
       },
+      // 177: the pair works only with a Draft model file, which this page does
+      // not pick, so its note sits before Draft device while the file has none.
+      {
+        kind: 'note',
+        key: 'draft-file-off-note',
+        text: t('preset-draft-file-off'),
+        shownWithout: 'model-draft',
+      },
       {
         kind: 'device',
         key: 'device-draft',
         empty: t('preset-device-same-as-model'),
         label: t('preset-draft-device'),
         hint: t('preset-draft-device-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'file', key: 'model-draft' }],
       },
       {
         kind: 'number',
@@ -392,6 +422,8 @@ const CARDS: CardFields[] = [
         key: 'n-gpu-layers-draft',
         label: t('preset-draft-gpu-layers'),
         hint: t('preset-draft-gpu-layers-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'file', key: 'model-draft' }],
       },
     ],
   },
@@ -1055,10 +1087,8 @@ function readAs(
 
 /** A select's options and its selected value. A value no option carries
  * becomes one extra last option holding it as its value and its text, selected
- * (criterion 87). A row whose key is a boolean of table 122 holds it trimmed as
- * the INI grammar trims it (criterion 124a). A row that normalizes matches an
- * option ignoring case and surrounding space, and the extra option still
- * carries the value as written. */
+ * (criterion 87). A row whose key is a boolean of table 122 holds it trimmed,
+ * as the INI grammar trims it (criterion 124a). */
 function shown(
   row: SelectRow,
   value: string | undefined,
@@ -1067,8 +1097,7 @@ function shown(
   value: string
 } {
   if (value === undefined) return { options: row.options, value: row.absent }
-  const match = row.normalize ? value.trim().toLowerCase() : value
-  const hit = row.options.find((o) => o.value === match)
+  const hit = row.options.find((o) => o.value === value)
   if (hit !== undefined) return { options: row.options, value: hit.value }
   const extra = row.reading === undefined ? value : iniTrim(value)
   return {
@@ -1092,8 +1121,7 @@ export function selectState(
 ): string {
   const value = heldFor(row, values)
   if (value === undefined) return row.absent
-  const match = row.normalize ? value.trim().toLowerCase() : value
-  if (row.options.some((o) => o.value === match)) return match
+  if (row.options.some((o) => o.value === value)) return value
   const state =
     row.reading === undefined ? undefined : readAs(row.reading, value)
   if (state !== undefined && state.on !== undefined)
@@ -1229,6 +1257,8 @@ function bounded(keys: string[], min: number | null, max: number | null) {
 
 const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
   // Any whole number: the table's first row, and the layer counts of its last.
+  // The two layer counts of that row also take the words of WORD_VALUES,
+  // checked and sent trimmed, so a word is never read as an out-of-range value.
   ...bounded(
     [
       'cache-ram',
@@ -1325,6 +1355,15 @@ function intValue(text: string): number | null {
   return INT_TEXT.test(s) ? Number(s) : null
 }
 
+/** 2h.7's 157: the two words a layer count takes as its whole value, by key:
+ * llama.cpp reads both and neither the bff nor the manager checks these keys,
+ * so a file holding `all` must not block a save. Checked on the trimmed text
+ * and sent trimmed, so the space around a typed word never reaches the file. */
+const WORD_VALUES: Record<string, string[]> = {
+  'n-gpu-layers': ['auto', 'all'],
+  'n-gpu-layers-draft': ['auto', 'all'],
+}
+
 /** The error of a number field's text (157): the trimmed text must be a whole
  * number within the key's range, and for a float key a finite decimal (165). A
  * ticked box says nothing: the save sends no value for it, and the manager
@@ -1342,6 +1381,7 @@ export function numberError(
   }
   const r = INT_KEYS[row.key]
   if (r === undefined) return undefined
+  if (WORD_VALUES[row.key]?.includes(b.text.trim())) return undefined
   const n = intValue(b.text)
   if (
     n !== null &&
@@ -1370,10 +1410,16 @@ function numericMode(row: NumberRow): boolean {
 /** What a number field sends (157): the number in decimal, with no sign for a
  * positive value and no leading zeros; a ticked box sends the key's removal. A
  * float key sends the text as the check read it (165), so the spelling the user
- * typed survives: `1e-3` stays `1e-3`. */
+ * typed survives: `1e-3` stays `1e-3`. One of a key's words of 157 is sent
+ * trimmed. */
 export function numberSend(row: NumberRow, b: Boxed): string | null {
   if (b.ticked) return null
   if (FLOAT_KEYS.includes(row.key)) return decimalText(b.text)
+  const words = WORD_VALUES[row.key]
+  if (words !== undefined) {
+    const word = b.text.trim()
+    if (words.includes(word)) return word
+  }
   const n = intValue(b.text)
   return n === null ? b.text : String(n)
 }
@@ -1569,7 +1615,17 @@ function PresetField({
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
 }) {
-  if (row.kind === 'note') return <p className="note">{row.text}</p>
+  if (row.kind === 'note') {
+    // 177: a note that speaks for a rule sits only while the rule is not met.
+    if (
+      row.shownWithout !== undefined &&
+      held(loaded, row.shownWithout) !== undefined
+    )
+      return null
+    // 181: a plain paragraph in reading order, never a live region and never a
+    // control's description.
+    return <p className="note">{row.text}</p>
+  }
   // What every control of a read-only card shares: its id, the texts of its
   // field, and the native disabled of criterion 85. Each control's own
   // handler does nothing: the page sends nothing for it. An editable row's

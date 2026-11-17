@@ -5,11 +5,18 @@
 // 108, whose toggle text follows the GUI's rule (allowed only with
 // Context size and GPU layers both absent) while its state is the engine's
 // reading of 127 (2e.3c), the lazy-mode select matched
-// exactly, and the load-mode select matched ignoring case and space. The
+// exactly, and the load-mode select matched ignoring case and space while
+// disabled (2e's 107), now exactly, since 2h.7 enables it (180). The
 // shared rules of section 1 are pinned for the cards of 2e.1 in
 // PresetCards1.test.tsx, for those of 2e.2 in PresetCards2.test.tsx and for
 // what 2e.3 adds in PresetCards3.test.tsx; here they are pinned for the
-// Hardware card. The checkbox is pinned here for the `on` value of the 109 stub
+// Hardware card. 2h.7's 175 to 180 retarget what 2e left read-only: the seven
+// `always` rows and the draft pair (behind `model-draft`, 177) are enabled, the
+// Fit trio (2h.8) and the two MoE rows (178) stay natively disabled, the card
+// holds the two note rows of 177 and 178, and load-mode is matched exactly
+// (180): `MLOCK` is the extra option `MLOCK`. The editing itself (the draft,
+// what a save sends, the checks) is PresetSave13.test.tsx.
+// The checkbox is pinned here for the `on` value of the 109 stub
 // and for the absent key only: every row of the 129 table, with the written-as
 // line and the field error, is pinned in PresetFlags.test.tsx. The route and
 // the read are
@@ -39,6 +46,7 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
+  controlEnabled,
   expectedInputMode,
   fieldTabStops,
   saveBarTabStops,
@@ -89,7 +97,8 @@ const LOAD = [
   'dio',
 ]
 
-/** The modes `normalize_load_mode` knows, each with the option text it selects. */
+/** The load-mode values that match one of the table's options exactly (180),
+ * each with the option text it selects. */
 const LOAD_MODES: [string, string][] = [
   ['auto', en('option-auto')],
   ['none', en('option-none')],
@@ -105,10 +114,18 @@ const SAME = en('preset-device-same-as-model')
 /** The card of 107. */
 const CARD = 'preset-hardware-config'
 
+/** When 2h.7's 175 to 178 leaves a row's controls enabled. */
+type Enable = 'always' | 'model-draft' | 'read-only'
+
 /** One row of the field table of 107. */
 type Row = {
   /** The key of the section's `values`. */
   key: string
+  /** The table's last column (107), as 2h.7's 175 to 178 retargets it:
+   * `always` is editable; `model-draft` is enabled while the read's
+   * `model-draft` is present and not empty (177); `read-only` stays disabled
+   * (the Fit trio, until 2h.8; the two MoE rows, until 2g, 178). */
+  enable: Enable
   /** The label as the page shows it: the strings text of 110. */
   label: string
   /** The strings key of the field's hint (criterion 88). */
@@ -135,10 +152,12 @@ type Row = {
   shownChecked?: boolean
 }
 
-/** The field table of 107, in the GUI's order. */
+/** The field table of 107, in the GUI's order, each row with its 2h.7 enable
+ * rule. */
 const FIELDS: Row[] = [
   {
     key: 'n-gpu-layers',
+    enable: 'always',
     label: en('preset-gpu-layers'),
     hint: 'preset-gpu-layers-hint',
     kind: 'number',
@@ -149,6 +168,7 @@ const FIELDS: Row[] = [
   {
     key: 'n-cpu-moe',
     label: en('preset-moe-cpu-layers'),
+    enable: 'read-only',
     hint: 'preset-moe-cpu-layers-hint',
     kind: 'number',
     integer: true,
@@ -158,6 +178,7 @@ const FIELDS: Row[] = [
   {
     key: 'moe-cache-mib',
     label: en('preset-moe-cache'),
+    enable: 'read-only',
     hint: 'preset-moe-cache-hint',
     kind: 'number',
     integer: true,
@@ -168,6 +189,7 @@ const FIELDS: Row[] = [
   {
     key: 'n-cpu-ffn',
     label: en('preset-dense-ffn-cpu-layers'),
+    enable: 'always',
     hint: 'preset-dense-ffn-cpu-layers-hint',
     kind: 'number',
     integer: true,
@@ -177,6 +199,7 @@ const FIELDS: Row[] = [
   {
     key: 'op-offload',
     label: en('preset-op-offload'),
+    enable: 'always',
     hint: 'preset-op-offload-hint',
     kind: 'select',
     options: TRISTATE,
@@ -187,6 +210,7 @@ const FIELDS: Row[] = [
   {
     key: 'repack',
     label: en('preset-repack'),
+    enable: 'always',
     hint: 'preset-repack-hint',
     kind: 'select',
     options: TRISTATE,
@@ -197,6 +221,7 @@ const FIELDS: Row[] = [
   {
     key: 'no-host',
     label: en('preset-no-host-buffer'),
+    enable: 'always',
     hint: 'preset-no-host-buffer-hint',
     kind: 'select',
     options: OFF_ON,
@@ -207,6 +232,7 @@ const FIELDS: Row[] = [
   {
     key: 'lazy-mode',
     label: en('preset-lazy-tensors'),
+    enable: 'always',
     hint: 'preset-lazy-tensors-hint',
     kind: 'select',
     options: LAZY,
@@ -217,16 +243,20 @@ const FIELDS: Row[] = [
   {
     key: 'load-mode',
     label: en('preset-load-mode'),
+    enable: 'always',
     hint: 'preset-load-mode-hint',
     kind: 'select',
-    options: LOAD,
+    // 180: the select is enabled, so the match is exact and the stub's `MLOCK`
+    // stands as the extra option the file's value, listed last.
+    options: [...LOAD, 'MLOCK'],
     absentOption: en('option-default'),
     set: 'MLOCK',
-    shown: 'mlock',
+    shown: 'MLOCK',
   },
   {
     key: 'fit',
     label: en('preset-fit-to-vram'),
+    enable: 'read-only',
     hint: 'preset-fit-to-vram-hint',
     kind: 'checkbox',
     // 127: the box is checked when `fit` is absent (llama.cpp's default) and
@@ -240,6 +270,7 @@ const FIELDS: Row[] = [
   {
     key: 'fit-ctx',
     label: en('preset-fit-min-context'),
+    enable: 'read-only',
     hint: 'preset-fit-min-context-hint',
     kind: 'number',
     integer: true,
@@ -249,6 +280,7 @@ const FIELDS: Row[] = [
   {
     key: 'fit-target',
     label: en('preset-fit-free-vram'),
+    enable: 'read-only',
     hint: 'preset-fit-free-vram-hint',
     kind: 'text',
     unit: 'MiB',
@@ -258,6 +290,7 @@ const FIELDS: Row[] = [
   {
     key: 'device-draft',
     label: en('preset-draft-device'),
+    enable: 'model-draft',
     hint: 'preset-draft-device-hint',
     kind: 'device',
     absentOption: SAME,
@@ -267,6 +300,7 @@ const FIELDS: Row[] = [
   {
     key: 'n-gpu-layers-draft',
     label: en('preset-draft-gpu-layers'),
+    enable: 'model-draft',
     hint: 'preset-draft-gpu-layers-hint',
     kind: 'number',
     integer: true,
@@ -590,10 +624,29 @@ function fitShows(
 
 // ── One test per field (85, 86, 87, 88, 89, 107, 109) ──────────────────
 
+/** True when 2h.7's 175 to 178 leaves this row's controls enabled on a read
+ * that holds `values`: the seven `always` rows (175), and the draft pair while
+ * the read's `model-draft` is present and not empty (177). The Fit trio (kept
+ * read-only until 2h.8) and the two MoE rows (kept read-only until 2g, 178)
+ * are never enabled. The box of an editable number is enabled too (156);
+ * whether its input is, follows the box, which is `controlEnabled`. */
+function rowEnabled(f: Row, values: Record<string, string>): boolean {
+  const on =
+    f.enable === 'always' ||
+    (f.enable === 'model-draft' && (values['model-draft'] ?? '') !== '')
+  if (controlEnabled(f.label, values))
+    expect(
+      on,
+      `${f.key}: the shared list of the editable fields agrees (175)`,
+    ).toBe(true)
+  return on
+}
+
 test.each(FIELDS)(
-  '2e.107, 2e.87, 2h.158, 2e.85: $key is a $kind named by $label inside the Hardware card, shows the set value $set as the reply holds it, and every control is natively disabled',
+  '2e.107, 2e.87, 2h.158, 2h.175: $key is a $kind named by $label inside the Hardware card, shows the set value $set as the reply holds it, and its controls are natively enabled exactly as $enable says',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const on = rowEnabled(f, docOf(SET).values)
     const field = fieldOf(main, f.label)
     expect(
       cardOf(main, CARD).contains(field),
@@ -611,8 +664,8 @@ test.each(FIELDS)(
         f.shown,
       )
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
-      expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(box.disabled, `${f.key}: the box disabled`).toBe(!on)
+      expect(input.disabled, `${f.key}: the input disabled`).toBe(!on)
       // 87 as retargeted by 2h.158: every number of 107 is an integer key;
       // the ranged two take the numeric form, the layer counts none.
       expect(
@@ -624,7 +677,7 @@ test.each(FIELDS)(
       expect(box.checked, `${f.key}: ${f.set} shows ${f.shown}`).toBe(
         f.shownChecked,
       )
-      expect(box.disabled, `${f.key}: the checkbox disabled`).toBe(true)
+      expect(box.disabled, `${f.key}: the checkbox disabled`).toBe(!on)
     } else if (f.kind === 'select') {
       const select = selectOf(main, f.label)
       expect(optionTexts(select), `${f.key}: the options in order`).toEqual(
@@ -633,7 +686,7 @@ test.each(FIELDS)(
       expect(selectedText(select), `${f.key}: the mapping selects`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+      expect(select.disabled, `${f.key}: the select disabled`).toBe(!on)
     } else if (f.kind === 'device') {
       // 103 in 2e: the empty option, then the device of the file.
       const select = selectOf(main, f.label)
@@ -648,13 +701,13 @@ test.each(FIELDS)(
       expect(selectedTextExact(select), `${f.key}: and is selected`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+      expect(select.disabled, `${f.key}: the select disabled`).toBe(!on)
     } else {
       const input = inputOfField(main, f.label)
       expect(input.value, `${f.key}: the string of the file exactly`).toBe(
         f.shown,
       )
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(input.disabled, `${f.key}: the input disabled`).toBe(!on)
       expect(
         input.getAttribute('placeholder') ?? '',
         `${f.key}: no placeholder in 2e`,
@@ -669,8 +722,8 @@ test.each(FIELDS)(
     ]) {
       expect(
         (el as HTMLInputElement).disabled,
-        `${f.key}: ${el.tagName} disabled`,
-      ).toBe(true)
+        `${f.key}: ${el.tagName} ${on ? 'enabled' : 'disabled'}`,
+      ).toBe(!on)
       expect(
         el.getAttribute('aria-disabled'),
         `${f.key}: never aria-disabled`,
@@ -889,7 +942,8 @@ test('2e.107: Lazy tensors lists default, on, auto, off in that order, absent sh
     cleanup()
     vi.unstubAllGlobals()
   }
-  // The match is exact, unlike Load mode: the case and the spaces stand.
+  // The match is exact here and, since 2h.7's 180, for Load mode too: the case
+  // and the spaces stand.
   for (const value of ['Auto', ' auto ', 'AUTO+']) {
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'lazy-mode': value })),
@@ -908,7 +962,7 @@ test('2e.107: Lazy tensors lists default, on, auto, off in that order, absent sh
   }
 })
 
-test('2e.107: Load mode lists default, auto, none and the literals mmap, mlock, mmap+mlock, dio in that order, absent shows default, each mode selects its own option, a value matching one ignoring case and space selects it, and one matching none is an extra last option as written', async () => {
+test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap, mlock, mmap+mlock, dio in that order, absent shows default, each mode selects its own option, and the match is exact: MLOCK, " MLOCK ", MMAP+MLOCK and "  Dio  " are each one extra last option as written, never the mode they resemble', async () => {
   const f = FIELDS.find((x) => x.key === 'load-mode')!
   const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
   expect(optionTexts(selectOf(main, f.label)), 'the options of 107').toEqual(
@@ -932,34 +986,36 @@ test('2e.107: Load mode lists default, auto, none and the literals mmap, mlock, 
     cleanup()
     vi.unstubAllGlobals()
   }
-  // normalize_load_mode: the case and the surrounding space are ignored.
-  for (const [value, shown] of [
-    ['MLOCK', 'mlock'],
-    [' MLOCK ', 'mlock'],
-    ['MMAP+MLOCK', 'mmap+mlock'],
-    ['  Dio  ', 'dio'],
-  ] as [string, string][]) {
+  // 180: the match is EXACT, as llama.cpp's `--load-mode` and the manager's
+  // check compare it: the case and the surrounding space stand, so each of
+  // these is its own extra option, never the mode it resembles.
+  for (const value of ['MLOCK', ' MLOCK ', 'MMAP+MLOCK', '  Dio  ']) {
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'load-mode': value })),
     })
     const select = selectOf(m, f.label)
     expect(
       optionTexts(select),
-      `load-mode ${JSON.stringify(value)}: no extra option: it matches one`,
-    ).toEqual(LOAD)
+      `load-mode ${JSON.stringify(value)}: the seven options, then its own`,
+    ).toEqual([...LOAD, value.trim()])
     expect(
-      selectedText(select),
-      `load-mode ${JSON.stringify(value)}: selects ${shown}`,
-    ).toBe(shown)
+      selectedTextExact(select),
+      `load-mode ${JSON.stringify(value)}: its own option, as written`,
+    ).toBe(value)
     cleanup()
     vi.unstubAllGlobals()
   }
-  // The stub of 109: load-mode MLOCK shows the table's mlock.
+  // The stub of 109: load-mode MLOCK is the extra option MLOCK, listed last.
   const set = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const sel = selectOf(set.main, f.label)
+  expect(optionTexts(sel), 'the stub: the seven options, then MLOCK').toEqual([
+    ...LOAD,
+    'MLOCK',
+  ])
   expect(
-    selectedText(selectOf(set.main, f.label)),
-    'the stub: MLOCK selects mlock',
-  ).toBe('mlock')
+    selectedTextExact(sel),
+    'the stub: MLOCK selects MLOCK, not mlock (180)',
+  ).toBe('MLOCK')
   cleanup()
   vi.unstubAllGlobals()
   // A value no mode is: one extra last option, not the GUI's fallback to auto.
@@ -1145,17 +1201,37 @@ test('2e.87, 2h.158: the six number keys of 107 are all integer keys: the numeri
   }
 })
 
-test('2e.85: every control of the Hardware card is natively disabled, the Fit to VRAM checkbox included, while every About toggle of the card stays enabled', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (the Fit trio, the two MoE rows, and the draft pair while the read holds no model-draft), never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
+  const doc = docOf(SET)
+  const { main } = await loaded({ preset: () => reply(200, doc) })
   const controls = [
     ...cardOf(main, CARD).querySelectorAll<HTMLElement>(
       'input, select, textarea',
     ),
   ]
   expect(controls.length, 'the controls of 107').toBe(CONTROLS)
+  // Each row's own controls, and the state 2h.7 gives them.
+  const fromRows = FIELDS.flatMap((f) => {
+    const on = rowEnabled(f, doc.values)
+    const cells =
+      f.kind === 'number'
+        ? [
+            boxOf(groupBox(main, f.label)),
+            inputOf(groupBox(main, f.label), f.label),
+          ]
+        : [controlOf(main, f) as HTMLInputElement]
+    for (const el of cells)
+      expect(
+        el.disabled,
+        `${f.key} (${f.enable}): ${el.tagName} ${on ? 'enabled' : 'disabled'}`,
+      ).toBe(!on)
+    return cells
+  })
+  expect(fromRows.length, 'the rows of 107 are every control of the card').toBe(
+    CONTROLS,
+  )
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
-    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(true)
     expect(
       el.getAttribute('aria-disabled'),
       `${id}: never aria-disabled`,
@@ -1201,14 +1277,27 @@ test('2e.83: the Hardware card is a D5.2 Card inside the section of the h2, afte
   ).toEqual(cardHeadings())
 })
 
-test('2e.90: the Hardware card holds no note and no group: 107 gives no note between fields and no bold sub-heading, so no paragraph outside a Field, no h4 and no role=group', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the only paragraphs outside a Field are the two note rows of 2h.7 (this read has no model-draft): preset-moe-later before MoE CPU layers, preset-draft-file-off before Draft device', async () => {
+  const doc = docOf(SET)
+  const { main } = await loaded({ preset: () => reply(200, doc) })
   const card = cardOf(main, CARD)
+  const notes = [...card.querySelectorAll('p')].filter(
+    (p) => p.closest('.field') === null,
+  )
   expect(
-    [...card.querySelectorAll('p')].filter((p) => p.closest('.field') === null)
-      .length,
-    `${en(CARD)}: no note paragraph`,
-  ).toBe(0)
+    notes.map((p) => text(p)),
+    `${en(CARD)}: the note rows of 177 and 178, in reading order`,
+  ).toEqual([en('preset-moe-later'), en('preset-draft-file-off')])
+  const h3 = card.querySelector('h3')!
+  expect(before(h3, notes[0]!), '181: after the card h3').toBe(true)
+  expect(
+    before(notes[0]!, fieldOf(main, en('preset-moe-cpu-layers'))),
+    '178: the MoE note before MoE CPU layers',
+  ).toBe(true)
+  expect(
+    before(notes[1]!, fieldOf(main, en('preset-draft-device'))),
+    '177: the draft note before Draft device',
+  ).toBe(true)
   expect(card.querySelectorAll('h4').length, `${en(CARD)}: no h4`).toBe(0)
   expect(
     card.querySelectorAll('[role="group"]').length,
@@ -1216,21 +1305,30 @@ test('2e.90: the Hardware card holds no note and no group: 107 gives no note bet
   ).toBe(0)
 })
 
-test('2e.91: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), and no control of the Hardware card, its checkbox included', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
+  const doc = docOf(SET)
+  const { main } = await loaded({ preset: () => reply(200, doc) })
   expect(mainTabbable(main)).toEqual([
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldTabStops(docOf(SET).values),
+    ...fieldTabStops(doc.values),
     ...saveBarTabStops(),
   ])
-  // A disabled checkbox takes no focus, so the card offers only its fields'
-  // About toggles.
+  // A disabled control takes no focus, so a read-only row contributes only
+  // its About toggle; an enabled boxed row contributes its box and its input,
+  // an enabled select its own name.
+  const stops: string[] = []
+  for (const f of FIELDS) {
+    stops.push(`${en('field-about')} ${f.label}`)
+    if (!rowEnabled(f, doc.values)) continue
+    if (f.kind === 'number') stops.push(en('field-default'))
+    stops.push(f.label)
+  }
   expect(
-    mainTabbable(cardOf(main, CARD)).length,
-    `${en(CARD)}: only its About toggles take focus`,
-  ).toBe(FIELDS.length)
+    mainTabbable(cardOf(main, CARD)),
+    `${en(CARD)}: the About toggles and the enabled controls, in order`,
+  ).toEqual(stops)
 })
 
 // ── The strings (110) and what is out of 2e.4 (111) ────────────────────

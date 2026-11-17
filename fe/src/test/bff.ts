@@ -453,6 +453,11 @@ export const EN: Record<string, string> = {
   // Slice 2e.3b (criterion 124): the line naming how the file spells a flag.
   'preset-written-as': 'Written as {0}',
   'preset-written-empty': 'Written with no value',
+  // 2h.7's 177, 178, 182: the two note rows of the Hardware card.
+  'preset-draft-file-off':
+    'Draft device and Draft GPU layers apply only to a Draft model file, and this preset has none (Assets).',
+  'preset-moe-later':
+    'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.',
   'preset-hardware-config': 'Hardware config',
   'preset-gpu-layers': 'GPU layers',
   'preset-gpu-layers-hint':

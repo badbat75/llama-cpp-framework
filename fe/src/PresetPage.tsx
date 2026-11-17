@@ -5,10 +5,11 @@
 // Engine field, the Assets card as text and the cards of the settings
 // (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
-// card's controls and the Vision card's controls are editable, and the save
-// bar at the end of the settings writes what changed
+// card's controls, the Vision card's controls and the Hardware card's rows are
+// editable (the Fit trio and the two MoE rows of the last stay read-only), and
+// the save bar at the end of the settings writes what changed
 // (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5 and 2h.7,
-// criteria 130 to 149, 155 to 157, 164, 175 and 179, read by key in
+// criteria 130 to 149, 155 to 157, 164, 175 to 182, read by key in
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config.
 import {

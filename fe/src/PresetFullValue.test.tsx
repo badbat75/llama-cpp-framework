@@ -7,8 +7,10 @@
 // only for a disabled control): of the Resource / context card, now
 // editable, only Unified KV can be disabled with a value, and the KV cache and
 // Advanced cards are editable, so every example here is of a card that is
-// still read-only: the number, the text and the select are three fields of
-// the Hardware card (MoE cache, Fit free VRAM and Lazy tensors). The fields, their controls and
+// still read-only: the number, the text and the select are MoE cache and Fit
+// free VRAM of the Hardware card (178 keeps the MoE rows disabled, 2h.8 the
+// Fit trio) and the Draft K-cache type of the Speculative decoding card, the
+// select 2h.7's 175 left read-only with Lazy tensors. The fields, their controls and
 // how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
 // the route and the read are PresetPage.test.tsx. The colour and the wrap at
 // 320 px are the designer's review, not jsdom: criterion 118's style is pinned
@@ -50,7 +52,8 @@ const TEXT_21 = '{"MixedCaseX":TRUE}  '
 const SELECT_20 = 'mean-attention-pools'
 const SELECT_21 = 'Last-Attention-Pool-X'
 /** An unlisted select value past the limit, with spaces and capitals. The
- * select that carries it, Lazy tensors, is of a card that is still
+ * select that carries it, the Draft K-cache type of the Speculative decoding
+ * card, is of a card that is still
  * read-only; the brief's pooling stub has the same shape, but pooling sits
  * on the editable Embeddings card, which shows no line (134). */
 const SELECT_LONG = 'Last Attention Pool X  '
@@ -61,9 +64,12 @@ const NUM_PAD = ' 172032000 '
 const CTX = en('preset-context-size')
 const MOE = en('preset-moe-cache')
 /** The read-only card's text and select that carry the examples (134): Fit
- * free VRAM is the text `fit-target`, Lazy tensors the select `lazy-mode`. */
+ * free VRAM is the text `fit-target`, the Draft K-cache type the select
+ * `spec-draft-type-k` (2h.7's 175: the Hardware card's Lazy tensors and Load
+ * mode became editable, so 134 takes their line away; 2h.9 is the Speculative
+ * decoding card's own slice). */
 const FIT = en('preset-fit-free-vram')
-const LAZY = en('preset-lazy-tensors')
+const DRAFT_K = en('preset-draft-k-cache-type')
 /** The other editable number fields of the Resource / context card (2h.4). */
 const SLOT = en('preset-per-slot-context')
 const BATCH = en('preset-batch-size')
@@ -223,7 +229,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
   const { main } = await page({
     'moe-cache-mib': NUM_PAD,
     'fit-target': TEXT_21,
-    'lazy-mode': SELECT_LONG,
+    'spec-draft-type-k': SELECT_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
   // from a trimmed or normalised copy reads red.
@@ -235,7 +241,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
     ['moe-cache-mib', 'number', MOE, NUM_PAD],
     ['fit-target', 'text', FIT, TEXT_21],
-    ['lazy-mode', 'select', LAZY, SELECT_LONG],
+    ['spec-draft-type-k', 'select', DRAFT_K, SELECT_LONG],
   ]
   for (const [key, kind, label, value] of cases) {
     const line = lineOf(main, key)
@@ -252,9 +258,9 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
 })
 
 test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({ 'lazy-mode': SELECT_LONG })
-  const select = selectOf(main, LAZY)
-  const line = lineOf(main, 'lazy-mode')
+  const { main } = await page({ 'spec-draft-type-k': SELECT_LONG })
+  const select = selectOf(main, DRAFT_K)
+  const line = lineOf(main, 'spec-draft-type-k')
   // The extra option of an unlisted value carries the value as its text, and
   // the line repeats that text as written. A trimmed comparison can never
   // hold: SELECT_LONG ends in spaces, and the green 118 test above pins the
@@ -298,10 +304,10 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
   }
 })
 
-test('2e.118, 2h.160, 2h.170: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
+test('2e.118, 2h.160, 2h.170, 2h.175: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_9,
-    'lazy-mode': SELECT_LONG,
+    'spec-draft-type-k': SELECT_LONG,
     // The Resource / context card, every key past its limit: 160 says an
     // enabled control shows no line, so none of these has one. Parallel slots
     // is present, so its box is unticked and Unified KV is enabled too.
@@ -324,6 +330,12 @@ test('2e.118, 2h.160, 2h.170: one line per long field: each line is in its own f
     'reasoning-effort': SELECT_LONG,
     'reasoning-budget': NUM_9,
     'n-predict': NUM_9,
+    // The Hardware card, editable since 2h.7's 175 except the Fit trio (2h.8)
+    // and the MoE rows (178): its number's box is unticked by the key, so its
+    // input is enabled, and its three selects are always enabled.
+    'n-gpu-layers': NUM_9,
+    'lazy-mode': SELECT_LONG,
+    'load-mode': SELECT_LONG,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
   expect(lines.length, 'exactly the two long fields have a line').toBe(2)
@@ -340,13 +352,16 @@ test('2e.118, 2h.160, 2h.170: one line per long field: each line is in its own f
     'reasoning-effort',
     'reasoning-budget',
     'n-predict',
+    'n-gpu-layers',
+    'lazy-mode',
+    'load-mode',
   ])
     expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
   expect(owners.size, 'no field holds both lines').toBe(2)
   for (const [key, label] of [
     ['moe-cache-mib', MOE],
-    ['lazy-mode', LAZY],
+    ['spec-draft-type-k', DRAFT_K],
   ] as const) {
     const field = fieldOf(main, label)
     expect(
@@ -468,12 +483,12 @@ test('2e.119: a text value shows no line at 20 characters and its line at 21', a
 test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
   expect(SELECT_20.length, 'the select stub is 20 characters').toBe(20)
   expect(SELECT_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ 'lazy-mode': SELECT_20 })
-  expectNoLine(short.main, 'lazy-mode')
+  const short = await page({ 'spec-draft-type-k': SELECT_20 })
+  expectNoLine(short.main, 'spec-draft-type-k')
   cleanup()
-  const long = await page({ 'lazy-mode': SELECT_21 })
+  const long = await page({ 'spec-draft-type-k': SELECT_21 })
   expect(
-    lineOf(long.main, 'lazy-mode').textContent,
+    lineOf(long.main, 'spec-draft-type-k').textContent,
     'the 21-character line',
   ).toBe(SELECT_21)
 })
@@ -491,12 +506,12 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
     parallel: '8',
     'fit-target': '{"short":1}',
     'kv-unified': 'auto',
-    'lazy-mode': 'auto',
+    'spec-draft-type-k': 'auto',
   })
   expectNoLine(main, 'parallel')
   expectNoLine(main, 'fit-target')
   expectNoLine(main, 'kv-unified')
-  expectNoLine(main, 'lazy-mode')
+  expectNoLine(main, 'spec-draft-type-k')
 })
 
 // ── 120: accessibility ──────────────────────────────────────────────────
@@ -505,14 +520,14 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 const LONG = {
   'moe-cache-mib': NUM_9,
   'fit-target': TEXT_21,
-  'lazy-mode': SELECT_LONG,
+  'spec-draft-type-k': SELECT_LONG,
 }
 const SHORT = {
   'moe-cache-mib': NUM_8,
   'fit-target': TEXT_20,
-  'lazy-mode': SELECT_20,
+  'spec-draft-type-k': SELECT_20,
 }
-const LONG_KEYS = ['moe-cache-mib', 'fit-target', 'lazy-mode'] as const
+const LONG_KEYS = ['moe-cache-mib', 'fit-target', 'spec-draft-type-k'] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -561,8 +576,8 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
     [{ 'moe-cache-mib': '172032000' }, '172032000'],
     [{ 'moe-cache-mib': '17203200' }, null],
     [{}, null],
-    [{ 'lazy-mode': SELECT_21 }, SELECT_21],
-    [{ 'lazy-mode': SELECT_20 }, null],
+    [{ 'spec-draft-type-k': SELECT_21 }, SELECT_21],
+    [{ 'spec-draft-type-k': SELECT_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
       { 'fit-target': '{"enable_thinking":false}' },
