@@ -26,6 +26,7 @@ finishes. A tester working on 2h.N reads section 0, section 1 (2h.1) and section
 | 2h.2 | 142-150 | The PUT's keyed answers: 422 on a field, 409 and Reload, 404, 403, 503, 504 and time-out | 12 |
 | 2h.3 | 151-154 | Session ended (401) and revoked (403 `session-not-administrator`) during a save | 0 |
 | 2h.4 | 155-163 | Number fields (default box, integer checks, units, input mode) and Resource / context | 1 |
+| 2h.4b | 198b-198h | A form made clean drops its "Not saved" alert (both pages; user, 2026-11-17) | 0 |
 | 2h.5 | 164-169 | KV cache, Sampling overrides (decimal check), Advanced (JSON check) | 2 |
 | 2h.6 | 170-174 | Chat / reasoning | 0 |
 | 2h.7 | 175-182 | Vision, and Hardware but the Fit trio | 3 |
@@ -351,7 +352,8 @@ text `--muted`), and on the preset page read-only cards sit beside editable ones
 box disables its input. D5.2 "Disabled looks different from enabled" is the rule; CSS only, in
 `fe/src/index.css`, so the Server page changes with it (its ticked default boxes' inputs, Snapshot
 folder while Save on shutdown is off, the API key's Show while No key is ticked). No string, no
-markup, no behaviour changes. WCAG exempts inactive controls (1.4.3, 1.4.11): a usability rule, but
+markup, no behaviour changes. **Decided by the user (2026-11-17)**: only the control changes; a
+field's own label (outside a checkbox) keeps its full colour, `--text` (D5.2). WCAG exempts inactive controls (1.4.3, 1.4.11): a usability rule, but
 the value text is held to 4.5:1 anyway (`--muted` on `--surface`: 5.7:1 light, 6.9:1 dark). No new
 token.
 
@@ -384,6 +386,71 @@ token.
     `rgb(246, 247, 249)` light, `rgb(24, 27, 34)` dark, on a disabled input of a read-only card and of
     a ticked default box; `solid` on `--bg` for an enabled one; Chromium, Firefox, WebKit; light and
     dark; and forced colours in Chromium, where the dashed style must remain).
+
+## 2h.4b. A form made clean drops its "Not saved" alert
+
+Decided by the user (2026-11-17): after a failed save the bar keeps its alert; when the user then
+edits the form back to clean, an alert about the unsaved edits must go, on the preset page **and on
+the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 198b to 198h, after
+198a, so nothing collides. No string, no markup: one rule in the save bar's shared state
+(`SaveBar.tsx`, `useSaveAlert`), so both pages get it. "Clean" is D-b's (preset) and 01's 29
+(Server): every control back to the state it loaded in.
+
+198b. **Which alerts go.** The rule: **an alert with an answer button stays, an alert without one
+     goes.** At the moment the form turns from dirty to clean by an edit, the bar's alert is
+     removed when it is one of: `save-invalid`; `save-refused` and `save-refused-at`, whatever text
+     they carry (a check key's, `api-other`); `save-failed`; `save-timeout`;
+     `api-client-not-authorized`; `api-client-unavailable`; `api-no-preset-named` (preset page);
+     `instance-not-found` (Server page, 01's 37a). Each says the edits were not saved (or not
+     confirmed), and with no edits left there is nothing to save: Save is `aria-disabled` and the
+     status line is empty (30a). The alert does not come back when the form turns dirty again; the
+     next Save click shows its own (30a). Accepted: the 404 texts state a fact that is still true
+     (the preset or the instance is gone), and the timeout's file may hold what was sent; the next
+     save shows the 404 again, or meets 409 with Reload, so nothing is lost for good.
+198c. **Which alerts stay.** `session-ended` and `session-revoked` with **Sign in** (user: the
+     button is still the way back to a session). The 409 `api-preset-changed-elsewhere` /
+     `api-server-changed-elsewhere` with **Reload** (designer, 2026-11-17): a clean form still holds
+     the stale revision, so every later save meets 409 again, and the values on screen are not the
+     file's; the alert is the only place that says so, and Reload is still right. On a clean form
+     Reload reads at once, with no dialog (145, 01's 35). Its last clause ("your edits here will be
+     lost") no longer applies with no edits left; accepted, no new string. Keeping every button
+     alert also means no focused element ever disappears (198f).
+198d. **"Clean" by any route.** Typing a text back to its loaded text exactly; re-ticking or
+     unticking a checkbox (`jinja`, Fit to VRAM) or a default box back to its loaded state (with the
+     text it loaded with); picking a select's loaded option, the extra option of 132a included;
+     Bind to's rows back as loaded (Server page). **Discard** already clears every alert and every
+     field error (136, 01's 30 and 3.1): unchanged, it is not this rule. A 200 sets no alert, so it
+     is not concerned.
+198e. **The fields' own errors.** The edit that brings a field back to its loaded value is an edit,
+     so 142 and 01's 31 ("editing a field clears its error", also 34a for Bind to) have already
+     cleared that field's error: nothing new. A field the user did **not** edit keeps its error and
+     `aria-invalid`: a client check on a loaded value (162: `ctx-size` `abc`), or a server refusal of
+     an untouched value (144, 198a). It describes the value still on screen and in the file, which
+     the next Save meets again; only Discard clears it (198d).
+198f. **Focus and announcement.** Focus does not move: it stays on the control just edited, and
+     nothing focusable is removed (Reload and Sign in stay, 198c). The removal is not announced: no
+     new live message, no "No changes" text. Removing the `role="alert"` node announces nothing
+     (`aria-relevant` defaults to "additions text",
+     [WAI-ARIA 1.2](https://www.w3.org/TR/wai-aria-1.2/#aria-relevant)), and 4.1.3 asks only that a
+     status message reach the user without focus
+     ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)): the new state, "nothing to save",
+     follows the user's own edit and is exposed by the status line going empty and by Save's
+     `aria-disabled` when reached. **(preference: silence; the user just made the edit)**
+198g. **An answer that lands on a clean form** (edits made and undone while the PUT ran, 01's 33b
+     and its 3.1 ruling): an answer of 198b's list sets no alert (the form is clean, the status
+     empty); the session answers and the 409 set theirs as before. So the invariant holds: **a clean
+     form never shows a buttonless alert**.
+198h. **Tests** (no new string). Server page: Port `8080` loaded, typed `8081`, Save answered 503
+     `client-unavailable`: the alert shows; Port typed back to `8080`: no `role="alert"`, status
+     empty, Save `aria-disabled`, focus still on Port's input; typed `8082`: still no alert. Port
+     `abc`, Save: `save-invalid` and Port's error; `8080` typed: both gone. A 409, then Port back:
+     the alert and Reload stay; Reload reads at once (one `GET`, no dialog). A 401, then Port back:
+     `session-ended` and Sign in stay. Preset page: `jinja` toggled, 500 (`save-failed`), toggled
+     back: gone. `ctx-size` `abc` loaded and untouched, Embedding mode changed, Save: `save-invalid`
+     with Context size's error; Embedding mode back: the alert goes, Context size's error and
+     `aria-invalid` stay. A 422 `not-one-of` on `pooling`, then Pooling's loaded option picked: its
+     error and the alert gone. A 404 `no-preset-named`, then back: gone. A PUT held pending, the
+     edit undone, then a 500: no alert, status empty.
 
 ## 2h.5. KV cache, Sampling overrides, Advanced
 

@@ -305,8 +305,14 @@ authorization (`PLAN.md` step 10, point 4).
     dirty form replaces the previous alert: a click that fails the client checks shows `save-invalid`
     in place of whatever alert was there (31); a click that passes them clears the alert at once, at
     the click, not when the answer arrives, and the answer then shows its own (or none, on a 200).
-    Otherwise the alert stays until Discard, a confirmed Reload (35) or a successful sign-in in the
-    dialog (36); editing a field clears only that field's error (31), not the alert.
+    Otherwise the alert stays until Discard, a confirmed Reload (35), a successful sign-in in the
+    dialog (36), or (2026-11-17) the form turning clean by an edit when the alert has no button;
+    editing a field clears only that field's error (31), not the alert.
+    **Changed by 2h.4b** ([02h-preset-save.md](02h-preset-save.md) 198b to 198h, user, 2026-11-17):
+    an edit that makes the form clean removes an alert without an answer button (`save-invalid`,
+    `save-refused`, `save-failed`, `save-timeout`, the 403 / 503 texts, 37a's `instance-not-found`);
+    `session-ended`, `session-revoked` (Sign in) and the 409 (Reload) stay. Applies to 31, 34, 37,
+    37a and 47d here.
     ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
 31. **Save**, client checks first (5.4). Any failure: no request; each failing field shows its error
     (`aria-invalid`, `aria-describedby`); focus moves to the first failing control in DOM order; the

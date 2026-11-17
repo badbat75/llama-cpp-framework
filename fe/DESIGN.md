@@ -145,6 +145,10 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 - The sign-in form lets password managers and paste work: `autocomplete="username"` and
   `"current-password"`, no paste blocking, no puzzle
   ([3.3.8 Accessible Authentication (Minimum)](https://www.w3.org/TR/WCAG22/#accessible-authentication-minimum)).
+- **Plain HTTP on the LAN** (user, 2026-11-17): signing in is never blocked, but when
+  `window.isSecureContext` is `false` (neither HTTPS nor a loopback address) the sign-in form, on
+  its page and in the dialog, shows a static Notice before the fields saying the password is sent
+  unencrypted, described on the password field; nowhere else (`fe/briefs/03-insecure-sign-in.md`).
 
 ## 4. Layout and responsive rules
 
@@ -296,8 +300,8 @@ Each is one React component, reused by every page.
     it keeps its filled `--accent` look and its tick, and the input it disables turns flat and
     dashed beside it. A checkbox inactive by `aria-disabled` (a write in flight) shares the drawing
     but keeps `cursor: default` and its label colour: it turns back by itself in a moment. A field's
-    own label (outside a checkbox) stays `--text` **(preference)**: it names the setting, the control
-    carries the state. One set of rules in `index.css`, shared by the preset page and the Server page.
+    own label (outside a checkbox) stays `--text`: it names the setting, the control
+    carries the state (user, 2026-11-17). One set of rules in `index.css`, shared by the preset page and the Server page.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
@@ -328,7 +332,11 @@ Each is one React component, reused by every page.
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save
   runs both are `aria-disabled` (a save cannot be called back); the fields stay editable and what
   is typed meanwhile is never overwritten by the answer. Focus moves to an invalid field only after
-  its error is rendered, so it is announced with it.
+  its error is rendered, so it is announced with it. **A clean form shows no alert without a
+  button** (user, 2026-11-17; 02h 198b to 198h): an edit that makes the form clean removes a "Not
+  saved" alert (a check, a refusal, a failure, a timeout, a 403 / 404 / 503 text), silently and
+  without moving focus; an alert with its answer button (Sign in after a session ended, Reload after
+  a 409) stays. Field errors keep their own rule (an edit clears that field's; Discard clears all).
 - **State badge**: the instance state as text plus a shape: filled circle Running (`--success`),
   hollow circle Stopped (`--muted`), half circle Starting / Stopping (`--warning`), cross Failed
   (`--danger`), hollow circle for an unknown state. Never colour alone
