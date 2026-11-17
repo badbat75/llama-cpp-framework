@@ -1108,9 +1108,9 @@ keeps its folder.
   every instance it is in effect on) and `PUT /api/presets/{preset}/enabled` (the global switch), same
   bodies, revisions and errors; a resource refusal is 422 with `args` `[preset, instance]`; `running`
   is true when an instance the preset is in effect on is `active` or `activating`. The list rows gain
-  `assignments: [{instance, value}]`.
-- **An instance's Presets tab**: `GET /api/instances/{id}/presets`, the pool rows with this instance's
-  `value` (`none`, `inherit`, `on`, `off`) and `effective` (served by this instance after its next
+  `assignments` ((j) 5).
+- **An instance's Presets tab** (its exact shape in (j)): `GET /api/instances/{id}/presets`, the pool
+  rows with this instance's `value` (`none`, `inherit`, `on`, `off`) and `effective` (served by this instance after its next
   start); `PUT /api/instances/{id}/presets/{preset}` body `{"value": ...}`, 200 `{effective, running}`,
   the resource refusals 422, 404 `no-preset-named`, 404 `client-no-instance`.
 - New keys: `client-instance-exists`, `client-instance-running`, `client-instance-protected`,
@@ -1161,6 +1161,49 @@ instances", numbered as there):
   a port another program holds (Strata on 8580) shows at `start` as `failed`: a probe at create is racy.
 - (11) Answered by the pool: a new instance gets presets by assignment.
 
+**(j) Answers to the web UI's second round** (`fe/briefs/api-contract.md`, "Planned: nodes and
+instances", open points numbered as there; the architect, 2026-11-17). They refine (f):
+
+1. Accepted: `GET /api/instances/{id}/presets` answers `{"all": "inherit" | "none", "presets": [rows]}`;
+   a row's `value` is the explicit key only (`none` when only `*` covers it) and `"viaAll": <bool>`;
+   `PUT /api/instances/{id}/presets-all` `{"value": "inherit" | "none"}` sets `*` (the manager's
+   `SetAssignment` with preset `*`).
+2. Accepted: the pool row's fields plus `value`, `viaAll`, `effective`, in the pool's order
+   (`presets.ini` in file order, then `presets.ini.disabled`, an id in both listed once as on); an
+   administrator's session, moving the idle deadline as the pool list; the pool list's errors plus 404
+   `client-no-instance`.
+3. `off` has no other use than excluding one preset from `*`; `none` and `off` serve the same without
+   `*`. So the fe's three options per row are right (with `all` `inherit`: inherit, on, off; with
+   `none`: not assigned, inherit, on). The manager still accepts `off` in either state (no special
+   case), and narrowing `*` leaves explicit `off` keys, which serve nothing.
+4. Confirmed: with the global switch off, `inherit` is `effective` false and `on` true.
+5. Accepted: pool rows' `assignments` are `[{instance, value, viaAll, effective}]`, sorted by instance
+   id, listing every instance with an explicit key or covered by `*`; an instance with neither is not
+   listed.
+6. Accepted: the 200 of the preset save and of the switch gain `"restart": [ids]`, the instances where
+   the preset is in effect before or after the write and that are `active` or `activating`, sorted;
+   `running` is true when `restart` is not empty, or when a state could not be read (then `restart` is
+   `[]`). The assignment PUT's `running` is true only when that instance is running and its render
+   changed (the preset's `effective` differs before and after). The bff derives both from the
+   assignments and the pool it read before the write and the states after: no protocol change.
+7. Confirmed: the assignment PUT has no revision and never answers 409; the last write of one
+   (instance, preset) value wins, and the 200 carries the fresh `effective` whatever another tab
+   switched. It can still be 422 (a resource check) or 404.
+8. `preset-over-memory` `args` `[preset, instance, needed, available]`, the sizes whole MiB in decimal
+   digits (needed rounded up, available down); no `field`. The manager checks the instances in id
+   order and answers the first refusal, as every check answers one; nothing is written.
+9. Wanted later, not for the first slices: the instance's Presets reply gains `availableMiB` and each
+   row `needMiB` (the same estimate, the headers read per row and cached by path, size and mtime): slice
+   14 below.
+10. `preset-model-missing` `args` `[preset, instance, path]` (the first missing file, a shard
+    included), `field` `model` on a save; `preset-engine-mismatch` `[preset, instance, engine]` (the
+    instance's engine), no `field`.
+11. Accepted: `load-on-startup-over-max` `[count, max, instance]`, `load-on-startup-unlimited`
+    `[count, instance]`, the instance appended last. The GUI's and `pai`'s texts keep working:
+    `strings::fill` substitutes `{n}` by position and ignores an argument no text names
+    (`crates/core/src/strings.rs` `substitute`).
+12. `client-no-presets` `args` `[instance]`, as `client-instance-exists` names its id.
+
 **Slices**, each test first; Linux, the Windows code type-checked.
 
 1. **The render** (`pai-core`, pure): pool texts plus an instance's assignment section give
@@ -1186,6 +1229,7 @@ instances", numbered as there):
 11. **`CreateInstance`**, then **`RemoveInstance`** (two slices), with `NoPresets` at start.
 12. **The bff's `POST` and `DELETE /api/instances`.**
 13. **The web UI** (the web UI session, designer's brief first).
+14. **The estimate as a read** ((j) 9), when the web UI asks for it.
 
 Then the docs agent: AGENTS.md "Key conventions", "Through the manager", `crates/bff/README.md`,
 `installer/AGENTS.md`, `docs/build-packaging.md`, and Part 1 of this page.
