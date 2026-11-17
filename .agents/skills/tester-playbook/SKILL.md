@@ -1511,3 +1511,6 @@ Lessons only: the rules are in `AGENTS.md`.
   poll that is rescheduled in a React commit, so advance in 1 s steps; in a sampled loop the a11y
   role query is the cost, not the poll, so take the node once and read `textContent`; query a group
   by its `aria-labelledby` target, and scope queries to the group when labels repeat.
+- Web UI: a test that mounts the page more than about four times belongs in `it.each`, one mount per
+  row: two such loops passed Vitest's 5 s limit in full runs (fe session, 2h.4). Never leave a
+  half-converted test file: back it up before the first edit, not after.

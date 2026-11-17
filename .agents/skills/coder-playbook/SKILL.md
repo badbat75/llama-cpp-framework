@@ -992,3 +992,28 @@ Lessons only: the rules are in `AGENTS.md`.
   can set them. `HeaderMap::insert` replaces, which is what makes "exactly once" true whatever a route
   wrote. The two pairs sit in one `const [(HeaderName, HeaderValue); 2]`: both `from_static`s are
   `const fn` in http 1.5. A Content-Security-Policy, once the web UI agrees one, goes in this layer.
+- Web UI: the default-box mechanics (a ticked box means "absent from the file") are shared in
+   `fe/src/boxed.ts` (`Boxed`, `boxedFrom`, `boxText`, `tickBox`), which `ServerForm.tsx` uses too. A page
+   with boxes keeps `boxed: Record<string, Boxed>` beside the draft of the selects, and derives dirtiness
+   AND the PUT body from ONE `changed()`, so what is sent is exactly what is counted as changed. The number
+   range table of the preset page is `PresetCards.tsx`'s `INT_KEYS` keyed by INI key (its rows built with
+   `bounded()`), not a flag spread through the field table.
+- Web UI: the save's per-field checks run BEFORE the `!dirty` guard: the tester's test unticks the box of
+   a field absent from the file and clicks Save with nothing changed, expecting the mark, the bar's
+   `save-invalid` alert and no PUT.
+- Web UI: making a read-only card editable turns red every fixture that pinned it read-only. The shared
+   list `fe/src/test/presetCards.ts` spells the editable set (`EDITABLE_FIELDS`) and derives the tab stops
+   (`fieldTabStops`) and `isEditableField` from it, so the tab-order and "every control disabled" tests of
+   PresetCards1/2/3/4/5, PresetContent and PresetSave1 have ONE fix point there (an editable number field
+   is TWO tab stops, its box and its input); the full-value-line fixtures (PresetFullValue, PresetSave1
+   2h.134) must move to a field that stays read-only. Report the list, never edit the tests.
+- Web UI: two tests in one new file can be unsatisfiable together. `PresetSave6.test.tsx`'s 2h.155 asserts
+   the default box of an absent field (batch-size, kv-unified-per-slot, and kv-unified while parallel is
+   ticked) is ENABLED, while 2h.156 asserts that same input is `disabled` and empty with its box `checked`,
+   from the identical fixture. 156's wording governs; report the exact triple.
+- `npm --prefix fe test` lists failures as `FAIL  src/File.test.tsx > name` lines, so
+   `grep -E '^ FAIL  src'` is the red list and `grep -E "Tests +[0-9]+ (failed|passed)"` the summary.
+- The `edit` tool here intermittently fails to find text that `awk` shows verbatim: append with a shell
+   heredoc (`cat >> file <<'EOF'`) and check `git diff --stat`.
+- Web UI: a helper shared by two pages takes each caller's rule as a named parameter, never one page's
+  rule (fe session, 2h.4).
