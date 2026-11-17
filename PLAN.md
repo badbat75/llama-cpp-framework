@@ -974,8 +974,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     before a preset is applied to an instance the manager checks the instance's `ModelsMax`, the
     full-GPU memory estimate against all the node's GPUs (strict: refused even with `fit` or a CPU
     placement), the model file on the node and the engine's keys; other nodes later (step 14). The
-    navigation: node > instances, each with Server and Presets tabs, no top-level Models; `#/models`
-    goes to `default`'s presets. Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
+    navigation: node > instances, each with Server and Presets tabs, then Models (the shared pool)
+    under the node; `#/models` opens the pool as today (user, 2026-11-17, through the web UI session). Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
     `presets.ini`, assignments in `assignments.ini`, the manager renders `presets@<id>.ini` per
     instance), thirteen slices in its order, after the preset cards.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
