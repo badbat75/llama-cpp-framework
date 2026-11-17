@@ -983,7 +983,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     re-renders when `assignments.ini` appears on disk (an engine-only upgrade, or an rpm transaction whose
     framework %posttrans runs first, leaves `default` with `[*]` only: the deb order is safe); on Windows
     the instance services the manager creates have no dependency on `private-ai-manager` (set it at
-    creation); the docs (`installer/AGENTS.md` ~64 and ~92, `docs/build-packaging.md`) name two defaults; the e2e test of a failed render pins its log line only by parts; a server write re-renders every
+    creation); the docs (`installer/AGENTS.md` ~64 and ~92, `docs/build-packaging.md`) name two defaults; the e2e test of a failed render pins its log line only by parts;
+    seen at the install of ad525d3 (2026-11-17): apt configured the engine first, its postinst started
+    `llama.cpp@default` while the framework's upgrade had the manager stopped, so no manager job was queued,
+    `After=` did nothing, and the instance found no `presets@default.ini` yet (`NoPresets`); a restart once
+    the manager had rendered fixed it. It bites only while a render is missing (the first upgrade), so it
+    is noted, not planned (no migrations before the release); a server write re-renders every
     instance (only the written one would do); missing tests: a render failing after the pool write, the
     second instance over its max, the D-Bus and pipe `BadFileName` for `presets@<id>.ini`. Clients still
     cannot write a `[*]` section (decided 2026-11-17); a hand-edited `[*]` is rendered.
