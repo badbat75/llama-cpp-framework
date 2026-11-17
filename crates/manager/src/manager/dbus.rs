@@ -566,8 +566,10 @@ pub fn serve() -> zbus::Result<Connection> {
     );
     // The instances read `presets@<id>.ini`, so the pool on disk is rendered
     // before anyone can ask for it. A render that fails leaves the files as
-    // they are: the next write of a pool file renders again.
-    let _ = core.render_all();
+    // they are, names its instance in the log, and the next write of a pool
+    // file renders again.
+    let failures = core.render_failures();
+    core.report_render_failures(&failures);
     zbus::blocking::connection::Builder::system()?
         .serve_at(OBJECT_PATH, ManagerInterface::new(core))?
         .name(BUS_NAME)?

@@ -778,7 +778,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         std::fs::create_dir_all(&dir).map_err(io)?;
         write_served_file(&dir.join(name), file, contents, &*self.group).map_err(io)?;
-        self.render_all_locked()
+        // The write stands whatever the renders do: the render runs past a
+        // failure, and the caller is told the first failure in id order.
+        match self.render_all_locked().first() {
+            Some((_, err)) => Err(err.clone()),
+            None => Ok(()),
+        }
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
@@ -810,23 +815,45 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
-    /// Writes the render `presets@<id>.ini` of every instance from the pool,
-    /// the switched-off pool and `assignments.ini`. The manager calls it at
-    /// its start and after every write of a pool file.
-    pub fn render_all(&self) -> Result<(), ManagerError> {
+    /// Writes the render of every instance and answers with the instances
+    /// whose render did not land, in id order, each with the failure that
+    /// stopped it: empty when every render landed. The manager's start calls
+    /// this and hands the result to [`Self::report_render_failures`], so a
+    /// render that failed at the start is not silent.
+    pub fn render_failures(&self) -> Vec<(String, ManagerError)> {
         // The same lock a write holds, so a render never mixes with a write.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
         self.render_all_locked()
     }
 
+    /// One record per render that did not land, in the action log's own
+    /// format: the action is `render`, the target is the instance, the caller
+    /// and the principal are the bare `-` (this is the manager acting for
+    /// itself at its start, no one asked it), the outcome is the failure's
+    /// kind name, quoted as a failed guarded call quotes it. The line goes to
+    /// the log the service installed (on Linux stderr, which the unit sends
+    /// to the journal; on Windows the service's log file). A log, like the
+    /// action records: the manager's own words, not user text.
+    pub fn report_render_failures(&self, failures: &[(String, ManagerError)]) {
+        for (id, err) in failures {
+            self.action_log.record(&format!(
+                "action=\"render\" target={id:?} caller=- principal=- outcome={:?}",
+                error_kind(err)
+            ));
+        }
+    }
+
     /// The render of every instance, taken under the `writing` lock by
-    /// [`Self::render_all`] and by a write: a render is the pool as it is on
-    /// disk, so it belongs with the write that changed it.
-    fn render_all_locked(&self) -> Result<(), ManagerError> {
+    /// [`Self::render_failures`] and by a write: a render is the pool as it
+    /// is on disk, so it belongs with the write that changed it. A render
+    /// that cannot be written does not stop the rest: every instance is
+    /// rendered and every failure comes back, in id order.
+    fn render_all_locked(&self) -> Vec<(String, ManagerError)> {
         let dir = crate::paths::engine_config_dir();
         let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
         let (enabled, disabled) = (on_disk("presets.ini"), on_disk("presets.ini.disabled"));
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        let mut failures = Vec::new();
         for id in crate::paths::instance_ids() {
             let path = match crate::paths::instance_presets(&id) {
                 Some(path) => path,
@@ -835,9 +862,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // A render holds preset text alone, so it carries the preset
             // file's mode and needs no group of its own.
             let text = render_of(&id, &enabled, &disabled);
-            write_served_file(&path, &ConfigFile::Presets, &text, &*self.group).map_err(io)?;
+            if let Err(e) = write_served_file(&path, &ConfigFile::Presets, &text, &*self.group) {
+                failures.push((id, io(e)));
+            }
         }
-        Ok(())
+        failures
     }
 
     /// Whether `password` is `user`'s, and whether that user may configure:
@@ -1026,7 +1055,7 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
 
 /// The text of instance `id`'s render `presets@<id>.ini`, from the pool pair
 /// and the `assignments.ini` on disk: what the checks judge and what
-/// [`Manager::render_all`] writes.
+/// [`Manager::render_failures`] writes.
 fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
     let assignment =
         std::fs::read_to_string(crate::paths::engine_config_dir().join(ASSIGNMENTS_FILE))
@@ -3909,16 +3938,199 @@ pub(crate) fn manager_assignments_e2e() {
     );
 
     // ── The manager's start writes the render of every instance ──────────
-    // Last: the stub panics until the coder lands.
-    assert_eq!(
-        m.render_all(),
-        Ok(()),
+    assert!(
+        m.render_failures().is_empty(),
         "the renders are rewritten from what is on disk"
     );
     assert_eq!(
         read("presets@default.ini"),
         Some(render(&added, off, Some(section("default").as_str()))),
         "the start render agrees with the last write"
+    );
+}
+
+/// A render that cannot be written (its target is a directory, the disk is
+/// full): the render does not stop there and it is not silent. Every instance
+/// after it in id order is rendered, each failure comes back with its
+/// instance, and the manager's start reports each one, naming the instance.
+#[cfg(test)]
+pub(crate) fn manager_render_failure_e2e() {
+    use fakes::{FakeActionLog, FakeAuthority, FakeGroup, FakeResolver, FakeService};
+    use pai_core::assign::render;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let alice = Caller(":1.42".into());
+    let log = FakeActionLog::new();
+    let lines = log.lines.clone();
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_log(log);
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let listing = |dir: &std::path::Path| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    // Three instances: the id order the render walks is default, lan-2,
+    // lan-3, so lan-3 sits after the two renders broken below. Each section
+    // is told its own preset, and lan-3 is told a preset only the later pool
+    // has: its render says, in its own text, whether the render ran.
+    let assignments = "[default]\na = inherit\n\n[lan-2]\nb = inherit\n\n[lan-3]\nd = inherit\n";
+    let section = |id: &str| -> String {
+        pai_core::ini::text::section_text(assignments, id).unwrap_or_default()
+    };
+    let pool = "[a]\nmodel = /models/a.gguf\n\n[b]\nmodel = /models/b.gguf\n\n[c]\nmodel = /models/c.gguf\n";
+    // The pool a hand edit puts on disk, and the one a client write puts
+    // there: d arrives with the hand edit, e with the write.
+    let hand = format!("{pool}\n[d]\nmodel = /models/d.gguf\n");
+    let written = format!("{hand}\n[e]\nmodel = /models/e.gguf\n");
+
+    std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
+    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    for (id, port) in [("default", 8081u16), ("lan-2", 8082), ("lan-3", 8083)] {
+        let ini = format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n");
+        assert_eq!(
+            m.write_file(&alice, &format!("server@{id}.ini"), &ini, false),
+            Ok(()),
+            "{id} created"
+        );
+    }
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(pool, "", Some(section("lan-3").as_str()))),
+        "every instance rendered, before anything is broken"
+    );
+
+    // Two renders cannot land, each in the place of a file: the atomic write
+    // cannot rename a file onto a directory. A mode change is no fixture, the
+    // service runs as root and root ignores modes.
+    std::fs::write(sys.join("presets.ini"), &hand).expect("hand-edited pool");
+    for id in ["default", "lan-2"] {
+        let path = sys.join(format!("presets@{id}.ini"));
+        std::fs::rename(&path, sys.join(format!("presets@{id}.ini.held")))
+            .expect("move the render aside");
+        std::fs::create_dir(&path).expect("directory in a render's place");
+    }
+
+    // ── The start render: the instances after a failure are rendered ─────
+    let failures = m.render_failures();
+    let ids: Vec<String> = failures.iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(
+        ids,
+        vec!["default".to_string(), "lan-2".to_string()],
+        "one failure per instance whose render did not land, in id order, \
+         the first failure first: {failures:?}"
+    );
+    assert!(
+        failures
+            .iter()
+            .all(|(_, err)| matches!(err, ManagerError::Io(_))),
+        "a render that cannot be written is an I/O failure: {failures:?}"
+    );
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(&hand, "", Some(section("lan-3").as_str()))),
+        "lan-3, after both failures in id order, holds the pool on disk"
+    );
+    for id in ["default", "lan-2"] {
+        let path = sys.join(format!("presets@{id}.ini"));
+        assert!(
+            path.is_dir(),
+            "the directory that blocked {id} stands: {path:?}"
+        );
+        assert_eq!(
+            listing(&path),
+            Vec::<String>::new(),
+            "a render that failed writes nothing inside the directory that blocked it"
+        );
+    }
+    assert!(
+        !listing(&sys).iter().any(|name| name.contains(".tmp")),
+        "a failed render leaves no temp file: {:?}",
+        listing(&sys)
+    );
+
+    // ── The manager's start reports each failure, naming the instance ────
+    let before = records(&lines).len();
+    m.report_render_failures(&failures);
+    let recs = records(&lines);
+    let reported: Vec<&str> = recs[before..].iter().map(String::as_str).collect();
+    assert_eq!(
+        reported.len(),
+        2,
+        "one line per failed render: {reported:?}"
+    );
+    for id in ["default", "lan-2"] {
+        let named: Vec<&&str> = reported.iter().filter(|line| line.contains(id)).collect();
+        assert_eq!(named.len(), 1, "exactly one line names {id}: {reported:?}");
+        assert!(
+            named[0].contains("render") && named[0].contains("Io"),
+            "the line names the render and how it failed: {:?}",
+            named[0]
+        );
+    }
+    assert!(
+        reported.iter().all(|line| !line.contains("lan-3")),
+        "an instance that was rendered is not reported: {reported:?}"
+    );
+
+    // ── A write of a pool file: it lands, the render runs past a failure ─
+    // The caller is told the render failed, with the first failure in id
+    // order; the write itself stands, and every instance after the failures
+    // is rendered with it.
+    let answer = m.write_file(&alice, "presets.ini", &written, false);
+    assert_eq!(
+        answer,
+        Err(failures[0].1.clone()),
+        "the caller is told the first render failure"
+    );
+    assert_eq!(
+        read("presets.ini").as_deref(),
+        Some(written.as_str()),
+        "the write itself landed: the render that failed is not its failure"
+    );
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(&written, "", Some(section("lan-3").as_str()))),
+        "the write's render runs past both failures"
+    );
+
+    // ── A start where every render lands reports nothing ─────────────────
+    for id in ["default", "lan-2"] {
+        std::fs::remove_dir(sys.join(format!("presets@{id}.ini"))).expect("remove the blocker");
+    }
+    let clean = m.render_failures();
+    assert_eq!(
+        clean,
+        Vec::<(String, ManagerError)>::new(),
+        "with every render landing, nothing failed: {clean:?}"
+    );
+    let before_clean = records(&lines).len();
+    m.report_render_failures(&clean);
+    assert_eq!(
+        records(&lines).len(),
+        before_clean,
+        "a start with no failed render records nothing"
+    );
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(&written, "", Some(section("default").as_str()))),
+        "default's render lands once its path is free"
     );
 }
 
@@ -5644,6 +5856,22 @@ mod tests {
         ] {
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();
             assert!(!code.contains(old), "{file} still names {old}");
+        }
+    }
+
+    /// The manager's start reports the renders that did not land, on both
+    /// OSes: the failures reach the report, they are not thrown away.
+    #[test]
+    fn the_start_reports_the_renders_that_did_not_land() {
+        for (name, text) in [
+            ("dbus.rs", include_str!("dbus.rs")),
+            ("windows/entry.rs", include_str!("windows/entry.rs")),
+        ] {
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            assert!(
+                code.contains("report_render_failures"),
+                "{name}: the start reports the renders that did not land"
+            );
         }
     }
 

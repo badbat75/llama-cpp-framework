@@ -112,8 +112,10 @@ fn run_manager(report: Report) -> std::io::Result<()> {
     }
     // The instances read `presets@<id>.ini`: render the pool on disk before
     // the SCM starts an instance. A render that fails leaves the files as
-    // they are: the next write of a pool file renders again.
-    let _ = manager.render_all();
+    // they are, names its instance in the service's log, and the next write
+    // of a pool file renders again.
+    let failures = manager.render_failures();
+    manager.report_render_failures(&failures);
     pipe_server::serve(manager)
 }
 

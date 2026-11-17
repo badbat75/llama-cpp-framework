@@ -526,10 +526,18 @@ Lessons only: the rules are in `AGENTS.md`.
   renderer stays in this file and asks no strings file. The failure name of the outcome comes from
   the private `error_kind` match beside `error_reply` (the same words); `ok` and `refused` are bare,
   any other name is `{:?}`-quoted, and `format!("{:?}", s)` escaping a quote, a newline or a NUL is
-  what makes one record per call unforgeable.
+  what makes one record per call unforgeable. A record the manager writes for its own act (the start's
+  render report) keeps the same shape, with a literal `caller=- principal=-` and
+  `outcome={:?}` of `error_kind`: it does not call `record_action` (that one takes a `Result` and a
+  `Requester`).
 - An edit that inserts before a function must carry that function's whole body in BOTH oldString and
   newString: an oldString of the signature plus one body line and a newString of only the signature
   deleted that line, and the file read back broken.
+- The manager's `render_all_locked` runs on EVERY write (`check_and_write` renders the whole pool
+  after each write of a pool file, not only at the start), so a start-report test that counts log
+  lines must count from `before` and expect `report_render_failures` lines, never action records,
+  for the writes it made; `write_served_file` removes its temp on any failure, so a render blocked
+  by a directory leaves no `.tmp` and writes nothing inside the blocker.
 - The action log's sinks (`manager/action_log.rs`): `WriterLog::new` takes an `Arc<Mutex<W>>`, so a
   service entry writes `WriterLog::new(Arc::new(Mutex::new(std::io::stderr())))`; its record holds
   that lock across the write AND the flush (the tests count one flush per record), and keeps logging

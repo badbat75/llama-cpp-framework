@@ -41,6 +41,9 @@ fn data_root_e2e() {
     // ── Manager core: the per-instance presets renders and assignments.ini ─
     crate::manager::service::manager_assignments_e2e();
 
+    // ── Manager core: a render that cannot be written, and its report ─────
+    crate::manager::service::manager_render_failure_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]

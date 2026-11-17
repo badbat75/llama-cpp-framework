@@ -69,9 +69,12 @@ Lessons only: the rules are in `AGENTS.md`.
   report the per-command `exit=$?` lines, not the chain's. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
   A clean rerun IS fast (0.6 s for every pai-bff target on 24 cores, deps cached), and its own log is the
-  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` (not `Checking`), and cargo
-  prints that line ONCE for the whole package, so a count of 1 covers the lib test, the bins and every
-  `tests/*.rs` binary (pai-bff: 15 of them). Cargo indents its status lines (`   Compiling pai-bff ...`), so
+  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` when it builds the package's
+  own artifacts from scratch, and `Checking <pkg>` when a `cargo test` of the same sources left them
+  cached (checked: pai-manager, `Checking pai-manager` + `Finished in 0.98s`, exit 0: a `Checking` line
+  is the real check, not a replay). cargo prints that line ONCE for the whole package, so a count of 1
+  covers the lib test, the bins and every `tests/*.rs` binary (pai-bff: 15 of them; pai-manager: 2
+  binaries, the 259-test lib, which holds `tests::data_root_e2e`, and a 0-test bin). Cargo indents its status lines (`   Compiling pai-bff ...`), so
   grep `Compiling <pkg>` with NO `^`: an anchored count is 0 on a run that really compiled, and `grep -c`
   exiting 1 reads as a failure of the chain. The next plain `cargo test` replays the compile
   (`Finished ... in 0.05s`, no `Compiling`) yet its own `Running <bin>` and per-test `ok` lines prove the
@@ -1078,6 +1081,17 @@ Lessons only: the rules are in `AGENTS.md`.
 - A token holds the local groups (aliases) its user was in at logon, as SIDs: a check by group name
   looks the SID up (`LookupAccountNameW`) and compares it whole; a change of membership counts at the
   next logon. Unverified (fetch failed): UAC sets only the admin groups deny-only, a custom group stays enabled.
+- The manager's render (`presets@<id>.ini`): a render that cannot be written is made by RENAMING the
+  rendered file away (`<name>.held`) and putting a DIRECTORY in its place, so the atomic write's rename
+  fails `EISDIR`; `create_dir_all` on the file that is already there is `AlreadyExists`, not a fixture.
+  Tell the instance that sits AFTER the broken ones (in `assignments.ini`) a preset only the NEW pool has:
+  the red then shows the missing `[d]`, not a one-trailing-newline diff. Pin the start's wiring with the
+  house source lint (`include_str!("dbus.rs")` + `split("#[cfg(test)]")` over the production half): require
+  the report's name and forbid the discarding line (`let _ = core.render_all()`) as a second needle.
+- A probe that comments out the earlier asserts of a phase must KEEP every `let` the later asserts read
+  (`let before`, `let reported`): commenting a binding makes the probe's red E0425, not an assertion. And
+  re-take the `.bak` in the right order: the probe writes the real file FROM the bak, so an `edit` applied
+  to the real file after a probe lands in the probe's copy (restore, then re-apply the edit).
 
 ## Packaging, installers, CI (xtask)
 
