@@ -1,0 +1,964 @@
+// The render of one instance's `presets@<id>.ini`: the pool (the pair
+// `presets.ini` and `presets.ini.disabled`) cut to the presets one instance is
+// given by its section of `assignments.ini`.
+//
+// The manager owns that file: it renders it after every write of a pool file,
+// of an assignment and of an instance's create or remove, and renders every
+// instance again at its own start. The render here is pure: texts in, text out.
+
+use crate::ini;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The text of one instance's `presets@<id>.ini`.
+///
+/// - `enabled`: the text of `presets.ini`, the pool's switched-on presets
+/// - `disabled`: the text of `presets.ini.disabled`, the switched-off ones
+/// - `assignment`: the instance's section of `assignments.ini` as
+///   `ini::text::section_text` hands it (its `[<id>]` header line included),
+///   or `None` when the instance has no section. One key per assigned preset
+///   id: `inherit` follows the global switch, `on` and `off` are the explicit
+///   override. The key `*` assigns every preset of the pool, and an explicit
+///   key wins over it. A header of its own is optional: a bare list of key
+///   lines is the assignment. A key whose value is none of those three words
+///   (a hand-edited `none`) is an absent key.
+///
+/// The pool's global `[*]` section comes first, always (assigned or not, and
+/// taken from the file that holds it), then every assigned preset that is in
+/// effect on, in the pool's own order (`enabled` first, then `disabled`), each
+/// section copied byte for byte from the file that holds it. A preset with no
+/// key and no `*` is not assigned, so it is not rendered; an assigned id the
+/// pool does not hold renders nothing, so an instance with no assignment
+/// section is given `[*]` alone. `*` is never a preset id, so it never becomes
+/// a section of its own. One id is one preset, so an id the two pool files
+/// both hold, or written twice in one file, in any letter case, is rendered
+/// once, from the first copy: `presets.ini` before `presets.ini.disabled`.
+///
+/// The file opens with the one comment line saying it is generated, in the
+/// ending style of `enabled`, or of `disabled` when `enabled` is empty
+/// (`ini::detect_eol`). The copied sections keep their own bytes, and a
+/// section whose last line has no ending of its own, the last one of a file
+/// left unterminated, is given the render's, so the section that follows it
+/// opens a line of its own.
+pub fn render(enabled: &str, disabled: &str, assignment: Option<&str>) -> String {
+    // The ending style comes from the pool's file that holds text, so an empty
+    // `presets.ini` takes the style of the file that has the pool.
+    let eol = if enabled.is_empty() {
+        ini::detect_eol(disabled)
+    } else {
+        ini::detect_eol(enabled)
+    };
+    let keys = assigned(assignment);
+    let star = keys.get("*").map(String::as_str);
+    let mut out = format!("{HEADER}{eol}");
+    for pool in [enabled, disabled] {
+        if let Some(text) = ini::text::section_text(pool, "*") {
+            push_section(&mut out, &text, eol);
+            break;
+        }
+    }
+    // The ids rendered so far, lowered: the reader finds a section ignoring the
+    // letter case, so a second copy of an id is the same preset and renders
+    // nothing.
+    let mut rendered: BTreeSet<String> = BTreeSet::new();
+    for (in_enabled, pool) in [(true, enabled), (false, disabled)] {
+        // The global switch of this file's presets: the file that holds them
+        // (`enabled` is the switched-on half of the pool), with `on` and `off`
+        // under `*` replacing it for every preset of the pool.
+        let global = match star {
+            Some("on") => true,
+            Some("off") => false,
+            _ => in_enabled,
+        };
+        for id in pool_ids(pool) {
+            let on = match keys.get(&id) {
+                // The preset's own key wins over `*`; `inherit` follows the
+                // global switch.
+                Some(value) => is_on(value, global),
+                None => keys.contains_key("*") && global,
+            };
+            if on && rendered.insert(id.to_lowercase()) {
+                if let Some(text) = ini::text::section_text(pool, &id) {
+                    push_section(&mut out, &text, eol);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A copied section, and the render's line ending when the section's text ends
+/// in the middle of a line (the last section of a file with no final break), so
+/// the section written after it opens a line of its own.
+fn push_section(out: &mut String, text: &str, eol: &'static str) {
+    out.push_str(text);
+    if !text.ends_with('\n') {
+        out.push_str(eol);
+    }
+}
+
+/// The header line of the generated file. Text written into a file, not shown
+/// to anyone, so it stays here rather than in a strings file.
+const HEADER: &str = "; Generated by pai-manager from the preset pool: do not edit.";
+
+/// One assignment value as a switch: `on` and `off` as the manager writes them,
+/// `inherit` as the global one. Only these three reach here, `assigned` drops
+/// the rest.
+fn is_on(value: &str, global: bool) -> bool {
+    match value {
+        "on" => true,
+        "off" => false,
+        _ => global,
+    }
+}
+
+/// The keys of an assignment section, exact case, its values read the way
+/// `ini::parse_sections` reads them (trimmed, an inline comment dropped). No
+/// section, no keys. A key whose value is not one of the three words the
+/// manager writes is dropped: it assigns nothing, as if it were absent.
+fn assigned(assignment: Option<&str>) -> BTreeMap<String, String> {
+    let Some(text) = assignment else {
+        return BTreeMap::new();
+    };
+    // A header of its own in front of the text: `parse_sections` keeps the
+    // lines before the first header nowhere, so a key list written without one
+    // (a hand-edited file) reads as nothing. The section the text has, if any,
+    // is the LAST one and holds its keys.
+    let sections = ini::parse_sections(&format!("[keys]\n{text}"));
+    let mut keys = sections
+        .last()
+        .map(|section| section.keys.clone())
+        .unwrap_or_default();
+    keys.retain(|_, value| matches!(value.as_str(), "inherit" | "on" | "off"));
+    keys
+}
+
+/// The preset ids of a pool file, in the file's own order, `[*]` aside.
+fn pool_ids(pool: &str) -> Vec<String> {
+    ini::parse_sections(pool)
+        .into_iter()
+        .map(|section| section.id)
+        .filter(|id| id != "*")
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render;
+    use crate::ini;
+
+    /// Both ending styles a pool file can have.
+    const EOLS: [&str; 2] = ["\n", "\r\n"];
+
+    /// A file's text: `lines` joined by `eol`, the file ending with one.
+    fn file_of(lines: &[&str], eol: &str) -> String {
+        let mut out = String::new();
+        for line in lines {
+            out.push_str(line);
+            out.push_str(eol);
+        }
+        out
+    }
+
+    /// The pool that is switched on. Its comments, key order, compact
+    /// spellings and indentation are what the render must keep byte for byte.
+    fn pool_on(eol: &str) -> String {
+        file_of(
+            &[
+                "; presets.ini, the pool's switched-on presets",
+                "[*]",
+                "temp = 0.7",
+                "n-gpu-layers = 99",
+                "",
+                "; the alpha preset",
+                "[alpha]",
+                "model = /models/alpha.gguf",
+                "ctx-size=8192",
+                "    temp = 0.2 ; an inline note",
+                "",
+                "[beta]",
+                "model = /models/beta.gguf",
+            ],
+            eol,
+        )
+    }
+
+    /// The pool that is switched off.
+    fn pool_off(eol: &str) -> String {
+        file_of(
+            &[
+                "; presets.ini.disabled, the pool's switched-off presets",
+                "[gamma]",
+                "model = /models/gamma.gguf",
+                "load-on-startup = false",
+            ],
+            eol,
+        )
+    }
+
+    /// A pool with `beta` before `alpha` and no `[*]`: what the render orders
+    /// by, and the shape with no global section.
+    fn pool_no_global(eol: &str) -> String {
+        file_of(
+            &[
+                "[beta]",
+                "model = /models/beta.gguf",
+                "",
+                "[alpha]",
+                "model = /models/alpha.gguf",
+            ],
+            eol,
+        )
+    }
+
+    /// `presets.ini` of a pool where `alpha` sits in BOTH files.
+    fn pool_both_on(eol: &str) -> String {
+        file_of(
+            &[
+                "; presets.ini, the pool's switched-on presets",
+                "[*]",
+                "temp = 0.7",
+                "",
+                "[alpha]",
+                "model = /models/alpha.gguf",
+                "ctx-size = 8192",
+                "",
+                "[beta]",
+                "model = /models/beta.gguf",
+            ],
+            eol,
+        )
+    }
+
+    /// `presets.ini.disabled` of the same pool: the same `alpha`, switched off,
+    /// with its own text so the render's copy is told apart from the one in
+    /// `presets.ini`.
+    fn pool_both_off(eol: &str) -> String {
+        file_of(
+            &[
+                "; presets.ini.disabled, the pool's switched-off presets",
+                "[alpha]",
+                "; the alpha preset, switched off",
+                "model = /models/alpha-off.gguf",
+                "",
+                "[gamma]",
+                "model = /models/gamma.gguf",
+            ],
+            eol,
+        )
+    }
+
+    /// `file_of` with the last line's ending removed: a file that ends in the
+    /// middle of a line, as a hand-edited one does.
+    fn file_open_end(lines: &[&str], eol: &str) -> String {
+        file_of(lines, eol)
+            .trim_end_matches(['\r', '\n'])
+            .to_string()
+    }
+
+    /// A section's verbatim text in `pool` (comments, key order, spacing), the
+    /// way the render is required to copy it.
+    fn section(pool: &str, id: &str) -> String {
+        ini::text::section_text(pool, id).unwrap_or_default()
+    }
+
+    /// A render split into its header (every line before the first section
+    /// header) and the sections that follow.
+    fn parts(render: &str) -> (String, String) {
+        let mut head = String::new();
+        for line in render.split_inclusive('\n') {
+            let t = line.trim();
+            if t.starts_with('[') && t.ends_with(']') {
+                return (head.clone(), render[head.len()..].to_string());
+            }
+            head.push_str(line);
+        }
+        (render.to_string(), String::new())
+    }
+
+    /// The ids of the section headers of `text`, in order.
+    fn headers(text: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| {
+                let t = line.trim();
+                t.strip_prefix('[')
+                    .and_then(|rest| rest.strip_suffix(']'))
+                    .map(|name| name.trim().to_string())
+            })
+            .collect()
+    }
+
+    /// Pins `body` to be exactly the sections `want` (each a pool text and a
+    /// section id), in this order: every one of them sits in `body` byte for
+    /// byte (its line breaks included, its trailing ones not), in order, and
+    /// `body` holds no other section. Blank lines the render puts between two
+    /// sections are its own.
+    fn assert_sections(body: &str, want: &[(&str, &str)], eol: &str) {
+        let mut ids: Vec<String> = Vec::new();
+        let mut from = 0;
+        for (pool, id) in want {
+            let text = section(pool, id);
+            assert!(
+                !text.is_empty(),
+                "the fixture pool holds no [{id}] ({eol:?})"
+            );
+            let kept = text.trim_end_matches(['\r', '\n']);
+            let at = body[from..].find(kept).unwrap_or_else(|| {
+                panic!("the section [{id}] is not in the render byte for byte ({eol:?}): {body:?}")
+            });
+            from += at + kept.len();
+            ids.push((*id).to_string());
+        }
+        assert_eq!(
+            headers(body),
+            ids,
+            "the render's sections are not these, in this order ({eol:?})"
+        );
+    }
+
+    /// The render's header: comments on a line of their own, saying the file is
+    /// generated.
+    fn assert_generated_header(head: &str, eol: &str) {
+        assert!(
+            head.ends_with('\n'),
+            "the header is not its own line ({eol:?}): {head:?}"
+        );
+        assert!(
+            head.to_lowercase().contains("generated"),
+            "the header does not say the file is generated ({eol:?}): {head:?}"
+        );
+        for line in head.lines() {
+            let t = line.trim();
+            assert!(
+                t.is_empty() || t.starts_with(';'),
+                "the header is not a comment ({eol:?}): {line:?}"
+            );
+        }
+    }
+
+    /// The header's ending style: the render has one style, the pool's, no CR
+    /// in an LF render and no bare LF in a CRLF one.
+    fn assert_one_ending_style(render: &str, eol: &str) {
+        if eol == "\n" {
+            assert!(
+                !render.contains('\r'),
+                "an LF pool rendered with a CR: {render:?}"
+            );
+        } else {
+            assert_eq!(
+                render.matches("\r\n").count(),
+                render.matches('\n').count(),
+                "a CRLF pool rendered with a bare LF line ending: {render:?}"
+            );
+        }
+    }
+
+    /// Every section header of `body` opens a line of its own: the character in
+    /// front of the `[` that opens it is a line break (or the body starts).
+    fn assert_headers_own_lines(body: &str, ids: &[&str], eol: &str) {
+        for id in ids {
+            let needle = format!("[{id}]");
+            let at = body.find(&needle).unwrap_or_else(|| {
+                panic!("the render holds no {needle} header ({eol:?}): {body:?}")
+            });
+            assert!(
+                at == 0 || body[..at].ends_with('\n'),
+                "the {needle} header does not start a line ({eol:?}): {body:?}"
+            );
+        }
+    }
+
+    /// The section's text sits in `body` and its last line ENDS there: it is
+    /// not glued to the section that follows it, so the section's last value
+    /// stays one value.
+    fn assert_section_ends_at_break(body: &str, pool: &str, id: &str, eol: &str) {
+        let text = section(pool, id);
+        let kept = text.trim_end_matches(['\r', '\n']);
+        let at = body.find(kept).unwrap_or_else(|| {
+            panic!("the section [{id}] is not in the render byte for byte ({eol:?}): {body:?}")
+        });
+        let after = &body[at + kept.len()..];
+        assert!(
+            after.is_empty() || after.starts_with("\r\n") || after.starts_with('\n'),
+            "the [{id}] section is glued to what follows it ({eol:?}): {body:?}"
+        );
+    }
+
+    /// The render of a pool where one id sits in BOTH files: the sections
+    /// `want` in order, with that id rendered ONCE, from `presets.ini` (never
+    /// the copy switched off in `presets.ini.disabled`).
+    fn assert_alpha_once(body: &str, want: &[(&str, &str)], off: &str, eol: &str) {
+        assert_sections(body, want, eol);
+        assert_eq!(
+            headers(body).iter().filter(|id| *id == "alpha").count(),
+            1,
+            "the id in both files of the pool is not rendered exactly once ({eol:?}): {:?}",
+            headers(body)
+        );
+        let off_alpha = section(off, "alpha");
+        let off_alpha = off_alpha.trim_end_matches(['\r', '\n']);
+        assert!(
+            !body.contains(off_alpha),
+            "the copy switched off in presets.ini.disabled is in the render ({eol:?}): {body:?}"
+        );
+    }
+
+    /// `* = inherit`: the pool's `[*]` section and every preset the global
+    /// switch has on, nothing switched off.
+    #[test]
+    fn the_render_star_inherit_follows_the_global_switch() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = inherit"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha"), (&on, "beta")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `* = off` drops every globally-on preset; the explicit `on` survives.
+    #[test]
+    fn the_render_star_off_keeps_only_the_explicit_on() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = off", "beta = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "beta")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// An explicit `off` wins over `* = on`, which reaches into the
+    /// switched-off file.
+    #[test]
+    fn the_render_explicit_off_wins_over_the_star() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on", "beta = off"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha"), (&off, "gamma")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `on` renders a preset that sits only in `presets.ini.disabled`, copied
+    /// byte for byte from that file.
+    #[test]
+    fn the_render_override_on_renders_a_preset_only_in_the_disabled_file() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = inherit", "gamma = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(
+                &body,
+                &[(&on, "*"), (&on, "alpha"), (&on, "beta"), (&off, "gamma")],
+                eol,
+            );
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `inherit` on a named key follows the global switch: on from
+    /// `presets.ini`, absent from `presets.ini.disabled`.
+    #[test]
+    fn the_render_inherit_of_a_named_key_follows_the_global_switch() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["alpha = inherit", "gamma = inherit"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// The section text arrives as `ini::text::section_text` hands it: its
+    /// `[<id>]` header line, comment lines and inline comments carry no
+    /// assignment.
+    #[test]
+    fn the_render_assignment_comments_and_inline_comments_are_ignored() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(
+                &[
+                    "[default]",
+                    "; the switch of alpha is explicit",
+                    "alpha = on ; set by hand",
+                    "",
+                    "gamma = off",
+                ],
+                eol,
+            );
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// No assignment section, an empty one, one holding only a comment, one
+    /// switching a preset off: the instance is given `[*]` alone.
+    #[test]
+    fn the_render_no_assignment_section_renders_only_the_global_section() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            for case in [
+                None,
+                Some(""),
+                Some("[default]\n; nothing assigned\n"),
+                Some("[default]\nbeta = off\n"),
+            ] {
+                let (head, body) = parts(&render(&on, &off, case));
+                assert_sections(&body, &[(&on, "*")], eol);
+                assert_generated_header(&head, eol);
+            }
+        }
+    }
+
+    /// An assigned id the pool does not hold renders nothing: alone it leaves
+    /// the render with no section at all, beside a `*` it adds none.
+    #[test]
+    fn the_render_assigned_id_missing_from_the_pool_renders_nothing() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on", "zeta = inherit"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(
+                &body,
+                &[(&on, "*"), (&on, "alpha"), (&on, "beta"), (&off, "gamma")],
+                eol,
+            );
+            assert_generated_header(&head, eol);
+
+            let assignment = file_of(&["zeta = on", "alpha = inherit"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `[*]` is first whatever the pool looks like: last in the file, or only
+    /// in the switched-off one.
+    #[test]
+    fn the_render_global_section_is_first() {
+        for eol in EOLS {
+            let late = file_of(
+                &[
+                    "[alpha]",
+                    "model = /models/alpha.gguf",
+                    "",
+                    "[*]",
+                    "temp = 0.7",
+                ],
+                eol,
+            );
+            let empty = String::new();
+            let assignment = file_of(&["* = inherit"], eol);
+            let (head, body) = parts(&render(&late, &empty, Some(&assignment)));
+            assert_eq!(
+                headers(&body).first().map(String::as_str),
+                Some("*"),
+                "the global section is not first ({eol:?}): {:?}",
+                headers(&body)
+            );
+            assert_sections(&body, &[(&late, "*"), (&late, "alpha")], eol);
+            assert_generated_header(&head, eol);
+
+            let on = file_of(&["[alpha]", "model = /models/alpha.gguf"], eol);
+            let off = file_of(
+                &[
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[gamma]",
+                    "model = /models/gamma.gguf",
+                ],
+                eol,
+            );
+            let assignment = file_of(&["alpha = inherit", "gamma = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&off, "*"), (&on, "alpha"), (&off, "gamma")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// A pool with no `[*]` section: the render is the assigned presets, in the
+    /// pool's order (`enabled` first, then `disabled`), not sorted.
+    #[test]
+    fn the_render_follows_the_pool_order_not_the_key_order() {
+        for eol in EOLS {
+            let on = pool_no_global(eol);
+            let off = pool_off(eol);
+            let empty = String::new();
+            let assignment = file_of(&["* = inherit"], eol);
+            let (head, body) = parts(&render(&on, &empty, Some(&assignment)));
+            assert_sections(&body, &[(&on, "beta"), (&on, "alpha")], eol);
+            assert_generated_header(&head, eol);
+
+            let assignment = file_of(&["beta = inherit", "gamma = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "beta"), (&off, "gamma")], eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `*` is never a preset id, so it never becomes a section: on a pool that
+    /// holds no preset it renders no section at all, and on a pool that has a
+    /// `[*]` section it renders that one, once.
+    #[test]
+    fn the_render_star_never_becomes_a_preset_section() {
+        for eol in EOLS {
+            let off = pool_off(eol);
+            let empty = String::new();
+            let bare = file_of(&["; presets.ini, no preset in the pool yet"], eol);
+            let assignment = file_of(&["* = on"], eol);
+            let (head, body) = parts(&render(&bare, &empty, Some(&assignment)));
+            assert_eq!(
+                headers(&body),
+                Vec::<String>::new(),
+                "the key `*` rendered a section of its own ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+
+            let on = pool_on(eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_eq!(
+                headers(&body).iter().filter(|id| *id == "*").count(),
+                1,
+                "the global section rendered more than once ({eol:?}): {:?}",
+                headers(&body)
+            );
+            assert!(
+                body.contains(section(&on, "*").trim_end_matches(['\r', '\n'])),
+                "the global section is not in the render ({eol:?})"
+            );
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// The pool's ending style is the render's: no CR in an LF render, no bare
+    /// LF in a CRLF one.
+    #[test]
+    fn the_render_keeps_the_pools_ending_style() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on"], eol);
+            let got = render(&on, &off, Some(&assignment));
+            assert!(
+                got.contains(section(&on, "alpha").trim_end_matches(['\r', '\n'])),
+                "the alpha section is not in the render ({eol:?})"
+            );
+            if eol == "\n" {
+                assert!(
+                    !got.contains('\r'),
+                    "an LF pool rendered with a CR: {got:?}"
+                );
+            } else {
+                assert_eq!(
+                    got.matches("\r\n").count(),
+                    got.matches('\n').count(),
+                    "a CRLF pool rendered with a bare LF line ending: {got:?}"
+                );
+            }
+        }
+    }
+
+    /// One id in both files of the pool is ONE preset: when it is on it is
+    /// rendered once, from `presets.ini` (the file that holds it on), under its
+    /// own `on`, under `* = on` and under `inherit`.
+    #[test]
+    fn the_render_an_id_in_both_pool_files_is_rendered_once_from_the_enabled_one() {
+        for eol in EOLS {
+            let (on, off) = (pool_both_on(eol), pool_both_off(eol));
+
+            let assignment = file_of(&["alpha = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_alpha_once(&body, &[(&on, "*"), (&on, "alpha")], &off, eol);
+            assert_generated_header(&head, eol);
+
+            let assignment = file_of(&["* = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_alpha_once(
+                &body,
+                &[(&on, "*"), (&on, "alpha"), (&on, "beta"), (&off, "gamma")],
+                &off,
+                eol,
+            );
+            assert_generated_header(&head, eol);
+
+            let assignment = file_of(&["alpha = inherit"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_alpha_once(&body, &[(&on, "*"), (&on, "alpha")], &off, eol);
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// The same id in both files, switched off: the preset is off, so it is
+    /// rendered not at all, from neither file, and `* = on` does not reach it.
+    #[test]
+    fn the_render_an_id_in_both_pool_files_switched_off_renders_not_at_all() {
+        for eol in EOLS {
+            let (on, off) = (pool_both_on(eol), pool_both_off(eol));
+            let on_alpha = section(&on, "alpha");
+            let on_alpha = on_alpha.trim_end_matches(['\r', '\n']);
+            let off_alpha = section(&off, "alpha");
+            let off_alpha = off_alpha.trim_end_matches(['\r', '\n']);
+
+            let assignment = file_of(&["alpha = off"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*")], eol);
+            assert_eq!(
+                headers(&body).iter().filter(|id| *id == "alpha").count(),
+                0,
+                "a preset switched off in both files is rendered ({eol:?}): {:?}",
+                headers(&body)
+            );
+            assert!(
+                !body.contains(on_alpha) && !body.contains(off_alpha),
+                "a preset switched off in both files is in the render ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+
+            let assignment = file_of(&["* = on", "alpha = off"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "beta"), (&off, "gamma")], eol);
+            assert_eq!(
+                headers(&body).iter().filter(|id| *id == "alpha").count(),
+                0,
+                "the explicit off does not win over `* = on` ({eol:?}): {:?}",
+                headers(&body)
+            );
+            assert!(
+                !body.contains(on_alpha) && !body.contains(off_alpha),
+                "the preset the explicit off switched off is in the render ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// The last section of a pool file with NO final line break: its text ends
+    /// in the middle of a line, so the render opens a line of its own for the
+    /// section that follows, and the section's last value stays one value.
+    #[test]
+    fn the_render_a_pool_section_with_no_final_break_does_not_glue_the_next_one() {
+        for eol in EOLS {
+            let on = file_open_end(
+                &[
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[beta]",
+                    "model = /models/beta.gguf",
+                ],
+                eol,
+            );
+            let off = file_of(&["[gamma]", "model = /models/gamma.gguf"], eol);
+            let assignment = file_of(&["* = on"], eol);
+            let got = render(&on, &off, Some(&assignment));
+            let (head, body) = parts(&got);
+            assert_sections(&body, &[(&on, "*"), (&on, "beta"), (&off, "gamma")], eol);
+            assert_headers_own_lines(&body, &["*", "beta", "gamma"], eol);
+            assert_section_ends_at_break(&body, &on, "beta", eol);
+            assert_generated_header(&head, eol);
+            assert_one_ending_style(&got, eol);
+        }
+    }
+
+    /// `[*]` as the LAST section of its file, with no final line break: it is
+    /// rendered first, before the preset that follows it in the file, so the
+    /// render breaks the line the global section ends in.
+    #[test]
+    fn the_render_the_global_section_last_with_no_final_break_does_not_glue_the_next_one() {
+        for eol in EOLS {
+            let on = file_open_end(
+                &[
+                    "[alpha]",
+                    "model = /models/alpha.gguf",
+                    "",
+                    "[*]",
+                    "temp = 0.7",
+                ],
+                eol,
+            );
+            let empty = String::new();
+            let assignment = file_of(&["alpha = inherit"], eol);
+            let got = render(&on, &empty, Some(&assignment));
+            let (head, body) = parts(&got);
+            assert_sections(&body, &[(&on, "*"), (&on, "alpha")], eol);
+            assert_headers_own_lines(&body, &["*", "alpha"], eol);
+            assert_section_ends_at_break(&body, &on, "*", eol);
+            assert_generated_header(&head, eol);
+            assert_one_ending_style(&got, eol);
+        }
+    }
+
+    /// One pool file holding the same section twice: llama-server knows one
+    /// preset with that name, so the render gives one section, the first, once.
+    #[test]
+    fn the_render_a_duplicate_section_in_one_pool_file_renders_once() {
+        for eol in EOLS {
+            let on = file_of(
+                &[
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[beta]",
+                    "model = /models/beta.gguf",
+                    "",
+                    "[beta]",
+                    "model = /models/beta-second.gguf",
+                ],
+                eol,
+            );
+            let empty = String::new();
+            let assignment = file_of(&["* = on"], eol);
+            let (head, body) = parts(&render(&on, &empty, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "beta")], eol);
+            assert_eq!(
+                headers(&body)
+                    .iter()
+                    .filter(|id| *id == "beta")
+                    .count(),
+                1,
+                "the section written twice in one file is not rendered exactly once ({eol:?}): {:?}",
+                headers(&body)
+            );
+            assert_eq!(
+                body.matches("/models/beta.gguf").count(),
+                1,
+                "the first copy of the section is not rendered exactly once ({eol:?}): {body:?}"
+            );
+            assert!(
+                !body.contains("/models/beta-second.gguf"),
+                "the second copy of the section is in the render ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// `[Alpha]` and `[alpha]` in one pool file: the reader knows one section
+    /// with that name (its lookup ignores the case), so the render gives one
+    /// section, the first, once.
+    #[test]
+    fn the_render_ids_differing_only_in_case_render_one_section_each() {
+        for eol in EOLS {
+            let on = file_of(
+                &[
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[Alpha]",
+                    "model = /models/Alpha.gguf",
+                    "",
+                    "[alpha]",
+                    "model = /models/alpha.gguf",
+                ],
+                eol,
+            );
+            let empty = String::new();
+            for assignment in [file_of(&["* = on"], eol), file_of(&["Alpha = on"], eol)] {
+                let (head, body) = parts(&render(&on, &empty, Some(&assignment)));
+                assert_sections(&body, &[(&on, "*"), (&on, "Alpha")], eol);
+                assert_eq!(
+                    headers(&body)
+                        .iter()
+                        .filter(|id| id.eq_ignore_ascii_case("alpha"))
+                        .count(),
+                    1,
+                    "the two spellings of one id are not rendered as one section ({eol:?}): {:?}",
+                    headers(&body)
+                );
+                assert_eq!(
+                    body.matches("/models/Alpha.gguf").count(),
+                    1,
+                    "the first section of the pair is not rendered exactly once ({eol:?}): {body:?}"
+                );
+                assert!(
+                    !body.contains("/models/alpha.gguf"),
+                    "the second section of the pair is in the render ({eol:?}): {body:?}"
+                );
+                assert_generated_header(&head, eol);
+            }
+        }
+    }
+
+    /// An assignment value that is not `inherit`, `on` or `off` (a hand-edited
+    /// `none`) is read as an absent key: only the pool's `[*]` and the presets
+    /// the assignment really assigns are rendered.
+    #[test]
+    fn the_render_an_assignment_value_that_is_not_inherit_on_or_off_reads_as_absent() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+
+            for assignment in [file_of(&["alpha = none"], eol), file_of(&["* = none"], eol)] {
+                let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+                assert_sections(&body, &[(&on, "*")], eol);
+                assert!(
+                    !body.contains("model = /models/alpha.gguf"),
+                    "the preset of the nonsense value is in the render ({eol:?}): {body:?}"
+                );
+                assert_generated_header(&head, eol);
+            }
+
+            // The nonsense key does not assign alpha; the real `on` next to it
+            // still assigns beta.
+            let assignment = file_of(&["alpha = none", "beta = on"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(&body, &[(&on, "*"), (&on, "beta")], eol);
+            assert!(
+                !body.contains("model = /models/alpha.gguf"),
+                "the preset of the nonsense value is in the render ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+
+            // Under a real `* = on` the preset has no key of its own to fall
+            // back on, so the `*` assigns it: the nonsense value changes nothing.
+            let assignment = file_of(&["* = on", "alpha = none"], eol);
+            let (head, body) = parts(&render(&on, &off, Some(&assignment)));
+            assert_sections(
+                &body,
+                &[(&on, "*"), (&on, "alpha"), (&on, "beta"), (&off, "gamma")],
+                eol,
+            );
+            assert_generated_header(&head, eol);
+        }
+    }
+
+    /// An empty `presets.ini` beside a non-empty `presets.ini.disabled`: the
+    /// render is the pool it has, in the ending style of the file that has one.
+    #[test]
+    fn the_render_an_empty_enabled_file_renders_the_disabled_pool() {
+        for eol in EOLS {
+            let empty = String::new();
+            let off = file_of(
+                &[
+                    "; presets.ini.disabled, the pool's switched-off presets",
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[gamma]",
+                    "model = /models/gamma.gguf",
+                    "",
+                    "[delta]",
+                    "model = /models/delta.gguf",
+                ],
+                eol,
+            );
+
+            let assignment = file_of(&["* = on"], eol);
+            let (head, body) = parts(&render(&empty, &off, Some(&assignment)));
+            assert_sections(&body, &[(&off, "*"), (&off, "gamma"), (&off, "delta")], eol);
+            assert_generated_header(&head, eol);
+
+            // No `*` in the assignment: only the preset the keys assign.
+            let assignment = file_of(&["gamma = on"], eol);
+            let (head, body) = parts(&render(&empty, &off, Some(&assignment)));
+            assert_sections(&body, &[(&off, "*"), (&off, "gamma")], eol);
+            assert!(
+                !body.contains("model = /models/delta.gguf"),
+                "an unassigned preset of the switched-off file is in the render ({eol:?}): {body:?}"
+            );
+            assert_generated_header(&head, eol);
+
+            let got = render(&empty, &off, Some(&file_of(&["* = on"], eol)));
+            assert_one_ending_style(&got, eol);
+        }
+    }
+}

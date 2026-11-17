@@ -674,6 +674,44 @@ Lessons only: the rules are in `AGENTS.md`.
   `the_repo_database_matches_the_schema` compares only columns: a comment between statements changes
   nothing SQLite records (`sqlite3 -readonly benchmarks/bench.db "select sql from sqlite_master"`), one
   inside a `CREATE` does.
+- A render that copies INI sections "byte for byte" (the `presets@<id>.ini` render): pin it with a
+  `ini::text::section_text(pool, id)` needle (id WITHOUT brackets: the match is on the stripped,
+  case-insensitive name), `body[from..].find(needle)` walking forward (pins presence AND order) plus
+  `headers(body) == ids` (pins absence and the `[*]` first). Whole-string equality over the
+  concatenated needles over-pins: it also fixes the blank lines the render puts BETWEEN sections,
+  which no design says. Trim the needle's `['\r','\n']` at the END: a section's trailing breaks are
+  not its bytes, and a writer that drops them is right.
+- Two reading traps of that design: an unassigned preset (no key, no `*`) is NOT rendered, so a writer
+  that defaults a missing key to the global switch greens the `*` tests and is wrong; and the pool's
+  `[*]` is in the render always, so every expectation starts with it. A "renders nothing" pin whose
+  expectation is an empty body greens by construction on a stub returning `String::new()`: pair it in
+  the same test with a non-vacuous case (the id absent while another is present), and let the header
+  assert be the red that names the stub there.
+- Prove a pure helper's red set goes green WITHOUT touching production code: build a probe
+  (`rustc --test --edition 2021 probe.rs`, 1 s). Copy the test file, cut the stub `pub fn` block with
+  python (`src[:src.index("pub fn render(")] + src[src.index("#[cfg(test)]"):]`), rewrite
+  `use super::render;` to `use crate::render;`, and `include!` that file from the probe next to a
+  candidate fn and a mini-module copying ONLY the helpers the tests call. `crates/core/src/ini.rs`
+  cannot be `include!`ed whole (`use crate::strings;`, `crate::checks::`), so copy
+  `section_text` with `find_section_header` + `next_section_start` + `line_start_of`.
+- `body.contains(&section(..).trim_end_matches(['\r','\n']))` is `clippy::needless_borrows_for_generic_args`
+  under `-D warnings`; drop the `&` (the argument coerces on its own).
+- The probe's test cut is regenerated from the real file every round (`awk '/^#\[cfg\(test\)\]/{f=1} f'
+  crates/<c>/src/<f>.rs > probe_tests.rs`): a driver that `continue`s on a compile failure leaves its
+  PATCHED cut on disk and reads it back as pristine, so the next case silently tests a stripped module.
+  Write each patched cut to a NEW path and never write the pristine copy.
+- libtest prints the per-test panic text and the `test result:` line on **stdout**: a probe driver that
+  greps only stderr reports a red run as green. Read `run.stdout + run.stderr`, and print the
+  `panicked at` line, so a green says "NO PANIC".
+- Teeth of a pin that sits AFTER a pin red today: `//` the predecessors in the cut only shows the pins
+  whose group is live. For the rest, mutate the CANDIDATE (one `if on {` → `if on || !in_enabled {`, an
+  early `return`), so the earlier pins pass and only the target pin can fire. Four mutations of one
+  candidate, one per pin, is the proof, and the unmutated candidate green is the joint-satisfiability
+  proof of the whole set.
+- A render that takes its line-ending style from the file it reads: an EMPTY pool file makes
+  `ini::detect_eol("")` answer CRLF, so the generated header lands CRLF in an LF render. Pin it as
+  "an LF pool rendered with a CR" and state the assumption (the empty file takes the style of the file
+  that has content).
 
 ## Data-root e2e and the configurator
 
@@ -1200,6 +1238,11 @@ Lessons only: the rules are in `AGENTS.md`.
  - A number field's `inputmode` is DERIVED from the range table (`numericMode` reads `INT_KEYS[].min`), so
    a mutant that gives one key a minimum fires the input-mode pins too: count those reds as collateral of
    one change, not as extra coverage.
+- A mutant sweep: a python driver that applies each mutant with `str.replace` guarded by
+   `count(old) == 1` (a regex pasted into sed dies on `/` and `\\`), runs the named test files, greps
+   `×` + the `Tests ` line, and restores a `.pristine` copy after EACH mutant. A "check only changed
+   fields" mutant (an unchanged loaded value escapes the check) is killed by the untick-and-empty refusal
+   rows: the untick leaves the text equal to the loaded text, so those fields fall out of the changed set.
 - A hand check against the real bff: drive the snap's `geckodriver --port <free>` over plain WebDriver
   HTTP from `python3 -I` (`-headless`, screenshots as base64 over HTTP, 2 s after each load; Firefox
   stops at 500 px wide). Kill it with `snap run --shell firefox.geckodriver -c 'kill -TERM <pid>'`. The
@@ -1595,3 +1638,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: a test that mounts the page more than about four times belongs in `it.each`, one mount per
   row: two such loops passed Vitest's 5 s limit in full runs (fe session, 2h.4). Never leave a
   half-converted test file: back it up before the first edit, not after.
+- Never `git checkout --` or `git restore` a file another session may have left dirty (a playbook, a
+  shared test file): on 2026-11-17 a revert dropped 27 lines two sessions had added that day. Undo your
+  own edit by hand.
+- A card made editable invalidates read-only pins outside the slice's file: grep the suite for the
+  field ids first (web UI session, 2h.5). A mutant sweep varies the send predicate per reading (flag,
+  truthy, text, select), not only the card list.

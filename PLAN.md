@@ -977,7 +977,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     navigation: node > instances, each with Server and Presets tabs, then Models (the shared pool)
     under the node; `#/models` opens the pool as today (user, 2026-11-17, through the web UI session). Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
     `presets.ini`, assignments in `assignments.ini`, the manager renders `presets@<id>.ini` per
-    instance), thirteen slices in its order, after the preset cards.
+    instance), thirteen slices in its order, after the preset cards. Slice 1 (the render,
+    `pai-core` `assign.rs`) done 2026-11-17.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances).

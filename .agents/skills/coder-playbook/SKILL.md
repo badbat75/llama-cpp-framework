@@ -1045,3 +1045,21 @@ Lessons only: the rules are in `AGENTS.md`.
 - A `tool_use` call the harness rejects for a bad parameter key (`new_string` for `newString`) can
   still write its arguments into the file: the file gained `</parameter>` and `<parameter=newString>`
   lines. After any rejected edit, `grep -n "parameter>" <file>` before the next one.
+- `ini::parse_sections` keeps the key lines BEFORE the first section header nowhere, so a key list
+  written without a header reads as empty. To read the keys of an assignment section that may arrive
+  header-less, parse `&format!("[keys]\n{text}")` and take the LAST section (the text's own header,
+  when it has one, becomes that last section).
+- `ini::detect_eol` is `pub(crate)`: `assign::render` writes its generated header in the pool's style
+  with it, taking the style from `disabled` when `enabled` is empty (an empty text reads as CRLF, the
+  writer default). A copied section's text has no ending of its own when it is the last one of a file
+  with no final break, so the render appends its `eol` after every section not ending in `\n`, else the
+  next section header lands mid-line and glues two values into one.
+- The assignment render rule the tests pin: `* = on` / `* = off` replace the file-based global switch
+  for EVERY preset of the pool, so `* = on` reaches into `presets.ini.disabled`; `* = inherit` and a
+  bare `<id> = inherit` follow the file that holds the section. A value that is not `inherit`, `on` or
+  `off` is an ABSENT key (drop it in `assigned` with `BTreeMap::retain`, so it also stops counting as
+  an `*`). One id is one preset: `ini::find_section_header` answers the FIRST case-insensitive match,
+  so a `BTreeSet` of the lowered ids renders an id written twice, in one file or in both files, once.
+- rustfmt breaks a one-line `let x = if c { a } else { b };` when the if-else text is over 50 chars
+  (`single_line_if_else_max_width`, the default): write the multi-line form. Shortening the test with
+  `s == ""` is `clippy::is_empty`, which `-D warnings` refuses.
