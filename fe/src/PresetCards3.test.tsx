@@ -272,6 +272,11 @@ const FIELDS: Row[] = [
 /** The two cards of 2e.3. */
 const CARDS = ['preset-chat-reasoning', 'preset-vision']
 
+/** The cards of 2e.3 that 2h.170 made editable: every control of these is
+ * enabled (a number's input while its default box is unticked, 156), every
+ * control of a card not listed stays natively disabled (2e.85). */
+const EDITABLE_CARDS = ['preset-chat-reasoning']
+
 /** The notes inside the two cards (90): the card, the note's strings key, and
  * the labels of the fields each note sits between (MP 933-938, 1099-1104). */
 const NOTES = [
@@ -560,9 +565,13 @@ function notesOf(card: HTMLElement): HTMLElement[] {
 // ── One test per field (85, 86, 87, 88, 101, 102, 104) ─────────────────
 
 test.each(FIELDS)(
-  '2e.101, 2e.102, 2e.87, 2h.158, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set as the reply holds it, and every control is natively disabled',
+  '2e.101, 2e.102, 2e.87, 2h.158, 2e.85, 2h.170: $key is a $kind named by $label inside its card, shows the set value $set as the reply holds it, its control enabled on the editable card and natively disabled on the read-only one',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    // 2h.170: the Chat / reasoning card is editable, every field always
+    // enabled; a card this file's rows do not list stays read-only, so the
+    // table also pins the natively disabled control (2e.85).
+    const editable = EDITABLE_CARDS.includes(f.card)
     const field = fieldOf(main, f.label)
     expect(
       cardOf(main, f.card).contains(field),
@@ -580,8 +589,17 @@ test.each(FIELDS)(
         f.shown,
       )
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
-      expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(
+        box.disabled,
+        `${f.key}: the box ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
+      // 156: on the editable card the input follows the unticked box, so it is
+      // enabled and can scroll; a ticked box disables it, pinned in
+      // PresetSave11.test.tsx.
+      expect(
+        input.disabled,
+        `${f.key}: the input ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       // 87 as retargeted by 2h.158: every number of 101 and 102 is an
       // integer key; the ranged ones take the numeric form, the
       // any-whole-number ones none.
@@ -594,7 +612,10 @@ test.each(FIELDS)(
       expect(box.checked, `${f.key}: ${f.set} shows ${f.shown}`).toBe(
         f.shownChecked,
       )
-      expect(box.disabled, `${f.key}: the checkbox disabled`).toBe(true)
+      expect(
+        box.disabled,
+        `${f.key}: the checkbox ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
     } else if (f.kind === 'select') {
       const select = selectOf(main, f.label)
       expect(optionTexts(select), `${f.key}: the options in order`).toEqual(
@@ -608,19 +629,26 @@ test.each(FIELDS)(
       expect(selectedText(select), `${f.key}: the mapping selects`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+      expect(
+        select.disabled,
+        `${f.key}: the select ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
     } else {
       const input = inputOfField(main, f.label)
       expect(input.value, `${f.key}: the string of the file exactly`).toBe(
         f.shown,
       )
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(
+        input.disabled,
+        `${f.key}: the input ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       expect(
         input.getAttribute('placeholder') ?? '',
         `${f.key}: no placeholder in 2e`,
       ).toBe('')
     }
-    // 85: the native disabled attribute, never aria-disabled, never readonly.
+    // 85: the native disabled attribute, never aria-disabled, never readonly,
+    // on the read-only card and its mirror on the editable one (2h.170).
     for (const el of [
       controlOf(main, f),
       ...(f.kind === 'number'
@@ -629,8 +657,8 @@ test.each(FIELDS)(
     ]) {
       expect(
         (el as HTMLInputElement).disabled,
-        `${f.key}: ${el.tagName} disabled`,
-      ).toBe(true)
+        `${f.key}: ${el.tagName} ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       expect(
         el.getAttribute('aria-disabled'),
         `${f.key}: never aria-disabled`,
@@ -738,13 +766,16 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
 
 // ── The checkbox field, the kind 2e.3 brings (87, 101, 102, 104) ───────
 
-test('2e.87, 2e.101, 2e.102, 2e.122: a checkbox field is a group named by its label holding one checkbox whose text is the table toggle, and it is checked per the table: absent checked, the falsey words unchecked, any other value checked (case-sensitive, 2e.3b), true and false read trimmed as ini.rs trims', async () => {
+test('2e.87, 2e.101, 2e.102, 2e.122, 2h.170: a checkbox field is a group named by its label holding one checkbox whose text is the table toggle, and it is checked per the table: absent checked, the falsey words unchecked, any other value checked (case-sensitive, 2e.3b), true and false read trimmed as ini.rs trims; its control is enabled on the editable card and disabled on the read-only one', async () => {
   const boxes = FIELDS.filter((f) => f.kind === 'checkbox')
   expect(
     boxes.map((f) => f.key),
     'the checkbox fields of 101 and 102',
   ).toEqual(['jinja', 'prefill-assistant', 'mmproj-offload'])
   for (const f of boxes) {
+    // 2h.170: the two boxes of the Chat / reasoning card are enabled, the
+    // Vision card's stays natively disabled (2e.85).
+    const editable = EDITABLE_CARDS.includes(f.card)
     // 2e.3b (criterion 122): a flag is off for exactly the falsey words, and on
     // for every other value, "" included. The GUI's reading (form.rs 258, 296,
     // 160: unwrap_or(true)) holds for a value that is not falsey.
@@ -780,7 +811,10 @@ test('2e.87, 2e.101, 2e.102, 2e.122: a checkbox field is a group named by its la
       expect(box.checked, `${f.key} ${JSON.stringify(value)}: checked`).toBe(
         checked,
       )
-      expect(box.disabled, `${f.key}: the checkbox disabled`).toBe(true)
+      expect(
+        box.disabled,
+        `${f.key}: the checkbox ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       expect(
         box.getAttribute('aria-disabled'),
         `${f.key}: never aria-disabled`,
@@ -1122,31 +1156,51 @@ test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with n
   ).toBe('XHigh')
 })
 
-test('2e.118, 2e.119, 2e.104: a Budget message of 21 characters shows the full-value line under the input, and one of 20 characters does not', async () => {
+test("2e.118, 2e.119, 2e.104, 2h.134: a long Budget message shows no full-value line, the card is editable, and the same length under the Vision card's disabled select shows one", async () => {
+  // 134: the full-value line is only for a disabled control, because an
+  // enabled input can be scrolled and an enabled select opened. The Budget
+  // message of 104, past the 20 characters of a text input, sits under an
+  // enabled input since 2h.170: no line.
   const LONG = 'Wrap up now. Answers.'
-  const SHORT = 'Wrap up now. Answer.'
+  const DEVICE_LONG = 'ROCm1-Attention-Pool-X'
   expect(
     LONG.length,
     'the 104 case: over the 20 characters of a text input',
   ).toBe(21)
-  expect(SHORT.length, 'and one that the input shows').toBe(20)
+  expect(
+    DEVICE_LONG.length,
+    'and a device value past the same limit of a select',
+  ).toBeGreaterThan(20)
   const { main } = await loaded({
     preset: () => reply(200, exactOf({ 'reasoning-budget-message': LONG })),
   })
-  const line = main.querySelector('#preset-full-reasoning-budget-message')
-  expect(line, 'the full-value line of the budget message').toBeTruthy()
-  expect(line!.tagName, 'the line is a paragraph').toBe('P')
-  expect(line!.textContent, 'the line holds the value').toBe(LONG)
-  expect(isHidden(line!), 'the line is shown').toBe(false)
+  const msg = within(main).getByRole('textbox', {
+    name: en('preset-budget-message'),
+  }) as HTMLInputElement
+  expect(msg.disabled, 'the budget message is editable (170)').toBe(false)
+  expect(msg.value, 'and it holds the long value').toBe(LONG)
+  expect(
+    main.querySelector('#preset-full-reasoning-budget-message'),
+    'an enabled input shows no line (134)',
+  ).toBeNull()
+  // The Vision card is still read-only: its device select holds the long
+  // value as an extra option and repeats it under the control.
   cleanup()
   vi.unstubAllGlobals()
-  const { main: short } = await loaded({
-    preset: () => reply(200, exactOf({ 'reasoning-budget-message': SHORT })),
+  const { main: other } = await loaded({
+    preset: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
   })
-  expect(
-    short.querySelector('#preset-full-reasoning-budget-message'),
-    'a value of 20 characters: no line',
-  ).toBeNull()
+  const device = within(other).getByRole('combobox', {
+    name: en('preset-vision-gpu'),
+  }) as HTMLSelectElement
+  expect(device.disabled, 'the Vision GPU select is read-only (2e.103)').toBe(
+    true,
+  )
+  const line = other.querySelector('#preset-full-mmproj-device')
+  expect(line, 'the disabled control has its full-value line').toBeTruthy()
+  expect(line!.tagName, 'the line is a paragraph').toBe('P')
+  expect(line!.textContent, 'the line holds the value').toBe(DEVICE_LONG)
+  expect(isHidden(line!), 'the line is shown').toBe(false)
 })
 
 // ── The cards: numbers, units, disabled, in their place (83, 85, 87, 89, 91) ──
@@ -1182,7 +1236,7 @@ test('2e.89: no field of 2e.3 carries a unit, so neither card shows a .unit elem
     ).toBe(0)
 })
 
-test('2e.85: every control of the two cards of 2e.3 is natively disabled, the checkboxes included, while every About toggle of 2e.3 stays enabled', async () => {
+test('2e.85, 2h.170: every control of the Chat / reasoning card is enabled, every control of the Vision card is natively disabled, the checkboxes included, while every About toggle of 2e.3 stays enabled', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   const controls = CARDS.flatMap((cardKey) => [
     ...cardOf(main, cardKey).querySelectorAll<HTMLElement>(
@@ -1190,16 +1244,26 @@ test('2e.85: every control of the two cards of 2e.3 is natively disabled, the ch
     ),
   ])
   expect(controls.length, 'the controls of 101 and 102').toBe(CONTROLS)
-  for (const el of controls) {
-    const id = el.getAttribute('id') ?? el.tagName
-    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(true)
-    expect(
-      el.getAttribute('aria-disabled'),
-      `${id}: never aria-disabled`,
-    ).toBeNull()
-    // `readonly` is a text-input attribute (section 0), so the attribute is
-    // the check: a select has no readOnly property.
-    expect(el.getAttribute('readonly'), `${id}: never readonly`).toBeNull()
+  for (const cardKey of CARDS) {
+    // 2h.170 made the Chat / reasoning card editable, with every key present
+    // in the stub each number's box is unticked so its input is enabled (156).
+    const disabled = !EDITABLE_CARDS.includes(cardKey)
+    for (const el of cardOf(main, cardKey).querySelectorAll<HTMLElement>(
+      'input, select, textarea',
+    )) {
+      const id = el.getAttribute('id') ?? el.tagName
+      expect(
+        (el as HTMLInputElement).disabled,
+        `${id}: ${disabled ? 'disabled' : 'enabled'}`,
+      ).toBe(disabled)
+      expect(
+        el.getAttribute('aria-disabled'),
+        `${id}: never aria-disabled`,
+      ).toBeNull()
+      // `readonly` is a text-input attribute (section 0), so the attribute is
+      // the check: a select has no readOnly property.
+      expect(el.getAttribute('readonly'), `${id}: never readonly`).toBeNull()
+    }
   }
   for (const f of FIELDS)
     expect(
@@ -1238,7 +1302,7 @@ test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, 
   ).toEqual(cardHeadings())
 })
 
-test('2e.91: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), and no control of a 2e.3 card, its checkboxes included', async () => {
+test("2e.91, 2h.170: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     en('preset-back'),
@@ -1247,13 +1311,20 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
-  // A disabled checkbox takes no focus, so each card of 2e.3 offers only its
-  // fields' About toggles.
-  for (const cardKey of CARDS)
+  // A disabled control takes no focus, so the read-only Vision card offers
+  // only its fields' About toggles; on the editable Chat / reasoning card
+  // every control follows its toggle (170), and a number adds its box and,
+  // with the box unticked, its input (156).
+  for (const cardKey of CARDS) {
+    const fields = FIELDS.filter((f) => f.card === cardKey)
+    const stops = fields
+      .map((f) => (f.kind === 'number' ? 2 : 1))
+      .reduce((n, f) => n + f, 0)
     expect(
       mainTabbable(cardOf(main, cardKey)).length,
-      `${en(cardKey)}: only its About toggles take focus`,
-    ).toBe(FIELDS.filter((f) => f.card === cardKey).length)
+      `${en(cardKey)}: ${EDITABLE_CARDS.includes(cardKey) ? 'its About toggles and every control' : 'only its About toggles'}`,
+    ).toBe(fields.length + (EDITABLE_CARDS.includes(cardKey) ? stops : 0))
+  }
 })
 
 // ── The strings (105) and what is out of 2e.3 (106) ────────────────────

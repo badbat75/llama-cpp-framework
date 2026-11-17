@@ -474,7 +474,12 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
     alone never makes the form dirty or sends anything (133's Text row). Every editable text input
     carries `spellcheck="false"`, `autocapitalize="off"`, `autocorrect="off"`,
     `autocomplete="off"` and no `inputmode`: a value typed by hand, which a phone's keyboard would
-    otherwise change (curly quotes, a capital first letter). (2h.5 review, 2026-11-17.)
+    otherwise change (curly quotes, a capital first letter). (2h.5 review, 2026-11-17.) An
+    editable text field with no default box (Chat kwargs, Budget message) is a plain labelled
+    input, not a `fieldset`/`role="group"`: the label is a `<label for>` naming the input, the
+    hint and error tie to it by `aria-describedby`, so a screen reader speaks the name once
+    ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+    [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value); 2h.6, 2026-11-17).
 167. **Cache RAM's input mode**: none (158). **Load on startup** sends per 133 (`on` `true`, `off`
     `null`); its truthy reading (2e's 122) still decides what the select shows.
 168. **Tests**: `temp` `0,7` sends `0.7`; `temp` `hot` blocks with `field-error-decimal`; kwargs

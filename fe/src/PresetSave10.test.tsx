@@ -91,14 +91,12 @@ function without(...keys: string[]): Record<string, string> {
   return out
 }
 
-/** The field whose label is `label` (its group). */
-function field(main: HTMLElement, label: string): HTMLElement {
-  return within(main).getByRole('group', { name: label })
-}
-
-/** The text input of a field, by its accessible name. */
+/** The text input of a field, by its accessible name: the label, tied to the
+ * input by a `<label>`. The designer's decision for an editable text field
+ * with no default box: a plain labelled input, NOT a group named by the label,
+ * which would make a screen reader say the name twice. */
 function input(main: HTMLElement, label: string): HTMLInputElement {
-  return within(field(main, label)).getByRole('textbox', {
+  return within(main).getByRole('textbox', {
     name: label,
   }) as HTMLInputElement
 }
@@ -449,6 +447,10 @@ test('2h.132: a Chat kwargs equal to the file text when trimmed travels in no bo
 
 test('2h.164: the Chat kwargs input has spellcheck false, autocapitalize off, autocorrect off, autocomplete off, no inputmode and no maxlength', async () => {
   const { main } = await form()
+  expect(
+    within(main).queryByRole('group', { name: KWARGS }),
+    'no element with role="group" named by the label (a plain labelled input)',
+  ).toBeNull()
   const el = input(main, KWARGS)
   expect(el.getAttribute('spellcheck'), 'no spell check on typed JSON').toBe(
     'false',

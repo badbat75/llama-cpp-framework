@@ -193,6 +193,7 @@ function fieldId(field: Label): string {
  * 2h.5's 164 (the KV cache card's seven, all always enabled), 2h.5's 164
  * (the Sampling overrides card's seven, all always enabled) and 2h.5's 164
  * (the Advanced card's two, the off / on select and the text, always enabled),
+ * 2h.6's 170 (the Chat / reasoning card's nine, all always enabled),
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
@@ -220,6 +221,15 @@ const EDITABLE_FIELDS: Label[] = [
   'preset-backend-sampling',
   'preset-load-on-startup',
   'preset-chat-kwargs',
+  'preset-chat-template',
+  'preset-prefill-assistant',
+  'preset-reasoning',
+  'preset-reasoning-format',
+  'preset-reasoning-effort',
+  'preset-keep-past-thinking',
+  'preset-thinking-budget',
+  'preset-budget-message',
+  'preset-max-output',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
@@ -241,6 +251,16 @@ const BOXED_FIELDS: Record<string, string> = {
   'Min-P': 'min-p',
   'preset-repeat-penalty': 'repeat-penalty',
   'preset-presence-penalty': 'presence-penalty',
+  'preset-thinking-budget': 'reasoning-budget',
+  'preset-max-output': 'n-predict',
+}
+
+/** The editable fields whose control is a checkbox: the label's strings key
+ * mapped to the strings key of the toggle text that names the control (2e's
+ * 87: a checkbox's accessible name is its own text, not the field's label). */
+const CHECKBOX_TOGGLES: Record<string, string> = {
+  'preset-chat-template': 'preset-chat-template-toggle',
+  'preset-prefill-assistant': 'preset-prefill-assistant-toggle',
 }
 
 /** The editable fields with an enable rule (2h.155): Unified KV is enabled
@@ -271,10 +291,11 @@ export function controlEnabled(
 }
 
 /** Every field's tab stops in the order of 91: each field's About toggle,
- * then the controls 2h.1, 2h.4 and 2h.5 made editable and left enabled on this
- * read (141, 155, 156): a boxed field's default box, named by the box's own
- * text, and its input while the box is unticked. The whole-page tab path of
- * every preset page test is this list, read with the values of its fixture. */
+ * then the controls 2h.1, 2h.4, 2h.5 and 2h.6 made editable and left enabled
+ * on this read (141, 155, 156, 170): a boxed field's default box, named by the
+ * box's own text, and its input while the box is unticked; a checkbox, named
+ * by its toggle text (87). The whole-page tab path of every preset page test
+ * is this list, read with the values of its fixture. */
 export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
   for (const card of PRESET_CARDS)
@@ -284,7 +305,9 @@ export function fieldTabStops(values: Record<string, string>): string[] {
       if (!isEditableField(field)) continue
       if (BOXED_FIELDS[fieldId(field)] !== undefined)
         stops.push(en('field-default'))
-      if (controlEnabled(field, values)) stops.push(label)
+      if (!controlEnabled(field, values)) continue
+      const toggle = CHECKBOX_TOGGLES[fieldId(field)]
+      stops.push(toggle === undefined ? label : en(toggle))
     }
   return stops
 }

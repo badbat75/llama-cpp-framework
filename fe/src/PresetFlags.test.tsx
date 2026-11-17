@@ -937,13 +937,13 @@ test('2e.124b: the checkbox or select names its written-as line in aria-describe
   // 120, unchanged: the full-value line is named by no aria-describedby, on a
   // page where a full-value line and a written-as line sit side by side. The
   // valued key's example moved: 134 shows no line under an enabled control, so
-  // the line here is Budget message of the read-only Chat / reasoning card.
+  // the line here is Load mode of the read-only Hardware / configuration card.
   const { main } = await page({
-    'reasoning-budget-message': '{"enable_thinking":false}',
+    'load-mode': LONG,
     jinja: 'yes',
   })
   expect(
-    main.querySelector('#preset-full-reasoning-budget-message'),
+    main.querySelector('#preset-full-load-mode'),
     'the page has a full-value line',
   ).toBeTruthy()
   expect(

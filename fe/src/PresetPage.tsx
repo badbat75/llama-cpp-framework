@@ -27,6 +27,9 @@ import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
 import PresetCards, {
   checkRows,
+  checkboxRows,
+  checkboxSend,
+  checkboxState,
   editableRows,
   fieldId,
   numberError,
@@ -596,6 +599,11 @@ function Content({
       const state = selectState(row, draft)
       if (state === selectState(row, loaded.values)) continue
       values[row.key] = selectSend(row, state)
+    }
+    for (const row of checkboxRows()) {
+      const state = checkboxState(row, draft)
+      if (state === checkboxState(row, loaded.values)) continue
+      values[row.key] = checkboxSend(row, state)
     }
     const was = numberStates(loaded.values)
     for (const row of numberRows()) {

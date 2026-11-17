@@ -7,9 +7,8 @@
 // only for a disabled control): of the Resource / context card, now
 // editable, only Unified KV can be disabled with a value, and the KV cache and
 // Advanced cards are editable, so every example here is of a card that is
-// still read-only: the number is MoE cache of the Hardware card, the text
-// Budget message of Chat / reasoning and the select Reasoning effort of the
-// same card. The fields, their controls and
+// still read-only: the number, the text and the select are three fields of
+// the Hardware card (MoE cache, Fit free VRAM and Lazy tensors). The fields, their controls and
 // how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
 // the route and the read are PresetPage.test.tsx. The colour and the wrap at
 // 320 px are the designer's review, not jsdom: criterion 118's style is pinned
@@ -51,7 +50,7 @@ const TEXT_21 = '{"MixedCaseX":TRUE}  '
 const SELECT_20 = 'mean-attention-pools'
 const SELECT_21 = 'Last-Attention-Pool-X'
 /** An unlisted select value past the limit, with spaces and capitals. The
- * select that carries it, Reasoning effort, is of a card that is still
+ * select that carries it, Lazy tensors, is of a card that is still
  * read-only; the brief's pooling stub has the same shape, but pooling sits
  * on the editable Embeddings card, which shows no line (134). */
 const SELECT_LONG = 'Last Attention Pool X  '
@@ -61,8 +60,10 @@ const NUM_PAD = ' 172032000 '
 
 const CTX = en('preset-context-size')
 const MOE = en('preset-moe-cache')
-const REASON = en('preset-reasoning-effort')
-const BUDGET = en('preset-budget-message')
+/** The read-only card's text and select that carry the examples (134): Fit
+ * free VRAM is the text `fit-target`, Lazy tensors the select `lazy-mode`. */
+const FIT = en('preset-fit-free-vram')
+const LAZY = en('preset-lazy-tensors')
 /** The other editable number fields of the Resource / context card (2h.4). */
 const SLOT = en('preset-per-slot-context')
 const BATCH = en('preset-batch-size')
@@ -221,8 +222,8 @@ test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the i
 test('2e.118: the line holds the value exactly as written, for a number, a text and an unlisted select value with capitals, a leading space and trailing spaces', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_PAD,
-    'reasoning-budget-message': TEXT_21,
-    'reasoning-effort': SELECT_LONG,
+    'fit-target': TEXT_21,
+    'lazy-mode': SELECT_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
   // from a trimmed or normalised copy reads red.
@@ -233,8 +234,8 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
     ).toBe(false)
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
     ['moe-cache-mib', 'number', MOE, NUM_PAD],
-    ['reasoning-budget-message', 'text', BUDGET, TEXT_21],
-    ['reasoning-effort', 'select', REASON, SELECT_LONG],
+    ['fit-target', 'text', FIT, TEXT_21],
+    ['lazy-mode', 'select', LAZY, SELECT_LONG],
   ]
   for (const [key, kind, label, value] of cases) {
     const line = lineOf(main, key)
@@ -251,9 +252,9 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
 })
 
 test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({ 'reasoning-effort': SELECT_LONG })
-  const select = selectOf(main, REASON)
-  const line = lineOf(main, 'reasoning-effort')
+  const { main } = await page({ 'lazy-mode': SELECT_LONG })
+  const select = selectOf(main, LAZY)
+  const line = lineOf(main, 'lazy-mode')
   // The extra option of an unlisted value carries the value as its text, and
   // the line repeats that text as written. A trimmed comparison can never
   // hold: SELECT_LONG ends in spaces, and the green 118 test above pins the
@@ -267,11 +268,11 @@ test('2e.118: an unlisted select value shows on the line the text of the selecte
 test('2e.118: the line sits under its own control, after its unit, before its hint, inside its own field', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_9,
-    'reasoning-budget-message': TEXT_21,
+    'fit-target': TEXT_21,
   })
   const cases: [string, 'number' | 'text', string, boolean][] = [
     ['moe-cache-mib', 'number', MOE, true],
-    ['reasoning-budget-message', 'text', BUDGET, false],
+    ['fit-target', 'text', FIT, true],
   ]
   for (const [key, kind, label, hasUnit] of cases) {
     const field = fieldOf(main, label)
@@ -297,10 +298,10 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
   }
 })
 
-test('2e.118, 2h.160: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
+test('2e.118, 2h.160, 2h.170: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_9,
-    'reasoning-effort': SELECT_LONG,
+    'lazy-mode': SELECT_LONG,
     // The Resource / context card, every key past its limit: 160 says an
     // enabled control shows no line, so none of these has one. Parallel slots
     // is present, so its box is unticked and Unified KV is enabled too.
@@ -316,6 +317,13 @@ test('2e.118, 2h.160: one line per long field: each line is in its own field, a 
     // select show a long value the same way, so 134 keeps both off the lines.
     'chat-template-kwargs': TEXT_21,
     'load-on-startup': SELECT_LONG,
+    // The Chat / reasoning card, editable since 2h.6's 170: its text, its
+    // selects and its two numbers are enabled, so 134 keeps every long value
+    // off the lines.
+    'reasoning-budget-message': TEXT_21,
+    'reasoning-effort': SELECT_LONG,
+    'reasoning-budget': NUM_9,
+    'n-predict': NUM_9,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
   expect(lines.length, 'exactly the two long fields have a line').toBe(2)
@@ -328,13 +336,17 @@ test('2e.118, 2h.160: one line per long field: each line is in its own field, a 
     'cache-type-k',
     'chat-template-kwargs',
     'load-on-startup',
+    'reasoning-budget-message',
+    'reasoning-effort',
+    'reasoning-budget',
+    'n-predict',
   ])
     expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
   expect(owners.size, 'no field holds both lines').toBe(2)
   for (const [key, label] of [
     ['moe-cache-mib', MOE],
-    ['reasoning-effort', REASON],
+    ['lazy-mode', LAZY],
   ] as const) {
     const field = fieldOf(main, label)
     expect(
@@ -443,12 +455,12 @@ test('2e.119: a number shows no line at 8 characters and its line at 9', async (
 test('2e.119: a text value shows no line at 20 characters and its line at 21', async () => {
   expect(TEXT_20.length, 'the text stub is 20 characters').toBe(20)
   expect(TEXT_21.length, 'the text stub is 21 characters').toBe(21)
-  const short = await page({ 'reasoning-budget-message': TEXT_20 })
-  expectNoLine(short.main, 'reasoning-budget-message')
+  const short = await page({ 'fit-target': TEXT_20 })
+  expectNoLine(short.main, 'fit-target')
   cleanup()
-  const long = await page({ 'reasoning-budget-message': TEXT_21 })
+  const long = await page({ 'fit-target': TEXT_21 })
   expect(
-    lineOf(long.main, 'reasoning-budget-message').textContent,
+    lineOf(long.main, 'fit-target').textContent,
     'the 21-character line',
   ).toBe(TEXT_21)
 })
@@ -456,12 +468,12 @@ test('2e.119: a text value shows no line at 20 characters and its line at 21', a
 test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
   expect(SELECT_20.length, 'the select stub is 20 characters').toBe(20)
   expect(SELECT_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ 'reasoning-effort': SELECT_20 })
-  expectNoLine(short.main, 'reasoning-effort')
+  const short = await page({ 'lazy-mode': SELECT_20 })
+  expectNoLine(short.main, 'lazy-mode')
   cleanup()
-  const long = await page({ 'reasoning-effort': SELECT_21 })
+  const long = await page({ 'lazy-mode': SELECT_21 })
   expect(
-    lineOf(long.main, 'reasoning-effort').textContent,
+    lineOf(long.main, 'lazy-mode').textContent,
     'the 21-character line',
   ).toBe(SELECT_21)
 })
@@ -477,14 +489,14 @@ test('2e.119: no key, no line: an empty values object shows no line on any field
 test('2e.119: a short value shows no line: a 1-character number, a short text and a select showing a short option text', async () => {
   const { main } = await page({
     parallel: '8',
-    'reasoning-budget-message': '{"short":1}',
+    'fit-target': '{"short":1}',
     'kv-unified': 'auto',
-    'reasoning-effort': 'low',
+    'lazy-mode': 'auto',
   })
   expectNoLine(main, 'parallel')
-  expectNoLine(main, 'reasoning-budget-message')
+  expectNoLine(main, 'fit-target')
   expectNoLine(main, 'kv-unified')
-  expectNoLine(main, 'reasoning-effort')
+  expectNoLine(main, 'lazy-mode')
 })
 
 // ── 120: accessibility ──────────────────────────────────────────────────
@@ -492,19 +504,15 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 /** Three long fields of three kinds, the line of each. */
 const LONG = {
   'moe-cache-mib': NUM_9,
-  'reasoning-budget-message': TEXT_21,
-  'reasoning-effort': SELECT_LONG,
+  'fit-target': TEXT_21,
+  'lazy-mode': SELECT_LONG,
 }
 const SHORT = {
   'moe-cache-mib': NUM_8,
-  'reasoning-budget-message': TEXT_20,
-  'reasoning-effort': SELECT_20,
+  'fit-target': TEXT_20,
+  'lazy-mode': SELECT_20,
 }
-const LONG_KEYS = [
-  'moe-cache-mib',
-  'reasoning-budget-message',
-  'reasoning-effort',
-] as const
+const LONG_KEYS = ['moe-cache-mib', 'fit-target', 'lazy-mode'] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -553,11 +561,11 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
     [{ 'moe-cache-mib': '172032000' }, '172032000'],
     [{ 'moe-cache-mib': '17203200' }, null],
     [{}, null],
-    [{ 'reasoning-effort': SELECT_21 }, SELECT_21],
-    [{ 'reasoning-effort': SELECT_20 }, null],
+    [{ 'lazy-mode': SELECT_21 }, SELECT_21],
+    [{ 'lazy-mode': SELECT_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
-      { 'reasoning-budget-message': '{"enable_thinking":false}' },
+      { 'fit-target': '{"enable_thinking":false}' },
       '{"enable_thinking":false}',
     ],
   ]

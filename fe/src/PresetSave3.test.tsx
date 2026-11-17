@@ -455,38 +455,55 @@ test('2h.142 (139): a 422 with a key the fe does not know is api-other with the 
 
 // ── 144: the field's control is disabled ────────────────────────────────
 
-test('2h.144: not-one-of on Reasoning effort, a field of a card that is still disabled, marks that field, alerts its text, and leaves the focus on Save changes', async () => {
+test('2h.144 (2h.6 170): not-one-of on Reasoning effort, an editable select, marks it and moves focus to it; on Unified KV, disabled by 155, the error goes on the control and the focus stays on Save changes', async () => {
+  const ARGS = [
+    'reasoning-effort',
+    'ultra',
+    'default, minimal, low, medium, high, xhigh, max',
+  ]
   const { bff, main } = await refused({
     key: 'not-one-of',
-    args: [
-      'reasoning-effort',
-      'ultra',
-      'default, minimal, low, medium, high, xhigh, max',
-    ],
+    args: ARGS,
     field: 'reasoning-effort',
   })
   saveButton(main).focus()
   await save(main, bff)
-  const text = en(
-    'api-not-one-of',
-    'reasoning-effort',
-    'ultra',
-    'default, minimal, low, medium, high, xhigh, max',
-  )
+  const text = en('api-not-one-of', ...ARGS)
   await within(main).findByText(en('save-refused', text))
   const effort = selectOf(main, en('preset-reasoning-effort'))
-  // The Chat / reasoning card is not enabled in this build (2h.5 opens the
-  // KV cache card only): the control is natively disabled.
-  expect(effort.disabled, 'the Reasoning effort select is disabled').toBe(true)
-  expectError(effort, text, 'Reasoning effort (disabled)')
-  expectAlert(
-    main,
-    en('save-refused', text),
-    'the disabled Reasoning effort field',
-  )
-  // No enabled control of that field, so the focus stays where it was.
-  expect(document.activeElement, 'focus stays on Save changes').toBe(
-    saveButton(main),
-  )
+  // 170: the Chat / reasoning card is editable, so 142 applies: the marked
+  // control is enabled and takes the focus.
+  expect(effort.disabled, 'the Reasoning effort select is enabled').toBe(false)
+  expectError(effort, text, 'Reasoning effort (enabled)')
+  expect(document.activeElement, 'focus on Reasoning effort').toBe(effort)
+  expectAlert(main, en('save-refused', text), 'the Reasoning effort field')
   expect(status(main).textContent).toBe(en('save-unsaved'))
+  cleanup()
+  vi.unstubAllGlobals()
+  // The other half of 144: a control of an editable card that this read
+  // leaves disabled (155: Parallel slots at its default keeps Unified KV
+  // off), with no enabled control of its own to take the focus.
+  const second = await refused({
+    key: 'not-one-of',
+    args: ['kv-unified', 'ultra', 'auto, on, off'],
+    field: 'kv-unified',
+  })
+  saveButton(second.main).focus()
+  await save(second.main, second.bff)
+  const text2 = en('api-not-one-of', 'kv-unified', 'ultra', 'auto, on, off')
+  await within(second.main).findByText(en('save-refused', text2))
+  const unified = selectOf(second.main, en('preset-unified-kv'))
+  expect(unified.disabled, 'the Unified KV select is disabled').toBe(true)
+  expectError(unified, text2, 'Unified KV (disabled)')
+  expectAlert(
+    second.main,
+    en('save-refused', text2),
+    'the disabled Unified KV field',
+  )
+  // No enabled control of that field (it has no default box), so 144 leaves
+  // the focus where it was.
+  expect(document.activeElement, 'focus stays on Save changes').toBe(
+    saveButton(second.main),
+  )
+  expect(status(second.main).textContent).toBe(en('save-unsaved'))
 })

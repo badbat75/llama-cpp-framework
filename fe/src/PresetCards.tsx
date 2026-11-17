@@ -89,6 +89,11 @@ type SelectRow = RowBase & {
   kind: 'select'
   options: Option[]
   absent: string
+  /** 2h.6's 171 (133's row of the selects with no `default` option): every
+   * option is a value the file holds, so every state sends its own value, the
+   * absent one included. The absent option is only what the control shows for a
+   * key the file lacks, and picking it back is no change (132). */
+  ownValue?: true
   normalize?: boolean
   /** 2h.4's 155: an enabled select is disabled while one of these keys has its
    * default box ticked (Unified KV sizes a cache shared by the slots, so it
@@ -107,6 +112,13 @@ type CheckboxRow = RowBase & {
   kind: 'checkbox'
   toggle: string
   absent: boolean
+  /** 2h.6's 171 (133's checkbox rows): what the save sends while the box is
+   * checked, and what it sends while it is not. Each key has its own spelling,
+   * the one the configurator's `form.rs` writes: `jinja` and `mmproj-offload`
+   * write `true` and `false`, `prefill-assistant` drops the key when it is on,
+   * and `fit` writes `on` and `off`. A row of a later card carries its own. */
+  onSend: string | null
+  offSend: string | null
   /** A box the configurator only lets the user set under a rule (criterion
    * 108: Fit to VRAM sizes the context and the GPU layers, so it is allowed
    * while both are absent). Each key of `needsAbsent` must be absent; when one
@@ -314,6 +326,8 @@ const CARDS: CardFields[] = [
         reading: 'fit',
         toggle: t('preset-fit-allowed'),
         absent: true,
+        onSend: 'on',
+        offSend: 'off',
         allowed: {
           needsAbsent: ['ctx-size', 'n-gpu-layers'],
           notAllowed: t('preset-fit-not-allowed'),
@@ -515,8 +529,11 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         toggle: t('preset-chat-template-toggle'),
         absent: true,
+        onSend: 'true',
+        offSend: 'false',
         label: t('preset-chat-template'),
         hint: t('preset-chat-template-hint'),
+        editable: true,
       },
       {
         kind: 'checkbox',
@@ -524,24 +541,31 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         toggle: t('preset-prefill-assistant-toggle'),
         absent: true,
+        onSend: null,
+        offSend: 'false',
         label: t('preset-prefill-assistant'),
         hint: t('preset-prefill-assistant-hint'),
+        editable: true,
       },
       {
         kind: 'select',
         key: 'reasoning',
         options: REASONING,
         absent: 'auto',
+        ownValue: true,
         label: t('preset-reasoning'),
         hint: t('preset-reasoning-hint'),
+        editable: true,
       },
       {
         kind: 'select',
         key: 'reasoning-format',
         options: REASONING_FORMAT,
         absent: 'auto',
+        ownValue: true,
         label: t('preset-reasoning-format'),
         hint: t('preset-reasoning-format-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -550,6 +574,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-reasoning-effort'),
         hint: t('preset-reasoning-effort-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -559,6 +584,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-keep-past-thinking'),
         hint: t('preset-keep-past-thinking-hint'),
+        editable: true,
       },
       {
         // The note of 90, at the GUI's place (MP 933-938).
@@ -572,12 +598,14 @@ const CARDS: CardFields[] = [
         key: 'reasoning-budget',
         label: t('preset-thinking-budget'),
         hint: t('preset-thinking-budget-hint'),
+        editable: true,
       },
       {
         kind: 'text',
         key: 'reasoning-budget-message',
         label: t('preset-budget-message'),
         hint: t('preset-budget-message-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -585,6 +613,7 @@ const CARDS: CardFields[] = [
         key: 'n-predict',
         label: t('preset-max-output'),
         hint: t('preset-max-output-hint'),
+        editable: true,
       },
     ],
   },
@@ -684,6 +713,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         toggle: t('preset-vision-offload-toggle'),
         absent: true,
+        onSend: 'true',
+        offSend: 'false',
         label: t('preset-vision-on-gpu'),
         hint: t('preset-vision-on-gpu-hint'),
       },
@@ -1004,13 +1035,18 @@ function shown(
  * that a read value became is a state like any other). A key the file does not
  * hold has the row's absent option selected, so that option is its state: the
  * control shows that one option for the absence, and picking it is no change
- * (133 sends the key's removal, which is what the file already is). */
+ * (133 sends the key's removal, which is what the file already is). A value one
+ * of the options carries is that option, the `default` of a tri-state row
+ * included (133): only a spelling no option carries is read as the row's key,
+ * which for a flag row is the on or off the control shows (125). */
 export function selectState(
   row: SelectRow,
   values: Record<string, string>,
 ): string {
   const value = heldFor(row, values)
   if (value === undefined) return row.absent
+  const match = row.normalize ? value.trim().toLowerCase() : value
+  if (row.options.some((o) => o.value === match)) return match
   const state =
     row.reading === undefined ? undefined : readAs(row.reading, value)
   if (state !== undefined && state.on !== undefined)
@@ -1018,12 +1054,49 @@ export function selectState(
   return shown(row, value).value
 }
 
-/** What the form sends for a select at `state` (133): the flag's off is the
- * GUI's spelling of a key that is not there, and an option a row leaves when
- * its key is absent is that same removal. Every other state is the option. */
+/** The options of an enabled select, built from the state of the value the read
+ * gave (132a): the row's own options, plus the extra option of 87 carrying the
+ * state when no option carries it. A flag's state is always one of them (125),
+ * so its select lists no extra option; a valued key with a spelling in neither
+ * list, and a row whose key is not a boolean, get the one. */
+function optionsAt(row: SelectRow, state: string): Option[] {
+  return row.options.some((o) => o.value === state)
+    ? row.options
+    : [...row.options, { value: state, text: state }]
+}
+
+/** What the form sends for a select at `state` (133): a row whose options are
+ * all values the file holds sends the option itself, the absent one included;
+ * every other row's absent option is the state of a key the file does not hold
+ * (the off of an off / on key, the `default` of a tri-state one), so it is the
+ * key's removal. Every other state is the option. */
 export function selectSend(row: SelectRow, state: string): string | null {
-  if (row.reading === 'flag') return state === 'true' ? 'true' : null
+  if (row.ownValue === true) return state
   return state === row.absent ? null : state
+}
+
+/** The checkbox of a row as the form's `values` leave it: the state the control
+ * shows (2h.1's 132: the state the page compares), the row's `absent` for a key
+ * the file does not hold. */
+export function checkboxState(
+  row: CheckboxRow,
+  values: Record<string, string>,
+): boolean {
+  const value = heldFor(row, values)
+  const state =
+    row.reading === undefined || value === undefined
+      ? undefined
+      : readAs(row.reading, value)
+  return state === undefined ? row.absent : state.on === true
+}
+
+/** What the form sends for a checkbox at that state (133's checkbox rows): the
+ * row's own spelling for each side of the box. */
+export function checkboxSend(
+  row: CheckboxRow,
+  checked: boolean,
+): string | null {
+  return checked ? row.onSend : row.offSend
 }
 
 /** The rows of every card, in the page's order, a group's rows in place of the
@@ -1040,6 +1113,14 @@ function fieldRows(): FieldRow[] {
 export function editableRows(): SelectRow[] {
   return fieldRows().filter(
     (one): one is SelectRow => one.kind === 'select' && one.editable === true,
+  )
+}
+
+/** The checkbox rows the form edits (2h.6's 170), in the page's order. */
+export function checkboxRows(): CheckboxRow[] {
+  return fieldRows().filter(
+    (one): one is CheckboxRow =>
+      one.kind === 'checkbox' && one.editable === true,
   )
 }
 
@@ -1239,6 +1320,12 @@ const TEXT_KEYS: Record<string, (text: string) => string | undefined> = {
     text.includes(';') || text.includes('#')
       ? t('field-error-comment-markers')
       : jsonError(text),
+  // 2h.6's 172: the text goes to the engine as it stands, so only the comment
+  // markers can break the line.
+  'reasoning-budget-message': (text) =>
+    text.includes(';') || text.includes('#')
+      ? t('field-error-comment-markers')
+      : undefined,
 }
 
 /** The error of a text that is not one JSON object (166): `JSON.parse` must
@@ -1289,11 +1376,15 @@ export function numberStates(
  * which the save leaves as it is, so it stands only while the control is at
  * the state the read gave. A row whose key is not a boolean has no line. */
 function editableWritten(
-  row: SelectRow,
+  row: SelectRow | CheckboxRow,
   draft: Record<string, string>,
   loaded: Record<string, string>,
 ): string | undefined {
-  if (selectState(row, draft) !== selectState(row, loaded)) return undefined
+  const same =
+    row.kind === 'checkbox'
+      ? checkboxState(row, draft) === checkboxState(row, loaded)
+      : selectState(row, draft) === selectState(row, loaded)
+  if (!same) return undefined
   const raw = heldFor(row, loaded)
   return row.reading === undefined || raw === undefined
     ? undefined
@@ -1438,10 +1529,16 @@ function PresetField({
       rule.needsAbsent.every((key) => held(values, key) === undefined)
         ? row.toggle
         : rule.notAllowed
-    const written = state?.written
+    // An editable box's line is the loaded value's spelling, which the save
+    // leaves as it is, so it stands only while the box is at the state the read
+    // gave (134).
+    const written = editable
+      ? editableWritten(row, values, loaded)
+      : state?.written
     return (
       <CheckboxField
         {...common}
+        disabled={!editable}
         toggle={toggle}
         checked={state === undefined ? row.absent : state.on === true}
         written={
@@ -1450,7 +1547,9 @@ function PresetField({
             : { id: `preset-written-${row.key}`, text: written }
         }
         error={common.error ?? state?.error}
-        onChange={() => undefined}
+        onChange={(checked) =>
+          editable ? onEdit(row.key, checked ? 'true' : 'false') : undefined
+        }
       />
     )
   }
@@ -1463,7 +1562,6 @@ function PresetField({
       <TextField
         {...common}
         disabled={!editable}
-        group={editable}
         value={text}
         unit={row.unit}
         full={editable ? undefined : fullValue(row, text)}
@@ -1475,20 +1573,31 @@ function PresetField({
   const select =
     row.kind === 'device'
       ? shownDevice(row, value)
-      : // A flag's select shows on or off by the reading and lists no extra
-        // option (criterion 125). A valued key whose value is in neither list
-        // keeps criterion 87: the extra option carries it.
-        state !== undefined && state.on !== undefined
-        ? { options: row.options, value: state.on ? 'true' : 'false' }
-        : // The list of an enabled select is built from the value the read
-          // gave, so the extra option of 87 stays last in it whatever is
-          // picked (criterion 132a); only a 200 that lists the loaded value
-          // drops it. The selected value is the draft's. A disabled row shows
-          // the read's values, so its list is the one `shown` always gave.
-          {
-            options: shown(row, heldFor(row, loaded)).options,
-            value: shown(row, value).value,
+      : // An enabled select shows the state the page is dirty against (132),
+        // which is the state `selectSend` writes back: `selectState` decides
+        // both, so the option the user reads and the value the save sends are
+        // the same one. Its option-first match keeps a spelling one of the
+        // options carries, the `default` of a tri-state row included, as that
+        // option, and not the on the flag's reading gives it (133). The list
+        // is built from the state of the value the read gave, so the extra
+        // option of 87 stays last in it whatever is picked (132a), and a flag
+        // keeps the options of 1.3 (125): an unlisted spelling is a state
+        // among them, never an extra option.
+        editable
+        ? {
+            options: optionsAt(row, selectState(row, loaded)),
+            value: selectState(row, values),
           }
+        : // A disabled row shows the read's values: a flag's select shows on
+          // or off by the reading and lists no extra option (criterion 125). A
+          // valued key whose value is in neither list keeps criterion 87: the
+          // extra option carries it, and its list is the one `shown` gave.
+          state !== undefined && state.on !== undefined
+          ? { options: row.options, value: state.on ? 'true' : 'false' }
+          : {
+              options: shown(row, heldFor(row, loaded)).options,
+              value: shown(row, value).value,
+            }
   // What the user reads for a select is the selected option's text, which for
   // an unlisted value is the value itself (criterion 87). A device select
   // reads the file's device, and has nothing to repeat when the file names

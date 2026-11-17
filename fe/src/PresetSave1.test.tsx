@@ -45,6 +45,10 @@ const POOLING = en('preset-pooling')
  * (133: picking it again makes the field unchanged, so it is never sent). */
 const EXTRA_POOL = 'Last-Attention-Pool-X'
 
+/** A text past the 20 characters a text field shows: the value 118's
+ * full-value line repeats under a disabled input. */
+const LONG_TEXT = '{"enable_thinking":false,"keep_past":true}'
+
 /** The values of the read the 130 test uses: both Embeddings keys, and no key
  * of the Resource / context card, so every box of that card starts ticked
  * (2h.156) and Unified KV sits disabled (2h.155: Parallel slots at default). */
@@ -79,6 +83,19 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-backend-sampling': 'preset-backend-sampling',
   'preset-load-on-startup': 'preset-load-on-startup',
   'preset-chat-template-kwargs': 'preset-chat-kwargs',
+  // 2h.6's 170: the Chat / reasoning card, every field always enabled. The
+  // two boxes of the card's boxed numbers are `<id>-box`, their inputs
+  // `<id>-control`, and the two checkboxes' inputs are `<id>-control` too.
+  'preset-jinja': 'preset-chat-template',
+  'preset-prefill-assistant': 'preset-prefill-assistant',
+  'preset-reasoning': 'preset-reasoning',
+  'preset-reasoning-format': 'preset-reasoning-format',
+  'preset-reasoning-effort': 'preset-reasoning-effort',
+  // The row's key is reasoning-preserve, its label keeps-past-thinking.
+  'preset-reasoning-preserve': 'preset-keep-past-thinking',
+  'preset-reasoning-budget': 'preset-thinking-budget',
+  'preset-reasoning-budget-message': 'preset-budget-message',
+  'preset-n-predict': 'preset-max-output',
 }
 
 beforeEach(() => {
@@ -237,7 +254,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card and the Advanced card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card and the Chat / reasoning card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -550,37 +567,67 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134 (2h.4 160, 2h.5 164): an editable control shows no full-value line, Embeddings, Resource / context and KV cache alike, and the disabled cards keep theirs', async () => {
+test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170): an editable control shows no full-value line, Embeddings, Resource / context, KV cache and Chat / reasoning alike, and the disabled cards keep theirs', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
+    // The Chat / reasoning card, editable since 2h.6's 170: 134 takes its
+    // lines, and the number of a box the file unticked is an enabled input.
     'reasoning-effort': EXTRA_POOL,
+    'reasoning-budget-message': LONG_TEXT,
+    'n-predict': '172032000',
     // The KV cache card, editable since 2h.5's 164: 134 takes its lines.
     'cache-type-k': EXTRA_POOL,
     'cache-ram': '172032000',
+    // The Hardware / configuration card, still read-only: its three kinds
+    // keep the line of 118 (a select, a text, a number).
+    'load-mode': EXTRA_POOL,
+    'fit-target': LONG_TEXT,
+    'n-gpu-layers': '172032000',
   })
   // An enabled select opens and an enabled input scrolls, so 134 takes the
   // line away from both, and 160 says the Resource card's number never has
   // one: a ticked box's input is empty, an unticked one is enabled.
-  for (const key of ['pooling', 'ctx-size', 'cache-type-k', 'cache-ram'])
+  for (const key of [
+    'pooling',
+    'ctx-size',
+    'cache-type-k',
+    'cache-ram',
+    'reasoning-effort',
+    'reasoning-budget-message',
+    'n-predict',
+  ])
     expect(
       fullOf(main, key),
       `${key}: no full-value line under an editable control`,
     ).toBeNull()
-  expect(
-    fullOf(main, 'reasoning-effort'),
-    'the disabled control keeps its line',
-  ).toBeTruthy()
+  // The read-only card keeps its line: a select, a text and a number.
+  for (const key of ['load-mode', 'fit-target', 'n-gpu-layers'])
+    expect(
+      fullOf(main, key),
+      `${key}: the disabled control keeps its line`,
+    ).toBeTruthy()
 })
 
-test('2h.134: a long value the disabled control cannot show keeps its line: Reasoning effort is the disabled half of the pair, the KV cache select the enabled half (pinned above)', async () => {
-  const { main } = await page({ 'reasoning-effort': EXTRA_POOL })
-  const line = fullOf(main, 'reasoning-effort')!
+test("2h.134 (2h.6 170): a long value the disabled control cannot show keeps its line: the Hardware / configuration card's Load mode select is the disabled half of the pair, Reasoning effort the enabled half (pinned above)", async () => {
+  const { main } = await page({
+    'load-mode': EXTRA_POOL,
+    'reasoning-effort': EXTRA_POOL,
+  })
+  const line = fullOf(main, 'load-mode')!
   expect(text(line), 'the line repeats the value as written').toBe(EXTRA_POOL)
   expect(
-    selectOf(main, en('preset-reasoning-effort')).disabled,
+    selectOf(main, en('preset-load-mode')).disabled,
     'the field is a disabled select',
   ).toBe(true)
+  expect(
+    selectOf(main, en('preset-reasoning-effort')).disabled,
+    'Reasoning effort: 170 makes its card editable, so the select is enabled',
+  ).toBe(false)
+  expect(
+    fullOf(main, 'reasoning-effort'),
+    'and the enabled half shows no line',
+  ).toBeNull()
 })
 
 // ── 139 with 138: an edit made while the PUT runs, and the save fails ───
