@@ -268,6 +268,21 @@ Lessons only: the rules are in `AGENTS.md`.
   ended session from a live one without a second read); `client-not-authorized` (502) is what a
   session-free read answers when the bff's own account is refused (the instances list, `GET boot`:
   `control.rs` `read_failure`, `lib.rs`).
+- A bff route that writes two files at once (the preset switch): read the handler and its blocking task
+  before writing the order. What is not obvious and broke a draft: `WriteState` is **per request**
+  (shared by the handler and its task, `crates/bff/src/server.rs`), so the save and the switch share
+  the 503/504 rule, not a lock; a bff read route runs no content check at all (a 422 comes from the
+  manager's write), and which checks run per file is `check_contents` in
+  `crates/manager/src/manager/service.rs` (`presets_file` then `preset_ids_free` for `presets.ini`,
+  `presets_disabled_file` then `preset_ids_free` for the disabled one, each `?` first).
+- The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
+  `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
+  strings key (`preset-load-failed`). The preset page's route is `#/models/<id>` (`fe/src/route.ts`),
+  not `#/presets/<id>`, and `GET` of an unregistered path is a bare 404 with no JSON body
+  (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
+- `cargo test -p pai-bff` prints one block per suite and the tail shows only the last: scope it with
+  `cargo test -p pai-bff --test presets --test presets_switch` and grep `test result` to see the
+  suites you mean.
 - When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
   fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
   case): cite the sha, and paraphrase a string rather than quoting it, its text living in

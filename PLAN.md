@@ -900,8 +900,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    a missing destination file is created with a plain write, so one created by someone else between
    the read and the write is overwritten (needs a create-if-absent in the manager); a failed read-back
    after both writes answers 504 or 502 for a move that stands; switching `[*]` off moves
-   llama-server's global section out of `presets.ini`, as the GUI does (decide whether either should
-   refuse it); tests missing: `Unavailable` between the two writes, asked on while in both files, the
+   llama-server's global section out of `presets.ini`, as the GUI does, and by the code it cannot be
+   switched back on from the web (the manager's check refuses the id `*`: 422 `invalid-preset-id`):
+   a one-way trap, the bff (and the GUI) should refuse to switch `[*]`, a small slice before or right
+   after the user's run; tests missing: `Unavailable` between the two writes, asked on while in both files, the
    `[*]` id; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
 11c. **A preset's page, read-only.** `GET /api/presets/{id}` as proposed in `fe/briefs/api-contract.md`
    (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
