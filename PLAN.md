@@ -978,10 +978,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     under the node; `#/models` opens the pool as today (user, 2026-11-17, through the web UI session). Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
     `presets.ini`, assignments in `assignments.ini`, the manager renders `presets@<id>.ini` per
     instance), thirteen slices in its order, after the preset cards. Slices 1 (the render,
-    `pai-core` `assign.rs`) and 2 (the manager renders and launches) done 2026-11-17. Left from 2, before
-    an install: the instance unit must not start before the manager has rendered on the first boot after
-    the upgrade (`llama.cpp@.service` has no ordering on the manager: add `After=private-ai-manager.service`
-    in slice 3, and check the Windows SCM start); `render_all` stops at the first failing instance and its
+    `pai-core` `assign.rs`), 2 (the manager renders and launches) and 3 (`assignments.ini` shipped,
+    `After=private-ai-manager.service` on the instance unit) done 2026-11-17. Left: the manager never
+    re-renders when `assignments.ini` appears on disk (an engine-only upgrade, or an rpm transaction whose
+    framework %posttrans runs first, leaves `default` with `[*]` only: the deb order is safe); on Windows
+    the instance services the manager creates have no dependency on `private-ai-manager` (set it at
+    creation); the docs (`installer/AGENTS.md` ~64 and ~92, `docs/build-packaging.md`) name two defaults; `render_all` stops at the first failing instance and its
     start-time result is discarded (keep going, report the failure); a server write re-renders every
     instance (only the written one would do); missing tests: a render failing after the pool write, the
     second instance over its max, the D-Bus and pipe `BadFileName` for `presets@<id>.ini`. Clients still

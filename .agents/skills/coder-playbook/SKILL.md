@@ -1109,3 +1109,17 @@ Lessons only: the rules are in `AGENTS.md`.
   evidence the coordinator needs, and the real tree is left exactly as the tests describe.
 - A tester's `for who in [&alice]` is `clippy::single_element_loop` under `--all-targets`: report it,
   and show the production code is clean with plain `cargo clippy -p <crate> -- -D warnings`.
+- One more shipped engine default file is four edits and no staging code: the text goes in
+  `crates/core/defaults/` (and `defaults/windows/` when Windows differs), `msi::engine_defaults()` stages
+  it into `share\defaults\` and `linux::system_files::files()` into the Llama component's
+  `usr/share/private-ai/llama.cpp/`, both loops are data-driven, and `components::of` routes that prefix
+  already. Windows needs a `<Component>` in `installer/llama.cpp.wxs` (the defaults are
+  `NeverOverwrite="yes" Permanent="yes"`, an auto GUID works when the key path is one file) plus its
+  `<ComponentRef>`, and `copy_missing_defaults()` is where a default reaches `/etc/llama.cpp/`.
+- `msi::needle_check_list` reads `.github/workflows/installers-windows.yml` as text and wants the
+  install-check list to quote EVERY shipped default's name in single quotes; the workflow's repair step
+  is a separate list. Both files are tests' fixtures: a `ci_windows.rs` step is the text between
+  `- name:` lines, comment lines dropped.
+- The instance unit's dependency list is pinned by name (`unit_dependencies_include_the_manager`): an
+  ordering line is a plain `After=`, and `After=` alone is what the test accepts (no `Wants=`,
+  no `BindsTo=`), so a unit that must start after the manager adds one line.

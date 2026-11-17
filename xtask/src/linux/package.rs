@@ -2330,7 +2330,8 @@ mod tests {
             names,
             [
                 "usr/share/private-ai/llama.cpp/server@default.ini",
-                "usr/share/private-ai/llama.cpp/presets.ini"
+                "usr/share/private-ai/llama.cpp/presets.ini",
+                "usr/share/private-ai/llama.cpp/assignments.ini"
             ]
         );
         for (rel, text) in &defaults {

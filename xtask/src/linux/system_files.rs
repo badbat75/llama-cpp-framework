@@ -96,6 +96,10 @@ pub fn files() -> Vec<(&'static str, String)> {
             "usr/share/private-ai/llama.cpp/presets.ini",
             include_str!("../../../crates/core/defaults/presets.ini").to_string(),
         ),
+        (
+            "usr/share/private-ai/llama.cpp/assignments.ini",
+            include_str!("../../../crates/core/defaults/assignments.ini").to_string(),
+        ),
         ("usr/lib/tmpfiles.d/llama.cpp.conf", engine_tmpfiles()),
     ]
 }
@@ -157,6 +161,10 @@ pub fn instance_unit() -> String {
          Description=llama.cpp server %i (Private AI Framework)\n\
          After=network-online.target\n\
          Wants=network-online.target\n\
+         # Ordering only, no requirement: the manager renders each instance's\n\
+         # presets@<id>.ini at its own start, so an enabled instance that starts\n\
+         # at boot starts once that render stands.\n\
+         After=private-ai-manager.service\n\
          # The launcher is the framework's, which this package does not require.\n\
          ConditionFileIsExecutable={MANAGER_EXE}\n\
          \n\
@@ -527,12 +535,14 @@ fn start_recorded_instances(indent: &str) -> String {
 /// Copies each shipped default into [`ENGINE_ETC`] when it is missing, never
 /// over an existing file: the server file 0640 with the group private-ai
 /// once that group exists (the core package creates it), else 0644 root:root
-/// until the manager's first write; the presets 0644. With `chroot` (the
+/// until the manager's first write; the presets and the assignment 0644, as
+/// neither holds a secret. With `chroot` (the
 /// `.deb`), every path is under `$DPKG_ROOT` and a chroot install asks the
 /// host for no group: the server file is copied 0644 there.
 fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
     let server = "server@default.ini";
     let presets = "presets.ini";
+    let assignments = "assignments.ini";
     let (root, host) = if chroot {
         ("$DPKG_ROOT", r#"[ -z "$DPKG_ROOT" ] && "#)
     } else {
@@ -551,6 +561,9 @@ fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
          {indent}fi\n\
          {indent}if [ ! -e {etc}/{presets} ]; then\n\
          {indent}\tinstall -m 0644 {share}/{presets} {etc}/{presets}\n\
+         {indent}fi\n\
+         {indent}if [ ! -e {etc}/{assignments} ]; then\n\
+         {indent}\tinstall -m 0644 {share}/{assignments} {etc}/{assignments}\n\
          {indent}fi\n"
     )
 }
@@ -787,6 +800,7 @@ mod tests {
     const BFF_SYSUSERS: &str = "usr/lib/sysusers.d/private-ai-bff.conf";
     const DEFAULT_SERVER: &str = "usr/share/private-ai/llama.cpp/server@default.ini";
     const DEFAULT_PRESETS: &str = "usr/share/private-ai/llama.cpp/presets.ini";
+    const DEFAULT_ASSIGNMENTS: &str = "usr/share/private-ai/llama.cpp/assignments.ini";
 
     /// The text of the generated file at `path`, from [`files`].
     fn file(path: &str) -> String {
@@ -865,13 +879,15 @@ mod tests {
                 BFF_SYSUSERS,
                 DEFAULT_SERVER,
                 DEFAULT_PRESETS,
+                DEFAULT_ASSIGNMENTS,
                 TMPFILES
             ]
         );
         for (path, text) in &got {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
-                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS | TMPFILES => Component::Llama,
+                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS | DEFAULT_ASSIGNMENTS
+                | TMPFILES => Component::Llama,
                 _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
@@ -882,7 +898,8 @@ mod tests {
                 POLKIT_POLICY => polkit_policy(),
                 POLKIT_RULES => polkit_rules(),
                 BFF_UNIT => bff_unit(),
-                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS | TMPFILES => text.clone(),
+                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS | DEFAULT_ASSIGNMENTS
+                | TMPFILES => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -1100,6 +1117,52 @@ mod tests {
         );
         assert!(!unit.contains("DefaultInstance="), "{unit}");
         assert!(!unit.contains("never enabled"), "{unit}");
+    }
+
+    /// The instance is ordered after the manager, so an enabled instance
+    /// starting at boot starts once the manager is up: the manager renders
+    /// every instance's `presets@<id>.ini` at its own start, so on the first
+    /// boot after an upgrade the engine reads a rendered file, never a stale
+    /// one. Ordering only: the manager is the framework's package, which the
+    /// engine's package does not ship and must not require, so no `Requires=`,
+    /// `Requisite=` or `Wants=` names it (systemd.unit(5): `After=` takes a
+    /// blank-separated list of unit names and orders only the units that
+    /// start anyway).
+    #[test]
+    fn the_instance_unit_starts_after_the_manager() {
+        let unit = instance_unit();
+        let after = after_targets(&unit);
+        assert!(
+            after.contains(&MANAGER_SERVICE),
+            "the instance is not ordered after the manager: {after:?}\n{unit}"
+        );
+        for name in requirement_targets(&unit) {
+            assert_ne!(
+                name, MANAGER_SERVICE,
+                "the engine's unit requires the framework's, which it does not ship:\n{unit}"
+            );
+        }
+    }
+
+    /// The unit names of every `After=` line of a unit's `[Unit]` section.
+    fn after_targets(unit: &str) -> Vec<&str> {
+        section(unit, "[Unit]")
+            .into_iter()
+            .filter(|l| l.starts_with("After="))
+            .flat_map(|l| l["After=".len()..].split_whitespace())
+            .collect()
+    }
+
+    /// The unit names of every `Requires=`, `Requisite=` and `Wants=` line of
+    /// a unit's `[Unit]` section.
+    fn requirement_targets(unit: &str) -> Vec<&str> {
+        section(unit, "[Unit]")
+            .into_iter()
+            .filter(|l| {
+                l.starts_with("Requires=") || l.starts_with("Requisite=") || l.starts_with("Wants=")
+            })
+            .flat_map(|l| l.split_once('=').expect("key=value").1.split_whitespace())
+            .collect()
     }
 
     /// A new instance starts disabled, as the old setting defaulted to off:
@@ -2346,6 +2409,7 @@ mod tests {
                     INSTANCE_UNIT,
                     DEFAULT_SERVER,
                     DEFAULT_PRESETS,
+                    DEFAULT_ASSIGNMENTS,
                     TMPFILES,
                 ]
                 .contains(p)
@@ -2443,6 +2507,9 @@ mod tests {
     /// The sandbox's stand-in for the shipped server file (the real one is
     /// pinned by `the_engine_ships_its_defaults_read_only`).
     const SHIPPED_SERVER: &str = "[Server]\nPort = 9931\nHostname = 127.0.0.1\n";
+    /// The sandbox's stand-in for the shipped default assignment (the real
+    /// text is pinned by `the_engine_ships_the_default_assignment`).
+    const SHIPPED_ASSIGNMENTS: &str = "[default]\n* = inherit\n";
 
     /// What `systemctl list-units --plain --no-legend --state=active
     /// 'llama.cpp@*.service'` printed on a machine with an instance running
@@ -2554,6 +2621,7 @@ exit 0
             std::fs::create_dir_all(&share).unwrap();
             std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
             std::fs::write(share.join("presets.ini"), "").unwrap();
+            std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
             Sandbox { dir }
         }
 
@@ -2753,6 +2821,13 @@ exit 0
             let w: Vec<&str> = l.split_whitespace().collect();
             words.iter().all(|x| w.contains(x))
         })
+    }
+
+    /// The index of the first `install` call naming `name` (the paths on the
+    /// line are whole paths, so this matches the file name inside them).
+    fn installs(log: &[String], name: &str) -> Option<usize> {
+        log.iter()
+            .position(|l| l.split_whitespace().next() == Some("install") && l.contains(name))
     }
 
     /// Whether a call starts (or restarts) `unit`.
@@ -3080,6 +3155,30 @@ exit 0
         }
     }
 
+    /// The engine ships the default assignment beside them: `assignments.ini`,
+    /// one section for the instance `default` with the key `* = inherit`, so a
+    /// fresh install and an upgrade serve on `default` exactly what
+    /// `presets.ini` serves, with nothing to move by hand. Checked in as
+    /// `crates/core/defaults/assignments.ini`, beside the other shipped
+    /// defaults (the manager owns the file: `pai-core`'s `assign` module pins
+    /// what the keys mean).
+    #[test]
+    fn the_engine_ships_the_default_assignment() {
+        let checked_in = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/core/defaults/assignments.ini");
+        let want = std::fs::read_to_string(&checked_in)
+            .unwrap_or_else(|e| panic!("{}: {e}", checked_in.display()));
+        let text = file(DEFAULT_ASSIGNMENTS);
+        assert_eq!(text, want);
+        let keys: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with(';') && !l.starts_with('#'))
+            .collect();
+        assert_eq!(keys, ["[default]", "* = inherit"], "{text}");
+        assert_eq!(components::of(DEFAULT_ASSIGNMENTS), Component::Llama);
+    }
+
     /// The modes of a file and of a directory.
     fn mode(p: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -3142,11 +3241,26 @@ exit 0
                 "{args:?}: {log:?}"
             );
             assert_eq!(mode(&etc.join("presets.ini")), 0o644, "{args:?}");
+            assert_eq!(
+                std::fs::read_to_string(etc.join("assignments.ini"))
+                    .ok()
+                    .as_deref(),
+                Some(SHIPPED_ASSIGNMENTS),
+                "{args:?}: {log:?}"
+            );
+            assert_eq!(mode(&etc.join("assignments.ini")), 0o644, "{args:?}");
             let start = call(&log, &["start", "llama.cpp@default.service"])
                 .unwrap_or_else(|| panic!("{args:?}: {log:?}"));
             assert!(
                 log[start].contains("has-default=yes"),
                 "the defaults are copied before the instances start: {log:?}"
+            );
+            let copied = installs(&log, "assignments.ini").unwrap_or_else(|| {
+                panic!("the default assignment is not copied: {args:?}: {log:?}")
+            });
+            assert!(
+                copied < start,
+                "the default assignment is copied after the instances start: {log:?}"
             );
         }
     }
@@ -3171,6 +3285,16 @@ exit 0
         );
         assert_eq!(mode(&ini), 0o644, "{log:?}");
         assert!(!grouped(&log, "server@default.ini"), "{log:?}");
+        // The assignment is not a secret and has no group of its own: 0644
+        // with or without the group private-ai.
+        let assign = sb.etc().join("assignments.ini");
+        assert_eq!(
+            std::fs::read_to_string(&assign).ok().as_deref(),
+            Some(SHIPPED_ASSIGNMENTS),
+            "{log:?}"
+        );
+        assert_eq!(mode(&assign), 0o644, "{log:?}");
+        assert!(!grouped(&log, "assignments.ini"), "{log:?}");
     }
 
     /// What the administrator or the manager wrote is never touched: an
@@ -3195,6 +3319,8 @@ exit 0
         )
         .unwrap();
         std::fs::write(etc.join("presets.ini.disabled"), disabled).unwrap();
+        let assignments = "[default]\nQwen3.8-27B = inherit\n[gpu1]\n* = inherit\n";
+        std::fs::write(etc.join("assignments.ini"), assignments).unwrap();
         let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
         assert_eq!(
             std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
@@ -3251,6 +3377,7 @@ exit 0
             "server@gpu1.ini",
             "presets.ini",
             "presets.ini.disabled",
+            "assignments.ini",
         ];
         let fill = |sb: &Sandbox| {
             std::fs::create_dir_all(sb.etc()).unwrap();
@@ -3301,16 +3428,36 @@ exit 0
             Some("")
         );
         assert_eq!(mode(&etc.join("presets.ini")), 0o644);
+        assert_eq!(
+            std::fs::read_to_string(etc.join("assignments.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_ASSIGNMENTS),
+            "{log:?}"
+        );
+        assert_eq!(mode(&etc.join("assignments.ini")), 0o644, "{log:?}");
         let start = call(&log, &["start", "llama.cpp@default.service"])
             .unwrap_or_else(|| panic!("{log:?}"));
         assert!(log[start].contains("has-default=yes"), "{log:?}");
+        let copied = installs(&log, "assignments.ini")
+            .unwrap_or_else(|| panic!("the default assignment is not copied: {log:?}"));
+        assert!(
+            copied < start,
+            "the default assignment is copied before the instances start: {log:?}"
+        );
 
         std::fs::write(etc.join("server@default.ini"), "[Server]\nPort = 8080\n").unwrap();
+        std::fs::write(etc.join("assignments.ini"), "[default]\n* = on\n").unwrap();
         sb.run(&posttrans, &[], true, None);
         assert_eq!(
             std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
             "[Server]\nPort = 8080\n",
             "never overwritten"
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("assignments.ini")).unwrap(),
+            "[default]\n* = on\n",
+            "the assignment is never overwritten"
         );
 
         for name in ["%preun", "%postun"] {
@@ -3336,6 +3483,7 @@ exit 0
         std::fs::create_dir_all(&share).unwrap();
         std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
         std::fs::write(share.join("presets.ini"), "").unwrap();
+        std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
         let etc = root.join(ENGINE_ETC.trim_start_matches('/'));
 
         let log = sb.run_chroot(&deb(Component::Llama, "postinst"), &["configure"], &root);
@@ -3353,12 +3501,20 @@ exit 0
             Some(""),
             "{log:?}"
         );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("assignments.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_ASSIGNMENTS),
+            "the default assignment is copied inside the root: {log:?}"
+        );
         assert_eq!(mode(&etc), 0o755);
         assert!(!sb.etc().exists(), "nothing outside the root: {log:?}");
 
         let log = sb.run_chroot(&deb(Component::Llama, "postrm"), &["purge"], &root);
         assert!(!etc.exists(), "the chroot's /etc/llama.cpp purged: {log:?}");
         assert!(share.join("server@default.ini").is_file(), "{log:?}");
+        assert!(share.join("assignments.ini").is_file(), "{log:?}");
     }
 
     /// Whether any call disables a unit.

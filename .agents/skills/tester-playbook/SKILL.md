@@ -1125,6 +1125,12 @@ Lessons only: the rules are in `AGENTS.md`.
   fakes. `run_chroot` refuses any `/etc` path not under `$DPKG_ROOT`. Enabled template instances exist
   only as `multi-user.target.wants` links (`systemctl list-unit-files` lists the template alone): pin
   the links. rpm scriptlets run the same way, `$1` as argument.
+- The sandbox helper matches whole whitespace-separated tokens (`call`), so a file name inside a
+  path token is never seen: `install -m 0644 ... /usr/share/.../presets.ini` is not a call of
+  `presets.ini`. To pin "the copy of <file> against <action>", add a helper that finds the word
+  and then the file name in the tokens after it.
+- xtask is a bin crate: `cargo test -p xtask --lib` lists 0 tests. Use `cargo test -p xtask --bins
+  --no-fail-fast -- <filters>`, and `--bins -- --list` to type-check all of them.
 - The xtask suite is flaky in its parallel run: `the_engine_prerm_records_the_running_instances_and_stops_them`
   failed once in six full runs (the recorded list short of `llama.cpp@gpu1.service`) and is green alone,
   in four further full runs and with `--test-threads=1`; its `Sandbox::new("engine-prerm")` root is

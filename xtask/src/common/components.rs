@@ -492,6 +492,7 @@ mod tests {
             // The engine's defaults, copied into /etc/llama.cpp when missing.
             "usr/share/private-ai/llama.cpp/server@default.ini",
             "usr/share/private-ai/llama.cpp/presets.ini",
+            "usr/share/private-ai/llama.cpp/assignments.ini",
         ] {
             assert_eq!(of(rel), Component::Llama, "{rel}");
         }

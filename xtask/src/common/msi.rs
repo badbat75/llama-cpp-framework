@@ -100,6 +100,10 @@ pub fn engine_defaults() -> Vec<(&'static str, String)> {
             "presets.ini",
             include_str!("../../../crates/core/defaults/windows/presets.ini").to_string(),
         ),
+        (
+            "assignments.ini",
+            include_str!("../../../crates/core/defaults/windows/assignments.ini").to_string(),
+        ),
     ]
 }
 

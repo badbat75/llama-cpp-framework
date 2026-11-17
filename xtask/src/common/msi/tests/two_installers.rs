@@ -16,7 +16,7 @@ const ENGINE_WXS: &str = "installer/llama.cpp.wxs";
 const REMOVE_INSTANCES_PS1: &str = "installer/msi-remove-instances.ps1";
 /// The framework's identity across versions, 2.4 included (installer/AGENTS.md).
 const FRAMEWORK_UPGRADE_CODE: &str = "F21D044C-04F5-478D-8F0A-A9B940DB23C3";
-const DEFAULTS: [&str; 2] = ["server@default.ini", "presets.ini"];
+const DEFAULTS: [&str; 3] = ["server@default.ini", "presets.ini", "assignments.ini"];
 
 pub(super) fn engine_text() -> String {
     read(ENGINE_WXS)
@@ -220,6 +220,30 @@ fn the_engine_defaults_on_windows_hold_only_portable_starting_values() {
     );
     assert!(!server.contains("/var/lib"), "{server}");
     assert_eq!(d[1].1, "", "presets.ini is empty");
+}
+
+/// The engine's defaults on Windows carry the default assignment as well:
+/// `assignments.ini` with the one section of the instance `default` and the
+/// key `* = inherit`, so a fresh install and an upgrade serve on `default`
+/// exactly what `presets.ini` serves, with nothing to move by hand. Checked in
+/// as `crates/core/defaults/windows/assignments.ini`, beside the other
+/// Windows defaults; the manager owns the file, the installer only copies it.
+#[test]
+fn the_engine_ships_the_default_assignment_on_windows() {
+    let want = read("crates/core/defaults/windows/assignments.ini");
+    let text = engine_defaults()
+        .into_iter()
+        .find(|(n, _)| *n == "assignments.ini")
+        .expect("assignments.ini among the engine's defaults")
+        .1;
+    assert_eq!(text, want);
+    let keys: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with(';') && !l.starts_with('#'))
+        .collect();
+    assert_eq!(keys, ["[default]", "* = inherit"], "{text}");
+    assert!(text.is_ascii(), "{text}");
 }
 
 /// The Windows package phase uses the functions above: one MSI per product,

@@ -274,6 +274,7 @@ fn installers_windows_checks_the_installed_products() {
         "ProgramData",
         "server@default.ini",
         "presets.ini",
+        "assignments.ini",
         "127.0.0.1:8590/api/version",
     ] {
         assert!(
@@ -303,8 +304,8 @@ fn installers_windows_repairs_before_uninstalling() {
 
 /// Test plan step 7: the engine's defaults are copied back only when missing.
 /// The files exist before the repair, so seeing them after it proves nothing:
-/// `presets.ini` is deleted before the repair (it must come back) and
-/// `server@default.ini` changed (the change must stay).
+/// `presets.ini` and `assignments.ini` are deleted before the repair (they
+/// must come back) and `server@default.ini` changed (the change must stay).
 #[test]
 fn installers_windows_repair_restores_a_deleted_default_and_keeps_a_changed_one() {
     let text = workflow();
@@ -314,10 +315,12 @@ fn installers_windows_repair_restores_a_deleted_default_and_keeps_a_changed_one(
         .expect("no msiexec /f repair after the install");
     let step_start = text[..repair].rfind("\n      - ").unwrap_or(install);
     let before_repair = &text[step_start..repair];
-    assert!(
-        before_repair.contains("Remove-Item") && before_repair.contains("presets.ini"),
-        "presets.ini is not deleted before the repair"
-    );
+    for name in ["presets.ini", "assignments.ini"] {
+        assert!(
+            before_repair.contains("Remove-Item") && before_repair.contains(name),
+            "{name} is not deleted before the repair"
+        );
+    }
     assert!(
         ["Add-Content", "Set-Content", "Out-File"]
             .iter()
