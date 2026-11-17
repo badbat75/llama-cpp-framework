@@ -948,7 +948,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     install and `Listen = 0.0.0.0:8590` in `/etc/private-ai/bff.ini` with the user's go-ahead; the docs
     pass (`crates/bff/README.md` lines 3, 19-20, 43-60, `ARCHITECTURE.md` ~29, 84, 97, 182, 245; say the
     session cookie is bound to the host, not the port); pin more hostile hosts in `origin.rs`'s
-    refusal test (`0x7f.1`, `1.2.3.4.evil.example`, `[::1].evil`, a zone id). A Content-Security-Policy
+    refusal test (`0x7f.1`, `1.2.3.4.evil.example`, `[::1].evil`, a zone id). **12b. The machine's names**
+    (user, 2026-11-17): beside the IP literals and `localhost`, the `Host` guard accepts this machine's
+    names, read at the bff's start: its host name, `<name>.local` and `<name>.<domain>` for each
+    `search`/`domain` of `/etc/resolv.conf` (Linux; on Windows the computer name and its DNS domain);
+    `[Bff] Hosts` (comma-separated names) in `bff.ini`, when set, replaces those automatic names. Any
+    other name stays refused. A Content-Security-Policy
     is agreed with the web UI session first. Left from the web UI session's UX pass: hashed assets with
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
