@@ -344,6 +344,47 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
     `aria-describedby` naming its unit.
 163. **String (1 new)**: `field-error-whole-number` | Enter a whole number, without a decimal point.
 
+## 2h.4a. Disabled controls can be told from enabled ones
+
+Why: a disabled empty input looked exactly like an enabled one (same `--bg`, same border; only its
+text `--muted`), and on the preset page read-only cards sit beside editable ones and a ticked default
+box disables its input. D5.2 "Disabled looks different from enabled" is the rule; CSS only, in
+`fe/src/index.css`, so the Server page changes with it (its ticked default boxes' inputs, Snapshot
+folder while Save on shutdown is off, the API key's Show while No key is ticked). No string, no
+markup, no behaviour changes. WCAG exempts inactive controls (1.4.3, 1.4.11): a usability rule, but
+the value text is held to 4.5:1 anyway (`--muted` on `--surface`: 5.7:1 light, 6.9:1 dark). No new
+token.
+
+163a. **Disabled field**: one rule whose selector list holds `input:disabled`, `select:disabled` and
+    `textarea:disabled` declares `background: var(--surface)`, a 1px **dashed** border in
+    `var(--control)` (shorthand `border: 1px dashed var(--control)` or `border-style: dashed` with
+    the colour), `color: var(--muted)`, `-webkit-text-fill-color: var(--muted)` (Safari otherwise
+    greys the text), `cursor: not-allowed` and `opacity: 1`.
+163b. **Enabled field unchanged**: the enabled rule (`input[type='text']`, `input[type='password']`,
+    `select`) keeps `background: var(--bg)` and `border: 1px solid var(--control)`; the disabled
+    rule comes later in the file or is more specific, so it wins.
+163c. **Disabled checkbox**: the rule for `input[type='checkbox']:disabled` (today shared with
+    `[aria-disabled='true']`, kept shared) declares `background: var(--surface)` and a dashed
+    `var(--control)` border; its `::before` (the tick) keeps `border-color: var(--muted)`. It wins
+    over `input[type='checkbox']:checked` (same specificity, later in the file), so a disabled
+    ticked box shows a `--muted` tick on `--surface`, not an `--accent` fill.
+163d. **Its text and cursor**: `.check:has(> input:disabled)` declares `color: var(--muted)`;
+    `input[type='checkbox']:disabled` declares `cursor: not-allowed`. The `aria-disabled` checkbox
+    keeps `cursor: default` (`.check input[aria-disabled='true']`) and no `--muted` label.
+163e. **Disabled button**: `.primary:disabled, .secondary:disabled` declare
+    `background: var(--surface)`, a dashed `var(--control)` border, `color: var(--muted)` and
+    `cursor: not-allowed`. The `aria-disabled` buttons (save bar, run controls) are unchanged: solid
+    `--control` border on `--bg` (D5.2 Buttons, Inactive).
+163f. **No opacity, no new token**: no rule matching `:disabled` sets `opacity` below 1, and `:root`
+    gains no custom property in this sub-slice.
+163g. **Tests** (as 2h.135 and 2e.118: read `index.css`, strip comments, collect the rules whose
+    selector contains the named selector, assert the declarations): one test per 163a, 163c, 163d,
+    163e, and 163b plus 163f together. Not tested in jsdom: the drawn result; the designer checks it
+    with Playwright after the coder (computed `border-top-style` `dashed`, background
+    `rgb(246, 247, 249)` light, `rgb(24, 27, 34)` dark, on a disabled input of a read-only card and of
+    a ticked default box; `solid` on `--bg` for an enabled one; Chromium, Firefox, WebKit; light and
+    dark; and forced colours in Chromium, where the dashed style must remain).
+
 ## 2h.5. KV cache, Sampling overrides, Advanced
 
 164. **Editable**: 2e's tables 96, 97, 98, every field always enabled (MP).

@@ -184,10 +184,10 @@ and state shapes ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)).
 | Token | Light | Dark | Use | Contrast light / dark (bg, surface) |
 |---|---|---|---|---|
 | `--bg` | `#ffffff` | `#0f1115` | page | |
-| `--surface` | `#f6f7f9` | `#181b22` | cards, header, save bar | |
+| `--surface` | `#f6f7f9` | `#181b22` | cards, header, save bar, fill of a disabled control | |
 | `--text` | `#1b1f24` | `#e6e8eb` | body text | 16.6, 15.5 / 15.4, 14.0 |
 | `--muted` | `#59636e` | `#9ba5b0` | hints, secondary text, values of disabled controls | 6.1, 5.7 / 7.6, 6.9 |
-| `--control` | `#818b98` | `#7d8794` | input and checkbox borders, dividers that carry meaning | 3.5, 3.2 / 5.2, 4.7 |
+| `--control` | `#818b98` | `#7d8794` | input and checkbox borders (dashed on a disabled control), dividers that carry meaning | 3.5, 3.2 / 5.2, 4.7 |
 | `--accent` | `#0a5cc2` | `#6cb0ff` | links, primary button, focus ring, selected nav | 6.3, 5.9 / 8.4, 7.6 |
 | `--on-accent` | `#ffffff` | `#0f1115` | text on `--accent` | 6.3 / 8.4 |
 | `--danger` | `#b42318` | `#ff8d80` | errors, Failed | 6.6, 6.1 / 8.4, 7.7 |
@@ -276,10 +276,28 @@ Each is one React component, reused by every page.
     `aria-invalid` stay on it and focus goes to the field's first enabled control, else to the switch
     that enables the field ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
   - **Disabled controls stay readable**: a disabled control still shows a value, so its value is
-    drawn in `--muted`, a checkbox included (its box border and its check mark in `--muted`, not the
-    browser's faint disabled grey). WCAG exempts inactive
-    controls from [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast); this rule is a
-    **(preference)** so the value can be read.
+    drawn in `--muted`, a checkbox included (its check mark in `--muted`, not the browser's faint
+    disabled grey). WCAG exempts inactive controls from
+    [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum) and
+    [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast); holding the value to 4.5:1 anyway is a
+    **(preference)**, since the read-only cards exist to be read: `--muted` on `--surface` is 5.7:1
+    light, 6.9:1 dark.
+  - **Disabled looks different from enabled** (2026-11-17, 02h 163a to 163g): every control with the
+    native `disabled` attribute (`input`, `select`, `textarea`, a checkbox or switch, a button) is
+    drawn **flat**: background `--surface` (the card's own, so it reads as part of the card, not a
+    box to type into), border **1px dashed** `--control` (the box stays visible, at 3.2:1 light,
+    4.7:1 dark on `--surface`), text and check mark `--muted`, `cursor: not-allowed`, never
+    `opacity`. An enabled control keeps its solid `--control` border on `--bg`. The cue is the
+    border's style, not a colour (`--surface` on `--bg` is only 1.07:1 light, 1.1:1 dark), so it
+    holds without colour ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)) and under forced
+    colours, which replace border colours but not `border-style`
+    ([CSS Color Adjustment 1, properties affected](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties)).
+    A disabled checkbox's own text (`.check`) is `--muted` too. A ticked default box is enabled, so
+    it keeps its filled `--accent` look and its tick, and the input it disables turns flat and
+    dashed beside it. A checkbox inactive by `aria-disabled` (a write in flight) shares the drawing
+    but keeps `cursor: default` and its label colour: it turns back by itself in a moment. A field's
+    own label (outside a checkbox) stays `--text` **(preference)**: it names the setting, the control
+    carries the state. One set of rules in `index.css`, shared by the preset page and the Server page.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
