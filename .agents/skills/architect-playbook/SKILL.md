@@ -86,3 +86,10 @@ description: What the architect has learned about this project's components, int
   file already holds in the same section, or a byte-for-byte edit (web save, switch on) of a
   hand-commented line is refused (decision c1). `presets_file` sees only `presets.ini` as `old`
   unless given the disabled file: a switch on checks the moved section whole.
+- Instances (checked 2026-11-17): a new `server@<id>.ini` IS the instance (no create method; Windows
+  `Start` creates the SCM service, `scm.rs` `sync` deletes orphans at the manager's start); there is no
+  remove. Both the GUI's and the bff's server saves render the WHOLE file from `ServerConfig`
+  (`render_for`), so any new server key must be a `ServerConfig` field or a save drops it. The shipped
+  `server@default.ini` sets `StateDir` explicitly; snapshots are named by model stem, so a shared
+  state folder collides across instances. `server@<id>.ini` needs `control` to read: anything the
+  session-free Overview shows from it needs an unauthenticated manager call.

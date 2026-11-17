@@ -60,7 +60,8 @@ Linux system files in `xtask/src/linux/system_files.rs`.
   `fe/briefs/api-contract.md`.
 - **The instance files**: `server@<id>.ini`, `presets.ini`, `presets.ini.disabled` in the engine's
   configuration directory, written only by the manager; read by `run-instance` and by llama-server
-  (`--models-preset`).
+  (`--models-preset`). Designed to become one preset pair per instance, `presets@<id>.ini` and its
+  `.disabled` ("Nodes and instances" below).
 
 ### Identities and trust boundaries
 
@@ -789,7 +790,8 @@ instance's llama-server gets the engine's one `presets.ini` (`launch::server_arg
 and the manager already counts load-on-startup against every instance's `ModelsMax` for that reason.
 With one engine today, that is every instance: `list_instances`, then `status` of each until one is
 active or activating. A failed status read after a done write gives `running: true`, as for the server
-file. When engines arrive (item 10) the list is filtered by the engine.
+file. When engines arrive (item 10) the list is filtered by the engine. Superseded by "Nodes and
+instances" (f): each instance gets its own preset files, so `running` reads that one instance.
 
 **The bff's steps for a PUT**, each failure answered before the next: session (401); the body (400,
 then the comment-marker 422); read `presets.ini` as the user (`ReadFileAs`) and find the section
@@ -937,6 +939,205 @@ instead of the key syntax, `presets-malformed` for an empty value, the switch's 
 **For the user to decide.** Nothing blocks the slices. Two choices are recommendations the user may
 overrule: (1) the section revision rather than the file's (recommended); (2) reloading llama-server
 after a save stays a later design (recommended), with "restart to apply" meanwhile.
+
+### Nodes and instances (step 10 item 13)
+
+Designed 2026-11-17, decided by the user the same day (below); built after the web UI's preset cards (2h.5 to 2h.10). The user's
+decisions of 2026-11-17 (`PLAN.md` step 10 item 13): the web UI's top level is the node (this machine
+under its host name) with its instances inside, and more nodes later without redoing the page; each
+instance is collapsible and shows, collapsed, its engine, its port and its tags; instances are added
+and removed from the web UI, llama.cpp first, each on its own port (Strata is a step of its own);
+**a model (preset) belongs to an instance on a node, not to an engine**, the engine follows from the
+instance, and the same model can be on several instances, each with its own preset. No migration of
+existing files beyond the simplest (user: "Non pianificare migrazioni da una cartella all'altra in
+questa fase di pre release").
+
+**What exists.** An instance is a file: a new `server@<id>.ini` in the engine's directory adds instance
+`id` (`WriteFile`, `service.rs`; `paths::instance_ids` lists the files), the Linux template unit runs
+any id, and on Windows `Start` creates the missing `llama.cpp_<id>` service while the manager's start
+(`scm.rs` `sync`) deletes services with no file. There is no remove. Every instance gets the engine's
+one `presets.ini` (`launch::instance_command`, `--models-preset`, refused with `NoPresets` when it has
+no section), so the manager counts `load-on-startup` against the lowest `ModelsMax` of all instances
+(`check_contents`), the switch and the bff's `running` look at every instance, and the GUI and `pai`
+read and write `presets.ini` (`pai-app` `server_control::ConfigFile`, hard-wired to the instance
+`default`, `INSTANCE`). Ports are already unique: `check_address` refuses a server file whose host and
+port collide with another instance's (`AddressInUse`). Unset `StateDir` is the one shared
+`paths::instance_state_dir()` (`launch::with_instance_defaults`), where snapshots are named by the
+model's file stem (`slot_save.rs`): two instances serving one model would overwrite each other's.
+`GET /api/instances` is `{id, engine, state}` from `ListInstances` and `Status`, the two calls the
+manager answers to anybody; the port is in `server@<id>.ini`, which needs `control` to read, a right
+the bff's own account does not have.
+
+**(a) The files: one preset pair per instance, beside its server file.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `presets@<id>.ini` and `presets@<id>.ini.disabled` beside `server@<id>.ini`** in the engine's directory | `config_file` learns two names with an id; the launch, the checks and the clients take the id | None new: the same directory, owner, modes and ACL; the engine still follows from the directory holding the file | **Chosen** |
+| B. A directory per instance (`<id>/server.ini`, `<id>/presets.ini`) | Moves `server@<id>.ini` too: `instance_ids`, the unit's paths, both packages' shipped defaults, the MSI's copy | A migration the user ruled out; more paths for the same result | Rejected |
+| C. One shared file with sections keyed by instance | Nothing on disk moves | llama-server reads the whole file it is given and refuses unknown keys: it cannot hold another instance's presets | Rejected |
+
+Today's `presets.ini` and `presets.ini.disabled` are no longer read or served by anything: the manager
+refuses the bare names (`BadFileName`) and leaves the files where they are. The packages ship and copy
+the default as `presets@default.ini` where they copied `presets.ini` (`xtask/src/linux/system_files.rs`,
+`xtask/src/common/msi.rs`, `installer/llama.cpp.wxs`), so a fresh install starts as today. On a machine
+that has presets, the administrator moves them once, by hand, after the upgrade (`sudo mv
+/etc/llama.cpp/presets.ini /etc/llama.cpp/presets@default.ini`, the same for `.disabled`; on Windows in
+`%ProgramData%\llama.cpp\config\`); the copy at install happens only when the target is missing, so it
+never overwrites a moved file if the move comes first. The per-user import of an earlier install
+(`pai-app` `migration.rs`) hands its files to `presets@default.ini` through the same `ConfigFile` name.
+
+**(b) The checks, per instance.** `check_contents` reads the instance's own files: `server@<id>.ini`
+against `presets@<id>.ini`; `presets@<id>.ini` against that instance's `ModelsMax` only (no minimum
+across instances) and its `.disabled`; ids unique within the instance's two files
+(`preset_ids_free`, unchanged). A preset write for an id with no `server@<id>.ini` is `NoInstance`,
+so no write creates orphan preset files. The pai-core functions keep their signatures; only the
+manager's choice of the `old` and `other` texts changes. The same preset id on two instances is
+allowed (the user's "same model on several instances"); the router treats it as one model served
+twice and picks a running instance (user, 2026-11-17).
+
+**(c) The port and the tags.** The port stays `Port` in `server@<id>.ini` (unique by `check_address`).
+Tags go in the same file, a framework key like `ModelsDir`: `[Server] Tags = coding, fast`, never
+passed to llama-server (`launch` builds its argv from `ServerConfig` fields, not raw keys).
+
+| Option for the tags | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `Tags` in `server@<id>.ini`** | A `ServerConfig` field, rendered by `render_for` (so the GUI's and the web's whole-file saves keep it); a rule in `checks::server_file`; edited by the existing `PUT .../server` | A tag edit moves the server revision (a concurrent server edit gets its 409, as for any key) | **Chosen**: one file per instance, removed with it, checked by the manager, on the node where the super-manager will find it |
+| B. A manager-owned `instance@<id>.ini` | A fourth file, its own read and write, its own checks | More surface for no gain | Rejected |
+| C. The bff's own state | No manager change | The manager and the super-manager cannot see them; lost with a bff reinstall; a node's labels kept off the node | Rejected |
+
+The tag rule (a preference, the smallest that leaves routing open): 0 to 8 tags, comma-separated, each
+1 to 32 characters of `a-z`, `0-9`, `-` (the instance-id alphabet, so a tag is safe in a URL, a header
+or a future `model` alias), duplicates refused; refusal key `server-bad-tags` with the tag. Read on
+every OS; the GUI shows nothing for them yet and keeps them on save.
+
+The Overview is session-free, so the port and the tags reach it through a new unauthenticated manager
+call, **`Instances() -> [{id, engine, port, tags}]`** (D-Bus `a(ssqas)`; pipe `Instances`), the
+manager reading each `server@<id>.ini` as root and returning only those fields, the configured port
+(a running instance may still use the previous one until a restart, as for every saved value). It
+discloses nothing a local user cannot already see (`ss -ltn`, the unit list); over the LAN it shows an
+unauthenticated visitor the instances' ports and labels, as it already shows their ids and states
+(decided, user 2026-11-17: the session-free Overview shows port and tags).
+
+**(d) Creating and removing an instance: two manager methods.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| A. Reuse `WriteFile` of a new `server@<id>.ini` for create | No new method for create | A plain write overwrites an existing instance's file; `WriteFileIf` refuses a missing file; remove needs a method anyway | Rejected |
+| **B. `CreateInstance(engine, id, port, tags)` and `RemoveInstance(id)`**, with their `As` forms | Two methods (protocol 3), one `ServiceControl::remove` | None new: `configure`, the `writing` lock, the record of who acted, as every write | **Chosen** |
+
+- `CreateInstance`: `configure`; `engine` must be `llama.cpp` (`unknown-engine` otherwise; the argument
+  is there now so Strata adds no method); `valid_instance_id`, unique across the engines' directories
+  (one directory today); refused `InstanceExists` when `server@<id>.ini` exists; the port through
+  `checks::server_file` and `check_address` like any server write. Under the `writing` lock it writes
+  `server@<id>.ini` = `render_for(ServerConfig { port, tags, ..Default }, true)` (directories left
+  unset, so the instance gets the engine's folders, below) and, when absent, `presets@<id>.ini` with a
+  header comment and no section. Boot start is off, as for every new instance. It starts nothing.
+- `RemoveInstance`: `configure`; `NoInstance` for an unknown id; **`default` is refused**
+  (`InstanceProtected`: the GUI and `pai` address it; user, 2026-11-17); an instance
+  not `inactive` or `failed` is refused `InstanceRunning` (a stop can last minutes for the snapshot
+  save, so the administrator stops it first and the call stays short). Under the lock:
+  `ServiceControl::remove(id)` (Linux: `DisableUnitFiles` of `llama.cpp@<id>.service`, the call
+  `set_boot_enabled(false)` already makes; Windows: `DeleteService`), then the preset pair, then
+  `server@<id>.ini` last, so a failure halfway leaves an instance that lists and can be removed again.
+  Models, snapshots and the Windows log stay (they are data, not configuration). A service the SCM has
+  only marked for deletion makes a create of the same id fail until its handles close
+  ([DeleteService](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-deleteservice),
+  remarks): answered as a service error, not hidden.
+- Starting an instance whose `presets@<id>.ini` has no section is refused by the manager's `Start`
+  (`NoPresets`, the launch's own reason) instead of a unit that fails a moment later.
+
+Trust: both methods cross the same boundary as `WriteFile` (the bus or the pipe, the caller identified
+by the OS, `configure` by polkit or the token, or the bff vouching for a current `pai` member through the
+`As` form). A compromised bff can create and remove non-`default` stopped instances only while a `pai`
+member's session exists, as it can already rewrite their files. Every refusal writes nothing.
+
+**(e) Snapshots per instance.** `with_instance_defaults` takes the id and gives an unset `StateDir`
+`instance_state_dir()/<id>`. Today's `default` file sets `StateDir` explicitly (the shipped default),
+so it keeps its folder and nothing moves; new instances get their own. `slot_state::ensure_dir` creates
+it before the launch, as today.
+
+**(f) The bff.** Local mode, every route as today unless named:
+
+- `GET /api/node` (session-free, as the Overview): `{"name": <host name>, "api": "/api"}`, the name
+  the bff already reads at its start for the `Host` guard (12b). `api` is the path prefix of that
+  node's routes, so the web UI builds every instance URL from it and never branches on the mode; hub
+  mode (Part 2) answers `GET /api/nodes` with the same objects, `api` = `/api/nodes/<node>`. A
+  preference over a `nodes` flag in `/api/version`; Part 2's routes are unchanged by it.
+- `GET /api/instances` items `{id, engine, state, port, tags}` from `Instances` then `Status`.
+- `POST /api/instances` `{engine, id, port, tags}` (administrator) 201 `{id}`; `DELETE
+  /api/instances/{id}` (administrator) 204. New keys `client-instance-exists` (409),
+  `client-instance-running` (409), `client-instance-protected` (409), `client-no-presets` (409, on
+  start), `server-bad-tags` (422); `client-address-in-use`, `client-no-instance` and `unknown-engine` as
+  today.
+- The preset routes move under the instance: `GET /api/instances/{id}/presets`, `GET`/`PUT
+  /api/instances/{id}/presets/{preset}`, `PUT .../presets/{preset}/enabled`, same bodies, revisions and
+  errors, the files `presets@<id>.ini` and its `.disabled`; `running` reads that one instance. The
+  rows' `engine`/`engineAvailable` stay until the web UI session drops them (they now follow from the
+  instance). `/api/presets...` keep answering for `default` until the web UI reads the new routes, then
+  are removed in the same step (no long-lived alias).
+- Tags are edited through `PUT /api/instances/{id}/server` (`Tags` is a server key; the read gains it).
+
+The contract (`fe/briefs/api-contract.md`) is the web UI session's: the coordinator hands it this list;
+the node page, the collapsed instance, the add and remove dialogs and the Models page under its
+instance start with the designer's brief.
+
+**(g) GUI, CLI, Windows.** `pai-config` and `pai` keep addressing `default` only: `ConfigFile::Presets`
+and `PresetsDisabled` name `presets@default.ini(.disabled)` among the manager's files; on macOS
+(`Direct`) the per-user `presets.ini` is unchanged. `ServerConfig` gains `tags` so their saves keep
+them. Choosing an instance in the GUI or `pai --instance` waits until asked. Windows: the same names
+in `%ProgramData%\llama.cpp\config\` (files the manager creates there inherit the MSI's ACL: users have
+no ACE), `DeleteService` behind `ServiceControl::remove`, type-checked only like the rest.
+
+**(h) The router (item 14) and the super-manager.** The router sends a request for model `m` to an
+instance whose `presets@<id>.ini` holds `[m]` (llama-server's model name is the section), on the node
+the bff serves; Part 2's hub mode is unchanged in shape, the instance routes simply carry the node
+prefix.
+
+**Slices**, each test first; Linux, with the Windows code type-checked.
+
+1. **Per-instance preset files in the core and the manager.** `paths` gains the two names;
+   `instance_command` reads `presets@<id>.ini`; `config_file` accepts `presets@<id>.ini(.disabled)` and
+   refuses `presets.ini`; `check_contents` per instance; a preset write for an instance with no server
+   file is `NoInstance`. Done when: two instances with different `ModelsMax` each accept a preset file
+   that fits their own limit and refuse one that does not; a write of `presets.ini` is `BadFileName`;
+   the launch of `b` names `presets@b.ini`.
+2. **The clients follow.** `pai-app` `ConfigFile` names, the import, the bff's preset code taking an
+   instance id (old routes passing `default`). Done when: the GUI's and `pai`'s fakes see
+   `presets@default.ini`; every bff preset test passes against the new names.
+3. **Packaging.** The shipped default copied as `presets@default.ini` (deb, rpm, the MSI and its CI
+   repair check). Done when: `xtask`'s package-content tests name the new file.
+4. **Snapshots per instance** (e). Done when: an instance with no `StateDir` launches with
+   `--slot-save-path <state>/<id>`; one with `StateDir` set keeps it.
+5. **Tags** (c): `ServerConfig.tags`, `render_for`, `checks::server_file`. Done when: a rendered file
+   round-trips its tags; each malformed tag list is refused with `server-bad-tags`.
+6. **`Instances`** (protocol 3), D-Bus and pipe, and `GET /api/instances` with `port` and `tags`, plus
+   `GET /api/node`. Done when: an unauthenticated caller gets id, engine, port and tags and nothing
+   else of the file; the bff's list carries them.
+7. **The instance-scoped preset routes** (f). Done when: the four routes work for `default` and for a
+   second instance, and a preset of one instance is 404 on the other.
+8. **`CreateInstance`**, then **`RemoveInstance`** with `ServiceControl::remove` (two slices). Done
+   when: create writes the two files and refuses an existing id, a taken port, a bad id or engine, a
+   non-`configure` caller, each with nothing written; remove refuses `default`, a running instance and
+   an unknown id, and otherwise leaves no file and calls `remove` once; `Start` with no preset section
+   is `NoPresets`.
+9. **The bff's `POST` and `DELETE /api/instances`.** Done when: each manager refusal maps to its key
+   and status, with the session and same-origin rules of every write.
+10. **The web UI** (the web UI session, designer's brief first), then the old `/api/presets...` routes
+    are removed.
+
+Then the docs agent: AGENTS.md "Key conventions", "Through the manager", `crates/bff/README.md`,
+`installer/AGENTS.md`, `docs/build-packaging.md`, and Part 1 of this page (the instance files).
+
+**Decided by the user (2026-11-17)**, each the recommended option:
+
+1. **Tags are labels only**, for the page; the router routes by model name alone (the tag alphabet
+   leaves tag-based routing possible later).
+2. **One preset id on several instances is one model served twice**: ids are allowed across
+   instances and the router picks an instance that is running. This replaces "a preset id is unique
+   across engines" (2026-11-15); ids stay unique within an instance's two files.
+3. **The defaults**: `default` cannot be removed; a running instance must be stopped before its
+   removal; today's `presets.ini` is moved by hand once, with no migration code.
+4. **The session-free Overview shows port and tags** (`Instances`, (c)).
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
