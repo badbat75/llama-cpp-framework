@@ -302,3 +302,49 @@ test('2h.163e: a disabled .primary or .secondary is on --surface with a dashed -
     'the aria-disabled button keeps a solid border, not the dashed one',
   ).toBe(false)
 })
+
+// The save bar's scroll padding (DESIGN.md 5.2 "Sticky save bar", WCAG 2.4.11
+// Focus Not Obscured): the scroll container pads by the bar's rendered height,
+// which the bar measures as it grows (an alert and its button can triple it).
+// Before that measurement lands, a field focused near the bottom must still
+// clear the bar, so the declaration carries a floor of its own. jsdom does no
+// layout, so as 2h.135 and 2e.118 do, this pins the CSS text.
+test('DESIGN.md 5.2: the save-bar scroll padding has a 7rem floor inside max(), and the short-viewport media rule still zeroes it', () => {
+  const PAD = 'scroll-padding-bottom'
+  const bar = one(
+    TOP.filter((r) => r.compact.includes('html:has(.save-bar)')),
+    'the top-level html:has(.save-bar) rule',
+  )
+  expect(
+    prop(bar.body, PAD),
+    'the floor of the height a bar with a notice needs, so a focused field clears it before the measured height grows',
+  ).toBe('calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3))')
+  // compact is the selector text only, so a nested rule cannot name the
+  // at-rule around it: locate the media block in the CSS text by its own
+  // matched braces, then take the rule the scanner found inside that range.
+  const open = CSS.indexOf('@media (max-height: 31.98rem)')
+  expect(open, 'the short-viewport media block').toBeGreaterThan(-1)
+  let end = open
+  let depth = 0
+  for (; end < CSS.length; end++) {
+    if (CSS[end] === '{') depth++
+    else if (CSS[end] === '}' && --depth === 0) break
+  }
+  const short = one(
+    RULES.filter(
+      (r) =>
+        r.depth > 0 &&
+        r.at > open &&
+        r.at < end &&
+        r.sel === 'html:has(.save-bar)',
+    ),
+    'the short-viewport html:has(.save-bar) rule, inside the media block',
+  )
+  expect(prop(short.body, PAD), 'the bar is not sticky there: no padding').toBe(
+    '0',
+  )
+  expect(
+    short.at > bar.at,
+    'the media rule comes after the top-level one, so it wins there',
+  ).toBe(true)
+})

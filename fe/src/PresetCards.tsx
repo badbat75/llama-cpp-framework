@@ -10,7 +10,10 @@
 // the page's form edits those and its save bar writes what changed. 2h.4 gives
 // the same to the number fields of Resource / context (155), whose default box
 // the page keeps in `boxed` (156, the mechanics of `boxed.ts`), and 155 leaves
-// a select enabled only while another key's box is unticked (`needsUnticked`).
+// a select enabled only while another key's box is unticked; 2h.7 generalises
+// that rule to `enabledWhen` (176: "enabled when a box is unticked, a box is
+// checked, a file key is present"), on rows and on a card, and gives the
+// Vision card its editable controls.
 // 2h.5 gives the KV cache card the same (164: every field of the card enabled,
 // always), and 132 decides what each of them sends (the state the control
 // shows is the state the page is dirty against, an absent key included).
@@ -58,12 +61,33 @@ type Option = { value: string; text: string }
  *   where the engine's own default is on (`common/common.h`). */
 type Reading = 'flag' | 'truthy' | 'valued' | 'fit'
 
+/** When a row's control is enabled, one rule of 2h.7's 176 (the
+ * generalisation of 155's `needsUnticked`: "enabled when ..."). The control
+ * is enabled while every rule of the row's list is met; a control a rule
+ * disables is natively disabled and keeps the state it holds, so a change
+ * made while it was enabled stays in the draft and is sent as for any other
+ * editable row.
+ * - `unticked`: the number field's default box is unticked (155: Unified KV
+ *   sizes a cache shared by the slots, so it needs Parallel slots);
+ * - `checked`: the checkbox row's box is ticked, live from the draft (176:
+ *   Vision GPU needs Vision on GPU checked);
+ * - `file`: the key is present in the read's values and not empty (176: the
+ *   Vision card's controls do nothing without an MMProj, a key this page
+ *   cannot edit). The Hardware card of 177 adds rows of its own. */
+type EnableRule =
+  | { rule: 'unticked'; key: string }
+  | { rule: 'checked'; key: string }
+  | { rule: 'file'; key: string }
+
 /** What every row carries: the key and the strings keys of its texts. */
 type RowBase = {
   /** The key of the read's `values`. */
   key: string
   label: string
   hint: string
+  /** 2h.7's 176: the rules that enable this row's control (an absent list:
+   * enabled whenever the row's card enables it). */
+  enabledWhen?: EnableRule[]
   /** The reading of a checkbox or select row whose key is a boolean. Absent for
    * every other row: its value is not a boolean, so it keeps criterion 87. */
   reading?: Reading
@@ -95,10 +119,6 @@ type SelectRow = RowBase & {
    * key the file lacks, and picking it back is no change (132). */
   ownValue?: true
   normalize?: boolean
-  /** 2h.4's 155: an enabled select is disabled while one of these keys has its
-   * default box ticked (Unified KV sizes a cache shared by the slots, so it
-   * needs Parallel slots). */
-  needsUnticked?: string[]
 }
 
 /** A text: one monospace input showing the string as it is. The unit, when the
@@ -158,7 +178,17 @@ type Row =
 export type FieldRow = Exclude<Row, GroupRow>
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
-type CardFields = { title: string; rows: Row[] }
+type CardFields = {
+  title: string
+  /** 2h.7's 176: the rule of the whole card, the same `file` rule of 176 one
+   * level up: every control of the card is enabled only while the key is
+   * present in the read's values and not empty (the Vision card works only
+   * with an MMProj, and this page cannot pick one). While the key is not,
+   * `note` sits right after the card's h3, before the first field: a plain
+   * paragraph in reading order (181), never a control's description. */
+  needsFile?: { key: string; note: string }
+  rows: Row[]
+}
 
 /** The tri-state of section 1.3: default / on / off, as `emit_bool` writes it. */
 const TRISTATE: Option[] = [
@@ -393,7 +423,7 @@ const CARDS: CardFields[] = [
         label: t('preset-unified-kv'),
         hint: t('preset-unified-kv-hint'),
         editable: true,
-        needsUnticked: ['parallel'],
+        enabledWhen: [{ rule: 'unticked', key: 'parallel' }],
       },
       {
         kind: 'number',
@@ -706,6 +736,10 @@ const CARDS: CardFields[] = [
   },
   {
     title: t('preset-vision'),
+    // 176: the card works only with an MMProj (the read's value: this page
+    // does not edit `mmproj`). Every row carries the same rule; the card
+    // shows its note while the rule is not met.
+    needsFile: { key: 'mmproj', note: t('preset-vision-off') },
     rows: [
       {
         kind: 'checkbox',
@@ -717,6 +751,8 @@ const CARDS: CardFields[] = [
         offSend: 'false',
         label: t('preset-vision-on-gpu'),
         hint: t('preset-vision-on-gpu-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
       {
         kind: 'device',
@@ -724,6 +760,13 @@ const CARDS: CardFields[] = [
         empty: t('preset-device-follows-model'),
         label: t('preset-vision-gpu'),
         hint: t('preset-vision-gpu-hint'),
+        editable: true,
+        // 176: Vision GPU also needs Vision on GPU checked, live from the
+        // draft (the switch sits just above, so it needs no note of its own).
+        enabledWhen: [
+          { rule: 'file', key: 'mmproj' },
+          { rule: 'checked', key: 'mmproj-offload' },
+        ],
       },
       {
         // The note of 90, at the GUI's place (MP 1099-1104).
@@ -737,6 +780,8 @@ const CARDS: CardFields[] = [
         key: 'image-min-tokens',
         label: t('preset-min-image-tokens'),
         hint: t('preset-min-image-tokens-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
       {
         kind: 'number',
@@ -744,6 +789,8 @@ const CARDS: CardFields[] = [
         key: 'image-max-tokens',
         label: t('preset-max-image-tokens'),
         hint: t('preset-max-image-tokens-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
     ],
   },
@@ -1099,6 +1146,22 @@ export function checkboxSend(
   return checked ? row.onSend : row.offSend
 }
 
+/** The device select of a row as the form's `values` leave it (2h.7's 179):
+ * the device the key holds, and the empty string for a key the file lacks,
+ * the value of the empty option of 103. */
+export function deviceState(
+  row: DeviceRow,
+  values: Record<string, string>,
+): string {
+  return held(values, row.key) ?? ''
+}
+
+/** What the form sends for a device select at that state (179): picking the
+ * empty option sends the key's removal, every other state the device. */
+export function deviceSend(state: string): string | null {
+  return state === '' ? null : state
+}
+
 /** The rows of every card, in the page's order, a group's rows in place of the
  * group: the table nests them, so the page asks this list which keys it owns. */
 function fieldRows(): FieldRow[] {
@@ -1121,6 +1184,13 @@ export function checkboxRows(): CheckboxRow[] {
   return fieldRows().filter(
     (one): one is CheckboxRow =>
       one.kind === 'checkbox' && one.editable === true,
+  )
+}
+
+/** The device rows the form edits (2h.7's 175, 179), in the page's order. */
+export function deviceRows(): DeviceRow[] {
+  return fieldRows().filter(
+    (one): one is DeviceRow => one.kind === 'device' && one.editable === true,
   )
 }
 
@@ -1392,18 +1462,31 @@ function editableWritten(
 }
 
 /** A device select's options and selected value (criterion 103): the empty
- * option first, then the device the file names as its own option, selected.
- * The page has no device list to add, so it lists no device of its own. */
+ * option first, then the device the read's value names as its own option. The
+ * list is built from the value the read gave, as an enabled select builds its
+ * options from the state of the read's value (132a), so picking the empty
+ * option leaves the list whole and the file's device pickable again. The state
+ * the control shows, when no option carries it, is added as its own. The page
+ * has no device list to add, so it lists no device of its own. */
 function shownDevice(
   row: DeviceRow,
-  value: string | undefined,
+  file: string | undefined,
+  state: string | undefined,
 ): {
   options: Option[]
   value: string
 } {
-  const none = { value: '', text: row.empty }
-  if (value === undefined) return { options: [none], value: '' }
-  return { options: [none, { value, text: value }], value }
+  const options = [
+    { value: '', text: row.empty },
+    ...(file === undefined ? [] : [{ value: file, text: file }]),
+  ]
+  const value = state ?? ''
+  return {
+    options: options.some((o) => o.value === value)
+      ? options
+      : [...options, { value, text: value }],
+    value,
+  }
 }
 
 /** The full-value line's limits, in characters (criterion 119): the number
@@ -1434,6 +1517,28 @@ function fullValue(
  * `<id>-control`): the page marks a field by the key of its row. */
 export function fieldId(key: string): string {
   return `preset-${key}`
+}
+
+/** 2h.7's 176: is the row's control disabled by a rule of its `enabledWhen`?
+ * The `unticked` rules read the box state of the number fields (155), the
+ * `checked` rule the draft, live from the box the user sees, and the `file`
+ * rules the values the read gave (the key is not editable on this page). A
+ * locked control keeps the state it holds: its draft stays, and a change
+ * made while it was enabled is sent as for any other editable row. The page's
+ * Save applies the same gate to its check of 157 and 166: it reports no error
+ * on a field the user cannot edit. */
+export function ruleLocked(
+  row: RowBase,
+  draft: Record<string, string>,
+  loaded: Record<string, string>,
+  boxed: Record<string, Boxed>,
+): boolean {
+  return (row.enabledWhen ?? []).some((one) => {
+    if (one.rule === 'unticked') return boxed[one.key]?.ticked === true
+    if (one.rule === 'file') return held(loaded, one.key) === undefined
+    const box = checkboxRows().find((r) => r.key === one.key)
+    return box === undefined || !checkboxState(box, draft)
+  })
 }
 
 /** One field of a card, in the form its row names. `values` is what the control
@@ -1470,6 +1575,9 @@ function PresetField({
   // handler does nothing: the page sends nothing for it. An editable row's
   // control is enabled and its handler writes the draft (130, 164).
   const editable = row.editable === true
+  // 2h.7's 176: a row the rules of 155 and 176 disable is natively disabled
+  // and keeps the state it holds.
+  const locked = ruleLocked(row, values, loaded, boxed)
   const common = {
     id: fieldId(row.key),
     label: row.label,
@@ -1493,7 +1601,7 @@ function PresetField({
       return (
         <DefaultBoxField
           {...common}
-          disabled={false}
+          disabled={locked}
           box={t('field-default')}
           numeric={numericMode(row)}
           unit={row.unit}
@@ -1538,7 +1646,7 @@ function PresetField({
     return (
       <CheckboxField
         {...common}
-        disabled={!editable}
+        disabled={!editable || locked}
         toggle={toggle}
         checked={state === undefined ? row.absent : state.on === true}
         written={
@@ -1561,7 +1669,7 @@ function PresetField({
     return (
       <TextField
         {...common}
-        disabled={!editable}
+        disabled={!editable || locked}
         value={text}
         unit={row.unit}
         full={editable ? undefined : fullValue(row, text)}
@@ -1572,7 +1680,9 @@ function PresetField({
   }
   const select =
     row.kind === 'device'
-      ? shownDevice(row, value)
+      ? // The device select's list comes from the value the read gave, and the
+        // state it shows from the form's draft (103, 132a).
+        shownDevice(row, heldFor(row, loaded), value)
       : // An enabled select shows the state the page is dirty against (132),
         // which is the state `selectSend` writes back: `selectState` decides
         // both, so the option the user reads and the value the save sends are
@@ -1607,9 +1717,13 @@ function PresetField({
       ? (value ?? '')
       : (select.options.find((o) => o.value === select.value)?.text ??
         select.value)
+  // A control is natively disabled when its row is not editable, and right now
+  // when a rule of 176 locks it: the same gate for the full-value line of 118.
+  const disabled = !editable || locked
   // The full-value line of 118: an enabled select opens, so its whole value
-  // shows and 134 takes the line away from an editable row.
-  const full = editable ? undefined : fullValue(row, text)
+  // shows, and 134 keeps the line under a control that is disabled now, one a
+  // rule of 176 locks included.
+  const full = disabled ? fullValue(row, text) : undefined
   // The written-as line of criterion 124: the control shows what the engine does
   // with the value, the line what the file holds. A flag's control shows on or
   // off, so any value the configurator would not write needs the line. A valued
@@ -1622,15 +1736,10 @@ function PresetField({
     row.kind === 'select' && editable
       ? editableWritten(row, values, loaded)
       : state?.written
-  // 155: a select that needs another key's default box unticked is disabled
-  // while that box is ticked, and keeps the state it holds.
-  const locked =
-    row.kind === 'select' &&
-    row.needsUnticked?.some((key) => boxed[key]?.ticked === true) === true
   return (
     <SelectField
       {...common}
-      disabled={editable && !locked ? false : true}
+      disabled={disabled}
       options={select.options}
       value={select.value}
       full={full}
@@ -1730,7 +1839,19 @@ export default function PresetCards({
   return (
     <>
       {CARDS.map((card) => (
-        <Card key={card.title} title={card.title}>
+        <Card
+          key={card.title}
+          title={card.title}
+          // 176, 181: while the card's file rule is not met, its note sits
+          // right after the h3, before the first field: a plain paragraph in
+          // reading order, not a live region, no control's description.
+          intro={
+            card.needsFile !== undefined &&
+            held(loaded, card.needsFile.key) === undefined
+              ? card.needsFile.note
+              : undefined
+          }
+        >
           {card.rows.map((row) => (
             <PresetRow
               key={row.key}

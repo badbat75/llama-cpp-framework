@@ -828,9 +828,15 @@ input[type='checkbox'][aria-invalid='true'] {
 /* ── Save bar (DESIGN.md 5.2) ─────────────────────────────────────────── */
 
 /* A field focused near the bottom is never hidden behind the sticky bar:
-   --save-bar-height is the bar's rendered height, kept by ServerForm. */
+   --save-bar-height is the bar's rendered height, kept by ServerForm. The
+   max() floor is the height a bar with a notice needs, so a focused field
+   clears the bar before the measured height lands: after a refused save the
+   bar grows with its alert, after the scroll of the marked field. */
 html:has(.save-bar) {
-  scroll-padding-bottom: calc(var(--save-bar-height, 7rem) + var(--space-3));
+  /* The declaration is pinned as written (DESIGN.md 5.2, 2h.135): Prettier
+     would break this long calc across lines. */
+  /* prettier-ignore */
+  scroll-padding-bottom: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
 }
 
 .save-bar {

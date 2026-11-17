@@ -1064,7 +1064,15 @@ test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fiel
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   for (const [cardKey, noteKey, afterLabel, beforeLabel] of NOTES) {
     const card = cardOf(main, cardKey)
-    const notes = notesOf(card)
+    // 2h.176: the SET stub has no mmproj, so the Vision card opens with its
+    // preset-vision-off paragraph right after the h3, before the first field
+    // (the paragraph is pinned by 176 and 181 in PresetSave12.test.tsx). The
+    // notes of 90 sit between fields, so a 90 note is a card paragraph that
+    // starts after the card's first field; the intro is not one of them.
+    const firstField = card.querySelector('.field')
+    const notes = notesOf(card).filter(
+      (p) => firstField !== null && before(firstField, p),
+    )
     expect(notes.length, `${en(cardKey)}: one note between the fields`).toBe(1)
     const note = notes[0]!
     expect(note.tagName, `${en(cardKey)}: the note is a paragraph`).toBe('P')
@@ -1156,7 +1164,7 @@ test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with n
   ).toBe('XHigh')
 })
 
-test("2e.118, 2e.119, 2e.104, 2h.134: a long Budget message shows no full-value line, the card is editable, and the same length under the Vision card's disabled select shows one", async () => {
+test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no full-value line, and the Vision GPU device shows its line only while the select is disabled by 176's rule", async () => {
   // 134: the full-value line is only for a disabled control, because an
   // enabled input can be scrolled and an enabled select opened. The Budget
   // message of 104, past the 20 characters of a text input, sits under an
@@ -1183,21 +1191,53 @@ test("2e.118, 2e.119, 2e.104, 2h.134: a long Budget message shows no full-value 
     main.querySelector('#preset-full-reasoning-budget-message'),
     'an enabled input shows no line (134)',
   ).toBeNull()
-  // The Vision card is still read-only: its device select holds the long
-  // value as an extra option and repeats it under the control.
+  // 2h.176: with the read's mmproj present and Vision on GPU checked, the
+  // device select is an enabled control: 134 takes its line away, the opened
+  // select shows the whole value.
   cleanup()
   vi.unstubAllGlobals()
-  const { main: other } = await loaded({
-    preset: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
+  const { main: on } = await loaded({
+    preset: () =>
+      reply(
+        200,
+        exactOf({
+          mmproj: 'Qwen3-VL-mmproj-BF16.gguf',
+          'mmproj-offload': 'true',
+          'mmproj-device': DEVICE_LONG,
+        }),
+      ),
   })
-  const device = within(other).getByRole('combobox', {
+  const gpu = within(on).getByRole('combobox', {
     name: en('preset-vision-gpu'),
   }) as HTMLSelectElement
-  expect(device.disabled, 'the Vision GPU select is read-only (2e.103)').toBe(
-    true,
-  )
-  const line = other.querySelector('#preset-full-mmproj-device')
-  expect(line, 'the disabled control has its full-value line').toBeTruthy()
+  expect(
+    gpu.disabled,
+    'the Vision GPU select is editable with an MMProj (176)',
+  ).toBe(false)
+  expect(gpu.value, 'the enabled select holds the long value').toBe(DEVICE_LONG)
+  expect(
+    on.querySelector('#preset-full-mmproj-device'),
+    'an enabled select shows no line (134)',
+  ).toBeNull()
+  // While mmproj is absent the select is disabled (176), and 134 keeps the
+  // line of 118 under it: a disabled select cannot be opened.
+  cleanup()
+  vi.unstubAllGlobals()
+  const { main: off } = await loaded({
+    preset: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
+  })
+  const device = within(off).getByRole('combobox', {
+    name: en('preset-vision-gpu'),
+  }) as HTMLSelectElement
+  expect(
+    device.disabled,
+    'the Vision GPU select is disabled without an MMProj (176)',
+  ).toBe(true)
+  const line = off.querySelector('#preset-full-mmproj-device')
+  expect(
+    line,
+    'the disabled control has its full-value line (134, 118)',
+  ).toBeTruthy()
   expect(line!.tagName, 'the line is a paragraph').toBe('P')
   expect(line!.textContent, 'the line holds the value').toBe(DEVICE_LONG)
   expect(isHidden(line!), 'the line is shown').toBe(false)
@@ -1372,7 +1412,14 @@ test('2e.105: the two cards, every label, hint, toggle, option, note and the emp
     expect(
       notesOf(cardOf(main, cardKey)).map((p) => text(p)),
       `${en(cardKey)}: the note shows the English of 105`,
-    ).toEqual([en(noteKey)])
+    ).toEqual(
+      // 2h.176: the SET stub has no mmproj, so the Vision card opens with
+      // its preset-vision-off paragraph (the string of 2h.7's 182) before
+      // 90's note; the Chat / reasoning card has only the note of 90.
+      cardKey === 'preset-vision'
+        ? [en('preset-vision-off'), en(noteKey)]
+        : [en(noteKey)],
+    )
   expect(
     optionsOf(selectOf(main, en('preset-vision-gpu')))[0]!.textContent,
     'the empty device option of 105',

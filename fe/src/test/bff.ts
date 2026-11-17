@@ -438,6 +438,9 @@ export const EN: Record<string, string> = {
   'preset-vision-gpu': 'Vision GPU',
   'preset-vision-gpu-hint':
     "The GPU the image encoder runs on.\nDefault: the first GPU in this preset's device list; with no device checked, the first GPU llama.cpp finds, which on a mixed machine is often not the one running the model. It holds VRAM there and stays idle until an image arrives.\nName a device to override both.\nFlag: --mmproj-device",
+  // 2h.7's 176, 182: the note shown while the preset has no MMProj.
+  'preset-vision-off':
+    'Used only with an MMProj file, and this preset has none (Assets).',
   'preset-image-tokens-note':
     'The two limits below set how many tokens ONE image takes on dynamic-resolution vision models. They apply only with an MMProj picked above. Leave them at default to read the limit from the model.',
   'preset-min-image-tokens': 'Min image tokens',

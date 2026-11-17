@@ -194,6 +194,7 @@ function fieldId(field: Label): string {
  * (the Sampling overrides card's seven, all always enabled) and 2h.5's 164
  * (the Advanced card's two, the off / on select and the text, always enabled),
  * 2h.6's 170 (the Chat / reasoning card's nine, all always enabled),
+ * 2h.7's 175 (the Vision card's four, enabled by 176's rule),
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
@@ -230,6 +231,10 @@ const EDITABLE_FIELDS: Label[] = [
   'preset-thinking-budget',
   'preset-budget-message',
   'preset-max-output',
+  'preset-vision-on-gpu',
+  'preset-vision-gpu',
+  'preset-min-image-tokens',
+  'preset-max-image-tokens',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
@@ -253,6 +258,8 @@ const BOXED_FIELDS: Record<string, string> = {
   'preset-presence-penalty': 'presence-penalty',
   'preset-thinking-budget': 'reasoning-budget',
   'preset-max-output': 'n-predict',
+  'preset-min-image-tokens': 'image-min-tokens',
+  'preset-max-image-tokens': 'image-max-tokens',
 }
 
 /** The editable fields whose control is a checkbox: the label's strings key
@@ -261,41 +268,73 @@ const BOXED_FIELDS: Record<string, string> = {
 const CHECKBOX_TOGGLES: Record<string, string> = {
   'preset-chat-template': 'preset-chat-template-toggle',
   'preset-prefill-assistant': 'preset-prefill-assistant-toggle',
+  'preset-vision-on-gpu': 'preset-vision-offload-toggle',
 }
 
-/** The editable fields with an enable rule (2h.155): Unified KV is enabled
- * while Parallel slots' box is unticked, which is how a key the file holds
- * starts. */
-const ENABLE_RULE: Record<string, string> = { 'preset-unified-kv': 'parallel' }
+/** One field's enable rule: `present` keys must be in the read's `values`
+ * (with a value that is not the empty string, 176: `mmproj` present), and
+ * `checked`, when set, must read as a checked flag (2e's 122). */
+type Rule = { present: string[]; checked?: string }
 
-/** True when 2h.1's 130, 2h.4's 155 or 2h.5's 164 makes this field editable:
- * its default box is enabled, whatever the file holds. */
+/** The editable fields with an enable rule (2h.155, 2h.176): Unified KV is
+ * enabled while Parallel slots' box is unticked, which is how a key the file
+ * holds starts; every Vision control is enabled while the read's `mmproj` is
+ * present and not empty, and Vision GPU also needs Vision on GPU checked. */
+const ENABLE_RULE: Record<string, Rule> = {
+  'preset-unified-kv': { present: ['parallel'] },
+  'preset-vision-on-gpu': { present: ['mmproj'] },
+  'preset-vision-gpu': { present: ['mmproj'], checked: 'mmproj-offload' },
+  'preset-min-image-tokens': { present: ['mmproj'] },
+  'preset-max-image-tokens': { present: ['mmproj'] },
+}
+
+/** The flag spellings 2e's 122 reads as unchecked. Any other value, the empty
+ * string included, and an absent key, read as checked. */
+const FLAG_UNCHECKED = ['off', 'disabled', 'false', '0']
+
+function flagChecked(values: Record<string, string>, key: string): boolean {
+  const value = values[key]
+  return value === undefined || !FLAG_UNCHECKED.includes(value)
+}
+
+/** True when 2h.1's 130, 2h.4's 155, 2h.5's 164, 2h.6's 170 or 2h.7's 175
+ * makes this field editable: its default box is enabled, whatever the file
+ * holds. */
 export function isEditableField(field: Label): boolean {
   return EDITABLE_FIELDS.some((f) => fieldId(f) === fieldId(field))
 }
 
+/** True when the field's enable rule (155, 176) holds on a read that holds
+ * `values`, whatever the state of its own default box. */
+function ruleHolds(field: Label, values: Record<string, string>): boolean {
+  const rule = ENABLE_RULE[fieldId(field)]
+  if (rule === undefined) return true
+  for (const key of rule.present)
+    if (values[key] === undefined || values[key] === '') return false
+  return rule.checked === undefined || flagChecked(values, rule.checked)
+}
+
 /** True when the control of the field with this label key is enabled on a
  * read that holds `values`: a boxed field's input follows its box (156), and
- * a field with an enable rule follows that rule (155). False for a field of a
- * read-only card, so the expectations of 85 stay pinned for every other card. */
+ * a field with an enable rule follows that rule (155, 176), on top of its
+ * box. False for a field of a read-only card, so the expectations of 85 stay
+ * pinned for every other card. */
 export function controlEnabled(
   field: Label,
   values: Record<string, string>,
 ): boolean {
-  if (!isEditableField(field)) return false
+  if (!isEditableField(field) || !ruleHolds(field, values)) return false
   const boxed = BOXED_FIELDS[fieldId(field)]
-  if (boxed !== undefined) return boxed in values
-  const rule = ENABLE_RULE[fieldId(field)]
-  if (rule !== undefined) return rule in values
-  return true
+  return boxed === undefined || boxed in values
 }
 
 /** Every field's tab stops in the order of 91: each field's About toggle,
- * then the controls 2h.1, 2h.4, 2h.5 and 2h.6 made editable and left enabled
- * on this read (141, 155, 156, 170): a boxed field's default box, named by the
- * box's own text, and its input while the box is unticked; a checkbox, named
- * by its toggle text (87). The whole-page tab path of every preset page test
- * is this list, read with the values of its fixture. */
+ * then the controls 2h.1, 2h.4, 2h.5, 2h.6 and 2h.7 made editable and left
+ * enabled on this read (141, 155, 156, 170, 176): a boxed field's default box,
+ * named by the box's own text and only while the field's enable rule leaves
+ * the box enabled (176), and its input while the box is unticked; a checkbox,
+ * named by its toggle text (87). The whole-page tab path of every preset page
+ * test is this list, read with the values of its fixture. */
 export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
   for (const card of PRESET_CARDS)
@@ -304,7 +343,8 @@ export function fieldTabStops(values: Record<string, string>): string[] {
       stops.push(`${en('field-about')} ${label}`)
       if (!isEditableField(field)) continue
       if (BOXED_FIELDS[fieldId(field)] !== undefined)
-        stops.push(en('field-default'))
+        if (isEditableField(field) && ruleHolds(field, values))
+          stops.push(en('field-default'))
       if (!controlEnabled(field, values)) continue
       const toggle = CHECKBOX_TOGGLES[fieldId(field)]
       stops.push(toggle === undefined ? label : en(toggle))

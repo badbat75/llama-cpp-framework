@@ -4,10 +4,11 @@
 // (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
 // Engine field, the Assets card as text and the cards of the settings
 // (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
-// controls, the Resource / context card's number fields and the KV cache
-// card's controls are editable, and the save bar at the end of the
-// settings writes what changed (fe/briefs/02h-preset-save.md, sub-slices 2h.1,
-// 2h.4 and 2h.5, criteria 130 to 149, 155 to 157 and 164, read by key in
+// controls, the Resource / context card's number fields, the KV cache
+// card's controls and the Vision card's controls are editable, and the save
+// bar at the end of the settings writes what changed
+// (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5 and 2h.7,
+// criteria 130 to 149, 155 to 157, 164, 175 and 179, read by key in
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config.
 import {
@@ -30,12 +31,16 @@ import PresetCards, {
   checkboxRows,
   checkboxSend,
   checkboxState,
+  deviceRows,
+  deviceSend,
+  deviceState,
   editableRows,
   fieldId,
   numberError,
   numberRows,
   numberSend,
   numberStates,
+  ruleLocked,
   selectSend,
   selectState,
   textError,
@@ -605,6 +610,12 @@ function Content({
       if (state === checkboxState(row, loaded.values)) continue
       values[row.key] = checkboxSend(row, state)
     }
+    // 2h.7's 179: a device select at the empty option is the key's removal.
+    for (const row of deviceRows()) {
+      const state = deviceState(row, draft)
+      if (state === deviceState(row, loaded.values)) continue
+      values[row.key] = deviceSend(state)
+    }
     const was = numberStates(loaded.values)
     for (const row of numberRows()) {
       const b = boxed[row.key]
@@ -628,11 +639,14 @@ function Content({
     if (saving.current) return
     // 157, 166: every enabled number field whose box is unticked, and every
     // text field with a text that is not empty, is checked, changed or not
-    // (the manager checks the whole section anyway). A failure marks its
+    // (the manager checks the whole section anyway). A field a rule of 176
+    // locks right now is skipped, by the gate that disables it: the page
+    // reports no error on a field the user cannot edit. A failure marks its
     // field, tells the bar, and puts the focus on the first failing control
     // in the order the fields are on screen: nothing is sent, and the bar
     // keeps saying what is not saved.
     const failures = checkRows()
+      .filter((row) => !ruleLocked(row, draft, loaded.values, boxed))
       .map(
         (row) =>
           [

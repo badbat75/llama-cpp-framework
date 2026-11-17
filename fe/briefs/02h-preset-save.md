@@ -512,7 +512,13 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
     `mmproj` is present and not empty; Vision GPU also needs Vision on GPU checked (live). While
     `mmproj` is absent, a paragraph `preset-vision-off` (D5.2 Card note, `--muted`) sits right
     after the card's `h3`, before the first field. Vision GPU needs no line of its own (its switch
-    is just above).
+    is just above). **A control disabled by a live rule keeps its draft and sends it** (2026-11-17,
+    one rule with Unified KV, 155): unchecking Vision on GPU after picking a device in Vision GPU
+    leaves the picked device on screen (dashed) and Save sends it with `"mmproj-offload":"false"`;
+    Discard is the way back to the loaded value. As the GUI: its Vision GPU keeps
+    `form.mmproj_device` while disabled (MP 1091-1097) and the save writes it whatever the switch
+    (`presets.rs` 1776-1777). Why: the control shows what the file will hold (nothing hidden is
+    written, nothing shown is dropped) and re-checking brings the pick back. The same holds for Unified KV under Parallel slots' box.
 177. **Draft placement** (MP 632, 660-665): Draft device and Draft GPU layers are enabled only when
     the read's `model-draft` is present and not empty. While it is absent a note row
     `preset-draft-file-off` sits before Draft device (where the GUI shows its embedded-MTP note,
