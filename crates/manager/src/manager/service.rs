@@ -937,8 +937,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
 /// The content checks of `file` for `contents`, against the files on disk:
 /// an instance file against `presets.ini`, `presets.ini` against every
-/// instance's `ModelsMax` (each serves it: the lowest decides), the disabled
-/// presets against both preset files.
+/// instance's `ModelsMax` (each serves it: the lowest decides) and the
+/// disabled presets, the disabled presets against both preset files.
 fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
@@ -956,8 +956,9 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
                 })
                 .min();
             let old = on_disk("presets.ini");
-            checks::presets_file(contents, &old, models_max)?;
-            checks::preset_ids_free(contents, &old, &on_disk("presets.ini.disabled"))
+            let disabled = on_disk("presets.ini.disabled");
+            checks::presets_file(contents, &old, &disabled, models_max)?;
+            checks::preset_ids_free(contents, &old, &disabled)
         }
         ConfigFile::PresetsDisabled => {
             let (old, enabled) = (on_disk("presets.ini.disabled"), on_disk("presets.ini"));
@@ -3403,6 +3404,25 @@ pub(crate) fn manager_checks_e2e() {
                 "not-whole-number-in-range",
                 &["ctx-size", "abc", "0", "2147483647"]
             )
+        );
+    }
+
+    // ── A preset switched on with an inline comment: the disabled file is
+    //    the other file check_contents hands to presets_file ──────────────
+    {
+        let m = manager(true);
+        let kept = "[kept]\nmodel = /models/kept.gguf\n";
+        let parked = "[commented]\nmodel = /models/c.gguf ; Q8\n";
+        std::fs::write(sys.join("presets.ini"), kept).expect("presets.ini fixture");
+        std::fs::write(sys.join("presets.ini.disabled"), parked).expect("disabled fixture");
+        // The switch moves the section whole: new to presets.ini, held
+        // identically by the disabled file, so the commented line is known.
+        let on = format!("{kept}{parked}");
+        assert_eq!(m.write_file(&alice, "presets.ini", &on, false), Ok(()));
+        assert_eq!(
+            read("presets.ini").as_deref(),
+            Some(on.as_str()),
+            "the switch wrote through"
         );
     }
 

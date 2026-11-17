@@ -3006,7 +3006,7 @@ mod tests {
         cases.push(with(&|p| p.spec_ngram_map_k4v_min_hits = Some(65536)));
         for p in cases {
             let today = validate_for_save(&p);
-            let manager = pai_core::checks::presets_file(&render_section(&p), "", None);
+            let manager = pai_core::checks::presets_file(&render_section(&p), "", "", None);
             assert_eq!(
                 manager.is_err(),
                 today.is_err(),

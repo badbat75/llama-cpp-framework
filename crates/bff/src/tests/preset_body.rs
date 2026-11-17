@@ -11,11 +11,12 @@
 //! kept, and the rewritten line is spelled `key = value` (`set_key`'s rule), so
 //! the fixture spells its key lines compactly (`key=value`) to show the
 //! untouched lines keeping their bytes while an edited line is rewritten whole;
-//! a key the section does not hold is appended after its last real line, and two
-//! such keys are appended in key order when the body spells them in key order
-//! (the map of `values` is serde_json's: sorted keys in this crate's build, the
-//! body's order once the workspace turns on `preserve_order` through `pai-app`,
-//! so the order of two appended lines is pinned only for that body); a key that
+//! a key the section does not hold is appended after its last real line, and
+//! several such keys land in key order whatever the order of the body and of the
+//! `values` map, because the bff applies the edits sorted by key (a
+//! `serde_json::Map` is a `BTreeMap` sorted by key in this crate's build and
+//! insertion-ordered once the workspace turns `preserve_order` on through
+//! `pai-app`, so the bytes written must not depend on it); a key that
 //! is null removes every line of that key in the section named
 //! by `id`; a key the web list does not hold is 400 and nothing else of the body
 //! is applied; that list is `pai_core::checks::WEB_PRESET_KEYS` (this crate
@@ -632,15 +633,20 @@ fn preset_body_value_is_trimmed() {
 
 #[test]
 fn preset_body_two_new_keys_land_after_the_last_line() {
+    /// The file with the lines of `keys` appended to `[main]`, after its last
+    /// real line and before the blank line that separates the sections: the
+    /// whole change, every other byte of the file kept.
+    fn appended(file_text: &str, nl: &str, keys: &[(&str, &str)]) -> String {
+        let mut lines = "n-cpu-moe=7".to_string();
+        for (key, value) in keys {
+            lines.push_str(&format!("{nl}{key} = {value}"));
+        }
+        replaced(file_text, nl, "n-cpu-moe=7", &lines)
+    }
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         // Two keys the section does not hold, spelled in the body in their key
-        // order (`temp` before `top-k`). The map of `values` is serde_json's:
-        // sorted keys when the `preserve_order` feature is off (this crate's
-        // own build) and the body's order when it is on (the workspace turns it
-        // on through `pai-app`), so the order of two appended lines is pinned
-        // only for a body that spells its keys in key order. The next block
-        // covers the other body order, where the map decides.
+        // order (`temp` before `top-k`).
         let out = text_of(
             &body(Some(REV), &[("temp", Some("0.9")), ("top-k", Some("40"))]),
             &file_text,
@@ -649,51 +655,51 @@ fn preset_body_two_new_keys_land_after_the_last_line() {
         );
         assert_eq!(
             out,
-            replaced(
-                &file_text,
-                nl,
-                "n-cpu-moe=7",
-                &format!("n-cpu-moe=7{nl}temp = 0.9{nl}top-k = 40")
-            ),
+            appended(&file_text, nl, &[("temp", "0.9"), ("top-k", "40")]),
             "the two new lines land after [main]'s last real line, in key order, and before \
              the blank line that separates the sections ({nl:?})"
         );
-        // The same two keys in the other body order: the lines are each written
-        // once, inside [main], after its last real line, and they are all that
-        // changed. Their order against each other is the map's, so it is not
-        // pinned here.
+        // The same two keys in the reverse key order. The bff applies the edits
+        // sorted by key, so the text is the one above byte for byte: the map of
+        // `values` is serde_json's, a `BTreeMap` sorted by key in this crate's
+        // build and the body's order once the workspace turns `preserve_order`
+        // on through `pai-app`, and the bytes of the file must not depend on
+        // that, nor on the order of the body.
         let out = text_of(
             &body(Some(REV), &[("top-k", Some("40")), ("temp", Some("0.9"))]),
             &file_text,
             "main",
             REV,
         );
-        let main = out.find("[main]").expect("[main]");
-        let other = out.find("[other]").expect("[other]");
-        let last = out.find("n-cpu-moe=7").expect("the last real line");
-        for line in ["temp = 0.9", "top-k = 40"] {
-            let at = out
-                .find(line)
-                .unwrap_or_else(|| panic!("{line} written: {out:?}"));
-            assert_eq!(
-                out.matches(line).count(),
-                1,
-                "{line} is written once, not twice ({nl:?})"
-            );
-            assert!(
-                main < at && at < other,
-                "{line} lands inside [main], not past its header ({nl:?}): {out:?}"
-            );
-            assert!(
-                last < at,
-                "{line} lands after [main]'s last real line ({nl:?}): {out:?}"
-            );
-        }
         assert_eq!(
-            out.replace(&format!("{nl}temp = 0.9"), "")
-                .replace(&format!("{nl}top-k = 40"), ""),
-            file_text,
-            "the two appended lines are the whole change, in either body order ({nl:?})"
+            out,
+            appended(&file_text, nl, &[("temp", "0.9"), ("top-k", "40")]),
+            "a body listing the two new keys in reverse key order writes them in key order \
+             ({nl:?})"
+        );
+        // Three new keys in an order of its own: the edits are sorted by key,
+        // not put back into the one order a two-key body happens to allow.
+        let out = text_of(
+            &body(
+                Some(REV),
+                &[
+                    ("top-k", Some("40")),
+                    ("min-p", Some("0.1")),
+                    ("temp", Some("0.9")),
+                ],
+            ),
+            &file_text,
+            "main",
+            REV,
+        );
+        assert_eq!(
+            out,
+            appended(
+                &file_text,
+                nl,
+                &[("min-p", "0.1"), ("temp", "0.9"), ("top-k", "40")]
+            ),
+            "the new keys land in key order, whatever the order of the body ({nl:?})"
         );
     }
 }

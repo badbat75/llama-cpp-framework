@@ -132,8 +132,8 @@ async fn boot_read(connect: Connect, timeout: Duration, id: String) -> Response 
 /// one connect, and the reply is what the read answered, never what the body
 /// asked. A body the bff cannot read is 400 and the manager is not asked; the
 /// session check runs first, so with no session such a body is 401. A body
-/// over `origin::MAX_BODY` is refused by the extractor, before the session is
-/// read: 413, and the manager is not connected to.
+/// over `origin::MAX_BODY` is the extractor's 413, which this handler answers
+/// as its second step, before the manager is connected to.
 async fn boot_write(
     connect: Connect,
     timeout: Duration,

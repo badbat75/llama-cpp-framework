@@ -995,7 +995,7 @@ mod tests {
         let presets = shipped_default("presets.ini");
         assert_eq!(presets.trim(), "", "no preset shipped: {presets:?}");
         assert_eq!(crate::checks::server_file(&server, &presets), Ok(()));
-        assert_eq!(crate::checks::presets_file(&presets, "", None), Ok(()));
+        assert_eq!(crate::checks::presets_file(&presets, "", "", None), Ok(()));
     }
 
     /// `render` → parse-back through the real INI reader: the guard for steps

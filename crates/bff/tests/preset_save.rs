@@ -38,7 +38,9 @@
 //!   the bff's key. A body carrying another one is 409 `preset-changed-elsewhere`
 //!   with no write, and that includes the revision of the same section in the
 //!   OTHER file and the one another bff computed;
-//! - the edits, in body order: `null` removes every line of the key, a string
+//! - the edits, applied in key order (the map of `values` carries no order of
+//!   its own every build can rely on), so two keys the section does not hold are
+//!   appended in key order: `null` removes every line of the key, a string
 //!   is written trimmed. A text equal to the one read is 200 with the current
 //!   revision and NO write, so `{}` with a fresh revision is 200 and a stale one
 //!   is 409 first;
@@ -59,7 +61,8 @@
 //! which the contract's `client-not-authorized` line contradicts: the design
 //! wins). 503 `client-unavailable` while no write was asked, and the write then
 //! never happens; 504 `client-timeout` once it was; 200 with `running` true when
-//! the write landed and only the state read ran out; 502 `client-other`
+//! the write landed and only the state read ran out, and just the same when the
+//! body needed no write at all; 502 `client-other`
 //! otherwise, never the manager's own words. `write_timeout` bounds the whole
 //! save, the reads with it; it is the write's own, longer limit, so a manager
 //! that takes its time writing is not cut off at the limit that is right for a
@@ -1127,6 +1130,12 @@ impl App {
     /// arrives, with a write asked.
     fn set_write_pause_ms(&self, ms: u64) {
         self.live.write_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// A state read that takes `ms`: the manager busy when the save asks
+    /// whether an instance is up.
+    fn set_status_pause_ms(&self, ms: u64) {
+        self.live.status_pause_ms.store(ms, Ordering::SeqCst);
     }
 
     /// Stop the next read inside the manager call, until `release_read_gate`
@@ -2629,6 +2638,41 @@ async fn save_running_is_true_when_the_state_read_fails_after_the_write() {
             "{case}: the write landed"
         );
     }
+}
+
+/// A body that changes nothing has no write to wait for, so a state read that
+/// outlives the save's limit cannot make the save fail: nothing needed writing
+/// and nothing was written, so the answer is the 200 of a landed save, the
+/// revision the file holds and `running: true` (the safe answer for a state the
+/// bff could not read, as for a state read that fails after a write). 503
+/// `client-unavailable` tells the page the save did not happen, when it did:
+/// the page shows the edit as lost and offers a retry of an edit that is saved.
+#[tokio::test]
+async fn save_no_changes_with_a_state_read_outliving_the_limit_is_200_running_true() {
+    let app = app_holding_write_timeout(FILE_ON, FILE_OFF, Duration::from_millis(300));
+    // The manager's one instance is idle, so the state the save never read
+    // would answer false: `running: true` is pinned as the safe answer, not as
+    // the one the read carried.
+    let fresh = alpha_revision();
+    app.set_status_pause_ms(350);
+    let cookie = app.sign_in().await;
+    let rep = app
+        .save(ALPHA, &save_body(&fresh, json!({})), Some(&cookie))
+        .await;
+    rep.assert_saved(&fresh, true);
+    assert!(
+        app.no_write_asked(),
+        "a body that changes nothing writes nothing: {:?}",
+        app.writes()
+    );
+    assert_eq!(
+        app.file_text(PRESETS).as_deref(),
+        Some(FILE_ON),
+        "the file is as it was read"
+    );
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
 }
 
 // ---------------------------------------------------------------------------

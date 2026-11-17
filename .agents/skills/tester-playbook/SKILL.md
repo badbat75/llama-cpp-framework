@@ -16,6 +16,10 @@ Lessons only: the rules are in `AGENTS.md`.
   y.clone());`) and `move` them in; the originals stay for the asserts after it.
 - Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
   did not exist yet). Recheck such tests once the code exists.
+- A per-line exemption in a section checked by a whole-section rule: the rule runs line by line in code
+  order, so a "this line is refused" pin is red today at the refusal key of an EARLIER line the
+  exemption will later skip. Assert the expected refusal key, never `is_err()`, and report that red as
+  the key-name, not as an existing refusal.
 - Read the file you are extending before writing against it; never work from a remembered or summarised
   API. A context summary recites names (`App::app_writing`, `Outcome::Err(..)`, `rich_cfg()` in a route
   test) that the file does not have, and a whole `read` of a region can render lines that are not there
@@ -403,7 +407,12 @@ Lessons only: the rules are in `AGENTS.md`.
   `cargo tree -p pai-bff -e features -i serde_json` is the proof for the invocation you care about.
   Pin an order only when it holds in both (write the fixture keys sorted, then the request order equals the
   map order under both); anything else is presence compared sorted, and the run that changes the order must
-  be reported.
+  be reported. Once the production rule is "the edits are applied sorted", the key-order pin DOES hold in
+  both, and to show it red exercise the feature on: `cargo test -p pai-bff --lib
+  --features serde_json/preserve_order <filter>` (2026-11-17). Write the body in an order that is NOT the
+  key order (a block whose body order equals the key order greens by luck), and cover three keys, so a
+  two-key order is not mistaken for the whole rule: the appended-keys test of `tests/preset_body.rs` sends
+  body order, reverse key order and a shuffled three-key body in one test.
 - A non-JSON body reaches the handlers of an axum service that consumes `Result<Bytes, BytesRejection>`:
   the extractor never looks at Content-Type, so a route that wants the JSON check takes it from the headers
   (the bff's `json_body` reads the essence before `;`). A test of that sends the header on the request, so

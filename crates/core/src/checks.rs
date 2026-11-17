@@ -572,6 +572,7 @@ pub fn preset_values(get: impl Fn(&str) -> Option<String>) -> Result<(), Refusal
 /// One section of an INI text: its id, its key lines (key, raw value: the
 /// text after the first `=`, trimmed, comment markers included) and its
 /// non-blank lines trimmed, which say whether it changed.
+#[derive(Clone)]
 struct RawSection {
     id: String,
     keys: Vec<(String, String)>,
@@ -635,12 +636,34 @@ fn unchanged_in(s: &RawSection, sections: &[RawSection]) -> bool {
     sections.iter().any(|o| o.id == s.id && o.lines == s.lines)
 }
 
-/// The rules of one preset section, on its own.
-fn preset_section(s: &RawSection) -> Result<(), Refusal> {
+/// `a` and `b` end to end: the sections of the two preset files as they are
+/// now, the text a key line can already be known from.
+fn known_sections(a: &[RawSection], b: &[RawSection]) -> Vec<RawSection> {
+    let mut out = a.to_vec();
+    out.extend_from_slice(b);
+    out
+}
+
+/// True when a section of `sections` with the id `id` holds the key line `key`
+/// with the raw value `raw` exactly (id, key and value byte for byte, as
+/// `raw_sections` stores them): a line no write of this text introduced, the
+/// inline comment a byte-for-byte save moves whole ("Saving a preset from the
+/// web", decision c1).
+fn known_key_line(sections: &[RawSection], id: &str, key: &str, raw: &str) -> bool {
+    sections
+        .iter()
+        .any(|o| o.id == id && o.keys.iter().any(|(k, v)| k == key && v == raw))
+}
+
+/// The rules of one preset section. `known` are the sections of the preset
+/// files as they are now: a key line one of them holds identically in the
+/// section of the same id takes no `comment_markers`, every other rule runs on
+/// the whole section.
+fn preset_section(s: &RawSection, known: &[RawSection]) -> Result<(), Refusal> {
     preset_id(&s.id)?;
     preset_model(&s.id, &s.get("model").unwrap_or_default())?;
     for (key, raw) in &s.keys {
-        if PRESET_TEXT_KEYS.contains(&key.as_str()) {
+        if PRESET_TEXT_KEYS.contains(&key.as_str()) && !known_key_line(known, &s.id, key, raw) {
             comment_markers(key, raw)?;
         }
     }
@@ -657,17 +680,18 @@ fn preset_section(s: &RawSection) -> Result<(), Refusal> {
 }
 
 /// The preset rules on the sections of `new` that `changed` picks, the id
-/// taken once in any letter case included. Returns whether a changed section
-/// loads on startup.
+/// taken once in any letter case included, `known` the sections the key lines
+/// can be known from. Returns whether a changed section loads on startup.
 fn preset_sections(
     new: &[RawSection],
+    known: &[RawSection],
     changed: impl Fn(&RawSection) -> bool,
 ) -> Result<bool, Refusal> {
     let mut flagged = false;
     for (j, s) in new.iter().enumerate() {
         let mine = changed(s);
         if mine {
-            preset_section(s)?;
+            preset_section(s, known)?;
             flagged |= s.loads_on_startup();
         }
         let earlier = new[..j].iter().find(|o| o.id.eq_ignore_ascii_case(&s.id));
@@ -711,11 +735,21 @@ pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
 /// Check the new text of `presets.ini` against `old`, the file as it is now
 /// (empty when there is none): the preset rules on every section that is not
 /// in `old` unchanged, and the `load-on-startup` count against `models_max`
-/// (an instance's `ModelsMax`, None = llama.cpp's default).
-pub fn presets_file(new: &str, old: &str, models_max: Option<i32>) -> Result<(), Refusal> {
+/// (an instance's `ModelsMax`, None = llama.cpp's default). `other` is
+/// `presets.ini.disabled` as it is now: a key line that a section of the same
+/// id (header exact) holds identically in `old` or in `other` is exempt from
+/// `comment_markers`, the inline comment a byte-for-byte save moves whole
+/// ("Saving a preset from the web", decision c1).
+pub fn presets_file(
+    new: &str,
+    old: &str,
+    other: &str,
+    models_max: Option<i32>,
+) -> Result<(), Refusal> {
     let new = raw_sections(new);
     let old = raw_sections(old);
-    if preset_sections(&new, |s| !unchanged_in(s, &old))? {
+    let known = known_sections(&old, &raw_sections(other));
+    if preset_sections(&new, &known, |s| !unchanged_in(s, &old))? {
         startup_count(startup_flagged(&new), models_max)?;
     }
     Ok(())
@@ -724,12 +758,15 @@ pub fn presets_file(new: &str, old: &str, models_max: Option<i32>) -> Result<(),
 /// Check the new text of `presets.ini.disabled`: the preset rules on every
 /// section found unchanged neither in `old` (this file now) nor in `enabled`
 /// (`presets.ini` now), so switching off a preset is never refused; no
-/// `load-on-startup` count, llama-server never reads this file.
+/// `load-on-startup` count, llama-server never reads this file. A key line a
+/// section of the same id (header exact) holds identically in `old` or in
+/// `enabled` is exempt from `comment_markers`, as in [`presets_file`].
 pub fn presets_disabled_file(new: &str, old: &str, enabled: &str) -> Result<(), Refusal> {
     let new = raw_sections(new);
     let old = raw_sections(old);
     let enabled = raw_sections(enabled);
-    preset_sections(&new, |s| {
+    let known = known_sections(&old, &enabled);
+    preset_sections(&new, &known, |s| {
         !unchanged_in(s, &old) && !unchanged_in(s, &enabled)
     })
     .map(|_| ())
@@ -834,7 +871,7 @@ top-p = 0.95\r\n";
     }
 
     fn presets(new: &str) -> Result<(), Refusal> {
-        presets_file(new, "", None)
+        presets_file(new, "", "", None)
     }
 
     /// Every `{N}` of `text` has a value: N < `n`, and the highest is n - 1.
@@ -882,6 +919,23 @@ top-p = 0.95\r\n";
             assert_eq!(placeholders(named), 1, "{named:?}");
             let taken = table.get("preset-name-taken").expect("preset-name-taken");
             assert_eq!(placeholders(taken), 1, "{taken:?}");
+        }
+    }
+
+    /// The `comment-markers` text names the two characters and what they do
+    /// to any value: the old wording said "use a path", wrong for
+    /// `chat-template-kwargs` or `fit-target`, which are no path.
+    #[test]
+    fn the_comment_markers_text_names_the_characters_not_a_path() {
+        const WANT: &str = "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters";
+        for file in [
+            include_str!("../strings/cli.toml"),
+            include_str!("../strings/en_US.toml"),
+        ] {
+            let table = crate::strings::parse(file);
+            let text = table.get("comment-markers").expect("comment-markers");
+            assert_eq!(text, WANT);
+            assert_eq!(placeholders(text), 1, "{text:?}");
         }
     }
 
@@ -1330,19 +1384,19 @@ top-p = 0.95\r\n";
                 .collect()
         };
         assert_eq!(
-            presets_file(&flagged(&["a", "b", "c"]), "", Some(2)),
+            presets_file(&flagged(&["a", "b", "c"]), "", "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["3", "2"]))
         );
-        assert_eq!(presets_file(&flagged(&["a", "b"]), "", Some(2)), Ok(()));
+        assert_eq!(presets_file(&flagged(&["a", "b"]), "", "", Some(2)), Ok(()));
         assert_eq!(
-            presets_file(&flagged(&["a"]), "", Some(0)),
+            presets_file(&flagged(&["a"]), "", "", Some(0)),
             Err(refusal("load-on-startup-unlimited", &["1"]))
         );
-        assert_eq!(presets_file(&section("a", ""), "", Some(0)), Ok(()));
+        assert_eq!(presets_file(&section("a", ""), "", "", Some(0)), Ok(()));
         let d = flagged(&["a", "b", "c", "d"]);
-        assert_eq!(presets_file(&d, "", None), Ok(()));
+        assert_eq!(presets_file(&d, "", "", None), Ok(()));
         assert_eq!(
-            presets_file(&flagged(&["a", "b", "c", "d", "e"]), "", None),
+            presets_file(&flagged(&["a", "b", "c", "d", "e"]), "", "", None),
             Err(refusal("load-on-startup-over-max", &["5", "4"]))
         );
         // Only `true` loads on startup.
@@ -1351,7 +1405,7 @@ top-p = 0.95\r\n";
             flagged(&["a"]),
             section("b", "load-on-startup = false\n")
         );
-        assert_eq!(presets_file(&off, "", Some(1)), Ok(()));
+        assert_eq!(presets_file(&off, "", "", Some(1)), Ok(()));
     }
 
     /// The integer keys of a preset, with the values each takes: the same
@@ -1473,17 +1527,17 @@ top-p = 0.95\r\n";
     fn a_section_unchanged_from_the_file_on_disk_is_not_checked() {
         let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
         let added = format!("{broken}{}", section("new", "ctx-size = 8192\n"));
-        assert_eq!(presets_file(&added, broken, None), Ok(()));
+        assert_eq!(presets_file(&added, broken, "", None), Ok(()));
         // The same section edited, still broken: checked.
         let edited = "[old]\nmodel = /models/old.gguf\nctx-size = abc\nparallel = 2\n";
         assert_eq!(
-            presets_file(edited, broken, None),
+            presets_file(edited, broken, "", None),
             Err(not_int("ctx-size", "abc", &crate::ini::INT_NON_NEGATIVE))
         );
         // A new section with a problem: checked.
         let bad_new = format!("{broken}{}", section("new", "parallel = 0\n"));
         assert_eq!(
-            presets_file(&bad_new, broken, None),
+            presets_file(&bad_new, broken, "", None),
             Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
     }
@@ -1497,10 +1551,10 @@ top-p = 0.95\r\n";
             .map(|id| section(id, "load-on-startup = true\n"))
             .collect();
         let plus_plain = format!("{over}{}", section("d", ""));
-        assert_eq!(presets_file(&plus_plain, &over, Some(2)), Ok(()));
+        assert_eq!(presets_file(&plus_plain, &over, "", Some(2)), Ok(()));
         let plus_flagged = format!("{over}{}", section("d", "load-on-startup = true\n"));
         assert_eq!(
-            presets_file(&plus_flagged, &over, Some(2)),
+            presets_file(&plus_flagged, &over, "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["4", "2"]))
         );
         // Switching one on: new in presets.ini, so checked.
@@ -1509,7 +1563,7 @@ top-p = 0.95\r\n";
             .map(|id| section(id, "load-on-startup = true\n"))
             .collect();
         assert_eq!(
-            presets_file(&over, &two, Some(2)),
+            presets_file(&over, &two, "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["3", "2"]))
         );
     }
@@ -1557,6 +1611,114 @@ top-p = 0.95\r\n";
         );
     }
 
+    // ── An inline comment on a line the save does not touch ──────────────
+    //
+    // The manager's `comment_markers` of a checked section skips a key line
+    // that `old` or the disabled file holds identically in the section of
+    // the same id: that line is the one a byte-for-byte save moves whole,
+    // and no web save can introduce it ("Saving a preset from the web",
+    // decision c1).
+
+    /// `[a]` with an inline comment on its `model` line, as a hand edit
+    /// writes it; llama-server reads the value cut at the `;`.
+    const COMMENTED: &str = "[a]\nmodel = a.gguf ; Q8\nctx-size = 4096\n";
+
+    /// The web edits `ctx-size` only: the commented `model` line stays byte
+    /// for byte, so the section passes.
+    #[test]
+    fn inline_comment_untouched_in_the_edited_section_passes() {
+        let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(presets_file(edited, COMMENTED, "", None), Ok(()));
+    }
+
+    /// The exemption is per key line: a comment on the line the save changes
+    /// is the value the save writes with a marker in it, refused.
+    #[test]
+    fn inline_comment_changed_by_the_save_is_refused() {
+        let edited = "[a]\nmodel = b.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(
+            presets_file(edited, COMMENTED, "", None),
+            Err(refusal("comment-markers", &["model"]))
+        );
+    }
+
+    /// A line the save adds is in no known section: its markers are refused,
+    /// even beside an exempt commented line.
+    #[test]
+    fn inline_comment_on_an_added_line_is_refused() {
+        let added = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\nreasoning-budget-message = a;b\n";
+        assert_eq!(
+            presets_file(added, COMMENTED, "", None),
+            Err(refusal("comment-markers", &["reasoning-budget-message"]))
+        );
+    }
+
+    /// The known section must carry the id: the same key line held only by
+    /// another section `[b]` of `old` exempts nothing.
+    #[test]
+    fn inline_comment_known_only_from_another_section_is_refused() {
+        let other_id = "[b]\nmodel = a.gguf ; Q8\nctx-size = 4096\n";
+        let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(
+            presets_file(edited, other_id, "", None),
+            Err(refusal("comment-markers", &["model"]))
+        );
+    }
+
+    /// The switch on moves the section whole: new to `presets.ini`, held
+    /// identically (header exact) by the disabled file, so it switches on.
+    #[test]
+    fn inline_comment_known_from_the_disabled_file_switches_on_ok() {
+        let kept = "[kept]\nmodel = /models/kept.gguf\n";
+        assert_eq!(
+            presets_file(&format!("{kept}{COMMENTED}"), kept, COMMENTED, None),
+            Ok(())
+        );
+    }
+
+    /// The same in the disabled file, from `old` (this file now) and from
+    /// `enabled` (`presets.ini` now): a disabled preset edited on its own
+    /// page keeps the commented line the file already holds.
+    #[test]
+    fn inline_comment_known_in_disabled_file_from_old_and_enabled_passes() {
+        let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(presets_disabled_file(edited, COMMENTED, ""), Ok(()));
+        assert_eq!(presets_disabled_file(edited, "", COMMENTED), Ok(()));
+    }
+
+    /// A section new to both files is checked whole: the `other` file opens
+    /// no door for a marker no file holds.
+    #[test]
+    fn inline_comment_new_in_both_files_is_refused() {
+        let fresh = "[a]\nmodel = a;b.gguf\n";
+        assert_eq!(
+            presets_file(fresh, "", "", None),
+            Err(refusal("comment-markers", &["model"]))
+        );
+        let kept = "[kept]\nmodel = /models/kept.gguf\n";
+        assert_eq!(
+            presets_file(fresh, "", kept, None),
+            Err(refusal("comment-markers", &["model"]))
+        );
+    }
+
+    /// Exactness, as the header is kept byte for byte by the save and the
+    /// switch: a `[A]` header is not the known `[a]`, and a `MODEL` line is
+    /// not the known `model` (llama-server knows keys in their own case).
+    #[test]
+    fn inline_comment_known_in_another_letter_case_is_refused() {
+        let header_case = "[A]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(
+            presets_file(header_case, COMMENTED, "", None),
+            Err(refusal("comment-markers", &["model"]))
+        );
+        let key_case = "[a]\nMODEL = a.gguf ; Q8\nctx-size = 8192\n";
+        assert_eq!(
+            presets_file(key_case, COMMENTED, "", None),
+            Err(refusal("preset-no-model", &["a"]))
+        );
+    }
+
     // ── ctx-size = 0: the context from the model ─────────────────────────
 
     /// llama.cpp reads `ctx-size = 0` as "the context the model was trained
@@ -1568,7 +1730,7 @@ top-p = 0.95\r\n";
         assert!(r.contains(&0), "0 in {r:?}");
         assert!(!r.contains(&-1), "-1 in {r:?}");
         let zero = section("m", "ctx-size = 0\n");
-        assert_eq!(presets_file(&zero, "", None), Ok(()));
+        assert_eq!(presets_file(&zero, "", "", None), Ok(()));
         assert_eq!(presets_disabled_file(&zero, "", ""), Ok(()));
         assert_eq!(
             presets(&section("m", "ctx-size = -1\n")),

@@ -450,11 +450,23 @@ impl WriteState {
                 .compare_exchange(WRITE_ASKED, WRITE_DONE, Ordering::SeqCst, Ordering::SeqCst);
     }
 
+    /// The task's word that the call needs no write at all, the text it was
+    /// asked for being the text the file holds. Idle to Done is the only move,
+    /// so a handler that already settled the state (Cancelled: the limit ran
+    /// out on the reads) is left alone, and a limit that runs out on what
+    /// follows finds the call DONE, answering its own 200.
+    pub(crate) fn nothing_to_write(&self) {
+        let _ = self
+            .0
+            .compare_exchange(WRITE_IDLE, WRITE_DONE, Ordering::SeqCst, Ordering::SeqCst);
+    }
+
     /// The handler's answer when its time limit ran out and its task is still
     /// running. Idle to Cancelled settles it with the task: won, no write was
     /// ever asked and the task will never ask one, so [`TimedOut::Cancelled`];
-    /// lost, a write is sent, [`TimedOut::Asked`] while its outcome is unknown
-    /// and [`TimedOut::Done`] once it landed.
+    /// lost, the task settled the state itself: [`TimedOut::Asked`] while a
+    /// write's outcome is unknown, [`TimedOut::Done`] once the call is over,
+    /// every write of it landed or none needed.
     pub(crate) fn timed_out(&self) -> TimedOut {
         if self
             .0
@@ -484,10 +496,10 @@ pub(crate) enum TimedOut {
     Cancelled,
     /// A write is sent and its outcome is unknown: 504 `client-timeout`.
     Asked,
-    /// Every write of the call landed, so the call is DONE: the limit ran out
-    /// on a call that follows the writes. The handler answers its own 200, the
-    /// file saved, and the state it cannot read (`running`) is true, the safe
-    /// answer.
+    /// Every write of the call landed, or the call needed no write at all, so
+    /// it is DONE: the limit ran out on a call that follows the writes. The
+    /// handler answers its own 200, the file saved as the body asked, and the
+    /// state it cannot read (`running`) is true, the safe answer.
     Done,
 }
 
@@ -499,9 +511,10 @@ const WRITE_DONE: u8 = 3;
 /// `PUT /api/instances/{id}/server` `{"revision", "values"}`: the Server
 /// form's save of the whole file, as the signed-in user. The answer is
 /// `{"revision", "running"}`, the revision of the text the file holds now and
-/// whether the instance's process runs; with no session the manager is not
-/// even connected to, and a body over `origin::MAX_BODY` is refused by the
-/// extractor before the session is read (413, as the boot write).
+/// whether the instance's process runs; the session is read first, so with no
+/// session the manager is not even connected to (401), and only a signed-in
+/// request sees a body over `origin::MAX_BODY` refused by the extractor with a
+/// 413 (as the boot write).
 ///
 /// The session, the body and the bff's own check answer first, so a body
 /// nothing can be made of reaches no manager. The file is then read as the

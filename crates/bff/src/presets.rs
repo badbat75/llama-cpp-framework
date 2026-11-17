@@ -188,9 +188,9 @@ enum Answer {
 
 /// `PUT /api/presets/{id}/enabled` `{"enabled": <bool>}`: the on/off switch of
 /// one preset, as the signed-in user. The answer is exactly `{"enabled",
-/// "running"}`; with no session the manager is not even connected to, and a
-/// body over `origin::MAX_BODY` is refused by the extractor before the session
-/// is read (413, as the boot write).
+/// "running"}`; the session is read first, so with no session the manager is
+/// not even connected to (401), and only a signed-in request sees a body over
+/// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
 /// The session and the body answer first, so a body nothing can be made of (400
 /// `presets-malformed`) reaches no manager. The two files are then read once
@@ -646,9 +646,9 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// file, so the card can go on editing, and `running` whether any instance is
 /// up ([`running`]), asked only when the section lives in the file llama-server
 /// reads: a preset saved in the disabled file is not offered, so it is not
-/// running. With no session the manager is not even connected to, and a body
-/// over `origin::MAX_BODY` is refused by the extractor before the session is
-/// read (413, as the boot write).
+/// running. The session is read first, so with no session the manager is not
+/// even connected to (401), and only a signed-in request sees a body over
+/// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
 /// The session and the body answer first, so a body nothing can be made of (400
 /// `presets-malformed`, bytes of another content type included: [`json_body`]
@@ -676,7 +676,11 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// answer is still wanted, so a task left behind by a deadline writes nothing.
 /// Once the write landed the preset is the one the body asked for, so a limit
 /// that runs out on the states that follow, and a state read that fails, are the
-/// 200 with `running` true: the safe answer for a state the bff cannot read.
+/// 200 with `running` true: the safe answer for a state the bff cannot read. A
+/// body that changes nothing has no write to ask, so the state is settled as
+/// done before the instances' state is asked, and a limit that runs out there
+/// is that same 200, never the 503 that tells the page an edit was lost while
+/// the file is the one the body asked for.
 ///
 /// The save is handed both limits, where the server save is handed the longer
 /// one alone: its reads answer within `timeout`, as every other read does.
@@ -737,6 +741,12 @@ pub(crate) async fn save(
             }
             client.write_file_if(&file, &new_text, &text)?;
             mine.landed();
+        } else {
+            // Nothing to write, the text the body asked for is the text the
+            // file holds: the save is settled before the instances' state is
+            // asked, so a limit that runs out there finds it done, as a write
+            // that landed does.
+            mine.nothing_to_write();
         }
         Ok(if enabled { running(&client) } else { false })
     });
@@ -751,8 +761,9 @@ pub(crate) async fn save(
                 error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
             }
             TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            // The write landed, so the preset is the one the body asked for and
-            // only the instances' state stayed unknown.
+            // The write landed, or the body asked for the text the file
+            // already holds and nothing was written: the preset is the one the
+            // body asked for and only the instances' state stayed unknown.
             TimedOut::Done => saved(&written, true),
         },
     }
@@ -784,10 +795,11 @@ enum BodyError {
 }
 
 /// The edits of a body, one per key of its `values` map: a `None` value is the
-/// key to remove. Their order is the map's own and the file that comes out does
-/// not depend on it: an edit touches only the lines of its key, so the edits of
-/// different keys commute, and a key the body lists twice is one edit, at its
-/// last value.
+/// key to remove. [`parse_body`] hands them sorted by key: the map's own order
+/// is not one every build can rely on (a `BTreeMap`, so sorted by key, while
+/// serde_json's `preserve_order` is off, and insertion-ordered once the
+/// workspace turns it on through `pai-app`), and the bytes written must not
+/// depend on it. A key the body lists twice is one edit, at its last value.
 type Edits = Vec<(String, Option<String>)>;
 
 /// The whole answer of a body read on its own, the file's text handed in: the
@@ -843,11 +855,8 @@ pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> PresetBody
 }
 
 /// The body of `PUT /api/presets/{id}`, read and checked, the file it edits
-/// looked at nowhere: the revision it carries and its edits. `values` is a map,
-/// so the edits come in an order of the map's own, and the text [`apply`]
-/// writes does not depend on it: an edit touches only the lines of its own key,
-/// so the edits of different keys commute, and a key the body lists twice is
-/// one edit, at its last value.
+/// looked at nowhere: the revision it carries and its edits, sorted by key
+/// ([`Edits`]) whatever the order the body's `values` map came in.
 ///
 /// Every key of `values` must be in `checks::WEB_PRESET_KEYS` (the list lives in
 /// `pai-core`, pinned against `pai-app` `presets::render_section`; this crate
@@ -921,6 +930,9 @@ fn parse_body(body: &Value) -> Result<(String, Edits), BodyError> {
             field,
         });
     }
+    // The edits go to the file sorted by key, so the text `apply` writes is the
+    // same whatever order the body's `values` map came in ([`Edits`]).
+    edits.sort_by(|a, b| a.0.cmp(&b.0));
     Ok((revision.to_string(), edits))
 }
 

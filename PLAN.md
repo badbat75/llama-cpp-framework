@@ -908,15 +908,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    untruncated text); a last line ending in a lone `\r` moves the revision when a `\n` is appended;
    a line `[broken` with no `]` ends the revision's text while the parser reads on; the docs pass.)
 11e. (Done, 2026-11-17: `PUT /api/presets/{id}`, `crates/bff/src/presets.rs` `save`, designed in
-   `ARCHITECTURE.md` "Saving a preset from the web"; the in-place edits `ini::text::set_key` and
-   `remove_key`, the 65 web-editable keys `checks::WEB_PRESET_KEYS`. Left from it, one small slice
-   next (the architect's review): apply the edits sorted by key, so two keys appended in one save land
-   in the same order whatever the build (serde_json's `preserve_order` differs per build); a save that
-   changes nothing and meets a slow status read answers 200 with `running: true`, not 503; the doc
-   comments of `presets.rs`, `server.rs`, `control.rs`, `session.rs` say a body over the limit is refused
-   before the session is read, while the session is read first; `parse_sections` should read a value
-   through `value_of_line`; the docs pass. Reload of llama-server after a save: a later design; until
-   then `running` drives "restart to apply".)
+   `ARCHITECTURE.md` "Saving a preset from the web"; the edits sorted by key; an untouched line already
+   in a preset file skips the manager's comment-marker check (decision c1). Left from it, small:
+   `parse_sections` should read a value through `value_of_line`; `checks.rs` `known_sections` clones
+   both section lists per check (two slices would do); a test for the exemption with a duplicate id;
+   the docs pass. Reload of llama-server after a save: a later design; until then `running` drives
+   "restart to apply".)
 11f. **The configurator's "Saved preset" says when a restart is needed** (from the architect,
    2026-11-16): when the preset is in `presets.ini` and the instance is active, the GUI's `preset-saved`
    message adds "restart to apply" (one status read, one string).

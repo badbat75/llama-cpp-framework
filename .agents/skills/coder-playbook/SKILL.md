@@ -141,6 +141,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - A strings key used inside `server_control.rs` or `bench/` (sources a CLI command reaches, e.g.
   `bench run` through `Backend::log_text`) needs a `cli.toml` entry even if the CLI only discards
   the text: binding_lint is static. `log-journal-denied`/`-failed` are in both files for that reason.
+- The fe mirrors every `checks` refusal text of `crates/core/strings/` under `api-<key>` in
+  `fe/src/strings/en_US.json` (and in the fake's table `fe/src/test/bff.ts`): a core text change leaves
+  it stale. The fe is a separate session's files: report it, do not edit it.
+- `checks.rs` `RawSection` compares byte for byte where a save keeps the bytes (`unchanged_in` and
+  `known_key_line`: id, key and raw value exact), and case-insensitively only in the name rules
+  (`preset-name-taken`, `preset_ids_free`). `get` returns the value cut at `;`/`#`, `keys` holds the raw
+  value: `comment_markers` on `PRESET_TEXT_KEYS` is the only raw-line rule, so it is the only one with
+  the exemption of a line the current preset files already hold ("Saving a preset from the web", c1);
+  `known_sections` joins the two files' sections, which needs `RawSection: Clone`.
 - A periodic GUI probe that would spawn a process to read a log (journalctl under the manager)
   reads only on a flip: `gui.rs` keeps the last sample in a static `AtomicBool` and swaps it.
 - WiX (v4+ schema, the pinned toolset) generates a component's GUID only when its key path is one file
@@ -862,6 +871,11 @@ Lessons only: the rules are in `AGENTS.md`.
   Done answer is the route's own 200: `running: true` always (a status the bff cannot read), and for
   the switch `enabled` is the flag the request asked, because a move that landed is exactly a
   `presets.ini` with the section when the flag is true and without it when false.
+- `WriteState::nothing_to_write()` (Idle -> Done, `server.rs`) is how a call that asks NO write reaches
+  that 200: `presets::save` calls it when the new text equals the file's. A save with no changes that
+  rides a slow read lands in the TIMEOUT arm (`TimedOut::Cancelled` from Idle is a 503), so settle the
+  state and let the Done arm answer: a flag on `WriteState`, a handler-side branch, or a second
+  mechanism are the same thing built twice.
 - A manager call that FAILS after a write landed must not be a 503: the switch's read back of
   `presets.ini` answers the landed move (`switch_failure` never sees it), and only
   `ClientError::NotAuthorized` propagates, the 403 that ends the session. A `?` on any post-write
@@ -941,10 +955,13 @@ Lessons only: the rules are in `AGENTS.md`.
   (the sign-in, the server save, the switch, the preset save): absent, unreadable, or another essence is
   the route's own `*-malformed` 400, answered BEFORE the first connect, so a test pins it with an empty
   calls list. `application/json; charset=utf-8` passes: the helper compares the essence.
-- `serde_json`'s `preserve_order` is on in this workspace (through `pai-app`), so a `Map` iterates in
-  insertion order and the order a body's `values` map comes out in varies with the build: a doc comment
-  about the edits of a body must not claim sorted or body order, only that the file does not depend on
-  it (an edit touches its key's lines, so edits of different keys commute).
+- `serde_json`'s `preserve_order` is ON for a crate built with `pai-app` in the same invocation and OFF
+  in a bare `cargo test -p pai-bff`, so a body's `Map` iterates in insertion order in one build and in
+  a hash order in the other: `parse_body` sorts the edits (`edits.sort_by(|a, b| a.0.cmp(&b.0))`) so
+  `apply` writes the keys of a body in file order whatever the map. A red that only `preserve_order`
+  shows is INVISIBLE in a bare `-p pai-bff` run: reproduce it with both packages in one invocation
+  (`PRIVATE_AI_LLAMA_CPP_DIR=$PWD/build/linux/llama.cpp cargo test -p pai-bff -p pai-app --lib -- <name>`).
+  Name the order in the doc comment as the code states it ("sorted by key"), not as a property.
 - The bff's two-limit write shape (`presets::save`, the split `server::save` does not need): ONE
   blocking task under `timeout` for the connect and the reads, the `Client` moved out of it into a
   SECOND task bounded by `write_timeout.saturating_sub(Instant::now().elapsed())` for the write and
@@ -956,6 +973,11 @@ Lessons only: the rules are in `AGENTS.md`.
   extractor's rejection handed to `origin::body_refusal(&rejection, <fallback key>)`, which answers the
   413 `payload-too-large` (the cap is the `DefaultBodyLimit` layer in front of the whole router). An
   axum handler here takes `Path(id)` first and the `Bytes` last, as the existing routes do.
+- The SESSION is read before the body in every bff route: an over-`MAX_BODY` body with no session is
+  401 `session-bad-credentials`, because the extractor (413 `payload-too-large`) never runs when the
+  session check fails first. Only sign-in has no session, so it is the one route whose doc may say the
+  cap answers before the shape check. Four comments said "the cap answers first" for the server save,
+  the switch, the preset save and the sign-in: a doc comment states the order the code has.
 - `cargo fmt -p <crate>` rewrites the crate's `tests/*.rs` too. When a test file of the tester's is
   pending a lint, apply rustfmt's diff to your own file by hand (`cargo fmt -p <crate> --check` prints
   it) and report the test file: `cargo clippy -p <crate> -- -D warnings` shows the production code clean.

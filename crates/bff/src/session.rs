@@ -226,9 +226,10 @@ pub(crate) fn routes(state: Arc<Sessions>) -> axum::Router {
         .with_state(state)
 }
 
-/// `POST /api/session` `{"username", "password"}`. A body over
-/// `origin::MAX_BODY` is refused by the extractor, so the manager is never
-/// connected to for it.
+/// `POST /api/session` `{"username", "password"}`. This route reads no session:
+/// the body is its first step, so a body over `origin::MAX_BODY` is the
+/// extractor's 413, answered before the body's shape, the sign-in gate and the
+/// manager.
 async fn sign_in(
     State(s): State<Arc<Sessions>>,
     ConnectInfo(client): ConnectInfo<SocketAddr>,
