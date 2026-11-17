@@ -2,10 +2,12 @@
 // the cards and fields of pai-config's Server tab, in its order, each control
 // showing the file's value. Every signed-in session edits it: the controls
 // follow their dependencies (5.3) and the save bar checks the values, sends
-// them typed (5.4) and shows the answer by its key.
+// them typed (5.4) and shows the answer by its key. The answer is read in
+// save.ts, shared with the preset page; this file keeps the keys of its own
+// (section 3) and the tables of its check keys.
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { call, isRecord } from './api.ts'
 import Card from './Card.tsx'
 import Dialog, { DiscardDialog } from './Dialog.tsx'
 import {
@@ -16,8 +18,11 @@ import {
   SelectField,
   TextField,
 } from './Field.tsx'
+import { useFieldErrors, type RefusalTable } from './refusal.ts'
+import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
   SaveBar,
+  useAsk,
   useDirtyReport,
   useSaveBarPadding,
   useWarnOnLeave,
@@ -298,62 +303,65 @@ function checks(d: Draft, limits: unknown): [Key, string][] {
   return all.filter((c): c is [Key, string] => c[1] !== undefined)
 }
 
-/** The text of a check key the configurator shares (5.6), else undefined. */
-function refusalText(key: string, args: string[]): string | undefined {
+/** The check keys of 5.6 this form knows: the text of each, and the field each
+ * names when the bff names none. One literal t() call per key. */
+const REFUSALS: RefusalTable = {
+  text: (key, args) => {
+    switch (key) {
+      case 'not-whole-number-in-range':
+        return t('api-not-whole-number-in-range', ...args)
+      case 'comment-markers':
+        return t('api-comment-markers', ...args)
+      case 'load-on-startup-over-max':
+        return t('api-load-on-startup-over-max', ...args)
+      case 'load-on-startup-unlimited':
+        return t('api-load-on-startup-unlimited', ...args)
+      case 'client-address-in-use':
+        return t('api-client-address-in-use', ...args)
+      case 'client-unresolvable-host':
+        return t('api-client-unresolvable-host', ...args)
+      case 'bind-all-with-others':
+        return t('api-bind-all-with-others', ...args)
+      default:
+        return undefined
+    }
+  },
+  field: (key, args) => {
+    switch (key) {
+      case 'not-whole-number-in-range':
+      case 'comment-markers':
+        return args[0]
+      case 'load-on-startup-over-max':
+      case 'load-on-startup-unlimited':
+        return 'ModelsMax'
+      case 'client-address-in-use':
+        return 'Port'
+      case 'client-unresolvable-host':
+      case 'bind-all-with-others':
+        return 'Hostname'
+      default:
+        return undefined
+    }
+  },
+}
+
+/** The keys of this page beside the shared ones of `saveAnswer`. */
+function serverKey(id: string, key: string): SaveAnswer | undefined {
   switch (key) {
-    case 'not-whole-number-in-range':
-      return t('api-not-whole-number-in-range', ...args)
-    case 'comment-markers':
-      return t('api-comment-markers', ...args)
-    case 'load-on-startup-over-max':
-      return t('api-load-on-startup-over-max', ...args)
-    case 'load-on-startup-unlimited':
-      return t('api-load-on-startup-unlimited', ...args)
-    case 'client-address-in-use':
-      return t('api-client-address-in-use', ...args)
-    case 'client-unresolvable-host':
-      return t('api-client-unresolvable-host', ...args)
-    case 'bind-all-with-others':
-      return t('api-bind-all-with-others', ...args)
+    case 'server-changed-elsewhere':
+      return { kind: 'changed-elsewhere' }
+    case 'client-no-instance':
+      return { kind: 'failed', text: t('instance-not-found', id) }
     default:
       return undefined
   }
 }
-
-/** The field of a check key when the bff names none (5.6's fallback table). */
-function fallbackField(key: string, args: string[]): string | undefined {
-  switch (key) {
-    case 'not-whole-number-in-range':
-    case 'comment-markers':
-      return args[0]
-    case 'load-on-startup-over-max':
-    case 'load-on-startup-unlimited':
-      return 'ModelsMax'
-    case 'client-address-in-use':
-      return 'Port'
-    case 'client-unresolvable-host':
-    case 'bind-all-with-others':
-      return 'Hostname'
-    default:
-      return undefined
-  }
-}
-
-/** What the PUT answered, read by key in the order of the brief (section 3). */
-type SaveAnswer =
-  | { kind: 'saved'; revision: string; running: boolean }
-  | { kind: 'signed-out' }
-  | { kind: 'revoked' }
-  | { kind: 'changed-elsewhere' }
-  | { kind: 'refused'; text: string; field?: string }
-  | { kind: 'failed'; text: string }
 
 async function sendSave(
   id: string,
   revision: unknown,
   values: Keys,
 ): Promise<SaveAnswer> {
-  const failed = (text: string): SaveAnswer => ({ kind: 'failed', text })
   let reply
   try {
     reply = await call(`/api/instances/${encodeURIComponent(id)}/server`, {
@@ -363,45 +371,9 @@ async function sendSave(
     })
   } catch (e) {
     // A timeout may have written the file (4.8, 47d).
-    const timedOut = e instanceof DOMException && e.name === 'TimeoutError'
-    return failed(timedOut ? t('save-timeout') : t('save-failed'))
+    return { kind: 'failed', text: sendFailure(e) }
   }
-  if (reply.status === 401) return { kind: 'signed-out' }
-  if (sessionRevoked(reply)) return { kind: 'revoked' }
-  const body = reply.body
-  if (reply.ok) {
-    return isRecord(body) &&
-      typeof body.revision === 'string' &&
-      typeof body.running === 'boolean'
-      ? { kind: 'saved', revision: body.revision, running: body.running }
-      : failed(t('save-failed'))
-  }
-  const error = apiError(body)
-  if (error === null) return failed(t('save-failed'))
-  switch (error.key) {
-    case 'server-changed-elsewhere':
-      return { kind: 'changed-elsewhere' }
-    case 'client-not-authorized':
-      return failed(t('api-client-not-authorized'))
-    case 'client-unavailable':
-      return failed(t('api-client-unavailable'))
-    case 'client-no-instance':
-      return failed(t('instance-not-found', id))
-    case 'client-timeout':
-      // The service's own time-out may have written the file too (4.8).
-      return failed(t('save-timeout'))
-  }
-  const text = refusalText(error.key, error.args)
-  if (text !== undefined) {
-    const field =
-      isRecord(body) && typeof body.field === 'string'
-        ? body.field
-        : fallbackField(error.key, error.args)
-    return { kind: 'refused', text, field }
-  }
-  if (reply.status === 422)
-    return { kind: 'refused', text: t('api-other', error.key) }
-  return failed(t('save-failed'))
+  return saveAnswer(reply, (key) => serverKey(id, key), REFUSALS)
 }
 
 /** The bar's alert, with the button that answers it when there is one. */
@@ -449,7 +421,7 @@ export default function ServerForm({
   const [draft, setDraft] = useState(() =>
     fromValues(doc.values, doc.defaults, rows),
   )
-  const [errors, setErrors] = useState<Partial<Record<Key, string>>>({})
+  const { errors, set: setErrors, clear: clearError } = useFieldErrors<Key>()
   const [stored, setAlert] = useState<Alert | null>(null)
   const alert =
     stored?.action === 'sign-in' && stored.at !== renewals ? null : stored
@@ -458,7 +430,7 @@ export default function ServerForm({
   >('idle')
   // The run actions started when the last save-saved-restart answered.
   const [restartAt, setRestartAt] = useState(0)
-  const [asking, setAsking] = useState<'reload' | 'sign-in' | null>(null)
+  const [asking, setAsking] = useState<'sign-in' | null>(null)
   // A second Save while one runs sends nothing.
   const saving = useRef(false)
   const bar = useSaveBarPadding()
@@ -480,6 +452,10 @@ export default function ServerForm({
 
   const element = (suffix: string) =>
     document.getElementById(`${fid}-${suffix}`) as HTMLInputElement | null
+
+  // The bar's Reload: it asks before dropping the edits, and the focus goes
+  // back to the button when the answer is kept (35, 38).
+  const askReload = useAsk(true, onReload, () => element('reload')?.focus())
 
   /** Focus on a field: its control, else its default box, else its switch (34b). */
   function focusField(key: string) {
@@ -504,12 +480,7 @@ export default function ServerForm({
 
   function edit<K extends Key>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }))
-    setErrors((e) => {
-      if (!(key in e)) return e
-      const rest = { ...e }
-      delete rest[key]
-      return rest
-    })
+    clearError(key)
     setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
@@ -875,9 +846,7 @@ export default function ServerForm({
         dirty={dirty}
         saving={phase === 'saving'}
         reloadId={`${fid}-reload`}
-        onReload={
-          alert?.action === 'reload' ? () => setAsking('reload') : undefined
-        }
+        onReload={alert?.action === 'reload' ? askReload.press : undefined}
         signInId={`${fid}-sign-in`}
         onSignIn={
           alert?.action === 'sign-in' ? () => setAsking('sign-in') : undefined
@@ -886,14 +855,8 @@ export default function ServerForm({
         onDiscard={discard}
         onSave={save}
       />
-      {asking === 'reload' && (
-        <DiscardDialog
-          onKeep={() => closeAsking('reload')}
-          onDiscard={() => {
-            setAsking(null)
-            onReload()
-          }}
-        />
+      {askReload.asking && (
+        <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
       )}
       {asking === 'sign-in' && (
         <Dialog

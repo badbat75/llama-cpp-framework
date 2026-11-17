@@ -161,7 +161,7 @@ export const EN: Record<string, string> = {
   'api-not-whole-number-in-range':
     '{0} = `{1}` is not a whole number from {2} to {3}',
   'api-comment-markers':
-    "{0} contains ';' or '#', which the INI comment rule would truncate on reload; use a path without those characters",
+    "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters",
   'api-load-on-startup-over-max':
     '{0} enabled presets would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another preset, or raise ModelsMax',
   'api-load-on-startup-unlimited':
@@ -176,7 +176,33 @@ export const EN: Record<string, string> = {
     'Hostname lists 0.0.0.0 with other addresses; 0.0.0.0 already covers every address, so bind it alone.',
   'api-server-changed-elsewhere':
     'These settings changed elsewhere, or the web service restarted, after you opened them. Reload to see them; your edits here will be lost.',
+  // Sub-slice 2h.2 (fe/briefs/02h-preset-save.md, criterion 145): a preset
+  // save answered 409 preset-changed-elsewhere. The English is the brief's,
+  // verbatim.
+  'api-preset-changed-elsewhere':
+    'This preset changed elsewhere (edited, or switched on or off), or the web service restarted, after you opened it. Reload to see it as it is now; your edits here will be lost.',
   'api-other': 'The request was refused ({0}).',
+  // Sub-slice 2h.2 (fe/briefs/02h-preset-save.md, the table of criterion 150):
+  // the bff's 422 keys for a preset. Each English is the en_US.toml line the
+  // criterion names, verbatim (no closing full stop, as every copied check).
+  'api-not-a-number': '{0} = `{1}` is not a number',
+  'api-not-one-of': '{0} = `{1}` is not one of: {2}',
+  'api-not-json-object':
+    '{0} is not a JSON object (a list of "key": value pairs in braces)',
+  'api-min-above-max':
+    '{0} = {1} is above {2} = {3}: the minimum cannot exceed the maximum',
+  'api-fit-target-format':
+    'fit-target `{0}`: {1} as whole numbers, one value or a comma-separated list per device',
+  'api-moe-cache-with-tensor-split':
+    "moe-cache-mib with split-mode tensor: llama.cpp's MoE cache does not support tensor parallelism and the model would not load. Clear the MoE cache or pick another split mode",
+  'api-preset-no-model':
+    'preset `{0}` names no model: every preset needs a `model` path',
+  'api-override-no-pattern': 'tensor override {0} has an empty pattern',
+  'api-override-no-device':
+    'tensor override {0} (`{1}`) names no device: a rule is `<pattern>=<device>`, and llama.cpp splits it at the first `=`',
+  'api-invalid-preset-id':
+    "invalid preset id `{0}`: use letters, digits, '.', '-', '_'",
+  'api-preset-name-taken': 'a preset named `{0}` already exists',
   'server-edits-dropped':
     'Your unsaved changes were dropped: you signed in with a different account. The form shows the saved settings.',
   // Slice 1c (section 5.7): run controls and live state.

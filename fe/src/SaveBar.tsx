@@ -3,7 +3,8 @@
 // bar's rendered height. ServerForm (the Server page) and the preset page
 // share it, so a save answers the same way on both.
 // The text is in en_US.json.
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { flushSync } from 'react-dom'
 import { t } from './strings.ts'
 
 /** What the status line says. `saving` while a save runs; `unsaved` while
@@ -54,6 +55,38 @@ export function useWarnOnLeave(dirty: boolean) {
     window.addEventListener('beforeunload', ask)
     return () => window.removeEventListener('beforeunload', ask)
   }, [dirty])
+}
+
+/** The ask a bar's answer button makes before it acts (01's 38, 2h's 145):
+ * with something to lose (`ask`), pressing it opens the discard dialog,
+ * keeping the answer closes it and puts the focus back on the button,
+ * discarding runs the action; with nothing to lose the action runs at once. */
+export function useAsk(
+  ask: boolean,
+  onGo: () => void,
+  onFocusBack: () => void,
+): {
+  asking: boolean
+  press: () => void
+  keep: () => void
+  confirm: () => void
+} {
+  const [asking, setAsking] = useState(false)
+  return {
+    asking,
+    press: () => {
+      if (ask) setAsking(true)
+      else onGo()
+    },
+    keep: () => {
+      flushSync(() => setAsking(false))
+      onFocusBack()
+    },
+    confirm: () => {
+      setAsking(false)
+      onGo()
+    },
+  }
 }
 
 /** The bar's element: the scroll padding follows the height the bar renders

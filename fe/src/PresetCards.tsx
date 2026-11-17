@@ -1062,21 +1062,30 @@ function fullValue(
     : { id: `preset-full-${row.key}`, text }
 }
 
+/** The id of the field a row renders (the Field's convention: its control is
+ * `<id>-control`): the page marks a field by the key of its row. */
+export function fieldId(key: string): string {
+  return `preset-${key}`
+}
+
 /** One field of a card, in the form its row names. `values` is what the control
  * shows: the form's draft for an editable row, the read's values for every
  * other one. `loaded` is the value the read gave, which the written-as line of
  * an editable row describes, and `onEdit` what a pick of an editable control
- * leaves in the draft. */
+ * leaves in the draft. `errors` is the field error of a save refusal, by key
+ * (2h's 142): it marks the field the refusal named. */
 function PresetField({
   row,
   values,
   loaded,
   onEdit,
+  errors,
 }: {
   row: FieldRow
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  errors: Partial<Record<string, string>>
 }) {
   if (row.kind === 'note') return <p className="note">{row.text}</p>
   // What every control of a read-only card shares: its id, the texts of its
@@ -1085,10 +1094,11 @@ function PresetField({
   // control is enabled and its handler writes the draft (130).
   const editable = row.kind === 'select' && row.editable === true
   const common = {
-    id: `preset-${row.key}`,
+    id: fieldId(row.key),
     label: row.label,
     hint: row.hint,
     disabled: true,
+    error: errors[row.key],
   }
   const value = heldFor(row, values)
   // A row whose key is a boolean: the reading gives the state the engine acts as
@@ -1135,7 +1145,7 @@ function PresetField({
             ? undefined
             : { id: `preset-written-${row.key}`, text: written }
         }
-        error={state?.error}
+        error={common.error ?? state?.error}
         onChange={() => undefined}
       />
     )
@@ -1221,11 +1231,13 @@ function PresetRow({
   values,
   loaded,
   onEdit,
+  errors,
 }: {
   row: Row
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  errors: Partial<Record<string, string>>
 }) {
   if (row.kind === 'group') {
     const heading = `preset-group-${row.key}`
@@ -1240,6 +1252,7 @@ function PresetRow({
               values={values}
               loaded={loaded}
               onEdit={onEdit}
+              errors={errors}
             />
           ))}
         </div>
@@ -1247,22 +1260,31 @@ function PresetRow({
     )
   }
   return (
-    <PresetField row={row} values={values} loaded={loaded} onEdit={onEdit} />
+    <PresetField
+      row={row}
+      values={values}
+      loaded={loaded}
+      onEdit={onEdit}
+      errors={errors}
+    />
   )
 }
 
 /** The cards, in the order of the table, each with the fields of its rows. The
  * page's form (`values`, the draft it edits, and `loaded`, the read's values)
  * writes a change of an editable row into `onEdit`; a page that only shows the
- * file leaves every control disabled. */
+ * file leaves every control disabled. `errors` marks the fields a save refusal
+ * named (2h's 142), by key. */
 export default function PresetCards({
   values,
   loaded,
   onEdit,
+  errors,
 }: {
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  errors: Partial<Record<string, string>>
 }) {
   return (
     <>
@@ -1275,6 +1297,7 @@ export default function PresetCards({
               values={values}
               loaded={loaded}
               onEdit={onEdit}
+              errors={errors}
             />
           ))}
         </Card>

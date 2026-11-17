@@ -208,7 +208,14 @@ fe does not know is `api-other` with the key. Anything else is 139.
     **Reload** (`save-reload`) after it (01's 35, 3.1). Reload opens the discard dialog when dirty
     (Keep editing: nothing happens, focus back on Reload); Discard changes, or no dialog when clean,
     reads the preset again: `preset-loading` in place of the settings, then the form with the read's
-    values, clean, no alert, focus on the page's `h1`. A read that fails shows 2d's messages.
+    values, clean, no alert, focus on the page's `h1`. A read that fails shows 2d's messages exactly
+    as a first visit shows them, by the read's key (`api-client-unavailable`,
+    `api-client-not-authorized`, `preset-not-found` with the id, else `preset-load-failed`), as the
+    Server page's Reload does (`ServerSection.tsx` `errorText`); focus on the `h1` there too. The
+    draft is dropped when the user confirms, before the read lands, and a failed read does not bring
+    it back: intended. The user chose Discard changes under a text that says the edits will be
+    lost, and the edits could not be saved anyway (the held revision is stale, so every save meets
+    409 again); keeping them would need a second form state for one failure path.
 146. **404 `no-preset-named`**: the bar's alert `api-no-preset-named` filled with the id; the edits
     stay, still dirty; no Reload (the page is not replaced, 01's 37a).
 147. **403 `client-not-authorized`**: `api-client-not-authorized`; **503 `client-unavailable`**:
@@ -217,7 +224,10 @@ fe does not know is `api-other` with the key. Anything else is 139.
     with no button; the revision held is unchanged, so a later save meets 409 if the file was
     written (01's 47d, S3.6).
 149. **The guard's keys and `presets-malformed`** (400, the fe never sends a malformed body):
-    `save-failed` (01's S1.1).
+    `save-failed` (01's S1.1). Not to be confused with a 422 whose key is not in table 150: that one
+    is the bar's `save-refused` filled with `api-other` and the key, nothing marked, focus on Save
+    changes, as on the Server page (the order paragraph above); `save-failed` stays for an answer
+    that carries no key at all (139).
 150. **Check keys, their field and their text** (the bff's 422 keys for a preset, `checks.rs`
     `KEYS`; English verbatim from the toml line named, no closing full stop like every copied check
     text, 01's 5.6):
@@ -512,3 +522,16 @@ sizes the layers. So the three cases differ.
      `location.hash` unchanged. **Strings (2 new)**: `preset-jump-label` | Preset sections.
      `preset-assets-read-only` | The files of a preset cannot be picked here yet. Change them in
      pai-config on the server machine. Removed: `preset-read-only`, `preset-partly-editable`.
+198a. **A refusal on a field that cannot take focus says where it is** (from the 2h.2 review,
+     2026-11-17). With 144, the alert names the field only by its INI key (`ctx-size = ...`), which
+     the page never shows, and the marked field can be thousands of pixels from the bar at 320 px.
+     When the marked field's control and default box are both disabled (focus stays on Save
+     changes), the alert reads `save-refused-at` filled with the check text, the field's label and
+     its card's title; every other refusal keeps `save-refused`. No link and no scroll: the jump
+     list (196) reaches the card. Not a WCAG failure today (the field carries the error in text,
+     [3.3.1](https://www.w3.org/TR/WCAG22/#error-identification); the check text says what is
+     accepted, [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)); a usability aid **(preference)**.
+     Test: a 422 `moe-cache-with-tensor-split` with field `moe-cache-mib` (disabled by 178) reads
+     the field's label and the Hardware card's title; a 422 `not-one-of` on `pooling` still reads
+     `save-refused`. **String (1 new)**: `save-refused-at` | Not saved: {0}. The field is {1}, on
+     the card {2}.
