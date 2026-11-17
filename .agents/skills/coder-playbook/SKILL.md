@@ -909,3 +909,53 @@ Lessons only: the rules are in `AGENTS.md`.
   `rest.trim_end_matches(['\r','\n']) == "n-cpu-moe = 8"`, and a trim at the END leaves a leading
   break in place, so no writer passes both. Report the exact pair and the fix (`trim_matches`, both
   ends); the writer is judged by the assertions that CAN hold.
+- `ini::text::set_key` writes the canonical `key = value` (the configurator's writer too). A test that
+  builds its expected text by rewriting a COMPACT fixture line (`ctx-size=8192` to `ctx-size=16384`)
+  is red by construction, and a needle `matches("ctx-size=")` counts a canonical line as zero: the
+  fixture and the needle must carry the canonical spelling. Check such a claim mechanically
+  (line-wise, allowing only `key=` to `key = `), not by eye.
+- `assert_eq!`'s message is a format string, so a `{` in a compared value prints DOUBLED (`{{`) in the
+  panic output: a script that diffs captured `left:`/`right:` lines must de-double both sides.
+- `set_key`'s equal-value byte-for-byte case applies only when the single line spells the key in the
+  exact case given (`line_spells_key`, ini.rs); the duplicate count stays any-case, so a key held twice
+  still collapses onto the first occurrence.
+- The preset keys the web may write are `pai_core::checks::WEB_PRESET_KEYS`, the configurator-only ones
+  `checks::PRESET_KEYS_NOT_ON_WEB`; `pai-app`'s `web_key_lists_are_exactly_what_render_section_writes`
+  pins the union against `render_section(&full_preset())` read by `ini::parse_sections` and keeps the
+  lists disjoint, so the lists travel with the writer and name no count in a comment.
+- A `pub(crate)` item of a private module that only `#[cfg(test)]` code calls fails
+  `cargo clippy -p <crate> --all-targets -- -D warnings` (the plain lib target builds without the
+  tests): the rule and its variant are dead there. Keep the wrapper the unit tests call and split the
+  part production calls (`body_to_text` = `parse_body` + `apply` in `bff/src/presets.rs`, so the body's
+  checks answer BEFORE the manager is connected to, which a test pins by an empty call list). The
+  wrapper a test-only caller reaches is `#[cfg(test)]` (a fn simply stops being built, so production
+  carries no allow. Do the same with its answer enum: the LAST
+  `#[cfg_attr(not(test), allow(dead_code))]` went by splitting it, the narrow production error
+  (`BodyError { Malformed, Refused { key, args, field } }`) beside the wrapper's whole answer
+  (`PresetBodyAnswer`, all of it `#[cfg(test)]`, its `Text` variant included, names unchanged so
+  `src/tests/preset_body.rs` compiles untouched). A `#[cfg(test)]` variant that production's `match`
+  names is the shape to avoid, not to allow. So `parse_body` takes the `Value` `json_body` parsed,
+  and the `#[cfg(test)]` wrapper does its own `serde_json::from_slice`: that is what keeps the
+  wrapper's `Malformed` test (raw bytes in) true.
+- Every bff body route gates the content type with the ONE helper `session::json_body(&headers, &body)`
+  (the sign-in, the server save, the switch, the preset save): absent, unreadable, or another essence is
+  the route's own `*-malformed` 400, answered BEFORE the first connect, so a test pins it with an empty
+  calls list. `application/json; charset=utf-8` passes: the helper compares the essence.
+- `serde_json`'s `preserve_order` is on in this workspace (through `pai-app`), so a `Map` iterates in
+  insertion order and the order a body's `values` map comes out in varies with the build: a doc comment
+  about the edits of a body must not claim sorted or body order, only that the file does not depend on
+  it (an edit touches its key's lines, so edits of different keys commute).
+- The bff's two-limit write shape (`presets::save`, the split `server::save` does not need): ONE
+  blocking task under `timeout` for the connect and the reads, the `Client` moved out of it into a
+  SECOND task bounded by `write_timeout.saturating_sub(Instant::now().elapsed())` for the write and
+  the states after it; every write behind `WriteState::may_write()` so a task the deadline left behind
+  writes nothing. A route handler that takes both limits is 8 arguments: `#[allow(clippy::too_many_arguments)]`
+  (precedent in `app/src/bench/exec.rs`, `app/src/hf_fit.rs`, `xtask/src/linux/package.rs`).
+- In the bff, `session::json_body(headers, body)` PARSES a request (`Option<Value>`); a JSON answer is
+  `(StatusCode::OK, axum::Json(v)).into_response()`, and an over-`origin::MAX_BODY` body is the
+  extractor's rejection handed to `origin::body_refusal(&rejection, <fallback key>)`, which answers the
+  413 `payload-too-large` (the cap is the `DefaultBodyLimit` layer in front of the whole router). An
+  axum handler here takes `Path(id)` first and the `Bytes` last, as the existing routes do.
+- `cargo fmt -p <crate>` rewrites the crate's `tests/*.rs` too. When a test file of the tester's is
+  pending a lint, apply rustfmt's diff to your own file by hand (`cargo fmt -p <crate> --check` prints
+  it) and report the test file: `cargo clippy -p <crate> -- -D warnings` shows the production code clean.

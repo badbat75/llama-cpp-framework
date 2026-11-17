@@ -29,8 +29,9 @@ const ENGINE_LLAMA_CPP: &str = "llama.cpp";
 pub const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How long the manager's calls of a WRITE are given: the server file's save
-/// (a read, the write, the state that answers `running`) and the preset switch
-/// (two reads, two writes, the read back and the state). Longer than a read's
+/// (a read, the write, the state that answers `running`), the preset save (its
+/// write and the state after it, its read keeping `timeout`) and the preset
+/// switch (every call of the move). Longer than a read's
 /// [`MANAGER_TIMEOUT`], because a write goes through the manager's checks
 /// before the file, and its address check may resolve a host name. An
 /// estimate, until a real run measures a save and its figure replaces this.
@@ -98,8 +99,8 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// `PUT /api/instances/{id}/server`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
 /// `PUT /api/instances/{id}/boot`, the preset list
-/// `GET /api/presets` and the preset switch
-/// `PUT /api/presets/{id}/enabled`. The boot read
+/// `GET /api/presets`, the preset save `PUT /api/presets/{id}` and the preset
+/// switch `PUT /api/presets/{id}/enabled`. The boot read
 /// `GET /api/instances/{id}/boot` needs none, so it is served beside them.
 /// One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
@@ -126,10 +127,10 @@ pub fn router_with_session(
 }
 
 /// `router_with_session` with the manager's calls of a WRITE given their own,
-/// longer limit: the server file's save and the preset switch run under
-/// `write_timeout`, every read keeps `timeout`, and so does the boot write and
-/// the control verbs (the control routes are handed `timeout`). A manager busy
-/// writing is not cut off at the limit that is right for a read.
+/// longer limit: the server file's save, the preset save and the preset switch
+/// run under `write_timeout`, every read keeps `timeout`, and so does the boot
+/// write and the control verbs (the control routes are handed `timeout`). A
+/// manager busy writing is not cut off at the limit that is right for a read.
 pub fn router_with_session_and_write_timeout(
     connect: Connect,
     timeout: std::time::Duration,
@@ -189,6 +190,23 @@ pub fn router_with_session_and_write_timeout(
             presets::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
         }
     };
+    let save_preset = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>,
+              headers: axum::http::HeaderMap,
+              body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
+            presets::save(
+                connect.clone(),
+                timeout,
+                write_timeout,
+                sessions.clone(),
+                id,
+                headers,
+                key,
+                body,
+            )
+        }
+    };
     router_with(connect.clone(), timeout)
         .merge(session::routes(sessions.clone()))
         .route(
@@ -196,7 +214,10 @@ pub fn router_with_session_and_write_timeout(
             axum::routing::get(read).put(save),
         )
         .route("/api/presets", axum::routing::get(presets))
-        .route("/api/presets/{id}", axum::routing::get(read_preset))
+        .route(
+            "/api/presets/{id}",
+            axum::routing::get(read_preset).put(save_preset),
+        )
         .route("/api/presets/{id}/enabled", axum::routing::put(set_enabled))
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))

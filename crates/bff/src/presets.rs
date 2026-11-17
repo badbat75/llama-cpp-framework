@@ -32,6 +32,9 @@
 //! when there is no manager or it answers later than `timeout`, and 502
 //! `client-other` for anything else.
 //!
+//! `PUT /api/presets/{id}` is the save of one preset, the body
+//! `{"revision", "values"}`: the section's keys are rewritten in place in the
+//! file that holds it; see [`save`].
 //! `PUT /api/presets/{id}/enabled` is the switch of one preset, the body
 //! `{"enabled": <bool>}`. The section moves, unchanged, between the two files,
 //! the file it LANDS IN written first; see [`set_enabled`].
@@ -40,6 +43,7 @@ use crate::origin::body_refusal;
 use crate::server::{revision, runs, TimedOut, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
+use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -47,7 +51,7 @@ use pai_core::client::{ClientError, ManagerFile};
 use pai_core::{checks, ini};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The engine's file of switched-on presets, the one llama-server reads.
 const PRESETS: &str = "presets.ini";
@@ -392,13 +396,13 @@ fn running(client: &Client) -> bool {
     }
 }
 
-/// The answer to a switch the manager could not do, `write_asked` the shared
-/// state's: a write sent, so a stream that died there leaves its outcome
+/// The answer to a preset write the manager could not do, `write_asked` the
+/// shared state's: a write sent, so a stream that died there leaves its outcome
 /// unknown, is 504 `client-timeout`, and not 503 `client-unavailable`. The
-/// compare and swap found its file changed: 409 `preset-changed-elsewhere`, and
-/// when it answered the second write the preset is in both files. The manager's
-/// check of the moved section is 422 with its key, its values and the field to
-/// mark ([`field_of`]); the manager's detail stays out of the body. The manager
+/// compare and swap found its file changed: 409 `preset-changed-elsewhere`. The
+/// manager's check of the section it was asked to write is 422 with its key, its
+/// values and the field to mark ([`field_of`]); the manager's detail stays out of
+/// the body. The manager
 /// refused the signed-in user: 403 `session-not-administrator` (the sign-in's
 /// key for the same fact) and the session ends with the right that authorized
 /// it. The other answers are the bff's news, not a refusal of the user, so the
@@ -431,16 +435,26 @@ fn switch_failure(
 }
 
 /// The field of a 422: the preset key the form marks, beside the check's key and
-/// values. The load-on-startup pair counts `load-on-startup` against the lowest
-/// `ModelsMax` and names no key in its values, so the pair maps to that key. A
-/// check that names the key it is about marks it, as its `args[0]`. A refusal
-/// about the preset's name (`invalid-preset-id`, `preset-name-taken`) has no key
-/// of the section to mark, so the answer carries no field at all.
+/// values. One rule per check, so a refusal names the card's field whoever asks.
+/// A check that names the key it is about marks it, as its `args[0]`. The checks
+/// that name a VALUE and not a key, the load-on-startup pair (its `args` are the
+/// total and `ModelsMax`) and `preset-no-model` (its `args` are the preset's
+/// name), name the key their value belongs to: `load-on-startup` and `model`.
+/// So does the pair `override-no-pattern` and `override-no-device`, whose
+/// `args[0]` is the position of the rule inside the value, and
+/// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
+/// its own value. A refusal about the preset's name (`invalid-preset-id`,
+/// `preset-name-taken`) has no key of the section to mark, so the answer carries
+/// no field at all.
 fn field_of(key: &str, args: &[String]) -> Option<String> {
     match key {
         "load-on-startup-over-max" | "load-on-startup-unlimited" => {
             Some("load-on-startup".to_string())
         }
+        "preset-no-model" => Some("model".to_string()),
+        "fit-target-format" => Some("fit-target".to_string()),
+        "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
+        "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
         "invalid-preset-id" | "preset-name-taken" => None,
         _ => args.first().cloned(),
     }
@@ -590,4 +604,339 @@ fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String 
     let body = body.strip_suffix("\r\n").unwrap_or(body);
     let body = body.strip_suffix('\n').unwrap_or(body);
     revision(&format!("{file}\n{body}"), key)
+}
+
+/// The section a save starts from: the file that holds it, the text of that
+/// file as the manager read it (the compare and swap expects it), and the
+/// connect made for the signed-in user, reused for the write. `NotFound` when
+/// neither preset file has a section of that name.
+enum Read {
+    Found {
+        client: Client,
+        file: String,
+        text: String,
+    },
+    NotFound,
+}
+
+/// The file that holds the section `id`, read as the signed-in user over one
+/// connect: `presets.ini` first, so a section in both files is the enabled one,
+/// as the list and the section read answer the same id. A file the manager says
+/// is not there holds nothing, and llama-server's global `[*]` is not a preset.
+fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientError> {
+    let client = connect(Some(user))?;
+    for file in [PRESETS, PRESETS_DISABLED] {
+        let Some(text) = client.read_file(file)?.map(|file| file.text) else {
+            continue;
+        };
+        if !is_global(id) && ini::text::section_text(&text, id).is_some() {
+            return Ok(Read::Found {
+                client,
+                file: file.to_string(),
+                text,
+            });
+        }
+    }
+    Ok(Read::NotFound)
+}
+
+/// `PUT /api/presets/{id}`: the save of one preset, as the signed-in user. The
+/// body is the object [`parse_body`] reads, the answer is exactly `{"revision",
+/// "running"}`: `revision` the revision of the section as it now stands in the
+/// file, so the card can go on editing, and `running` whether any instance is
+/// up ([`running`]), asked only when the section lives in the file llama-server
+/// reads: a preset saved in the disabled file is not offered, so it is not
+/// running. With no session the manager is not even connected to, and a body
+/// over `origin::MAX_BODY` is refused by the extractor before the session is
+/// read (413, as the boot write).
+///
+/// The session and the body answer first, so a body nothing can be made of (400
+/// `presets-malformed`, bytes of another content type included: [`json_body`]
+/// is the gate, as the server save's and the switch's) and a value no check
+/// allows (422, [`field_of`]) reach no manager. The file is read next: a name
+/// no file holds, and llama-server's global `[*]`, are 404 `no-preset-named`
+/// ([`not_found`]) with nothing written.
+/// The section's revision ([`section_revision`]) is then compared with the one
+/// the body carries: a card that started from an older text is 409
+/// `preset-changed-elsewhere` with nothing written, and a body that asks for the
+/// text the file already holds answers 200 and writes nothing.
+///
+/// The write is the compare and swap, expecting the text this request read, so
+/// the file is never changed under a card that read it earlier: 409
+/// `preset-changed-elsewhere` when the file moved in between. The manager's
+/// check of the section is 422 ([`field_of`]). A refusal of the signed-in user,
+/// at the connect, the read or the write, is 403 and ends that session; the
+/// other answers keep it ([`switch_failure`]).
+///
+/// The two limits are the server save's ([`crate::server::save`], the same
+/// [`WriteState`]): the reads answer within `timeout` and a time limit that runs
+/// out while no write was asked is 503 `client-unavailable`; from the moment a
+/// write was sent its outcome is unknown, and the answer is 504
+/// `client-timeout`, within `write_timeout`. A write only starts while the
+/// answer is still wanted, so a task left behind by a deadline writes nothing.
+/// Once the write landed the preset is the one the body asked for, so a limit
+/// that runs out on the states that follow, and a state read that fails, are the
+/// 200 with `running` true: the safe answer for a state the bff cannot read.
+///
+/// The save is handed both limits, where the server save is handed the longer
+/// one alone: its reads answer within `timeout`, as every other read does.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn save(
+    connect: Connect,
+    timeout: Duration,
+    write_timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+    key: [u8; 16],
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "presets-malformed"),
+    };
+    let Some(body) = json_body(&headers, &body) else {
+        return error(StatusCode::BAD_REQUEST, "presets-malformed", &[]);
+    };
+    let (sent, edits) = match parse_body(&body) {
+        Ok(pair) => pair,
+        Err(BodyError::Malformed) => {
+            return error(StatusCode::BAD_REQUEST, "presets-malformed", &[])
+        }
+        Err(BodyError::Refused { key, args, field }) => return refused(&key, &args, Some(&field)),
+    };
+    let user = identity.user;
+    let name = id.clone();
+    let started = Instant::now();
+    let ask = tokio::task::spawn_blocking(move || read_section(&connect, &user, &name));
+    let found = match tokio::time::timeout(timeout, ask).await {
+        Err(_elapsed) => return error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Ok(Err(_join)) => return error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+        Ok(Ok(Err(failure))) => return switch_failure(&sessions, &session, failure, false),
+        Ok(Ok(Ok(found))) => found,
+    };
+    let Read::Found { client, file, text } = found else {
+        return not_found(&id);
+    };
+    if section_revision(&file, &text, &id, &key) != sent {
+        return error(StatusCode::CONFLICT, "preset-changed-elsewhere", &[]);
+    }
+    let new_text = apply(&edits, &text, &id);
+    let written = section_revision(&file, &new_text, &id, &key);
+    let changed = new_text != text;
+    let enabled = file == PRESETS;
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
+        if changed {
+            if !mine.may_write() {
+                return Ok(true);
+            }
+            client.write_file_if(&file, &new_text, &text)?;
+            mine.landed();
+        }
+        Ok(if enabled { running(&client) } else { false })
+    });
+    let left = write_timeout.saturating_sub(started.elapsed());
+    match tokio::time::timeout(left, ask).await {
+        Ok(Ok(Ok(running))) => saved(&written, running),
+        Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
+        Ok(Err(_join)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+        Err(_elapsed) => match state.timed_out() {
+            // The write was never asked: the file is the one that was read.
+            TimedOut::Cancelled => {
+                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+            }
+            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
+            // The write landed, so the preset is the one the body asked for and
+            // only the instances' state stayed unknown.
+            TimedOut::Done => saved(&written, true),
+        },
+    }
+}
+
+/// The 200 of a save: exactly `{"revision", "running"}`, the section's revision
+/// as the file now holds it, and whether an instance is up.
+fn saved(revision: &str, running: bool) -> Response {
+    (
+        StatusCode::OK,
+        axum::Json(json!({ "revision": revision, "running": running })),
+    )
+        .into_response()
+}
+
+/// Why [`parse_body`] refuses the body of `PUT /api/presets/{id}`: the two
+/// answers the save gives before it reads a file, as the server save's
+/// [`crate::server::BodyAnswer`] answers them.
+enum BodyError {
+    /// The body is not a preset save at all: 400 `presets-malformed`.
+    Malformed,
+    /// A value was refused: 422 `{key, args, field}`, the check's key and
+    /// values, and the INI key the form marks (the table of one rule per key).
+    Refused {
+        key: String,
+        args: Vec<String>,
+        field: String,
+    },
+}
+
+/// The edits of a body, one per key of its `values` map: a `None` value is the
+/// key to remove. Their order is the map's own and the file that comes out does
+/// not depend on it: an edit touches only the lines of its key, so the edits of
+/// different keys commute, and a key the body lists twice is one edit, at its
+/// last value.
+type Edits = Vec<(String, Option<String>)>;
+
+/// The whole answer of a body read on its own, the file's text handed in: the
+/// new text of the file and the revision the body carried, or one of
+/// [`BodyError`]'s refusals. The route answers through [`parse_body`] and
+/// [`apply`], with the file read between the two; this is the shape the body's
+/// own tests in `src/tests/preset_body.rs` read.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) enum PresetBodyAnswer {
+    /// The new text of the preset file, and the revision the body carried: the
+    /// save goes to the file that still holds it, and a body that changed the
+    /// revision of the card is not written at all.
+    Text { text: String, revision: String },
+    /// The body is not a preset save at all: 400 `presets-malformed`.
+    Malformed,
+    /// A value was refused: 422 `{key, args, field}`, the check's key and
+    /// values, and the INI key the form marks (the table of one rule per key).
+    Refused {
+        key: String,
+        args: Vec<String>,
+        field: String,
+    },
+}
+
+/// The body of `PUT /api/presets/{id}`, applied to `file_text`, the text of the
+/// preset file that holds the section named by `id`: the object
+/// `{"revision": <the revision of the card the edit started from>, "values":
+/// {"<key>": <value>, ...}}`, a `null` value removing that key. The checks of
+/// [`parse_body`] answer first, then [`apply`] writes the edits: every check
+/// answers before the first edit is applied, so a refused body writes nothing.
+///
+/// The save calls [`parse_body`] and [`apply`] with the file's text in between,
+/// so a body nothing can be made of is answered before a preset file is read.
+/// This is the whole of it, the tests' entry to it: it is built only under
+/// `cfg(test)`, because no route calls it, only the body's own tests in
+/// `src/tests/preset_body.rs` do.
+#[cfg(test)]
+pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> PresetBodyAnswer {
+    let Ok(body) = serde_json::from_slice::<Value>(body) else {
+        return PresetBodyAnswer::Malformed;
+    };
+    match parse_body(&body) {
+        Ok((revision, edits)) => PresetBodyAnswer::Text {
+            text: apply(&edits, file_text, id),
+            revision,
+        },
+        Err(BodyError::Malformed) => PresetBodyAnswer::Malformed,
+        Err(BodyError::Refused { key, args, field }) => {
+            PresetBodyAnswer::Refused { key, args, field }
+        }
+    }
+}
+
+/// The body of `PUT /api/presets/{id}`, read and checked, the file it edits
+/// looked at nowhere: the revision it carries and its edits. `values` is a map,
+/// so the edits come in an order of the map's own, and the text [`apply`]
+/// writes does not depend on it: an edit touches only the lines of its own key,
+/// so the edits of different keys commute, and a key the body lists twice is
+/// one edit, at its last value.
+///
+/// Every key of `values` must be in `checks::WEB_PRESET_KEYS` (the list lives in
+/// `pai-core`, pinned against `pai-app` `presets::render_section`; this crate
+/// keeps no copy of it), matched in the exact spelling of the list: a key in
+/// another letter case is as unknown as a name no reader knows, because
+/// llama-server knows a key only in its own case. Every set value is a string
+/// that is not empty after trimming spaces and tabs, holds no control character
+/// other than a tab, and starts and ends with a space the reader keeps: the
+/// parser (`pai_core::ini`) reads a value with `str::trim`, which knows every
+/// Unicode space, so a value that starts or ends with one beyond a space or a
+/// tab would be read back shorter than it went. Every set value goes through
+/// the configurator's `checks::comment_markers` for its key: 422
+/// `comment-markers` listing every key whose value holds a marker, with the
+/// field the first of them. A value is written trimmed.
+fn parse_body(body: &Value) -> Result<(String, Edits), BodyError> {
+    // The shape: `{revision: string, values: object}`. The revision is only
+    // carried through: this function answers no 409, the save that reads the
+    // file back before it writes is the one that refuses a stale edit.
+    let Some(revision) = body.get("revision").and_then(Value::as_str) else {
+        return Err(BodyError::Malformed);
+    };
+    let Some(values) = body.get("values").and_then(Value::as_object) else {
+        return Err(BodyError::Malformed);
+    };
+    // The keys first: one name the web may not write refuses the whole body.
+    if !values
+        .keys()
+        .all(|key| checks::WEB_PRESET_KEYS.contains(&key.as_str()))
+    {
+        return Err(BodyError::Malformed);
+    }
+    // The values, read in full before one byte is written: a string is the text
+    // to write, trimmed of the spaces and tabs no reader keeps, a `null` the key
+    // to remove, and nothing else is a value at all. A control character ends
+    // the line in the file, so a value holds none of them beyond a tab.
+    let mut edits: Edits = Vec::with_capacity(values.len());
+    let mut markers: Vec<String> = Vec::new();
+    for (key, value) in values {
+        match value {
+            Value::Null => edits.push((key.clone(), None)),
+            Value::String(text) => {
+                let text = text.trim_matches([' ', '\t']);
+                // A Unicode space beyond a space or a tab at one of the ends:
+                // the writer keeps that byte in the file, while the parser's
+                // `str::trim` reads the value without it, so the value would
+                // come back shorter than it went.
+                let space_at_end = |c: char| c.is_whitespace() && c != ' ' && c != '\t';
+                if text.is_empty()
+                    || text.chars().any(|c| c.is_control() && c != '\t')
+                    || text.starts_with(space_at_end)
+                    || text.ends_with(space_at_end)
+                {
+                    return Err(BodyError::Malformed);
+                }
+                // `;` and `#` end a value for every reader of the file, so a
+                // value holding one reloads as less than what was written.
+                if checks::comment_markers(key, text).is_err() {
+                    markers.push(key.clone());
+                }
+                edits.push((key.clone(), Some(text.to_string())));
+            }
+            _ => return Err(BodyError::Malformed),
+        }
+    }
+    if !markers.is_empty() {
+        markers.sort();
+        let field = markers.first().cloned().unwrap_or_default();
+        return Err(BodyError::Refused {
+            key: "comment-markers".to_string(),
+            args: markers,
+            field,
+        });
+    }
+    Ok((revision.to_string(), edits))
+}
+
+/// The edits of a body, applied to `file_text`: they go to the section named by
+/// `id`, and to no other, in the key's own spelling and the section matched in
+/// any letter case: `pai_core::ini::text::set_key` for a string (a line that
+/// spells the key as given and already holds the value is left byte for byte, a
+/// line that does not is rewritten whole, and a key the section holds twice is
+/// collapsed onto the first occurrence) and `text::remove_key` for a `null`.
+fn apply(edits: &Edits, file_text: &str, id: &str) -> String {
+    let mut text = file_text.to_string();
+    for (key, value) in edits {
+        text = match value {
+            Some(value) => ini::text::set_key(&text, id, key, value),
+            None => ini::text::remove_key(&text, id, key),
+        };
+    }
+    text
 }

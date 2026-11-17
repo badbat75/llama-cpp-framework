@@ -78,3 +78,6 @@ description: What the architect has learned about this project's components, int
   controls; the field tables of 02e (92 to 112) name the keys.
 - `ini::text::line_starts_with_key` matches any letter case, llama-server only the exact one: any
   "already equal, leave it" shortcut must also require the exact spelling.
+- `serde_json::Map` iterates in key order unless `preserve_order` is on, and that feature differs
+  per build in this workspace (on through `pai-app`, off for `pai-bff` alone): never let file bytes
+  depend on the order of a JSON object's keys; sort first.

@@ -195,6 +195,16 @@ Lessons only: the rules are in `AGENTS.md`.
   the design leaves it open, a coder reading it as 400 reds a 422 test for the wrong reason).
   Pin `render_for(cfg, true)` against `false` with the blank-dirs case only: with both dirs set the two
   renders are identical, so the equality of the whole file cannot tell the flag.
+- The INI value asymmetry a writer must refuse: the bff trims a value with `trim_matches([' ', '\t'])`,
+  the core's reader trims with `str::trim`, which is Unicode-aware (`ini.rs`: `line.trim()`, then
+  `t[eq + 1..].trim()`), so a value with U+00A0 or U+2028 at an END is written whole and read back
+  shorter. `char::is_control()` is the Cc category only, so both slip past the control-character rule. An
+  interior U+00A0 survives the reader (read back identical), so pin that as the guard of the rule's scope
+  and keep the plain space/tab ends accepted (they belong to the trim rule).
+- A `for value in [..]` reds at its first element, so one run proves one element. Prove the rest are red
+  for their own reason with a standalone `rustc --edition 2021` probe that replicates the rule's
+  predicates and the reader's trim and prints the answer per value (20 lines beat copying the crate out of
+  the workspace, where `path = "../core"` deps break).
 - A `pub(crate)` stub in a PRIVATE module, reached only from tests: `-D warnings` fails `dead_code` on
   the function, the enum and its variants (3 messages, lib and lib test). `pub` does not clear it (the
   module is private, so the item is still unreachable), and the caller that clears it is a later slice:
@@ -357,6 +367,98 @@ Lessons only: the rules are in `AGENTS.md`.
    so a split at the first reads a header with no calls, and the require-needle goes red for the wrong
    reason. The require-needle (`"<fn>("`) is green today at the call site, so the red of the move is the
    forbid-needle (`"fn <fn>("`): report which line reds.
+- A design that accepts a CLOSED list of names ("the 84 keys of the brief's table") is not a list to invent:
+  the brief's prose names are often wrong (`frequency-penalty` is `frequency_penalty`, `chat-template` is
+  `chat-template-file`, `rope-scaling-type` does not exist: about 40 of my 64 guesses were not real keys).
+  Rebuild it from the authoritative sources and cross-check both: the check tables (`crates/core/src/checks.rs`
+  `PRESET_INT_KEYS`/`PRESET_FLOAT_KEYS`/`PRESET_ENUM_KEYS`) and the reader that consumes the key
+  (`crates/app/src/presets.rs`), and report how you built it. When the test loops over a constant the coder
+  completes, that list travels in production code: a name that reaches no rule is a key no check guards.
+- A list constant the coordinator orders left EMPTY for the coder: every test that iterates it is vacuously
+  GREEN, so name that in the report and put the red in a presence assert (the constant `contains` two named
+  keys) and in a literal case beside the loop (`foo`). The loop over an excluded list is vacuous too.
+- Verify a design's key list against the writer before pinning them equal, no compile needed: a python pass
+  over the writer's lines. One regex is not enough: the keys arrive as `emit_*(&mut out, "k", ..)` (often
+  split across lines, needs `re.S`), as `format!("k = {}` and as a bare `push_str("k = true\r\n")`: my first
+  pass found 2 of 75. Feed it the design's union, print both diffs.
+- `ini::Section::keys` is a `BTreeMap`: its keys come out sorted, so a `Vec<&str>` of them compares straight
+  against a sorted union. `render_section` has no `if` guard around an `emit_*`, so a fixture with every
+  field set (`full_preset`) yields every key the writer can emit, and a union-equality red prints the
+  writer's own list: read the count there to prove the fixture needs no change.
+- `set_key` appends a key the section does not have AFTER the section's last real line (a blank line at the
+  end of the file stays below it), so two new keys of one body land on the two lines below the line the
+  section ended with. Pin that: write the body keys sorted (the order then holds with and without
+  `preserve_order`), assert the two lines at `from.len() + 1` and `+ 2`, and prove the rest of the file byte
+  for byte with a `replaced` anchor whose window ENDS at the section's last line, repeating that line inside
+  `to` (the file's own last two lines are now the appended ones, so an anchor up to `from.len()-1` never
+  matches). A reverse-order body pins presence once inside the section, not the order: the line index of the
+  key depends on the map order.
+- Element coercion propagates into an array literal, so `(key, Some("12"))` with `key: &&str` compiles where
+  `&[(&str, Option<&str>)]` is wanted: `LIST.iter().chain(std::iter::once(&"foo"))` needs no deref.
+- `todo!("... {id} ...")` interpolates: a brace in the message is `E0425: found format placeholder "{id}"`,
+  which stops the crate. Keep a stub message free of braces.
+- `serde_json`'s `preserve_order` is a **per-invocation** feature here: `pai-app` turns it on, `pai-bff` does
+  not, so the map order of a parsed body depends on the package set of the run (`cargo test -p pai-bff --lib`
+  builds it plain, `-p pai-bff -p pai-app` unifies the features). Cargo.lock records no features, so
+  `cargo tree -p pai-bff -e features -i serde_json` is the proof for the invocation you care about.
+  Pin an order only when it holds in both (write the fixture keys sorted, then the request order equals the
+  map order under both); anything else is presence compared sorted, and the run that changes the order must
+  be reported.
+- A non-JSON body reaches the handlers of an axum service that consumes `Result<Bytes, BytesRejection>`:
+  the extractor never looks at Content-Type, so a route that wants the JSON check takes it from the headers
+  (the bff's `json_body` reads the essence before `;`). A test of that sends the header on the request, so
+  the request helper takes the header list and `req.request.headers_mut().extend(list)` (the `Parts::from`
+  form drops the method and URI, `RequestParts::try_into_request` keeps it). One helper that takes the
+  Content-Type as an argument keeps the request to a single value; `Vec::insert` on
+  `request.headers_mut()` appends, which makes a multi-value header and leaves the check's answer unpinned.
+  Pin the accept side of the same rule too (a `charset` suffix is served), and prove each refusal case red
+  on its own by running the list with the case first: one red names one index.
+- A body fixture with a control character goes through `serde_json::to_string`, so the bytes reach the parser
+  escaped as the browser sends them (`\u0000`, not a raw NUL), and write DEL as `\u{7f}` (the character is
+  non-printing in the source).
+- A verb added BESIDE a path that already serves (the `PUT` of a routed `GET /api/presets/{id}`): every status
+  assert of the new file reds `left: 405 right: <expected>`, the 404 tests included (the router's 405 answers
+  before the app can name an unknown id). Two greens need naming: the "PUT is the only write verb" pin greens
+  by construction (POST/DELETE/PATCH are 405 today), and so does a "the session survives every non-refusal"
+  assert (no route ran, so no session was touched).
+- The bff's body cap is the router's `DefaultBodyLimit` (`MAX_CONTENT_LEN`, private to the lib): it answers 413
+  `payload-too-large` BEFORE the origin guard, the session and any manager call, so the test asserts zero
+  connects. Pad a VALUE of the contract's body to cross it, so a 413 cannot be read as a malformed body.
+- "The manager's words never reach the browser" is a `!body.contains(needle)` over EVERY failure reply
+  (400/401/403/404/409/413/502/503/504): cut the needle from the message with
+  `msg.split_whitespace().collect::<Vec<_>>().join(" ")`, never with format magic, so the needle cannot vanish.
+- 503 and 504 of one save are the SAME fake cell (a parked call) told apart by what the test proved: no write
+  asked (file text unchanged, write log empty) is 503 `client-unavailable`; a write already SENT is 504
+  `client-timeout` and the gate release makes the file land AFTER the answer, which is the outcome the answer
+  cannot name. The project's rule: once a write was ASKED its outcome is unknown, so an explicit
+  `Unavailable` answered by the write is 504 `client-timeout` too, not 503 (the server save, the switch's
+  `switch_when_the_write_answers_unavailable_is_504`, and `switch_failure`'s `Unavailable if write_asked`
+  arm all answer that way); 503 is only where no write was asked.
+- Two limits of one route are pinned by their DIFFERENCE: a call slower than the read limit answers 200 under
+  the write limit (a write, and the state read after a landed write), a read of the same delay answers 503.
+  `MANAGER_TIMEOUT` is private to the bff lib, so the integration file pins it behaviourally, and the save
+  limit needs a builder arg (`router_with_session_and_write_timeout`).
+- The bff's fixed-clock seam (`App::clock`) cannot pin an IDLE deadline: the deadline never moves on a stopped
+  clock, so the read after the save answers 401 whatever the route does. Give the App a `tick: Arc<AtomicU64>`
+  and a builder that hands the session `fixed + tick`; `advance(ms)` then a signed-in read pins the move as a
+  number (the session's `now_ms` ticks at 5 ms, so ms units resolve). Every other test leaves the tick at 0.
+- A fake's helper nobody calls is a `-D warnings` red in `tests/*.rs`: an unused gate is 4 fields and 4
+  accessors, an unused setter one more. Build the machinery a test needs, and when a test does not need it,
+  delete it before reporting; the connect refusal needs an outcome cell only (a refused connect opens no
+  stream, so a pause and a gate there are dead weight).
+- The 422 field table: `field` is `args[0]` ONLY for a rule whose first arg is a key. A rule naming a value, a
+  position, a count or nothing maps to its control: `fit-target-format` to `fit-target`,
+  `moe-cache-with-tensor-split` (empty `args`) to `moe-cache-mib`, `load-on-startup-over-max`/`-unlimited` to
+  `load-on-startup`, `preset-no-model` to `model`, `override-no-pattern`/`-no-device` to `override-tensor`. A
+  refusal about the preset's NAME (`invalid-preset-id`, `preset-name-taken`) carries NO `field` member (not
+  null). Read the real `args` from `crates/core/src/checks.rs` (`grep -n '"<key>"'`): the built `field_of`
+  takes `args[0]` and drops the rest, so a table copied from a design's prose reds on `args`, and the
+  `left: 405` of an unrouted route hides it. A rule whose `args` has no key at all (`min-above-max`) has an
+  `args[0]` that is a key, and a rule whose `args` is `[]` has none: pin both.
+- `AsStatusAll` (the instance states behind `running`) is asked for the file that holds the section, so a save
+  of `presets.ini.disabled` ends its exact call list at the WRITE: no `list`, no `status`. Pin that, and pin
+  the safe hint the other way round: a state read that fails AFTER a write that landed is a 200 with
+  `running: true`.
 
 ## Text pins and source lints
 
@@ -381,6 +483,12 @@ Lessons only: the rules are in `AGENTS.md`.
   ended by a paren-balance walk. Commenting the `let` alone leaves its assert live, every variant dies as
   `E0425: cannot find value` and prints no `test result` line. An assert that only passes when an earlier
   one of its own fixture group is live is the same trap.
+- A fixture that spells key lines compactly (`ctx-size=8192`) to show untouched bytes: the EXPECTED text of
+  a REWRITTEN line is `key = value` (`set_key`'s rule, ARCHITECTURE.md "Saving a preset from the web"), not
+  the fixture's spelling. A count pin on the compact needle (`matches("ctx-size=")`) drops when the line is
+  rewritten, so its expectation must name what the smaller count proves (the compact spelling survives only
+  on the untouched section's line), and the compact line's byte-for-byte survival gets its own
+  `contains("{needle}{nl}")` pin, with `nl` in the needle so the CRLF pass pins the ending too.
 - In a slice under a coordinator's decision, some reds in the filter are the PRE-EXISTING tests (the
   previous slice's red the reviewer is now extending: `set_key` glued an appended key to a final-line
   header). Say which reds predate your edits; `git diff` cannot tell them in a tree a coder left dirty.
@@ -1317,6 +1425,23 @@ Lessons only: the rules are in `AGENTS.md`.
 - A 5xx whose body names a secret (`{ key: 'secret-detail' }`) is the fixture that makes "the bar's
   alert cleared" testable in a slice with no client checks and no keyed answers yet: the alert exists
   to clear, and the same row asserts the key never reaches `document.body`.
+- A page whose save answers only the generic `save-failed` today: every keyed-answer test reds on the
+  alert TEXT (`Unable to find an element with the text: <brief English>`), and the guard-key test of
+  "anything else is the generic failure" (403 `request-cross-origin`, `request-bad-host`, 413
+  `payload-too-large`, 400 `presets-malformed`) is GREEN by construction: report it as a guard, it is
+  the net the new reading must not break.
+- A fe time-limit test needs no new clock in the page: `api.ts call()` already aborts a non-GET at
+  120 000 ms, so a `held()` PUT plus `advance(119_999)` / `advance(1)` (the `fakeClock`/`flush`/`advance`
+  of `Timeout.test.tsx`: fake `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`Date` only, so
+  the microtasks stay real) shows the abort is wired while the red is the message the page renders.
+  `afterEach` needs `vi.useRealTimers()` beside `vi.unstubAllGlobals()`.
+- `App.test.tsx`'s strings pin (`en_US.json holds the English the brief gives`) lists every `EN` key that
+  `en_US.json` lacks, so adding the slice's strings to `src/test/bff.ts` grows that existing red by one
+  per key: name it as pre-existing (the 2h.2 422 keys were already in it), not as a new failure.
+- A preset page reload test (409 then Reload) needs a stateful read stub: `preset: () => ++reads === 1 ?
+  reply(200, presetDoc({}, { revision: 'r1', values: A })) : reply(200, presetDoc({}, { revision: 'r-9',
+  values: B }))` (`presetDoc`'s `extra` replaces `values` wholesale, not merged), and the second reply
+  can be a failure reply to test the failed read of the same flow.
 - A test file past ~900 lines splits into `<Name>1` / `<Name>2` with the helpers COPIED: a test file
   imports no other test file, and the copy keeps each file runnable on its own. Splitting one back
   means hand-reverting the setup edits (imports, `beforeEach`, `afterEach`): a file the slice created

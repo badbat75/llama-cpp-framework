@@ -78,8 +78,8 @@ as not checked, and the step stays open.
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
 presets and switches them on or off, and (user, 2026-11-17, relayed by the web UI session and
-confirmed here) opens a preset and saves it. Built up to the preset page's read (2026-11-17); left:
-the preset save (11e on the bff, 2h on the fe), then the user's run on their machine. After it: 11d,
+confirmed here) opens a preset and saves it. Built on the bff (2026-11-17, the preset save the last); left:
+the preset save on the fe (2h), then the user's run on their machine. After it: 11d,
 11f.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
@@ -907,20 +907,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    contract says raw (told to the web UI session: decide before 11e whether the save needs the
    untruncated text); a last line ending in a lone `\r` moves the revision when a `\n` is appended;
    a line `[broken` with no `]` ends the revision's text while the parser reads on; the docs pass.)
-11e. **Save a preset from the web.** `PUT /api/presets/{id}` (`fe/briefs/02h-preset-save.md`), designed in
-   `ARCHITECTURE.md` "Saving a preset from the web" (2026-11-16): the edit applied in place (only the
-   changed lines; user, 2026-11-16: in place, or the whole section if in place proved too costly; the
-   architect chose in place), duplicates of an edited key cleaned up, a fixed list of keys the web may
-   set, the manager checking the edited section whole; Fit to VRAM editable on the web, MoE CPU layers
-   and MoE cache read-only (user, 2026-11-16). Slices there: `ini::text::remove_key` and `set_key`, the
-   section revision (in 11c), the body to the new text, the route; then 11b's switch as two
-   compare-and-swap writes, destination first. Reload of llama-server after a save: a later design;
-   until then `running` drives "restart to apply".
-   Built: slice 1 (2026-11-17, `ini::text::set_key` and `remove_key`; coordinator's rule where the
-   design was silent, for the architect's review: a key occurring once whose value, as the parser reads
-   it, equals the value given leaves the text byte for byte, so its inline comment stays; left:
-   `parse_sections` should read a value through `value_of_line` so the two cannot drift). Next: slice
-   3 (the body to the new text), then the route.
+11e. (Done, 2026-11-17: `PUT /api/presets/{id}`, `crates/bff/src/presets.rs` `save`, designed in
+   `ARCHITECTURE.md` "Saving a preset from the web"; the in-place edits `ini::text::set_key` and
+   `remove_key`, the 65 web-editable keys `checks::WEB_PRESET_KEYS`. Left from it, one small slice
+   next (the architect's review): apply the edits sorted by key, so two keys appended in one save land
+   in the same order whatever the build (serde_json's `preserve_order` differs per build); a save that
+   changes nothing and meets a slow status read answers 200 with `running: true`, not 503; the doc
+   comments of `presets.rs`, `server.rs`, `control.rs`, `session.rs` say a body over the limit is refused
+   before the session is read, while the session is read first; `parse_sections` should read a value
+   through `value_of_line`; the docs pass. Reload of llama-server after a save: a later design; until
+   then `running` drives "restart to apply".)
 11f. **The configurator's "Saved preset" says when a restart is needed** (from the architect,
    2026-11-16): when the preset is in `presets.ini` and the instance is active, the GUI's `preset-saved`
    message adds "restart to apply" (one status read, one string).

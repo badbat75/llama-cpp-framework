@@ -3,4 +3,5 @@
 //! through the public API in `tests/`.
 
 mod deps_lint;
+mod preset_body;
 mod timeouts;

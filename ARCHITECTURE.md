@@ -752,13 +752,44 @@ file. When engines arrive (item 10) the list is filtered by the engine.
 **The bff's steps for a PUT**, each failure answered before the next: session (401); the body (400,
 then the comment-marker 422); read `presets.ini` as the user (`ReadFileAs`) and find the section
 (`id` matched in any letter case), else read `presets.ini.disabled`, else 404 `no-preset-named`; the
-section revision compare (409); apply the edits in body order, `null` by `remove_key`, a string by
+section revision compare (409); apply the edits in key order (below), `null` by `remove_key`, a string by
 `set_key` with the value trimmed; a text equal to the one read is 200 with the current revision and no
 write (so `{}` with a fresh revision is 200; a stale one is 409 first); else `WriteFileIfAs` with the
 text read as `expected` (`Changed` is 409), the manager re-running its checks (422); then `running`;
 200 `{revision of the section as written, running}`. The other answers, the write's own time limit
 and 504 `client-timeout` are the server file's (slice 8), shared code. The id is only matched against
 section headers; the two file names are fixed, so no path comes from the URL.
+
+**As built and reviewed (2026-11-17, `crates/bff/src/presets.rs` `save`, `parse_body`, `apply`;
+tests `crates/bff/tests/preset_save.rs`, `src/tests/preset_body.rs`).** The route follows the steps
+above, the 422 field table (`field_of`) and `running` (decision d, the switch's `running`). Decided
+during the build and accepted:
+
+- A body whose `Content-Type` is not `application/json` (a charset parameter allowed) is 400
+  `presets-malformed` before any connect: the server save's and the switch's `json_body` gate.
+- A set value is trimmed of spaces and tabs only; one whose first or last character is another
+  Unicode whitespace (U+00A0, U+2028, ...) is 400, because `pai_core::ini` reads a value with
+  `str::trim` (Unicode `White_Space`) and would read back a shorter value than the one written.
+  Such characters inside a value are allowed.
+- After a landed write, a refusal or failure of the state read, or a limit that runs out on it,
+  answers 200 `running: true`, as the switch does: the preset is saved, only the state is unknown.
+  A refusal there does not end the session; the next call that needs the right does.
+- A preset present in both files: the `presets.ini` copy is edited, the one GET and the list show.
+- The total limit is `write_timeout` from the start of the request, its reads within `timeout`;
+  the write starts only while the answer is still wanted (`WriteState::may_write`).
+
+Two small corrections, neither blocking the commit, each one test and a few lines:
+
+- **Edit order.** The design said "body order", which the build cannot keep: `values` is a
+  `serde_json::Map`, insertion-ordered only with serde_json's `preserve_order` feature, which this
+  workspace enables through `pai-app`'s dependencies and not for `pai-bff` built alone
+  (`serde_json::Map` docs, docs.rs/serde_json: a `BTreeMap` unless `preserve_order` is on). Edits of different keys commute (each touches only its own
+  lines), but two keys missing from the section are appended in map order, so the bytes written
+  depend on how the binary was built. Decision: the bff applies the edits sorted by key, so new keys
+  land in a fixed order a test can pin.
+- **A save that changes nothing** answers 503 `client-unavailable` when the state read outlasts the
+  limit (`TimedOut::Cancelled`, no write asked). Nothing needed writing, so it should answer as the
+  landed case does: 200 with the revision and `running: true`.
 
 **(e) Reloading llama-server after a save: later, not now.** The v1.0.0 router re-reads its preset
 file at `GET /models?reload=1` (any non-empty value, `tools/server/server-models.cpp:2166-2169`) and
