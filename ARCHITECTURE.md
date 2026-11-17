@@ -1310,7 +1310,7 @@ method has its `As` form, needs `configure`, runs under the `writing` lock and i
 | `Instances()`, no authorization | `-> a(sssqas)`: `(id, engine, server_profile, port, tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, tags}` | none; port 0 and no tags when the profile file is missing |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (not for `*`), `value` none/inherit/on/off (`*` takes none/inherit), checks 1 and 3 of (b), model file and memory once built |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `load-on-startup-over-max` |
-| `CreateServerProfile(engine, profile)` | `(ss)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig::default(), true)` (a create-if-absent under the lock, so it never overwrites) |
+| `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
 | `DeleteServerProfile(engine, profile)` | `(ss)` | `NoServerProfile`, `ServerProfileInUse` |
 | `CreateInstance(engine, id, serverProfile)` (replaces `(engine, id, port, tags)`: port and tags are the profile's) | `(sss)` | `unknown-engine`, `instance-bad-id`, `InstanceExists`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`; writes its `instances.ini` section, then an empty render; assigned no model profile; boot off |
 | `RemoveInstance(id)` | `(s)` | as (d); removes the service, the `assignments.ini` section, the render, then the `instances.ini` section last; the server profile stays in the pool |
@@ -1331,10 +1331,10 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `GET /api/profiles/model/{id}/estimate` (later, slice 17) | as (j) 9 | |
 | `GET /api/profiles/server` | `[{id, engine, port, tags, instance}]`, `instance` the id using it or `null`, sorted by id | 503, 401, 403 |
 | `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
-| `POST /api/profiles/server` `{"engine", "id"}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
+| `POST /api/profiles/server` `{"engine", "id", "port"?}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
 | `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, removable}` | as (f) |
-| `PUT /api/instances/{id}/profiles/server` `{"id": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use` (`field` `id`), `load-on-startup-over-max` |
+| `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use` and `load-on-startup-over-max` (`field` `serverProfile` each) |
 | `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value"}` -> 200 `{effective, running}` | as (f), keys renamed |
 | `PUT /api/instances/{id}/profiles/model` `{"all": "inherit" \| "none"}` (was `.../presets-all`) | 200 `{running}` | 404 `client-no-instance` |
@@ -1353,6 +1353,33 @@ New: `client-no-server-profile` `[id]`, `client-server-profile-in-use` `[profile
 (`server-malformed`, `server-changed-elsewhere`, `server-bad-tags`), `load-on-startup-*` (instance
 last), `client-address-in-use`, `client-instance-*`, `instance-*`, `unknown-engine`. The tags rule of
 (c) is unchanged, its key on the server profile.
+
+*Answers to the web UI session (2026-11-17), refining the table above:*
+
+1. Yes: the document of `GET /api/profiles/server/{id}` carries `"instance": <id> | null` (the instance
+   using the profile, read from `instances.ini`), and the 200 of its `PUT` is
+   `{revision, running, instance}`. Delete is offered only while `instance` is `null`; the manager still
+   refuses a delete in use (409 `client-server-profile-in-use`), since the page may be stale.
+2. `POST /api/profiles/server` takes an optional `"port"` (1 to 65535, the server save's rule, 422
+   `not-whole-number-in-range` `field` `port`): `{"engine", "id", "port"?}`. The manager method is
+   `CreateServerProfile(engine, profile, port)`, D-Bus `(ssq)`, `0` meaning absent (the file then has
+   no `Port`, the default). No collision check at create: an unused profile serves nothing; the check
+   runs when it is put in use. Create-then-edit stays possible for every other key.
+3. The body of `PUT /api/instances/{id}/profiles/server` is `{"serverProfile": <profile>}`. On that
+   route `client-address-in-use` and `load-on-startup-over-max` carry `"field": "serverProfile"` (the
+   choice that causes them), as do `client-no-server-profile` and `client-server-profile-in-use` on
+   `POST /api/instances`.
+4. Confirmed: `no-preset-named` -> `no-model-profile-named`, `preset-changed-elsewhere` ->
+   `model-profile-changed-elsewhere`, `preset-no-model` -> `model-profile-no-model`,
+   `invalid-preset-id` -> `invalid-model-profile-id`, `preset-name-taken` -> `model-profile-name-taken`,
+   `presets-malformed` -> `model-profiles-malformed`. `client-no-instance` stays on every
+   `/api/instances/{id}/...` route for a missing instance; `client-no-server-profile` `[id]` is a new
+   key, answered on the `/api/profiles/server/{id}` routes and wherever a body names a missing server
+   profile (it does not replace `client-no-instance`).
+5. (Grep safety.) The existing strings keys `profiler-attach*` (and the fe's `server-profiler-attach*`)
+   share the letters `server-profile`; every new key has a hyphen right after `profile`
+   (`server-profile-bad-id`, `client-server-profile-*`), which `profiler` never has, so grep for
+   `server-profile-` (with the hyphen) or `-w`, never the bare `server-profile`.
 
 Hash routes (a preference; the web UI session's designer decides): `#/profiles/server`,
 `#/profiles/server/<id>`, `#/profiles/model`, `#/profiles/model/<id>`, `#/instances/<id>`; an old
