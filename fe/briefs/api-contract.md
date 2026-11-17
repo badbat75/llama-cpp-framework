@@ -20,7 +20,7 @@ exist yet. Change this file first when a shape changes.
   9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
@@ -51,7 +51,7 @@ exist yet. Change this file first when a shape changes.
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, proposed | 204 |
 | `GET /api/instances/{id}/server` | administrator | 1a, proposed | the server document below |
-| `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, proposed | `{"revision", "running"}` |
+| `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, served (8) | `{"revision", "running"}` |
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
@@ -127,38 +127,53 @@ manager's detail never reaches the body).
 
 ### `PUT /api/instances/{id}/server`
 
-Body `{"revision", "values"}`, `values` keyed and typed as the read gives them (`null` unsets a key);
-every key of the read is sent. Designed in `ARCHITECTURE.md`, "Saving the server file from the web";
-not served yet (bff slice 8, sub-slice 6).
+Served since bff slice 8 (eff112d; `crates/bff/src/server.rs` `save`, `body_to_file`, `FIELDS`,
+`field_of`, `save_failure`). Designed in `ARCHITECTURE.md`, "Saving the server file from the web".
+Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17: they agree.
 
-- The bff runs `server_cfg::check` (the number ranges, `LogVerbosity` 0..5, threads at most the CPU
-  count, `0.0.0.0` alone in `Hostname`), strips a trailing `/` and `/v1` from the base URL, then the
-  manager runs `checks::server_file` and the address check again.
-- A blank `ModelsDir` or `StateDir` is left unset in the file, on every OS; the save creates no folder.
-- `OpencodeApiKey`: a string sets it, `null` unsets it.
+- **Request**: `Content-Type: application/json` (any other type, or none, is 400
+  `server-malformed`), body at most 64 KiB, `{"revision": <string>, "values": {...}}`. The same-origin
+  guard applies (a `PUT` is a write): the browser's own `Origin` and `Sec-Fetch-Site` on a same-origin
+  `fetch` pass it.
+- **`values`**: the 19 keys of the read, typed as the read gives them, `null` the key unset: numbers
+  (whole, within `i32`) for `Port`, `Threads`, `ThreadsBatch`, `ModelsMax`, `ModelsMemoryMargin`,
+  `LogVerbosity`; booleans for `CudaDisableGraphs`, `AttnRotDisable`, `RocprofAttach`, `Webui`,
+  `WebuiMcpProxy`, `SaveStateOnShutdown`; `"on"`/`"off"` for `RocblasUseHipblaslt`; strings for
+  `Hostname`, `ModelsDir`, `CudaAllreduce`, `StateDir`, `OpencodeBaseUrl`, `OpencodeApiKey`. A value of
+  another type (a fraction, a numeric string, another word for the tri-state) is 400
+  `server-malformed`. **A key absent from `values` is read as `null`: that key is unset in the file**,
+  so the fe sends every key at every save (it does: `toValues` builds all 19). Unknown keys are
+  ignored. For the three off-by-default switches `null` and `false` write the same.
+- The bff runs `server_cfg::check` (the number ranges, `LogVerbosity` 0..5, threads 1 to the CPU
+  count, `;`/`#` in `ModelsDir`, `StateDir`, `OpencodeBaseUrl`, `OpencodeApiKey` **whatever
+  `SaveStateOnShutdown` says**, `0.0.0.0` alone in `Hostname`), normalizes the base URL (a trailing
+  `/` and `/v1` stripped), then the manager runs its file checks and the address check again.
+- A blank (empty or spaces only) text is left unset; a blank `ModelsDir` or `StateDir` is written as
+  its commented hint, on every OS; the save creates no folder.
+- `OpencodeApiKey`: a string sets it (as sent, not trimmed), `null` or blank unsets it.
 - The file is rendered whole from the values (`server_cfg::render_for`): unknown keys and the file's
-  own comments are not kept, as in the GUI's save.
-- 200 `{"revision", "running"}`: `revision` is the new file's, the one a `GET` now returns;
-  `running` chooses between "Saved." and "Saved: restart llama-server to apply." (`true` also when
-  the status read after the write failed). Decided, not served yet (platform coordinator): `running`
-  is true only when the instance is `active` or `activating` (a llama-server already launched with
-  the old file); `deactivating`, `inactive` and `failed` give false, since the instance reads its
-  server file when its process starts, so the next start, a Restart's start half included, reads a
-  file saved during the stop.
-- 422 `{"key", "args", "field"}`: a refused value; `field` is the INI key it belongs to: `args[0]`
-  for `not-whole-number-in-range` and `comment-markers`, `ModelsMax` for `load-on-startup-over-max`
-  and `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
-  `client-unresolvable-host` (`[host]`), `Port` for `client-address-in-use` (`[id]`).
+  own comments are not kept, as in the GUI's save. The manager writes the text as rendered.
+- 200 `{"revision", "running"}`: `revision` is the written file's (the hash of the rendered text),
+  the one a `GET` now returns and the next `PUT` must send. `running` is true only when the instance
+  is `active` or `activating` (a llama-server already launched with the old file), and true too when
+  the status read after a done write failed; `deactivating`, `inactive` and `failed` give false.
+- 422 `{"key", "args", "field"}`: a refused value; `args` are strings; `field` is the INI key it
+  belongs to: `args[0]` for `not-whole-number-in-range` (`[key, value, min, max]`) and
+  `comment-markers` (`[key]`), `ModelsMax` for `load-on-startup-over-max` and
+  `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
+  `client-unresolvable-host` (`[host]`), `Port` for `client-address-in-use` (`[id]`). For any other
+  key of the manager's checks `field` is `args[0]`, or `""` when there are no args.
 - 409 `server-changed-elsewhere`: the revision is stale (the file changed, or the bff restarted,
   since the read), or the manager found the file changed between the bff's read and its write.
   Nothing is written.
-- Errors, each `{"key", "args"}`: 401 `session-required`; 400 `server-malformed` (a body or a value
-  not of the read's type); 403 `session-not-administrator` (the session is ended); 404
-  `client-no-instance`; 503 `client-unavailable` (also a time-out after the manager may have
-  written until 504 is served); 502 `client-other`.
-- 504 `client-timeout`, `args: []` (accepted, not served yet): the time limit ran out after the
-  write was sent to the manager, so the file may or may not be saved; 503 `client-unavailable` stays
-  for a manager never reached.
+- Errors, each `{"key", "args": []}`: 401 `session-required` (checked first); 413
+  `payload-too-large`; 400 `server-malformed` (the body's type, JSON or shape); 403
+  `session-not-administrator` (the PUT's own read or the write refused: the session is ended); 404
+  `client-no-instance`; 503 `client-unavailable` only while the write was never asked (no manager, or
+  the time limit ran out in the connect or the read); 504 `client-timeout` once the write was sent
+  (its outcome unknown; also a done write whose status read outran the limit, the file then saved);
+  502 `client-other`; and the guard's 403s. One time limit (5 s, `lib.rs` `MANAGER_TIMEOUT`) covers
+  the connect, the read, the write with the manager's checks, and the status read.
 
 ### Start, stop, restart, boot
 
@@ -349,4 +364,8 @@ key to that value, `null` removes the key. A key not in `values` is not touched.
 - **`ModelsMax` accepts negatives today** and the render drops them silently; the fe shows whatever
   `limits` says.
 - **A bind list mixing `0.0.0.0` with other addresses** is refused by the save's `server_cfg::check`
-  (422 `bind-all-with-others`, field `Hostname`), once the PUT is served.
+  (422 `bind-all-with-others`, field `Hostname`), served since eff112d.
+- **Asked of the platform side (2026-11-17)**: a done write whose status read outruns the time limit
+  answers 504 though the file is saved, so the fe's next save meets a 409 and a Reload; could it
+  answer 200 with `running: true`, as a failed status read already does? And is 5 s enough for a
+  write whose address check resolves a host name?

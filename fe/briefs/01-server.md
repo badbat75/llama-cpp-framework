@@ -1036,6 +1036,39 @@ S3.7. **Strings, slice S3.** New: `api-bind-all-with-others` | Hostname lists 0.
 **Out of S3**: a client check for `0.0.0.0` with other rows (the rows already prevent making one);
 `server-malformed` (400) and `client-other` (502), which keep `save-failed`.
 
+## 4f. Later slice S4: State folder checked as the bff checks it
+
+Written 2026-11-17, after comparing the built `PUT .../server` (eff112d, `crates/bff/src/server.rs`
+`body_to_file`, `crates/core/src/server_cfg.rs` `check` lines 570 to 580) with the fe on HEAD. The fe
+sends every key at every save, typed as the bff reads them, and handles every answer (contract,
+`PUT .../server`); one client check differs. 5.4 checks F14 (State folder) only while
+`SaveStateOnShutdown` is on, but `toValues` sends F14 trimmed whatever the switch says, and the bff
+refuses `;` or `#` in it either way: typing `/srv/st;ate`, then switching Save state off and saving,
+goes to the bff and comes back 422 `comment-markers` with `field: "StateDir"`. The page then shows
+the right text and moves the focus to the switch (`focusField`'s fallback), but only after a round
+trip, and against 5.4's own rule. pai-config shares `server_cfg::check`, so its Server tab refuses the
+same save. No new pattern, component, token or string.
+
+S4.1. **Check.** At Save, F14's text is checked for `;` and `#` whenever it is sent non-null, that
+    is whatever `SaveStateOnShutdown` says; 5.4's "only when the field is enabled" no longer applies
+    to F14.
+S4.2. **Nothing sent.** A failing F14 sends no `PUT` (the stub records none).
+S4.3. **What shows.** The bar's `role="alert"` shows `save-invalid`; F14 carries
+    `field-error-comment-markers` as its error, linked to the input by `aria-describedby` even while
+    it is disabled ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification)).
+S4.4. **Focus.** With the switch off, the focus moves to the Save state switch
+    (`SaveStateOnShutdown`), the first enabled control that leads to F14 (34b's fallback); with the
+    switch on, to F14's input. Turning the switch on enables F14 with its error still shown; editing
+    F14 clears it (33a).
+S4.5. **Order.** Among several failures the first in DOM order takes the focus, as for every client
+    check (5.4).
+S4.6. **Unchanged**: F9 (Models folder) is already checked always; the API key and the base URL are
+    sent `null` while their box is ticked, so their rule stays as it is.
+S4.7. **Strings**: none new (`save-invalid`, `field-error-comment-markers` exist).
+
+**Out of S4**: sending `StateDir` as `null` while the switch is off (it would drop a folder the user
+set); any change to the bff.
+
 ## 5. The Server form
 
 ### 5.1 Cards and fields, in order
@@ -1122,6 +1155,7 @@ loads clean, and a save then sends `true`.
 | F3, F4, F9, F14 | contains no `;` and no `#` (`checks::comment_markers`) | `field-error-comment-markers` |
 
 A number check is skipped when `limits` gives no `[min, max]` pair of numbers for its key (3.1).
+From S4 (4f) on, F14 is checked whenever it is sent, even while disabled, as the bff checks it.
 
 Sent values: default/auto/No key ticked → `null`; numbers as integers; F2 as the checked values joined
 by `,` in row order; F3 trimmed, then every trailing `/` removed, then a trailing `/v1`, then every
