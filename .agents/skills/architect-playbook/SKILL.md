@@ -93,3 +93,8 @@ description: What the architect has learned about this project's components, int
   `server@default.ini` sets `StateDir` explicitly; snapshots are named by model stem, so a shared
   state folder collides across instances. `server@<id>.ini` needs `control` to read: anything the
   session-free Overview shows from it needs an unauthenticated manager call.
+- Presets are a pool per node assigned to instances (user, 2026-11-17): the pool is the engine's
+  `presets.ini` pair, the assignments `assignments.ini`, and llama-server gets a render per instance
+  (ARCHITECTURE.md "Nodes and instances"). The GGUF estimate (`hf_fit::local_shape`, `estimate`,
+  `devices.rs`) lives in `pai-app`, which the manager cannot link: a manager check needing it moves
+  it to `pai-core` first.

@@ -967,17 +967,17 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
     labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
     and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design.
-    **A model belongs to an instance on a node, not to an engine** (user, 2026-11-17, a requirement
-    change): the engine follows from the instance. Today every instance of an engine serves the
-    engine's one `presets.ini` (`launch::server_args`, `--models-preset`; `ARCHITECTURE.md` ~776), so
-    this moves the presets to each instance (the files, the manager's checks and `ModelsMax`, the
-    switch, the Models page under its instance). The same model can be on several instances, each with
-    its own preset (user, 2026-11-17). Designed: `ARCHITECTURE.md` "Nodes and instances" (decided by
-    the user 2026-11-17: tags are labels only; one preset id on several instances is one model served
-    twice; `default` cannot be removed; the old `presets.ini` is moved by hand once; the Overview shows
-    port and tags), ten slices in its order, after the preset cards. Then adding and
-    removing instances from the web UI, llama.cpp first, each with its own port (the manager already
-    keeps instances by id: R8); Strata as a second engine in a step of its own (R12).
+    **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
+    change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
+    one or more instances; removing an instance removes only its assignments; editing a preset applies
+    to every instance it is assigned to; the on/off is global with an explicit per-assignment override;
+    before a preset is applied to an instance the manager checks the instance's `ModelsMax`, the
+    full-GPU memory estimate against all the node's GPUs (strict: refused even with `fit` or a CPU
+    placement), the model file on the node and the engine's keys; other nodes later (step 14). The
+    navigation: node > instances, each with Server and Presets tabs, no top-level Models; `#/models`
+    goes to `default`'s presets. Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
+    `presets.ini`, assignments in `assignments.ini`, the manager renders `presets@<id>.ini` per
+    instance), thirteen slices in its order, after the preset cards.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances).
