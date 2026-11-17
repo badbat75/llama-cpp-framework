@@ -439,7 +439,11 @@ export function SelectField({
   value: string
   /** Omitted: the select is enabled. */
   disabled?: boolean
-  onChange: (value: string) => void
+  /** `picked` is false when the change left the select with no selected
+   * option: the value is not in its list, so it is not a pick the control
+   * holds. A page that shows the value it lists (as an extra option) never
+   * sees a false, only a value set from outside the list. */
+  onChange: (value: string, picked: boolean) => void
 }) {
   return (
     <LabelField
@@ -454,7 +458,7 @@ export function SelectField({
         id={`${id}-control`}
         value={value}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value, e.target.selectedIndex >= 0)}
         {...describes(id, error, written?.id)}
       >
         {options.map((o) => (

@@ -265,13 +265,14 @@ export const EN: Record<string, string> = {
   'preset-drafter': 'Drafter',
   'preset-ngram-drafters': 'N-gram drafters',
   'preset-value-none': '(none)',
-  // Slice 2e.1 (fe/briefs/02e-preset-cards.md, criterion 95): the read-only
-  // Notice, the Resource / context and Embeddings cards, and the pooling
-  // options the shared texts of 1.3 lack. The hints are the GUI's tooltips
-  // (en_US.toml), unchanged except preset-context-size-hint, whose web text
-  // criterion 92 gives.
-  'preset-read-only':
-    "Read-only for now: this page cannot change a preset's settings yet. Change them in pai-config on the server machine.",
+  // Slice 2e.1 (fe/briefs/02e-preset-cards.md, criterion 95): the Resource /
+  // context and Embeddings cards, and the pooling options the shared texts of
+  // 1.3 lack. The hints are the GUI's tooltips (en_US.toml), unchanged except
+  // preset-context-size-hint, whose web text criterion 92 gives.
+  // Slice 2h.1 (fe/briefs/02h-preset-save.md, criteria 130 and 141): the
+  // Notice that replaces preset-read-only, which 2h.1 removes.
+  'preset-partly-editable':
+    'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.',
   'preset-resource-context': 'Resource / context',
   'preset-context-size': 'Context size',
   'preset-context-size-hint':
@@ -737,6 +738,17 @@ export type BffOptions = {
     n: number,
     init?: RequestInit,
   ) => Response | Promise<Response>
+  /**
+   * PUT /api/presets/{id}: the reply to the n-th save (from 1), given the
+   * parsed body and the decoded id. Default 200 {"revision": "r2",
+   * "running": false} (fe/briefs/api-contract.md).
+   */
+  presetSave?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
   server?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
@@ -853,6 +865,18 @@ export function fakeBff(options: BffOptions = {}) {
         options.presetSwitch
           ? options.presetSwitch(body, id, n, init)
           : reply(200, { enabled, running: false }),
+      )
+    }
+    const presetSave = /^PUT \/api\/presets\/([^/]+)$/.exec(route)
+    if (presetSave) {
+      const id = decodeURIComponent(presetSave[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.presetSave
+          ? options.presetSave(body, id, n, init)
+          : reply(200, { revision: 'r2', running: false }),
       )
     }
     const presetRead = /^GET \/api\/presets\/([^/]+)$/.exec(route)

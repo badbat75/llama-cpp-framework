@@ -210,7 +210,7 @@
   "preset-drafter": "Drafter",
   "preset-ngram-drafters": "N-gram drafters",
   "preset-value-none": "(none)",
-  "preset-read-only": "Read-only for now: this page cannot change a preset's settings yet. Change them in pai-config on the server machine.",
+  "preset-partly-editable": "Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.",
   "preset-resource-context": "Resource / context",
   "preset-context-size": "Context size",
   "preset-context-size-hint": "How many tokens of conversation the model can hold. Bigger = longer history, more VRAM for the KV cache. It can be divided among requests: see Parallel slots.\nDefault: 0 (llama.cpp's own), meaning the context the model was trained with.\nFlag: --ctx-size",

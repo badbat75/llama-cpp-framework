@@ -30,7 +30,9 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
-  fieldAboutToggles,
+  fieldTabStops,
+  saveBarTabStops,
+  isEditableField,
 } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -399,7 +401,7 @@ test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice
   const notices = main.querySelectorAll('.notice')
   expect(notices.length, 'the read-only Notice and the engine Notice').toBe(2)
   expect(text(notices[0]!), 'the read-only Notice comes first').toBe(
-    en('preset-read-only'),
+    en('preset-partly-editable'),
   )
   expect(text(notices[1]!)).toBe(en('preset-engine-unavailable', STRATA))
   expect(
@@ -408,7 +410,7 @@ test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice
   ).toBe(true)
 })
 
-test('2e.84: the read-only Notice preset-read-only is a bordered paragraph right after the h2 and not a live region, and it shows for every loaded preset', async () => {
+test('2e.84: the Notice preset-partly-editable (2h.1 130) is a bordered paragraph right after the h2 and not a live region, and it shows for every loaded preset', async () => {
   for (const [what, doc] of [
     ['the all-set stub', docOf(SET)],
     ['a values of {}', exactOf({})],
@@ -419,7 +421,7 @@ test('2e.84: the read-only Notice preset-read-only is a bordered paragraph right
     const n = notice(main)
     expect(n.tagName, `${what}: a paragraph`).toBe('P')
     expect(text(n), `${what}: the text of criterion 95`).toBe(
-      en('preset-read-only'),
+      en('preset-partly-editable'),
     )
     expect(
       n.getAttribute('role'),
@@ -446,9 +448,16 @@ test('2e.85: every control of the two cards is natively disabled, the default bo
     ),
   ])
   expect(controls.length, 'the controls of 92 and 93').toBe(CONTROLS)
+  // 2h.1's 130: the Embeddings card's two controls lose disabled.
+  const editable: HTMLElement[] = [
+    selectOf(main, en('preset-embedding-mode')),
+    selectOf(main, en('preset-pooling')),
+  ]
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
-    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(true)
+    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(
+      !editable.includes(el),
+    )
     expect(
       el.getAttribute('aria-disabled'),
       `${id}: never aria-disabled`,
@@ -572,7 +581,10 @@ test.each(FIELDS)(
       expect(selectedText(select), `${f.key}: the mapping selects`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+      expect(
+        select.disabled,
+        `${f.key}: ${isEditableField(f.label) ? 'editable (2h.1 130)' : 'disabled'}`,
+      ).toBe(!isEditableField(f.label))
     }
     expect(aboutOf(main, label).disabled, `${f.key}: About stays enabled`).toBe(
       false,
@@ -632,7 +644,9 @@ test('2e.87, 2e.94: a value the mapping does not list becomes one extra last opt
     expect(selectedText(select), `${f.key}: the extra option is selected`).toBe(
       value,
     )
-    expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+    expect(select.disabled, `${f.key}: editable (2h.1 130)`).toBe(
+      !isEditableField(f.label),
+    )
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -724,7 +738,8 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldAboutToggles(),
+    ...fieldTabStops(),
+    ...saveBarTabStops(),
   ])
 })
 
@@ -738,7 +753,7 @@ test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts
       .map((h) => text(h)),
     'the cards, in the order of 83',
   ).toEqual(cardHeadings())
-  expect(text(notice(main))).toBe(en('preset-read-only'))
+  expect(text(notice(main))).toBe(en('preset-partly-editable'))
   // Every label is the strings text of 95, and names its control.
   for (const f of FIELDS) {
     const label = en(f.label)

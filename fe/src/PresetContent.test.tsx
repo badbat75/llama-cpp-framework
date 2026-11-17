@@ -26,7 +26,11 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import { PRESET_CARDS, fieldAboutToggles } from './test/presetCards.ts'
+import {
+  PRESET_CARDS,
+  fieldTabStops,
+  saveBarTabStops,
+} from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -52,7 +56,7 @@ const LABELS = [
 /** The 2e cards' fields, in card and field order: each is one tab stop, its
  * About toggle (criterion 91), and nothing else of a 2e card takes focus
  * (criterion 85). The list is test/presetCards.ts. */
-const CARD_TAB_STOPS = fieldAboutToggles()
+const CARD_TAB_STOPS = [...fieldTabStops(), ...saveBarTabStops()]
 
 /** The five group headings of the Speculative decoding card of 2e.5 (criterion
  * 114): the strings text of `preset-draft-model-group`, and the four speculator
@@ -269,12 +273,12 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
   expect(within(main).queryByRole('heading', { level: 3 })).toBeNull()
 })
 
-test('2d.71: no save bar and nothing to save: no Save changes, no Discard, no save bar, and in main Tab reaches the back link, the Engine About toggle and select, then each 2e field About toggle', async () => {
+test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the Engine About toggle and select, then each 2e field About toggle, the editable controls and the bar', async () => {
   const { main } = await loaded({ preset: () => reply(200, fullDoc()) })
   await engineSelect(main)
   for (const name of [en('save-button'), en('save-discard')])
-    expect(within(main).queryByRole('button', { name }), name).toBeNull()
-  expect(main.querySelector('.save-bar'), 'no save bar').toBeNull()
+    expect(within(main).queryByRole('button', { name }), name).toBeTruthy()
+  expect(main.querySelector('.save-bar'), 'the save bar').toBeTruthy()
   expect(mainTabbable(main)).toEqual([
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
@@ -624,15 +628,23 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the select is named E
     MODEL,
   ])
   expect(second).toEqual([en('preset-project-url'), URL])
-  // The loading status went with the content, and the page announces nothing.
-  expect(within(main).queryAllByRole('status'), 'no status left').toEqual([])
+  // The loading status went with the content. 2h.1's 135 keeps the save bar's
+  // status line on the page permanently: it is the only live region, it is
+  // empty on arrival, so the page still announces nothing.
+  const statuses = within(main).queryAllByRole('status')
   expect(
-    [
-      ...main.querySelectorAll(
-        '[role="status"], [role="alert"], [role="log"], [aria-live]',
-      ),
-    ],
-    'nothing is announced on arrival (a NodeList is not deep-equal to [])',
+    statuses,
+    'the loading status is gone, the bar line is the only one left',
+  ).toHaveLength(1)
+  const line = statuses[0]!
+  expect(
+    line.closest('.save-bar'),
+    'the line is the save bar of 135',
+  ).toBeTruthy()
+  expect(text(line), 'empty on arrival: nothing announced').toBe('')
+  expect(
+    [...main.querySelectorAll('[role="alert"], [role="log"], [aria-live]')],
+    'no alert, no log, no explicit live region on arrival (a NodeList is not deep-equal to [])',
   ).toEqual([])
 })
 

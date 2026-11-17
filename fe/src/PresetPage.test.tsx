@@ -310,9 +310,17 @@ test('2d.66: any other status, key, body, reply shape, a network failure shows p
     vi.unstubAllGlobals()
   }
   // Criterion 81: the shape is id, engine, engineAvailable, enabled, values,
-  // projectUrl; every other field, `revision` included, is ignored.
+  // projectUrl; every other field is ignored. 2h.1's 131 took `revision` out
+  // of that set (a read without one is preset-load-failed, pinned by 131 in
+  // PresetSave1.test.tsx), so the field ignored here is one the fe never
+  // reads. The content is awaited: the h1 of the id stands while the read is
+  // in flight, so checking the text next to it alone is a race.
   const { main } = open({
-    preset: () => reply(200, presetDoc({}, { revision: undefined })),
+    preset: () => reply(200, presetDoc({}, { note: 'zzz' })),
+  })
+  await within(main).findByRole('heading', {
+    level: 3,
+    name: en('preset-assets'),
   })
   expect(await heading1(main, ID)).toBeTruthy()
   expect(within(main).queryByText(en('preset-load-failed'))).toBeNull()
@@ -896,18 +904,21 @@ test('2d.67: the preset is read once on open and once on each route change to it
   expect(presetReads(bff)).toBe(1)
   // Criterion 67: no refresh button. Criterion 70 and 88: the loaded page's
   // buttons are exactly the Engine About toggle and one About toggle per 2e
-  // field, in DOM order (the list of test/presetCards.ts), so no other button
-  // (a refresh, a save) is in main.
+  // field, in DOM order (the list of test/presetCards.ts), and 2h.1's 135
+  // adds the save bar's two buttons at the end of the settings section: so no
+  // other button (a refresh) is in main.
   expect(
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the Engine About toggle and one About toggle per field, nothing else',
-  ).toEqual(
-    [en('preset-engine'), ...fieldLabels()].map(
+    'main holds the Engine About toggle, one About toggle per field, then the bar',
+  ).toEqual([
+    ...[en('preset-engine'), ...fieldLabels()].map(
       (label) => `${en('field-about')} ${label}`,
     ),
-  )
+    en('save-discard'),
+    en('save-button'),
+  ])
   await advance(60_000)
   expect(presetReads(bff), 'no polling').toBe(1)
   navigate(OFF_HASH)

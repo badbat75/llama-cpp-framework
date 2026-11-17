@@ -4,8 +4,10 @@
 // control and, for a select, its options. A later slice adds rows; the renderer
 // here does not change.
 //
-// Every control is natively disabled (criterion 85): the page shows the file
-// and cannot change it until it can save, so nothing is ever sent. Each field
+// Every control of a card is natively disabled (criterion 85): the page shows
+// the file for it and sends nothing. 2h.1 makes the Embeddings card's two
+// controls editable (criterion 130): the row says which with `editable`, and
+// the page's form edits those and its save bar writes what changed. Each field
 // is the same Field the Server page uses, so the page looks the same before
 // and after the save lands.
 //
@@ -58,6 +60,10 @@ type RowBase = {
   /** The reading of a checkbox or select row whose key is a boolean. Absent for
    * every other row: its value is not a boolean, so it keeps criterion 87. */
   reading?: Reading
+  /** 2h.1's 130: the page's form edits this row's control and sends what
+   * changed. Absent for every other row: its control stays natively disabled
+   * (85), so the page only shows the file for it. */
+  editable?: true
 }
 
 /** A number: the default box and a text input showing the string as it is. The
@@ -394,6 +400,7 @@ const CARDS: CardFields[] = [
         absent: 'false',
         label: t('preset-embedding-mode'),
         hint: t('preset-embedding-mode-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -411,6 +418,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-pooling'),
         hint: t('preset-pooling-hint'),
+        editable: true,
       },
     ],
   },
@@ -957,6 +965,64 @@ function shown(
   }
 }
 
+/** The state of a control whose key the file does not hold. The control shows
+ * its absent option, so this is not a value any control carries: it is the
+ * state the form is dirty against, since the file not holding the key and the
+ * file holding it at its default are two things the save answers the same way
+ * (2h.1's 132: picking the option the absence shows is a change). */
+const NOT_IN_FILE = '\u0000'
+
+/** The select of a row as the form's `values` leave it: the state the control
+ * shows (2h.1's 132: the state the page compares, so the extra option of 87
+ * that a read value became is a state like any other). */
+export function selectState(
+  row: SelectRow,
+  values: Record<string, string>,
+): string {
+  const value = heldFor(row, values)
+  if (value === undefined) return NOT_IN_FILE
+  const state =
+    row.reading === undefined ? undefined : readAs(row.reading, value)
+  if (state !== undefined && state.on !== undefined)
+    return state.on ? 'true' : 'false'
+  return shown(row, value).value
+}
+
+/** What the form sends for a select at `state` (133): the flag's off is the
+ * GUI's spelling of a key that is not there, and an option a row leaves when
+ * its key is absent is that same removal. Every other state is the option. */
+export function selectSend(row: SelectRow, state: string): string | null {
+  if (state === NOT_IN_FILE) return null
+  if (row.reading === 'flag') return state === 'true' ? 'true' : null
+  return state === row.absent ? null : state
+}
+
+/** The rows the form edits (130), in the page's order: the table nests a
+ * group's rows, so the page asks this list which keys it owns. */
+export function editableRows(): SelectRow[] {
+  const rows: SelectRow[] = []
+  for (const card of CARDS)
+    for (const row of card.rows)
+      for (const one of row.kind === 'group' ? row.rows : [row])
+        if (one.kind === 'select' && one.editable === true) rows.push(one)
+  return rows
+}
+
+/** The written-as line of an editable row (134): the spelling the file holds,
+ * which the save leaves as it is, so it stands only while the control is at
+ * the state the read gave. A row whose key is not a boolean has no line. */
+function editableWritten(
+  row: SelectRow,
+  draft: Record<string, string>,
+  loaded: Record<string, string>,
+): string | undefined {
+  if (selectState(row, draft) !== selectState(row, loaded)) return undefined
+  const raw = heldFor(row, loaded)
+  return row.reading === undefined || raw === undefined
+    ? undefined
+    : readAs(row.reading, raw).written
+}
+
 /** A device select's options and selected value (criterion 103): the empty
  * option first, then the device the file names as its own option, selected.
  * The page has no device list to add, so it lists no device of its own. */
@@ -996,18 +1062,28 @@ function fullValue(
     : { id: `preset-full-${row.key}`, text }
 }
 
-/** One field of a card, in the form its row names. */
+/** One field of a card, in the form its row names. `values` is what the control
+ * shows: the form's draft for an editable row, the read's values for every
+ * other one. `loaded` is the value the read gave, which the written-as line of
+ * an editable row describes, and `onEdit` what a pick of an editable control
+ * leaves in the draft. */
 function PresetField({
   row,
   values,
+  loaded,
+  onEdit,
 }: {
   row: FieldRow
   values: Record<string, string>
+  loaded: Record<string, string>
+  onEdit: (key: string, value: string) => void
 }) {
   if (row.kind === 'note') return <p className="note">{row.text}</p>
   // What every control of a read-only card shares: its id, the texts of its
   // field, and the native disabled of criterion 85. Each control's own
-  // handler does nothing: the page sends nothing.
+  // handler does nothing: the page sends nothing for it. An editable row's
+  // control is enabled and its handler writes the draft (130).
+  const editable = row.kind === 'select' && row.editable === true
   const common = {
     id: `preset-${row.key}`,
     label: row.label,
@@ -1087,7 +1163,15 @@ function PresetField({
         // keeps criterion 87: the extra option carries it.
         state !== undefined && state.on !== undefined
         ? { options: row.options, value: state.on ? 'true' : 'false' }
-        : shown(row, value)
+        : // The list of an enabled select is built from the value the read
+          // gave, so the extra option of 87 stays last in it whatever is
+          // picked (criterion 132a); only a 200 that lists the loaded value
+          // drops it. The selected value is the draft's. A disabled row shows
+          // the read's values, so its list is the one `shown` always gave.
+          {
+            options: shown(row, heldFor(row, loaded)).options,
+            value: shown(row, value).value,
+          }
   // What the user reads for a select is the selected option's text, which for
   // an unlisted value is the value itself (criterion 87). A device select
   // reads the file's device, and has nothing to repeat when the file names
@@ -1097,17 +1181,24 @@ function PresetField({
       ? (value ?? '')
       : (select.options.find((o) => o.value === select.value)?.text ??
         select.value)
-  const full = fullValue(row, text)
+  // The full-value line of 118: an enabled select opens, so its whole value
+  // shows and 134 takes the line away from an editable row.
+  const full = editable ? undefined : fullValue(row, text)
   // The written-as line of criterion 124: the control shows what the engine does
   // with the value, the line what the file holds. A flag's control shows on or
   // off, so any value the configurator would not write needs the line. A valued
   // key whose value is in neither list is the extra option, so the select shows
   // it itself and needs no line (124a): what the select clips, the full-value
-  // line of 118 repeats.
-  const written = state?.written
+  // line of 118 repeats. An editable row's line is the loaded value's spelling,
+  // which the save leaves as it is, so it stands only while the control is at
+  // the state the read gave (134).
+  const written = editable
+    ? editableWritten(row, values, loaded)
+    : state?.written
   return (
     <SelectField
       {...common}
+      disabled={editable ? false : true}
       options={select.options}
       value={select.value}
       full={full}
@@ -1116,7 +1207,9 @@ function PresetField({
           ? undefined
           : { id: `preset-written-${row.key}`, text: written }
       }
-      onChange={() => undefined}
+      onChange={(value, picked) =>
+        editable && picked ? onEdit(row.key, value) : undefined
+      }
     />
   )
 }
@@ -1126,9 +1219,13 @@ function PresetField({
 function PresetRow({
   row,
   values,
+  loaded,
+  onEdit,
 }: {
   row: Row
   values: Record<string, string>
+  loaded: Record<string, string>
+  onEdit: (key: string, value: string) => void
 }) {
   if (row.kind === 'group') {
     const heading = `preset-group-${row.key}`
@@ -1137,27 +1234,48 @@ function PresetRow({
         <h4 id={heading}>{row.title}</h4>
         <div role="group" aria-labelledby={heading}>
           {row.rows.map((nested) => (
-            <PresetRow key={nested.key} row={nested} values={values} />
+            <PresetRow
+              key={nested.key}
+              row={nested}
+              values={values}
+              loaded={loaded}
+              onEdit={onEdit}
+            />
           ))}
         </div>
       </div>
     )
   }
-  return <PresetField row={row} values={values} />
+  return (
+    <PresetField row={row} values={values} loaded={loaded} onEdit={onEdit} />
+  )
 }
 
-/** The cards, in the order of the table, each with the fields of its rows. */
+/** The cards, in the order of the table, each with the fields of its rows. The
+ * page's form (`values`, the draft it edits, and `loaded`, the read's values)
+ * writes a change of an editable row into `onEdit`; a page that only shows the
+ * file leaves every control disabled. */
 export default function PresetCards({
   values,
+  loaded,
+  onEdit,
 }: {
   values: Record<string, string>
+  loaded: Record<string, string>
+  onEdit: (key: string, value: string) => void
 }) {
   return (
     <>
       {CARDS.map((card) => (
         <Card key={card.title} title={card.title}>
           {card.rows.map((row) => (
-            <PresetRow key={row.key} row={row} values={values} />
+            <PresetRow
+              key={row.key}
+              row={row}
+              values={values}
+              loaded={loaded}
+              onEdit={onEdit}
+            />
           ))}
         </Card>
       ))}

@@ -16,6 +16,12 @@ import {
   SelectField,
   TextField,
 } from './Field.tsx'
+import {
+  SaveBar,
+  useDirtyReport,
+  useSaveBarPadding,
+  useWarnOnLeave,
+} from './SaveBar.tsx'
 import type { Session } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { t } from './strings.ts'
@@ -455,7 +461,7 @@ export default function ServerForm({
   const [asking, setAsking] = useState<'reload' | 'sign-in' | null>(null)
   // A second Save while one runs sends nothing.
   const saving = useRef(false)
-  const bar = useRef<HTMLDivElement>(null)
+  const bar = useSaveBarPadding()
   // The sign-in count when a save's answer arrives (43b).
   const renewalsNow = useRef(renewals)
   useEffect(() => {
@@ -469,37 +475,8 @@ export default function ServerForm({
       toValues(fromValues(loaded.values, doc.defaults, rows), rows),
     )
 
-  useEffect(() => {
-    onDirty(dirty)
-    return () => onDirty(false)
-  }, [dirty, onDirty])
-
-  // Closing or reloading the tab asks only while there is something to lose.
-  useEffect(() => {
-    if (!dirty) return
-    const ask = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      // For browsers that predate preventDefault() here (brief, 38).
-      e.returnValue = true
-    }
-    window.addEventListener('beforeunload', ask)
-    return () => window.removeEventListener('beforeunload', ask)
-  }, [dirty])
-
-  // The scroll padding follows the bar's rendered height (DESIGN.md 4).
-  useEffect(() => {
-    const el = bar.current
-    if (el === null || typeof ResizeObserver === 'undefined') return
-    const root = document.documentElement.style
-    const observer = new ResizeObserver(() =>
-      root.setProperty('--save-bar-height', `${el.offsetHeight}px`),
-    )
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-      root.removeProperty('--save-bar-height')
-    }
-  }, [])
+  useDirtyReport(dirty, onDirty)
+  useWarnOnLeave(dirty)
 
   const element = (suffix: string) =>
     document.getElementById(`${fid}-${suffix}`) as HTMLInputElement | null
@@ -657,13 +634,6 @@ export default function ServerForm({
   const ended = phase === 'saved-restart' && runs.settled > restartAt
   const status =
     phase === 'saving' ? phase : dirty ? 'unsaved' : ended ? 'idle' : phase
-  const statusText = {
-    idle: '',
-    saving: t('save-saving'),
-    unsaved: t('save-unsaved'),
-    saved: t('save-saved'),
-    'saved-restart': t('save-saved-restart'),
-  }[status]
   const shownBox = (b: Boxed, fallback: unknown) =>
     b.ticked ? shown(fallback) : b.text
   const autoBox = (b: Boxed) => (b.ticked ? '' : b.text)
@@ -898,64 +868,24 @@ export default function ServerForm({
           />
         </div>
       </Card>
-      <div className="save-bar" ref={bar}>
-        <div className="save-messages">
-          <p
-            role="status"
-            className={
-              status === 'saved' || status === 'saved-restart'
-                ? `save-status ${status}`
-                : 'save-status'
-            }
-          >
-            {statusText}
-          </p>
-          {alert !== null && (
-            <p role="alert" className="save-alert">
-              {alert.text}
-            </p>
-          )}
-          {alert?.action === 'reload' && (
-            <button
-              id={`${fid}-reload`}
-              type="button"
-              className="secondary"
-              onClick={() => setAsking('reload')}
-            >
-              {t('save-reload')}
-            </button>
-          )}
-          {alert?.action === 'sign-in' && (
-            <button
-              id={`${fid}-sign-in`}
-              type="button"
-              className="secondary"
-              onClick={() => setAsking('sign-in')}
-            >
-              {t('session-sign-in')}
-            </button>
-          )}
-        </div>
-        <div className="save-actions">
-          <button
-            type="button"
-            className="secondary"
-            aria-disabled={!dirty || phase === 'saving' || undefined}
-            onClick={discard}
-          >
-            {t('save-discard')}
-          </button>
-          <button
-            id={`${fid}-save`}
-            type="button"
-            className="primary"
-            aria-disabled={!dirty || phase === 'saving' || undefined}
-            onClick={save}
-          >
-            {phase === 'saving' ? t('save-saving') : t('save-button')}
-          </button>
-        </div>
-      </div>
+      <SaveBar
+        bar={bar}
+        status={status}
+        alert={alert}
+        dirty={dirty}
+        saving={phase === 'saving'}
+        reloadId={`${fid}-reload`}
+        onReload={
+          alert?.action === 'reload' ? () => setAsking('reload') : undefined
+        }
+        signInId={`${fid}-sign-in`}
+        onSignIn={
+          alert?.action === 'sign-in' ? () => setAsking('sign-in') : undefined
+        }
+        saveId={`${fid}-save`}
+        onDiscard={discard}
+        onSave={save}
+      />
       {asking === 'reload' && (
         <DiscardDialog
           onKeep={() => closeAsking('reload')}

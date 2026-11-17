@@ -446,7 +446,9 @@ function Page({
     )
   }
   if (route.page === 'preset') {
-    return <PresetPage id={route.id} onSignedOut={onSignedOut} />
+    return (
+      <PresetPage id={route.id} onSignedOut={onSignedOut} onDirty={onDirty} />
+    )
   }
   return (
     <InstancePage

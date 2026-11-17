@@ -95,6 +95,14 @@ prunes at save (2k), New, Clone, Rename, Delete (2l to 2n), a raw-key view (2o).
     is **dirty** while any field is changed: the status reads `save-unsaved` and both bar buttons
     are enabled (01's 29). A disabled control keeps its state and still counts (D5.2 Dependent
     field). Hint toggles change nothing.
+132a. **The extra option stays listed.** An enabled select's options are built from its **loaded**
+    value, not its current one: the extra option of criterion 87 (a loaded value the select does not
+    list) stays last in the list while the page is open, whatever option is picked, so the loaded
+    state is always reachable from the control itself (132, 133's last paragraph). It goes only when
+    a 200 (138) makes the loaded value one the select lists, and a select whose loaded value is listed
+    never gains one. Test: Pooling loaded `weird-pool`; pick `mean`: the options still end with
+    `weird-pool`; pick it: the form is clean and Save sends nothing. (Design rule, no WCAG
+    criterion: it is what 132 and 133 already assume.)
 133. **What a changed field sends** (`values[key]` of the body; an unchanged field is absent from
     the body). By the field's kind and reading (2e's criteria 87, 122):
 

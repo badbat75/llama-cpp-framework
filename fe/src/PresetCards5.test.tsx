@@ -27,7 +27,8 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
-  fieldAboutToggles,
+  fieldTabStops,
+  saveBarTabStops,
 } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -1217,7 +1218,7 @@ test('2e.91, 2e.113: Tab in the card reaches only the 16 About toggles of 112 in
   expect(
     tabbed.slice(3),
     'the page tab order is the list of test/presetCards.ts',
-  ).toEqual(fieldAboutToggles())
+  ).toEqual([...fieldTabStops(), ...saveBarTabStops()])
 })
 
 test('2e.116: the card, its five group headings, every label, hint and the note show the English of the 31 new strings of 116', async () => {

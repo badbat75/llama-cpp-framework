@@ -52,7 +52,7 @@ const NUM_PAD = ' 172032000 '
 
 const CTX = en('preset-context-size')
 const RAM = en('preset-cache-ram')
-const POOLING = en('preset-pooling')
+const KCACHE = en('preset-k-cache-type')
 const KWARGS = en('preset-chat-kwargs')
 
 beforeEach(() => startAt(HASH))
@@ -209,7 +209,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
   const { main } = await page({
     'ctx-size': NUM_PAD,
     'chat-template-kwargs': TEXT_21,
-    pooling: POOL_LONG,
+    'cache-type-k': POOL_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
   // from a trimmed or normalised copy reads red.
@@ -221,7 +221,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
     ['ctx-size', 'number', CTX, NUM_PAD],
     ['chat-template-kwargs', 'text', KWARGS, TEXT_21],
-    ['pooling', 'select', POOLING, POOL_LONG],
+    ['cache-type-k', 'select', KCACHE, POOL_LONG],
   ]
   for (const [key, kind, label, value] of cases) {
     const line = lineOf(main, key)
@@ -238,9 +238,9 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
 })
 
 test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({ pooling: POOL_LONG })
-  const select = selectOf(main, POOLING)
-  const line = lineOf(main, 'pooling')
+  const { main } = await page({ 'cache-type-k': POOL_LONG })
+  const select = selectOf(main, KCACHE)
+  const line = lineOf(main, 'cache-type-k')
   // The extra option of an unlisted value carries the value as its text, and
   // the line repeats that text as written. A trimmed comparison can never
   // hold: POOL_LONG ends in spaces, and the green 118 test above pins the
@@ -287,7 +287,7 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
 test('2e.118: one line per long field: each line is in its own field and a short field of the same card has none', async () => {
   const { main } = await page({
     'ctx-size': NUM_9,
-    pooling: POOL_LONG,
+    'cache-type-k': POOL_LONG,
     parallel: '8',
     'kv-unified': 'auto',
   })
@@ -299,7 +299,7 @@ test('2e.118: one line per long field: each line is in its own field and a short
   expect(owners.size, 'no field holds both lines').toBe(2)
   for (const [key, label] of [
     ['ctx-size', CTX],
-    ['pooling', POOLING],
+    ['cache-type-k', KCACHE],
   ] as const) {
     const field = fieldOf(main, label)
     expect(
@@ -363,12 +363,12 @@ test('2e.119: a text value shows no line at 20 characters and its line at 21', a
 test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
   expect(POOL_20.length, 'the select stub is 20 characters').toBe(20)
   expect(POOL_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ pooling: POOL_20 })
-  expectNoLine(short.main, 'pooling')
+  const short = await page({ 'cache-type-k': POOL_20 })
+  expectNoLine(short.main, 'cache-type-k')
   cleanup()
-  const long = await page({ pooling: POOL_21 })
+  const long = await page({ 'cache-type-k': POOL_21 })
   expect(
-    lineOf(long.main, 'pooling').textContent,
+    lineOf(long.main, 'cache-type-k').textContent,
     'the 21-character line',
   ).toBe(POOL_21)
 })
@@ -386,12 +386,12 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
     parallel: '8',
     'chat-template-kwargs': '{"short":1}',
     'kv-unified': 'auto',
-    pooling: 'mean',
+    'cache-type-k': 'mean',
   })
   expectNoLine(main, 'parallel')
   expectNoLine(main, 'chat-template-kwargs')
   expectNoLine(main, 'kv-unified')
-  expectNoLine(main, 'pooling')
+  expectNoLine(main, 'cache-type-k')
 })
 
 // ── 120: accessibility ──────────────────────────────────────────────────
@@ -400,14 +400,14 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 const LONG = {
   'ctx-size': NUM_9,
   'chat-template-kwargs': TEXT_21,
-  pooling: POOL_LONG,
+  'cache-type-k': POOL_LONG,
 }
 const SHORT = {
   'ctx-size': NUM_8,
   'chat-template-kwargs': TEXT_20,
-  pooling: POOL_20,
+  'cache-type-k': POOL_20,
 }
-const LONG_KEYS = ['ctx-size', 'chat-template-kwargs', 'pooling'] as const
+const LONG_KEYS = ['ctx-size', 'chat-template-kwargs', 'cache-type-k'] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -456,8 +456,8 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
     [{ 'ctx-size': '172032000' }, '172032000'],
     [{ 'ctx-size': '17203200' }, null],
     [{}, null],
-    [{ pooling: POOL_21 }, POOL_21],
-    [{ pooling: POOL_20 }, null],
+    [{ 'cache-type-k': POOL_21 }, POOL_21],
+    [{ 'cache-type-k': POOL_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
       { 'chat-template-kwargs': '{"enable_thinking":false}' },

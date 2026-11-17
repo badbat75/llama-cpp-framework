@@ -452,11 +452,14 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // non-administrator views goes with them (fe/briefs/01-server.md,
   // "Administrators only", 5.5 and 2.8): the Server page has no read-only
   // Notice, the API key has no withheld sentence, and the banner names no role.
+  // 2h.1's 130 adds one: the preset page's read-only Notice is replaced by
+  // preset-partly-editable, so preset-read-only is out of the strings file.
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
     'session-role-admin',
     'session-role-user',
+    'preset-read-only',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

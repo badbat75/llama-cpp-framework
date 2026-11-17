@@ -154,3 +154,34 @@ export function fieldLabels(): string[] {
 export function fieldAboutToggles(): string[] {
   return fieldLabels().map((label) => `${en('field-about')} ${label}`)
 }
+
+/** The fields 2h.1 makes editable (fe/briefs/02h-preset-save.md, criterion
+ * 130: the Embeddings card's two controls, by their label key). Every other
+ * field's control stays disabled, so it takes no tab stop. */
+const EDITABLE_FIELDS = ['preset-embedding-mode', 'preset-pooling']
+
+/** True when 2h.1 makes the field with this label key editable
+ * (fe/briefs/02h-preset-save.md, criterion 130). */
+export function isEditableField(labelKey: string): boolean {
+  return EDITABLE_FIELDS.includes(labelKey)
+}
+
+/** Every field's tab stops in the order of 91, as 2h.1 leaves them: each
+ * field's About toggle, plus the control of an editable field (141). The
+ * whole-page tab path of every preset page test is this list. */
+export function fieldTabStops(): string[] {
+  const stops: string[] = []
+  for (const card of PRESET_CARDS)
+    for (const field of card.fields) {
+      const label = labelText(field)
+      stops.push(`${en('field-about')} ${label}`)
+      if (typeof field === 'string' && EDITABLE_FIELDS.includes(field))
+        stops.push(label)
+    }
+  return stops
+}
+
+/** The save bar's two buttons, at the end of the page (2h.1's 141). */
+export function saveBarTabStops(): string[] {
+  return [en('save-discard'), en('save-button')]
+}

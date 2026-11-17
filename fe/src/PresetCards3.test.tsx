@@ -32,7 +32,8 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
-  fieldAboutToggles,
+  fieldTabStops,
+  saveBarTabStops,
 } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -1239,7 +1240,8 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldAboutToggles(),
+    ...fieldTabStops(),
+    ...saveBarTabStops(),
   ])
   // A disabled checkbox takes no focus, so each card of 2e.3 offers only its
   // fields' About toggles.
