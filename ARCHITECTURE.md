@@ -184,8 +184,9 @@ pair (the bff's account, a current `pai` member). Requiring both would mean gran
 `control`/`configure` on its own, which a call without a principal could then use.
 
 **Fail closed.** A user removed from `pai` is refused at their next call, and the bff ends that
-session at the first refusal: the route answers 403 `client-not-authorized` and the same cookie is
-then 401 `session-required` (user, 2026-11-16, reversing this design's earlier "the session lives on").
+session at the first refusal: the route answers 403 `session-not-administrator` (the sign-in's key for
+the same fact, 5f0d405) and the same cookie is then 401 `session-required` (user, 2026-11-16, reversing
+this design's earlier "the session lives on").
 Only the manager's `NotAuthorized` ends it; an unavailable or slow manager, an unknown instance or any
 other failure keeps the session, being the bff's news and not a refusal of the user. A deleted account
 fails the lookup. A site caching NSS (`nscd`, `sssd`) delays
@@ -269,7 +270,12 @@ anyone else and never beyond `control`/`configure`; a local user who is not the 
 Then the docs agent updates `crates/bff/README.md`, "Through the manager" and the pipe client's header.
 
 **As built** (eff112d closed the slice, the earlier parts ddaa95f, 11fabbf, c092d0e, 86dbcb3): as
-designed, with one correction found in review. The 503/504 line above words a timeout as 504; the
+designed, with one correction found in review, and one key that moved later (5f0d405). Slice 5's
+`NotAuthorized` answer is recorded above as 403 `client-not-authorized`; today a signed-in route answers
+403 `session-not-administrator`, the sign-in's key for the same fact (`control.rs` `action_failure`,
+`server.rs`, `presets.rs`), and `client-not-authorized` is the 502 of a session-free read, the instances
+list and the boot read (`control.rs` `read_failure`, `lib.rs`). The 503/504 line above words a timeout
+as 504; the
 built rule turns on one fact, settled by one atomic shared by the handler and its blocking task: while
 the write was never asked a time limit or a dead stream is 503 `client-unavailable` (the task then
 never writes, the file is what it was), from the moment the write was sent it is 504
@@ -591,8 +597,9 @@ the pipe client's header.
 
 ### Saving a preset from the web (step 10 items 11b, 11c, 11d, 2h)
 
-Designed 2026-11-16, proposed. `PUT /api/presets/{id}` as `fe/briefs/api-contract.md` proposes it,
-for the web UI's brief `fe/briefs/02h-preset-save.md`; with it the switch `PUT /api/presets/{id}/enabled`
+Designed 2026-11-16, built: `PUT /api/presets/{id}` is served (3eb24b2, its follow-ups 26f5413), as
+`fe/briefs/api-contract.md` proposed it, for the web UI's brief `fe/briefs/02h-preset-save.md`; with it
+the switch `PUT /api/presets/{id}/enabled`
 (item 11b). The user decided (2026-11-16): the save changes only the edited lines and keeps the rest
 of the preset files byte for byte; body `{revision, values}` with only the changed keys (a string
 sets, `null` removes), 200 `{revision, running}`; Fit to VRAM stays editable (the fe checks its value,
@@ -600,8 +607,8 @@ the manager does not); MoE CPU layers and MoE cache stay read-only on the web. T
 (same day) rewriting the whole section, as the configurator does, if in place is too costly: weighed
 below.
 
-**What exists.** No preset route in the bff yet (items 11 and 11c are open). `pai-core` `ini::text`
-has `replace_key` (first occurrence, key matched in any letter case, the line rewritten as
+**What existed when this was designed.** No preset route in the bff (items 11 and 11c open). `pai-core`
+`ini::text` has `replace_key` (first occurrence, key matched in any letter case, the line rewritten as
 `key = value` with its own line ending; a missing key appended after the section's last non-blank
 line), `section_text`, `replace_section` and `delete_section`, but no key removal. The readers
 (`ini::parse_sections`, `checks.rs` `RawSection::get`) take the LAST line of a key, exact case;

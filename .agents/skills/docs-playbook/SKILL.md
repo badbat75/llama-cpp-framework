@@ -333,3 +333,9 @@ Lessons only: the rules are in `AGENTS.md`.
   them too but are not ours: report them. Absolute sentences ("No config file is shipped", "overwritten
   on every upgrade") break when a package gains a conffile. Before citing a `PLAN.md` slice for a bff
   route, check the slice lists that route.
+- `ARCHITECTURE.md` design records go stale the day the slice is built and read as open work: the
+  heading's "Designed <date>, proposed" becomes "built (<sha>, its follow-ups <sha>)", the "**What
+  exists.**" paragraph is relabelled "**What existed when this was designed.**" (its text kept), and a
+  key that moved after the design is recorded in that section's own "**As built**" paragraph, leaving
+  the record's "Done when" text alone (preset save: 3eb24b2, follow-ups 26f5413; 403 key: 5f0d405).
+  Grep `proposed.`, `What exists.`, `is open`, `are open` at the start of each section.
