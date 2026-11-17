@@ -22,6 +22,9 @@
 //!   presets, then the switched-off ones, each group in file order; an id in
 //!   both files is listed once, as on (the id matched without case, the row
 //!   the copy from `presets.ini`). The web UI does not sort.
+//! - llama-server's global `[*]` section is not a preset: it is the defaults
+//!   every preset starts from, and it is never a row. The page switches
+//!   presets, and the global section is nothing a user switches off.
 //! - A missing file is an empty group, not an error: no `presets.ini.disabled`
 //!   means no switched-off preset, no `presets.ini` means no preset at all.
 //! - Errors `{"key", "args": []}`, never the manager's detail: 401
@@ -917,6 +920,36 @@ async fn an_id_in_both_files_is_listed_once_as_enabled() {
         vec![
             row("Qwen3-32B", true, "/models/on.gguf"),
             row("other", false, "/models/other.gguf"),
+        ]
+    );
+}
+
+/// llama-server's global `[*]` section, the defaults every preset starts from,
+/// is not a preset: it is never a row, in either file, and the presets beside
+/// it keep their place and their order.
+#[tokio::test]
+async fn the_global_section_is_not_a_preset() {
+    let on = "\
+[*]\r\n\
+model = /models/global.gguf\r\n\
+n-gpu-layers = 99\r\n\
+\r\n\
+[alpha]\r\n\
+model = /models/alpha.gguf\r\n\
+";
+    let off = "\
+[*]\r\n\
+ctx-size = 4096\r\n\
+\r\n\
+[mistral-7b]\r\n\
+model = /models/Mistral-7B-Q5_K_M.gguf\r\n\
+";
+    let app = app_holding(on, off);
+    assert_eq!(
+        app.list().await.rows(),
+        vec![
+            row("alpha", true, "/models/alpha.gguf"),
+            row("mistral-7b", false, "/models/Mistral-7B-Q5_K_M.gguf"),
         ]
     );
 }

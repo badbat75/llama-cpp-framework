@@ -40,7 +40,11 @@ Lessons only: the rules are in `AGENTS.md`.
   report the per-command `exit=$?` lines, not the chain's. Bare cargo commands here land in
   `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
   A clean rerun IS fast (0.6 s for every pai-bff target on 24 cores, deps cached), and its own log is the
-  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` (not `Checking`). The `-v`
+  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` (not `Checking`), and cargo
+  prints that line ONCE for the whole package, so a count of 1 covers the lib test, the bins and every
+  `tests/*.rs` binary (pai-bff: 15 of them). The next plain `cargo test` replays the compile
+  (`Finished ... in 0.05s`, no `Compiling`) yet its own `Running <bin>` and per-test `ok` lines prove the
+  binaries ran. The `-v`
   count of `--crate-name <target>` works only on a run that really checks: a `Fresh` run prints NO
   `--crate-name` line at all (checked: 0 after a clean run), so from `-v` take the `Fresh <own pkg>` /
   `Dirty <own pkg>` line, which says the previous run's fingerprint matches the current sources. To prove a green
@@ -265,6 +269,28 @@ Lessons only: the rules are in `AGENTS.md`.
   403 `session-not-administrator` and ENDS the session when the manager refuses the `As` principal (PLAN:
   a refusal ends the session). Pin the served sibling, and report the contract line to the coordinator as
   the one assert to change if they choose the contract's key.
+ - "A write that LANDED is answered 200, not 504, when the read that follows it runs out": 504 stays only
+   where the write's own outcome is unknown. That flips the existing post-write-504 tests (the tester
+   changes them, the coordinator says so) while the write-parked 504 tests stay as the guards of the rule.
+   To slow ONLY the read-back (the route reads the file again after its writes, e.g. the switch's
+   `enabled`): give the fake a positional pause on the n-th read (`Live::set_read_pause_at(3, ms)`, a
+   `read_count` incremented in `read_file`), so the form's own read that carries the revision stays fast.
+   Pin the 200's body with the value the read-back CARRIES (the switch answers the file's, not the move's),
+   and with the value the move produced when the read-back itself is the one that runs out.
+ - A new optional parameter on a shared builder (`router_with_session`): add a sibling
+   (`router_with_session_and_write_timeout`) named after the existing seam pattern
+   (`session::routes_with_sign_in_timeout`), keep the old arity delegating, and stub it `pub` (a pub stub
+   in a lib crate is not dead code, no lint red) with the new argument inert, so the reds are the
+   assertions. The old harnesses then need no edit: only the harness that pins the new rule passes the
+   value. Time-limit constants that are private to the bff lib (`MANAGER_TIMEOUT`) are NOT reachable from
+   `tests/*.rs`: say the unit pin must live inside the crate, and pin the rule behaviourally in the
+   integration file (a call that outlives the read limit but not the write limit answers 200 under the
+   write limit, a GET of the same delay answers 503, so the limits really differ).
+ - llama-server's global `[*]` section is not a preset: `ini::parse_sections` strips the brackets, so its
+   id is `*`, and `checks::preset_id` refuses `*` - a switch of it is 404 `no-preset-named` with EMPTY
+   `args` (the id never passes the check to be echoed). Test the id raw, url-encoded (`%2A`) and bracketed
+   (`%5B%2A%5D`): axum's `Path` decodes all three to `*`, and the list-exclusion pin needs the section in
+   `presets.ini` with real keys beside a real preset.
 
 ## Text pins and source lints
 

@@ -28,6 +28,12 @@
 //! - the id is a section name, matched in any letter case, never a path: the
 //!   two file names are fixed, so nothing comes from the URL. An id neither
 //!   file holds is 404 `no-preset-named` with `args: [id]`.
+//! - llama-server's global `[*]` section is not a preset: it is the defaults
+//!   every preset starts from, it is never a row of the list, and a switch
+//!   naming it is 404 `no-preset-named` (the id check refuses `*`, so with
+//!   `args: []`) with the files untouched. Moved to the disabled file it would
+//!   silently stop applying to every model, and no list row would be left to
+//!   switch it back.
 //! - the preset moves, unchanged, between `presets.ini` and
 //!   `presets.ini.disabled`: the file the preset LANDS IN is written FIRST,
 //!   because a preset in both files reads as enabled. Switching off writes the
@@ -51,8 +57,16 @@
 //!   key for the same fact, and the session ends) when the manager refuses
 //!   the read or the write for the signed-in user; 503 `client-unavailable`
 //!   while the manager has not been asked to write; 504 `client-timeout` from
-//!   the moment a write was asked and its outcome is unknown; 502
+//!   the moment a write was asked and its outcome is unknown (the write does
+//!   not come back, the stream dies with the manager at it); 502
 //!   `client-other` for anything else, never the manager's detail.
+//! - once the move is done the answer is the switch's 200: a time limit that
+//!   runs out on the file read back after the writes, or on the state asked
+//!   after that, does not make a completed move a timeout. `enabled` is then
+//!   the value the move produced, the read-back's when the read-back came
+//!   back, and `running` is true, the safe answer for a state the bff cannot
+//!   see (the rule `switch_answers_running_true_when_the_state_cannot_be_read`
+//!   pins for a state that fails).
 //! - every answer says `running`: true when any instance of the engine is
 //!   `active` or `activating` (one `list_instances`, then the `status` of each
 //!   until one answers so), and true when a status read fails after a write
@@ -61,10 +75,13 @@
 //! The time limits are the bff's own and they end the manager's task when
 //! they fire (`crates/bff/src/server.rs`): a switch whose read is parked is
 //! answered 503 and the task it leaves behind must not write, so the files
-//! keep the text they had. A gate stops a manager call until the test
-//! releases it, `GRACE` is how long a released call is given to reach a write,
-//! and `GATE_LIMIT` lets an unreleased call through, so a test fails, it does
-//! not hang.
+//! keep the text they had. The manager's calls of a write run under the
+//! write's own limit, longer than the one a read is given, so a manager that
+//! takes its time writing is not cut off at the read's (`router_with_session_and_write_timeout`
+//! is the seam a test hands its own pair of limits through). A gate stops a
+//! manager call until the test releases it, `GRACE` is how long a released
+//! call is given to reach a write, and `GATE_LIMIT` lets an unreleased call
+//! through, so a test fails, it does not hang.
 //!
 //! These are the bff's tests, with the manager faked: the switch against the
 //! real manager, the real compare and swap and the real checks are the
@@ -272,6 +289,11 @@ struct Live {
     /// plain `write_outcome`: how a test answers the second write of a move
     /// with `Changed` and lets the first land.
     write_outcome_at: Arc<Mutex<Option<(usize, Outcome)>>>,
+    /// How long the read at one position (1, 2, ...) takes, in place of the
+    /// plain `read_pause_ms`: how a test slows only the read of the file the
+    /// switch reads back after the writes, leaving the two reads of the move
+    /// quick.
+    read_pause_at: Arc<Mutex<Option<(usize, u64)>>>,
     /// How long each takes.
     connect_pause_ms: Arc<AtomicU64>,
     read_pause_ms: Arc<AtomicU64>,
@@ -298,6 +320,9 @@ struct Live {
     /// How many writes of any kind the manager was asked for, so
     /// `write_outcome_at` counts the plain ones too.
     write_count: Arc<AtomicUsize>,
+    /// How many reads the manager was asked for, so `read_pause_at` counts
+    /// them too.
+    read_count: Arc<AtomicUsize>,
 }
 
 impl Live {
@@ -438,6 +463,24 @@ impl FakeManager {
             .any(|u| Some(u.as_str()) == self.as_user.as_deref())
     }
 
+    /// How long this read takes: the pause armed for its position (1-based,
+    /// counting every read of this app) wins over the one armed for every
+    /// read.
+    fn read_pause(&self) -> u64 {
+        let position = self.live.read_count.fetch_add(1, Ordering::SeqCst) + 1;
+        let armed = *self
+            .live
+            .read_pause_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((at, ms)) = armed {
+            if at == position {
+                return ms;
+            }
+        }
+        self.live.read_pause_ms.load(Ordering::SeqCst)
+    }
+
     /// What the manager answers the write at `position` (1-based), counting
     /// the writes asked so far: the one armed for this position wins over the
     /// one armed for every write.
@@ -474,7 +517,7 @@ impl ManagerClient for FakeManager {
             &self.live.reads_gated,
             &self.live.reads_released,
         );
-        let pause = self.live.read_pause_ms.load(Ordering::SeqCst);
+        let pause = self.read_pause();
         if pause > 0 {
             std::thread::sleep(Duration::from_millis(pause));
         }
@@ -659,11 +702,24 @@ impl Authenticator for FakeAuth {
 }
 
 /// The app: a manager holding the files, refusing the calls of `refuse`, and
-/// answering every connect with `connect_result`.
+/// answering every connect with `connect_result`. The manager's calls run
+/// under `TIMEOUT`.
 fn app_for(
     files: &[(&str, &str)],
     refuse: &[&str],
     connect_result: Result<(), ClientError>,
+) -> App {
+    app_for_timeouts(files, refuse, connect_result, TIMEOUT)
+}
+
+/// The same manager, with the manager's calls of a write bound by
+/// `write_timeout` and the reads left at `TIMEOUT`: the seam a test of the
+/// write's own limit uses, so it can hand the pair it wants.
+fn app_for_timeouts(
+    files: &[(&str, &str)],
+    refuse: &[&str],
+    connect_result: Result<(), ClientError>,
+    write_timeout: Duration,
 ) -> App {
     let live = Live::default();
     live.idle();
@@ -694,9 +750,10 @@ fn app_for(
         }) as Client)
     });
     let start = Instant::now();
-    let router = pai_bff::router_with_session(
+    let router = pai_bff::router_with_session_and_write_timeout(
         connect,
         TIMEOUT,
+        write_timeout,
         Arc::new(FakeAuth),
         Arc::new(move || start),
         KEY,
@@ -724,6 +781,17 @@ struct App {
 /// the pair that shows a preset on and a preset off.
 fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(PRESETS, on), (DISABLED, off)], &[], Ok(()))
+}
+
+/// The same pair, with the manager's calls of a write bound by
+/// `write_timeout` and the reads left at `TIMEOUT`.
+fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> App {
+    app_for_timeouts(
+        &[(PRESETS, on), (DISABLED, off)],
+        &[],
+        Ok(()),
+        write_timeout,
+    )
 }
 
 /// A manager holding `on` as `presets.ini` and no `presets.ini.disabled`: the
@@ -976,6 +1044,13 @@ impl App {
     /// A read that takes `ms`.
     fn set_read_pause_ms(&self, ms: u64) {
         self.live.read_pause_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// The read at `position` (1-based) that takes `ms`, leaving every other
+    /// read quick: the switch's read of the file it reads back after the
+    /// writes is its third read.
+    fn set_read_pause_at(&self, position: usize, ms: u64) {
+        *self.live.read_pause_at.lock().unwrap() = Some((position, ms));
     }
 
     /// A write that takes `ms`: the manager busy at the moment the switch
@@ -1315,6 +1390,51 @@ async fn switch_with_no_preset_file_is_404_and_creates_nothing() {
         "no disabled file was created"
     );
     assert!(app.no_write_asked(), "nothing written");
+}
+
+/// llama-server's global `[*]` section is not a preset: naming it, raw or
+/// url-encoded, is the 404 of a name no preset carries, and its args carry
+/// nothing (the id check refuses `*`, so the id is echoed nowhere). The section
+/// stays where it is: switched off it would stop applying to every model with
+/// no row left in the list to bring it back.
+#[tokio::test]
+async fn switch_for_the_global_section_is_404_and_moves_nothing() {
+    let on = "\
+[*]\r\n\
+model = /models/global.gguf\r\n\
+n-gpu-layers = 99\r\n\
+\r\n\
+[alpha]\r\n\
+model = /models/alpha.gguf\r\n\
+";
+    let app = app_holding(on, FILE_OFF);
+    for id in ["*", "%2A", "%5B%2A%5D"] {
+        let rep = app.switch_on(id, false).await;
+        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[]);
+    }
+    assert_eq!(
+        app.file_text(PRESETS).as_deref(),
+        Some(on),
+        "the global section is where it was"
+    );
+    assert_eq!(
+        app.file_text(DISABLED).as_deref(),
+        Some(FILE_OFF),
+        "the disabled file is as it was"
+    );
+    assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
+    // The lookup of a name no preset carries: the two files, nothing else.
+    assert_eq!(
+        app.calls(),
+        [
+            "read presets.ini",
+            "read presets.ini.disabled",
+            "read presets.ini",
+            "read presets.ini.disabled",
+            "read presets.ini",
+            "read presets.ini.disabled",
+        ]
+    );
 }
 
 /// The id on the URL is matched the way the list's ids are: the section is
@@ -2159,21 +2279,93 @@ async fn switch_with_a_write_that_is_too_slow_is_504() {
 }
 
 /// The two writes landed and the instance's state does not come back in time:
-/// the move is done, and the answer is the 504 of a call that cannot be seen
-/// through, with the files carrying the move.
+/// the move is done and stands in the files, so the answer is the switch's 200
+/// with `enabled` where the move put it and `running` true, the safe answer for
+/// a state that cannot be read. A 504 here tells the browser the move may have
+/// happened, when the files say it did.
 #[tokio::test]
-async fn switch_with_a_status_read_that_is_too_slow_is_504_after_the_move_landed() {
+async fn switch_with_a_status_read_that_is_too_slow_is_200_after_the_move_landed() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.set_status_pause_ms(TIMEOUT.as_millis() as u64 + 200);
+    let started = Instant::now();
 
     app.switch_on(QWEN, false)
         .await
-        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+        .assert_switched(false, true);
+    assert!(
+        started.elapsed() < DEADLINE,
+        "the answer came at the time limit, not at the request's deadline"
+    );
     assert_eq!(
         app.writes().len(),
         2,
         "both writes were asked: {:?}",
         app.writes()
+    );
+    assert_eq!(
+        app.file_text(DISABLED).as_deref(),
+        Some(&file_off_with_qwen()[..]),
+        "the move landed"
+    );
+    assert_eq!(
+        app.file_text(PRESETS).as_deref(),
+        Some(&file_on_without_qwen()[..]),
+        "the move landed"
+    );
+}
+
+/// The two writes landed and the read-back of `presets.ini` that follows them
+/// is the call that runs out: `enabled` cannot be read off the machine, so the
+/// answer carries the value the move produced, and the move is in the files.
+/// The read-back is the switch's third read: the first two are the files the
+/// move reads, and only the third is slowed.
+#[tokio::test]
+async fn switch_with_a_read_back_that_is_too_slow_is_200_with_the_value_the_move_produced() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.set_read_pause_at(3, TIMEOUT.as_millis() as u64 + 200);
+
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, true);
+    assert_eq!(
+        app.writes().len(),
+        2,
+        "both writes were asked: {:?}",
+        app.writes()
+    );
+    assert_eq!(
+        app.file_text(DISABLED).as_deref(),
+        Some(&file_off_with_qwen()[..]),
+        "the move landed"
+    );
+    assert_eq!(
+        app.file_text(PRESETS).as_deref(),
+        Some(&file_on_without_qwen()[..]),
+        "the move landed"
+    );
+}
+
+/// The manager is busy on the writes for longer than the read's limit and the
+/// switch answers 200 with the move in the files: the calls of a write run
+/// under the write's own, longer limit, so a manager that takes its time
+/// writing is not cut off at the limit that is right for a read. The pair
+/// production uses is the read's `MANAGER_TIMEOUT` and the writes' longer one;
+/// the test hands its own pair through the seam.
+#[tokio::test]
+async fn switch_whose_writes_outlive_the_read_limit_is_answered_under_the_write_limit() {
+    let write_limit = Duration::from_millis(TIMEOUT.as_millis() as u64 * 4);
+    let app = app_holding_write_timeout(FILE_ON, FILE_OFF, write_limit);
+    // Two writes of one pause each: the move lands past the read's limit.
+    app.set_write_pause_ms(TIMEOUT.as_millis() as u64);
+
+    let started = Instant::now();
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, false);
+    assert!(
+        started.elapsed() > TIMEOUT,
+        "the switch outlived the read's limit: {:?}",
+        started.elapsed()
     );
     assert_eq!(
         app.file_text(DISABLED).as_deref(),

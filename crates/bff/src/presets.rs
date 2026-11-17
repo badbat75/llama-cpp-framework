@@ -11,6 +11,11 @@
 //! is an empty group, so a machine with no preset file answers an empty list
 //! and not an error.
 //!
+//! llama-server's global `[*]` section is not a preset: it is the defaults
+//! every preset starts from, so it is never a row, and the switch moves
+//! nothing for it ([`switch`]): moved to the disabled file it would stop
+//! applying to every model with no row left in the list to bring it back.
+//!
 //! Every row carries the five fields the web UI reads: `{"id", "engine",
 //! "engineAvailable", "enabled", "model"}`. `id` is the section as the file
 //! spells it, `model` the section's `model` key as the file holds it (the
@@ -32,7 +37,7 @@
 //! the file it LANDS IN written first; see [`set_enabled`].
 
 use crate::origin::body_refusal;
-use crate::server::{runs, WriteState};
+use crate::server::{runs, TimedOut, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
 use axum::extract::rejection::BytesRejection;
@@ -96,17 +101,29 @@ pub(crate) async fn list(
 
 /// The rows of the two files: the switched-on sections in their order, then
 /// the switched-off ones in theirs, each id of `presets.ini.disabled` that
-/// `presets.ini` also holds left out.
+/// `presets.ini` also holds left out, and llama-server's global section left
+/// out of both.
 fn rows(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<Value> {
-    let on = sections(on);
+    let on: Vec<ini::Section> = sections(on)
+        .into_iter()
+        .filter(|s| !is_global(&s.id))
+        .collect();
     let off: Vec<ini::Section> = sections(off)
         .into_iter()
+        .filter(|s| !is_global(&s.id))
         .filter(|s| !on.iter().any(|q| q.id.eq_ignore_ascii_case(&s.id)))
         .collect();
     on.into_iter()
         .map(|section| row(&section, true))
         .chain(off.into_iter().map(|section| row(&section, false)))
         .collect()
+}
+
+/// Whether a section id is llama-server's global `[*]`, the defaults every
+/// preset starts from. It is not a preset: the list has no row for it, and the
+/// switch has nothing to move.
+fn is_global(id: &str) -> bool {
+    id == "*"
 }
 
 /// The sections of a file the manager answered: none when it says the file is
@@ -153,7 +170,8 @@ enum Answer {
 /// connect, made for the session's user, all of it in one blocking task. The id
 /// is a section name, matched in any letter case as the list's ids are, never a
 /// path: the two file names are the fixed ones. A name neither file holds is 404
-/// `no-preset-named` ([`not_found`]), and nothing is written.
+/// `no-preset-named` ([`not_found`]), and nothing is written; so is
+/// llama-server's global `[*]`, which is not a preset.
 ///
 /// The section moves, unchanged, from the file that holds it to the other one,
 /// and the file it LANDS IN is written FIRST: a section in both files reads as
@@ -171,14 +189,22 @@ enum Answer {
 /// The 503 and the 504 follow the server file's rule, on the same shared state
 /// as its save: while no write was asked, a time limit that runs out is 503
 /// `client-unavailable`; from the moment a write was sent its outcome is
-/// unknown, and the answer is 504 `client-timeout`.
+/// unknown, and the answer is 504 `client-timeout`. Once BOTH writes landed the
+/// move stands in the files, so a limit that runs out on the file read back
+/// after them, or on the states that follow, is the switch's 200: `enabled` the
+/// value the move produced, and `running` true, the safe answer for a state the
+/// bff cannot read. `write_timeout` bounds every manager call of the move, the
+/// two reads and the read back with them: the write's own limit, longer than
+/// [`crate::MANAGER_TIMEOUT`], the limit a read is given. A read back that
+/// fails answers the same as one that runs out, and a refusal of the signed-in
+/// user there stays the 403 that ends the session.
 ///
 /// `running` is what the page's "restart llama-server to apply" note is about:
 /// the engine reads `presets.ini` at launch, so it is true when any instance is
 /// up ([`running`]). The switch starts, stops and restarts nothing.
 pub(crate) async fn set_enabled(
     connect: Connect,
-    timeout: Duration,
+    write_timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
@@ -197,19 +223,31 @@ pub(crate) async fn set_enabled(
     let user = identity.user;
     // The writes' state, shared with the task. From the moment the task sends
     // one, every answer that cannot see it is 504, never 503; a task whose
-    // handler ran out of time with no write asked sends none at all.
+    // handler ran out of time with no write asked sends none at all; once both
+    // writes landed the state is Done and the answer is the switch's 200.
     let state = Arc::new(WriteState::new());
     let mine = state.clone();
     let name = id.clone();
     let ask = tokio::task::spawn_blocking(move || switch(&connect, &user, &name, enabled, &mine));
-    match tokio::time::timeout(timeout, ask).await {
+    match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(Answer::Moved { enabled, running }))) => {
             axum::Json(json!({ "enabled": enabled, "running": running })).into_response()
         }
         Ok(Ok(Ok(Answer::NotFound))) => not_found(&id),
         Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
-        // The answer cannot see the write, and the task keeps running.
-        Err(_) => state.timed_out(),
+        // The answer cannot see the write, and the task keeps running: 503 with
+        // no write asked, 504 with one sent and its outcome unknown. Done is a
+        // move that landed in both files, so the answer carries the `enabled`
+        // the move produced and `running` true, the state the bff cannot read.
+        Err(_) => match state.timed_out() {
+            TimedOut::Cancelled => {
+                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+            }
+            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
+            TimedOut::Done => {
+                axum::Json(json!({ "enabled": enabled, "running": true })).into_response()
+            }
+        },
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -218,7 +256,8 @@ pub(crate) async fn set_enabled(
 /// section moved, the instances' states asked for `running`. The two files are
 /// read once each for the move; the one that makes a preset enabled is read
 /// once more after the writes, because the answer is the text on the machine
-/// and not what the bff computed.
+/// and not what the bff computed. llama-server's global section is answered
+/// [`Answer::NotFound`] with nothing written, as the list has no row for it.
 fn switch(
     connect: &Connect,
     user: &str,
@@ -229,6 +268,11 @@ fn switch(
     let client = connect(Some(user))?;
     let on = client.read_file(PRESETS)?.map(|file| file.text);
     let off = client.read_file(PRESETS_DISABLED)?.map(|file| file.text);
+    if is_global(id) {
+        // llama-server's global section: not a preset, no row in the list, and
+        // nothing to move: switched off it would stop applying to every model.
+        return Ok(Answer::NotFound);
+    }
     let section_on = ini::text::section_text(on.as_deref().unwrap_or(""), id);
     let section_off = ini::text::section_text(off.as_deref().unwrap_or(""), id);
     if section_on.is_none() && section_off.is_none() {
@@ -284,13 +328,25 @@ fn switch(
     // of time answered 504 with that write in flight. This one goes on and is
     // asked, as the 504 told the browser the outcome is unknown.
     client.write_file_if(source, &left, current)?;
+    // The move is made: both files carry it, so a time limit that runs out on
+    // the read back that follows finds the switch done, and answers its 200.
+    state.landed();
     // The move is not reported as the bff computed it: the file that makes a
     // preset enabled is read back after the writes, so `enabled` is the text
-    // that is on the machine.
-    let on = client
-        .read_file(PRESETS)?
-        .map(|file| file.text)
-        .unwrap_or_default();
+    // that is on the machine. A read back that fails is not the move failing:
+    // the files carry it, so the answer is the value the move produced and
+    // `running` true, never the 503 of a manager that was never reached. A
+    // refusal of the signed-in user is the one answer that ends the session.
+    let on = match client.read_file(PRESETS) {
+        Ok(file) => file.map(|file| file.text).unwrap_or_default(),
+        Err(ClientError::NotAuthorized) => return Err(ClientError::NotAuthorized),
+        Err(_) => {
+            return Ok(Answer::Moved {
+                enabled,
+                running: true,
+            })
+        }
+    };
     Ok(Answer::Moved {
         enabled: ini::text::section_text(&on, id).is_some(),
         running: running(&client),

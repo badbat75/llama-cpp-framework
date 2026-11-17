@@ -840,3 +840,27 @@ Lessons only: the rules are in `AGENTS.md`.
   `server-malformed` and `boot-malformed` have no `en_US.toml` entry, so `presets-malformed`,
   `preset-changed-elsewhere` and `client-timeout` need none (the fe carries the text). `no-preset-named`
   is a check key already in `en_US.toml`, with `{0}` the id.
+- Two manager limits, both `pub` in `bff/src/lib.rs`: `MANAGER_TIMEOUT` bounds a read, `WRITE_TIMEOUT`
+  (longer) a write, because a save's read-back and status ride the task of a write that already asked,
+  and a write that lands after the answer is the write's outcome, not a lost one. The seam that pins
+  them is `router_with_session_and_write_timeout`; `try_router` (the production signature) takes both
+  and `router_with_session` passes the same value for both. A write handler takes ONE limit, named
+  `write_timeout`: its own reads ride the same blocking task, so it has no read limit to pass.
+- `WriteState` is 3-valued (Idle / Asked / Done): `timed_out()` answers `TimedOut::{Cancelled, Asked,
+  Done}`, `landed()` moves Asked to Done after the LAST write of the call, and `sent()` is true of
+  Asked only: a Done task is not "outcome unknown", so every 504 test stays a 504 with the CAS. The
+  Done answer is the route's own 200: `running: true` always (a status the bff cannot read), and for
+  the switch `enabled` is the flag the request asked, because a move that landed is exactly a
+  `presets.ini` with the section when the flag is true and without it when false.
+- A manager call that FAILS after a write landed must not be a 503: the switch's read back of
+  `presets.ini` answers the landed move (`switch_failure` never sees it), and only
+  `ClientError::NotAuthorized` propagates, the 403 that ends the session. A `?` on any post-write
+  read is a 503 on a move that stands in the files.
+- llama-server's global `[*]` is not a preset: `rows()` drops it from BOTH files (one `is_global`),
+  and `switch()` answers `Answer::NotFound` for it AFTER the two file reads (the route reads first),
+  which leaves the id failing `checks::preset_id` so the 404 carries `args: []`.
+- `read` on a source file has handed back content that is not in the file (a fabricated whole
+  function, real line numbers, an md5 of its own output as a line): a `write` based on it destroyed
+  `presets.rs` and the compiler saw a file of 84 lines. Verify the text with bash before editing
+  (`awk 'NR>=a && NR<=b' file`, `md5sum`, the compiler's own line numbers), prefer `edit` over a
+  whole-file `write` for an existing source, and `git checkout -- <path>` restores the file.

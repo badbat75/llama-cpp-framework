@@ -855,12 +855,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    the control verbs and the boot write (`control.rs`) answer 503 at their time limit without
    cancelling the blocking task, which may still act afterwards: give them the save's
    Idle/Asked/Cancelled state; pai-bff's `pai_bff_binary` failed once of 13 runs, likely its
-   `free_port` bind-release-rebind race; a status read slower than the limit after a done write
-   answers 504 though the file is saved: answer 200 with `running: true` instead, as a failed status
-   read does (asked by the web UI session, accepted 2026-11-17, a small slice after 11b); and the save
-   gets its own time limit, 15 s as an estimate until measured, since one 5 s limit covers connect,
-   read, the write with the manager's address check (which may resolve a host name) and the status
-   read (the fe waits 120 s on a non-GET).)
+   `free_port` bind-release-rebind race; the write limit of 15 s (`WRITE_TIMEOUT`, built 2026-11-17 with the 200 for a
+   done write whose status read is slow) is an estimate: set it from the first real save.)
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so
@@ -899,12 +895,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (pai-core); `DISABLED_FILE_HEADER` moves to `pai-core` (the bff holds a copy a test keeps equal);
    a missing destination file is created with a plain write, so one created by someone else between
    the read and the write is overwritten (needs a create-if-absent in the manager); a failed read-back
-   after both writes answers 504 or 502 for a move that stands; switching `[*]` off moves
-   llama-server's global section out of `presets.ini`, as the GUI does, and by the code it cannot be
-   switched back on from the web (the manager's check refuses the id `*`: 422 `invalid-preset-id`):
-   a one-way trap, the bff (and the GUI) should refuse to switch `[*]`, a small slice before or right
-   after the user's run; tests missing: `Unavailable` between the two writes, asked on while in both files, the
-   `[*]` id; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
+   after both writes answers 504 or 502 for a move that stands; the GUI still lists `[*]` (llama-server's
+   global section) as a preset and lets it be switched off, after which its id check refuses to
+   switch it back on (the web hides it and answers 404 since 2026-11-17); tests missing: `Unavailable` and the time limit between the two writes, asked on while in both
+   files, a read-back that fails after a landed move (200), the ids `**` and ` * `; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
 11c. **A preset's page, read-only.** `GET /api/presets/{id}` as proposed in `fe/briefs/api-contract.md`
    (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
    revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method

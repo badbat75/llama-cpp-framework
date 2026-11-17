@@ -400,12 +400,14 @@ fn revision(text: &str, key: &[u8; 16]) -> String {
 
 /// The state of the write of one request, in one atomic shared by the handler
 /// and its blocking task: `WRITE_IDLE` while no write has been asked,
-/// `WRITE_ASKED` from the moment the task sends one, `WRITE_CANCELLED` when the
-/// handler's time limit ran out with no write asked. Each side moves Idle to
-/// its own state with a compare and exchange, so the pair settles the write
-/// once: a task that finds the state Cancelled sends no write, a handler that
-/// finds it Asked answers 504, the outcome of the sent write unknown. The
-/// server file's save and the preset switch share it.
+/// `WRITE_ASKED` from the moment the task sends one, `WRITE_DONE` once EVERY
+/// write of the call has landed, `WRITE_CANCELLED` when the handler's time
+/// limit ran out with no write asked. Each side moves the state with a compare
+/// and exchange, so the pair settles the write once: a task that finds the
+/// state Cancelled sends no write, a handler that finds it Asked answers 504,
+/// the outcome of the sent write unknown, and a handler that finds it Done
+/// answers its own 200, the file saved. The server file's save and the preset
+/// switch share it.
 pub(crate) struct WriteState(AtomicU8);
 
 impl WriteState {
@@ -432,17 +434,28 @@ impl WriteState {
 
     /// True when the task sent a write, so its outcome is unknown: the answer
     /// to the manager's `Unavailable` is then 504 `client-timeout`, it was
-    /// reached, and not 503 `client-unavailable`.
+    /// reached, and not 503 `client-unavailable`. A state the task moved to
+    /// Done is not this: that write landed, and what the call could not read
+    /// afterwards is not the write's outcome.
     pub(crate) fn sent(&self) -> bool {
         self.0.load(Ordering::SeqCst) == WRITE_ASKED
     }
 
-    /// The answer when the handler's time limit ran out and its task is still
+    /// The task's word that every write of the call has landed. Asked to Done
+    /// is the only move, so a handler that already settled the state
+    /// (Cancelled: the write was never asked) is left alone.
+    pub(crate) fn landed(&self) {
+        let _ =
+            self.0
+                .compare_exchange(WRITE_ASKED, WRITE_DONE, Ordering::SeqCst, Ordering::SeqCst);
+    }
+
+    /// The handler's answer when its time limit ran out and its task is still
     /// running. Idle to Cancelled settles it with the task: won, no write was
-    /// ever asked and the task will never ask one, so 503
-    /// `client-unavailable`, the manager not reached; lost, the state is Asked,
-    /// a write is sent and its outcome unknown, so 504 `client-timeout`.
-    pub(crate) fn timed_out(&self) -> Response {
+    /// ever asked and the task will never ask one, so [`TimedOut::Cancelled`];
+    /// lost, a write is sent, [`TimedOut::Asked`] while its outcome is unknown
+    /// and [`TimedOut::Done`] once it landed.
+    pub(crate) fn timed_out(&self) -> TimedOut {
         if self
             .0
             .compare_exchange(
@@ -453,16 +466,35 @@ impl WriteState {
             )
             .is_ok()
         {
-            error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+            return TimedOut::Cancelled;
+        }
+        if self.0.load(Ordering::SeqCst) == WRITE_DONE {
+            TimedOut::Done
         } else {
-            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+            TimedOut::Asked
         }
     }
+}
+
+/// What a handler's time limit found in the shared write state ([`WriteState`]),
+/// and the answer each write route makes of it.
+pub(crate) enum TimedOut {
+    /// No write was asked, and the task left behind by the limit will never
+    /// ask one: 503 `client-unavailable`, the manager not reached.
+    Cancelled,
+    /// A write is sent and its outcome is unknown: 504 `client-timeout`.
+    Asked,
+    /// Every write of the call landed, so the call is DONE: the limit ran out
+    /// on a call that follows the writes. The handler answers its own 200, the
+    /// file saved, and the state it cannot read (`running`) is true, the safe
+    /// answer.
+    Done,
 }
 
 const WRITE_IDLE: u8 = 0;
 const WRITE_ASKED: u8 = 1;
 const WRITE_CANCELLED: u8 = 2;
+const WRITE_DONE: u8 = 3;
 
 /// `PUT /api/instances/{id}/server` `{"revision", "values"}`: the Server
 /// form's save of the whole file, as the signed-in user. The answer is
@@ -491,9 +523,19 @@ const WRITE_CANCELLED: u8 = 2;
 /// compare and exchange, so the answer is the state's last word. A task parked
 /// in the connect or the read when the limit runs out finds the state
 /// Cancelled and sends no write: the 503 stands, the file is what it was.
+///
+/// `write_timeout` bounds the whole save, the read, the write and the status
+/// that answers `running`: the manager's calls of a write are given the write's
+/// own, longer limit (the reads of the router keep [`crate::MANAGER_TIMEOUT`],
+/// the shorter one), so a manager busy writing is not cut off at the limit that
+/// is right for a read. A limit that runs out once every write landed finds the
+/// state Done: the file holds what the form sent, so the answer is the save's
+/// 200 with `running` true, the safe answer for a state the bff cannot read,
+/// and not the 504 that tells the user to look at the server and decide
+/// whether the file is saved.
 pub(crate) async fn save(
     connect: Connect,
-    timeout: Duration,
+    write_timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
@@ -523,10 +565,11 @@ pub(crate) async fn save(
     let sent = sent.to_string();
     let written = revision(&text, &key);
     let name = format!("server@{id}.ini");
-    // The write's state. It moves Idle -> Asked just before the write is sent
-    // and Idle -> Cancelled when the time limit runs out first: from the
-    // moment the write is sent its outcome is unknown, and every answer that
-    // cannot see it is 504, never 503.
+    // The write's state. It moves Idle -> Asked just before the write is sent,
+    // Asked -> Done once that write landed, and Idle -> Cancelled when the time
+    // limit runs out first: from the moment the write is sent its outcome is
+    // unknown, and every answer that cannot see it is 504, never 503; once the
+    // write landed the save is done, and the answer is the 200.
     let state = Arc::new(WriteState::new());
     let mine = state.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
@@ -545,12 +588,15 @@ pub(crate) async fn save(
             return Ok(true);
         }
         client.write_file_if(&name, &text, &current)?;
+        // The write landed: what follows is a read of the state, and a limit
+        // that runs out there finds the save done.
+        mine.landed();
         Ok(match client.status(&id) {
             Ok(running) => runs(running),
             Err(_) => true,
         })
     });
-    match tokio::time::timeout(timeout, ask).await {
+    match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(running))) => axum::Json(json!({
             "revision": written,
             "running": running,
@@ -561,8 +607,21 @@ pub(crate) async fn save(
         // Cancelled settles it with the task: won, the write was never asked
         // and the task will never ask it, so 503 `client-unavailable`, the
         // manager not reached; lost, the state is Asked, the write is sent and
-        // its outcome unknown, so 504 `client-timeout`.
-        Err(_) => state.timed_out(),
+        // its outcome unknown, so 504 `client-timeout`; a state that reached
+        // Done is a write that landed, so the file holds what the form sent and
+        // the answer is the save's 200, `running` true, the state the bff
+        // cannot read.
+        Err(_) => match state.timed_out() {
+            TimedOut::Cancelled => {
+                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+            }
+            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
+            TimedOut::Done => axum::Json(json!({
+                "revision": written,
+                "running": true,
+            }))
+            .into_response(),
+        },
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }

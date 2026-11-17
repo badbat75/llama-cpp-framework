@@ -74,13 +74,22 @@
 //!   manager that does not answer the save: 503 `client-unavailable` for as
 //!   long as it has not been asked to write (it was never reached, it refuses
 //!   at the read, or the time limit runs out on the connect or on the read),
-//!   504 `client-timeout` from the moment the write was asked and its outcome
-//!   is unknown (the write never comes back, or the stream dies with the
+//!   504 `client-timeout` while the write was asked and its outcome is
+//!   unknown (the write never comes back, or the stream dies with the
 //!   manager at the write: the client reports that as `Unavailable` too, and
-//!   the route must not read it as a manager that was never reached). A save
-//!   the time limit cut off at the connect or at the read ends with that 503:
-//!   the blocking task the route left behind must not write, so the file keeps
-//!   the text the form read. A blank `ModelsDir` or `StateDir` is left unset
+//!   the route must not read it as a manager that was never reached). Once the
+//!   write has landed the save is done: a time limit that runs out on the
+//!   status read that follows it answers the 200 with `running` true, because
+//!   a 504 there tells the user to look at the server and decide whether the
+//!   file is saved, when the bff knows it is. A save the time limit cut off at
+//!   the connect or at the read ends with that 503: the blocking task the
+//!   route left behind must not write, so the file keeps the text the form
+//!   read.
+//! - The manager's calls of a write run under the write's own time limit,
+//!   longer than the one a read is given: a manager that is busy writing is
+//!   not cut off at the limit that is right for a read (the reads keep theirs,
+//!   `router_with_session_and_write_timeout` is the seam a test hands its own
+//!   pair of limits through). A blank `ModelsDir` or `StateDir` is left unset
 //!   in the file; the key the body names is written and never sent in an
 //!   answer.
 //! - A 403 refusal for the signed-in user ends their session at once
@@ -642,6 +651,13 @@ fn app_reading(file: Result<Option<ManagerFile>, ClientError>) -> App {
 /// the writes, the refusals and the instance state are shared cells, set
 /// through the `App` methods.
 fn app_writing(text: &str) -> App {
+    app_writing_with_write_timeout(text, TIMEOUT)
+}
+
+/// The same manager, with the manager's calls of a write bound by
+/// `write_timeout` and the reads left at `TIMEOUT`: the seam a test of the
+/// write's own limit uses, so it can hand the pair it wants.
+fn app_writing_with_write_timeout(text: &str, write_timeout: Duration) -> App {
     let live = Live::default();
     live.files
         .lock()
@@ -669,9 +685,10 @@ fn app_writing(text: &str) -> App {
         }) as Client)
     });
     let start = Instant::now();
-    let router = pai_bff::router_with_session(
+    let router = pai_bff::router_with_session_and_write_timeout(
         connect,
         TIMEOUT,
+        write_timeout,
         Arc::new(FakeAuth),
         Arc::new(move || start),
         KEY_A,
@@ -2404,25 +2421,34 @@ async fn a_manager_lost_at_the_write_is_504() {
         .assert_signed_in_as("alice");
 }
 
-/// The write landed and the status read that follows it never comes back: the time limit runs
-/// out with the write asked, so 504 `client-timeout`, and the file holds the new value. A fix
-/// keyed on "the call that failed is not the write" gets this one wrong: the write asked is
-/// what makes the answer 504, whichever call times out after it.
+/// The write landed and only the status read that follows it is too slow: the
+/// file holds the new value, the save is done, so the answer is the save's 200
+/// with `running` true, the safe answer for a state the bff cannot see (the
+/// rule
+/// `running_is_true_when_the_status_read_after_the_write_fails` pins for a
+/// status read that fails). A 504 here tells the user the file may be saved
+/// and to look at the server, when the write is known to have landed.
 #[tokio::test]
-async fn a_time_limit_that_runs_out_after_the_write_is_504() {
+async fn a_time_limit_that_runs_out_after_the_write_landed_is_200() {
     let app = app_writing(WITH_KEY);
     let cookie = app.sign_in().await;
     let doc = app.read_default().await.document();
 
     app.set_status_pause_ms(3 * TIMEOUT.as_millis() as u64);
 
-    app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
-        .await
-        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+    let saved = assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+            .await,
+    );
+    assert_eq!(
+        saved["running"],
+        json!(true),
+        "the state is unknown after a write that stands: the safe answer: {saved}"
+    );
     assert_eq!(app.writes().len(), 1, "the write was asked");
     assert!(
         app.file_text().contains("Port = 8642"),
-        "the write landed, the answer only says the state is unknown: {}",
+        "the answer says the file is saved, so it must be: {}",
         app.file_text()
     );
 }
@@ -2550,4 +2576,60 @@ async fn a_write_that_never_returns_is_answered_504() {
         "the bff answered within its own limit, not the request deadline"
     );
     assert_eq!(app.writes().len(), 1, "the write was sent to the manager");
+}
+
+/// The manager is busy on the write for longer than the read's limit and the
+/// save answers 200: the calls of a write are bound by the write's own, longer
+/// limit, so a manager that takes its time writing is not cut off at the limit
+/// that is right for a read. The pair production uses is the read's
+/// `MANAGER_TIMEOUT` and the writes' longer one; these tests hand their own
+/// pair through `router_with_session_and_write_timeout`, so the timing is
+/// theirs and not the machine's.
+#[tokio::test]
+async fn a_save_that_outlives_the_read_limit_is_answered_under_the_write_limit() {
+    let slow = TIMEOUT.as_millis() as u64 * 2;
+    let write_limit = Duration::from_millis(TIMEOUT.as_millis() as u64 * 3);
+    let app = app_writing_with_write_timeout(WITH_KEY, write_limit);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    app.set_write_pause_ms(slow);
+    let started = Instant::now();
+    let saved = assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+            .await,
+    );
+    assert!(
+        started.elapsed() >= TIMEOUT,
+        "the save outlived the read's limit: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(saved["running"], json!(true), "{saved}");
+    assert!(
+        app.file_text().contains("Port = 8642"),
+        "the write landed: {}",
+        app.file_text()
+    );
+}
+
+/// The longer limit is the write's and not the manager's: a read of the same
+/// app, taking the same time as that save, is answered 503 `client-unavailable`
+/// at the read's own limit, well before the write's runs out.
+#[tokio::test]
+async fn a_read_that_outlives_the_read_limit_is_still_answered_at_it() {
+    let slow = TIMEOUT.as_millis() as u64 * 2;
+    let write_limit = Duration::from_millis(TIMEOUT.as_millis() as u64 * 3);
+    let app = app_writing_with_write_timeout(WITH_KEY, write_limit);
+    let cookie = app.sign_in().await;
+    app.set_read_pause_ms(slow);
+
+    let started = Instant::now();
+    app.get("/api/instances/default/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    assert!(
+        started.elapsed() < write_limit,
+        "the read was answered at the read's limit, not carried by the write's: {:?}",
+        started.elapsed()
+    );
 }

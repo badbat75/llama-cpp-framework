@@ -25,8 +25,16 @@ pub type Connect =
 /// The engine every instance runs: llama.cpp, the only engine today.
 const ENGINE_LLAMA_CPP: &str = "llama.cpp";
 
-/// How long a request waits for the manager, the connect included.
-const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a read waits for the manager, the connect included.
+pub const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the manager's calls of a WRITE are given: the server file's save
+/// (a read, the write, the state that answers `running`) and the preset switch
+/// (two reads, two writes, the read back and the state). Longer than a read's
+/// [`MANAGER_TIMEOUT`], because a write goes through the manager's checks
+/// before the file, and its address check may resolve a host name. An
+/// estimate, until a real run measures a save and its figure replaces this.
+pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
 /// system's manager, `/api/session` through the system's authenticator,
@@ -49,9 +57,10 @@ pub fn router() -> axum::Router {
 pub fn try_router() -> Result<axum::Router, std::io::Error> {
     let mut key = [0u8; 16];
     getrandom::fill(&mut key)?;
-    Ok(router_with_session(
+    Ok(router_with_session_and_write_timeout(
         std::sync::Arc::new(system_connect),
         MANAGER_TIMEOUT,
+        WRITE_TIMEOUT,
         std::sync::Arc::new(session::SystemAuthenticator::new(std::sync::Arc::new(
             system_connect,
         ))),
@@ -103,10 +112,28 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// SipHash-2-4 of the file text keyed by it, so one router answers the same
 /// revision for the same text and another router answers another one; the
 /// service draws it at each start ([`try_router`]), which leaves every open
-/// form stale after a restart.
+/// form stale after a restart. The manager's calls of a WRITE are given the
+/// same `timeout` as the reads: the service hands its longer write limit
+/// through [`router_with_session_and_write_timeout`].
 pub fn router_with_session(
     connect: Connect,
     timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+) -> axum::Router {
+    router_with_session_and_write_timeout(connect, timeout, timeout, auth, clock, key)
+}
+
+/// `router_with_session` with the manager's calls of a WRITE given their own,
+/// longer limit: the server file's save and the preset switch run under
+/// `write_timeout`, every read keeps `timeout`, and so does the boot write and
+/// the control verbs (the control routes are handed `timeout`). A manager busy
+/// writing is not cut off at the limit that is right for a read.
+pub fn router_with_session_and_write_timeout(
+    connect: Connect,
+    timeout: std::time::Duration,
+    write_timeout: std::time::Duration,
     auth: std::sync::Arc<dyn session::Authenticator>,
     clock: session::Clock,
     key: [u8; 16],
@@ -126,7 +153,7 @@ pub fn router_with_session(
               body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
             server::save(
                 connect.clone(),
-                timeout,
+                write_timeout,
                 sessions.clone(),
                 id,
                 headers,
@@ -148,7 +175,7 @@ pub fn router_with_session(
               body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
             presets::set_enabled(
                 connect.clone(),
-                timeout,
+                write_timeout,
                 sessions.clone(),
                 id,
                 headers,
