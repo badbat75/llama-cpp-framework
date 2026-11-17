@@ -151,6 +151,16 @@ Lessons only: the rules are in `AGENTS.md`.
   only the GNU-target clippy shows it. Name it in the `cfg(not(unix))` branch (`let _ = (file, group);`).
 - `pai_core::ini::atomic_write` sets no mode or group: the manager writes its served files through
   `service::write_served_file` (0640 + group `private-ai` for `server@<id>.ini`, 0644 for the presets).
+- `ini::text` writers share one geometry, no second scanner: `find_section_header` (span ends at `]`),
+  the body from the first `\n` after it, `next_section_start(content, header_end)` as the end (scan from
+  `header_end`, never from the body start: an empty body would splice into the NEXT section).
+  `body_start <= body_end` always, so an empty body needs no clamp and the key lands in its section.
+  The key-line matcher is `line_starts_with_key` (any case, `=` after the name, so `ctx-size-draft` is
+  not `ctx-size`). `detect_eol` returns `&'static str`, so a helper picking a line's ending takes
+  `eol: &'static str` (a plain `&str` fails to compile).
+- A test-name filter is a substring over the whole path: `remove_key set_key` also matches
+  `checks::tests::preset_keys_with_no_check_today_pass` ("preSET_KEYs"), so a 13-test red list turns
+  into a 14-test green list. Count the names, not the number.
 - clippy's `items_after_test_module` looks only at the FIRST `#[cfg(test)]` module of a file and stays
   quiet when a `mod` follows it: turning a leading `#[cfg(test)] mod fake` into
   `cfg(any(test, feature = ...))` made it fire on the `mod tests` with e2e phases after it.
@@ -894,3 +904,8 @@ Lessons only: the rules are in `AGENTS.md`.
   fix is to append the real `ZETA` text to that fixture (its doc comment says that is what it holds).
   Rule a pinned constant by hashing the fixture's bytes with a script that first passes a published
   vector, before changing the code.
+- Two assertions on the same slice can be unsatisfiable together: `set_key`'s header-only test pins
+  `rest.starts_with('\n')` (a break after the header) and then
+  `rest.trim_end_matches(['\r','\n']) == "n-cpu-moe = 8"`, and a trim at the END leaves a leading
+  break in place, so no writer passes both. Report the exact pair and the fix (`trim_matches`, both
+  ends); the writer is judged by the assertions that CAN hold.

@@ -104,7 +104,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
   (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
   compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`); a `///` on a `let`
-  (a closure helper inside an e2e fn) is `unused_doc_comments`, use `//`.
+  (a closure helper inside an e2e fn) is `unused_doc_comments`, use `//`; `out.push_str(*line)` over a
+  `&[&str]` (`explicit_auto_deref`: write `out.push_str(line)`, the argument coerces on its own).
+- A cargo filter is a SUBSTRING, so a new test name can drag in an old one: `-- remove_key set_key`
+  also ran `preset_keys_with_no_check_today_pass` (`preset_keys` holds `set_key`). Account for every
+  non-red line by name, and name new tests so they cannot collide with an existing name.
 - `cargo test` takes ONE filter as its positional; further names are "unexpected argument". Several
   filters go after `--` (above); a filter that matches only bins prints "0 tests" noise: add `--lib`.
 - `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
@@ -355,6 +359,31 @@ Lessons only: the rules are in `AGENTS.md`.
    forbid-needle (`"fn <fn>("`): report which line reds.
 
 ## Text pins and source lints
+
+- A byte-exact text transform: build the fixtures from lines (`fn file_of(lines: &[&str], eol: &str)`)
+  and loop the test over `["\n", "\r\n"]`, so both ending styles and the "no CR in an LF file" pin share
+  one body; gate that last assert on `eol == "\n"` (it reds by construction on a CRLF fixture). Count the
+  lines a writer matches with the module's own predicate (`text.lines().filter(|l| line_starts_with_key(l, key)).count()`),
+  so "exactly one line remains" is pinned by the same rule the writer uses, not a re-spelled one.
+
+- A coordinator's decision that changes ONE rule of a writer (the INI `set_key`: an equal value returns
+  the text byte for byte, a rewritten line keeps its OWN ending) leaves the writer's other paths alone:
+  the append path is NOT covered, so an appended last line keeps taking the file's ending (the pre-existing
+  pin of the last-line-header test says so), and a new key lands after the section's LAST real line, not
+  after the sibling you were thinking of. Read the sibling pins of the same function before writing an
+  expectation the decision does not name; two guesses of mine were wrong in one run.
+- A pin of "prefix, one break of an unpinned style, the content": a `trim_end_matches(['\r','\n'])` on the
+  slice taken after the prefix cannot remove the LEADING break, so a `rest.starts_with('\n')` assert beside
+  it is a contradiction and the test is red by construction (red reads `left: "\r\nn-cpu-moe = 8"`). Trim
+  BOTH ends (`trim_matches(['\r','\n'])`) for the content, and keep the break's presence in its own assert.
+- Proving each assert of a multi-assert test reds for its own reason (scratch copy, `//` the predecessors,
+  `cmp` back): a block is the `let fixture = ..` statement AND the `assert_eq!` that follows it, each
+  ended by a paren-balance walk. Commenting the `let` alone leaves its assert live, every variant dies as
+  `E0425: cannot find value` and prints no `test result` line. An assert that only passes when an earlier
+  one of its own fixture group is live is the same trap.
+- In a slice under a coordinator's decision, some reds in the filter are the PRE-EXISTING tests (the
+  previous slice's red the reviewer is now extending: `set_key` glued an appended key to a final-line
+  header). Say which reds predate your edits; `git diff` cannot tell them in a tree a coder left dirty.
 
 - A pin that a source literal IS a text constant of another crate (the bff's disabled-file header, the
   configurator's `DISABLED_FILE_HEADER`): extract the raw literal, then DECODE it before comparing

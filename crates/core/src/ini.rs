@@ -16,10 +16,15 @@
 //!   `;`/`#` simply cannot occur inside a value, and a writer that emits one
 //!   produces a value llama-server would truncate anyway. Writers must also
 //!   emit trimmed values or break round-trips.
-//! - Writers preserve the file's existing line endings (per line on
-//!   replace_key's replace path, detected once everywhere else; section
-//!   bodies arrive CRLF from the renderers and are converted to the file's
-//!   style); brand-new content defaults to CRLF.
+//! - Writers preserve the file's existing line endings (per line on the
+//!   replace_key and set_key replace paths, detected once everywhere else; a
+//!   rewritten line that has no ending of its own, the file's last line, stays
+//!   unterminated on set_key); section bodies arrive CRLF from the renderers
+//!   and are converted to the file's style; brand-new content defaults to CRLF.
+//! - `set_key` returns the text byte for byte when the key already reads as
+//!   the value it is asked to write (it sits once in the section, its value
+//!   read as `parse_sections` reads it), so a caller that writes only when the
+//!   text changes writes nothing; `replace_key` always rewrites.
 //! - `atomic_write` (sibling temp file + FSYNC + rename) is the canonical write
 //!   path: every config writer in the crate funnels through it. The sync is not
 //!   belt-and-braces, it is the difference between atomicity and DURABILITY, and
@@ -103,6 +108,15 @@ pub fn parse_sections(text: &str) -> Vec<Section> {
 fn strip_inline_comment(val: &str) -> &str {
     let end = val.find([';', '#']).unwrap_or(val.len());
     val[..end].trim_end()
+}
+
+/// The value of a key line exactly as `parse_sections` reads it, so a writer
+/// that asks "does this line already say that?" answers the way the reader
+/// does. `None` for a line with no `=`.
+fn value_of_line(line: &str) -> Option<&str> {
+    let t = line.trim();
+    let eq = t.find('=')?;
+    Some(strip_inline_comment(t[eq + 1..].trim()))
 }
 
 /// Save-boundary guard for the comment rule above: the format has NO escaping,
@@ -205,7 +219,33 @@ pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
 /// returns the content to write.
 pub mod text {
     use super::{detect_eol, find_section_header, line_start_of, next_section_start};
-    use super::{line_starts_with_key, normalize_eol, strings};
+    use super::{line_starts_with_key, normalize_eol, strings, value_of_line};
+
+    /// The line ending a rewritten key line gets: the one the line already has,
+    /// so a CRLF file keeps CRLF per line; an unterminated final line has none
+    /// to preserve, so it takes the file's detected style, never a hardcoded
+    /// `\n` that would mix endings into a CRLF file.
+    fn line_eol(line: &str, eol: &'static str) -> &'static str {
+        if line.ends_with("\r\n") {
+            "\r\n"
+        } else if line.ends_with('\n') {
+            "\n"
+        } else {
+            eol
+        }
+    }
+
+    /// Where a section's body starts (the first byte after its header's line
+    /// ending) and whether that header has no line ending of its own because it
+    /// is the file's last line: a writer splicing a body in front of it adds one
+    /// there, so an appended key starts on its own line instead of glued to the
+    /// `]`.
+    fn body_start_of(content: &str, header_end: usize) -> (usize, bool) {
+        match content[header_end..].find('\n') {
+            Some(n) => (header_end + n + 1, false),
+            None => (content.len(), true),
+        }
+    }
 
     /// `content` with one key replaced inside the named section (inserted,
     /// with the section when that is missing too).
@@ -234,10 +274,7 @@ pub mod text {
         // Body starts after the header's newline; a header that is the file's
         // last line (no terminator) gets one added at the splice below so the
         // appended key starts on its own line instead of glued to the `]`.
-        let (section_start, header_needs_eol) = match content[header_end..].find('\n') {
-            Some(n) => (header_end + n + 1, false),
-            None => (content.len(), true),
-        };
+        let (section_start, header_needs_eol) = body_start_of(content, header_end);
         // Scan from header_end (like replace_section / delete_section), NOT from
         // section_start: next_section_start only sees a header on a line AFTER a
         // '\n' at/beyond `from`, so scanning from the body start skips a
@@ -253,16 +290,7 @@ pub mod text {
             // line_starts_with_key does its own trim_start.
             if !replaced && line_starts_with_key(line, key) {
                 new_body.push_str(&new_line);
-                // An unterminated final line has no ending to preserve: fall
-                // back to the file's detected EOL, not a hardcoded `\n` that
-                // would mix endings into a CRLF file.
-                new_body.push_str(if line.ends_with("\r\n") {
-                    "\r\n"
-                } else if line.ends_with('\n') {
-                    "\n"
-                } else {
-                    eol
-                });
+                new_body.push_str(line_eol(line, eol));
                 replaced = true;
             } else {
                 new_body.push_str(line);
@@ -377,6 +405,105 @@ pub mod text {
             out.replace("\r\n\r\n\r\n", "\r\n\r\n")
                 .replace("\n\n\n", "\n\n"),
         )
+    }
+
+    /// `content` with every line of `key` inside the named section dropped, its
+    /// line ending with it, every other byte kept. A key line counts the way
+    /// `replace_key` counts one (any letter case, never a comment line, never a
+    /// longer key such as `ctx-size-draft`), and only inside the named section:
+    /// the same key in another section stays. An absent section or an absent
+    /// key leaves the text equal.
+    pub fn remove_key(content: &str, section: &str, key: &str) -> String {
+        let Some((_, header_end)) = find_section_header(content, section) else {
+            return content.to_string();
+        };
+        // Scan from the header's end (as replace_key does), so the section's
+        // span ends at the neighbour header sitting on the very next line.
+        let body_end = next_section_start(content, header_end).unwrap_or(content.len());
+        let mut out = String::with_capacity(content.len());
+        out.push_str(&content[..header_end]);
+        for line in content[header_end..body_end].split_inclusive('\n') {
+            if !line_starts_with_key(line, key) {
+                out.push_str(line);
+            }
+        }
+        out.push_str(&content[body_end..]);
+        out
+    }
+
+    /// `content` with `key` set to `value` inside the named section. The named
+    /// section must exist: an absent one leaves the text equal (the caller
+    /// answers a preset that is not there, it does not create one).
+    ///
+    /// A key the section holds exactly once, whose value read the way
+    /// `parse_sections` reads it (the text after the first `=`, trimmed, with
+    /// everything from the first `;`/`#` dropped as an inline comment) equals
+    /// `value`, already has that value: the text comes back byte for byte, so
+    /// the line keeps its indentation, its spacing, its inline comment and the
+    /// letter case it is spelled in, and an unterminated final line stays
+    /// unterminated. When the value differs the line is rewritten whole as
+    /// `key = value`, the value as given, and keeps its own line ending: an
+    /// unterminated final line stays unterminated. A key occurring more than
+    /// once is always collapsed onto the first occurrence, even when every copy
+    /// already holds the value, and a key the section does not have is appended
+    /// where `replace_key` appends it.
+    pub fn set_key(content: &str, section: &str, key: &str, value: &str) -> String {
+        let Some((_, header_end)) = find_section_header(content, section) else {
+            return content.to_string();
+        };
+        let eol = detect_eol(content);
+        let new_line = format!("{key} = {value}");
+        // The body starts after the header's own line ending and ends at the
+        // next header's line, the way replace_key scopes it: an appended key
+        // lands in this section, never past the next one.
+        let (body_start, header_needs_eol) = body_start_of(content, header_end);
+        let body_end = next_section_start(content, header_end).unwrap_or(content.len());
+
+        // The equal-value check: one line of the key, read as the reader reads
+        // it, is nothing to write, and the caller writes no file at all.
+        let mut lines = content[body_start..body_end]
+            .split_inclusive('\n')
+            .filter(|line| line_starts_with_key(line, key));
+        if let Some(line) = lines.next() {
+            if lines.next().is_none() && value_of_line(line) == Some(value) {
+                return content.to_string();
+            }
+        }
+
+        let mut new_body = String::new();
+        let mut set = false;
+        for line in content[body_start..body_end].split_inclusive('\n') {
+            if !line_starts_with_key(line, key) {
+                new_body.push_str(line);
+            } else if !set {
+                new_body.push_str(&new_line);
+                // The line's OWN ending, and nothing when it has none: the
+                // rewrite of an unterminated final line leaves it unterminated.
+                new_body.push_str(&line[line.trim_end_matches(['\r', '\n']).len()..]);
+                set = true;
+            }
+        }
+        if !set {
+            // No such key here: append it after the section's last real line,
+            // `tail` keeping the body's trailing blank lines, so the separator
+            // in front of the next header is neither lost nor doubled.
+            let trimmed = new_body.trim_end_matches(['\r', '\n']);
+            let tail = &new_body[trimmed.len()..];
+            new_body = if trimmed.is_empty() {
+                format!("{new_line}{eol}{tail}")
+            } else {
+                format!("{trimmed}{eol}{new_line}{tail}")
+            };
+        }
+
+        let mut out = String::with_capacity(content.len() + new_line.len());
+        out.push_str(&content[..body_start]);
+        if header_needs_eol {
+            out.push_str(eol);
+        }
+        out.push_str(&new_body);
+        out.push_str(&content[body_end..]);
+        out
     }
 }
 
@@ -962,6 +1089,691 @@ mod tests {
             project_url_of(&sections[1].comments),
             "",
             "a section without the comment"
+        );
+    }
+
+    // ── The preset save's in-place edits (text::set_key / text::remove_key) ──
+    //
+    // The web's save changes only the edited lines and keeps the rest of the
+    // file byte for byte: `set_key` rewrites one line, `remove_key` drops the
+    // key's lines, and a key written more than once collapses to the one line
+    // every reader reads.
+
+    /// A file of these lines, each one terminated by `eol`.
+    fn file_of(lines: &[&str], eol: &str) -> String {
+        let mut out = String::new();
+        for line in lines {
+            out.push_str(line);
+            out.push_str(eol);
+        }
+        out
+    }
+
+    /// The lines of `text` the writers count as `key`, the way `replace_key`
+    /// counts them.
+    fn key_line_count(text: &str, key: &str) -> usize {
+        text.lines()
+            .filter(|l| line_starts_with_key(l, key))
+            .count()
+    }
+
+    #[test]
+    fn remove_key_drops_every_line_of_the_key() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "; tuned by hand",
+                "ctx-size = 4096",
+                "CTX-SIZE = 8192",
+                "   ctx-size = 123",
+                "ctx-size=7 ; note",
+                "; ctx-size = 9",
+                "ctx-size-draft = 512",
+                "other = 1",
+                "",
+                "[beta]",
+                "ctx-size = 42",
+            ],
+            "\r\n",
+        );
+        let out = text::remove_key(&text, "alpha", "ctx-size");
+        assert_eq!(
+            out,
+            file_of(
+                &[
+                    "[alpha]",
+                    "; tuned by hand",
+                    "; ctx-size = 9",
+                    "ctx-size-draft = 512",
+                    "other = 1",
+                    "",
+                    "[beta]",
+                    "ctx-size = 42",
+                ],
+                "\r\n",
+            ),
+            "every line of the key goes (any case, indented, unspaced around the \
+             `=`) with its ending, and the comment naming it, the longer key, the \
+             blank separator and the other section's own line all stay"
+        );
+        let sections = parse_sections(&out);
+        assert!(!sections[0].keys.contains_key("ctx-size"));
+        assert_eq!(sections[1].keys["ctx-size"], "42");
+        assert_eq!(key_line_count(&out, "ctx-size"), 1);
+    }
+
+    #[test]
+    fn remove_key_keeps_the_files_line_ending_style() {
+        for eol in ["\n", "\r\n"] {
+            let text = file_of(
+                &["[alpha]", "ctx-size = 4096", "ctx-size = 8192", "other = 1"],
+                eol,
+            );
+            let out = text::remove_key(&text, "alpha", "ctx-size");
+            assert_eq!(out, file_of(&["[alpha]", "other = 1"], eol));
+            if eol == "\n" {
+                assert!(!out.contains('\r'), "an LF-only file gained a CR");
+            }
+        }
+    }
+
+    #[test]
+    fn remove_key_of_an_absent_key_or_section_leaves_the_text_equal() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "; tuned by hand",
+                "other = 1",
+                "",
+                "[beta]",
+                "ctx-size = 42",
+            ],
+            "\r\n",
+        );
+        assert_eq!(
+            text::remove_key(&text, "alpha", "ctx-size"),
+            text,
+            "the key is only in the other section"
+        );
+        assert_eq!(
+            text::remove_key(&text, "gamma", "ctx-size"),
+            text,
+            "no such section"
+        );
+        assert_eq!(text::remove_key("", "alpha", "ctx-size"), "", "empty text");
+    }
+
+    // The file's last line has no ending of its own: the key's line goes with
+    // its ending, and the section header is never touched.
+    #[test]
+    fn remove_key_of_the_last_line_of_the_last_section() {
+        for eol in ["\n", "\r\n"] {
+            let with_break = file_of(&["[alpha]", "k = 1", "ctx-size = 4096"], eol);
+            assert_eq!(
+                text::remove_key(&with_break, "alpha", "ctx-size"),
+                file_of(&["[alpha]", "k = 1"], eol),
+                "the file keeps a final break"
+            );
+            let without = with_break.strip_suffix(eol).unwrap();
+            assert_eq!(
+                text::remove_key(without, "alpha", "ctx-size"),
+                file_of(&["[alpha]", "k = 1"], eol),
+                "a final line with no break of its own"
+            );
+            assert_eq!(
+                text::remove_key(
+                    &file_of(&["[alpha]", "ctx-size = 4096"], eol),
+                    "alpha",
+                    "ctx-size"
+                ),
+                format!("[alpha]{eol}"),
+                "the header stays"
+            );
+        }
+    }
+
+    // `read_all` trims the name inside the brackets and the line around them,
+    // so an indented `[ Alpha ]` IS the section the reader lists: the writers
+    // edit it there, and stop at the next (also indented) header.
+    #[test]
+    fn remove_key_takes_the_section_the_reader_finds() {
+        let text = file_of(
+            &[
+                "  [ Alpha ]",
+                "ctx-size = 4096",
+                "k = 1",
+                "  [beta]",
+                "ctx-size = 42",
+            ],
+            "\r\n",
+        );
+        assert_eq!(
+            text::remove_key(&text, "alpha", "ctx-size"),
+            file_of(
+                &["  [ Alpha ]", "k = 1", "  [beta]", "ctx-size = 42"],
+                "\r\n"
+            )
+        );
+    }
+
+    #[test]
+    fn remove_key_edits_only_the_first_of_a_repeated_section() {
+        // Two `[a]` headers are not mended here (the manager refuses the write
+        // with `preset-name-taken`), so the second copy is left as it is.
+        let text = file_of(&["[a]", "ctx-size = 1", "[A]", "ctx-size = 2"], "\r\n");
+        assert_eq!(
+            text::remove_key(&text, "a", "ctx-size"),
+            file_of(&["[a]", "[A]", "ctx-size = 2"], "\r\n")
+        );
+    }
+
+    #[test]
+    fn set_key_rewrites_only_the_edited_line() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "; keep me",
+                "  Port   =   8080   ; hand note",
+                "Host = localhost",
+                "",
+                "[beta]",
+                "Port = 1",
+            ],
+            "\r\n",
+        );
+        assert_eq!(
+            text::set_key(&text, "alpha", "Port", "9090"),
+            file_of(
+                &[
+                    "[alpha]",
+                    "; keep me",
+                    "Port = 9090",
+                    "Host = localhost",
+                    "",
+                    "[beta]",
+                    "Port = 1",
+                ],
+                "\r\n",
+            ),
+            "the edited line is rewritten whole as `key = value` (its indentation, \
+             its spacing and its inline comment go with it, as the design says), \
+             its own ending stays, the comment line above stays, and the same key \
+             in the other section is untouched"
+        );
+    }
+
+    #[test]
+    fn set_key_keeps_the_files_line_ending_style() {
+        // Replacing an existing key and appending a new one in an LF-only file.
+        let text = file_of(&["[alpha]", "Port = 8080", "", "[beta]", "k = 2"], "\n");
+        let out = text::set_key(&text, "alpha", "Port", "9090");
+        let out = text::set_key(&out, "alpha", "n-cpu-moe", "8");
+        assert_eq!(
+            out,
+            file_of(
+                &[
+                    "[alpha]",
+                    "Port = 9090",
+                    "n-cpu-moe = 8",
+                    "",
+                    "[beta]",
+                    "k = 2"
+                ],
+                "\n"
+            )
+        );
+        // A rewritten final line keeps its OWN ending: an unterminated last
+        // line stays unterminated, the rewrite only replaces the line's text.
+        assert_eq!(
+            text::set_key("[a]\r\nPort = 1", "a", "Port", "9"),
+            "[a]\r\nPort = 9"
+        );
+        assert_eq!(
+            text::set_key("[a]\nPort = 1", "a", "Port", "9"),
+            "[a]\nPort = 9"
+        );
+    }
+
+    // The readers take the LAST line of a key (llama-server the same), so the
+    // page shows 3 here; after the edit exactly one line stands, at the first's
+    // place, carrying the written value. A line of the key in another letter
+    // case is an occurrence and goes too.
+    #[test]
+    fn set_key_collapses_a_repeated_key_onto_the_first() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "; note above",
+                "ctx-size = 1",
+                "CTX-SIZE = 2",
+                "ctx-size = 3 ; last",
+                "other = 9",
+            ],
+            "\r\n",
+        );
+        let out = text::set_key(&text, "alpha", "ctx-size", "4096");
+        assert_eq!(
+            out,
+            file_of(
+                &["[alpha]", "; note above", "ctx-size = 4096", "other = 9"],
+                "\r\n"
+            ),
+            "the first keeps its place, every other line of the key goes"
+        );
+        assert_eq!(key_line_count(&out, "ctx-size"), 1);
+        assert_eq!(parse_sections(&out)[0].keys["ctx-size"], "4096");
+        // The only line in another case is the one that is set, and it takes the
+        // spelling the caller asked for (the readers key on the exact name).
+        assert_eq!(
+            text::set_key("[alpha]\r\nCTX-SIZE = 1\r\n", "alpha", "ctx-size", "9"),
+            "[alpha]\r\nctx-size = 9\r\n"
+        );
+    }
+
+    #[test]
+    fn set_key_appends_a_new_key_inside_the_section() {
+        // The new line sits after the section's last real line, before its
+        // trailing blank lines, and never past the next section's header.
+        let text = file_of(&["[alpha]", "k = 1", "", "[beta]", "k = 2"], "\r\n");
+        assert_eq!(
+            text::set_key(&text, "alpha", "n-cpu-moe", "8"),
+            file_of(
+                &["[alpha]", "k = 1", "n-cpu-moe = 8", "", "[beta]", "k = 2"],
+                "\r\n"
+            )
+        );
+        // An empty body: the key lands in the section, not in the next one.
+        assert_eq!(
+            text::set_key("[alpha]\r\n[beta]\r\nk = 2\r\n", "alpha", "n", "9"),
+            "[alpha]\r\nn = 9\r\n[beta]\r\nk = 2\r\n"
+        );
+    }
+
+    // A section header sitting on the file's LAST line has no line ending of
+    // its own. An absent key appended under it must start on its own line,
+    // never glued to the `]` (the header's terminator is added, as
+    // `replace_key` does), and the reader must find the key in that section.
+    #[test]
+    fn set_key_of_an_absent_key_under_a_last_line_header() {
+        // An LF file: the break in front of the key, and the one closing it,
+        // are the file's LF, no CR smuggled in.
+        let text = format!("{}[Sec]", file_of(&["[alpha]", "k = 1"], "\n"));
+        let out = text::set_key(&text, "Sec", "n-cpu-moe", "8");
+        assert_eq!(
+            out,
+            file_of(&["[alpha]", "k = 1", "[Sec]", "n-cpu-moe = 8"], "\n"),
+            "the header line keeps its own line, the key follows on the next"
+        );
+        let sections = parse_sections(&out);
+        assert_eq!(sections.last().expect("the Sec section").id, "Sec");
+        assert_eq!(
+            sections.last().expect("the Sec section").keys["n-cpu-moe"],
+            "8",
+            "the key is read in the section it was written to"
+        );
+
+        // The same header as the file's last line, in a CRLF file (every other
+        // line CRLF): the break between the header and the appended key is the
+        // file's CRLF, and the key's own line takes it as the file's ending
+        // (the append path's rule, the one the LF case above pins).
+        let text = format!("{}[Sec]", file_of(&["[alpha]", "k = 1"], "\r\n"));
+        let out = text::set_key(&text, "Sec", "n-cpu-moe", "8");
+        assert_eq!(
+            out,
+            file_of(&["[alpha]", "k = 1", "[Sec]", "n-cpu-moe = 8"], "\r\n"),
+            "the appended key is separated from the header by the file's CRLF"
+        );
+        let sections = parse_sections(&out);
+        assert_eq!(sections.last().expect("the Sec section").id, "Sec");
+        assert_eq!(
+            sections.last().expect("the Sec section").keys["n-cpu-moe"],
+            "8",
+            "the key is read in the section it was written to"
+        );
+
+        // A file whose only line is the header has no line break at all, so
+        // nothing to detect a style from: the writer still puts a break of its
+        // default style between the header and the key. Which break (CRLF, as
+        // `detect_eol` answers for content with no newline, the way
+        // `replace_key` does, or LF) is not pinned here, only that one is
+        // there and the header survives.
+        const HEADER: &str = "[Sec]";
+        let out = text::set_key(HEADER, "Sec", "n-cpu-moe", "8");
+        assert!(out.starts_with(HEADER), "the header line: {out:?}");
+        let rest = &out[HEADER.len()..];
+        assert!(
+            rest.starts_with('\n') || rest.starts_with("\r\n"),
+            "no line break between the header and the key: {out:?}"
+        );
+        assert_eq!(
+            rest.trim_matches(['\r', '\n']),
+            "n-cpu-moe = 8",
+            "the key line, between the breaks: {out:?}"
+        );
+        assert_eq!(key_line_count(&out, "n-cpu-moe"), 1);
+        let sections = parse_sections(&out);
+        assert_eq!(sections.len(), 1, "one section: {out:?}");
+        assert_eq!(sections[0].id, "Sec", "{out:?}");
+        assert_eq!(sections[0].keys["n-cpu-moe"], "8", "{out:?}");
+    }
+
+    #[test]
+    fn set_key_leaves_an_absent_section_untouched() {
+        // The route answers a preset that is in neither file before it edits
+        // anything, so this transform creates no section (`replace_key` does).
+        let text = file_of(&["[alpha]", "k = 1"], "\r\n");
+        assert_eq!(
+            text::set_key(&text, "beta", "k", "2"),
+            text,
+            "byte for byte"
+        );
+        assert_eq!(text::set_key("", "beta", "k", "2"), "", "empty text");
+    }
+
+    #[test]
+    fn set_key_of_the_value_the_key_already_has_is_the_text_unchanged() {
+        for eol in ["\n", "\r\n"] {
+            let text = file_of(&["[alpha]", "ctx-size = 4096", ""], eol);
+            assert_eq!(
+                text::set_key(&text, "alpha", "ctx-size", "4096"),
+                text,
+                "the route writes nothing when the text comes back equal"
+            );
+        }
+    }
+
+    #[test]
+    fn set_key_writes_the_value_as_it_is_given() {
+        // Trimming the value and refusing `;`/`#` are the route's rules; this
+        // transform checks nothing, so the value it is handed is the value that
+        // lands after `key =`.
+        assert_eq!(
+            text::set_key("[a]\r\nPort = 1\r\n", "a", "Port", " 9 "),
+            "[a]\r\nPort =  9 \r\n"
+        );
+        assert_eq!(
+            text::set_key("[a]\r\nPort = 1\r\n", "a", "Port", "C:/Models #1"),
+            "[a]\r\nPort = C:/Models #1\r\n"
+        );
+    }
+
+    // "Already has that value" is compared the way the parser READS the line:
+    // the value with any inline comment cut at the first `;`/`#` and trimmed.
+    // When the key sits exactly once in the section and that reading equals
+    // the value given, the text comes back byte for byte: the line is NOT
+    // canonicalised, its indentation, spacing, inline comment, and the
+    // spelling of its key all stay.
+    #[test]
+    fn set_key_of_an_equal_value_returns_the_text_byte_for_byte() {
+        for eol in ["\n", "\r\n"] {
+            let canonical = file_of(&["[alpha]", "Port = 9090", "Host = localhost"], eol);
+            assert_eq!(
+                text::set_key(&canonical, "alpha", "Port", "9090"),
+                canonical,
+                "the canonical line is not rewritten at all"
+            );
+
+            let commented = file_of(
+                &["[alpha]", "Port = 9090 ; hand note", "Host = localhost"],
+                eol,
+            );
+            assert_eq!(
+                text::set_key(&commented, "alpha", "Port", "9090"),
+                commented,
+                "the value read is `9090`, the inline comment stays"
+            );
+
+            let spaced = file_of(
+                &[
+                    "[alpha]",
+                    "  Port\t=  9090  ; hand note",
+                    "Host = localhost",
+                ],
+                eol,
+            );
+            assert_eq!(
+                text::set_key(&spaced, "alpha", "Port", "9090"),
+                spaced,
+                "indentation, tabs and spacing are kept, not canonicalised"
+            );
+
+            let upper = file_of(&["[alpha]", "PORT = 9090", "Host = localhost"], eol);
+            assert_eq!(
+                text::set_key(&upper, "alpha", "Port", "9090"),
+                upper,
+                "the line is kept as the file spells it"
+            );
+        }
+        // The file's last line has no ending of its own: the text, ending
+        // included, comes back as it was.
+        let last = "[alpha]\nPort = 9090";
+        assert_eq!(
+            text::set_key(last, "alpha", "Port", "9090"),
+            last,
+            "the unterminated final line stays unterminated"
+        );
+    }
+
+    // When the value DOES differ, the line is rewritten whole as `key = value`
+    // (the decision the sibling test pins: only an equal value is untouched),
+    // and the rewritten line keeps its own ending.
+    #[test]
+    fn set_key_of_a_changed_value_keeps_the_last_lines_own_ending() {
+        let text = file_of(
+            &["[alpha]", "Port = 9090 ; hand note", "Host = localhost"],
+            "\n",
+        );
+        assert_eq!(
+            text::set_key(&text, "alpha", "Port", "8080"),
+            file_of(&["[alpha]", "Port = 8080", "Host = localhost"], "\n"),
+            "a changed value rewrites the line whole, comment included"
+        );
+        assert_eq!(
+            text::set_key("[a]\nPort = 1 ; note", "a", "Port", "9"),
+            "[a]\nPort = 9",
+            "the unterminated final line stays unterminated"
+        );
+    }
+
+    // A key that occurs more than once is collapsed onto the first occurrence
+    // even when every copy already holds the value: "nothing to write" is only
+    // true of a key that sits exactly once in the section.
+    #[test]
+    fn set_key_collapses_a_repeated_key_even_when_the_values_match() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "ctx-size = 4096",
+                "CTX-SIZE = 4096 ; note",
+                "other = 9",
+            ],
+            "\r\n",
+        );
+        let out = text::set_key(&text, "alpha", "ctx-size", "4096");
+        assert_eq!(
+            out,
+            file_of(&["[alpha]", "ctx-size = 4096", "other = 9"], "\r\n"),
+            "one line stands, at the first's place"
+        );
+        assert_eq!(key_line_count(&out, "ctx-size"), 1);
+    }
+
+    // Blank and comment lines are not lines of the key: a collapse keeps every
+    // one of them, wherever it sits.
+    #[test]
+    fn set_key_keeps_the_blank_and_comment_lines_between_duplicates() {
+        let text = file_of(
+            &[
+                "[alpha]",
+                "ctx-size = 1",
+                "",
+                "; a note between the two",
+                "ctx-size = 2",
+                "other = 9",
+            ],
+            "\r\n",
+        );
+        assert_eq!(
+            text::set_key(&text, "alpha", "ctx-size", "4096"),
+            file_of(
+                &[
+                    "[alpha]",
+                    "ctx-size = 4096",
+                    "",
+                    "; a note between the two",
+                    "other = 9",
+                ],
+                "\r\n",
+            )
+        );
+    }
+
+    // A key is matched as a whole name, not as a prefix: `keyboard` is not a
+    // line of `key` (the same rule as `ctx-size-draft`).
+    #[test]
+    fn set_key_and_remove_key_of_key_leave_a_longer_key_alone() {
+        let text = file_of(&["[alpha]", "keyboard = 1", "other = 2"], "\r\n");
+        assert_eq!(
+            text::set_key(&text, "alpha", "key", "9"),
+            file_of(&["[alpha]", "keyboard = 1", "other = 2", "key = 9"], "\r\n"),
+            "the new line lands after the section's last real line, `keyboard` untouched"
+        );
+        assert_eq!(
+            text::remove_key(&text, "alpha", "key"),
+            text,
+            "nothing to drop: the section has no `key`"
+        );
+    }
+
+    // The key and value spans are byte counts into a line: every name and
+    // value here is multi-byte UTF-8.
+    #[test]
+    fn set_key_and_remove_key_in_a_section_with_non_ascii_text() {
+        let text = file_of(
+            &[
+                "[café]",
+                ";注释",
+                "名字 = Café",
+                "ctx-size = 4096",
+                "notes = Ω 日本語",
+            ],
+            "\r\n",
+        );
+        assert_eq!(
+            text::remove_key(&text, "café", "名字"),
+            file_of(
+                &["[café]", ";注释", "ctx-size = 4096", "notes = Ω 日本語"],
+                "\r\n"
+            ),
+            "the non-ASCII key's line goes, its neighbour stays"
+        );
+        assert_eq!(
+            text::set_key(&text, "café", "ctx-size", "8192"),
+            file_of(
+                &[
+                    "[café]",
+                    ";注释",
+                    "名字 = Café",
+                    "ctx-size = 8192",
+                    "notes = Ω 日本語"
+                ],
+                "\r\n",
+            ),
+            "the multi-byte value three lines away is not touched"
+        );
+        assert_eq!(
+            text::set_key(&text, "café", "名字", "日本語"),
+            file_of(
+                &[
+                    "[café]",
+                    ";注释",
+                    "名字 = 日本語",
+                    "ctx-size = 4096",
+                    "notes = Ω 日本語"
+                ],
+                "\r\n",
+            ),
+            "a non-ASCII key and value are rewritten as given"
+        );
+        // The equal value is byte for byte even with a multi-byte value.
+        assert_eq!(
+            text::set_key(&text, "café", "notes", "Ω 日本語"),
+            text,
+            "the section name and the value are both kept as they are"
+        );
+        // A key whose byte length lands INSIDE a multi-byte character of a
+        // line is not that line's key: the writers count bytes into a line, so
+        // this is the shape that would panic on a slice.
+        let edges = file_of(&["[café]", "aΩ = 1", "ab = 2"], "\r\n");
+        assert_eq!(
+            text::remove_key(&edges, "café", "ab"),
+            file_of(&["[café]", "aΩ = 1"], "\r\n"),
+            "only the real line goes"
+        );
+        assert_eq!(
+            text::set_key(&edges, "café", "ab", "3"),
+            file_of(&["[café]", "aΩ = 1", "ab = 3"], "\r\n"),
+            "the neighbour line is not read as `ab`"
+        );
+    }
+
+    // The reader parses `[*]` as a section named `*` (llama-server's global
+    // section), so the writers edit it like any other.
+    #[test]
+    fn set_key_and_remove_key_in_the_star_section() {
+        let text = file_of(&["[*]", "use-jinja = true", "", "[alpha]", "k = 1"], "\r\n");
+        assert_eq!(
+            text::set_key(&text, "*", "use-jinja", "false"),
+            file_of(
+                &["[*]", "use-jinja = false", "", "[alpha]", "k = 1"],
+                "\r\n"
+            )
+        );
+        assert_eq!(
+            text::remove_key(&text, "*", "use-jinja"),
+            file_of(&["[*]", "", "[alpha]", "k = 1"], "\r\n")
+        );
+        assert_eq!(
+            text::set_key(&text, "alpha", "k", "1"),
+            text,
+            "the guard: the equal value in the real section comes back untouched"
+        );
+    }
+
+    // The writers take the FIRST section the reader finds; two headers of one
+    // name are not mended here (the manager refuses the write).
+    #[test]
+    fn set_key_edits_only_the_first_of_a_repeated_section() {
+        let text = file_of(&["[a]", "k = 1", "[A]", "k = 2"], "\r\n");
+        assert_eq!(
+            text::set_key(&text, "a", "k", "9"),
+            file_of(&["[a]", "k = 9", "[A]", "k = 2"], "\r\n")
+        );
+    }
+
+    // The body of a section with no keys: the new line lands between the two
+    // headers. The file's last line has no ending of its own, so an appended
+    // key must not be glued to that header: it starts on its own line and
+    // closes with the file's ending.
+    #[test]
+    fn set_key_on_a_last_line_header_with_an_empty_body() {
+        assert_eq!(
+            text::set_key("[a]\n[b]", "a", "k", "1"),
+            "[a]\nk = 1\n[b]",
+            "the key is inside `a`, the next header keeps its line"
+        );
+        assert_eq!(
+            text::set_key("[a]\n[b]", "b", "k", "1"),
+            "[a]\n[b]\nk = 1\n",
+            "the key is inside `b`, not glued to its header"
+        );
+        assert_eq!(
+            parse_sections(&text::set_key("[a]\n[b]", "b", "k", "1"))
+                .last()
+                .expect("b")
+                .keys["k"],
+            "1",
+            "the reader finds the key in `b`"
         );
     }
 }
