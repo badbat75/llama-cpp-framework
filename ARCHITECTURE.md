@@ -1307,7 +1307,8 @@ method has its `As` form, needs `configure`, runs under the `writing` lock and i
 
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
-| `Instances()`, no authorization | `-> a(sssqas)`: `(id, engine, server_profile, port, tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, tags}` | none; port 0 and no tags when the profile file is missing |
+| `Instances()`, no authorization | `-> a(sssqasas)`: `(id, engine, server_profile, port, instance_tags, profile_tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, instanceTags, profileTags}` | none; port 0 and no profile tags when the profile file is missing |
+| `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `instance-bad-tags` (the rule of (c)); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (not for `*`), `value` none/inherit/on/off (`*` takes none/inherit), checks 1 and 3 of (b), model file and memory once built |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `load-on-startup-over-max` |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
@@ -1333,7 +1334,8 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
 | `POST /api/profiles/server` `{"engine", "id", "port"?}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
-| `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, removable}` | as (f) |
+| `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, instanceTags, removable}`: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing | as (f) |
+| `PUT /api/instances/{id}/tags` `{"tags": [string]}` | 204 | 404 `client-no-instance`, 422 `instance-bad-tags` `field` `tags`, 400 `instance-malformed` |
 | `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use` and `load-on-startup-over-max` (`field` `serverProfile` each) |
 | `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value"}` -> 200 `{effective, running}` | as (f), keys renamed |
@@ -1381,6 +1383,23 @@ last), `client-address-in-use`, `client-instance-*`, `instance-*`, `unknown-engi
    (`server-profile-bad-id`, `client-server-profile-*`), which `profiler` never has, so grep for
    `server-profile-` (with the hyphen) or `-w`, never the bare `server-profile`.
 
+*User decisions, second round (2026-11-17):*
+
+- (a) The port stays in the server profile. A server profile is meant to be shared by instances on
+  DIFFERENT nodes (the same port on different machines); on one node it serves one instance
+  (`client-server-profile-in-use` and the single `instance` field stand). Sharing one profile across
+  nodes is the super-manager's concern (Part 2), not built now.
+- (b) Tags are on the server profile AND on the instance (`Tags` beside `ServerProfile` in its
+  `instances.ini` section, the rule of (c), new key `instance-bad-tags`); an instance shows the union,
+  the profile's tags first, then its own, duplicates dropped (`SetInstanceTags`,
+  `PUT /api/instances/{id}/tags`, the tables above).
+- (c) The instance page shows the state, Start, Stop, Restart, start at boot and the associations (one
+  server profile, the model profiles); the server form lives on the server profile's page.
+- (d) The Profiles menu entries are "Server profiles" and "Model profiles".
+- (e) After a profile save, the message names the running instances that use it (on this node at most
+  one for a server profile), each linked to its page, from the save's `running`/`instance` (server)
+  and `restart` (model); no Restart button on a profile page.
+
 Hash routes (a preference; the web UI session's designer decides): `#/profiles/server`,
 `#/profiles/server/<id>`, `#/profiles/model`, `#/profiles/model/<id>`, `#/instances/<id>`; an old
 `#/models` opens `#/profiles/model`.
@@ -1420,7 +1439,10 @@ profile waits until asked.
 8. **`SetServerProfile`**. Done when: each refusal of (d') writes nothing; a success rewrites the section
    and the next launch uses the new profile.
 9. **The model-file check** (old 5). 10. **The estimate to `pai-core`, then the memory check** (old 6).
-11. **Snapshots per instance** (old 7). 12. **Tags in the server profile** (old 8).
+11. **Snapshots per instance** (old 7). 12. **Tags** on the server profile (`[Server] Tags`) and on the instance (`Tags` in its `instances.ini`
+    section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused
+    by the rule of (c); `Instances()` returns both lists; the shown `tags` are the union, profile first,
+    deduplicated.
 13. **`Instances()`**, `GET /api/instances` and `GET /api/node` (old 9).
 14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
