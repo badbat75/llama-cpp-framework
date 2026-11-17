@@ -284,7 +284,7 @@ const TABLE_150: [
     { key: 'comment-markers', args: ['chat-template-kwargs'] },
     'text',
     en('preset-chat-kwargs'),
-    false,
+    true,
   ],
   [
     'not-a-number: args[0]',
@@ -298,7 +298,7 @@ const TABLE_150: [
     { key: 'not-json-object', args: ['chat-template-kwargs'] },
     'text',
     en('preset-chat-kwargs'),
-    false,
+    true,
   ],
   [
     'min-above-max: args[0]',
@@ -329,14 +329,14 @@ const TABLE_150: [
     { key: 'load-on-startup-over-max', args: ['3', '2'] },
     'select',
     en('preset-load-on-startup'),
-    false,
+    true,
   ],
   [
     'load-on-startup-unlimited: load-on-startup',
     { key: 'load-on-startup-unlimited', args: ['2'] },
     'select',
     en('preset-load-on-startup'),
-    false,
+    true,
   ],
   [
     'not-one-of: pooling (the one enabled control)',

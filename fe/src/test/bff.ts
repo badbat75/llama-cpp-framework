@@ -163,6 +163,8 @@ export const EN: Record<string, string> = {
     'Enter a number, such as 0.7 (a decimal comma also works).',
   'field-error-comment-markers':
     'Remove the ; and # characters: the INI file would cut the value there.',
+  'field-error-json-object':
+    'Enter one JSON object in braces, such as {"enable_thinking": false}.',
   'api-not-whole-number-in-range':
     '{0} = `{1}` is not a whole number from {2} to {3}',
   'api-comment-markers':

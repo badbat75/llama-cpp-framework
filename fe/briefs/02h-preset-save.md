@@ -470,6 +470,11 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
 166. **Chat kwargs** (`chat-template-kwargs`, Text): checked when not empty: no `;` or `#`
     (`field-error-comment-markers`, exists), then one JSON object (`JSON.parse` gives an object
     that is not an array or `null`): `field-error-json-object`. The comment check comes first.
+    A text field is changed only when its trimmed text differs from the loaded value: white space
+    alone never makes the form dirty or sends anything (133's Text row). Every editable text input
+    carries `spellcheck="false"`, `autocapitalize="off"`, `autocorrect="off"`,
+    `autocomplete="off"` and no `inputmode`: a value typed by hand, which a phone's keyboard would
+    otherwise change (curly quotes, a capital first letter). (2h.5 review, 2026-11-17.)
 167. **Cache RAM's input mode**: none (158). **Load on startup** sends per 133 (`on` `true`, `off`
     `null`); its truthy reading (2e's 122) still decides what the select shows.
 168. **Tests**: `temp` `0,7` sends `0.7`; `temp` `hot` blocks with `field-error-decimal`; kwargs

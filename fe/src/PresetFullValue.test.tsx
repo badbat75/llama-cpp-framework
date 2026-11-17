@@ -5,10 +5,11 @@
 // shared field renderer of fe/src/PresetCards.tsx, so every field of 2e.1 and
 // 2e.2 gets it. 2h.4's 160 and 2h.5's 164 keep the rule (134: the line is
 // only for a disabled control): of the Resource / context card, now
-// editable, only Unified KV can be disabled with a value, and the KV cache
-// card is editable, so the number example here is MoE cache of the
-// read-only Hardware card and the select example Reasoning effort of the
-// read-only Chat / reasoning card. The fields, their controls and
+// editable, only Unified KV can be disabled with a value, and the KV cache and
+// Advanced cards are editable, so every example here is of a card that is
+// still read-only: the number is MoE cache of the Hardware card, the text
+// Budget message of Chat / reasoning and the select Reasoning effort of the
+// same card. The fields, their controls and
 // how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
 // the route and the read are PresetPage.test.tsx. The colour and the wrap at
 // 320 px are the designer's review, not jsdom: criterion 118's style is pinned
@@ -61,7 +62,7 @@ const NUM_PAD = ' 172032000 '
 const CTX = en('preset-context-size')
 const MOE = en('preset-moe-cache')
 const REASON = en('preset-reasoning-effort')
-const KWARGS = en('preset-chat-kwargs')
+const BUDGET = en('preset-budget-message')
 /** The other editable number fields of the Resource / context card (2h.4). */
 const SLOT = en('preset-per-slot-context')
 const BATCH = en('preset-batch-size')
@@ -220,7 +221,7 @@ test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the i
 test('2e.118: the line holds the value exactly as written, for a number, a text and an unlisted select value with capitals, a leading space and trailing spaces', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_PAD,
-    'chat-template-kwargs': TEXT_21,
+    'reasoning-budget-message': TEXT_21,
     'reasoning-effort': SELECT_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
@@ -232,7 +233,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
     ).toBe(false)
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
     ['moe-cache-mib', 'number', MOE, NUM_PAD],
-    ['chat-template-kwargs', 'text', KWARGS, TEXT_21],
+    ['reasoning-budget-message', 'text', BUDGET, TEXT_21],
     ['reasoning-effort', 'select', REASON, SELECT_LONG],
   ]
   for (const [key, kind, label, value] of cases) {
@@ -266,11 +267,11 @@ test('2e.118: an unlisted select value shows on the line the text of the selecte
 test('2e.118: the line sits under its own control, after its unit, before its hint, inside its own field', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_9,
-    'chat-template-kwargs': TEXT_21,
+    'reasoning-budget-message': TEXT_21,
   })
   const cases: [string, 'number' | 'text', string, boolean][] = [
     ['moe-cache-mib', 'number', MOE, true],
-    ['chat-template-kwargs', 'text', KWARGS, false],
+    ['reasoning-budget-message', 'text', BUDGET, false],
   ]
   for (const [key, kind, label, hasUnit] of cases) {
     const field = fieldOf(main, label)
@@ -311,6 +312,10 @@ test('2e.118, 2h.160: one line per long field: each line is in its own field, a 
     // values off the lines.
     'cache-ram': NUM_9,
     'cache-type-k': SELECT_LONG,
+    // The Advanced card, editable since 2h.5's 164: the text and the off / on
+    // select show a long value the same way, so 134 keeps both off the lines.
+    'chat-template-kwargs': TEXT_21,
+    'load-on-startup': SELECT_LONG,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
   expect(lines.length, 'exactly the two long fields have a line').toBe(2)
@@ -321,6 +326,8 @@ test('2e.118, 2h.160: one line per long field: each line is in its own field, a 
     'kv-unified-per-slot',
     'cache-ram',
     'cache-type-k',
+    'chat-template-kwargs',
+    'load-on-startup',
   ])
     expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
@@ -436,12 +443,12 @@ test('2e.119: a number shows no line at 8 characters and its line at 9', async (
 test('2e.119: a text value shows no line at 20 characters and its line at 21', async () => {
   expect(TEXT_20.length, 'the text stub is 20 characters').toBe(20)
   expect(TEXT_21.length, 'the text stub is 21 characters').toBe(21)
-  const short = await page({ 'chat-template-kwargs': TEXT_20 })
-  expectNoLine(short.main, 'chat-template-kwargs')
+  const short = await page({ 'reasoning-budget-message': TEXT_20 })
+  expectNoLine(short.main, 'reasoning-budget-message')
   cleanup()
-  const long = await page({ 'chat-template-kwargs': TEXT_21 })
+  const long = await page({ 'reasoning-budget-message': TEXT_21 })
   expect(
-    lineOf(long.main, 'chat-template-kwargs').textContent,
+    lineOf(long.main, 'reasoning-budget-message').textContent,
     'the 21-character line',
   ).toBe(TEXT_21)
 })
@@ -470,12 +477,12 @@ test('2e.119: no key, no line: an empty values object shows no line on any field
 test('2e.119: a short value shows no line: a 1-character number, a short text and a select showing a short option text', async () => {
   const { main } = await page({
     parallel: '8',
-    'chat-template-kwargs': '{"short":1}',
+    'reasoning-budget-message': '{"short":1}',
     'kv-unified': 'auto',
     'reasoning-effort': 'low',
   })
   expectNoLine(main, 'parallel')
-  expectNoLine(main, 'chat-template-kwargs')
+  expectNoLine(main, 'reasoning-budget-message')
   expectNoLine(main, 'kv-unified')
   expectNoLine(main, 'reasoning-effort')
 })
@@ -485,17 +492,17 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 /** Three long fields of three kinds, the line of each. */
 const LONG = {
   'moe-cache-mib': NUM_9,
-  'chat-template-kwargs': TEXT_21,
+  'reasoning-budget-message': TEXT_21,
   'reasoning-effort': SELECT_LONG,
 }
 const SHORT = {
   'moe-cache-mib': NUM_8,
-  'chat-template-kwargs': TEXT_20,
+  'reasoning-budget-message': TEXT_20,
   'reasoning-effort': SELECT_20,
 }
 const LONG_KEYS = [
   'moe-cache-mib',
-  'chat-template-kwargs',
+  'reasoning-budget-message',
   'reasoning-effort',
 ] as const
 
@@ -550,7 +557,7 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
     [{ 'reasoning-effort': SELECT_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
-      { 'chat-template-kwargs': '{"enable_thinking":false}' },
+      { 'reasoning-budget-message': '{"enable_thinking":false}' },
       '{"enable_thinking":false}',
     ],
   ]

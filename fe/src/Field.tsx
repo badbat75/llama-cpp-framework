@@ -398,7 +398,13 @@ export function CheckListField({
   )
 }
 
-/** A path: a text input, the placeholder saying what an empty one means. */
+/** A path: a text input, the placeholder saying what an empty one means. The
+ * text is typed by hand, so nothing spells, capitalizes, autocorrects it or
+ * offers a value for it.
+ * `group`: the field is a group named by the label and the input is named by
+ * it too, as the default box's field is: how a form's text field is found
+ * and marked (2h.5's 166). Omitted: a label tied to the input, the read-only
+ * page. */
 export function TextField({
   id,
   label,
@@ -409,6 +415,7 @@ export function TextField({
   placeholder,
   unit,
   disabled,
+  group = false,
   onChange,
 }: Common & {
   value: string
@@ -417,18 +424,26 @@ export function TextField({
   unit?: string
   /** Omitted: the input is enabled. */
   disabled?: boolean
+  /** Omitted: the label is tied to the input (the read-only page). */
+  group?: boolean
   onChange: (value: string) => void
 }) {
   const unitId = unit === undefined ? undefined : `${id}-unit`
+  const Field = group ? GroupField : LabelField
   return (
-    <LabelField id={id} label={label} hint={hint} error={error} full={full}>
+    <Field id={id} label={label} hint={hint} error={error} full={full}>
       <input
         id={`${id}-control`}
         type="text"
         className="mono"
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        autoComplete="off"
         value={value}
         placeholder={placeholder}
         disabled={disabled}
+        {...(group ? { 'aria-labelledby': `${id}-label` } : {})}
         onChange={(e) => onChange(e.target.value)}
         {...describes(id, error, unitId)}
       />
@@ -437,7 +452,7 @@ export function TextField({
           {unit}
         </span>
       )}
-    </LabelField>
+    </Field>
   )
 }
 

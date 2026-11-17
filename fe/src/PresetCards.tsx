@@ -143,7 +143,7 @@ type Row =
 
 /** The rows that are a field or a note: what a group holds, and what
  * `PresetField` shows. */
-type FieldRow = Exclude<Row, GroupRow>
+export type FieldRow = Exclude<Row, GroupRow>
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
 type CardFields = { title: string; rows: Row[] }
@@ -664,12 +664,14 @@ const CARDS: CardFields[] = [
         absent: 'false',
         label: t('preset-load-on-startup'),
         hint: t('preset-load-on-startup-hint'),
+        editable: true,
       },
       {
         kind: 'text',
         key: 'chat-template-kwargs',
         label: t('preset-chat-kwargs'),
         hint: t('preset-chat-kwargs-hint'),
+        editable: true,
       },
     ],
   },
@@ -1049,6 +1051,23 @@ export function numberRows(): NumberRow[] {
   )
 }
 
+/** The text rows the form edits (2h.5's 166), in the page's order. */
+export function textRows(): TextRow[] {
+  return fieldRows().filter(
+    (one): one is TextRow => one.kind === 'text' && one.editable === true,
+  )
+}
+
+/** The rows the save checks (157, 166): the editable number and text rows, in
+ * the order the fields sit on screen, which is the order a save reports its
+ * first failure in. */
+export function checkRows(): (NumberRow | TextRow)[] {
+  return fieldRows().filter(
+    (one): one is NumberRow | TextRow =>
+      (one.kind === 'number' || one.kind === 'text') && one.editable === true,
+  )
+}
+
 /** 2h.4's 157: the range of every preset integer key, the brief's table: the
  * bounds the manager's `checks.rs` `PRESET_INT_KEYS` applies. `null` is no
  * bound; every key's value is at most `I32_MAX`, the largest number the file
@@ -1208,6 +1227,53 @@ export function numberSend(row: NumberRow, b: Boxed): string | null {
   return n === null ? b.text : String(n)
 }
 
+/** 2h.5's 166: the checks of the editable text fields, keyed by INI key, the
+ * data a later card extends with its own text keys. Each check reads the
+ * trimmed text and answers the field's error, `undefined` when the text
+ * passes. The empty text is checked by nothing, and a key with no entry here
+ * has no check. */
+const TEXT_KEYS: Record<string, (text: string) => string | undefined> = {
+  'chat-template-kwargs': (text) =>
+    // The comment markers first (166): a value holding one is cut by the INI
+    // grammar before the engine ever reads it as JSON.
+    text.includes(';') || text.includes('#')
+      ? t('field-error-comment-markers')
+      : jsonError(text),
+}
+
+/** The error of a text that is not one JSON object (166): `JSON.parse` must
+ * give an object that is not an array and not `null`; a parse error is the
+ * same error. */
+function jsonError(text: string): string | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return t('field-error-json-object')
+  }
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+    ? undefined
+    : t('field-error-json-object')
+}
+
+/** The error of a text field's text (166): the key's check on the text
+ * trimmed, nothing for an empty text or a key the table lacks. Checked
+ * changed or not, like the number fields. */
+export function textError(row: TextRow, text: string): string | undefined {
+  const check = TEXT_KEYS[row.key]
+  if (check === undefined) return undefined
+  const trimmed = text.trim()
+  return trimmed === '' ? undefined : check(trimmed)
+}
+
+/** What a text field sends (133): the text trimmed, and nothing reformatted;
+ * the emptied text is `null`, the key's removal, never `""` (a key the file
+ * lacks is not in the draft, so the page sends nothing for it). */
+export function textSend(text: string): string | null {
+  const trimmed = text.trim()
+  return trimmed === '' ? null : trimmed
+}
+
 /** The box state of every number field the form edits, as `values` leaves it
  * (156): a key the file lacks has its box ticked, with nothing to show. */
 export function numberStates(
@@ -1311,8 +1377,8 @@ function PresetField({
   // What every control of a read-only card shares: its id, the texts of its
   // field, and the native disabled of criterion 85. Each control's own
   // handler does nothing: the page sends nothing for it. An editable row's
-  // control is enabled and its handler writes the draft (130).
-  const editable = row.kind === 'select' && row.editable === true
+  // control is enabled and its handler writes the draft (130, 164).
+  const editable = row.editable === true
   const common = {
     id: fieldId(row.key),
     label: row.label,
@@ -1390,16 +1456,19 @@ function PresetField({
   }
   if (row.kind === 'text') {
     // No placeholder: an example in a field nobody can type into reads as a
-    // value (criterion 87).
-    const text = value ?? ''
+    // value (criterion 87). An editable text field (164) holds the text the
+    // form's draft gives, typed as it stands, and its input is open.
+    const text = editable ? (values[row.key] ?? '') : (value ?? '')
     return (
       <TextField
         {...common}
+        disabled={!editable}
+        group={editable}
         value={text}
         unit={row.unit}
-        full={fullValue(row, text)}
+        full={editable ? undefined : fullValue(row, text)}
         placeholder=""
-        onChange={() => undefined}
+        onChange={(text) => (editable ? onEdit(row.key, text) : undefined)}
       />
     )
   }
@@ -1440,9 +1509,10 @@ function PresetField({
   // line of 118 repeats. An editable row's line is the loaded value's spelling,
   // which the save leaves as it is, so it stands only while the control is at
   // the state the read gave (134).
-  const written = editable
-    ? editableWritten(row, values, loaded)
-    : state?.written
+  const written =
+    row.kind === 'select' && editable
+      ? editableWritten(row, values, loaded)
+      : state?.written
   // 155: a select that needs another key's default box unticked is disabled
   // while that box is ticked, and keeps the state it holds.
   const locked =

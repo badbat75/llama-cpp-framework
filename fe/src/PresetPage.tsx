@@ -26,6 +26,7 @@ import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
 import PresetCards, {
+  checkRows,
   editableRows,
   fieldId,
   numberError,
@@ -34,6 +35,9 @@ import PresetCards, {
   numberStates,
   selectSend,
   selectState,
+  textError,
+  textRows,
+  textSend,
 } from './PresetCards.tsx'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
@@ -580,7 +584,12 @@ function Content({
   /** The changed keys as the body of 133 spells them. A number field with its
    * box ticked is a key to remove, and a key the file never had is sent as
    * nothing; with the box unticked, the field sends the number its text holds
-   * (157). */
+   * (157). A text field is changed when the text it would send differs from
+   * the loaded value (a key the file lacks is loaded as nothing): the sent
+   * text is the typed text trimmed, so spaces typed into a key the file lacks
+   * and a trailing space on an unchanged value leave the form clean, and an
+   * emptied text is the key's removal when the file had the key (132, 133,
+   * 166). */
   function changed(): Record<string, string | null> {
     const values: Record<string, string | null> = {}
     for (const row of editableRows()) {
@@ -598,19 +607,33 @@ function Content({
         values[row.key] = numberSend(row, b)
       }
     }
+    for (const row of textRows()) {
+      const send = textSend(draft[row.key] ?? '')
+      if (send === (loaded.values[row.key] ?? null)) continue
+      values[row.key] = send
+    }
     return values
   }
 
   /** Save changes: the bar of 135 to 149. */
   async function save() {
     if (saving.current) return
-    // 157: every enabled number field whose box is unticked is checked, changed
-    // or not (the manager checks the whole section anyway). A failure marks its
-    // field, tells the bar, and puts the focus on the first failing control in
-    // the order the fields are on screen: nothing is sent, and the bar keeps
-    // saying what is not saved.
-    const failures = numberRows()
-      .map((row) => [row.key, numberError(row, boxed[row.key])] as const)
+    // 157, 166: every enabled number field whose box is unticked, and every
+    // text field with a text that is not empty, is checked, changed or not
+    // (the manager checks the whole section anyway). A failure marks its
+    // field, tells the bar, and puts the focus on the first failing control
+    // in the order the fields are on screen: nothing is sent, and the bar
+    // keeps saying what is not saved.
+    const failures = checkRows()
+      .map(
+        (row) =>
+          [
+            row.key,
+            row.kind === 'number'
+              ? numberError(row, boxed[row.key])
+              : textError(row, draft[row.key] ?? ''),
+          ] as const,
+      )
       .filter((one): one is [string, string] => one[1] !== undefined)
     if (failures.length > 0) {
       // Rendered first, so the focused control is announced with its error.

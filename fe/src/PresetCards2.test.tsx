@@ -287,6 +287,14 @@ const CARDS = [
   'preset-advanced',
 ]
 
+/** The cards of 2e.2 that 2h.164 made editable: every control of these is
+ * enabled, every control of a card not listed stays natively disabled (2e.85). */
+const EDITABLE_CARDS = [
+  'preset-kv-cache',
+  'preset-sampling-overrides',
+  'preset-advanced',
+]
+
 /** The controls 96, 97 and 98 put in the three cards: a box and an input per
  * number, one control per select and per text. */
 const CONTROLS = FIELDS.reduce((n, f) => n + (f.kind === 'number' ? 2 : 1), 0)
@@ -493,15 +501,14 @@ function expectAbsent(main: HTMLElement, f: Row): void {
 // ── One test per field (85, 86, 87, 88, 96, 97, 98, 99) ────────────────
 
 test.each(FIELDS)(
-  '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85, 2h.164: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, the controls of the KV cache and Sampling overrides cards enabled, the Advanced card natively disabled',
+  '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85, 2h.164: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, every control of the three cards enabled',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
-    // 2h.164: the KV cache and the Sampling overrides cards are editable,
-    // every field always enabled (SET holds every key, so each box is
-    // unticked and its input follows, 2h.156); the Advanced card stays
-    // read-only (2e.85) until the part that opens it.
-    const editable =
-      f.card === 'preset-kv-cache' || f.card === 'preset-sampling-overrides'
+    // 2h.164: the three cards of 2e.2 are editable, every field always
+    // enabled (SET holds every key, so each box is unticked and its input
+    // follows, 2h.156). A card this file's rows do not list stays read-only,
+    // so the table also pins the natively disabled control (2e.85).
+    const editable = EDITABLE_CARDS.includes(f.card)
     const field = fieldOf(main, f.label)
     expect(
       cardOf(main, f.card).contains(field),
@@ -846,7 +853,7 @@ test('2e.87, 2e.99: a number of 2e.2 shows the reply string exactly, with no par
   }
 })
 
-test('2e.98, 2e.87: Chat kwargs is a text field: a monospace input named by its label showing the reply string exactly, absent an empty input with no placeholder, disabled and with no unit', async () => {
+test('2e.98, 2e.87, 2h.164: Chat kwargs is a text field: a monospace input named by its label showing the reply string exactly, absent an empty input with no placeholder, enabled and with no unit', async () => {
   const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
   for (const [value, shown] of [
     ['{"enable_thinking":false}', '{"enable_thinking":false}'],
@@ -866,7 +873,7 @@ test('2e.98, 2e.87: Chat kwargs is a text field: a monospace input named by its 
       input.getAttribute('placeholder') ?? '',
       `${f.key} ${value}: no placeholder in 2e`,
     ).toBe('')
-    expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+    expect(input.disabled, `${f.key}: the input enabled (2h.164)`).toBe(false)
     expect(
       input.getAttribute('aria-disabled'),
       `${f.key}: never aria-disabled`,
@@ -903,7 +910,7 @@ test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a ro
   }
 })
 
-test('2e.85, 2h.164: every control of the Advanced card of 2e.2 is natively disabled, the default boxes included, every control of the KV cache and Sampling overrides cards is enabled, while every About toggle of 2e.2 stays enabled', async () => {
+test('2e.85, 2h.164: every control of the three cards of 2e.2 is enabled, the default boxes included, while every About toggle of 2e.2 stays enabled and no control carries aria-disabled or readonly', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   const controls = CARDS.flatMap((title) => [
     ...cardOf(main, title).querySelectorAll<HTMLElement>(
@@ -912,10 +919,9 @@ test('2e.85, 2h.164: every control of the Advanced card of 2e.2 is natively disa
   ])
   expect(controls.length, 'the controls of 96, 97 and 98').toBe(CONTROLS)
   for (const title of CARDS) {
-    // 2h.164: the KV cache and Sampling overrides cards are editable; 98
-    // stays read-only (2e.85) until the part that opens it.
-    const disabled =
-      title !== 'preset-kv-cache' && title !== 'preset-sampling-overrides'
+    // 2h.164: the KV cache, Sampling overrides and Advanced cards are
+    // editable, every field always enabled.
+    const disabled = !EDITABLE_CARDS.includes(title)
     for (const el of cardOf(main, title).querySelectorAll<HTMLElement>(
       'input, select, textarea',
     )) {

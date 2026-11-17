@@ -190,8 +190,10 @@ function fieldId(field: Label): string {
 
 /** The fields the preset page makes editable: 2h.1's 130 (the Embeddings
  * card's two controls), 2h.4's 155 (the Resource / context card's six),
- * 2h.5's 164 (the KV cache card's seven, all always enabled) and 2h.5's 164
- * (the Sampling overrides card's seven, all always enabled), by their label.
+ * 2h.5's 164 (the KV cache card's seven, all always enabled), 2h.5's 164
+ * (the Sampling overrides card's seven, all always enabled) and 2h.5's 164
+ * (the Advanced card's two, the off / on select and the text, always enabled),
+ * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
   'preset-context-size',
@@ -216,6 +218,8 @@ const EDITABLE_FIELDS: Label[] = [
   'preset-repeat-penalty',
   'preset-presence-penalty',
   'preset-backend-sampling',
+  'preset-load-on-startup',
+  'preset-chat-kwargs',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
