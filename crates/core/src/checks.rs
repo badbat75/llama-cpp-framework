@@ -214,6 +214,117 @@ pub const PRESET_MIN_MAX_KEYS: [(&str, &str); 3] = [
     ("spec-ngram-mod-n-min", "spec-ngram-mod-n-max"),
 ];
 
+/// The preset keys the web may write, the table of "Saving a preset from the
+/// web" in `ARCHITECTURE.md`: every key `pai-app` `presets::render_section` can
+/// write that a control the preset page enables sends. The bff's
+/// `PUT /api/presets/{id}` accepts a body key only when it is one of these, in
+/// this exact spelling: llama-server knows a key only in its own case, so an
+/// unlisted name is refused rather than written.
+///
+/// The `pai-app` test `web_key_lists_are_exactly_what_render_section_writes`
+/// pins this list and [`PRESET_KEYS_NOT_ON_WEB`] against the writer: the keys of
+/// a fully populated preset, read by `ini::parse_sections`, are the union of
+/// the two, and the two share no key.
+pub const WEB_PRESET_KEYS: &[&str] = &[
+    // Resource and context card.
+    "ctx-size",
+    "parallel",
+    "kv-unified",
+    "kv-unified-per-slot",
+    "batch-size",
+    "ubatch-size",
+    // Embeddings card.
+    "embeddings",
+    "pooling",
+    // KV cache card.
+    "cache-type-k",
+    "cache-type-v",
+    "flash-attn",
+    "cache-ram",
+    "cache-reuse",
+    "ctx-checkpoints",
+    "checkpoint-min-step",
+    // Sampling overrides card.
+    "temp",
+    "top-k",
+    "top-p",
+    "min-p",
+    "repeat-penalty",
+    "presence-penalty",
+    "backend-sampling",
+    // Advanced card.
+    "load-on-startup",
+    "chat-template-kwargs",
+    // Chat and reasoning card.
+    "jinja",
+    "prefill-assistant",
+    "reasoning",
+    "reasoning-format",
+    "reasoning-effort",
+    "reasoning-preserve",
+    "reasoning-budget",
+    "reasoning-budget-message",
+    "n-predict",
+    // Vision card.
+    "mmproj-offload",
+    "mmproj-device",
+    "image-min-tokens",
+    "image-max-tokens",
+    // Hardware card, the MoE keys of it in `PRESET_KEYS_NOT_ON_WEB`.
+    "n-gpu-layers",
+    "n-cpu-ffn",
+    "op-offload",
+    "repack",
+    "no-host",
+    "lazy-mode",
+    "load-mode",
+    "fit",
+    "fit-ctx",
+    "fit-target",
+    "device-draft",
+    "n-gpu-layers-draft",
+    // Speculative decoding card.
+    "spec-draft-n-max",
+    "spec-draft-p-min",
+    "spec-draft-n-min",
+    "spec-draft-n-ubatch",
+    "spec-draft-type-k",
+    "spec-draft-type-v",
+    "spec-ngram-mod-n-match",
+    "spec-ngram-mod-n-min",
+    "spec-ngram-mod-n-max",
+    "spec-ngram-simple-size-n",
+    "spec-ngram-simple-size-m",
+    "spec-ngram-map-k-size-n",
+    "spec-ngram-map-k-size-m",
+    "spec-ngram-map-k4v-size-n",
+    "spec-ngram-map-k4v-size-m",
+    "spec-ngram-map-k4v-min-hits",
+];
+
+/// The preset keys `pai-app` `presets::render_section` writes that no control of
+/// the preset page enables yet, each with the slice that enables it in the
+/// design's table: the Assets card's file picks, the MoE keys that need the
+/// model's facts, the GPU distribution and the tensor placement. A body key
+/// here is refused like an unknown one. A slice that enables one moves the key
+/// to [`WEB_PRESET_KEYS`], in the same commit as its control.
+pub const PRESET_KEYS_NOT_ON_WEB: &[&str] = &[
+    // The Assets card's file picks, until it exists.
+    "model",
+    "mmproj",
+    "model-draft",
+    "spec-type",
+    // The MoE keys: they need the model's facts.
+    "n-cpu-moe",
+    "moe-cache-mib",
+    // The GPU distribution.
+    "device",
+    "split-mode",
+    "tensor-split",
+    // The tensor placement.
+    "override-tensor",
+];
+
 /// The ports a listener can bind.
 pub const PORT: RangeInclusive<i32> = 1..=65535;
 
@@ -1315,6 +1426,43 @@ top-p = 0.95\r\n";
     fn preset_keys_with_no_check_today_pass() {
         let text = section("m", "load-on-startup = yes\nreasoning-effort = thorough\n");
         assert_eq!(presets(&text), Ok(()));
+    }
+
+    // The web's key list of "Saving a preset from the web" in
+    // `ARCHITECTURE.md`, pinned WITHOUT repeating it: the keys no web control
+    // writes must be absent from it, and two real keys of the design's table
+    // must be present. An empty list, a list of names no reader knows, and a
+    // list that dropped a card of the table each fail here. The full list is
+    // pinned against the configurator's writer by `pai-app`'s
+    // `web_key_lists_are_exactly_what_render_section_writes`.
+    #[test]
+    fn web_preset_keys_exclude_the_ten_and_hold_the_named_ones() {
+        // The ten the design keeps off the web until the slice it names.
+        for key in [
+            "model",
+            "mmproj",
+            "model-draft",
+            "spec-type",
+            "n-cpu-moe",
+            "moe-cache-mib",
+            "device",
+            "split-mode",
+            "tensor-split",
+            "override-tensor",
+        ] {
+            assert!(
+                !WEB_PRESET_KEYS.contains(&key),
+                "{key} is the configurator's to write, not the web's"
+            );
+        }
+        // One key of the sampling card and one of the context card: a list that
+        // holds none of the table's keys is no list.
+        for key in ["min-p", "ctx-size"] {
+            assert!(
+                WEB_PRESET_KEYS.contains(&key),
+                "{key} is a key of the design's table, so the web's list must hold it"
+            );
+        }
     }
 
     // ── presets.ini: only what the write changes is checked ────────────

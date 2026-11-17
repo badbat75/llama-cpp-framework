@@ -219,7 +219,7 @@ pub fn delete_section(path: &Path, section_name: &str) -> std::io::Result<()> {
 /// returns the content to write.
 pub mod text {
     use super::{detect_eol, find_section_header, line_start_of, next_section_start};
-    use super::{line_starts_with_key, normalize_eol, strings, value_of_line};
+    use super::{line_spells_key, line_starts_with_key, normalize_eol, strings, value_of_line};
 
     /// The line ending a rewritten key line gets: the one the line already has,
     /// so a CRLF file keeps CRLF per line; an unterminated final line has none
@@ -435,18 +435,23 @@ pub mod text {
     /// section must exist: an absent one leaves the text equal (the caller
     /// answers a preset that is not there, it does not create one).
     ///
-    /// A key the section holds exactly once, whose value read the way
-    /// `parse_sections` reads it (the text after the first `=`, trimmed, with
-    /// everything from the first `;`/`#` dropped as an inline comment) equals
-    /// `value`, already has that value: the text comes back byte for byte, so
-    /// the line keeps its indentation, its spacing, its inline comment and the
-    /// letter case it is spelled in, and an unterminated final line stays
-    /// unterminated. When the value differs the line is rewritten whole as
-    /// `key = value`, the value as given, and keeps its own line ending: an
+    /// A key the section holds exactly once, spelled in the exact case given,
+    /// whose value read the way `parse_sections` reads it (the text after the
+    /// first `=`, trimmed, with everything from the first `;`/`#` dropped as an
+    /// inline comment) equals `value`, already has that value: the text comes
+    /// back byte for byte, so the line keeps its indentation, its spacing and
+    /// its inline comment, and an unterminated final line stays unterminated. A
+    /// line that spells the key in ANOTHER case is rewritten even when its
+    /// value is equal: llama-server knows a key only in its own case and
+    /// refuses a preset that spells it otherwise (`common/preset.cpp`), so
+    /// leaving such a line alone would answer a save with success over a preset
+    /// that does not start. When the value differs the line is rewritten whole
+    /// as `key = value`, the value as given, and keeps its own line ending: an
     /// unterminated final line stays unterminated. A key occurring more than
     /// once is always collapsed onto the first occurrence, even when every copy
-    /// already holds the value, and a key the section does not have is appended
-    /// where `replace_key` appends it.
+    /// already holds the value and every copy spells the key as given, and a
+    /// key the section does not have is appended where `replace_key`
+    /// appends it.
     pub fn set_key(content: &str, section: &str, key: &str, value: &str) -> String {
         let Some((_, header_end)) = find_section_header(content, section) else {
             return content.to_string();
@@ -459,13 +464,18 @@ pub mod text {
         let (body_start, header_needs_eol) = body_start_of(content, header_end);
         let body_end = next_section_start(content, header_end).unwrap_or(content.len());
 
-        // The equal-value check: one line of the key, read as the reader reads
-        // it, is nothing to write, and the caller writes no file at all.
+        // The equal-value check: one line of the key, spelling it in the exact
+        // case given and read as the reader reads it, is nothing to write, and
+        // the caller writes no file at all. A line in another case is not: the
+        // rewrite below puts the spelling the engine knows in its place.
         let mut lines = content[body_start..body_end]
             .split_inclusive('\n')
             .filter(|line| line_starts_with_key(line, key));
         if let Some(line) = lines.next() {
-            if lines.next().is_none() && value_of_line(line) == Some(value) {
+            if lines.next().is_none()
+                && line_spells_key(line, key)
+                && value_of_line(line) == Some(value)
+            {
                 return content.to_string();
             }
         }
@@ -549,6 +559,15 @@ fn line_starts_with_key(line: &str, key: &str) -> bool {
     let rest = &line[key.len()..];
     let r = rest.trim_start();
     r.starts_with('=')
+}
+
+/// True when `line` spells `key` in the exact case given (the leading blanks
+/// and tabs of an indented line aside), where `line_starts_with_key` accepts
+/// any letter case. Every reader of the line takes it as the key; the writer
+/// that leaves an equal value alone must not, because the engine refuses a
+/// preset holding a key in a case of its own.
+fn line_spells_key(line: &str, key: &str) -> bool {
+    line.trim_start().starts_with(key)
 }
 
 /// Byte span (`[` ..= `]`, exclusive end) of the header line whose NAME equals
@@ -1499,10 +1518,13 @@ mod tests {
 
     // "Already has that value" is compared the way the parser READS the line:
     // the value with any inline comment cut at the first `;`/`#` and trimmed.
-    // When the key sits exactly once in the section and that reading equals
-    // the value given, the text comes back byte for byte: the line is NOT
-    // canonicalised, its indentation, spacing, inline comment, and the
-    // spelling of its key all stay.
+    // When the key sits exactly once in the section, spells the key in the
+    // exact case given, and that reading equals the value given, the text comes
+    // back byte for byte: the line is NOT canonicalised, its indentation,
+    // spacing and inline comment all stay. A line spelling the key in ANOTHER
+    // case is rewritten, because llama-server refuses that spelling
+    // (common/preset.cpp): leaving it would answer a save with 200 over a
+    // preset that does not start.
     #[test]
     fn set_key_of_an_equal_value_returns_the_text_byte_for_byte() {
         for eol in ["\n", "\r\n"] {
@@ -1536,13 +1558,6 @@ mod tests {
                 spaced,
                 "indentation, tabs and spacing are kept, not canonicalised"
             );
-
-            let upper = file_of(&["[alpha]", "PORT = 9090", "Host = localhost"], eol);
-            assert_eq!(
-                text::set_key(&upper, "alpha", "Port", "9090"),
-                upper,
-                "the line is kept as the file spells it"
-            );
         }
         // The file's last line has no ending of its own: the text, ending
         // included, comes back as it was.
@@ -1552,6 +1567,33 @@ mod tests {
             last,
             "the unterminated final line stays unterminated"
         );
+    }
+
+    // The equal-value case of the sibling test is for a line that spells the
+    // key AS IT IS GIVEN: `CTX-SIZE = 4096` set to `ctx-size` `4096` is
+    // rewritten as `ctx-size = 4096`, at the same place, with the line's own
+    // ending. llama-server knows a key only in its own case and refuses a
+    // preset holding another spelling, so an untouched line here is a save that
+    // answers 200 over a preset that will not start.
+    #[test]
+    fn set_key_of_an_equal_value_rewrites_a_key_spelled_in_another_case() {
+        for eol in ["\n", "\r\n"] {
+            let upper = file_of(&["[alpha]", "CTX-SIZE = 4096", "host = localhost"], eol);
+            assert_eq!(
+                text::set_key(&upper, "alpha", "ctx-size", "4096"),
+                file_of(&["[alpha]", "ctx-size = 4096", "host = localhost"], eol),
+                "the line is rewritten in the spelling given, and the neighbour \
+                 line keeps its own ({eol:?})"
+            );
+
+            // The line keeps its own ending: an unterminated last line stays
+            // unterminated.
+            assert_eq!(
+                text::set_key("[alpha]\nCTX-SIZE = 4096", "alpha", "ctx-size", "4096"),
+                "[alpha]\nctx-size = 4096",
+                "the rewrite of an unterminated final line leaves it unterminated"
+            );
+        }
     }
 
     // When the value DOES differ, the line is rewritten whole as `key = value`

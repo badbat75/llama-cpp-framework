@@ -2885,6 +2885,56 @@ mod tests {
         }
     }
 
+    // The two key lists of "Saving a preset from the web" in `ARCHITECTURE.md`,
+    // pinned against the configurator's own writer: every key a fully populated
+    // preset renders is in one of the two, and no key is in both. A name that is
+    // not a key at all, a key the configurator stops writing, and a new key
+    // nobody classified each fail here; the writer is the source of the list, so
+    // the lists travel with it. `full_preset` sets every field, which is what
+    // makes the render hold every key the writer can emit.
+    #[test]
+    fn web_key_lists_are_exactly_what_render_section_writes() {
+        let section = ini::parse_sections(&render_section(&full_preset()))
+            .first()
+            .cloned()
+            .expect("the rendered section of the full preset");
+        // `keys` is a BTreeMap: the keys come out sorted.
+        let rendered: Vec<&str> = section.keys.keys().map(String::as_str).collect();
+        let union: Vec<&str> = checks::WEB_PRESET_KEYS
+            .iter()
+            .chain(checks::PRESET_KEYS_NOT_ON_WEB.iter())
+            .copied()
+            .collect();
+        let mut sorted_union = union.clone();
+        sorted_union.sort_unstable();
+        assert_eq!(
+            rendered, sorted_union,
+            "the keys of a full preset are the union of the web's list and the \
+             configurator-only list"
+        );
+
+        // No key in both lists: a key the web writes and does not write at the
+        // same time makes the union's count lie.
+        for key in checks::WEB_PRESET_KEYS {
+            assert!(
+                !checks::PRESET_KEYS_NOT_ON_WEB.contains(key),
+                "{key} is in both web lists"
+            );
+        }
+
+        // Each list free of duplicates.
+        for (name, list) in [
+            ("WEB_PRESET_KEYS", checks::WEB_PRESET_KEYS),
+            ("PRESET_KEYS_NOT_ON_WEB", checks::PRESET_KEYS_NOT_ON_WEB),
+        ] {
+            let mut sorted = list.to_vec();
+            let count = sorted.len();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), count, "{name} lists one key twice");
+        }
+    }
+
     #[test]
     fn full_preset_round_trips_through_ini() {
         let original = full_preset();
