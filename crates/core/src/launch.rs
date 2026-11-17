@@ -204,7 +204,7 @@ pub enum LaunchError {
     InvalidId,
     /// No `server@<id>.ini` at this path.
     NoConfig(std::path::PathBuf),
-    /// The instance's `presets@<id>.ini` has no preset section
+    /// The instance's `models@<id>.ini` has no preset section
     /// (`start()`'s `has_presets`).
     NoPresets,
     /// SaveStateOnShutdown is on and this slot-state directory could not be
@@ -213,7 +213,7 @@ pub enum LaunchError {
 }
 
 /// The llama-server launch of instance `id`: `exe` with `server_args()` of
-/// `server@<id>.ini` and the presets render `presets@<id>.ini`, the cwd and
+/// `server@<id>.ini` and the presets render `models@<id>.ini`, the cwd and
 /// env `start()` sets. No log, no rotation: the service manager captures the
 /// output.
 pub fn instance_command(
@@ -368,10 +368,10 @@ pub(crate) fn instance_launch_e2e() {
     )
     .expect("stray server@default.ini");
     std::fs::write(
-        framework.join("presets.ini"),
+        framework.join("models.ini"),
         "[stray]\nmodel = /m/stray.gguf\n",
     )
-    .expect("stray presets.ini");
+    .expect("stray models.ini");
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
@@ -380,14 +380,14 @@ pub(crate) fn instance_launch_e2e() {
 
     // ── Refused for want of presets, as start() refuses (`has_presets`) ──
     // The instance file exists from here on; the instance reads the render
-    // of its id (presets@default.ini), never the pool.
+    // of its id (models@default.ini), never the pool.
     std::fs::write(sys.join("server@default.ini"), "[Server]\nPort = 8081\n")
         .expect("server@default.ini");
-    // The per-user presets.ini has a section: it must not count.
+    // The per-user models.ini has a section: it must not count.
     let user_presets = crate::paths::presets_ini();
     std::fs::write(&user_presets, "[user-model]\nmodel = /m/user.gguf\n").expect("user presets");
-    let sys_presets = sys.join("presets.ini");
-    let render = sys.join("presets@default.ini");
+    let sys_presets = sys.join("models.ini");
+    let render = sys.join("models@default.ini");
     std::fs::write(
         &sys_presets,
         "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
@@ -407,10 +407,10 @@ pub(crate) fn instance_launch_e2e() {
     // Every preset switched off: the sections are in the file llama-server
     // does not read.
     std::fs::write(
-        sys.join("presets.ini.disabled"),
+        sys.join("models.ini.disabled"),
         "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
     )
-    .expect("presets.ini.disabled");
+    .expect("models.ini.disabled");
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoPresets),
@@ -436,7 +436,7 @@ pub(crate) fn instance_launch_e2e() {
     std::fs::write(&user_ini, &content).expect("server.ini");
     let cfg = crate::server_cfg::load();
     // The instance reads the render of its id, not the pool.
-    let expected_args = server_args(&cfg, &sys.join("presets@default.ini"));
+    let expected_args = server_args(&cfg, &sys.join("models@default.ini"));
     let expected_env = env_vars(&cfg);
     assert!(
         expected_args.windows(2).any(|w| w == ["--port", "8081"]),
@@ -528,17 +528,17 @@ pub(crate) fn instance_launch_e2e() {
     );
     // And each id reads its own file, and its own render.
     std::fs::write(
-        sys.join("presets@lan-2.ini"),
+        sys.join("models@lan-2.ini"),
         "[*]\ntemp = 0.7\n\n[lan-model]\nmodel = /m/lan.gguf\n",
     )
-    .expect("presets@lan-2.ini");
+    .expect("models@lan-2.ini");
     let cmd = instance_command("lan-2", &exe).expect("launch of server@lan-2.ini");
     assert_eq!(
         port_of(&cmd).as_deref(),
         Some("8090"),
         "port of server@lan-2.ini"
     );
-    let lan_preset = sys.join("presets@lan-2.ini").to_string_lossy().into_owned();
+    let lan_preset = sys.join("models@lan-2.ini").to_string_lossy().into_owned();
     let lan_args: Vec<String> = cmd
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
@@ -699,7 +699,7 @@ mod tests {
     use std::path::Path;
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
-        server_args(cfg, Path::new("presets.ini"))
+        server_args(cfg, Path::new("models.ini"))
     }
 
     // The render's global section `[*]` holds defaults for every preset, not
@@ -707,7 +707,7 @@ mod tests {
     #[test]
     fn has_presets_in_ignores_the_global_section() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("presets@default.ini");
+        let path = dir.path().join("models@default.ini");
         assert!(!has_presets_in(&path), "the file does not exist");
         std::fs::write(&path, "[*]\ntemp = 0.7\n").expect("write render");
         assert!(

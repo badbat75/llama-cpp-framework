@@ -1,12 +1,12 @@
 //! Provider & model integration for opencode and Claude Code.
 //!
 //! Manages the `provider.llama.cpp` section in opencode.json, auto-generating
-//! model entries from presets.ini. Claude Code does not support per-file
+//! model entries from models.ini. Claude Code does not support per-file
 //! custom providers natively; an env-var snippet is generated for the GUI's
 //! Claude Code card instead (copy-paste only, never written to disk).
 //!
 //! The model list is not a selection of its own: it is every ENABLED preset
-//! (`presets::load_all`, i.e. presets.ini), the same set llama-server serves,
+//! (`presets::load_all`, i.e. models.ini), the same set llama-server serves,
 //! so switching a preset off in the Models tab is also how it leaves OpenCode.
 //! It used to be a second checkbox list here, which could offer OpenCode a model
 //! llama-server had no preset for, or hide one it did.
@@ -261,7 +261,7 @@ pub fn save_opencode_models(base_url: &str, api_key: ApiKey, keep: &[String]) ->
     Ok(())
 }
 
-/// The entries Save writes, one per ENABLED preset, in presets.ini order.
+/// The entries Save writes, one per ENABLED preset, in models.ini order.
 fn desired_models() -> Vec<(String, Value)> {
     let sections = server_control::read_sections(ConfigFile::Presets);
     presets::load_all()
@@ -502,7 +502,7 @@ fn env_script(
 /// The Claude Code snippet's example among `enabled`: the first preset with an
 /// advertised context, so the snippet can show the context and compaction lines,
 /// else the first preset, without a context (see `claude_code_env_script`).
-/// Reads presets.ini (the raw `fit` key, `fit_on`) and the GGUF headers.
+/// Reads models.ini (the raw `fit` key, `fit_on`) and the GGUF headers.
 pub fn claude_code_example(enabled: &[presets::Preset]) -> Option<(&str, Option<i64>)> {
     let sections = server_control::read_sections(ConfigFile::Presets);
     let mut first = None;

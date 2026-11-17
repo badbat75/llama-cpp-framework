@@ -130,13 +130,13 @@ fn control_scan_flags_calls_imports_and_fn_pointers_and_leaves_the_rest() {
 
 // ── The configuration files ─────────────────────────────────────────────
 //
-// server.ini (`server@default.ini` under the manager), presets.ini and
-// presets.ini.disabled are read and written only through `server_control`
+// server.ini (`server@default.ini` under the manager), models.ini and
+// models.ini.disabled are read and written only through `server_control`
 // (`Backend::read_config`, `write_config`, `config_path`): under the manager
 // they live in the system directory, and a reader of the per-user path would
 // see a stale file, a writer would write one nobody reads. `runstate.rs` is
 // the `Direct` backend's launch, which hands llama-server the per-user
-// presets.ini. Test code (a `#[cfg(test)]` item, `src/tests/`) may name them.
+// models.ini. Test code (a `#[cfg(test)]` item, `src/tests/`) may name them.
 
 /// The files allowed to name the per-user paths.
 const CONFIG_ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
@@ -145,7 +145,7 @@ const CONFIG_ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
 const CONFIG_PATHS: [&str; 3] = ["server_ini", "presets_ini", "presets_disabled_ini"];
 
 /// The file names only the seam may join onto `config_dir()`.
-const CONFIG_NAMES: [&str; 3] = ["server.ini", "presets.ini", "presets.ini.disabled"];
+const CONFIG_NAMES: [&str; 3] = ["server.ini", "models.ini", "models.ini.disabled"];
 
 /// The per-user config paths named on one line of code, comments left out.
 fn config_hits(line: &str) -> Vec<String> {
@@ -270,12 +270,12 @@ fn config_scan_flags_the_per_user_paths_and_leaves_the_rest() {
             vec!["paths::server_ini"],
         ),
         (
-            "    let p = paths::config_dir().join(\"presets.ini\");",
-            vec!["config_dir().join(\"presets.ini\")"],
+            "    let p = paths::config_dir().join(\"models.ini\");",
+            vec!["config_dir().join(\"models.ini\")"],
         ),
         (
-            "    let p = config_dir().join(\"presets.ini.disabled\");",
-            vec!["config_dir().join(\"presets.ini.disabled\")"],
+            "    let p = config_dir().join(\"models.ini.disabled\");",
+            vec!["config_dir().join(\"models.ini.disabled\")"],
         ),
         (
             "    let p = config_dir().join(\"server.ini\");",
@@ -288,7 +288,7 @@ fn config_scan_flags_the_per_user_paths_and_leaves_the_rest() {
             "    let d = paths::config_dir().join(\"settings.ini\");",
             vec![],
         ),
-        ("    let p = dir.path().join(\"presets.ini\");", vec![]),
+        ("    let p = dir.path().join(\"models.ini\");", vec![]),
         ("    let p = paths::server_ini_backup();", vec![]),
         (
             "    // paths::server_ini() would be the stale per-user file",
@@ -710,7 +710,7 @@ fn the_gate_ask_scan_needs_the_backend_the_gate_asks() {
 }
 
 // ── The instance files are the engine's ────────────────────────────────
-// `server@<id>.ini`, `presets.ini` and `presets.ini.disabled` live in the
+// `server@<id>.ini`, `models.ini` and `models.ini.disabled` live in the
 // engine's directory (`paths::engine_config_dir`, `/etc/llama.cpp` on Linux);
 // the framework's (`paths::system_config_dir`, `/etc/private-ai`) keeps only
 // its own files (`bff.ini`). Production code of every crate that touches

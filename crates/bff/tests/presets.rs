@@ -6,8 +6,8 @@
 //!
 //! The answer (fe/briefs/api-contract.md, `GET /api/presets`): 200 and
 //! `[{"id", "engine", "engineAvailable", "enabled", "model"}]`, one entry per
-//! section of the engine's `presets.ini` (enabled true) and
-//! `presets.ini.disabled` (enabled false), read as the session's user:
+//! section of the engine's `models.ini` (enabled true) and
+//! `models.ini.disabled` (enabled false), read as the session's user:
 //! - `id` as the file spells it, `model` the section's `model` key as the
 //!   preset file holds it (no path resolution, no existence check, the
 //!   server machine's separators kept), `""` when the section has no `model`
@@ -21,12 +21,12 @@
 //! - The order is the GUI's (`presets::load_listed`): the switched-on
 //!   presets, then the switched-off ones, each group in file order; an id in
 //!   both files is listed once, as on (the id matched without case, the row
-//!   the copy from `presets.ini`). The web UI does not sort.
+//!   the copy from `models.ini`). The web UI does not sort.
 //! - llama-server's global `[*]` section is not a preset: it is the defaults
 //!   every preset starts from, and it is never a row. The page switches
 //!   presets, and the global section is nothing a user switches off.
-//! - A missing file is an empty group, not an error: no `presets.ini.disabled`
-//!   means no switched-off preset, no `presets.ini` means no preset at all.
+//! - A missing file is an empty group, not an error: no `models.ini.disabled`
+//!   means no switched-off preset, no `models.ini` means no preset at all.
 //! - Errors `{"key", "args": []}`, never the manager's detail: 401
 //!   `session-required` (the manager not asked), 403
 //!   `session-not-administrator` when the manager refused the call for the
@@ -68,10 +68,10 @@ const CLIENT: &str = "127.0.0.1:51000";
 const KEY: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// The names the manager knows the engine's preset files by.
-const ON: &str = "presets.ini";
-const OFF: &str = "presets.ini.disabled";
+const ON: &str = "models.ini";
+const OFF: &str = "models.ini.disabled";
 
-/// A `presets.ini` with three switched-on presets, in an order that is
+/// A `models.ini` with three switched-on presets, in an order that is
 /// neither alphabetical nor reversed, so a bff that sorts the list is caught.
 /// `alpha`'s model has an inline comment after it: the file's parser ends the
 /// value at the marker, and that is the value llama-server reads.
@@ -91,7 +91,7 @@ model = C:\\Models\\alpha.gguf ; kept short for now\r\n\
 n-gpu-layers = 99\r\n\
 ";
 
-/// A `presets.ini.disabled` with two switched-off presets, again in file
+/// A `models.ini.disabled` with two switched-off presets, again in file
 /// order and with ids whose case the file spells.
 const FILE_OFF: &str = "\
 ; Presets switched OFF (llama-server never reads this file).\r\n\
@@ -340,12 +340,12 @@ fn app_for(
     }
 }
 
-/// A manager holding `on` as `presets.ini` and `off` as `presets.ini.disabled`.
+/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`.
 fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(ON, on), (OFF, off)], &[], Ok(()))
 }
 
-/// A manager holding `on` as `presets.ini` and no `presets.ini.disabled`.
+/// A manager holding `on` as `models.ini` and no `models.ini.disabled`.
 fn app_holding_no_disabled(on: &str) -> App {
     app_for(&[(ON, on)], &[], Ok(()))
 }
@@ -591,10 +591,7 @@ async fn the_read_connects_as_the_signed_in_user() {
             vec![Some(user.to_string())],
             "{user}: the principal of the connect"
         );
-        assert_eq!(
-            app.calls(),
-            ["read presets.ini", "read presets.ini.disabled"]
-        );
+        assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
     }
 }
 
@@ -643,7 +640,7 @@ async fn the_read_asks_only_the_two_preset_files() {
     assert_eq!(app.list().await.rows().len(), 5);
     assert_eq!(
         app.calls(),
-        ["read presets.ini", "read presets.ini.disabled"],
+        ["read models.ini", "read models.ini.disabled"],
         "the enabled file read first, then the switched-off one, nothing else"
     );
 }
@@ -907,7 +904,7 @@ model =\r\n\
 }
 
 /// An id in both files is listed once, as enabled, with the section
-/// `presets.ini` holds (the copy llama-server serves): the id matched without
+/// `models.ini` holds (the copy llama-server serves): the id matched without
 /// case, as the GUI's list does.
 #[tokio::test]
 async fn an_id_in_both_files_is_listed_once_as_enabled() {
@@ -954,7 +951,7 @@ model = /models/Mistral-7B-Q5_K_M.gguf\r\n\
     );
 }
 
-/// No `presets.ini.disabled` is not an error: the switched-on presets alone,
+/// No `models.ini.disabled` is not an error: the switched-on presets alone,
 /// and the bff still asked the manager for the file (it answers it is not
 /// there).
 #[tokio::test]
@@ -968,10 +965,7 @@ async fn a_missing_disabled_file_is_not_an_error() {
             row("alpha", true, "C:\\Models\\alpha.gguf"),
         ]
     );
-    assert_eq!(
-        app.calls(),
-        ["read presets.ini", "read presets.ini.disabled"]
-    );
+    assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
 }
 
 /// Neither file exists: 200 and an empty list (the page's empty state), not an
@@ -980,10 +974,7 @@ async fn a_missing_disabled_file_is_not_an_error() {
 async fn no_preset_file_at_all_is_an_empty_list() {
     let app = app_no_files();
     assert_eq!(app.list().await.rows(), Vec::<Value>::new());
-    assert_eq!(
-        app.calls(),
-        ["read presets.ini", "read presets.ini.disabled"]
-    );
+    assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
 }
 
 /// Both files there and no section in either: 200 and an empty list, with a

@@ -289,7 +289,7 @@ export component AppWindow inherits Window {
                         }
                         // Re-read the config files and re-scan the models
                         // directory. Always available: use it after adding a
-                        // model file or hand-editing server.ini / presets.ini.
+                        // model file or hand-editing server.ini / models.ini.
                         Button {
                             text: Strings.t("refresh");
                             clicked => { AppState.reload_all(); }

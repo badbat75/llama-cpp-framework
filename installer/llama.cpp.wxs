@@ -104,7 +104,7 @@
     </StandardDirectory>
     <!--
       The instances' machine tree, %ProgramData%\llama.cpp: config\ (each
-      instance's server@<id>.ini and presets.ini, written by pai-manager),
+      instance's server@<id>.ini and models.ini, written by pai-manager),
       logs\ (llama-server@<id>.log), models\ (the default ModelsDir) and
       state\ (the default StateDir, slot snapshots).
     -->
@@ -207,7 +207,7 @@
       <File Id="DefaultServerIni" Source="$(var.StagingDir)\share\defaults\server@default.ini" KeyPath="yes" />
     </Component>
     <Component Id="DefaultPresetsIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
-      <File Id="DefaultPresetsIni" Source="$(var.StagingDir)\share\defaults\presets.ini" KeyPath="yes" />
+      <File Id="DefaultPresetsIni" Source="$(var.StagingDir)\share\defaults\models.ini" KeyPath="yes" />
     </Component>
     <Component Id="DefaultAssignmentsIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
       <File Id="DefaultAssignmentsIni" Source="$(var.StagingDir)\share\defaults\assignments.ini" KeyPath="yes" />

@@ -395,7 +395,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // follows the preset into whichever file now holds it.
                 match presets::set_enabled(id.as_str(), enabled) {
                     Ok(()) => {
-                        // The router reads presets.ini once, at launch.
+                        // The router reads models.ini once, at launch.
                         let key = match (app.global::<AppState>().get_server_running(), enabled) {
                             (true, true) => strings::key("preset-enabled-restart"),
                             (true, false) => strings::key("preset-disabled-restart"),
@@ -928,7 +928,7 @@ fn draft_pin_device(form: &PresetForm, spec: &str) -> Option<String> {
 
 // ── Write invariant: reload + reselect + re-baseline ──────────────────
 
-/// Refresh everything that depends on the preset set after a presets.ini write:
+/// Refresh everything that depends on the preset set after a models.ini write:
 /// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
 /// and the tabs that read the enabled set (`presets_moved`). `want` picks the
 /// selection like `reload_presets`. The invariant every write path follows:
@@ -1014,9 +1014,9 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
     s.set_delete_target_id(dialog.id.as_str().into());
     s.set_delete_target_file(
         if target.enabled {
-            "presets.ini"
+            "models.ini"
         } else {
-            "presets.ini.disabled"
+            "models.ini.disabled"
         }
         .into(),
     );

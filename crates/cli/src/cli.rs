@@ -24,7 +24,7 @@ pub enum Command {
     /// Server-wide settings (server.ini).
     #[command(subcommand)]
     Server(ServerCmd),
-    /// Per-model presets (presets.ini).
+    /// Per-model presets (models.ini).
     #[command(subcommand)]
     Preset(PresetCmd),
     /// Control the llama-server process.
@@ -44,8 +44,8 @@ pub enum BenchCmd {
     ///
     /// Measured by the same engine the Benchmark tab uses, each finished leg a
     /// run of one bench.db campaign. Without --key the preset is measured as
-    /// presets.ini has it, and the file is not touched. With --key and
-    /// --values each value is written to presets.ini and the key is put back
+    /// models.ini has it, and the file is not touched. With --key and
+    /// --values each value is written to models.ini and the key is put back
     /// afterwards; a live sweep restarts llama-server per value, because the
     /// key rides the child's launch args.
     // Boxed for the reason `ServerSet` is: one payload-carrying variant next to
@@ -156,7 +156,7 @@ pub struct BenchRun {
     /// Preset id to benchmark (as in `preset list`).
     #[arg(long)]
     pub preset: String,
-    /// The presets.ini key to vary, e.g. spec-draft-n-max. Omitted (with
+    /// The models.ini key to vary, e.g. spec-draft-n-max. Omitted (with
     /// --values) = the preset as it is, one leg.
     #[arg(long, requires = "values")]
     pub key: Option<String>,
@@ -176,7 +176,7 @@ pub struct BenchRun {
     #[arg(long, default_value = "original", value_parser = ["original", "best", "last"])]
     pub apply: String,
     /// Treat this as the value the key had before the sweep, instead of reading
-    /// it from presets.ini. For after an interrupted sweep, which leaves the key
+    /// it from models.ini. For after an interrupted sweep, which leaves the key
     /// on one of its leg values (the value to pass is in its pending marker,
     /// and the sweep warns naming both).
     #[arg(long, requires = "key")]
@@ -474,7 +474,7 @@ pub enum PresetCmd {
         /// model), `mmproj` and `draft`. The folders a Hugging Face download
         /// leaves empty under ModelsDir's models / mmprojs / mtps / dflashs go
         /// too; nothing outside them, and never a folder with content. A file
-        /// another preset references (in presets.ini or presets.ini.disabled)
+        /// another preset references (in models.ini or models.ini.disabled)
         /// is refused, before anything is deleted, unless --even-if-shared.
         #[arg(long, value_name = "WHICH", value_delimiter = ',')]
         delete_files: Vec<FileKind>,
@@ -483,10 +483,10 @@ pub enum PresetCmd {
         #[arg(long, requires = "delete_files")]
         even_if_shared: bool,
     },
-    /// Switch a preset on: move it back into presets.ini, so llama-server
+    /// Switch a preset on: move it back into models.ini, so llama-server
     /// offers it again (after a restart).
     Enable { id: String },
-    /// Switch a preset off: park it in presets.ini.disabled, unchanged, where
+    /// Switch a preset off: park it in models.ini.disabled, unchanged, where
     /// llama-server no longer sees it.
     Disable { id: String },
     /// Download a GGUF from Hugging Face with llama.cpp's own downloader and
@@ -1020,10 +1020,7 @@ fn run_preset(c: PresetCmd) -> Result<()> {
     match c {
         PresetCmd::List => {
             let listed = presets::load_listed();
-            println!(
-                "presets.ini: {}",
-                config_path(ConfigFile::Presets).display()
-            );
+            println!("models.ini: {}", config_path(ConfigFile::Presets).display());
             if listed.iter().any(|l| !l.enabled) {
                 println!(
                     "{}",
@@ -1563,7 +1560,7 @@ fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
         strings::fill("preset-switched-off", &[&real_id])
     };
     println!("{switched}");
-    // The router reads presets.ini once, at launch.
+    // The router reads models.ini once, at launch.
     if crate::server_control::backend().is_running() {
         println!("{}", strings::t("restart-to-apply"));
     }
@@ -2800,7 +2797,7 @@ pub(crate) fn cli_control_e2e() {
         crate::paths::presets_ini(),
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
     )
-    .expect("presets.ini");
+    .expect("models.ini");
     // The last shutdown's dump, for the restore after a start.
     std::fs::write(
         state.join(crate::slot_state::state_file_name("Qwen3.8-27B")),
@@ -2945,7 +2942,7 @@ pub(crate) fn cli_config_e2e() {
     let user = crate::paths::config_dir();
     let cli = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
     let nothing_per_user = |when: &str| {
-        for name in ["server.ini", "presets.ini", "presets.ini.disabled"] {
+        for name in ["server.ini", "models.ini", "models.ini.disabled"] {
             assert!(
                 !user.join(name).exists(),
                 "{when}: {name} written under the per-user config directory"
@@ -2957,11 +2954,11 @@ pub(crate) fn cli_config_e2e() {
         FakeClient::new(&log, InstanceState::Inactive)
             .with_file("server@default.ini", "[Server]\nPort = 8080\n")
             .with_file(
-                "presets.ini",
+                "models.ini",
                 "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
             )
             .with_file(
-                "presets.ini.disabled",
+                "models.ini.disabled",
                 "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n",
             )
     };
@@ -2983,10 +2980,10 @@ pub(crate) fn cli_config_e2e() {
         run(cli(&["x", "preset", "disable", "Qwen3.8-27B"])).expect("preset disable");
         assert_eq!(
             fake::writes(&log),
-            ["write_file presets.ini.disabled", "write_file presets.ini"]
+            ["write_file models.ini.disabled", "write_file models.ini"]
         );
-        assert!(!file("presets.ini").contains("[Qwen3.8-27B]"));
-        assert!(file("presets.ini.disabled").contains("[Qwen3.8-27B]"));
+        assert!(!file("models.ini").contains("[Qwen3.8-27B]"));
+        assert!(file("models.ini.disabled").contains("[Qwen3.8-27B]"));
         nothing_per_user("preset disable");
     });
 
@@ -3000,7 +2997,7 @@ pub(crate) fn cli_config_e2e() {
                 "[Server]\nPort = 8080\nOpencodeApiKey =\n",
             )
             .with_file(
-                "presets.ini",
+                "models.ini",
                 "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
             );
         *c.withhold.lock().unwrap() = true;
@@ -3280,6 +3277,8 @@ pub(crate) fn cli_import_e2e() {
 
     std::fs::create_dir_all(&user).expect("config dir");
     std::fs::write(user.join("server.ini"), SERVER).expect("server.ini");
+    // The presets file of an earlier install, under the name that install
+    // wrote it under: the hand-over reads that name, never the manager's.
     std::fs::write(user.join("presets.ini"), PRESETS).expect("presets.ini");
 
     // No manager, with files to import: the client's text, nothing written.
@@ -3295,7 +3294,7 @@ pub(crate) fn cli_import_e2e() {
         ),
     }
 
-    // presets.ini refused: fails with the refusal's text; the server file
+    // models.ini refused: fails with the refusal's text; the server file
     // written before it stays.
     let refusal = pai_core::checks::Refusal {
         key: "load-on-startup-over-max",
@@ -3304,7 +3303,7 @@ pub(crate) fn cli_import_e2e() {
     let e = ClientError::Invalid(refusal);
     let log = fake::log();
     let mut c = FakeClient::new(&log, InstanceState::Inactive);
-    c.fail_write_of.insert("presets.ini".into(), e.clone());
+    c.fail_write_of.insert("models.ini".into(), e.clone());
     let files = c.files.clone();
     match fake::scoped(fake::backend(c), import) {
         Ok(()) => panic!("refused: succeeded"),
@@ -3312,7 +3311,7 @@ pub(crate) fn cli_import_e2e() {
     }
     assert_eq!(
         fake::writes(&log),
-        ["write_file server@default.ini", "write_file presets.ini"]
+        ["write_file server@default.ini", "write_file models.ini"]
     );
     assert_eq!(
         files
@@ -3328,9 +3327,9 @@ pub(crate) fn cli_import_e2e() {
     let mut c = FakeClient::new(&log, InstanceState::Inactive);
     c.files = files.clone();
     fake::scoped(fake::backend(c), import).expect("the rest imported");
-    assert_eq!(fake::writes(&log), ["write_file presets.ini"]);
+    assert_eq!(fake::writes(&log), ["write_file models.ini"]);
     assert_eq!(
-        files.lock().unwrap().get("presets.ini").map(String::as_str),
+        files.lock().unwrap().get("models.ini").map(String::as_str),
         Some(PRESETS)
     );
 

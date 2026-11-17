@@ -111,12 +111,12 @@ fn a_peer_without_the_manager_object_is_unavailable() {
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
         ("restart", |c| c.restart("default").err()),
-        ("read_file", |c| c.read_file("presets.ini").err()),
+        ("read_file", |c| c.read_file("models.ini").err()),
         ("write_file", |c| {
-            c.write_file("presets.ini", "", false).err()
+            c.write_file("models.ini", "", false).err()
         }),
         ("write_file_if", |c| {
-            c.write_file_if("presets.ini", "", "").err()
+            c.write_file_if("models.ini", "", "").err()
         }),
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
@@ -165,7 +165,7 @@ pub(crate) fn manager_dbus_client_e2e() {
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
     let alice = Caller(":1.42".into());
 
     // ── No sender: every change refused, nobody asked ────────────────────
@@ -176,13 +176,13 @@ pub(crate) fn manager_dbus_client_e2e() {
         assert_eq!(client.stop("default"), Err(ClientError::NotAuthorized));
         assert_eq!(client.restart("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
+            client.write_file("models.ini", "[x]\nmodel = /m/x.gguf\n", false),
             Err(ClientError::NotAuthorized)
         );
         // The compare and swap write is the same guarded call: no sender, no
         // write, nobody asked.
         assert_eq!(
-            client.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", ""),
+            client.write_file_if("models.ini", "[x]\nmodel = /m/x.gguf\n", ""),
             Err(ClientError::NotAuthorized)
         );
         // An instance file can hold a secret (OpencodeApiKey): its read
@@ -205,7 +205,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             Ok(vec!["broken".to_string(), "default".to_string()])
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
         // Start at boot: the change needs a caller, the read none.
         assert_eq!(
             client.set_boot_enabled("default", true),
@@ -242,7 +242,7 @@ pub(crate) fn manager_dbus_client_e2e() {
                 "configure: {configure}"
             );
             assert_eq!(
-                client.read_file("presets.ini"),
+                client.read_file("models.ini"),
                 Ok(Some(plain(presets))),
                 "a preset file is never withheld"
             );
@@ -285,7 +285,7 @@ pub(crate) fn manager_dbus_client_e2e() {
         let (_server, client) = connect(&c, Some(":1.42"));
         assert_eq!(client.start("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", "", false),
+            client.write_file("models.ini", "", false),
             Err(ClientError::NotAuthorized)
         );
         assert_eq!(
@@ -303,7 +303,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             ]
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets,
             "a refused write leaves the file"
         );
@@ -334,19 +334,16 @@ pub(crate) fn manager_dbus_client_e2e() {
             ]
         );
 
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
         assert_eq!(
-            client.read_file("presets.ini.disabled"),
+            client.read_file("models.ini.disabled"),
             Ok(None),
             "a missing file"
         );
         // A file whose text is empty is not a missing one.
-        std::fs::write(sys.join("presets.ini.disabled"), "").expect("empty file");
-        assert_eq!(
-            client.read_file("presets.ini.disabled"),
-            Ok(Some(plain("")))
-        );
-        std::fs::remove_file(sys.join("presets.ini.disabled")).unwrap();
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("empty file");
+        assert_eq!(client.read_file("models.ini.disabled"), Ok(Some(plain(""))));
+        std::fs::remove_file(sys.join("models.ini.disabled")).unwrap();
 
         let lan2 = "[Server]\nPort = 8081\nHostname = gpu-box.lan\n";
         assert_eq!(client.write_file("server@lan-2.ini", lan2, false), Ok(()));
@@ -433,7 +430,7 @@ pub(crate) fn manager_dbus_client_e2e() {
         // A value with spaces and a non-ASCII letter comes back whole.
         assert_eq!(
             client.write_file(
-                "presets.ini",
+                "models.ini",
                 "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
                 false
             ),
@@ -451,7 +448,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             default_ini
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets
         );
 
@@ -480,12 +477,12 @@ pub(crate) fn manager_dbus_client_e2e() {
         }
 
         // A read that fails for another reason than a missing file.
-        std::fs::create_dir(sys.join("presets.ini.disabled")).expect("dir in the way");
-        match client.read_file("presets.ini.disabled") {
+        std::fs::create_dir(sys.join("models.ini.disabled")).expect("dir in the way");
+        match client.read_file("models.ini.disabled") {
             Err(ClientError::Io(kind)) => assert!(!kind.is_empty(), "the kind"),
             other => panic!("read of a directory: {other:?}"),
         }
-        std::fs::remove_dir(sys.join("presets.ini.disabled")).unwrap();
+        std::fs::remove_dir(sys.join("models.ini.disabled")).unwrap();
     }
 
     // ── Every state the manager reports ──────────────────────────────────
@@ -508,25 +505,25 @@ pub(crate) fn manager_dbus_client_e2e() {
     {
         let c = core(true, &[]);
         let (_server, client) = connect(&c, Some(":1.42"));
-        let base = std::fs::read_to_string(sys.join("presets.ini")).expect("read presets");
+        let base = std::fs::read_to_string(sys.join("models.ini")).expect("read presets");
         let more = format!("{base}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
         assert_eq!(
-            client.write_file_if("presets.ini", &more, &base),
+            client.write_file_if("models.ini", &more, &base),
             Ok(()),
             "a caller holding the file's content writes"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             more,
             "the fresh content landed"
         );
         assert_eq!(
-            client.write_file_if("presets.ini", &base, &base),
+            client.write_file_if("models.ini", &base, &base),
             Err(ClientError::Changed),
             "a caller holding a content the file no longer holds"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             more,
             "the refused write changed nothing on the way to the error"
         );
@@ -545,7 +542,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             "the guarded call the plain write is, at every call"
         );
         assert_eq!(calls(&c), vec![], "a file write touches no unit");
-        std::fs::write(sys.join("presets.ini"), presets).expect("restore presets");
+        std::fs::write(sys.join("models.ini"), presets).expect("restore presets");
     }
 }
 
@@ -721,7 +718,7 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     let more = format!("{presets}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
     std::fs::write(sys.join("server@default.ini"), ini).expect("write default");
-    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // polkit refuses this caller everything, and would challenge it for
@@ -778,14 +775,14 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         let text = more.clone();
         assert_eq!(
             on("write_file", &bound, move |c| c.write_file(
-                "presets.ini",
+                "models.ini",
                 &text,
                 false
             )),
             Ok(()),
             "a member writes the presets"
         );
-        assert_eq!(text_of("presets.ini"), more, "the member's write landed");
+        assert_eq!(text_of("models.ini"), more, "the member's write landed");
         assert_eq!(
             on("read_file", &bound, |c| c.read_file("server@default.ini")),
             Ok(Some(plain(ini))),
@@ -869,7 +866,7 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         );
         assert_eq!(
             on("write_file", &bob, |c| c.write_file(
-                "presets.ini",
+                "models.ini",
                 "junk\n",
                 false
             )),
@@ -877,7 +874,7 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             "a non-member writes nothing"
         );
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             more,
             "a refused write leaves the file"
         );
@@ -932,7 +929,7 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         );
         assert_eq!(
             on("write_file", &bound, |c| {
-                c.write_file("presets.ini", "junk\n", false)
+                c.write_file("models.ini", "junk\n", false)
             }),
             Err(ClientError::NotAuthorized),
             "a write from a caller that is not the bff"
@@ -957,7 +954,7 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             Ok(true),
             "the refused change left the start at boot as the member set it"
         );
-        assert_eq!(text_of("presets.ini"), more, "the file kept");
+        assert_eq!(text_of("models.ini"), more, "the file kept");
         assert_eq!(
             asked(&c),
             vec![(Caller(BFF.into()), Action::Control)],
@@ -994,18 +991,18 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         let admins_before = asked_admin(&admins).len();
         let bff_before = bff_checks(&c).len();
         let calls_before = calls(&c).len();
-        let base = text_of("presets.ini");
+        let base = text_of("models.ini");
         let next = format!("{base}[Qwen3.5-9B]\nmodel = /models/Qwen3.5-9B-Q4_K_M.gguf\n");
         let (land, land_of) = (next.clone(), base.clone());
         assert_eq!(
             on("write_file_if", &client, move |c| c
                 .acting_for("alice")
-                .write_file_if("presets.ini", &land, &land_of)),
+                .write_file_if("models.ini", &land, &land_of)),
             Ok(()),
             "a member's compare and swap write, holding the file's content"
         );
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             next,
             "the member's fresh content landed"
         );
@@ -1013,12 +1010,12 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         assert_eq!(
             on("write_file_if", &client, move |c| c
                 .acting_for("alice")
-                .write_file_if("presets.ini", &back, &back_of)),
+                .write_file_if("models.ini", &back, &back_of)),
             Err(ClientError::Changed),
             "the same call with a content the file no longer holds"
         );
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             next,
             "the refused write changed nothing on the way to the error"
         );

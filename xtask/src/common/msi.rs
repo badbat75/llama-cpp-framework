@@ -97,8 +97,8 @@ pub fn engine_defaults() -> Vec<(&'static str, String)> {
             include_str!("../../../crates/core/defaults/windows/server@default.ini").to_string(),
         ),
         (
-            "presets.ini",
-            include_str!("../../../crates/core/defaults/windows/presets.ini").to_string(),
+            "models.ini",
+            include_str!("../../../crates/core/defaults/windows/models.ini").to_string(),
         ),
         (
             "assignments.ini",
@@ -1446,7 +1446,7 @@ mod tests {
 
     /// config\: the manager (SYSTEM) writes, Administrators too, the
     /// instances' virtual accounts read their `server@<id>.ini` and
-    /// `presets.ini`; users have no ACE at all: they read and write through
+    /// `models.ini`; users have no ACE at all: they read and write through
     /// the manager, and `OpencodeApiKey` is in there.
     #[test]
     fn the_config_folder_is_read_by_the_services_and_no_user() {

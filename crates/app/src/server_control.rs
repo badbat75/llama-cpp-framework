@@ -134,9 +134,9 @@ const STOP_POLL: Duration = Duration::from_millis(250);
 pub enum ConfigFile {
     /// `server@default.ini` (`server.ini` per user).
     Server,
-    /// `presets.ini`.
+    /// `models.ini`.
     Presets,
-    /// `presets.ini.disabled`.
+    /// `models.ini.disabled`.
     PresetsDisabled,
 }
 
@@ -152,8 +152,8 @@ impl ConfigFile {
     pub fn manager_name(self) -> String {
         match self {
             ConfigFile::Server => format!("server@{INSTANCE}.ini"),
-            ConfigFile::Presets => "presets.ini".into(),
-            ConfigFile::PresetsDisabled => "presets.ini.disabled".into(),
+            ConfigFile::Presets => "models.ini".into(),
+            ConfigFile::PresetsDisabled => "models.ini.disabled".into(),
         }
     }
 
@@ -936,8 +936,8 @@ pub mod fake {
         fn path(name: &str) -> Result<std::path::PathBuf, ClientError> {
             match name {
                 "server@default.ini" => Ok(crate::paths::server_ini()),
-                "presets.ini" => Ok(crate::paths::presets_ini()),
-                "presets.ini.disabled" => Ok(crate::paths::presets_disabled_ini()),
+                "models.ini" => Ok(crate::paths::presets_ini()),
+                "models.ini.disabled" => Ok(crate::paths::presets_disabled_ini()),
                 _ => Err(ClientError::BadFileName),
             }
         }
@@ -1118,7 +1118,7 @@ pub(crate) fn api_key_kept_e2e() {
             "[Server]\nPort = 8099\nOpencodeApiKey =\n",
         )
         .with_file(
-            "presets.ini",
+            "models.ini",
             "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
         );
     *c.withhold.lock().unwrap() = true;
@@ -1242,7 +1242,7 @@ pub(crate) fn server_control_e2e() {
     std::fs::create_dir_all(server_ini.parent().unwrap()).expect("config dir");
     std::fs::write(&server_ini, "[Server]\nPort = 9999\n").expect("server.ini");
     const MANAGED: &str = "[Server]\nPort = 8099\n";
-    // No presets.ini and no llama-server binary: those are the manager's to
+    // No models.ini and no llama-server binary: those are the manager's to
     // check under this backend, not the configurator's.
     assert!(!crate::paths::presets_ini().exists());
 
@@ -1420,23 +1420,23 @@ pub(crate) fn config_seam_e2e() {
         paths::presets_ini(),
         "[user-only]\nmodel = /models/user-only.gguf\n",
     )
-    .expect("user presets.ini");
+    .expect("user models.ini");
     let seeded = || {
         FakeClient::new(&log, InstanceState::Inactive)
             .with_file("server@default.ini", "[Server]\nPort = 8099\n")
             .with_file(
-                "presets.ini",
+                "models.ini",
                 "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
             )
             .with_file(
-                "presets.ini.disabled",
+                "models.ini.disabled",
                 "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n",
             )
     };
     fake::scoped(fake::backend(seeded()), || {
         assert_eq!(server_cfg::load().port_or_default(), 8099, "server.ini");
         let enabled: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
-        assert_eq!(enabled, ["Qwen3.8-27B"], "presets.ini");
+        assert_eq!(enabled, ["Qwen3.8-27B"], "models.ini");
         let listed: Vec<(String, bool)> = presets::load_listed()
             .into_iter()
             .map(|l| (l.preset.id, l.enabled))
@@ -1453,7 +1453,7 @@ pub(crate) fn config_seam_e2e() {
     // Writes: the manager's files, and nothing under the per-user directory.
     std::fs::remove_dir_all(&user).expect("clear the per-user config");
     let nothing_per_user = |when: &str| {
-        for name in ["server.ini", "presets.ini", "presets.ini.disabled"] {
+        for name in ["server.ini", "models.ini", "models.ini.disabled"] {
             assert!(
                 !user.join(name).exists(),
                 "{when}: {name} written under the per-user config directory"
@@ -1488,9 +1488,9 @@ pub(crate) fn config_seam_e2e() {
 
         log.lock().unwrap().clear();
         presets::save(&q8).expect("preset save");
-        assert_eq!(fake::writes(&log), ["write_file presets.ini"]);
-        assert_eq!(ids(file("presets.ini")), ["Qwen3.8-27B", "Qwen3.8-27B-Q8"]);
-        let section = crate::ini::parse_sections(&file("presets.ini"))
+        assert_eq!(fake::writes(&log), ["write_file models.ini"]);
+        assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B", "Qwen3.8-27B-Q8"]);
+        let section = crate::ini::parse_sections(&file("models.ini"))
             .into_iter()
             .find(|s| s.id == "Qwen3.8-27B-Q8")
             .expect("saved section");
@@ -1505,29 +1505,26 @@ pub(crate) fn config_seam_e2e() {
         presets::set_enabled("Qwen3.8-27B", false).expect("switch off");
         assert_eq!(
             fake::writes(&log),
-            ["write_file presets.ini.disabled", "write_file presets.ini"]
+            ["write_file models.ini.disabled", "write_file models.ini"]
         );
-        assert_eq!(ids(file("presets.ini")), ["Qwen3.8-27B-Q8"]);
+        assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B-Q8"]);
         assert_eq!(
-            ids(file("presets.ini.disabled")),
+            ids(file("models.ini.disabled")),
             ["Qwen3.8-Flash-Next", "Qwen3.8-27B"]
         );
         log.lock().unwrap().clear();
         presets::set_enabled("Qwen3.8-27B", true).expect("switch on");
         assert_eq!(
             fake::writes(&log),
-            ["write_file presets.ini", "write_file presets.ini.disabled"]
+            ["write_file models.ini", "write_file models.ini.disabled"]
         );
-        assert_eq!(ids(file("presets.ini.disabled")), ["Qwen3.8-Flash-Next"]);
-        assert_eq!(ids(file("presets.ini")), ["Qwen3.8-27B-Q8", "Qwen3.8-27B"]);
+        assert_eq!(ids(file("models.ini.disabled")), ["Qwen3.8-Flash-Next"]);
+        assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B-Q8", "Qwen3.8-27B"]);
 
         presets::rename("Qwen3.8-27B-Q8", "Qwen3.8-27B-Q8_0").expect("rename");
-        assert_eq!(
-            ids(file("presets.ini")),
-            ["Qwen3.8-27B-Q8_0", "Qwen3.8-27B"]
-        );
+        assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B-Q8_0", "Qwen3.8-27B"]);
         presets::delete("Qwen3.8-Flash-Next").expect("delete");
-        assert!(ids(file("presets.ini.disabled")).is_empty());
+        assert!(ids(file("models.ini.disabled")).is_empty());
         nothing_per_user("set_enabled, rename, delete");
 
         // Under the manager on Linux and Windows nothing seeds ModelsDir into
@@ -1612,7 +1609,7 @@ pub(crate) fn config_seam_e2e() {
             server_cfg::from_text(&file("server@default.ini")).models_dir,
             seeded_dir(&hf_root)
         );
-        assert!(ids(file("presets.ini")).contains(&"Qwen3.8-8B".to_string()));
+        assert!(ids(file("models.ini")).contains(&"Qwen3.8-8B".to_string()));
         nothing_per_user("ModelsDir seeding");
     });
 
@@ -2247,10 +2244,10 @@ mod tests {
     #[test]
     fn config_files_have_the_manager_names() {
         assert_eq!(ConfigFile::Server.manager_name(), "server@default.ini");
-        assert_eq!(ConfigFile::Presets.manager_name(), "presets.ini");
+        assert_eq!(ConfigFile::Presets.manager_name(), "models.ini");
         assert_eq!(
             ConfigFile::PresetsDisabled.manager_name(),
-            "presets.ini.disabled"
+            "models.ini.disabled"
         );
     }
 
@@ -2259,7 +2256,7 @@ mod tests {
         let log = fake::log();
         let c = FakeClient::new(&log, InstanceState::Inactive)
             .with_file("server@default.ini", "[Server]\nPort = 8099\n")
-            .with_file("presets.ini", "[Qwen3.8-27B]\nctx-size = 8192\n");
+            .with_file("models.ini", "[Qwen3.8-27B]\nctx-size = 8192\n");
         let b = fake::backend(c);
         assert_eq!(
             b.read_config(ConfigFile::Server),
@@ -2278,8 +2275,8 @@ mod tests {
             log.lock().unwrap().clone(),
             [
                 "read_file server@default.ini",
-                "read_file presets.ini",
-                "read_file presets.ini.disabled"
+                "read_file models.ini",
+                "read_file models.ini.disabled"
             ]
         );
     }
@@ -2312,7 +2309,7 @@ mod tests {
         let log = fake::log();
         let c = FakeClient::new(&log, InstanceState::Inactive)
             .with_file("server@default.ini", blanked)
-            .with_file("presets.ini", "[Qwen3.8-27B]\nctx-size = 8192\n");
+            .with_file("models.ini", "[Qwen3.8-27B]\nctx-size = 8192\n");
         *c.withhold.lock().unwrap() = true;
         let b = fake::backend(c);
         assert!(!b.api_key_withheld(), "nothing read yet");
@@ -2349,7 +2346,7 @@ mod tests {
         assert_eq!(b.write_config(ConfigFile::Presets, "[m]\n"), Ok(()));
         assert_eq!(
             fake::writes(&log),
-            ["write_file presets.ini"],
+            ["write_file models.ini"],
             "a preset file never keeps a key"
         );
     }
@@ -2492,7 +2489,7 @@ mod tests {
         for e in [ClientError::NotAuthorized, ClientError::Unavailable] {
             let log = fake::log();
             let mut c =
-                FakeClient::new(&log, InstanceState::Inactive).with_file("presets.ini", "[m]\n");
+                FakeClient::new(&log, InstanceState::Inactive).with_file("models.ini", "[m]\n");
             c.fail_read = Some(e.clone());
             let b = fake::backend(c);
             assert_eq!(b.read_config(ConfigFile::Presets), Err(e.text()), "{e:?}");

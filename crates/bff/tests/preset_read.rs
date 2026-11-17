@@ -1,5 +1,5 @@
-//! `GET /api/presets/{id}`: one preset section of the engine's `presets.ini`
-//! / `presets.ini.disabled`, read through the manager as the signed-in user,
+//! `GET /api/presets/{id}`: one preset section of the engine's `models.ini`
+//! / `models.ini.disabled`, read through the manager as the signed-in user,
 //! through `pai_bff::router_with_session` with a fake manager client and a
 //! fake authenticator (never the real bus, pipe, PAM or LogonUser). Each
 //! request runs under a deadline, so a bff that waits on the manager fails
@@ -15,8 +15,8 @@
 //!   the only engine) and `engineAvailable` is true for it: the same two
 //!   fields as the list's row (`tests/presets.rs`), so the page shows one
 //!   engine cell in both.
-//! - `enabled`: true for a section of `presets.ini`, false for one that is
-//!   only in `presets.ini.disabled`. A section in both files is the enabled
+//! - `enabled`: true for a section of `models.ini`, false for one that is
+//!   only in `models.ini.disabled`. A section in both files is the enabled
 //!   one, as the list answers it.
 //! - `values`: the section's keys as its file holds them, as strings (the
 //!   value trimmed, everything from a `;` or `#` cut, the file's separators
@@ -93,8 +93,8 @@ const KEY_B: [u8; 16] = [
 /// The names the manager knows the engine's preset files by. The revision is
 /// keyed on the name, so these strings are part of the answer: the read sends
 /// exactly these names to the manager.
-const ON: &str = "presets.ini";
-const OFF: &str = "presets.ini.disabled";
+const ON: &str = "models.ini";
+const OFF: &str = "models.ini.disabled";
 
 /// The section the tests read, as a file holds it: CRLF file, Windows
 /// separators, a key spelled with an underscore, and a spelling order that is
@@ -104,7 +104,7 @@ const OFF: &str = "presets.ini.disabled";
 /// after them cut, that last line's own ending NOT hashed.
 const ALPHA: &str = "[alpha]\r\nmodel = C:\\Models\\alpha.gguf\r\nn-gpu-layers = 99\r\n";
 
-/// A `presets.ini` holding `ALPHA` with a blank line and another section after
+/// A `models.ini` holding `ALPHA` with a blank line and another section after
 /// it, so the file the revision is read from holds a section the read does not
 /// touch, and the blank line is cut from the section's text.
 const FILE_ALPHA: &str =
@@ -150,33 +150,33 @@ const ALPHA_VALUE_LF: &str = "[alpha]\nmodel = /models/a.gguf\nn-gpu-layers = 10
 /// `siphash_2_4`, which is pinned to those vectors by
 /// `the_helper_is_the_published_siphash_2_4` and is run against the same input
 /// wherever a revision is checked.
-const REV_ALPHA_ON: &str = "e2afa5f11a5f8fe3";
-const REV_ALPHA_OFF: &str = "3b74c04103c7710a";
-const REV_ALPHA_KEY_B: &str = "8d69f889413c65a1";
-const REV_ALPHA_WITH_CTX: &str = "2d1d118a020daf6b";
+const REV_ALPHA_ON: &str = "09ee97b65e5489ad";
+const REV_ALPHA_OFF: &str = "4cfe56c43964900e";
+const REV_ALPHA_KEY_B: &str = "6d45850887c27fd2";
+const REV_ALPHA_WITH_CTX: &str = "b22fe753f8fe10ec";
 
-/// The digest of `ALPHA_NO_BREAK_CRLF` in `presets.ini`: the section's text
+/// The digest of `ALPHA_NO_BREAK_CRLF` in `models.ini`: the section's text
 /// with no final break, the bytes the rule hashes for it. It is `REV_ALPHA_ON`,
 /// the same section with a final break: the last line's own ending is not in
 /// the digest.
-const REV_ALPHA_NO_BREAK: &str = "e2afa5f11a5f8fe3";
+const REV_ALPHA_NO_BREAK: &str = "09ee97b65e5489ad";
 
-/// The digest of `ALPHA_NO_BREAK_LF` in `presets.ini`, and of
+/// The digest of `ALPHA_NO_BREAK_LF` in `models.ini`, and of
 /// `ALPHA_VALUE_LF`: the same rule in an LF file, and the section with
 /// `n-gpu-layers` changed to 100.
-const REV_ALPHA_NO_BREAK_LF: &str = "335ab3670beb7768";
-const REV_ALPHA_VALUE_LF: &str = "da13827c981e86c8";
+const REV_ALPHA_NO_BREAK_LF: &str = "c0e3488c6b9fcaa1";
+const REV_ALPHA_VALUE_LF: &str = "77a8e38aaab5cd07";
 
 /// The same hash over the whole file, and over the `[Bigger]` section that
 /// sits below `ALPHA` in `FILE_ALPHA`: a revision that is one of those is
 /// caught. The whole file is not a section, so its text is hashed as it is.
-const REV_WHOLE_FILE: &str = "a7f5970b0ce2c57c";
-const REV_NEIGHBOUR: &str = "b4ed709c7a0d327d";
+const REV_WHOLE_FILE: &str = "f61f68ec4c2ec783";
+const REV_NEIGHBOUR: &str = "c6cf323403eefba2";
 
-/// The same hash over `ZETA` in `presets.ini`: the section both appended-file
+/// The same hash over `ZETA` in `models.ini`: the section both appended-file
 /// tests read, so their expected value is its own and not the one of a section
 /// of the file that does not hold it.
-const REV_ZETA: &str = "06d798fe3318872c";
+const REV_ZETA: &str = "aa296521d7feb313";
 
 /// SipHash-2-4 of `s` under `key`, the reference implementation's own
 /// init (`v0 ^= k0`, `v1 ^= k1`, `v2 ^= k0`, `v3 ^= k1` over the four
@@ -532,7 +532,7 @@ fn app_for(
     }
 }
 
-/// A manager holding `on` as `presets.ini` and `off` as `presets.ini.disabled`.
+/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`.
 fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_A)
 }
@@ -788,7 +788,7 @@ async fn without_a_session_the_manager_is_not_asked() {
 
 // ── The document ────────────────────────────────────────────────────────
 
-/// A section of `presets.ini`: the whole document, field for field, read over
+/// A section of `models.ini`: the whole document, field for field, read over
 /// one connect as the signed-in user, from both preset files and nothing
 /// else.
 #[tokio::test]
@@ -842,7 +842,7 @@ async fn the_id_is_matched_without_case_and_answered_as_the_file_spells_it() {
 }
 
 /// A section in both files is the enabled one: the values and the revision of
-/// `presets.ini`, and `enabled` true, as the list answers the same id.
+/// `models.ini`, and `enabled` true, as the list answers the same id.
 #[tokio::test]
 async fn a_section_in_both_files_is_the_enabled_copy() {
     let app = app_holding(FILE_ALPHA, FILE_ALPHA);
@@ -857,9 +857,9 @@ async fn a_section_in_both_files_is_the_enabled_copy() {
     );
 }
 
-/// A section that is only in `presets.ini.disabled` is read: `enabled` false,
+/// A section that is only in `models.ini.disabled` is read: `enabled` false,
 /// and its revision is keyed on the file it sits in, so the same text in
-/// `presets.ini` is another revision.
+/// `models.ini` is another revision.
 #[tokio::test]
 async fn a_section_that_is_only_disabled_is_answered_switched_off() {
     let app = app_holding("[Other]\nmodel = /models/o.gguf\n", FILE_ALPHA);

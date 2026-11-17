@@ -1131,3 +1131,31 @@ Lessons only: the rules are in `AGENTS.md`.
 - The instance unit's dependency list is pinned by name (`unit_dependencies_include_the_manager`): an
   ordering line is a plain `After=`, and `After=` alone is what the test accepts (no `Wants=`,
   no `BindsTo=`), so a unit that must start after the manager adds one line.
+- The production region of a file ends at the FIRST `#[cfg(test)]` line, not at `mod tests {`: several
+  modules (`app/src/migration.rs`, `presets.rs`, `server_control.rs`, `runstate.rs`, `bench/sweep.rs`,
+  `hf_fit.rs`, core's `assign.rs`, `checks.rs`, `client/pipe.rs`, `launch.rs`, `paths.rs`,
+  `server_cfg.rs`, manager's `dbus.rs`, `pipe.rs`, `service.rs`, `cli/src/cli.rs`,
+  `xtask/src/ci_windows.rs`) open with a `#[cfg(test)] mod fake` and keep production fns below it, so a
+  whole-file script that renames a file name edits their test data too. Cut at the first
+  `#[cfg(test)]`, and let the red tests enumerate the test-region lines.
+- Renaming a config FILE (`presets.ini` to `models.ini`): the name is a literal in code, doc comments,
+  the strings files, the MSI `.wxs`, the CI workflow's installed-file list, and the bff's revision input.
+  Enumerate first with `grep -rn '"presets.ini"\|presets.ini' crates xtask installer .github docs fe`,
+  then decide per area. The bff's `revision` is a keyed SipHash over the file name, so EVERY pinned
+  `REV_*` constant in a bff test moves: that table is the tester's data, report it.
+- A mid-task history rewrite deletes the base commit: `git diff d93c314` answered
+  "Not a valid object name" and HEAD moved days ahead. Re-survey before editing (`git log --oneline -3`,
+  `git status`): files move (`crates/core/strings/` replaced `crates/app/strings/`, the glyph and
+  em-dash lint moved to `crates/config/src/tests/binding_lint.rs`).
+- Prove a snapshot exists before trusting it as the proof of a restore: `cp -r ... && echo ok` in a chain
+  whose output is piped through `tail` printed no `ok`, and the directory was never created. `ls` it.
+- `git stash` on the shared tree measures the wrong tree (the rule says never): the diff count read right
+  after `git stash` is the tree WITHOUT the slice, so a "279 lines" snapshot compared after the pop says
+  nothing. The only proof is a rerun of the red and green lists on the current tree.
+- The per-user config files of an EARLIER install keep the names that install wrote them under
+  (`presets.ini`, `presets.ini.disabled`): `pai_core::migrate` moves the tree and never renames a file,
+  so `migration::USER_FILES` reads the OLD per-user name and writes `ConfigFile::manager_name()`
+  (`models.ini`), and a per-user `models.ini` is nothing to import. A phase seeded by an older slice
+  (`cli_import_e2e` in `cli.rs`, writing `user.join("models.ini")`) contradicts that: report it, the
+  tester re-seeds it. The disabled-file header exists in TWO byte-identical copies (`app/presets.rs`
+  and `bff/presets.rs`), kept equal by `the_disabled_header_is_the_configurators_one`: change both.

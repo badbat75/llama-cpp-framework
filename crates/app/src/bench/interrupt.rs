@@ -1,7 +1,7 @@
 //! Ctrl-C (or SIGTERM, or a closed terminal) during `bench run`: put back what
 //! the run changed, then exit.
 //!
-//! A run edits presets.ini and owns llama-server for hours; left alone, the
+//! A run edits models.ini and owns llama-server for hours; left alone, the
 //! signal ends the process with the preset on a leg's value, and the next
 //! restart serves that. Every key a run changes is registered here beside its
 //! pending marker. The handler restores them newest first, removes their
@@ -37,7 +37,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     was_running: None,
 });
 
-/// Hold this across an edit of presets.ini or a stop or start of the server.
+/// Hold this across an edit of models.ini or a stop or start of the server.
 pub fn gate() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -82,7 +82,7 @@ fn restore(state: &mut State) -> i32 {
         match super::sweep::write_key(&h.preset, &h.key, &h.restore) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&h.marker);
-                println!("{} = {} (presets.ini).", h.key, h.restore);
+                println!("{} = {} (models.ini).", h.key, h.restore);
             }
             Err(e) => {
                 println!(

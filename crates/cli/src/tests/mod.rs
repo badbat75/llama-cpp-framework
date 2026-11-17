@@ -50,7 +50,7 @@ fn preset_commands_e2e() {
     paths::redirect_for_tests(dir.path());
     let ini = paths::presets_ini();
     std::fs::create_dir_all(ini.parent().expect("config dir")).expect("config dir");
-    std::fs::write(&ini, "[e2e]\nmodel = /models/e2e-Q8_0.gguf\n").expect("presets.ini");
+    std::fs::write(&ini, "[e2e]\nmodel = /models/e2e-Q8_0.gguf\n").expect("models.ini");
     let opencode = paths::opencode_user_config();
     std::fs::create_dir_all(opencode.parent().expect("opencode dir")).expect("opencode dir");
     let opencode_text = concat!(

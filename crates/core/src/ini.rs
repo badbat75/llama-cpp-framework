@@ -12,7 +12,7 @@
 //! - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
 //!   is stripped as an inline comment, spaced or not ("a;b" reads as "a").
 //!   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
-//!   `eol-start ::= ws ([;#] / newline / EOF)`), which presets.ini must obey:
+//!   `eol-start ::= ws ([;#] / newline / EOF)`), which models.ini must obey:
 //!   `;`/`#` simply cannot occur inside a value, and a writer that emits one
 //!   produces a value llama-server would truncate anyway. Writers must also
 //!   emit trimmed values or break round-trips.
@@ -190,7 +190,7 @@ pub fn project_url_of(comments: &[String]) -> String {
 /// or empty. Read leniently (`;` or `#`, any spacing around `=`), so a
 /// hand-written line counts; `word` must be the whole word, so `; urls ...` is
 /// prose. What a configurator stores in a comment of `server.ini` or
-/// `presets.ini` (`crates/app/src/presets.rs` writes them).
+/// `models.ini` (`crates/app/src/presets.rs` writes them).
 pub fn comment_value(comments: &[String], word: &str) -> String {
     comments
         .iter()
@@ -534,7 +534,7 @@ pub fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     //
     // That is not hypothetical. On 2026-09-02 a 0x116 bugcheck (the AMD driver
     // fault this machine is prone to) landed while a sweep was restoring one
-    // preset key, and presets.ini came back as 27,669 bytes of NUL: every model
+    // preset key, and models.ini came back as 27,669 bytes of NUL: every model
     // preset on the machine, gone, while server.ini and settings.ini (not being
     // written at that moment) were untouched. `fs::write` + `rename` had made
     // the update atomic, which was never the property at risk.

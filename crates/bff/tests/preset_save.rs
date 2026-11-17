@@ -30,8 +30,8 @@
 //!   from the bff. All of them reach no manager at all: the body is answered
 //!   before the read. A body over `origin::MAX_BODY` is the extractor's 413
 //!   `payload-too-large`, also with no manager call;
-//! - the section: `presets.ini` read as the signed-in user, and the section
-//!   matched in any letter case; else `presets.ini.disabled`; else 404
+//! - the section: `models.ini` read as the signed-in user, and the section
+//!   matched in any letter case; else `models.ini.disabled`; else 404
 //!   `no-preset-named`, the id echoed only when it is a name a preset can carry.
 //!   llama-server's global `[*]` is not a preset: the same 404 with no args;
 //! - the section revision: the digest of `<file name> LF <section text>` under
@@ -50,11 +50,11 @@
 //!   `field` by the design's table, one rule per key, and nothing is written;
 //! - then `running`, and the 200 is exactly `{"revision", "running"}`: the
 //!   revision of the section as written (the one `GET /api/presets/{id}`
-//!   returns for the new text), and true when the section went to `presets.ini`
+//!   returns for the new text), and true when the section went to `models.ini`
 //!   and any instance is `active` or `activating` (the instances listed, then
 //!   the states asked until one is up), true when a state read fails after a
 //!   write that landed, and false for a section written to
-//!   `presets.ini.disabled`, which asks no state at all.
+//!   `models.ini.disabled`, which asks no state at all.
 //!
 //! A refusal of the signed-in user, at the connect, a read or a write, is 403
 //! `session-not-administrator` and ends that session (the served sibling's rule,
@@ -114,8 +114,8 @@ const KEY_A: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const KEY_B: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
 
 /// The names the manager knows the engine's preset files by.
-const PRESETS: &str = "presets.ini";
-const DISABLED: &str = "presets.ini.disabled";
+const PRESETS: &str = "models.ini";
+const DISABLED: &str = "models.ini.disabled";
 
 /// The body cap of `origin::MAX_BODY`, copied here (it is private to the bff):
 /// the same copy `tests/origin.rs` keeps.
@@ -127,7 +127,7 @@ const ALPHA: &str = "alpha";
 const QWEN: &str = "Qwen";
 const MISTRAL: &str = "mistral-7b";
 
-/// A `presets.ini` with two switched-on presets. `[alpha]` carries an inline
+/// A `models.ini` with two switched-on presets. `[alpha]` carries an inline
 /// comment on a line the tests edit, a key to remove, and a blank line before
 /// the next section, so the save's in-place edit has bytes to leave alone.
 const FILE_ON: &str = "\
@@ -143,13 +143,13 @@ load-on-startup = 1\r\n\
 temp = 0.7\r\n\
 ";
 
-/// A `presets.ini.disabled` with one switched-off preset, written as the
+/// A `models.ini.disabled` with one switched-off preset, written as the
 /// configurator writes it (its header, then the section).
 const FILE_OFF: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n\
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n\
 [mistral-7b]\r\n\
 model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\
 ctx-size = 2048\r\n\
@@ -206,9 +206,9 @@ temp = 0.7\r\n\
 /// `FILE_OFF` with `temp` set to 1.0: the one line of the switched-off section.
 const OFF_TEMP_1: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n\
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n\
 [mistral-7b]\r\n\
 model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\
 ctx-size = 2048\r\n\
@@ -910,7 +910,7 @@ fn app_holding_key_b(on: &str, off: &str) -> App {
     )
 }
 
-/// A manager holding `on` as `presets.ini`, refusing the calls of the named
+/// A manager holding `on` as `models.ini`, refusing the calls of the named
 /// principals: the member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
     app_for_full(
@@ -1673,7 +1673,7 @@ async fn save_unknown_id_is_404_with_the_id_and_writes_nothing() {
     assert!(app.no_write_asked(), "nothing written");
     assert_eq!(
         app.calls(),
-        vec!["read presets.ini", "read presets.ini.disabled"],
+        vec!["read models.ini", "read models.ini.disabled"],
         "both files are looked in, nothing else"
     );
 }
@@ -1687,7 +1687,7 @@ async fn save_with_no_preset_file_is_404_and_creates_nothing() {
         .save_on_revision(ALPHA, "0000000000000000", json!({ "ctx-size": "8192" }))
         .await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[ALPHA]);
-    assert_eq!(app.file_text(PRESETS), None, "no presets.ini was created");
+    assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
         None,
@@ -1752,7 +1752,7 @@ async fn save_a_name_no_preset_can_carry_is_404_with_no_args() {
 }
 
 /// A section is found in the file that holds it: `mistral-7b` is switched off,
-/// so the save writes `presets.ini.disabled`, leaves `presets.ini` byte for
+/// so the save writes `models.ini.disabled`, leaves `models.ini` byte for
 /// byte, and answers `running: false` without asking the manager for a single
 /// instance state (the engine never reads that file).
 #[tokio::test]
@@ -1781,14 +1781,14 @@ async fn save_a_switched_off_preset_is_written_to_the_disabled_file_and_answers_
     assert_eq!(
         app.file_text(PRESETS).as_deref(),
         Some(FILE_ON),
-        "presets.ini is byte for byte what it was"
+        "models.ini is byte for byte what it was"
     );
     assert_eq!(
         app.calls(),
         vec![
-            "read presets.ini",
-            "read presets.ini.disabled",
-            "write-if alice presets.ini.disabled",
+            "read models.ini",
+            "read models.ini.disabled",
+            "write-if alice models.ini.disabled",
         ],
         "a switched-off preset asks for no instance state"
     );
@@ -1796,7 +1796,7 @@ async fn save_a_switched_off_preset_is_written_to_the_disabled_file_and_answers_
 
 /// The id on the URL is matched the way the list's ids are: the section is
 /// spelled `[Qwen]`, and `qwen` finds it, edits that very section and writes
-/// `presets.ini` with the file's own spelling of the header.
+/// `models.ini` with the file's own spelling of the header.
 #[tokio::test]
 async fn save_matches_the_id_ignoring_case() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -1833,7 +1833,7 @@ temp = 0.2\r\n\
 // The revision: the guard of the page
 // ---------------------------------------------------------------------------
 
-/// A fresh revision writes: one connect for the signed-in user, `presets.ini`
+/// A fresh revision writes: one connect for the signed-in user, `models.ini`
 /// read (it holds the section, so the disabled file is never opened), the file
 /// written by the compare and swap with the text the save read as `expected`,
 /// then the instances for `running`. The 200 is exactly `{"revision",
@@ -1866,8 +1866,8 @@ async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_r
     assert_eq!(
         app.calls(),
         vec![
-            "read presets.ini",
-            "write-if alice presets.ini",
+            "read models.ini",
+            "write-if alice models.ini",
             "list",
             "status default",
         ],
@@ -1903,7 +1903,7 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     app.save_on(ALPHA, json!({ "ctx-size": "8192" }))
         .await
         .assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
-    let text = app.file_text(PRESETS).expect("presets.ini");
+    let text = app.file_text(PRESETS).expect("models.ini");
     assert!(
         text.starts_with("; The presets llama-server is offered (--models-preset).\r\n"),
         "the file's own header survives: {text:?}"
@@ -2009,7 +2009,7 @@ async fn save_a_stale_revision_is_409_with_no_write() {
 
 /// The revision carries the file's name, so the same section's text in the
 /// other file is another preset: a page that read the disabled copy is 409
-/// against `presets.ini`, and nothing is written.
+/// against `models.ini`, and nothing is written.
 #[tokio::test]
 async fn save_a_revision_taken_from_the_other_file_is_409() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -2317,7 +2317,7 @@ async fn save_keeps_the_session_for_every_failure_that_is_no_refusal() {
 /// asked, a time limit or a dead stream is 503 `client-unavailable`, and the
 /// task that was cut off never writes. The read is parked inside the manager
 /// call, the save's limit passes, and the answer is 503; released afterwards,
-/// the parked read finishes and the save stops there, with `presets.ini` as it
+/// the parked read finishes and the save stops there, with `models.ini` as it
 /// was. A 503 is the bff's news, so the session lives.
 #[tokio::test]
 async fn save_a_parked_read_answers_503_and_the_cut_off_task_never_writes() {
@@ -2549,7 +2549,7 @@ async fn save_the_managers_other_answer_is_502_without_its_words() {
 // `running`: the instances serving the preset
 // ---------------------------------------------------------------------------
 
-/// A preset of `presets.ini` is served by every instance of the engine, so
+/// A preset of `models.ini` is served by every instance of the engine, so
 /// `running` is true when any of them is up: the instances are listed, then
 /// their states asked in order until one is `active`.
 #[tokio::test]

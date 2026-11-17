@@ -490,7 +490,7 @@ mod tests {
     /// (the round trips are in `pai-manager`'s e2e).
     #[test]
     fn a_client_of_the_default_body_reports_other() {
-        match NoCompareSwap.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", "") {
+        match NoCompareSwap.write_file_if("models.ini", "[x]\nmodel = /m/x.gguf\n", "") {
             Err(ClientError::Other(detail)) => {
                 assert!(!detail.is_empty(), "the detail says why: {detail:?}")
             }

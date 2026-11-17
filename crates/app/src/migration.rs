@@ -64,13 +64,20 @@ pub struct Import {
     pub refused: Option<(ConfigFile, String)>,
 }
 
-/// The per-user files in the order they are handed over, each with its
-/// name in the per-user directory: the server file first, since the manager
-/// checks presets.ini against the instances' `ModelsMax`.
-const USER_FILES: [(ConfigFile, &str); 3] = [
-    (ConfigFile::Server, "server.ini"),
-    (ConfigFile::Presets, "presets.ini"),
-    (ConfigFile::PresetsDisabled, "presets.ini.disabled"),
+/// The per-user files in the order they are handed over, each with two
+/// names: the one an earlier install wrote it under in the per-user directory
+/// (`pai_core::migrate` moves the tree and never renames a file, so the
+/// hand-over reads THOSE names), and the one the manager knows the same
+/// content under, which is where the bytes go. The server file first, since
+/// the manager checks models.ini against the instances' `ModelsMax`.
+const USER_FILES: [(ConfigFile, &str, &str); 3] = [
+    (ConfigFile::Server, "server.ini", "server@default.ini"),
+    (ConfigFile::Presets, "presets.ini", "models.ini"),
+    (
+        ConfigFile::PresetsDisabled,
+        "presets.ini.disabled",
+        "models.ini.disabled",
+    ),
 ];
 
 /// Whether to offer handing the per-user configuration in `user_dir` to the
@@ -81,7 +88,7 @@ pub fn import_offered(b: &Backend, user_dir: &Path) -> bool {
         return false;
     }
     let mut missing = false;
-    for (file, name) in USER_FILES {
+    for (file, name, _) in USER_FILES {
         if !user_dir.join(name).exists() {
             continue;
         }
@@ -102,7 +109,7 @@ pub fn import_user_config(b: &Backend, user_dir: &Path) -> Import {
     if matches!(b, Backend::Direct) {
         return done;
     }
-    for (file, name) in USER_FILES {
+    for (file, name, _) in USER_FILES {
         let text = match std::fs::read_to_string(user_dir.join(name)) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
@@ -290,7 +297,10 @@ mod import_tests {
     use pai_core::client::{ClientError, InstanceState};
 
     // The user's files as the 2.4 configurator wrote them: comments, CRLF,
-    // a trailing blank line, so a rewrite of any byte shows.
+    // a trailing blank line, so a rewrite of any byte shows. The preset files
+    // carry the names that install wrote them under, and those names are what
+    // stays in the per-user directory: `pai_core::migrate` moves the tree and
+    // never renames a file, so the hand-over reads them there.
     const SERVER: &str = "; written by the configurator\r\n[Server]\r\nPort = 8080\r\n\
                           ModelsMax = 6\r\nModelsDir = /mnt/data/models\r\n\r\n";
     const PRESETS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n\
@@ -298,9 +308,14 @@ mod import_tests {
     const DISABLED: &str = "[Qwen3.8-Flash-Next]\r\n\
                             model = /mnt/data/models/Qwen3.8-Flash-Next-IQ3_S.gguf\r\n";
 
+    // The names the per-user directory holds them under, and the names the
+    // manager knows the same content under.
+    const PRESETS_USER: &str = "presets.ini";
+    const DISABLED_USER: &str = "presets.ini.disabled";
+
     const SERVER_SYS: &str = "server@default.ini";
-    const PRESETS_SYS: &str = "presets.ini";
-    const DISABLED_SYS: &str = "presets.ini.disabled";
+    const PRESETS_SYS: &str = "models.ini";
+    const DISABLED_SYS: &str = "models.ini.disabled";
 
     /// A per-user config directory holding the files named.
     fn user_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -314,8 +329,8 @@ mod import_tests {
     fn all_three() -> tempfile::TempDir {
         user_dir(&[
             ("server.ini", SERVER),
-            ("presets.ini", PRESETS),
-            ("presets.ini.disabled", DISABLED),
+            (PRESETS_USER, PRESETS),
+            (DISABLED_USER, DISABLED),
         ])
     }
 
@@ -406,7 +421,7 @@ mod import_tests {
 
     #[test]
     fn import_is_not_offered_without_a_per_user_server_ini() {
-        let dir = user_dir(&[("presets.ini", PRESETS), ("presets.ini.disabled", DISABLED)]);
+        let dir = user_dir(&[(PRESETS_USER, PRESETS), (DISABLED_USER, DISABLED)]);
         let log = fake::log();
         let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
         assert!(!import_offered(&b, dir.path()));
@@ -438,7 +453,7 @@ mod import_tests {
         assert!(!import_offered(&b, dir.path()));
     }
 
-    /// A hand-over that stopped after the server file (presets.ini refused)
+    /// A hand-over that stopped after the server file (models.ini refused)
     /// is offered again for what is left, so a refusal never strands the
     /// user's presets.
     #[test]
@@ -454,13 +469,13 @@ mod import_tests {
 
     // ── What the hand-over writes ───────────────────────────────────────
 
-    /// The server file first: the manager checks presets.ini's
+    /// The server file first: the manager checks models.ini's
     /// `load-on-startup` count against the instances' `ModelsMax` on disk,
-    /// so presets.ini written before any instance would be held to
+    /// so models.ini written before any instance would be held to
     /// llama.cpp's default and a valid config with a larger `ModelsMax`
-    /// refused; the server file, checked against no presets.ini yet, passes
+    /// refused; the server file, checked against no models.ini yet, passes
     /// on its own rules. The disabled presets last, checked against
-    /// presets.ini. The user's bytes go over unchanged, and the user's files
+    /// models.ini. The user's bytes go over unchanged, and the user's files
     /// stay where they are, unchanged.
     #[test]
     fn import_writes_server_then_presets_then_disabled_with_the_users_bytes() {
@@ -486,8 +501,8 @@ mod import_tests {
             fake::writes(&log),
             [
                 "write_file server@default.ini",
-                "write_file presets.ini",
-                "write_file presets.ini.disabled"
+                "write_file models.ini",
+                "write_file models.ini.disabled"
             ]
         );
         let files = files.lock().unwrap().clone();
@@ -504,6 +519,86 @@ mod import_tests {
         );
     }
 
+    /// The per-user files of an earlier install keep the names that install
+    /// wrote them under (`presets.ini`, `presets.ini.disabled`: the tree move
+    /// leaves them there). The hand-over reads THOSE names and hands over the
+    /// manager's, so the offer comes with them and the manager ends up
+    /// holding `models.ini` and `models.ini.disabled` with the user's bytes.
+    #[test]
+    fn import_reads_the_per_user_names_of_an_earlier_install() {
+        let dir = user_dir(&[
+            ("server.ini", SERVER),
+            (PRESETS_USER, PRESETS),
+            (DISABLED_USER, DISABLED),
+        ]);
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive);
+        let files = c.files.clone();
+        let b = fake::backend(c);
+        assert!(import_offered(&b, dir.path()), "offered");
+        assert_eq!(
+            import_user_config(&b, dir.path()),
+            Import {
+                written: vec![
+                    ConfigFile::Server,
+                    ConfigFile::Presets,
+                    ConfigFile::PresetsDisabled
+                ],
+                refused: None,
+            }
+        );
+        assert_eq!(
+            fake::writes(&log),
+            [
+                "write_file server@default.ini",
+                "write_file models.ini",
+                "write_file models.ini.disabled"
+            ]
+        );
+        let files = files.lock().unwrap().clone();
+        assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(PRESETS));
+        assert_eq!(files.get(DISABLED_SYS).map(String::as_str), Some(DISABLED));
+    }
+
+    /// The manager's own names are not per-user files: nothing is read under
+    /// them, so a directory holding `models.ini` (the live name, where the
+    /// configurator writes today) offers nothing once the manager has the
+    /// server file, and hands over nothing.
+    #[test]
+    fn import_reads_nothing_under_the_managers_own_names() {
+        let dir = user_dir(&[("server.ini", SERVER), (PRESETS_SYS, PRESETS)]);
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_file(SERVER_SYS, "[Server]\nPort = 8099\n");
+        let files = c.files.clone();
+        let b = fake::backend(c);
+        assert!(
+            !import_offered(&b, dir.path()),
+            "models.ini is the manager's name, not the user's"
+        );
+        assert_eq!(
+            import_user_config(&b, dir.path()),
+            Import::default(),
+            "nothing handed over"
+        );
+        assert_eq!(fake::writes(&log), Vec::<String>::new());
+        let files = files.lock().unwrap().clone();
+        assert_eq!(
+            files.get(SERVER_SYS).map(String::as_str),
+            Some("[Server]\nPort = 8099\n"),
+            "the manager's server file untouched"
+        );
+        assert_eq!(files.get(PRESETS_SYS), None, "models.ini not created");
+
+        // The same file with no per-user server.ini: no offer, no write.
+        let dir = user_dir(&[(PRESETS_SYS, PRESETS)]);
+        let log = fake::log();
+        let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
+        assert!(!import_offered(&b, dir.path()));
+        assert_eq!(import_user_config(&b, dir.path()), Import::default());
+        assert_eq!(fake::writes(&log), Vec::<String>::new());
+    }
+
     #[test]
     fn import_skips_the_files_the_user_does_not_have() {
         let dir = user_dir(&[("server.ini", SERVER)]);
@@ -516,7 +611,7 @@ mod import_tests {
     }
 
     /// A system file that exists is never replaced, whatever it holds (an
-    /// empty presets.ini included).
+    /// empty models.ini included).
     #[test]
     fn import_never_overwrites_a_system_file() {
         let dir = all_three();
@@ -528,7 +623,7 @@ mod import_tests {
         let got = import_user_config(&fake::backend(c), dir.path());
         assert_eq!(got.written, [ConfigFile::PresetsDisabled]);
         assert_eq!(got.refused, None);
-        assert_eq!(fake::writes(&log), ["write_file presets.ini.disabled"]);
+        assert_eq!(fake::writes(&log), ["write_file models.ini.disabled"]);
         let files = files.lock().unwrap().clone();
         assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(""));
         assert_eq!(
@@ -615,8 +710,8 @@ mod import_tests {
     /// the hand-over there with an error; it is not skipped as missing.
     #[test]
     fn an_unreadable_user_file_stops_the_hand_over_there() {
-        let dir = user_dir(&[("server.ini", SERVER), ("presets.ini.disabled", DISABLED)]);
-        std::fs::create_dir(dir.path().join("presets.ini")).expect("dir in its place");
+        let dir = user_dir(&[("server.ini", SERVER), (DISABLED_USER, DISABLED)]);
+        std::fs::create_dir(dir.path().join(PRESETS_USER)).expect("dir in its place");
         let log = fake::log();
         let got = import_user_config(
             &fake::backend(FakeClient::new(&log, InstanceState::Inactive)),
@@ -625,7 +720,7 @@ mod import_tests {
         assert_eq!(got.written, [ConfigFile::Server]);
         match &got.refused {
             Some((ConfigFile::Presets, text)) => assert!(!text.is_empty()),
-            other => panic!("stopped at presets.ini with a text: {other:?}"),
+            other => panic!("stopped at models.ini with a text: {other:?}"),
         }
         assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);
     }

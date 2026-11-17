@@ -299,9 +299,9 @@ impl ActionLog for NoActionLog {
 pub enum ConfigFile {
     /// `server@<id>.ini`, the id valid.
     Instance(String),
-    /// `presets.ini`.
+    /// `models.ini`.
     Presets,
-    /// `presets.ini.disabled`.
+    /// `models.ini.disabled`.
     PresetsDisabled,
 }
 
@@ -309,8 +309,8 @@ pub enum ConfigFile {
 /// path, `server.ini`, `settings.ini`, an invalid instance id).
 pub fn config_file(name: &str) -> Option<ConfigFile> {
     match name {
-        "presets.ini" => Some(ConfigFile::Presets),
-        "presets.ini.disabled" => Some(ConfigFile::PresetsDisabled),
+        "models.ini" => Some(ConfigFile::Presets),
+        "models.ini.disabled" => Some(ConfigFile::PresetsDisabled),
         _ => {
             let id = name.strip_prefix("server@")?.strip_suffix(".ini")?;
             crate::paths::valid_instance_id(id).then(|| ConfigFile::Instance(id.to_string()))
@@ -851,7 +851,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     fn render_all_locked(&self) -> Vec<(String, ManagerError)> {
         let dir = crate::paths::engine_config_dir();
         let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
-        let (enabled, disabled) = (on_disk("presets.ini"), on_disk("presets.ini.disabled"));
+        let (enabled, disabled) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         let mut failures = Vec::new();
         for id in crate::paths::instance_ids() {
@@ -1012,8 +1012,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 }
 
 /// The content checks of `file` for `contents`, against the files on disk:
-/// the instance file against the Server rules and its own render, `presets.ini`
-/// and `presets.ini.disabled` against the other preset file and every
+/// the instance file against the Server rules and its own render, `models.ini`
+/// and `models.ini.disabled` against the other preset file and every
 /// instance's render. A render is the pool cut by the instance's section of
 /// `assignments.ini`, so the `load-on-startup` count is judged per instance,
 /// against that instance's `ModelsMax`. A refusal writes nothing.
@@ -1024,11 +1024,11 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
     // The pool the renders are made of once this write lands.
     let enabled = match file {
         ConfigFile::Presets => contents.to_string(),
-        _ => on_disk("presets.ini"),
+        _ => on_disk("models.ini"),
     };
     let disabled = match file {
         ConfigFile::PresetsDisabled => contents.to_string(),
-        _ => on_disk("presets.ini.disabled"),
+        _ => on_disk("models.ini.disabled"),
     };
     match file {
         ConfigFile::Instance(id) => {
@@ -1039,13 +1039,13 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
             check_render(id, &enabled, &disabled, models_max)
         }
         ConfigFile::Presets => {
-            let (old, off) = (on_disk("presets.ini"), on_disk("presets.ini.disabled"));
+            let (old, off) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
             checks::presets_file(contents, &old, &off, NO_MODELS_MAX)?;
             checks::preset_ids_free(contents, &old, &off)?;
             check_renders(&enabled, &disabled)
         }
         ConfigFile::PresetsDisabled => {
-            let (old, enabled_file) = (on_disk("presets.ini.disabled"), on_disk("presets.ini"));
+            let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
             checks::presets_disabled_file(contents, &old, &enabled_file)?;
             checks::preset_ids_free(contents, &old, &enabled_file)?;
             check_renders(&enabled, &disabled)
@@ -1053,7 +1053,7 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
     }
 }
 
-/// The text of instance `id`'s render `presets@<id>.ini`, from the pool pair
+/// The text of instance `id`'s render `models@<id>.ini`, from the pool pair
 /// and the `assignments.ini` on disk: what the checks judge and what
 /// [`Manager::render_failures`] writes.
 fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
@@ -1722,7 +1722,7 @@ pub(crate) fn manager_e2e() {
     let bad_names = |sys: &std::path::Path| -> Vec<String> {
         vec![
             "../x".into(),
-            "../presets.ini".into(),
+            "../models.ini".into(),
             "server.ini".into(),
             "settings.ini".into(),
             "server@Bad.ini".into(),
@@ -1730,12 +1730,12 @@ pub(crate) fn manager_e2e() {
             "server@a_b.ini".into(),
             "server@default.ini.tmp".into(),
             "server@default".into(),
-            "presets.ini.bak".into(),
-            "presets@a.ini".into(),
-            "presets@default.ini".into(),
-            "sub/presets.ini".into(),
+            "models.ini.bak".into(),
+            "models@a.ini".into(),
+            "models@default.ini".into(),
+            "sub/models.ini".into(),
             "".into(),
-            sys.join("presets.ini").to_string_lossy().into_owned(),
+            sys.join("models.ini").to_string_lossy().into_owned(),
             "/etc/passwd".into(),
             "Presets.ini".into(),
         ]
@@ -1760,9 +1760,9 @@ pub(crate) fn manager_e2e() {
             "refused write of an instance file"
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", "[m]\nmodel = /m/a.gguf\n", false),
+            m.write_file(&alice, "models.ini", "[m]\nmodel = /m/a.gguf\n", false),
             Err(ManagerError::NotAuthorized),
-            "refused write of presets.ini"
+            "refused write of models.ini"
         );
         assert!(
             !sys.exists(),
@@ -1812,7 +1812,7 @@ pub(crate) fn manager_e2e() {
             );
         }
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini"),
+            m.read_file(Some(&alice), "models.ini"),
             Ok(None),
             "missing file reads as None"
         );
@@ -1850,11 +1850,11 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", presets, false), Ok(()));
         assert_eq!(
             m.write_file(
                 &alice,
-                "presets.ini.disabled",
+                "models.ini.disabled",
                 "[Old]\nmodel = /m/old.gguf\n",
                 false
             ),
@@ -1868,9 +1868,9 @@ pub(crate) fn manager_e2e() {
             files_in(&sys),
             set(&[
                 "server@default.ini",
-                "presets.ini",
-                "presets.ini.disabled",
-                "presets@default.ini"
+                "models.ini",
+                "models.ini.disabled",
+                "models@default.ini"
             ]),
             "exactly the files written, no temp file left"
         );
@@ -1881,7 +1881,7 @@ pub(crate) fn manager_e2e() {
             Ok(Some(plain(default_ini)))
         );
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini"),
+            m.read_file(Some(&alice), "models.ini"),
             Ok(Some(plain(presets)))
         );
         assert!(
@@ -1931,7 +1931,7 @@ pub(crate) fn manager_e2e() {
         .with_group(crate::manager::service::fakes::FakeGroup::new());
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini"),
+            m.read_file(Some(&alice), "models.ini"),
             Ok(Some(plain(presets)))
         );
         assert_eq!(m.status("default"), Ok(UnitState::Active));
@@ -2209,8 +2209,8 @@ pub(crate) fn manager_e2e() {
         );
         std::fs::remove_file(sys.join("server@stale.ini")).expect("drop stale");
         std::fs::remove_file(sys.join("server@fresh.ini")).expect("drop fresh");
-        // presets.ini has no address: never checked.
-        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+        // models.ini has no address: never checked.
+        assert_eq!(m.write_file(&alice, "models.ini", presets, false), Ok(()));
         assert_eq!(m.list_instances(), ["bare", "default", "lan-2", "wild"]);
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -2235,7 +2235,7 @@ pub(crate) fn manager_e2e() {
         let probe = sys.join("probe");
         let enforced = std::fs::write(&probe, "").is_err();
         let _ = std::fs::remove_file(&probe);
-        let result = m.write_file(&alice, "presets.ini", "[Other]\nmodel = /m/o.gguf\n", false);
+        let result = m.write_file(&alice, "models.ini", "[Other]\nmodel = /m/o.gguf\n", false);
         std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
         if enforced {
             assert!(
@@ -2243,7 +2243,7 @@ pub(crate) fn manager_e2e() {
                 "write failure: {result:?}"
             );
             assert_eq!(
-                std::fs::read_to_string(sys.join("presets.ini")).expect("kept"),
+                std::fs::read_to_string(sys.join("models.ini")).expect("kept"),
                 presets
             );
             assert_eq!(files_in(&sys), before, "no temp file left");
@@ -2387,7 +2387,7 @@ pub(crate) fn manager_instance_files_e2e() {
             m.write_file(&alice, "server@default.ini", ini, false),
             Ok(())
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", presets, false), Ok(()));
         let c = group_calls.lock().unwrap().clone();
         assert_eq!(c.len(), 1, "one group change, the instance file's: {c:?}");
         assert_eq!(c[0].group, INSTANCE_GROUP);
@@ -2398,7 +2398,7 @@ pub(crate) fn manager_instance_files_e2e() {
             let mode =
                 |n: &str| std::fs::metadata(sys.join(n)).unwrap().permissions().mode() & 0o7777;
             assert_eq!(mode("server@default.ini"), 0o640);
-            assert_eq!(mode("presets.ini"), 0o644);
+            assert_eq!(mode("models.ini"), 0o644);
             assert_eq!(c[0].mode, 0o640);
         }
 
@@ -2410,11 +2410,11 @@ pub(crate) fn manager_instance_files_e2e() {
         assert_eq!(m.read_file(Some(&alice), "server@nope.ini"), Ok(None));
         // ── The preset files need no caller at all ───────────────────────
         assert_eq!(
-            m.read_file(None::<&Caller>, "presets.ini"),
+            m.read_file(None::<&Caller>, "models.ini"),
             Ok(Some(plain(presets)))
         );
         assert_eq!(
-            m.read_file(None::<&Caller>, "presets.ini.disabled"),
+            m.read_file(None::<&Caller>, "models.ini.disabled"),
             Ok(None)
         );
         assert_eq!(
@@ -2457,7 +2457,7 @@ pub(crate) fn manager_instance_files_e2e() {
         assert_eq!(
             m.write_file(
                 &alice,
-                "presets.ini.disabled",
+                "models.ini.disabled",
                 "[Old]\nmodel = /m/old.gguf\n",
                 false
             ),
@@ -2626,14 +2626,14 @@ ModelsMax = 2
     {
         let m = manager(false);
         let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nOpencodeApiKey = not-a-secret-here\n";
-        put("presets.ini", presets);
-        put("presets.ini.disabled", presets);
+        put("models.ini", presets);
+        put("models.ini.disabled", presets);
         assert_eq!(
-            m.read_file(None::<&Caller>, "presets.ini"),
+            m.read_file(None::<&Caller>, "models.ini"),
             Ok(Some(plain(presets)))
         );
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini.disabled"),
+            m.read_file(Some(&alice), "models.ini.disabled"),
             Ok(Some(plain(presets)))
         );
         assert_eq!(*m.authority().asked_quietly.lock().unwrap(), vec![]);
@@ -2868,8 +2868,8 @@ ModelsMax = 2
         put("server@default.ini", saved);
         let m = manager(true);
         let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
-        assert_eq!(m.write_file(&alice, "presets.ini", presets, true), Ok(()));
-        assert_eq!(get("presets.ini"), presets);
+        assert_eq!(m.write_file(&alice, "models.ini", presets, true), Ok(()));
+        assert_eq!(get("models.ini"), presets);
     }
 }
 
@@ -2906,7 +2906,7 @@ pub(crate) fn manager_engine_dir_e2e() {
     for (name, text) in [
         ("server@stray.ini", stray_ini),
         ("server@default.ini", stray_ini),
-        ("presets.ini", stray_presets),
+        ("models.ini", stray_presets),
         ("bff.ini", "[Bff]\nListen = 127.0.0.1:8590\n"),
     ] {
         std::fs::write(framework.join(name), text).expect("framework file");
@@ -2922,7 +2922,7 @@ pub(crate) fn manager_engine_dir_e2e() {
 
     // ── Nothing of the framework's directory counts ───────────────────────
     assert_eq!(m.list_instances(), Vec::<String>::new(), "no instance yet");
-    assert_eq!(m.read_file(None::<&Caller>, "presets.ini"), Ok(None));
+    assert_eq!(m.read_file(None::<&Caller>, "models.ini"), Ok(None));
     assert_eq!(m.read_file(Some(&alice), "server@default.ini"), Ok(None));
     assert_eq!(
         m.start(&alice, "stray"),
@@ -2939,15 +2939,15 @@ pub(crate) fn manager_engine_dir_e2e() {
         m.write_file(&alice, "server@default.ini", ini, false),
         Ok(())
     );
-    assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", presets, false), Ok(()));
     assert_eq!(
-        m.write_file(&alice, "presets.ini.disabled", disabled, false),
+        m.write_file(&alice, "models.ini.disabled", disabled, false),
         Ok(())
     );
     for (name, text) in [
         ("server@default.ini", ini),
-        ("presets.ini", presets),
-        ("presets.ini.disabled", disabled),
+        ("models.ini", presets),
+        ("models.ini.disabled", disabled),
     ] {
         assert_eq!(
             std::fs::read_to_string(engine.join(name)).ok().as_deref(),
@@ -2966,13 +2966,13 @@ pub(crate) fn manager_engine_dir_e2e() {
                 & 0o7777
         };
         assert_eq!(mode("server@default.ini"), 0o640);
-        assert_eq!(mode("presets.ini"), 0o644);
-        assert_eq!(mode("presets.ini.disabled"), 0o644);
+        assert_eq!(mode("models.ini"), 0o644);
+        assert_eq!(mode("models.ini.disabled"), 0o644);
     }
     assert_eq!(names(&framework), framework_before, "nothing written there");
     for (name, text) in [
         ("server@default.ini", stray_ini),
-        ("presets.ini", stray_presets),
+        ("models.ini", stray_presets),
     ] {
         assert_eq!(
             std::fs::read_to_string(framework.join(name)).unwrap(),
@@ -2984,7 +2984,7 @@ pub(crate) fn manager_engine_dir_e2e() {
     // ── Reads and the list come from the engine's directory ───────────────
     assert_eq!(m.list_instances(), ["default"]);
     assert_eq!(
-        m.read_file(None::<&Caller>, "presets.ini"),
+        m.read_file(None::<&Caller>, "models.ini"),
         Ok(Some(plain(presets)))
     );
     assert_eq!(
@@ -3055,7 +3055,7 @@ pub(crate) fn manager_waits_e2e() {
         let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
-        std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+        std::fs::write(sys.join("models.ini"), presets).expect("write presets");
 
         let gate = Gate::new();
         let m = Arc::new(
@@ -3088,7 +3088,7 @@ pub(crate) fn manager_waits_e2e() {
         assert_eq!(answer(&gate, "list_instances", list), vec!["default"]);
         let read = {
             let m = m.clone();
-            on_thread(move || m.read_file(None::<&Caller>, "presets.ini"))
+            on_thread(move || m.read_file(None::<&Caller>, "models.ini"))
         };
         assert_eq!(answer(&gate, "read_file", read), Ok(Some(plain(presets))));
         let stop = {
@@ -3102,9 +3102,7 @@ pub(crate) fn manager_waits_e2e() {
         );
         let refused = {
             let (m, carol) = (m.clone(), carol.clone());
-            on_thread(move || {
-                m.write_file(&carol, "presets.ini", "[x]\nmodel = /m/x.gguf\n", false)
-            })
+            on_thread(move || m.write_file(&carol, "models.ini", "[x]\nmodel = /m/x.gguf\n", false))
         };
         assert_eq!(
             answer(&gate, "carol's write", refused),
@@ -3114,7 +3112,7 @@ pub(crate) fn manager_waits_e2e() {
         let disabled = "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n";
         let write = {
             let (m, bob) = (m.clone(), bob.clone());
-            on_thread(move || m.write_file(&bob, "presets.ini.disabled", disabled, false))
+            on_thread(move || m.write_file(&bob, "models.ini.disabled", disabled, false))
         };
         assert_eq!(answer(&gate, "bob's write", write), Ok(()));
 
@@ -3146,12 +3144,12 @@ pub(crate) fn manager_waits_e2e() {
             ]
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets,
-            "the refused write left presets.ini"
+            "the refused write left models.ini"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini.disabled")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini.disabled")).unwrap(),
             disabled
         );
     }
@@ -3327,7 +3325,7 @@ pub(crate) fn manager_checks_e2e() {
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", "[a b]\nmodel = /m/a.gguf\n", false),
+            m.write_file(&alice, "models.ini", "[a b]\nmodel = /m/a.gguf\n", false),
             Err(ManagerError::NotAuthorized)
         );
         assert!(!sys.exists(), "nothing created");
@@ -3396,7 +3394,7 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", presets, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", presets, false), Ok(()));
 
         assert_eq!(
             m.write_file(
@@ -3418,20 +3416,20 @@ pub(crate) fn manager_checks_e2e() {
 
         let bad = format!("{presets}[Other]\nmodel = C:\\Models #1\\o.gguf\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &bad, false),
+            m.write_file(&alice, "models.ini", &bad, false),
             invalid("comment-markers", &["model"])
         );
         let bad = format!(
             "{presets}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &bad, false),
+            m.write_file(&alice, "models.ini", &bad, false),
             invalid("moe-cache-with-tensor-split", &[])
         );
-        assert_eq!(read("presets.ini").as_deref(), Some(presets), "old kept");
+        assert_eq!(read("models.ini").as_deref(), Some(presets), "old kept");
         assert_eq!(
             listing(),
-            ["presets.ini", "presets@default.ini", "server@default.ini"],
+            ["models.ini", "models@default.ini", "server@default.ini"],
             "no temp file left"
         );
         assert!(
@@ -3452,19 +3450,19 @@ pub(crate) fn manager_checks_e2e() {
         std::fs::write(sys.join("assignments.ini"), a_none).expect("assignments.ini");
         // default's ModelsMax is 2.
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
+            m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
             invalid("load-on-startup-over-max", &["3", "2", "default"]),
             "the refusal names the instance whose render is over its max"
         );
-        assert_eq!(read("presets.ini").as_deref(), Some(presets));
+        assert_eq!(read("models.ini").as_deref(), Some(presets));
         assert_eq!(
-            read("presets@default.ini"),
+            read("models@default.ini"),
             Some(pai_core::assign::render(presets, "", None)),
             "a refused write leaves the render as it was: it opens with the \
              generated header, so it is the pool rendered, never the pool text"
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b"]), false),
+            m.write_file(&alice, "models.ini", &flagged(&["a", "b"]), false),
             Ok(())
         );
         // Lowering ModelsMax under them is refused too.
@@ -3506,12 +3504,12 @@ pub(crate) fn manager_checks_e2e() {
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
+            m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
             Ok(()),
             "the pool has three presets and no instance is over its own max"
         );
         assert_eq!(
-            read("presets@default.ini"),
+            read("models@default.ini"),
             Some(pai_core::assign::render(
                 &flagged(&["a", "b", "c"]),
                 "",
@@ -3520,7 +3518,7 @@ pub(crate) fn manager_checks_e2e() {
             "default's render holds the one preset it is told"
         );
         assert_eq!(
-            read("presets@lan-2.ini"),
+            read("models@lan-2.ini"),
             Some(pai_core::assign::render(
                 &flagged(&["a", "b", "c"]),
                 "",
@@ -3532,9 +3530,9 @@ pub(crate) fn manager_checks_e2e() {
             listing(),
             [
                 "assignments.ini",
-                "presets.ini",
-                "presets@default.ini",
-                "presets@lan-2.ini",
+                "models.ini",
+                "models@default.ini",
+                "models@lan-2.ini",
                 "server@default.ini",
                 "server@lan-2.ini"
             ],
@@ -3546,49 +3544,49 @@ pub(crate) fn manager_checks_e2e() {
     let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
     {
         let m = manager(true);
-        std::fs::write(sys.join("presets.ini"), broken).expect("hand-edited fixture");
+        std::fs::write(sys.join("models.ini"), broken).expect("hand-edited fixture");
         let added = format!("{broken}[new]\nmodel = /models/new.gguf\n");
-        assert_eq!(m.write_file(&alice, "presets.ini", &added, false), Ok(()));
-        assert_eq!(read("presets.ini"), Some(added.clone()));
+        assert_eq!(m.write_file(&alice, "models.ini", &added, false), Ok(()));
+        assert_eq!(read("models.ini"), Some(added.clone()));
         let edited = format!("{broken}[new]\nmodel = /models/new.gguf\nparallel = 0\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &edited, false),
+            m.write_file(&alice, "models.ini", &edited, false),
             invalid(
                 "not-whole-number-in-range",
                 &["parallel", "0", "1", "2147483647"]
             )
         );
-        assert_eq!(read("presets.ini"), Some(added));
+        assert_eq!(read("models.ini"), Some(added));
     }
 
-    // ── presets.ini.disabled: switching off is never refused ─────────────
+    // ── models.ini.disabled: switching off is never refused ─────────────
     {
         let m = manager(true);
-        // The broken preset moves out of presets.ini unchanged: accepted.
+        // The broken preset moves out of models.ini unchanged: accepted.
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", broken, false),
+            m.write_file(&alice, "models.ini.disabled", broken, false),
             Ok(())
         );
-        assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
+        assert_eq!(read("models.ini.disabled").as_deref(), Some(broken));
         // A disabled preset edited now gets the preset rules.
         let edited = format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", &edited, false),
+            m.write_file(&alice, "models.ini.disabled", &edited, false),
             invalid("fit-target-format", &["2048MiB", "MiB"])
         );
-        assert_eq!(read("presets.ini.disabled").as_deref(), Some(broken));
+        assert_eq!(read("models.ini.disabled").as_deref(), Some(broken));
         // No startup count: llama-server never reads this file.
         let many = format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"]));
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", &many, false),
+            m.write_file(&alice, "models.ini.disabled", &many, false),
             Ok(())
         );
-        // Switching the broken one back on: new in presets.ini, so checked.
+        // Switching the broken one back on: new in models.ini, so checked.
         let enabled = "[new]\nmodel = /models/new.gguf\n";
-        std::fs::write(sys.join("presets.ini"), enabled).expect("presets.ini fixture");
+        std::fs::write(sys.join("models.ini"), enabled).expect("models.ini fixture");
         let on = format!("{enabled}{broken}");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &on, false),
+            m.write_file(&alice, "models.ini", &on, false),
             invalid(
                 "not-whole-number-in-range",
                 &["ctx-size", "abc", "0", "2147483647"]
@@ -3602,14 +3600,14 @@ pub(crate) fn manager_checks_e2e() {
         let m = manager(true);
         let kept = "[kept]\nmodel = /models/kept.gguf\n";
         let parked = "[commented]\nmodel = /models/c.gguf ; Q8\n";
-        std::fs::write(sys.join("presets.ini"), kept).expect("presets.ini fixture");
-        std::fs::write(sys.join("presets.ini.disabled"), parked).expect("disabled fixture");
-        // The switch moves the section whole: new to presets.ini, held
+        std::fs::write(sys.join("models.ini"), kept).expect("models.ini fixture");
+        std::fs::write(sys.join("models.ini.disabled"), parked).expect("disabled fixture");
+        // The switch moves the section whole: new to models.ini, held
         // identically by the disabled file, so the commented line is known.
         let on = format!("{kept}{parked}");
-        assert_eq!(m.write_file(&alice, "presets.ini", &on, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", &on, false), Ok(()));
         assert_eq!(
-            read("presets.ini").as_deref(),
+            read("models.ini").as_deref(),
             Some(on.as_str()),
             "the switch wrote through"
         );
@@ -3619,37 +3617,37 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(true);
         let zero = "[new]\nmodel = /models/new.gguf\nctx-size = 0\n";
-        assert_eq!(m.write_file(&alice, "presets.ini", zero, false), Ok(()));
-        assert_eq!(read("presets.ini").as_deref(), Some(zero));
+        assert_eq!(m.write_file(&alice, "models.ini", zero, false), Ok(()));
+        assert_eq!(read("models.ini").as_deref(), Some(zero));
     }
 
-    // ── One id across presets.ini and presets.ini.disabled ───────────────
+    // ── One id across models.ini and models.ini.disabled ───────────────
     {
         let m = manager(true);
         let enabled = "[new]\nmodel = /models/new.gguf\n";
         let parked = "[Parked]\nmodel = /models/parked.gguf\nctx-size = 8192\n";
-        std::fs::write(sys.join("presets.ini"), enabled).expect("presets.ini fixture");
-        std::fs::write(sys.join("presets.ini.disabled"), parked).expect("disabled fixture");
+        std::fs::write(sys.join("models.ini"), enabled).expect("models.ini fixture");
+        std::fs::write(sys.join("models.ini.disabled"), parked).expect("disabled fixture");
         // A new enabled preset named like a parked one, in another case.
         let namesake = format!("{enabled}[parked]\nmodel = /models/other.gguf\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &namesake, false),
+            m.write_file(&alice, "models.ini", &namesake, false),
             invalid("preset-name-taken", &["parked"])
         );
-        assert_eq!(read("presets.ini").as_deref(), Some(enabled), "old kept");
+        assert_eq!(read("models.ini").as_deref(), Some(enabled), "old kept");
         // A new parked preset named like an enabled one.
         let namesake = format!("{parked}[NEW]\nmodel = /models/other.gguf\n");
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", &namesake, false),
+            m.write_file(&alice, "models.ini.disabled", &namesake, false),
             invalid("preset-name-taken", &["NEW"])
         );
-        assert_eq!(read("presets.ini.disabled").as_deref(), Some(parked));
-        // Switching the parked one on writes presets.ini first: a move.
+        assert_eq!(read("models.ini.disabled").as_deref(), Some(parked));
+        // Switching the parked one on writes models.ini first: a move.
         let on = format!("{enabled}{parked}");
-        assert_eq!(m.write_file(&alice, "presets.ini", &on, false), Ok(()));
-        assert_eq!(read("presets.ini"), Some(on));
+        assert_eq!(m.write_file(&alice, "models.ini", &on, false), Ok(()));
+        assert_eq!(read("models.ini"), Some(on));
         assert_eq!(
-            m.write_file(&alice, "presets.ini.disabled", "", false),
+            m.write_file(&alice, "models.ini.disabled", "", false),
             Ok(())
         );
     }
@@ -3658,17 +3656,17 @@ pub(crate) fn manager_checks_e2e() {
     {
         let m = manager(true);
         let kept = "[kept]\nmodel = /models/kept.gguf\n";
-        std::fs::write(sys.join("presets.ini"), kept).expect("presets.ini fixture");
-        std::fs::write(sys.join("presets.ini.disabled"), "").expect("disabled fixture");
+        std::fs::write(sys.join("models.ini"), kept).expect("models.ini fixture");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("disabled fixture");
         let with = |lines: &str| format!("{kept}[new]\nmodel = /models/new.gguf\n{lines}");
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &with("temp = NaN\n"), false),
+            m.write_file(&alice, "models.ini", &with("temp = NaN\n"), false),
             invalid("not-a-number", &["temp", "NaN"])
         );
         assert_eq!(
             m.write_file(
                 &alice,
-                "presets.ini",
+                "models.ini",
                 &with("chat-template-kwargs = [1]\n"),
                 false
             ),
@@ -3677,7 +3675,7 @@ pub(crate) fn manager_checks_e2e() {
         assert_eq!(
             m.write_file(
                 &alice,
-                "presets.ini",
+                "models.ini",
                 &with("spec-draft-n-min = 5\nspec-draft-n-max = 4\n"),
                 false
             ),
@@ -3687,32 +3685,23 @@ pub(crate) fn manager_checks_e2e() {
             )
         );
         let enum_refused =
-            m.write_file(&alice, "presets.ini", &with("split-mode = banana\n"), false);
+            m.write_file(&alice, "models.ini", &with("split-mode = banana\n"), false);
         assert!(
             matches!(&enum_refused, Err(ManagerError::Invalid(r)) if r.key == "not-one-of"),
             "{enum_refused:?}"
         );
         assert_eq!(
-            m.write_file(
-                &alice,
-                "presets.ini.disabled",
-                &with("top-p = inf\n"),
-                false
-            ),
+            m.write_file(&alice, "models.ini.disabled", &with("top-p = inf\n"), false),
             invalid("not-a-number", &["top-p", "inf"])
         );
-        assert_eq!(read("presets.ini").as_deref(), Some(kept), "old kept");
-        assert_eq!(
-            read("presets.ini.disabled").as_deref(),
-            Some(""),
-            "old kept"
-        );
+        assert_eq!(read("models.ini").as_deref(), Some(kept), "old kept");
+        assert_eq!(read("models.ini.disabled").as_deref(), Some(""), "old kept");
     }
 }
 
 /// The presets render of every instance: `assignments.ini` is read through
 /// the file interface and never written by the client; the creation of an
-/// instance and every write of a pool file write `presets@<id>.ini`, which
+/// instance and every write of a pool file write `models@<id>.ini`, which
 /// holds the pool sections that instance's section of the assignments
 /// selects, plus the global `[*]` section for every instance.
 #[cfg(test)]
@@ -3789,13 +3778,13 @@ pub(crate) fn manager_assignments_e2e() {
     // ── The render of an instance is its section of the assignments ──────
     // The pool stands first, so the renders of the created instances hold
     // presets: default is told `a`, lan-2 is told `b`.
-    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
     assert_eq!(
         m.write_file(&alice, "server@default.ini", default_ini, false),
         Ok(())
     );
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(pool, "", Some(section("default").as_str()))),
         "default's render on the instance's creation"
     );
@@ -3808,18 +3797,18 @@ pub(crate) fn manager_assignments_e2e() {
         ),
         Ok(())
     );
-    let lan2 = read("presets@lan-2.ini").expect("lan-2's render");
+    let lan2 = read("models@lan-2.ini").expect("lan-2's render");
     assert_eq!(
         lan2,
         render(pool, "", Some(section("lan-2").as_str())),
         "lan-2's render is its own section"
     );
     assert!(
-        lan2.contains("[b]") && !read("presets@default.ini").unwrap().contains("[b]"),
+        lan2.contains("[b]") && !read("models@default.ini").unwrap().contains("[b]"),
         "the two renders differ: b is lan-2's alone"
     );
     assert!(
-        read("presets@default.ini").unwrap().contains("[a]") && !lan2.contains("[a]"),
+        read("models@default.ini").unwrap().contains("[a]") && !lan2.contains("[a]"),
         "and a is default's alone"
     );
     // An instance with no section gets the global section alone; the pool
@@ -3834,7 +3823,7 @@ pub(crate) fn manager_assignments_e2e() {
         Ok(())
     );
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(pool, "", None)),
         "no section: no preset of the pool"
     );
@@ -3842,10 +3831,10 @@ pub(crate) fn manager_assignments_e2e() {
         listing(),
         [
             "assignments.ini",
-            "presets.ini",
-            "presets@default.ini",
-            "presets@lan-2.ini",
-            "presets@lan-3.ini",
+            "models.ini",
+            "models@default.ini",
+            "models@lan-2.ini",
+            "models@lan-3.ini",
             "server@default.ini",
             "server@lan-2.ini",
             "server@lan-3.ini",
@@ -3860,64 +3849,64 @@ pub(crate) fn manager_assignments_e2e() {
     let on_disk = format!("{global}{pool}");
     assert!(
         matches!(
-            m.write_file(&alice, "presets.ini", &on_disk, false),
+            m.write_file(&alice, "models.ini", &on_disk, false),
             Err(ManagerError::Invalid(r)) if r.key == "invalid-preset-id" && r.values == ["*"]
         ),
         "the client cannot write the global section"
     );
     assert_eq!(
-        read("presets.ini").as_deref(),
+        read("models.ini").as_deref(),
         Some(pool),
         "the refused write changed nothing"
     );
-    std::fs::write(sys.join("presets.ini"), &on_disk).expect("hand-edited pool");
+    std::fs::write(sys.join("models.ini"), &on_disk).expect("hand-edited pool");
     assert_eq!(
-        m.write_file(&alice, "presets.ini.disabled", off, false),
+        m.write_file(&alice, "models.ini.disabled", off, false),
         Ok(())
     );
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(&on_disk, off, Some(section("default").as_str()))),
         "the render takes the global section from the pool file on disk"
     );
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(&on_disk, off, None)),
         "the global section reaches every instance: lan-3 is the global section alone"
     );
-    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(pool, off, Some(section("default").as_str()))),
         "default keeps a alone: the pool's other presets are not its rows"
     );
     assert_eq!(
-        read("presets@lan-2.ini"),
+        read("models@lan-2.ini"),
         Some(render(pool, off, Some(section("lan-2").as_str()))),
         "lan-2 keeps b alone"
     );
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(pool, off, None)),
         "the client's write replaced the hand-edited global section"
     );
     let added = format!("{pool}\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n");
-    assert_eq!(m.write_file(&alice, "presets.ini", &added, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", &added, false), Ok(()));
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(&added, off, Some(section("default").as_str()))),
         "the second write of the pool re-renders"
     );
 
     // ── A refused write changes no render ────────────────────────────────
     let broken = format!("{added}\n[bad]\nmodel = /models/bad.gguf\nctx-size = abc\n");
-    let answer = m.write_file(&alice, "presets.ini", &broken, false);
+    let answer = m.write_file(&alice, "models.ini", &broken, false);
     assert!(
         matches!(answer, Err(ManagerError::Invalid(_))),
         "a pool with a broken section is refused: {answer:?}"
     );
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(&added, off, Some(section("default").as_str()))),
         "a refused write leaves every render as it was"
     );
@@ -3925,11 +3914,11 @@ pub(crate) fn manager_assignments_e2e() {
         listing(),
         [
             "assignments.ini",
-            "presets.ini",
-            "presets.ini.disabled",
-            "presets@default.ini",
-            "presets@lan-2.ini",
-            "presets@lan-3.ini",
+            "models.ini",
+            "models.ini.disabled",
+            "models@default.ini",
+            "models@lan-2.ini",
+            "models@lan-3.ini",
             "server@default.ini",
             "server@lan-2.ini",
             "server@lan-3.ini",
@@ -3943,7 +3932,7 @@ pub(crate) fn manager_assignments_e2e() {
         "the renders are rewritten from what is on disk"
     );
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(&added, off, Some(section("default").as_str()))),
         "the start render agrees with the last write"
     );
@@ -4001,7 +3990,7 @@ pub(crate) fn manager_render_failure_e2e() {
     let written = format!("{hand}\n[e]\nmodel = /models/e.gguf\n");
 
     std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
-    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
     for (id, port) in [("default", 8081u16), ("lan-2", 8082), ("lan-3", 8083)] {
         let ini = format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n");
         assert_eq!(
@@ -4011,7 +4000,7 @@ pub(crate) fn manager_render_failure_e2e() {
         );
     }
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(pool, "", Some(section("lan-3").as_str()))),
         "every instance rendered, before anything is broken"
     );
@@ -4019,10 +4008,10 @@ pub(crate) fn manager_render_failure_e2e() {
     // Two renders cannot land, each in the place of a file: the atomic write
     // cannot rename a file onto a directory. A mode change is no fixture, the
     // service runs as root and root ignores modes.
-    std::fs::write(sys.join("presets.ini"), &hand).expect("hand-edited pool");
+    std::fs::write(sys.join("models.ini"), &hand).expect("hand-edited pool");
     for id in ["default", "lan-2"] {
-        let path = sys.join(format!("presets@{id}.ini"));
-        std::fs::rename(&path, sys.join(format!("presets@{id}.ini.held")))
+        let path = sys.join(format!("models@{id}.ini"));
+        std::fs::rename(&path, sys.join(format!("models@{id}.ini.held")))
             .expect("move the render aside");
         std::fs::create_dir(&path).expect("directory in a render's place");
     }
@@ -4043,12 +4032,12 @@ pub(crate) fn manager_render_failure_e2e() {
         "a render that cannot be written is an I/O failure: {failures:?}"
     );
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(&hand, "", Some(section("lan-3").as_str()))),
         "lan-3, after both failures in id order, holds the pool on disk"
     );
     for id in ["default", "lan-2"] {
-        let path = sys.join(format!("presets@{id}.ini"));
+        let path = sys.join(format!("models@{id}.ini"));
         assert!(
             path.is_dir(),
             "the directory that blocked {id} stands: {path:?}"
@@ -4093,26 +4082,26 @@ pub(crate) fn manager_render_failure_e2e() {
     // The caller is told the render failed, with the first failure in id
     // order; the write itself stands, and every instance after the failures
     // is rendered with it.
-    let answer = m.write_file(&alice, "presets.ini", &written, false);
+    let answer = m.write_file(&alice, "models.ini", &written, false);
     assert_eq!(
         answer,
         Err(failures[0].1.clone()),
         "the caller is told the first render failure"
     );
     assert_eq!(
-        read("presets.ini").as_deref(),
+        read("models.ini").as_deref(),
         Some(written.as_str()),
         "the write itself landed: the render that failed is not its failure"
     );
     assert_eq!(
-        read("presets@lan-3.ini"),
+        read("models@lan-3.ini"),
         Some(render(&written, "", Some(section("lan-3").as_str()))),
         "the write's render runs past both failures"
     );
 
     // ── A start where every render lands reports nothing ─────────────────
     for id in ["default", "lan-2"] {
-        std::fs::remove_dir(sys.join(format!("presets@{id}.ini"))).expect("remove the blocker");
+        std::fs::remove_dir(sys.join(format!("models@{id}.ini"))).expect("remove the blocker");
     }
     let clean = m.render_failures();
     assert_eq!(
@@ -4128,7 +4117,7 @@ pub(crate) fn manager_render_failure_e2e() {
         "a start with no failed render records nothing"
     );
     assert_eq!(
-        read("presets@default.ini"),
+        read("models@default.ini"),
         Some(render(&written, "", Some(section("default").as_str()))),
         "default's render lands once its path is free"
     );
@@ -4153,7 +4142,7 @@ pub(crate) fn manager_principal_e2e() {
     // of it is visible as the file on disk staying as `other`.
     let third = "[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n";
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
-    std::fs::write(sys.join("presets.ini"), presets).expect("presets file");
+    std::fs::write(sys.join("models.ini"), presets).expect("presets file");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // The bff's account (a bus name here, the service SID on Windows) and its
@@ -4276,11 +4265,11 @@ pub(crate) fn manager_principal_e2e() {
     {
         let m = core(false, false, FakePasswords::new());
         assert_eq!(
-            m.write_file(&alice, "presets.ini", other, false),
+            m.write_file(&alice, "models.ini", other, false),
             Ok(()),
             "granting the bff `configure` for this is what the pair replaces"
         );
-        assert_eq!(text_of("presets.ini"), other, "the write landed");
+        assert_eq!(text_of("models.ini"), other, "the write landed");
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
             Ok(Some(plain(ini))),
@@ -4300,7 +4289,7 @@ pub(crate) fn manager_principal_e2e() {
             "bob is no `pai` member"
         );
         assert_eq!(
-            m.write_file(&bob, "presets.ini", presets, false),
+            m.write_file(&bob, "models.ini", presets, false),
             Err(ManagerError::NotAuthorized),
             "writing needs the same membership"
         );
@@ -4315,7 +4304,7 @@ pub(crate) fn manager_principal_e2e() {
             "the refused start reached no service manager"
         );
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             other,
             "the refused write changed no file"
         );
@@ -4377,13 +4366,13 @@ pub(crate) fn manager_principal_e2e() {
                 principal: Some(Principal("alice".into())),
             };
             assert_eq!(
-                m.write_file(&who, "presets.ini", third, false),
+                m.write_file(&who, "models.ini", third, false),
                 Err(ManagerError::NotAuthorized),
                 "{who:?}: only the bff vouches for a user"
             );
         }
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             other,
             "no caller outside the bff wrote the preset file"
         );
@@ -4420,7 +4409,7 @@ pub(crate) fn manager_principal_e2e() {
                         caller: bff.clone(),
                         principal: Some(Principal(name.into())),
                     },
-                    "presets.ini",
+                    "models.ini",
                     third,
                     false
                 ),
@@ -4429,7 +4418,7 @@ pub(crate) fn manager_principal_e2e() {
             );
         }
         assert_eq!(
-            text_of("presets.ini"),
+            text_of("models.ini"),
             other,
             "an illegible name wrote nothing"
         );
@@ -4455,7 +4444,7 @@ pub(crate) fn manager_principal_e2e() {
         let asked_admin = p.asked_admin.clone();
         let m = core(true, true, p);
         assert_eq!(
-            m.read_file(Some(&bob), "presets.ini"),
+            m.read_file(Some(&bob), "models.ini"),
             Err(ManagerError::NotAuthorized),
             "a non-member reads no preset file, not even a blanked one"
         );
@@ -4480,7 +4469,7 @@ pub(crate) fn manager_principal_e2e() {
                     caller: Caller(":1.42".into()),
                     principal: Some(Principal("alice".into())),
                 }),
-                "presets.ini"
+                "models.ini"
             ),
             Err(ManagerError::NotAuthorized),
             "a caller outside the bff reads nothing as alice"
@@ -4491,7 +4480,7 @@ pub(crate) fn manager_principal_e2e() {
             "a caller outside the bff never reaches the membership lookup"
         );
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini"),
+            m.read_file(Some(&alice), "models.ini"),
             Ok(Some(plain(other))),
             "the member the bff names does read it: the gate refuses these calls, not all of them"
         );
@@ -4527,7 +4516,7 @@ pub(crate) fn manager_action_log_e2e() {
     let presets = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
     let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
-    std::fs::write(sys.join("presets.ini"), presets).expect("presets file");
+    std::fs::write(sys.join("models.ini"), presets).expect("presets file");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     let bff = Caller(":1.9".into());
@@ -4569,13 +4558,13 @@ pub(crate) fn manager_action_log_e2e() {
             Ok(()),
             "start at boot is a guarded call too"
         );
-        assert_eq!(m.write_file(&alice, "presets.ini", other, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", other, false), Ok(()));
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
             Ok(Some(plain(ini)))
         );
         assert_eq!(
-            m.read_file(Some(&alice), "presets.ini"),
+            m.read_file(Some(&alice), "models.ini"),
             Ok(Some(plain(other))),
             "the preset file needs no right, yet the read of it is recorded"
         );
@@ -4588,9 +4577,9 @@ pub(crate) fn manager_action_log_e2e() {
                 r#"action="stop" target="default" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="restart" target="default" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="set_boot_enabled" target="default" caller=":1.9" principal="alice" outcome=ok"#,
-                r#"action="write_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file" target="models.ini" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
-                r#"action="read_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="read_file" target="models.ini" caller=":1.9" principal="alice" outcome=ok"#,
             ],
             "one record per guarded call: action, target (id or file name), caller, principal, outcome, in this order, all values {{:?}}-quoted, ok unquoted"
         );
@@ -4609,7 +4598,7 @@ pub(crate) fn manager_action_log_e2e() {
         let m = core(true, FakePasswords::new(), service, log);
         assert_eq!(m.start(&bob, "default"), Err(ManagerError::NotAuthorized));
         assert_eq!(
-            m.write_file(&bob, "presets.ini", presets, false),
+            m.write_file(&bob, "models.ini", presets, false),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
@@ -4653,7 +4642,7 @@ pub(crate) fn manager_action_log_e2e() {
             got,
             vec![
                 r#"action="start" target="default" caller=":1.9" principal="bob" outcome=refused"#,
-                r#"action="write_file" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="write_file" target="models.ini" caller=":1.9" principal="bob" outcome=refused"#,
                 r#"action="read_file" target="server@default.ini" caller=":1.9" principal="bob" outcome=refused"#,
                 r#"action="start" target="ghost" caller=":1.9" principal="alice" outcome="NoInstance""#,
                 r#"action="start" target="../x" caller=":1.9" principal="alice" outcome="InvalidId""#,
@@ -4667,7 +4656,7 @@ pub(crate) fn manager_action_log_e2e() {
     }
 
     // ── The caller's own call: recorded with `principal=-` ───────────────
-    // The files here are as the blocks above left them: `presets.ini` holds
+    // The files here are as the blocks above left them: `models.ini` holds
     // `other`, the text the first block wrote (this block runs after it, in
     // this one phase).
     {
@@ -4682,7 +4671,7 @@ pub(crate) fn manager_action_log_e2e() {
             "a desktop reader here may configure, so nothing is withheld"
         );
         assert_eq!(
-            m.read_file(Some(&desktop), "presets.ini"),
+            m.read_file(Some(&desktop), "models.ini"),
             Ok(Some(plain(other))),
             "a preset file needs no right, yet it is recorded like any guarded call"
         );
@@ -4694,7 +4683,7 @@ pub(crate) fn manager_action_log_e2e() {
                 r#"action="start" target="default" caller=":1.42" principal=- outcome=ok"#,
                 r#"action="stop" target="default" caller=":1.42" principal=- outcome=ok"#,
                 r#"action="read_file" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
-                r#"action="read_file" target="presets.ini" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="read_file" target="models.ini" caller=":1.42" principal=- outcome=ok"#,
             ],
             "a call with no principal is recorded with `principal=-`"
         );
@@ -4730,7 +4719,7 @@ pub(crate) fn manager_action_log_e2e() {
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), FakeService::new(), log);
         assert_eq!(
-            m.write_file(&alice, "presets.ini", &secret_presets, false),
+            m.write_file(&alice, "models.ini", &secret_presets, false),
             Ok(())
         );
         assert_eq!(
@@ -4742,7 +4731,7 @@ pub(crate) fn manager_action_log_e2e() {
             Ok(Some(plain(&secret_ini)))
         );
         assert_eq!(
-            m.write_file(&bob, "presets.ini", &secret_presets, false),
+            m.write_file(&bob, "models.ini", &secret_presets, false),
             Err(ManagerError::NotAuthorized),
             "the refused write of a secret is a record as well"
         );
@@ -4755,10 +4744,10 @@ pub(crate) fn manager_action_log_e2e() {
         assert_eq!(
             got,
             vec![
-                r#"action="write_file" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file" target="models.ini" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="write_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
-                r#"action="write_file" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="write_file" target="models.ini" caller=":1.9" principal="bob" outcome=refused"#,
             ]
         );
         for line in records(&lines) {
@@ -5123,7 +5112,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::paths::redirect_for_tests(dir.path());
         let sys = crate::paths::engine_config_dir();
-        let names = ["presets.ini", "server@default.ini"];
+        let names = ["models.ini", "server@default.ini"];
         for name in names {
             std::fs::create_dir_all(sys.join(name)).expect("unreadable fixture");
         }
@@ -5175,10 +5164,7 @@ pub(crate) fn manager_write_file_if_e2e() {
 
     // ── Equal bytes: written, and checked as write_file checks ───────────
     {
-        let (_dir, sys) = root(&[
-            ("presets.ini", presets),
-            ("server@default.ini", default_ini),
-        ]);
+        let (_dir, sys) = root(&[("models.ini", presets), ("server@default.ini", default_ini)]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
@@ -5203,7 +5189,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["presets.ini", "presets@default.ini", "server@default.ini"],
+            ["models.ini", "models@default.ini", "server@default.ini"],
             "exactly the files written (the server write renders the instance's \
              presets file), no temp file left"
         );
@@ -5240,24 +5226,24 @@ pub(crate) fn manager_write_file_if_e2e() {
             "{presets}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
         );
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini", &bad_presets, presets),
+            m.write_file_if(&desktop, "models.ini", &bad_presets, presets),
             invalid("moe-cache-with-tensor-split", &[]),
             "the preset file's checks run too"
         );
         assert_eq!(
-            text_of(&sys, "presets.ini"),
+            text_of(&sys, "models.ini"),
             presets,
             "the refused text left the file"
         );
         // The compare is the first thing under the writing lock: a stale
         // expected is Changed, whatever the contents would have failed on.
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini", &bad_presets, default_ini),
+            m.write_file_if(&desktop, "models.ini", &bad_presets, default_ini),
             Err(ManagerError::Changed),
             "the compare answers before any check runs"
         );
         assert_eq!(
-            text_of(&sys, "presets.ini"),
+            text_of(&sys, "models.ini"),
             presets,
             "nothing written for a stale expected"
         );
@@ -5269,8 +5255,8 @@ pub(crate) fn manager_write_file_if_e2e() {
                 r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
                 r#"action="read_file" target="server@default.ini" caller=":1.42" principal=- outcome=ok"#,
                 r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome="Invalid""#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Invalid""#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Changed""#,
+                r#"action="write_file_if" target="models.ini" caller=":1.42" principal=- outcome="Invalid""#,
+                r#"action="write_file_if" target="models.ini" caller=":1.42" principal=- outcome="Changed""#,
             ],
             "one record per call, under the method's own name, the outcome the error's own name"
         );
@@ -5289,10 +5275,7 @@ pub(crate) fn manager_write_file_if_e2e() {
 
     // ── Any other bytes: Changed, nothing written ────────────────────────
     {
-        let (_dir, sys) = root(&[
-            ("presets.ini", presets),
-            ("server@default.ini", default_ini),
-        ]);
+        let (_dir, sys) = root(&[("models.ini", presets), ("server@default.ini", default_ini)]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
@@ -5312,13 +5295,13 @@ pub(crate) fn manager_write_file_if_e2e() {
         ];
         for expected in &stale {
             assert_eq!(
-                m.write_file_if(&desktop, "presets.ini", other, expected),
+                m.write_file_if(&desktop, "models.ini", other, expected),
                 Err(ManagerError::Changed),
                 "expected {expected:?} against the file on disk"
             );
         }
         assert_eq!(
-            text_of(&sys, "presets.ini"),
+            text_of(&sys, "models.ini"),
             presets,
             "the refused writes changed nothing"
         );
@@ -5332,7 +5315,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         assert_eq!(
             recs.first().map(String::as_str),
             Some(
-                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal=- outcome="Changed""#
+                r#"action="write_file_if" target="models.ini" caller=":1.42" principal=- outcome="Changed""#
             ),
             "the record of a refused compare-and-swap: the outcome is Changed"
         );
@@ -5344,41 +5327,41 @@ pub(crate) fn manager_write_file_if_e2e() {
         // The file's own bytes are accepted: the table above is not green
         // because every compare refuses.
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini", other, presets),
+            m.write_file_if(&desktop, "models.ini", other, presets),
             Ok(()),
             "the expected text is the file's own: written"
         );
-        assert_eq!(text_of(&sys, "presets.ini"), other, "the write landed");
+        assert_eq!(text_of(&sys, "models.ini"), other, "the write landed");
     }
 
     // ── A missing file: Changed, and nothing is created ──────────────────
     {
-        let (_dir, sys) = root(&[("presets.ini", presets)]);
+        let (_dir, sys) = root(&[("models.ini", presets)]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
         let disabled = "[Old]\nmodel = /models/old.gguf\n";
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini.disabled", disabled, presets),
+            m.write_file_if(&desktop, "models.ini.disabled", disabled, presets),
             Err(ManagerError::Changed),
             "the caller expects a file that is not there"
         );
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini.disabled", disabled, disabled),
+            m.write_file_if(&desktop, "models.ini.disabled", disabled, disabled),
             Err(ManagerError::Changed),
             "an expected equal to the contents does not make the file exist"
         );
         assert!(
-            !sys.join("presets.ini.disabled").exists(),
+            !sys.join("models.ini.disabled").exists(),
             "a refused compare-and-swap creates no file"
         );
-        assert_eq!(listing(&sys), ["presets.ini"], "nothing created");
+        assert_eq!(listing(&sys), ["models.ini"], "nothing created");
         assert_eq!(
             records(&lines),
             vec![
-                r#"action="write_file_if" target="presets.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                r#"action="write_file_if" target="models.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
                     .to_string(),
-                r#"action="write_file_if" target="presets.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                r#"action="write_file_if" target="models.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
                     .to_string(),
             ],
             "a missing file is recorded as Changed, not as a failure"
@@ -5391,7 +5374,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         let sys = crate::paths::engine_config_dir();
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         assert_eq!(
-            m.write_file_if(&desktop, "presets.ini", presets, presets),
+            m.write_file_if(&desktop, "models.ini", presets, presets),
             Err(ManagerError::Changed),
             "no file to compare with"
         );
@@ -5401,7 +5384,7 @@ pub(crate) fn manager_write_file_if_e2e() {
     // ── The principal form: the pair is the right, the compare is byte for byte
     {
         let ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-        let (_dir, sys) = root(&[("presets.ini", presets), ("server@default.ini", ini)]);
+        let (_dir, sys) = root(&[("models.ini", presets), ("server@default.ini", ini)]);
         let passwords = FakePasswords::new();
         let asked_admin = passwords.asked_admin.clone();
         let log = FakeActionLog::new();
@@ -5431,15 +5414,15 @@ pub(crate) fn manager_write_file_if_e2e() {
             "the key line the caller sent is written as sent, with no key flag"
         );
         assert_eq!(
-            m.write_file_if(&member, "presets.ini", other, presets),
+            m.write_file_if(&member, "models.ini", other, presets),
             Ok(()),
             "a member's compare-and-swap lands with the caller allowed nothing"
         );
-        assert_eq!(text_of(&sys, "presets.ini"), other, "the write landed");
+        assert_eq!(text_of(&sys, "models.ini"), other, "the write landed");
         assert_eq!(
             m.write_file_if(
                 &member,
-                "presets.ini",
+                "models.ini",
                 presets,
                 "[Qwen3.8-9B]\nmodel = /m/x.gguf\n"
             ),
@@ -5447,17 +5430,17 @@ pub(crate) fn manager_write_file_if_e2e() {
             "a member's stale expected is refused as anyone's"
         );
         assert_eq!(
-            text_of(&sys, "presets.ini"),
+            text_of(&sys, "models.ini"),
             other,
             "the refused write changed no file"
         );
         assert_eq!(
-            m.write_file_if(&outsider, "presets.ini", presets, other),
+            m.write_file_if(&outsider, "models.ini", presets, other),
             Err(ManagerError::NotAuthorized),
             "a non-member is refused as write_file refuses it"
         );
         assert_eq!(
-            text_of(&sys, "presets.ini"),
+            text_of(&sys, "models.ini"),
             other,
             "nothing written for a non-member"
         );
@@ -5470,14 +5453,14 @@ pub(crate) fn manager_write_file_if_e2e() {
                     caller: desktop.clone(),
                     principal: Some(Principal("alice".into())),
                 },
-                "presets.ini",
+                "models.ini",
                 presets,
                 other
             ),
             Err(ManagerError::NotAuthorized),
             "only the bff's account vouches for a user"
         );
-        assert_eq!(text_of(&sys, "presets.ini"), other, "nothing written");
+        assert_eq!(text_of(&sys, "models.ini"), other, "nothing written");
         assert_eq!(
             *m.authority().asked.lock().unwrap(),
             Vec::<(Caller, Action)>::new(),
@@ -5501,10 +5484,10 @@ pub(crate) fn manager_write_file_if_e2e() {
             vec![
                 r#"action="read_file" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
                 r#"action="write_file_if" target="server@default.ini" caller=":1.9" principal="alice" outcome=ok"#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="alice" outcome=ok"#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="alice" outcome="Changed""#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.9" principal="bob" outcome=refused"#,
-                r#"action="write_file_if" target="presets.ini" caller=":1.42" principal="alice" outcome=refused"#,
+                r#"action="write_file_if" target="models.ini" caller=":1.9" principal="alice" outcome=ok"#,
+                r#"action="write_file_if" target="models.ini" caller=":1.9" principal="alice" outcome="Changed""#,
+                r#"action="write_file_if" target="models.ini" caller=":1.9" principal="bob" outcome=refused"#,
+                r#"action="write_file_if" target="models.ini" caller=":1.42" principal="alice" outcome=refused"#,
             ],
             "a principal's compare-and-swap is recorded with its caller and its principal"
         );
@@ -5569,7 +5552,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["presets@slow.ini", "server@slow.ini"],
+            ["models@slow.ini", "server@slow.ini"],
             "no temp file left; the landed write renders the instance's presets file"
         );
     }
@@ -5642,9 +5625,9 @@ mod tests {
             config_file("server@lan-2.ini"),
             Some(ConfigFile::Instance("lan-2".into()))
         );
-        assert_eq!(config_file("presets.ini"), Some(ConfigFile::Presets));
+        assert_eq!(config_file("models.ini"), Some(ConfigFile::Presets));
         assert_eq!(
-            config_file("presets.ini.disabled"),
+            config_file("models.ini.disabled"),
             Some(ConfigFile::PresetsDisabled)
         );
     }
@@ -5654,12 +5637,12 @@ mod tests {
         for name in [
             "",
             "../x",
-            "../presets.ini",
-            "./presets.ini",
-            "sub/presets.ini",
-            "sub\\presets.ini",
-            "/etc/private-ai/presets.ini",
-            "C:\\ProgramData\\private-ai\\config\\presets.ini",
+            "../models.ini",
+            "./models.ini",
+            "sub/models.ini",
+            "sub\\models.ini",
+            "/etc/private-ai/models.ini",
+            "C:\\ProgramData\\private-ai\\config\\models.ini",
             "server.ini",
             "settings.ini",
             "server@Bad.ini",
@@ -5668,10 +5651,10 @@ mod tests {
             "server@../x.ini",
             "server@default.ini.tmp",
             "server@default",
-            "presets.ini.bak",
-            "presets.ini.tmp",
+            "models.ini.bak",
+            "models.ini.tmp",
             "Presets.ini",
-            "presets.ini ",
+            "models.ini ",
         ] {
             assert_eq!(config_file(name), None, "name {name:?}");
         }
@@ -5762,7 +5745,7 @@ mod tests {
         let alice = Caller(":1.42".into());
         let m = core(false);
         assert_eq!(
-            m.write_file_if(&alice, "presets.ini", "[X]\n", "[Y]\n"),
+            m.write_file_if(&alice, "models.ini", "[X]\n", "[Y]\n"),
             Err(ManagerError::NotAuthorized),
             "the same refusal write_file gives"
         );
@@ -5786,7 +5769,7 @@ mod tests {
     fn a_compare_and_swap_write_of_a_bad_name_is_refused_as_write_files() {
         let alice = Caller(":1.42".into());
         let m = core(false);
-        for name in ["server.ini", "../presets.ini", "presets.ini.tmp"] {
+        for name in ["server.ini", "../models.ini", "models.ini.tmp"] {
             assert_eq!(
                 m.write_file_if(&alice, name, "[X]\n", "[Y]\n"),
                 Err(ManagerError::NotAuthorized),
@@ -5799,7 +5782,7 @@ mod tests {
             "the gate runs before the name is looked at"
         );
         let m = core(true);
-        for name in ["server.ini", "../presets.ini", "presets.ini.tmp"] {
+        for name in ["server.ini", "../models.ini", "models.ini.tmp"] {
             assert_eq!(
                 m.write_file_if(&alice, name, "[X]\n", "[Y]\n"),
                 Err(ManagerError::BadFileName),
@@ -5978,13 +5961,13 @@ mod tests {
         #[test]
         fn preset_files_are_written_0644_and_keep_their_group() {
             let dir = tempfile::tempdir().expect("tempdir");
-            let presets = dir.path().join("presets.ini");
+            let presets = dir.path().join("models.ini");
             std::fs::write(&presets, "[Old]\nmodel = /m/old.gguf\n").unwrap();
             std::fs::set_permissions(&presets, std::fs::Permissions::from_mode(0o600)).unwrap();
             let g = FakeGroup::new();
             let text = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
             write_served_file(&presets, &ConfigFile::Presets, text, &g).expect("presets");
-            let disabled = dir.path().join("presets.ini.disabled");
+            let disabled = dir.path().join("models.ini.disabled");
             write_served_file(&disabled, &ConfigFile::PresetsDisabled, text, &g).expect("disabled");
             assert_eq!(std::fs::read_to_string(&presets).unwrap(), text);
             assert_eq!(std::fs::read_to_string(&disabled).unwrap(), text);
@@ -5993,10 +5976,7 @@ mod tests {
             assert_eq!(calls(&g), vec![], "no group change for a preset file");
             assert_eq!(
                 names(dir.path()),
-                BTreeSet::from([
-                    "presets.ini".to_string(),
-                    "presets.ini.disabled".to_string()
-                ])
+                BTreeSet::from(["models.ini".to_string(), "models.ini.disabled".to_string()])
             );
         }
 
@@ -6786,7 +6766,7 @@ mod tests {
         let (p, logs) = passwords();
         let m = auth_core(true, p);
         assert_eq!(
-            m.write_file_if(&request(&bff(), "bob"), "presets.ini", "[X]\n", "[Y]\n"),
+            m.write_file_if(&request(&bff(), "bob"), "models.ini", "[X]\n", "[Y]\n"),
             Err(ManagerError::NotAuthorized),
             "a non-member is refused as the other guarded calls refuse it"
         );
@@ -6798,7 +6778,7 @@ mod tests {
         assert_eq!(
             m.write_file_if(
                 &request(&Caller(":1.42".into()), "alice"),
-                "presets.ini",
+                "models.ini",
                 "[X]\n",
                 "[Y]\n"
             ),

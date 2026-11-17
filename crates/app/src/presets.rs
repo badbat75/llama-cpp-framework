@@ -1,4 +1,4 @@
-//! presets.ini schema and IO for the Private AI Framework.
+//! models.ini schema and IO for the Private AI Framework.
 //!
 //! ADD A PRESET FIELD. The recurring change fans out to all of these (trace an
 //! existing field like `ctx-size` as the template; kebab-case INI key ↔
@@ -47,8 +47,8 @@
 //! appears in the UI).
 //!
 //! ENABLED vs DISABLED. A preset lives in exactly one of two files of the same
-//! format: `presets.ini`, the file `llama-server --models-preset` reads, which
-//! makes it the set of ENABLED presets, and `presets.ini.disabled`
+//! format: `models.ini`, the file `llama-server --models-preset` reads, which
+//! makes it the set of ENABLED presets, and `models.ini.disabled`
 //! (`paths::presets_disabled_ini`), the ones switched off in the Models tab.
 //! `load_all` is the enabled set, and it is what everything that talks to
 //! llama-server reads (the Benchmark tab, the snapshot restore, `bench run`,
@@ -1137,7 +1137,7 @@ pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
 
 // ── File IO (load / save / delete / rename / id) ─────────────────────────
 
-/// The ENABLED presets: every section of presets.ini, in file order, i.e.
+/// The ENABLED presets: every section of models.ini, in file order, i.e.
 /// exactly what `llama-server --models-preset` serves. Everything that talks to
 /// llama-server reads this and only this; the switched-off ones are
 /// `load_listed`'s (see the module header).
@@ -1188,7 +1188,7 @@ fn has_section_in(files: &impl PresetFiles, file: ConfigFile, id: &str) -> bool 
     })
 }
 
-/// The two files of the unit tests: presets.ini at `on`, the disabled one at
+/// The two files of the unit tests: models.ini at `on`, the disabled one at
 /// `off`.
 #[cfg(test)]
 struct PathFiles<'a> {
@@ -1247,7 +1247,7 @@ fn listed_from(enabled: &Path, parked: &Path) -> Vec<Listed> {
 
 /// `load_listed` over `files`. An id present in BOTH files is listed once, as
 /// enabled: that is what a `set_enabled` interrupted between its two writes
-/// leaves behind, and presets.ini is the copy llama-server actually serves.
+/// leaves behind, and models.ini is the copy llama-server actually serves.
 fn listed_in(files: &impl PresetFiles) -> Vec<Listed> {
     let on = presets_in(files, ConfigFile::Presets);
     let off: Vec<Preset> = presets_in(files, ConfigFile::PresetsDisabled)
@@ -1286,9 +1286,9 @@ fn home_in(id: &str, enabled: PathBuf, parked: PathBuf) -> PathBuf {
     }
 }
 
-/// The file a preset's section lives in: presets.ini when the id is there
+/// The file a preset's section lives in: models.ini when the id is there
 /// (enabled wins, as in `listed_in`), the disabled file when it is parked
-/// there, and presets.ini for an id in neither: a NEW preset starts switched on.
+/// there, and models.ini for an id in neither: a NEW preset starts switched on.
 fn home(files: &impl PresetFiles, id: &str) -> ConfigFile {
     if !has_section_in(files, ConfigFile::Presets, id)
         && has_section_in(files, ConfigFile::PresetsDisabled, id)
@@ -1303,13 +1303,13 @@ fn home(files: &impl PresetFiles, id: &str) -> ConfigFile {
 /// hand: what it is, and that llama-server never reads it.
 const DISABLED_FILE_HEADER: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n";
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n";
 
 /// Switch a preset on (`enabled`) or off by moving its section between
-/// presets.ini and the disabled file (`move_section`). A running llama-server
-/// keeps the set it was started with: the router reads presets.ini at launch.
+/// models.ini and the disabled file (`move_section`). A running llama-server
+/// keeps the set it was started with: the router reads models.ini at launch.
 pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
     let files = server_control::backend();
     let (on, off) = (ConfigFile::Presets, ConfigFile::PresetsDisabled);
@@ -1381,7 +1381,7 @@ fn move_between(
 }
 
 /// Write (replace) the preset's section in the file it lives in (`home_of`):
-/// presets.ini, or the disabled file for a preset that is switched off, so an
+/// models.ini, or the disabled file for a preset that is switched off, so an
 /// edit never switches it back on as a side effect.
 ///
 /// Side effect: on the FIRST save, when server.ini has no `ModelsDir` yet, this
@@ -1419,7 +1419,7 @@ pub(crate) fn set_server_key(key: &str, value: &str) -> io::Result<()> {
     )
 }
 
-/// True if `id` uses only the presets.ini section-header charset (letters,
+/// True if `id` uses only the models.ini section-header charset (letters,
 /// digits, `.`, `-`, `_`). `[`/`]`/newline break the section structure; `;`/`#`
 /// get misread as an inline comment (here and by llama-server's preset reader).
 /// Enforced at BOTH free-text ways into a header (`rename` and the save
@@ -1494,7 +1494,7 @@ fn refused(r: checks::Refusal) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, r.text())
 }
 
-/// Refuse a presets.ini whose `load-on-startup` presets (`count`) the router
+/// Refuse a models.ini whose `load-on-startup` presets (`count`) the router
 /// would not start with: more than `models_max` (server.ini `ModelsMax`, `None`
 /// = llama.cpp's default), or any at all under `ModelsMax = 0`, which the
 /// router's startup check compares literally instead of reading it as
@@ -1513,7 +1513,7 @@ fn startup_count_with(enabled: &[Preset], id: &str, on: bool) -> usize {
         + usize::from(on)
 }
 
-/// `check_startup_count` for `preset` about to land in presets.ini. Only a
+/// `check_startup_count` for `preset` about to land in models.ini. Only a
 /// preset that carries the key can push the count over, so any other save or
 /// switch is never blocked by presets already on disk.
 fn check_startup_for(preset: &Preset) -> io::Result<()> {
@@ -2223,10 +2223,10 @@ pub(crate) fn preset_checks_every_backend_e2e() {
         });
     }
     assert!(
-        files.lock().unwrap().contains_key("presets.ini"),
+        files.lock().unwrap().contains_key("models.ini"),
         "the manager's save went to the manager"
     );
-    assert_eq!(fake::writes(&log), ["write_file presets.ini"]);
+    assert_eq!(fake::writes(&log), ["write_file models.ini"]);
 }
 
 #[cfg(test)]
@@ -2253,6 +2253,24 @@ mod tests {
         assert!(
             !DISABLED_FILE_HEADER.contains(concat!("llama-cpp", "-config")),
             "{DISABLED_FILE_HEADER}"
+        );
+    }
+
+    /// The disabled file's header points at files by name: the file it is
+    /// shaped like, the file llama-server reads, and the file a section moves
+    /// back to. Those are the names the manager knows the preset files under,
+    /// so the header has to carry them: a name the files no longer wear sends
+    /// whoever opens the file by hand to a file that is not there.
+    #[test]
+    fn the_disabled_header_names_the_files_it_points_at() {
+        let on = ConfigFile::Presets.manager_name();
+        assert!(
+            DISABLED_FILE_HEADER.contains(&on),
+            "the header names the file {on}: {DISABLED_FILE_HEADER}"
+        );
+        assert!(
+            !DISABLED_FILE_HEADER.contains("presets.ini"),
+            "no name the preset files no longer carry: {DISABLED_FILE_HEADER}"
         );
     }
 
@@ -2940,7 +2958,7 @@ mod tests {
         let original = full_preset();
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("presets.ini");
+        let path = dir.path().join("models.ini");
         fs::write(&path, render_section(&original)).unwrap();
 
         let sections = ini::read_all(&path);
@@ -3154,7 +3172,7 @@ mod tests {
     // matches on. `reasoning-budget` and `reasoning-budget-message` are
     // registered for LLAMA_EXAMPLE_SERVER and `n-predict` for every example, so
     // all three are legal in a router preset; any OTHER spelling makes
-    // llama-server reject the whole presets.ini with "option not recognized",
+    // llama-server reject the whole models.ini with "option not recognized",
     // taking every other model down with it.
     #[test]
     fn render_emits_the_output_budget_keys_with_llama_cpps_own_spelling() {
@@ -3310,7 +3328,7 @@ mod tests {
             ..Default::default()
         };
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("presets.ini");
+        let path = dir.path().join("models.ini");
         fs::write(&path, render_section(&p)).unwrap();
 
         let sections = ini::read_all(&path);
@@ -3323,9 +3341,9 @@ mod tests {
     /// The two files of the on/off switch, in a temp dir: `(dir, enabled, parked)`.
     fn preset_files(enabled: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let on = dir.path().join("presets.ini");
+        let on = dir.path().join("models.ini");
         fs::write(&on, enabled).unwrap();
-        let off = dir.path().join("presets.ini.disabled");
+        let off = dir.path().join("models.ini.disabled");
         (dir, on, off)
     }
 
@@ -3385,7 +3403,7 @@ mod tests {
 
     // What a switch interrupted between its two writes leaves: the preset in BOTH
     // files. It is listed once, as enabled (what llama-server serves), writes go
-    // to presets.ini, and the next switch replaces the stale twin.
+    // to models.ini, and the next switch replaces the stale twin.
     #[test]
     fn a_preset_left_in_both_files_reads_as_enabled() {
         let (_d, on, off) = preset_files("[a]\r\nmodel = new.gguf\r\n");

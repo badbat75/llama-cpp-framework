@@ -13,7 +13,7 @@
 //! away; nearly 1500 tensors on a hybrid MoE are only usable that way.
 //!
 //! ## What a tick writes
-//! The rule stays a regex in `presets.ini`, so llama.cpp reads exactly what it
+//! The rule stays a regex in `models.ini`, so llama.cpp reads exactly what it
 //! read before. `compile` writes the shortest one this module knows for the
 //! ticked set, in order of preference:
 //!   1. a `tensor_override::KINDS` pattern, over every layer or over some

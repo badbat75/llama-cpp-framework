@@ -34,10 +34,10 @@
 //!   `args: []`) with the files untouched. Moved to the disabled file it would
 //!   silently stop applying to every model, and no list row would be left to
 //!   switch it back.
-//! - the preset moves, unchanged, between `presets.ini` and
-//!   `presets.ini.disabled`: the file the preset LANDS IN is written FIRST,
+//! - the preset moves, unchanged, between `models.ini` and
+//!   `models.ini.disabled`: the file the preset LANDS IN is written FIRST,
 //!   because a preset in both files reads as enabled. Switching off writes the
-//!   disabled file, then `presets.ini`; switching on writes `presets.ini`,
+//!   disabled file, then `models.ini`; switching on writes `models.ini`,
 //!   then the disabled one. Each write is a compare and swap expecting the
 //!   text the bff read in this request.
 //! - a disabled file that does not exist is created with the configurator's
@@ -126,8 +126,8 @@ const CLIENT: &str = "127.0.0.1:51000";
 const KEY: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// The names the manager knows the engine's preset files by.
-const PRESETS: &str = "presets.ini";
-const DISABLED: &str = "presets.ini.disabled";
+const PRESETS: &str = "models.ini";
+const DISABLED: &str = "models.ini.disabled";
 
 /// The ids these tests switch. `Qwen` is spelled as the file spells it, so a
 /// bff that matches the id case-sensitively is caught; it carries
@@ -137,7 +137,7 @@ const QWEN: &str = "Qwen";
 const ALPHA: &str = "alpha";
 const MISTRAL: &str = "mistral-7b";
 
-/// A `presets.ini` with two switched-on presets, in a file order that is
+/// A `models.ini` with two switched-on presets, in a file order that is
 /// neither alphabetical nor reversed.
 const FILE_ON: &str = "\
 ; The presets llama-server is offered (--models-preset).\r\n\
@@ -149,13 +149,13 @@ model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
 load-on-startup = 1\r\n\
 ";
 
-/// A `presets.ini.disabled` with one switched-off preset, written as the
+/// A `models.ini.disabled` with one switched-off preset, written as the
 /// configurator writes it (its header, then the sections).
 const FILE_OFF: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n\
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n\
 [mistral-7b]\r\n\
 model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\
 ";
@@ -167,9 +167,9 @@ model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\
 /// carrying its own copy and the constant from being where it cannot link it.
 const DISABLED_HEADER: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n";
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n";
 
 // ── The texts a switch answers ──────────────────────────────────────────
 
@@ -192,7 +192,7 @@ fn left(source: &str, id: &str) -> String {
         .unwrap_or_else(|| panic!("[{id}] in {source:?}"))
 }
 
-/// `FILE_ON` with `Qwen` moved out of it: the `presets.ini` of the state the
+/// `FILE_ON` with `Qwen` moved out of it: the `models.ini` of the state the
 /// web UI's switch starts from for the switch-on tests.
 fn file_on_without_qwen() -> String {
     left(FILE_ON, QWEN)
@@ -209,7 +209,7 @@ fn created_with_qwen() -> String {
     landed(DISABLED_HEADER, FILE_ON, QWEN)
 }
 
-/// `FILE_ON` with `mistral-7b`'s section added: the `presets.ini` after the
+/// `FILE_ON` with `mistral-7b`'s section added: the `models.ini` after the
 /// switch on landed.
 fn file_on_with_mistral() -> String {
     landed(FILE_ON, FILE_OFF, MISTRAL)
@@ -777,7 +777,7 @@ struct App {
     live: Live,
 }
 
-/// A manager holding `on` as `presets.ini` and `off` as `presets.ini.disabled`:
+/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`:
 /// the pair that shows a preset on and a preset off.
 fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(PRESETS, on), (DISABLED, off)], &[], Ok(()))
@@ -794,14 +794,14 @@ fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> Ap
     )
 }
 
-/// A manager holding `on` as `presets.ini` and no `presets.ini.disabled`: the
+/// A manager holding `on` as `models.ini` and no `models.ini.disabled`: the
 /// state of a machine where nothing was ever switched off, the one the switch
 /// off has to create.
 fn app_holding_no_disabled(on: &str) -> App {
     app_for(&[(PRESETS, on)], &[], Ok(()))
 }
 
-/// A manager holding `on` as `presets.ini`, refusing the reads of the named
+/// A manager holding `on` as `models.ini`, refusing the reads of the named
 /// principals: the member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
     app_for(&[(PRESETS, on), (DISABLED, off)], refuse, Ok(()))
@@ -1241,7 +1241,7 @@ impl App {
 
 /// The route at work: `{"enabled": false}` on a preset that is on answers 200
 /// `{"enabled": false, "running": false}`, and the preset is off in the files:
-/// its bytes sit in `presets.ini.disabled`, gone from `presets.ini`.
+/// its bytes sit in `models.ini.disabled`, gone from `models.ini`.
 #[tokio::test]
 async fn switch_signed_in_moves_the_preset_off_and_answers_its_state() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -1383,7 +1383,7 @@ async fn switch_with_no_preset_file_is_404_and_creates_nothing() {
     let app = app_no_files();
     let rep = app.switch_on(QWEN, false).await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[QWEN]);
-    assert_eq!(app.file_text(PRESETS), None, "no presets.ini was created");
+    assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
         None,
@@ -1427,12 +1427,12 @@ model = /models/alpha.gguf\r\n\
     assert_eq!(
         app.calls(),
         [
-            "read presets.ini",
-            "read presets.ini.disabled",
-            "read presets.ini",
-            "read presets.ini.disabled",
-            "read presets.ini",
-            "read presets.ini.disabled",
+            "read models.ini",
+            "read models.ini.disabled",
+            "read models.ini",
+            "read models.ini.disabled",
+            "read models.ini",
+            "read models.ini.disabled",
         ]
     );
 }
@@ -1462,7 +1462,7 @@ async fn switch_matches_the_name_ignoring_case() {
     );
     assert!(
         !holds(&app.file_text(PRESETS).unwrap(), QWEN),
-        "gone from presets.ini"
+        "gone from models.ini"
     );
     assert!(
         holds(&app.file_text(DISABLED).unwrap(), "QWEN"),
@@ -1495,7 +1495,7 @@ async fn switch_is_served_to_every_signed_in_administrator() {
 /// manager re-checks their membership of `pai`, and every call of the move is
 /// made as them. The move asks for exactly seven calls: both files read, the
 /// enabled one first, the two writes (the destination first), then
-/// `presets.ini` read back for the `enabled` of the answer, then the instances
+/// `models.ini` read back for the `enabled` of the answer, then the instances
 /// for `running`.
 #[tokio::test]
 async fn switch_asks_exactly_seven_calls_as_the_signed_in_user() {
@@ -1510,11 +1510,11 @@ async fn switch_asks_exactly_seven_calls_as_the_signed_in_user() {
     assert_eq!(
         app.calls(),
         vec![
-            "read presets.ini",
-            "read presets.ini.disabled",
-            "write-if alice presets.ini.disabled",
-            "write-if alice presets.ini",
-            "read presets.ini",
+            "read models.ini",
+            "read models.ini.disabled",
+            "write-if alice models.ini.disabled",
+            "write-if alice models.ini",
+            "read models.ini",
             "list",
             "status default",
         ],
@@ -1546,7 +1546,7 @@ async fn switch_a_name_in_the_request_is_never_the_principal() {
 }
 
 /// Off: the destination first. The preset has to appear in
-/// `presets.ini.disabled` before it disappears from `presets.ini`, so a process
+/// `models.ini.disabled` before it disappears from `models.ini`, so a process
 /// that stops in the middle leaves it in both files, never in none.
 #[tokio::test]
 async fn switch_off_writes_the_disabled_file_first_then_presets_ini() {
@@ -1570,8 +1570,8 @@ async fn switch_off_writes_the_disabled_file_first_then_presets_ini() {
     );
 }
 
-/// The text that lands in `presets.ini.disabled` is the current disabled text
-/// plus the section as `presets.ini` holds it: every key, the comments, the
+/// The text that lands in `models.ini.disabled` is the current disabled text
+/// plus the section as `models.ini` holds it: every key, the comments, the
 /// blank line. Nothing is rewritten, nothing is dropped.
 #[tokio::test]
 async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
@@ -1589,11 +1589,11 @@ async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
     assert_eq!(
         section_of(&app.file_text(DISABLED).unwrap(), QWEN),
         section_of(FILE_ON, QWEN),
-        "the section that lands must be the bytes presets.ini held"
+        "the section that lands must be the bytes models.ini held"
     );
 }
 
-/// On: the same rule with the files exchanged, `presets.ini` is the destination
+/// On: the same rule with the files exchanged, `models.ini` is the destination
 /// and is written first, and the section that lands is the bytes the disabled
 /// file held.
 #[tokio::test]
@@ -1624,10 +1624,10 @@ async fn switch_on_writes_presets_ini_first_then_the_disabled_file() {
     );
 }
 
-/// No `presets.ini.disabled` at all (a machine where nothing was ever switched
+/// No `models.ini.disabled` at all (a machine where nothing was ever switched
 /// off): the switch creates it, with the configurator's header, through the
 /// plain write, because the compare and swap refuses a missing file. The preset
-/// follows the header, and `presets.ini` is then written as the source.
+/// follows the header, and `models.ini` is then written as the source.
 #[tokio::test]
 async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
     let app = app_holding_no_disabled(FILE_ON);
@@ -1707,9 +1707,9 @@ async fn switch_then_list_agree_on_which_presets_are_on() {
     );
 }
 
-/// The state a half-finished move leaves: the section sits in `presets.ini` and
-/// in `presets.ini.disabled`, so it reads enabled. Asking for on is already the
-/// state, so nothing moves; asking for off takes it out of `presets.ini` and
+/// The state a half-finished move leaves: the section sits in `models.ini` and
+/// in `models.ini.disabled`, so it reads enabled. Asking for on is already the
+/// state, so nothing moves; asking for off takes it out of `models.ini` and
 /// leaves the disabled file's copy alone, and the preset ends up off.
 #[tokio::test]
 async fn switch_mends_a_preset_the_files_hold_in_both_places() {
@@ -1768,7 +1768,7 @@ async fn switch_is_the_only_method_the_switch_path_serves() {
     }
 }
 
-/// The header the switch creates a missing `presets.ini.disabled` with is the
+/// The header the switch creates a missing `models.ini.disabled` with is the
 /// configurator's `DISABLED_FILE_HEADER`, not a text the bff invented: the bff
 /// links no `pai-app`, so the text is copied here and this pins the copy.
 #[test]
@@ -1864,7 +1864,7 @@ async fn switch_a_name_that_cannot_be_a_section_is_404_and_creates_no_file() {
         assert_eq!(
             app.file_text(PRESETS),
             None,
-            "{id}: no presets.ini was created"
+            "{id}: no models.ini was created"
         );
         assert_eq!(
             app.file_text(DISABLED),
@@ -1933,7 +1933,7 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
     );
     assert!(
         holds(&app.file_text(PRESETS).unwrap(), QWEN),
-        "the source write was the refused one, so presets.ini still holds it"
+        "the source write was the refused one, so models.ini still holds it"
     );
     assert!(
         holds(&app.file_text(DISABLED).unwrap(), QWEN),
@@ -1941,13 +1941,13 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
     );
 
     // Asking for off from the both-files state is the repair: the copy in
-    // `presets.ini` goes, the one in the disabled file stays.
+    // `models.ini` goes, the one in the disabled file stays.
     app.switch_on(QWEN, false)
         .await
         .assert_switched(false, false);
     assert!(
         !holds(&app.file_text(PRESETS).unwrap(), QWEN),
-        "the next switch took the section out of presets.ini"
+        "the next switch took the section out of models.ini"
     );
     assert!(
         holds(&app.file_text(DISABLED).unwrap(), QWEN),
@@ -2314,7 +2314,7 @@ async fn switch_with_a_status_read_that_is_too_slow_is_200_after_the_move_landed
     );
 }
 
-/// The two writes landed and the read-back of `presets.ini` that follows them
+/// The two writes landed and the read-back of `models.ini` that follows them
 /// is the call that runs out: `enabled` cannot be read off the machine, so the
 /// answer carries the value the move produced, and the move is in the files.
 /// The read-back is the switch's third read: the first two are the files the

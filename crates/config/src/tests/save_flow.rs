@@ -64,7 +64,7 @@ pub(super) fn run(app: &AppWindow) {
     assert!(st.get_status_is_error(), "empty-id save must set an error");
     assert!(
         !crate::paths::presets_ini().exists(),
-        "a rejected save must not create presets.ini"
+        "a rejected save must not create models.ini"
     );
 
     // ── Guard rails: save() itself enforces the `;`/`#` path validation ──
@@ -88,7 +88,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert!(
         !crate::paths::presets_ini().exists(),
-        "a path-rejected save must not create presets.ini"
+        "a path-rejected save must not create models.ini"
     );
     let hostile_server = crate::server_cfg::ServerConfig {
         models_dir: Some(r"E:\llm ; models".into()),
@@ -115,7 +115,7 @@ pub(super) fn run(app: &AppWindow) {
         "save failed: {}",
         st.get_status_text()
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini written");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini written");
     assert!(ini.contains("[e2e]"), "saved section missing:\n{ini}");
     assert_eq!(
         st.get_selected_preset_index(),
@@ -147,7 +147,7 @@ pub(super) fn run(app: &AppWindow) {
     st.set_form(form);
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         saved.contains("spec-type = ngram-mod"),
         "an n-gram spec-type needs no draft and must be saved:\n{saved}"
@@ -173,7 +173,7 @@ pub(super) fn run(app: &AppWindow) {
     st.set_form(form);
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         !saved.contains("\nspec-type ="),
         "draft-mtp without MTP heads must not reach the INI:\n{saved}"
@@ -200,9 +200,9 @@ pub(super) fn run(app: &AppWindow) {
         st.get_status_text()
     );
     assert_eq!(
-        std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini"),
+        std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini"),
         ini,
-        "a refused save must leave presets.ini untouched"
+        "a refused save must leave models.ini untouched"
     );
     assert!(
         st.get_preset_dirty(),
@@ -263,7 +263,7 @@ pub(super) fn run(app: &AppWindow) {
             st.get_status_text()
         );
     }
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         ini.contains("[e2e]") && ini.contains("[e2e-2]"),
         "second New… must de-conflict to e2e-2, not overwrite:\n{ini}"
@@ -276,7 +276,7 @@ pub(super) fn run(app: &AppWindow) {
         "rename failed: {}",
         st.get_status_text()
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         !ini.contains("[e2e]\n") && !ini.contains("[e2e]\r\n"),
         "old section must be gone:\n{ini}"
@@ -619,7 +619,7 @@ pub(super) fn run(app: &AppWindow) {
 
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         ini.contains("device = ROCm1,CUDA0") && ini.contains("tensor-split = 3,1"),
         "the table's selection must reach the INI:\n{ini}"
@@ -712,7 +712,7 @@ pub(super) fn run(app: &AppWindow) {
 
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         ini.contains(r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU"),
         "the table's rules must reach the INI:\n{ini}"
@@ -749,13 +749,13 @@ pub(super) fn run(app: &AppWindow) {
     // throws on it during arg parsing; the model just never loads. So write it the
     // way it really arrives (into the file, then reload) and pin both halves of the
     // answer: the table explains it, and the save refuses to write it back.
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     let hand_edited = ini.replace(
         r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
         r"override-tensor = token_embd\.weight",
     );
     assert_ne!(hand_edited, ini, "the line to hand-edit must be there");
-    std::fs::write(crate::paths::presets_ini(), &hand_edited).expect("hand-edit presets.ini");
+    std::fs::write(crate::paths::presets_ini(), &hand_edited).expect("hand-edit models.ini");
     st.invoke_revert_preset(); // reloads from disk → rebuilds the table
     assert!(
         st.get_preset_tensor_warning().contains("token_embd"),
@@ -876,8 +876,8 @@ pub(super) fn run(app: &AppWindow) {
     st.set_show_rename_dialog(false);
 
     // ── The on/off switch: the preset MOVES between two files, the form stays ──
-    // Switching a preset off moves its section, verbatim, from presets.ini (the
-    // file llama-server reads) to presets.ini.disabled. It is not a navigation:
+    // Switching a preset off moves its section, verbatim, from models.ini (the
+    // file llama-server reads) to models.ini.disabled. It is not a navigation:
     // an unsaved edit must survive it, and the Save that follows must land in
     // whichever file now holds the preset, or saving would switch it back on.
     let presets_ini = crate::paths::presets_ini();
@@ -992,7 +992,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     st.invoke_delete_preset("e2e-3".into());
 
-    // And back on: the section returns to presets.ini, edit included.
+    // And back on: the section returns to models.ini, edit included.
     switch("e2e").invoke_accessible_default_action();
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
@@ -1197,7 +1197,7 @@ pub(super) fn run(app: &AppWindow) {
         })
         .expect("seed a benchmark preset");
     }
-    st.invoke_reload_all(); // the seam's cut-down F5: re-read presets.ini
+    st.invoke_reload_all(); // the seam's cut-down F5: re-read models.ini
     let bench_row = |id: &str| {
         st.get_bench_presets()
             .iter()
@@ -2136,7 +2136,7 @@ pub(super) fn run(app: &AppWindow) {
             .any(|p| p.id.as_str() == "hfmodel-Q4_K_M"),
         "the new preset is listed"
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("presets.ini");
+    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
     assert!(
         ini.contains("[hfmodel-Q4_K_M]") && ini.contains("https://huggingface.co/org/Hf-GGUF"),
         "the derived preset is saved with its project URL:\n{ini}"
@@ -2378,7 +2378,7 @@ fn delete_with_files_phase(
         "the dialog is a modal"
     );
     assert_eq!(st.get_delete_target_id().as_str(), "split");
-    assert_eq!(st.get_delete_target_file().as_str(), "presets.ini");
+    assert_eq!(st.get_delete_target_file().as_str(), "models.ini");
     let rows = || st.get_delete_file_rows().iter().collect::<Vec<_>>();
     let r = rows();
     assert_eq!(r.len(), 3, "model, mmproj, drafter");
@@ -2469,7 +2469,7 @@ fn delete_with_files_phase(
     // model is in use by the Hugging Face preset, its mmproj no longer.
     select("sharer");
     st.invoke_request_delete();
-    assert_eq!(st.get_delete_target_file().as_str(), "presets.ini.disabled");
+    assert_eq!(st.get_delete_target_file().as_str(), "models.ini.disabled");
     let r = rows();
     assert_eq!(r.len(), 2);
     assert!(

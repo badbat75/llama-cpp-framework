@@ -110,7 +110,7 @@ fn run_manager(report: Report) -> std::io::Result<()> {
     for failure in manager.service().sync(&manager.list_instances()) {
         report(&failure);
     }
-    // The instances read `presets@<id>.ini`: render the pool on disk before
+    // The instances read `models@<id>.ini`: render the pool on disk before
     // the SCM starts an instance. A render that fails leaves the files as
     // they are, names its instance in the service's log, and the next write
     // of a pool file renders again.

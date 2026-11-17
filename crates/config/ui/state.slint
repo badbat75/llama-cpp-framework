@@ -182,7 +182,7 @@ export global AppState {
     in-out property <[TensorOverrideRow]> preset_tensor_rows;
     in-out property <string> preset_tensor_summary;
     // Non-empty when the value is one llama.cpp would refuse (a rule with no
-    // device). Only a hand-edited presets.ini reaches it (the table sanitizes
+    // device). Only a hand-edited models.ini reaches it (the table sanitizes
     // everything it writes), but that value would fail the model's LOAD, so it
     // is worth saying out loud rather than at the next launch.
     in-out property <string> preset_tensor_warning;
@@ -466,8 +466,8 @@ export global AppState {
     // every `delete_file_toggle`.
     in-out property <bool> show_delete_dialog: false;
     in-out property <string> delete_target_id: "";
-    // The file the section is removed from: presets.ini or presets.ini.disabled.
-    in-out property <string> delete_target_file: "presets.ini";
+    // The file the section is removed from: models.ini or models.ini.disabled.
+    in-out property <string> delete_target_file: "models.ini";
     in-out property <[DeleteFileRow]> delete_file_rows;
     // How many rows are ticked (the Delete button's label follows it), and one
     // line naming what a confirm removes from disk.
@@ -716,7 +716,7 @@ export global AppState {
 
     callback select_preset(int);
     // A row's on/off switch: (id, the state it was switched TO). Moves the
-    // preset between presets.ini and presets.ini.disabled; the form is left
+    // preset between models.ini and models.ini.disabled; the form is left
     // alone (see gui::refresh_preset_list).
     callback toggle_preset_enabled(string, bool);
     callback save_preset();
@@ -795,7 +795,7 @@ export global AppState {
     // the button does not show where it would do nothing.
     callback open_hw_monitor();
     in property <bool> hw_monitor_available;
-    // Re-read server.ini / presets.ini and re-scan the models directory.
+    // Re-read server.ini / models.ini and re-scan the models directory.
     // Picks up files added on disk or config files edited by hand outside
     // the GUI, without restarting the app.
     callback reload_all();

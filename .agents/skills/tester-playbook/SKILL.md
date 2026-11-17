@@ -560,6 +560,21 @@ Lessons only: the rules are in `AGENTS.md`.
   `const NAME: &str = ` to the line's `;`). Do not compare line counts: the extraction starts with the
   opening line's continuation `\`, so the counts differ by one on an identical text (`left: 4 right: 5`),
   and a green of a count compare proves nothing about the bytes.
+- A rename of a FILE NAME splits into three kinds of site, and only two go red: a fixture that CARRIES the
+  name inside prose data (the disabled file's header as the input file of a save test) is data and stays
+  green; a test holding its OWN copy of the prose is red only through the twin-keeper that decodes and
+  compares it to the owner crate's constant; and the owner crate usually has NO verbatim pin at all
+  (`parked.starts_with(DISABLED_FILE_HEADER)` is self-referential, green under any text). So a prose rename
+  needs a NEW verbatim fixture in the owner crate: derive the expected name from the code that owns it
+  (`ConfigFile::Presets.manager_name()`) and add `!HEADER.contains("<old name>")` beside it, so the pin
+  cannot rot with the next rename.
+- A tuple pairing `(the manager's file, the name on disk in the user's directory)` (the hand-over's
+  `USER_FILES`): a fixture that builds the per-user directory with the MANAGER's names greens the defect,
+  because the code under test reads exactly those names, and every existing test passes. The fixtures that
+  carry the user-side names must be built from constants for each side (`PRESETS_USER` = `presets.ini` in
+  the dir, `PRESETS_SYS` = `models.ini` in `with_file`/`writes`), and the negative needs the gate of the
+  rule isolated: an offer that requires a per-user `server.ini` reds "offered" only when the manager
+  already holds the server file, else it is green for the missing gate.
 - A text pin on a file the coder will rewrite: prove it greens on a candidate edit in a temp copy, so
   the red is not a broken helper. A "no old text left" pin must be narrow (pin the code shape, e.g.
   `"+llama.cpp.{"`): doc comments legitimately describe the old format.
@@ -1708,3 +1723,81 @@ Lessons only: the rules are in `AGENTS.md`.
 - A card made editable invalidates read-only pins outside the slice's file: grep the suite for the
   field ids first (web UI session, 2h.5). A mutant sweep varies the send predicate per reading (flag,
   truthy, text, select), not only the card list.
+
+## Renaming a file across crates (a rename sub-slice)
+
+- Flip ONLY what names the file on disk: the constants the tests hand the fake, the call-log literals
+  (`"read models.ini"`, `"write-if alice models.ini"`), the assert messages, the doc comments. NOT the
+  file's own CONTENT: the `DISABLED_FILE_HEADER` prose names the sibling file inside the INI text
+  ("Same format as presets.ini, llama-server only reads presets.ini, back to presets.ini"), and
+  `the_disabled_header_is_the_configurators_one` pins that text equal to `crates/app/src/presets.rs`,
+  which the prose/wire sub-slice renames later. Sed with a per-line skip:
+  `sed -i -e '/Same format as/{b}' -e '/nothing here is offered/{b}' -e '/back to presets\.ini/{b}' -e 's/presets\.ini/models.ini/g' <file>`.
+- A source lint whose name list AND its scan cases are flipped together stays GREEN by construction
+  (`control_lint`'s `CONFIG_NAMES` + cases): the scan is generic over the list. Report it as the guard
+  that the seam rule now covers the new names, not as a red. Its `paths::` function list
+  (`CONFIG_PATHS`: `presets_ini`, `presets_disabled_ini`) does NOT rename (only the file names do).
+- A rename half done shows up as a pre-existing test red you did not cause, and it names the seam that
+  kept the old name: `crates/app/src/server_control.rs` `ConfigFile::name()` still answers `"presets.ini"`
+  while the fake manager's gate (flipped) manages `models.ini`, so the GUI e2e dies at its FIRST phase
+  (save_flow.rs:113) with `client-bad-file-name` "The manager does not manage a file of that name".
+  Prove it predates your edit: `cp` the pristine file from your own backup, run, `cp` the edited one back,
+  `grep -c` to confirm the restore. Then name the production line the coder must flip, and say which
+  asserts of yours the red blocks (the e2e is ONE `#[test]`, so later phases report nothing).
+- The GUI's file names also live in production as bare literals (`models_tab.rs` feeds
+  `delete_target_file`), and a `state.slint` default property: flipping the test's expected string is the
+  red pin, the literals are the coder's.
+- `cargo fmt -p <crate> --check` after a rename: shorter names collapse an `assert_eq!` to one line
+  (rustfmt), so format the touched file, do not hand-wrap.
+- The red shape of a file-name flip on the bff's fake: the route asks for the old name, the fake holds the
+  new one, so it sees no file → 404 `no-preset-named` on every content test, `[]` on the list, and the
+  call-list asserts read `left: ["read presets.ini"] right: ["read models.ini"]` (7 of them: the exact
+  call lists are the real pin of the file names).
+- A name that is an INPUT of a keyed digest moves EVERY constant keyed on it, so enumerate them
+  (`grep -n '"[0-9a-f]\{16\}"' crates/bff/tests/*.rs`), never work from the coder's list (they named 4 of 10,
+  and the near-miss constants `REV_WHOLE_FILE` / `REV_NEIGHBOUR` are keyed too). Recompute in a scratch
+  `rustc` program that `include!`s the test file's own fixtures and `siphash_2_4` / `hashed_section` /
+  `revision_of` (`sed -n '<lines>p'` into `fixtures.rs` + `helper.rs`): print the OLD-name value of every
+  fixture and match it against the constant being replaced (all 10 matched, so the scratch model of the input
+  is the route's), then print the NEW-name ones. Cross-check the new values against the crate the production
+  code links: `rustc --edition 2018 --crate-type lib ~/.cargo/registry/src/*/siphasher-1.0.4/src/lib.rs -o
+  libsiphasher.rlib`, then `--extern siphasher=libsiphasher.rlib` (its `write`/`finish` are trait methods, so
+  the probe needs `use std::hash::Hasher`). Validate BOTH against the published vectors first.
+- A migration test that reads the moved file through `paths::presets_ini()` breaks when that helper's
+  RETURNED name is renamed, not when the migration is: the 2.4 tree's names are data, so pin them by the
+  literal path (`paths::config_dir().join("presets.ini")`) and add the guard of the decision
+  (`!paths::config_dir().join("models.ini").exists()`: the tree move renames nothing).
+- The hand-over (`import_user_config`) has TWO names per file (`migration.rs` `USER_FILES`): it READS the
+  per-user dir under the OLD name (`presets.ini`, `presets.ini.disabled`) and WRITES the manager's new one
+  (`models.ini`, `models.ini.disabled`), pinned by `import_reads_nothing_under_the_managers_own_names`. So in an
+  e2e phase that seeds the per-user dir, the seed and the read-back of the user's file keep `presets.ini`,
+  while the fake's `fail_write_of` key, the `fake::writes` list and the manager's `files.get(..)` are
+  `models.ini`. A seed under `models.ini` is read by NOTHING: the phase that expects a refusal reports
+  `panicked at ...: refused: succeeded` (the import finds no file and answers success), which reads like a
+  broken fake, not a wrong name. Grep the seeds (`grep -rn 'join("models.ini' crates --include=*.rs`) to tell
+  the manager/engine fixtures (`sys.join`, a temp dir) from a per-user seed.
+
+## Mutation runs (fe/, proving a test has teeth)
+
+- The scratch copy: `rsync -a --exclude node_modules --exclude dist --exclude ux fe/ /tmp/<x>/`, then
+  `ln -s <repo>/fe/node_modules /tmp/<x>/node_modules`. Drive it from a python script that restores
+  the pristine sources (kept OUTSIDE the copy) with `cp` after each mutant, so no mutant survives the
+  run and the repo is never touched. A scripted sweep takes seconds per mutant: 4 test files 7 s, the
+  full `fe` suite 19 s.
+- Names of the failures come from `npx vitest run --reporter=json --outputFile=/tmp/x.json` in the
+  copy: `testResults[].name` is the file and `assertionResults[].fullName` the test, which is what to
+  report (the console output of 19 runs is unreadable).
+- Re-read the source for every patch anchor just before the run: a context summary recites functions
+  the file does not have (a summary named `flagsOf`, `isEditable`, `hasText`, `buildSaveRows`; today
+  the same rules live in the `CARDS` table's `editable` flag, `ruleLocked`, `shown`, `selectState`,
+  `selectSend`, `editableWritten`). A driver that reports "anchor not unique" caught all four.
+- A mutant is a survivor only after a FULL-suite run: of 19, three were killed by files outside the
+  slice's own (the 176 lock rule is pinned in `PresetCards4.test.tsx`, the sends in `PresetSave12`).
+- The surviving mutants of 2h.7 were the readings no control reaches: a tri-state select's option
+  `default` short-circuits `selectState`, so the flag reading of the word `default` shows only on an
+  off / on row (`no-host`), where 122 makes it ON; and a read-only row is invisible to the save's
+  check (`checkRows` filters `editable === true`) so a mutant that makes it block needs two edits:
+  the check list and the box state it validates against.
+- A patch that only changes a value nothing reads is no test at all: making a checkbox row
+  `editable: true` adds no save row while the page's `boxed` map holds no entry for it. Design the
+  mutant where a real decision is reached, and say in the report which ones cannot be reached.

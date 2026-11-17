@@ -3,10 +3,10 @@
 //!
 //! The list is the engine's two preset files, read over one connect made for
 //! the session's user, so the manager re-checks their membership of `pai` at
-//! every call: the sections of `presets.ini` (switched on, the file
-//! llama-server reads) then the sections of `presets.ini.disabled` (switched
+//! every call: the sections of `models.ini` (switched on, the file
+//! llama-server reads) then the sections of `models.ini.disabled` (switched
 //! off), each group in its file order, and an id present in both files listed
-//! once, as enabled, with the copy `presets.ini` holds: the id matched without
+//! once, as enabled, with the copy `models.ini` holds: the id matched without
 //! case, as the configurator's list does. A file the manager says is not there
 //! is an empty group, so a machine with no preset file answers an empty list
 //! and not an error.
@@ -54,21 +54,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The engine's file of switched-on presets, the one llama-server reads.
-const PRESETS: &str = "presets.ini";
+const PRESETS: &str = "models.ini";
 
 /// The engine's file of switched-off presets, never read by llama-server.
-const PRESETS_DISABLED: &str = "presets.ini.disabled";
+const PRESETS_DISABLED: &str = "models.ini.disabled";
 
-/// The header a `presets.ini.disabled` the configurator never wrote is created
+/// The header a `models.ini.disabled` the configurator never wrote is created
 /// with, so a file the switch off makes reads like one it wrote. The text is
 /// the configurator's, in `crates/app/src/presets.rs`, which the bff does not
 /// link: `the_disabled_header_is_the_configurators_one` in
 /// `tests/presets_switch.rs` reads that file and keeps the two copies equal.
 const DISABLED_FILE_HEADER: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
-; the Models tab). Same format as presets.ini, but llama-server only reads\r\n\
-; presets.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
-; section, unchanged, back to presets.ini.\r\n";
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n";
 
 /// The answer to `GET /api/presets`: the list as a JSON array, or
 /// `{"key", "args": []}`. The two files are read over one connect, as the
@@ -130,8 +130,8 @@ fn read_answer<T>(
 }
 
 /// The rows of the two files: the switched-on sections in their order, then
-/// the switched-off ones in theirs, each id of `presets.ini.disabled` that
-/// `presets.ini` also holds left out, and llama-server's global section left
+/// the switched-off ones in theirs, each id of `models.ini.disabled` that
+/// `models.ini` also holds left out, and llama-server's global section left
 /// out of both.
 fn rows(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<Value> {
     let on: Vec<ini::Section> = sections(on)
@@ -230,7 +230,7 @@ enum Answer {
 /// user there stays the 403 that ends the session.
 ///
 /// `running` is what the page's "restart llama-server to apply" note is about:
-/// the engine reads `presets.ini` at launch, so it is true when any instance is
+/// the engine reads `models.ini` at launch, so it is true when any instance is
 /// up ([`running`]). The switch starts, stops and restarts nothing.
 pub(crate) async fn set_enabled(
     connect: Connect,
@@ -309,7 +309,7 @@ fn switch(
         return Ok(Answer::NotFound);
     }
     if enabled == section_on.is_some() {
-        // Already where it is asked for: `presets.ini` is the home, so a
+        // Already where it is asked for: `models.ini` is the home, so a
         // section in both files is on. The files are not written.
         return Ok(Answer::Moved {
             enabled,
@@ -340,7 +340,7 @@ fn switch(
         Some(expected) => client.write_file_if(destination, &landed, expected)?,
         // It is not there, and the compare and swap refuses a missing file: the
         // plain write creates it. A new disabled file carries the
-        // configurator's header; a new `presets.ini` needs none.
+        // configurator's header; a new `models.ini` needs none.
         None => {
             let base = if destination == PRESETS_DISABLED {
                 DISABLED_FILE_HEADER
@@ -497,7 +497,7 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// contract (`fe/briefs/api-contract.md`, "the preset page"). The page shows
 /// the keys and the values as the file holds them and runs no check of its own,
 /// so this only reads, over one connect made for the session's user:
-/// `presets.ini` first, then `presets.ini.disabled`, as the list reads them.
+/// `models.ini` first, then `models.ini.disabled`, as the list reads them.
 ///
 /// A section is matched in any letter case, as the list's ids are, and
 /// llama-server's global `[*]` is never an answer: nothing in either file of
@@ -620,7 +620,7 @@ enum Read {
 }
 
 /// The file that holds the section `id`, read as the signed-in user over one
-/// connect: `presets.ini` first, so a section in both files is the enabled one,
+/// connect: `models.ini` first, so a section in both files is the enabled one,
 /// as the list and the section read answer the same id. A file the manager says
 /// is not there holds nothing, and llama-server's global `[*]` is not a preset.
 fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientError> {

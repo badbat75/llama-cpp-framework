@@ -101,7 +101,7 @@ pub struct Step {
 
 /// Run `steps` one after another on their own thread, all into one campaign
 /// (each plan names it). A step with overrides restarts llama-server before it
-/// (the router reads presets.ini only at start), and so does the first step
+/// (the router reads models.ini only at start), and so does the first step
 /// after one; the server is left as it was found. `Done` carries the campaign,
 /// or every step's error joined.
 pub fn spawn_steps(
@@ -127,7 +127,7 @@ fn run_steps(
     let port = u16::try_from(server_cfg::load().port_or_default())
         .map_err(|_| strings::t("invalid-port"))?;
     let was_running = crate::server_control::backend().is_running();
-    // presets.ini differs from what the running router read.
+    // models.ini differs from what the running router read.
     let mut dirty = false;
     let mut shown: Vec<Point> = Vec::new();
     let mut problems = Vec::new();
@@ -392,7 +392,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
         .collect();
     if chosen.len() != plan.presets.len() {
         return Err(
-            "A selected preset is no longer in presets.ini. Refresh (F5) and \
+            "A selected preset is no longer in models.ini. Refresh (F5) and \
                     re-select."
                 .into(),
         );

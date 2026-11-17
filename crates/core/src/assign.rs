@@ -1,5 +1,5 @@
-// The render of one instance's `presets@<id>.ini`: the pool (the pair
-// `presets.ini` and `presets.ini.disabled`) cut to the presets one instance is
+// The render of one instance's `models@<id>.ini`: the pool (the pair
+// `models.ini` and `models.ini.disabled`) cut to the presets one instance is
 // given by its section of `assignments.ini`.
 //
 // The manager owns that file: it renders it after every write of a pool file,
@@ -9,10 +9,10 @@
 use crate::ini;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The text of one instance's `presets@<id>.ini`.
+/// The text of one instance's `models@<id>.ini`.
 ///
-/// - `enabled`: the text of `presets.ini`, the pool's switched-on presets
-/// - `disabled`: the text of `presets.ini.disabled`, the switched-off ones
+/// - `enabled`: the text of `models.ini`, the pool's switched-on presets
+/// - `disabled`: the text of `models.ini.disabled`, the switched-off ones
 /// - `assignment`: the instance's section of `assignments.ini` as
 ///   `ini::text::section_text` hands it (its `[<id>]` header line included),
 ///   or `None` when the instance has no section. One key per assigned preset
@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// section is given `[*]` alone. `*` is never a preset id, so it never becomes
 /// a section of its own. One id is one preset, so an id the two pool files
 /// both hold, or written twice in one file, in any letter case, is rendered
-/// once, from the first copy: `presets.ini` before `presets.ini.disabled`.
+/// once, from the first copy: `models.ini` before `models.ini.disabled`.
 ///
 /// The file opens with the one comment line saying it is generated, in the
 /// ending style of `enabled`, or of `disabled` when `enabled` is empty
@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// opens a line of its own.
 pub fn render(enabled: &str, disabled: &str, assignment: Option<&str>) -> String {
     // The ending style comes from the pool's file that holds text, so an empty
-    // `presets.ini` takes the style of the file that has the pool.
+    // `models.ini` takes the style of the file that has the pool.
     let eol = if enabled.is_empty() {
         ini::detect_eol(disabled)
     } else {
@@ -164,7 +164,7 @@ mod tests {
     fn pool_on(eol: &str) -> String {
         file_of(
             &[
-                "; presets.ini, the pool's switched-on presets",
+                "; models.ini, the pool's switched-on presets",
                 "[*]",
                 "temp = 0.7",
                 "n-gpu-layers = 99",
@@ -186,7 +186,7 @@ mod tests {
     fn pool_off(eol: &str) -> String {
         file_of(
             &[
-                "; presets.ini.disabled, the pool's switched-off presets",
+                "; models.ini.disabled, the pool's switched-off presets",
                 "[gamma]",
                 "model = /models/gamma.gguf",
                 "load-on-startup = false",
@@ -210,11 +210,11 @@ mod tests {
         )
     }
 
-    /// `presets.ini` of a pool where `alpha` sits in BOTH files.
+    /// `models.ini` of a pool where `alpha` sits in BOTH files.
     fn pool_both_on(eol: &str) -> String {
         file_of(
             &[
-                "; presets.ini, the pool's switched-on presets",
+                "; models.ini, the pool's switched-on presets",
                 "[*]",
                 "temp = 0.7",
                 "",
@@ -229,13 +229,13 @@ mod tests {
         )
     }
 
-    /// `presets.ini.disabled` of the same pool: the same `alpha`, switched off,
+    /// `models.ini.disabled` of the same pool: the same `alpha`, switched off,
     /// with its own text so the render's copy is told apart from the one in
-    /// `presets.ini`.
+    /// `models.ini`.
     fn pool_both_off(eol: &str) -> String {
         file_of(
             &[
-                "; presets.ini.disabled, the pool's switched-off presets",
+                "; models.ini.disabled, the pool's switched-off presets",
                 "[alpha]",
                 "; the alpha preset, switched off",
                 "model = /models/alpha-off.gguf",
@@ -384,8 +384,8 @@ mod tests {
     }
 
     /// The render of a pool where one id sits in BOTH files: the sections
-    /// `want` in order, with that id rendered ONCE, from `presets.ini` (never
-    /// the copy switched off in `presets.ini.disabled`).
+    /// `want` in order, with that id rendered ONCE, from `models.ini` (never
+    /// the copy switched off in `models.ini.disabled`).
     fn assert_alpha_once(body: &str, want: &[(&str, &str)], off: &str, eol: &str) {
         assert_sections(body, want, eol);
         assert_eq!(
@@ -398,7 +398,7 @@ mod tests {
         let off_alpha = off_alpha.trim_end_matches(['\r', '\n']);
         assert!(
             !body.contains(off_alpha),
-            "the copy switched off in presets.ini.disabled is in the render ({eol:?}): {body:?}"
+            "the copy switched off in models.ini.disabled is in the render ({eol:?}): {body:?}"
         );
     }
 
@@ -440,7 +440,7 @@ mod tests {
         }
     }
 
-    /// `on` renders a preset that sits only in `presets.ini.disabled`, copied
+    /// `on` renders a preset that sits only in `models.ini.disabled`, copied
     /// byte for byte from that file.
     #[test]
     fn the_render_override_on_renders_a_preset_only_in_the_disabled_file() {
@@ -458,7 +458,7 @@ mod tests {
     }
 
     /// `inherit` on a named key follows the global switch: on from
-    /// `presets.ini`, absent from `presets.ini.disabled`.
+    /// `models.ini`, absent from `models.ini.disabled`.
     #[test]
     fn the_render_inherit_of_a_named_key_follows_the_global_switch() {
         for eol in EOLS {
@@ -607,7 +607,7 @@ mod tests {
         for eol in EOLS {
             let off = pool_off(eol);
             let empty = String::new();
-            let bare = file_of(&["; presets.ini, no preset in the pool yet"], eol);
+            let bare = file_of(&["; models.ini, no preset in the pool yet"], eol);
             let assignment = file_of(&["* = on"], eol);
             let (head, body) = parts(&render(&bare, &empty, Some(&assignment)));
             assert_eq!(
@@ -661,7 +661,7 @@ mod tests {
     }
 
     /// One id in both files of the pool is ONE preset: when it is on it is
-    /// rendered once, from `presets.ini` (the file that holds it on), under its
+    /// rendered once, from `models.ini` (the file that holds it on), under its
     /// own `on`, under `* = on` and under `inherit`.
     #[test]
     fn the_render_an_id_in_both_pool_files_is_rendered_once_from_the_enabled_one() {
@@ -921,7 +921,7 @@ mod tests {
         }
     }
 
-    /// An empty `presets.ini` beside a non-empty `presets.ini.disabled`: the
+    /// An empty `models.ini` beside a non-empty `models.ini.disabled`: the
     /// render is the pool it has, in the ending style of the file that has one.
     #[test]
     fn the_render_an_empty_enabled_file_renders_the_disabled_pool() {
@@ -929,7 +929,7 @@ mod tests {
             let empty = String::new();
             let off = file_of(
                 &[
-                    "; presets.ini.disabled, the pool's switched-off presets",
+                    "; models.ini.disabled, the pool's switched-off presets",
                     "[*]",
                     "temp = 0.7",
                     "",

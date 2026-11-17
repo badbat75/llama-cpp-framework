@@ -93,8 +93,8 @@ pub fn files() -> Vec<(&'static str, String)> {
             include_str!("../../../crates/core/defaults/server@default.ini").to_string(),
         ),
         (
-            "usr/share/private-ai/llama.cpp/presets.ini",
-            include_str!("../../../crates/core/defaults/presets.ini").to_string(),
+            "usr/share/private-ai/llama.cpp/models.ini",
+            include_str!("../../../crates/core/defaults/models.ini").to_string(),
         ),
         (
             "usr/share/private-ai/llama.cpp/assignments.ini",
@@ -162,7 +162,7 @@ pub fn instance_unit() -> String {
          After=network-online.target\n\
          Wants=network-online.target\n\
          # Ordering only, no requirement: the manager renders each instance's\n\
-         # presets@<id>.ini at its own start, so an enabled instance that starts\n\
+         # models@<id>.ini at its own start, so an enabled instance that starts\n\
          # at boot starts once that render stands.\n\
          After=private-ai-manager.service\n\
          # The launcher is the framework's, which this package does not require.\n\
@@ -541,7 +541,7 @@ fn start_recorded_instances(indent: &str) -> String {
 /// host for no group: the server file is copied 0644 there.
 fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
     let server = "server@default.ini";
-    let presets = "presets.ini";
+    let presets = "models.ini";
     let assignments = "assignments.ini";
     let (root, host) = if chroot {
         ("$DPKG_ROOT", r#"[ -z "$DPKG_ROOT" ] && "#)
@@ -799,7 +799,7 @@ mod tests {
     const BFF_UNIT: &str = "usr/lib/systemd/system/private-ai-bff.service";
     const BFF_SYSUSERS: &str = "usr/lib/sysusers.d/private-ai-bff.conf";
     const DEFAULT_SERVER: &str = "usr/share/private-ai/llama.cpp/server@default.ini";
-    const DEFAULT_PRESETS: &str = "usr/share/private-ai/llama.cpp/presets.ini";
+    const DEFAULT_PRESETS: &str = "usr/share/private-ai/llama.cpp/models.ini";
     const DEFAULT_ASSIGNMENTS: &str = "usr/share/private-ai/llama.cpp/assignments.ini";
 
     /// The text of the generated file at `path`, from [`files`].
@@ -1121,7 +1121,7 @@ mod tests {
 
     /// The instance is ordered after the manager, so an enabled instance
     /// starting at boot starts once the manager is up: the manager renders
-    /// every instance's `presets@<id>.ini` at its own start, so on the first
+    /// every instance's `models@<id>.ini` at its own start, so on the first
     /// boot after an upgrade the engine reads a rendered file, never a stale
     /// one. Ordering only: the manager is the framework's package, which the
     /// engine's package does not ship and must not require, so no `Requires=`,
@@ -2620,7 +2620,7 @@ exit 0
             let share = dir.join("share-engine");
             std::fs::create_dir_all(&share).unwrap();
             std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
-            std::fs::write(share.join("presets.ini"), "").unwrap();
+            std::fs::write(share.join("models.ini"), "").unwrap();
             std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
             Sandbox { dir }
         }
@@ -3137,7 +3137,7 @@ exit 0
     /// /usr/share/private-ai/llama.cpp: `server@default.ini`, the engine's
     /// starting values, checked in as
     /// `crates/core/defaults/server@default.ini` (pai-core pins its content),
-    /// and an empty `presets.ini`. No header: the copy
+    /// and an empty `models.ini`. No header: the copy
     /// in /etc/llama.cpp is the administrator's and the manager's, never
     /// overwritten.
     #[test]
@@ -3158,7 +3158,7 @@ exit 0
     /// The engine ships the default assignment beside them: `assignments.ini`,
     /// one section for the instance `default` with the key `* = inherit`, so a
     /// fresh install and an upgrade serve on `default` exactly what
-    /// `presets.ini` serves, with nothing to move by hand. Checked in as
+    /// `models.ini` serves, with nothing to move by hand. Checked in as
     /// `crates/core/defaults/assignments.ini`, beside the other shipped
     /// defaults (the manager owns the file: `pai-core`'s `assign` module pins
     /// what the keys mean).
@@ -3211,7 +3211,7 @@ exit 0
     /// engine's postinst copies each shipped default into /etc/llama.cpp
     /// when it is missing: the directory 0755, `server@default.ini` 0640
     /// with the group private-ai when that group exists (the instances run
-    /// as its user; the file may later hold a secret), `presets.ini` 0644;
+    /// as its user; the file may later hold a secret), `models.ini` 0644;
     /// so the instance `default` exists from the first install. The copy
     /// comes before the recorded instances start again.
     #[test]
@@ -3234,13 +3234,13 @@ exit 0
             assert_eq!(mode(&etc.join("server@default.ini")), 0o640, "{args:?}");
             assert!(grouped(&log, "server@default.ini"), "{args:?}: {log:?}");
             assert_eq!(
-                std::fs::read_to_string(etc.join("presets.ini"))
+                std::fs::read_to_string(etc.join("models.ini"))
                     .ok()
                     .as_deref(),
                 Some(""),
                 "{args:?}: {log:?}"
             );
-            assert_eq!(mode(&etc.join("presets.ini")), 0o644, "{args:?}");
+            assert_eq!(mode(&etc.join("models.ini")), 0o644, "{args:?}");
             assert_eq!(
                 std::fs::read_to_string(etc.join("assignments.ini"))
                     .ok()
@@ -3318,7 +3318,7 @@ exit 0
             std::fs::Permissions::from_mode(0o640),
         )
         .unwrap();
-        std::fs::write(etc.join("presets.ini.disabled"), disabled).unwrap();
+        std::fs::write(etc.join("models.ini.disabled"), disabled).unwrap();
         let assignments = "[default]\nQwen3.8-27B = inherit\n[gpu1]\n* = inherit\n";
         std::fs::write(etc.join("assignments.ini"), assignments).unwrap();
         let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
@@ -3329,25 +3329,21 @@ exit 0
         );
         assert_eq!(mode(&etc.join("server@default.ini")), 0o640);
         assert_eq!(
-            std::fs::read_to_string(etc.join("presets.ini.disabled")).unwrap(),
+            std::fs::read_to_string(etc.join("models.ini.disabled")).unwrap(),
             disabled
         );
         assert_eq!(
-            std::fs::read_to_string(etc.join("presets.ini"))
+            std::fs::read_to_string(etc.join("models.ini"))
                 .ok()
                 .as_deref(),
             Some(""),
             "the missing one is copied: {log:?}"
         );
         // A second run copies nothing over what is now there.
-        std::fs::write(
-            etc.join("presets.ini"),
-            "[Qwen3.8-27B]\nmodel = /m/q.gguf\n",
-        )
-        .unwrap();
+        std::fs::write(etc.join("models.ini"), "[Qwen3.8-27B]\nmodel = /m/q.gguf\n").unwrap();
         let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
         assert_eq!(
-            std::fs::read_to_string(etc.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(etc.join("models.ini")).unwrap(),
             "[Qwen3.8-27B]\nmodel = /m/q.gguf\n",
             "{log:?}"
         );
@@ -3375,8 +3371,8 @@ exit 0
         let files = [
             "server@default.ini",
             "server@gpu1.ini",
-            "presets.ini",
-            "presets.ini.disabled",
+            "models.ini",
+            "models.ini.disabled",
             "assignments.ini",
         ];
         let fill = |sb: &Sandbox| {
@@ -3399,7 +3395,7 @@ exit 0
 
     /// The `.rpm` does the same in %posttrans, which runs after the whole
     /// transaction (the core's user exists by then): each default copied
-    /// when missing (`server@default.ini` 0640 with the group, `presets.ini`
+    /// when missing (`server@default.ini` 0640 with the group, `models.ini`
     /// 0644), never over an existing file, before the recorded instances
     /// start. rpm has no purge: nothing removes /etc/llama.cpp on erase.
     #[test]
@@ -3422,12 +3418,12 @@ exit 0
         assert_eq!(mode(&etc.join("server@default.ini")), 0o640);
         assert!(grouped(&log, "server@default.ini"), "{log:?}");
         assert_eq!(
-            std::fs::read_to_string(etc.join("presets.ini"))
+            std::fs::read_to_string(etc.join("models.ini"))
                 .ok()
                 .as_deref(),
             Some("")
         );
-        assert_eq!(mode(&etc.join("presets.ini")), 0o644);
+        assert_eq!(mode(&etc.join("models.ini")), 0o644);
         assert_eq!(
             std::fs::read_to_string(etc.join("assignments.ini"))
                 .ok()
@@ -3482,7 +3478,7 @@ exit 0
         let share = root.join(ENGINE_DEFAULTS.trim_start_matches('/'));
         std::fs::create_dir_all(&share).unwrap();
         std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
-        std::fs::write(share.join("presets.ini"), "").unwrap();
+        std::fs::write(share.join("models.ini"), "").unwrap();
         std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
         let etc = root.join(ENGINE_ETC.trim_start_matches('/'));
 
@@ -3495,7 +3491,7 @@ exit 0
             "{log:?}"
         );
         assert_eq!(
-            std::fs::read_to_string(etc.join("presets.ini"))
+            std::fs::read_to_string(etc.join("models.ini"))
                 .ok()
                 .as_deref(),
             Some(""),

@@ -16,7 +16,7 @@ const ENGINE_WXS: &str = "installer/llama.cpp.wxs";
 const REMOVE_INSTANCES_PS1: &str = "installer/msi-remove-instances.ps1";
 /// The framework's identity across versions, 2.4 included (installer/AGENTS.md).
 const FRAMEWORK_UPGRADE_CODE: &str = "F21D044C-04F5-478D-8F0A-A9B940DB23C3";
-const DEFAULTS: [&str; 3] = ["server@default.ini", "presets.ini", "assignments.ini"];
+const DEFAULTS: [&str; 3] = ["server@default.ini", "models.ini", "assignments.ini"];
 
 pub(super) fn engine_text() -> String {
     read(ENGINE_WXS)
@@ -197,7 +197,7 @@ fn each_product_has_its_own_wxs() {
 }
 
 /// The engine's defaults on Windows: `server@default.ini` with the starting
-/// values that hold on any machine (port, host) and an empty `presets.ini`.
+/// values that hold on any machine (port, host) and an empty `models.ini`.
 /// No Linux path, and no ModelsDir or StateDir: an INI value is not
 /// expanded, so `%ProgramData%` could not be written portably; the manager
 /// resolves them (assumed: a manager slice of its own).
@@ -219,13 +219,13 @@ fn the_engine_defaults_on_windows_hold_only_portable_starting_values() {
         "{server}"
     );
     assert!(!server.contains("/var/lib"), "{server}");
-    assert_eq!(d[1].1, "", "presets.ini is empty");
+    assert_eq!(d[1].1, "", "models.ini is empty");
 }
 
 /// The engine's defaults on Windows carry the default assignment as well:
 /// `assignments.ini` with the one section of the instance `default` and the
 /// key `* = inherit`, so a fresh install and an upgrade serve on `default`
-/// exactly what `presets.ini` serves, with nothing to move by hand. Checked in
+/// exactly what `models.ini` serves, with nothing to move by hand. Checked in
 /// as `crates/core/defaults/windows/assignments.ini`, beside the other
 /// Windows defaults; the manager owns the file, the installer only copies it.
 #[test]

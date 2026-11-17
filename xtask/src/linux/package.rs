@@ -56,7 +56,7 @@
 //! is skipped at start with nothing but a log line.
 //!
 //! No config file is in the package. The server and preset files
-//! (server@<id>.ini, presets.ini, presets.ini.disabled) live in
+//! (server@<id>.ini, models.ini, models.ini.disabled) live in
 //! /etc/llama.cpp, the engine's, which its maintainer scripts fill from the
 //! defaults it ships in /usr/share/private-ai/llama.cpp (each only when
 //! missing) and systemd creates at the manager's start
@@ -978,12 +978,12 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
         Component::Config => (
             "pai-config: graphical configurator for llama-server",
             "pai-config, the graphical configurator for server.ini and the per-model\n\
-             presets.ini, which the manager keeps in /etc/llama.cpp.\n"
+             models.ini, which the manager keeps in /etc/llama.cpp.\n"
                 .to_string(),
         ),
         Component::Cli => (
             "pai: command line for llama-server, its presets and benchmarks",
-            "pai, the command line of the framework: server.ini and the per-model presets.ini\n\
+            "pai, the command line of the framework: server.ini and the per-model models.ini\n\
              through the manager, the server's control and the benchmarks, with the\n\
              benchmark method. It needs no graphics library.\n"
                 .to_string(),
@@ -998,7 +998,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
         ),
         Component::Core => (
             "pai-manager: the service that runs llama-server for the framework",
-            "pai-manager, the framework's service: it keeps server.ini and presets.ini in\n\
+            "pai-manager, the framework's service: it keeps server.ini and models.ini in\n\
              /etc/llama.cpp and runs llama-server as a systemd service, for pai-config,\n\
              pai and pai-bff. With the systemd units, the D-Bus and polkit policies, the\n\
              service user and the texts the framework's programs print.\n"
@@ -2330,7 +2330,7 @@ mod tests {
             names,
             [
                 "usr/share/private-ai/llama.cpp/server@default.ini",
-                "usr/share/private-ai/llama.cpp/presets.ini",
+                "usr/share/private-ai/llama.cpp/models.ini",
                 "usr/share/private-ai/llama.cpp/assignments.ini"
             ]
         );

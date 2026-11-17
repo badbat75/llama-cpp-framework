@@ -100,8 +100,8 @@ export component ModelsPage inherits HorizontalLayout {
                     muted: !p.enabled;
                     selected: p.orig_index == AppState.selected_preset_index;
                     clicked => { AppState.select_preset(p.orig_index); }
-                    // On = the section sits in presets.ini, so llama-server (and
-                    // OpenCode) offer it; off = parked in presets.ini.disabled.
+                    // On = the section sits in models.ini, so llama-server (and
+                    // OpenCode) offer it; off = parked in models.ini.disabled.
                     // Sanctioned one-way binding, the GPU table's contract: a
                     // click self-assigns `checked`, breaking THIS delegate's
                     // binding, and the handler always replaces the whole list

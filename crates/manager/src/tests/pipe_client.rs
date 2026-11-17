@@ -88,7 +88,7 @@ pub(crate) fn manager_pipe_client_e2e() {
     let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("presets.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
     let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
@@ -102,13 +102,13 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert_eq!(client.stop("default"), Err(ClientError::NotAuthorized));
         assert_eq!(client.restart("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", "[x]\nmodel = /m/x.gguf\n", false),
+            client.write_file("models.ini", "[x]\nmodel = /m/x.gguf\n", false),
             Err(ClientError::NotAuthorized)
         );
         // The compare and swap write is the same guarded call: no identity,
         // no write, nobody asked.
         assert_eq!(
-            client.write_file_if("presets.ini", "[x]\nmodel = /m/x.gguf\n", ""),
+            client.write_file_if("models.ini", "[x]\nmodel = /m/x.gguf\n", ""),
             Err(ClientError::NotAuthorized)
         );
         // An instance file can hold a secret (OpencodeApiKey): its read
@@ -131,9 +131,9 @@ pub(crate) fn manager_pipe_client_e2e() {
             Ok(vec!["broken".to_string(), "default".to_string()])
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets,
             "a refused write leaves the file"
         );
@@ -174,7 +174,7 @@ pub(crate) fn manager_pipe_client_e2e() {
                 "configure: {configure}"
             );
             assert_eq!(
-                client.read_file("presets.ini"),
+                client.read_file("models.ini"),
                 Ok(Some(plain(presets))),
                 "a preset file is never withheld"
             );
@@ -219,7 +219,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         let (server, client) = connect(&c, &alice);
         assert_eq!(client.start("default"), Err(ClientError::NotAuthorized));
         assert_eq!(
-            client.write_file("presets.ini", "", false),
+            client.write_file("models.ini", "", false),
             Err(ClientError::NotAuthorized)
         );
         assert_eq!(
@@ -237,7 +237,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             ]
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets
         );
         // Start at boot: refused under configure, nothing changed.
@@ -297,19 +297,16 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(asked(&c), vec![(alice.clone(), Action::Control); 3]);
 
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(plain(presets))));
+        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
         assert_eq!(
-            client.read_file("presets.ini.disabled"),
+            client.read_file("models.ini.disabled"),
             Ok(None),
             "a missing file"
         );
         // A file whose text is empty is not a missing one.
-        std::fs::write(sys.join("presets.ini.disabled"), "").expect("empty file");
-        assert_eq!(
-            client.read_file("presets.ini.disabled"),
-            Ok(Some(plain("")))
-        );
-        std::fs::remove_file(sys.join("presets.ini.disabled")).unwrap();
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("empty file");
+        assert_eq!(client.read_file("models.ini.disabled"), Ok(Some(plain(""))));
+        std::fs::remove_file(sys.join("models.ini.disabled")).unwrap();
 
         let lan2 = "[Server]\nPort = 8081\nHostname = gpu-box.lan\n";
         assert_eq!(client.write_file("server@lan-2.ini", lan2, false), Ok(()));
@@ -391,7 +388,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         // Values with spaces, a backslash and a non-ASCII letter come back whole.
         assert_eq!(
             client.write_file(
-                "presets.ini",
+                "models.ini",
                 "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
                 false
             ),
@@ -402,7 +399,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(
             client.write_file(
-                "presets.ini",
+                "models.ini",
                 &format!(
                     "{presets}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"
                 ), false
@@ -421,17 +418,17 @@ pub(crate) fn manager_pipe_client_e2e() {
             default_ini
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             presets
         );
 
         // A read that fails for another reason than a missing file.
-        std::fs::create_dir(sys.join("presets.ini.disabled")).expect("dir in the way");
-        match client.read_file("presets.ini.disabled") {
+        std::fs::create_dir(sys.join("models.ini.disabled")).expect("dir in the way");
+        match client.read_file("models.ini.disabled") {
             Err(ClientError::Io(kind)) => assert!(!kind.is_empty(), "the kind"),
             other => panic!("read of a directory: {other:?}"),
         }
-        std::fs::remove_dir(sys.join("presets.ini.disabled")).unwrap();
+        std::fs::remove_dir(sys.join("models.ini.disabled")).unwrap();
 
         // Start at boot, both ways, and its refusals, as over D-Bus.
         assert_eq!(client.boot_enabled("default"), Ok(false));
@@ -459,12 +456,12 @@ pub(crate) fn manager_pipe_client_e2e() {
 
         // A file of non-ASCII text with every JSON escape round-trips whole.
         let tricky = "[m]\nmodel = /models/é \"q\"\\\t\u{1}.gguf\n";
-        std::fs::write(sys.join("presets.ini.disabled"), tricky).expect("tricky file");
+        std::fs::write(sys.join("models.ini.disabled"), tricky).expect("tricky file");
         assert_eq!(
-            client.read_file("presets.ini.disabled"),
+            client.read_file("models.ini.disabled"),
             Ok(Some(plain(tricky)))
         );
-        std::fs::remove_file(sys.join("presets.ini.disabled")).unwrap();
+        std::fs::remove_file(sys.join("models.ini.disabled")).unwrap();
         hang_up(server, client);
     }
 
@@ -489,25 +486,25 @@ pub(crate) fn manager_pipe_client_e2e() {
     {
         let c = core(true, &[]);
         let (server, client) = connect(&c, &alice);
-        let base = std::fs::read_to_string(sys.join("presets.ini")).expect("read presets");
+        let base = std::fs::read_to_string(sys.join("models.ini")).expect("read presets");
         let more = format!("{base}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
         assert_eq!(
-            client.write_file_if("presets.ini", &more, &base),
+            client.write_file_if("models.ini", &more, &base),
             Ok(()),
             "a caller holding the file's content writes"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             more,
             "the fresh content landed"
         );
         assert_eq!(
-            client.write_file_if("presets.ini", &base, &base),
+            client.write_file_if("models.ini", &base, &base),
             Err(ClientError::Changed),
             "a caller holding a content the file no longer holds"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("presets.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             more,
             "the refused write changed nothing on the way to the error"
         );
@@ -527,7 +524,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(calls(&c), vec![], "a file write touches no unit");
         hang_up(server, client);
-        std::fs::write(sys.join("presets.ini"), presets).expect("restore presets");
+        std::fs::write(sys.join("models.ini"), presets).expect("restore presets");
     }
 }
 

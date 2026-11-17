@@ -1,7 +1,7 @@
 //! Paths for the Private AI Framework.
 //!
 //! Four jobs: (1) the user runtime tree, %LOCALAPPDATA%\private-ai\ on Windows
-//! (config\server.ini, config\presets.ini, config\settings.ini,
+//! (config\server.ini, config\models.ini, config\settings.ini,
 //! logs\llama-server.log) and ~/.local/share/private-ai elsewhere, where the
 //! config files live in ~/.config/private-ai instead (`config_dir`), overridable
 //! for tests via PRIVATE_AI_DATA_ROOT; (2) locating llama.cpp's binaries
@@ -110,7 +110,7 @@ pub fn system_config_dir() -> PathBuf {
 }
 
 /// The engine's machine-wide config directory, where the instance files
-/// live (`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`):
+/// live (`server@<id>.ini`, `models.ini`, `models.ini.disabled`):
 /// `/etc/llama.cpp` on Linux, `%ProgramData%\llama.cpp\config` on Windows,
 /// `system_config_dir()` on macOS. Under
 /// the test override it is `<override>/engine-config` on every OS, a sibling
@@ -256,11 +256,11 @@ pub fn instance_ini(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| engine_config_dir().join(format!("server@{id}.ini")))
 }
 
-/// `presets@<id>.ini` in `engine_config_dir()`, the presets the instance `id`
+/// `models@<id>.ini` in `engine_config_dir()`, the presets the instance `id`
 /// reads: the pool cut by the instance's section of `assignments.ini`. The
 /// manager writes it, the instance's launch reads it. None for an invalid id.
 pub fn instance_presets(id: &str) -> Option<PathBuf> {
-    valid_instance_id(id).then(|| engine_config_dir().join(format!("presets@{id}.ini")))
+    valid_instance_id(id).then(|| engine_config_dir().join(format!("models@{id}.ini")))
 }
 
 /// The ids of the regular files `server@<valid id>.ini` in
@@ -288,7 +288,7 @@ pub fn server_ini() -> PathBuf {
 }
 
 pub fn presets_ini() -> PathBuf {
-    config_dir().join("presets.ini")
+    config_dir().join("models.ini")
 }
 
 /// The presets switched OFF: same INI format as `presets_ini()`, sections moved
@@ -297,7 +297,7 @@ pub fn presets_ini() -> PathBuf {
 /// parked here is simply not offered, while a `*.ini` glob (the user's own, or a
 /// backup tool's) cannot mistake it for a live config.
 pub fn presets_disabled_ini() -> PathBuf {
-    config_dir().join("presets.ini.disabled")
+    config_dir().join("models.ini.disabled")
 }
 
 /// The configurator's OWN settings (the Settings tab; see `settings.rs`),
@@ -792,6 +792,29 @@ pub(crate) fn instance_paths_e2e() {
     assert_eq!(instance_ini("lan-2"), Some(engine.join("server@lan-2.ini")));
     assert_eq!(instance_ini("8080"), Some(engine.join("server@8080.ini")));
 
+    // The file names themselves: the pool's pair, per user (macOS), and the
+    // render the instance reads, in the engine's directory.
+    assert_eq!(
+        presets_ini(),
+        config_dir().join("models.ini"),
+        "the pool's switched-on file"
+    );
+    assert_eq!(
+        presets_disabled_ini(),
+        config_dir().join("models.ini.disabled"),
+        "the pool's switched-off file"
+    );
+    assert_eq!(
+        instance_presets("default"),
+        Some(engine.join("models@default.ini")),
+        "the render is the engine's file, named after the instance"
+    );
+    assert_eq!(
+        instance_presets("lan-2"),
+        Some(engine.join("models@lan-2.ini")),
+        "one render per instance"
+    );
+
     // An instance file left in the framework's directory is no instance:
     // nothing moves or reads files from there.
     std::fs::create_dir_all(&sys).expect("system config dir");
@@ -812,8 +835,8 @@ pub(crate) fn instance_paths_e2e() {
         "server@default.ini",
         "server@8080.ini",
         "server.ini",
-        "presets.ini",
-        "presets.ini.disabled",
+        "models.ini",
+        "models.ini.disabled",
         "server@x.ini.bak",
         "server@.ini",
         "server@Upper.ini",

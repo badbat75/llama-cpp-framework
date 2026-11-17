@@ -9,9 +9,9 @@
 //! ```text
 //! {"method":"ListInstances"}
 //! {"method":"Status","id":"default"}        (also Start, Stop, Restart)
-//! {"method":"ReadFile","name":"presets.ini"}
-//! {"method":"WriteFile","name":"presets.ini","contents":"...","keep_api_key":false}
-//! {"method":"WriteFileIf","name":"presets.ini","contents":"...","expected":"..."}
+//! {"method":"ReadFile","name":"models.ini"}
+//! {"method":"WriteFile","name":"models.ini","contents":"...","keep_api_key":false}
+//! {"method":"WriteFileIf","name":"models.ini","contents":"...","expected":"..."}
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! {"method":"Authenticate","user":"alice","password":"..."}
@@ -27,11 +27,11 @@
 //!
 //! ```text
 //! {"method":"StartAs","principal":"alice","id":"default"}
-//! {"method":"ReadFileAs","principal":"alice","name":"presets.ini"}
+//! {"method":"ReadFileAs","principal":"alice","name":"models.ini"}
 //! {"method":"SetBootEnabledAs","principal":"alice","id":"default","enabled":true}
-//! {"method":"WriteFileAs","principal":"alice","name":"presets.ini",
+//! {"method":"WriteFileAs","principal":"alice","name":"models.ini",
 //!                              "contents":"...","keep_api_key":false}
-//! {"method":"WriteFileIfAs","principal":"alice","name":"presets.ini",
+//! {"method":"WriteFileIfAs","principal":"alice","name":"models.ini",
 //!                               "contents":"...","expected":"..."}
 //! ```
 //!
@@ -515,9 +515,9 @@ mod tests {
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
         ("restart", |c| c.restart("default").err()),
-        ("read_file", |c| c.read_file("presets.ini").err()),
+        ("read_file", |c| c.read_file("models.ini").err()),
         ("write_file", |c| {
-            c.write_file("presets.ini", "", false).err()
+            c.write_file("models.ini", "", false).err()
         }),
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
@@ -620,7 +620,7 @@ mod tests {
             ("status", |c| c.status("default").err()),
             ("start", |c| c.start("default").err()),
             ("write_file", |c| {
-                c.write_file("presets.ini", "x", false).err()
+                c.write_file("models.ini", "x", false).err()
             }),
         ] {
             let (server, client) = UnixStream::pair().expect("socket pair");
@@ -641,7 +641,7 @@ mod tests {
     fn a_request_over_the_cap_is_other_and_sends_nothing() {
         let (client, sent) = client_on(input(&[json!({"ok": null})]));
         let huge = "x".repeat(MAX_FRAME as usize);
-        match client.write_file("presets.ini", &huge, false) {
+        match client.write_file("models.ini", &huge, false) {
             Err(ClientError::Other(detail)) => assert!(!detail.is_empty()),
             other => panic!("a request over the cap: {other:?}"),
         }
@@ -735,7 +735,7 @@ mod tests {
             ("status", |c| c.status("default").err(), json!({"ok": null})),
             (
                 "read_file",
-                |c| c.read_file("presets.ini").err(),
+                |c| c.read_file("models.ini").err(),
                 json!({"ok": true}),
             ),
             ("start", |c| c.start("default").err(), json!({})),
@@ -877,13 +877,13 @@ mod tests {
             (
                 |c| {
                     c.write_file(
-                        "presets.ini",
+                        "models.ini",
                         "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
                         false,
                     )
                     .err()
                 },
-                json!({"method": "WriteFile", "name": "presets.ini", "contents": contents, "keep_api_key": false}),
+                json!({"method": "WriteFile", "name": "models.ini", "contents": contents, "keep_api_key": false}),
             ),
             (
                 |c| {
@@ -895,7 +895,7 @@ mod tests {
             (
                 |c| {
                     c.write_file_if(
-                        "presets.ini",
+                        "models.ini",
                         "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n",
                         "",
                     )
@@ -903,7 +903,7 @@ mod tests {
                 },
                 // The compare and swap: the file's name, the new content and
                 // the content it must still hold, and no `keep_api_key`.
-                json!({"method": "WriteFileIf", "name": "presets.ini", "contents": contents, "expected": ""}),
+                json!({"method": "WriteFileIf", "name": "models.ini", "contents": contents, "expected": ""}),
             ),
         ];
         for (f, request) in cases {
@@ -944,7 +944,7 @@ mod tests {
             ("stop", |c| c.stop("default")),
             ("restart", |c| c.restart("default")),
             ("write_file", |c| {
-                c.write_file("presets.ini", "[m]\nmodel = /m.gguf\n", false)
+                c.write_file("models.ini", "[m]\nmodel = /m.gguf\n", false)
             }),
         ] {
             let (client, _) = client_on(input(&[json!({"ok": null})]));
@@ -964,16 +964,16 @@ mod tests {
             withheld,
         };
         let (client, _) = client_on(input(&[json!({"ok": {"text": text, "withheld": false}})]));
-        assert_eq!(client.read_file("presets.ini"), Ok(Some(file(text, false))));
+        assert_eq!(client.read_file("models.ini"), Ok(Some(file(text, false))));
         let (client, _) = client_on(input(&[json!({"ok": null})]));
         assert_eq!(
-            client.read_file("presets.ini.disabled"),
+            client.read_file("models.ini.disabled"),
             Ok(None),
             "no such file"
         );
         let (client, _) = client_on(input(&[json!({"ok": {"text": "", "withheld": false}})]));
         assert_eq!(
-            client.read_file("presets.ini.disabled"),
+            client.read_file("models.ini.disabled"),
             Ok(Some(file("", false))),
             "an empty file is not a missing one"
         );
@@ -1229,21 +1229,21 @@ mod tests {
             (
                 "write_file",
                 |c| {
-                    c.write_file("presets.ini", "[m]\nmodel = /m/x.gguf\n", false)
+                    c.write_file("models.ini", "[m]\nmodel = /m/x.gguf\n", false)
                         .err()
                 },
-                json!({"method": "WriteFileAs", "principal": "alice", "name": "presets.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
+                json!({"method": "WriteFileAs", "principal": "alice", "name": "models.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "keep_api_key": false}),
             ),
             (
                 "write_file_if",
                 |c| {
-                    c.write_file_if("presets.ini", "[m]\nmodel = /m/x.gguf\n", "")
+                    c.write_file_if("models.ini", "[m]\nmodel = /m/x.gguf\n", "")
                         .err()
                 },
                 // The `expected` content travels beside the new one, and no
                 // `keep_api_key`: the caller that holds the file's text has
                 // no key to preserve.
-                json!({"method": "WriteFileIfAs", "principal": "alice", "name": "presets.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "expected": ""}),
+                json!({"method": "WriteFileIfAs", "principal": "alice", "name": "models.ini", "contents": "[m]\nmodel = /m/x.gguf\n", "expected": ""}),
             ),
             (
                 "set_boot_enabled",

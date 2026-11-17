@@ -9,7 +9,7 @@
 //! - **Keep is the default.** Nothing here runs unless the user picked the
 //!   files: every tick starts cleared, the CLI needs the flag.
 //! - **A file another preset references is never deleted**, whichever INI file
-//!   that preset sits in (`presets.ini` or `presets.ini.disabled`: callers pass
+//!   that preset sits in (`models.ini` or `models.ini.disabled`: callers pass
 //!   `presets::load_listed`, both files). `users` names those presets, the
 //!   dialog shows the file as in use and cannot tick it, and `delete` skips it
 //!   unless the CLI's `--even-if-shared` asks otherwise. Paths are compared the

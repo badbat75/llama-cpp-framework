@@ -245,7 +245,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
                     // The instance reads its render, never the pool: the
                     // message names the file that has no preset section.
                     let presets = crate::paths::instance_presets(&id)
-                        .unwrap_or_else(|| crate::paths::engine_config_dir().join("presets.ini"));
+                        .unwrap_or_else(|| crate::paths::engine_config_dir().join("models.ini"));
                     strings::fill("manager-no-presets", &[&presets.display()])
                 }
                 LaunchError::StateDir(p, kind) => {

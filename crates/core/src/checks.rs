@@ -1,5 +1,5 @@
 //! The content checks of the files the manager writes: `server@<id>.ini`,
-//! `presets.ini` and `presets.ini.disabled`. They work on the file text, so
+//! `models.ini` and `models.ini.disabled`. They work on the file text, so
 //! the manager runs them before every write and the configurator can run the
 //! same ones for feedback while the user types. A refusal is a strings key
 //! and its values, which the client shows in its own language.
@@ -708,13 +708,13 @@ fn startup_flagged(sections: &[RawSection]) -> usize {
 
 /// How many sections of `text` ask `load-on-startup`, counted as
 /// `startup_count` judges them. `text` is one instance's
-/// `presets@<id>.ini`: `ModelsMax` belongs to the instance, so the count is
+/// `models@<id>.ini`: `ModelsMax` belongs to the instance, so the count is
 /// read here and the caller compares it with that instance's own.
 pub fn startup_loads(text: &str) -> usize {
     startup_flagged(&raw_sections(text))
 }
 
-/// Check the text of a `server@<id>.ini`. `presets` is `presets.ini` as it
+/// Check the text of a `server@<id>.ini`. `presets` is `models.ini` as it
 /// is now (empty when there is none): its `load-on-startup` presets must fit
 /// the new `ModelsMax`.
 pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
@@ -740,11 +740,11 @@ pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
     startup_count(startup_flagged(&raw_sections(presets)), models_max)
 }
 
-/// Check the new text of `presets.ini` against `old`, the file as it is now
+/// Check the new text of `models.ini` against `old`, the file as it is now
 /// (empty when there is none): the preset rules on every section that is not
 /// in `old` unchanged, and the `load-on-startup` count against `models_max`
 /// (an instance's `ModelsMax`, None = llama.cpp's default). `other` is
-/// `presets.ini.disabled` as it is now: a key line that a section of the same
+/// `models.ini.disabled` as it is now: a key line that a section of the same
 /// id (header exact) holds identically in `old` or in `other` is exempt from
 /// `comment_markers`, the inline comment a byte-for-byte save moves whole
 /// ("Saving a preset from the web", decision c1).
@@ -763,9 +763,9 @@ pub fn presets_file(
     Ok(())
 }
 
-/// Check the new text of `presets.ini.disabled`: the preset rules on every
+/// Check the new text of `models.ini.disabled`: the preset rules on every
 /// section found unchanged neither in `old` (this file now) nor in `enabled`
-/// (`presets.ini` now), so switching off a preset is never refused; no
+/// (`models.ini` now), so switching off a preset is never refused; no
 /// `load-on-startup` count, llama-server never reads this file. A key line a
 /// section of the same id (header exact) holds identically in `old` or in
 /// `enabled` is exempt from `comment_markers`, as in [`presets_file`].
@@ -784,7 +784,7 @@ pub fn presets_disabled_file(new: &str, old: &str, enabled: &str) -> Result<(), 
 /// `other`, the other preset file now: a section whose id `old` does not
 /// hold (in any letter case) takes no id `other` holds, unless `other` holds
 /// that very section unchanged (a switch writes the destination first).
-/// Ids stay unique across `presets.ini` and `presets.ini.disabled`.
+/// Ids stay unique across `models.ini` and `models.ini.disabled`.
 pub fn preset_ids_free(new: &str, old: &str, other: &str) -> Result<(), Refusal> {
     let old = raw_sections(old);
     let other = raw_sections(other);
@@ -1237,7 +1237,7 @@ top-p = 0.95\r\n";
         );
     }
 
-    // ── presets.ini: one test per rule ──────────────────────────────────
+    // ── models.ini: one test per rule ──────────────────────────────────
 
     #[test]
     fn presets_as_the_configurator_writes_them_pass() {
@@ -1527,7 +1527,7 @@ top-p = 0.95\r\n";
         }
     }
 
-    // ── presets.ini: only what the write changes is checked ────────────
+    // ── models.ini: only what the write changes is checked ────────────
 
     /// A hand-edited section already on disk does not block saving another:
     /// today a save checks only the preset it writes.
@@ -1565,7 +1565,7 @@ top-p = 0.95\r\n";
             presets_file(&plus_flagged, &over, "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["4", "2"]))
         );
-        // Switching one on: new in presets.ini, so checked.
+        // Switching one on: new in models.ini, so checked.
         let two: String = ["a", "b"]
             .iter()
             .map(|id| section(id, "load-on-startup = true\n"))
@@ -1576,7 +1576,7 @@ top-p = 0.95\r\n";
         );
     }
 
-    // ── presets.ini.disabled ────────────────────────────────────────────
+    // ── models.ini.disabled ────────────────────────────────────────────
 
     #[test]
     fn a_disabled_preset_written_now_gets_the_preset_rules() {
@@ -1673,7 +1673,7 @@ top-p = 0.95\r\n";
         );
     }
 
-    /// The switch on moves the section whole: new to `presets.ini`, held
+    /// The switch on moves the section whole: new to `models.ini`, held
     /// identically (header exact) by the disabled file, so it switches on.
     #[test]
     fn inline_comment_known_from_the_disabled_file_switches_on_ok() {
@@ -1685,7 +1685,7 @@ top-p = 0.95\r\n";
     }
 
     /// The same in the disabled file, from `old` (this file now) and from
-    /// `enabled` (`presets.ini` now): a disabled preset edited on its own
+    /// `enabled` (`models.ini` now): a disabled preset edited on its own
     /// page keeps the commented line the file already holds.
     #[test]
     fn inline_comment_known_in_disabled_file_from_old_and_enabled_passes() {
@@ -1746,7 +1746,7 @@ top-p = 0.95\r\n";
         );
     }
 
-    // ── One id across presets.ini and presets.ini.disabled ───────────────
+    // ── One id across models.ini and models.ini.disabled ───────────────
 
     /// A preset written into one file under an id the other file holds, in
     /// any letter case, is refused with the id as written: switching either
@@ -1961,8 +1961,8 @@ top-p = 0.95\r\n";
             for v in bad {
                 let text = section("m", &format!("{key} = {v}\n"));
                 for (file, got) in [
-                    ("presets.ini", presets(&text)),
-                    ("presets.ini.disabled", presets_disabled_file(&text, "", "")),
+                    ("models.ini", presets(&text)),
+                    ("models.ini.disabled", presets_disabled_file(&text, "", "")),
                 ] {
                     let r = got.expect_err(&format!("{file}: {key} = {v}"));
                     assert_eq!(r.key, "not-one-of", "{file}: {key} = {v}: {r:?}");

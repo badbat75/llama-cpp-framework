@@ -931,7 +931,7 @@ fn preset_summaries(presets: &[presets::Listed], filter: &str) -> Vec<PresetSumm
         .collect()
 }
 
-/// Seed / re-seed every disk-backed piece of the UI: server.ini, presets.ini,
+/// Seed / re-seed every disk-backed piece of the UI: server.ini, models.ini,
 /// the ModelsDir scan, the integration state, the live run status, and the
 /// llama-server version + device probes (the exe can change under us, e.g. a
 /// `xtask build` rerun while the configurator is open). The one home shared by
@@ -956,11 +956,11 @@ fn reload_all_from_disk(
     spawn_device_probe(app.as_weak());
 }
 
-/// Reload `presets.ini` into `state`, rebuild the (filtered) list model, then
+/// Reload `models.ini` into `state`, rebuild the (filtered) list model, then
 /// pick the selection and apply its form:
 /// - `want = Some(id)` selects that preset if it exists (used after save/clone/rename);
 /// - `want = None` keeps the current preset, matched by the loaded form's ID
-///   first (a hand-edited presets.ini may have shifted the indices), falling
+///   first (a hand-edited models.ini may have shifted the indices), falling
 ///   back to the old index when the id is gone;
 /// - either way it falls back to the first preset, or `-1` + a blank form when
 ///   the list is empty.

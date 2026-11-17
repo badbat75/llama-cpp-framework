@@ -57,7 +57,7 @@ trait KvSource {
 
 /// A float32 widened through its shortest decimal form, the value a human (and
 /// the converter's `generation_config.json`) wrote: `0.95f32 as f64` is
-/// `0.949999988079071`, which would land in `presets.ini` verbatim.
+/// `0.949999988079071`, which would land in `models.ini` verbatim.
 fn f32_decimal(v: f32) -> f64 {
     v.to_string().parse().unwrap_or(v as f64)
 }

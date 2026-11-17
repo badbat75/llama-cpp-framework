@@ -146,7 +146,7 @@ const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500)
 
 // ── Process control (start / stop) ───────────────────────────────────────
 
-/// Launch llama-server.exe with args from server.ini + presets.ini.
+/// Launch llama-server.exe with args from server.ini + models.ini.
 ///
 /// Returns `Some(cfg)` (the config the process was ACTUALLY launched with)
 /// so the caller can snapshot the client URL from it (re-loading server.ini
@@ -548,7 +548,7 @@ mod tests {
     use std::path::Path;
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
-        server_args(cfg, Path::new("presets.ini"))
+        server_args(cfg, Path::new("models.ini"))
     }
 
     // ── Stop wait ────────────────────────────────────────────────────────

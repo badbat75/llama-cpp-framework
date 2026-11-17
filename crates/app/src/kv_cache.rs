@@ -163,7 +163,7 @@ fn fallback(fa_forced: bool) -> String {
 /// One cache's verdict (the model's or the draft's), or `None` when it is fine.
 fn check(label: &str, backends: &[Backend], k: &str, v: &str, flash_attn: &str) -> Option<String> {
     let (k, v) = (effective(k), effective(v));
-    // Only a hand-edited presets.ini gets here (the combos offer TYPES), and the
+    // Only a hand-edited models.ini gets here (the combos offer TYPES), and the
     // combo then shows "default" for a value it does not list, so the strip is
     // the one place that can say the launch will fail (`Unsupported cache type`).
     if let Some(bad) = [k, v].into_iter().find(|t| !TYPES.contains(t)) {

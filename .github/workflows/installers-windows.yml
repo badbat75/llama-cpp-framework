@@ -138,7 +138,7 @@ jobs:
             if ($path -ne $want) { throw "$svc PathName '$($s.PathName)', expected $want" }
             if ($s.StartName -ne $e.Account) { throw "$svc StartName '$($s.StartName)', expected $($e.Account)" }
           }
-          foreach ($file in 'server@default.ini', 'presets.ini', 'assignments.ini') {
+          foreach ($file in 'server@default.ini', 'models.ini', 'assignments.ini') {
             if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "no $file in ProgramData\llama.cpp\config" }
           }
           $version = $null
@@ -173,7 +173,7 @@ jobs:
           # back, a changed one keeps the change.
           $config = "$env:ProgramData\llama.cpp\config"
           $marker = '; ci-repair-marker'
-          Remove-Item -LiteralPath "$config\presets.ini"
+          Remove-Item -LiteralPath "$config\models.ini"
           Remove-Item -LiteralPath "$config\assignments.ini"
           Add-Content -LiteralPath "$config\server@default.ini" -Value $marker
           $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/fecmus `"$ll`" /qn /norestart /l*v `"$PWD\build\windows\ci-repair-llama.cpp.log`""
@@ -183,7 +183,7 @@ jobs:
           foreach ($svc in 'private-ai-manager', 'private-ai-bff') {
             (Get-Service $svc).WaitForStatus('Running', '00:00:30')
           }
-          if (-not (Test-Path "$config\presets.ini")) { throw 'the repair did not restore the deleted presets.ini' }
+          if (-not (Test-Path "$config\models.ini")) { throw 'the repair did not restore the deleted models.ini' }
           if (-not (Test-Path "$config\assignments.ini")) { throw 'the repair did not restore the deleted assignments.ini' }
           if (-not (Select-String -LiteralPath "$config\server@default.ini" -SimpleMatch $marker -Quiet)) { throw 'the repair overwrote the changed server@default.ini' }
           if (Test-Path "$env:ProgramData\llama.cpp\instances.running") { throw 'the repair left ProgramData\llama.cpp\instances.running' }
@@ -210,7 +210,7 @@ jobs:
           if (Test-Path "$env:ProgramFiles\private-ai") { throw 'the framework uninstall left ProgramFiles\private-ai' }
           # The engine does not depend on the framework: still installed, its config kept.
           if (-not (Test-Path 'HKLM:\Software\llama.cpp')) { throw 'the framework uninstall removed HKLM\Software\llama.cpp' }
-          foreach ($file in 'server@default.ini', 'presets.ini') {
+          foreach ($file in 'server@default.ini', 'models.ini') {
             if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "the framework uninstall removed ProgramData\llama.cpp\config\$file" }
           }
           # The framework's uninstall leaves the local group pai and its
@@ -229,7 +229,7 @@ jobs:
           }
           # A silent uninstall keeps the machine data trees.
           if (-not (Test-Path -LiteralPath "$env:ProgramData\private-ai\config\bff.ini")) { throw 'ProgramData\private-ai\config\bff.ini is gone' }
-          foreach ($file in 'server@default.ini', 'presets.ini') {
+          foreach ($file in 'server@default.ini', 'models.ini') {
             if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "ProgramData\llama.cpp\config\$file is gone" }
           }
           foreach ($dir in "$env:ProgramFiles\private-ai", "$env:ProgramFiles\llama.cpp") {

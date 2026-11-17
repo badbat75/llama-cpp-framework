@@ -4736,7 +4736,7 @@ mod tests {
         presets::validate_for_save(&p).unwrap();
 
         // Through the INI: the note is a comment, never a key, and reads back.
-        let path = dir.path().join("presets.ini");
+        let path = dir.path().join("models.ini");
         std::fs::write(&path, presets::render_section(&p)).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(

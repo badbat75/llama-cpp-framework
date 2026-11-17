@@ -6,8 +6,8 @@ export struct PresetSummary {
     // model only holds rows that pass the filter, so the `for` index is NOT a
     // stable handle; `orig_index` is what select_preset()/highlighting use.
     orig_index: int,
-    // Switched on (its section is in presets.ini, so llama-server offers it) or
-    // off (parked in presets.ini.disabled). See src/presets.rs's module header.
+    // Switched on (its section is in models.ini, so llama-server offers it) or
+    // off (parked in models.ini.disabled). See src/presets.rs's module header.
     enabled: bool,
 }
 

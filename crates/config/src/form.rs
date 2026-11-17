@@ -605,7 +605,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
 /// fails a test instead of saving a mistyped number as an absent key.
 fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
     // The range of each key is `pai_core::checks::PRESET_INT_KEYS`'s, the one
-    // the manager checks presets.ini with.
+    // the manager checks models.ini with.
     fn int<'a>(
         key: &'static str,
         default: bool,

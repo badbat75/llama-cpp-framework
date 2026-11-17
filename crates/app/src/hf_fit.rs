@@ -1718,7 +1718,7 @@ fn what_label(what: &str) -> String {
     }
 }
 
-/// `extras_label` for the comment written into presets.ini: never translated.
+/// `extras_label` for the comment written into models.ini: never translated.
 fn extras_note(e: &Estimate) -> String {
     let spot = |x: &Extra| match &x.spot {
         Spot::Gpu { gpu, .. } => gpu.id.clone(),

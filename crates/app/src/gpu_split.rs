@@ -13,7 +13,7 @@
 //! weight vector typed by hand is indexed against a list the user can't see and
 //! didn't choose. The two fields only make sense together, which is what this
 //! module models: one selection, rendered into the `device` + `tensor_split`
-//! strings a preset stores in `presets.ini`.
+//! strings a preset stores in `models.ini`.
 //!
 //! ## The four states (mirroring llama.cpp exactly)
 //! | selected | `device`        | `tensor_split` | meaning                                       |

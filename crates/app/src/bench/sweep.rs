@@ -17,7 +17,7 @@
 //! ## The key rides the CHILD's launch args, so a live leg must restart
 //!
 //! llama-server's router spawns one child per model and hands it the preset's
-//! keys at spawn time; nothing re-reads presets.ini afterwards. A live sweep
+//! keys at spawn time; nothing re-reads models.ini afterwards. A live sweep
 //! therefore restarts the server between values, and the restart is deliberately
 //! the bare `stop()` + `start()` pair of `server_control` rather than the one `control
 //! restart` performs: that path saves and restores the conversation snapshot,
@@ -27,7 +27,7 @@
 //! The synthetic engine wants the opposite state (llama-server DOWN: a second
 //! resident copy of the weights does not fail, it spills into shared memory and
 //! reads as a backend regression) and needs no restart at all, since llama-bench
-//! is a fresh process per leg and the leg builds its argv from presets.ini.
+//! is a fresh process per leg and the leg builds its argv from models.ini.
 //!
 //! ## `;` separates the values, because `,` cannot
 //!
@@ -38,7 +38,7 @@
 //! makes it the one separator guaranteed not to collide with the data. So
 //! `--values` splits on `;` when it sees one, and on `,` otherwise.
 //!
-//! ## presets.ini is edited, and says so before it is
+//! ## models.ini is edited, and says so before it is
 //!
 //! A sweep writes the key it sweeps, so an interrupted sweep leaves the preset
 //! on whatever value it was measuring. The original is written into the
@@ -65,7 +65,7 @@ use crate::{http, ini, presets, server_cfg, server_control};
 /// and reads as a deliberate choice in the summary table.
 pub const UNSET: &str = "unset";
 
-/// The one leg's value when no key is varied: the preset as presets.ini has it.
+/// The one leg's value when no key is varied: the preset as models.ini has it.
 pub const AS_IS: &str = "as is";
 
 /// How long to wait for llama-server to vanish after a stop, and to answer after
@@ -489,13 +489,13 @@ impl Apply {
 pub struct Opts {
     pub preset: String,
     /// The key to vary; `None` measures the preset as it is: one leg, and
-    /// presets.ini is not touched (no write, no marker, nothing to restore).
+    /// models.ini is not touched (no write, no marker, nothing to restore).
     pub key: Option<String>,
     /// The key's values; ignored without a key.
     pub values: Vec<String>,
     pub plan: Plan,
     pub apply: Apply,
-    /// What `--apply original` puts back, when the value in presets.ini is not
+    /// What `--apply original` puts back, when the value in models.ini is not
     /// it. The case this exists for: an interrupted sweep left the key on one of
     /// its leg values, so "the value it had before" is no longer readable from
     /// the file (it is in that sweep's pending marker, which the warning names).
@@ -746,7 +746,7 @@ pub fn sweep_caveats(mode: Mode, swept: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
     if swept {
         out.push("Legs ran in the order listed, so a card that heats up over a long sweep charges the drift to the LAST values. Re-run with the order reversed when two values are close.");
-        out.push("Only the swept key moved; every other key came from presets.ini as it stood when the sweep started, and a hand edit made while it ran is not reflected in the rows above it.");
+        out.push("Only the swept key moved; every other key came from models.ini as it stood when the sweep started, and a hand edit made while it ran is not reflected in the rows above it.");
     }
     out.extend([
         "Each leg's run in bench.db (`bench query runs --campaign <this sweep>`) carries the environment, the device ids resolved by name, every parameter and the raw repetitions. This table is a digest of them, not a replacement.",
@@ -944,7 +944,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         );
     }
     // An interrupted sweep left the key on one of ITS leg values, so the value
-    // read out of presets.ini above is that leftover and not the configuration
+    // read out of models.ini above is that leftover and not the configuration
     // this machine ran. Restoring it would quietly promote a half-measured
     // value to the permanent one, so say so while there is still time to stop.
     if let (Some(key), Some((path, restore))) = (&opts.key, &leftover) {
@@ -999,7 +999,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     }
 
     // Restore: the preset first, then the process, so a running llama-server is
-    // never left on a value presets.ini no longer names.
+    // never left on a value models.ini no longer names.
     let primary = primary_test(opts.plan.mode, &legs);
     let applied = match opts.apply {
         _ if set.is_none() => String::new(),
@@ -1028,7 +1028,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
                 let _ = std::fs::remove_file(path);
             }
         }
-        println!("\n{key} = {applied} (presets.ini).");
+        println!("\n{key} = {applied} (models.ini).");
     }
 
     let summary = render_summary(&Summary {
@@ -1166,7 +1166,7 @@ fn load_one(id: &str) -> Result<presets::Preset, String> {
             return strings::fill("preset-off-cannot-run", &[&id]);
         }
         let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
-        strings::fill("unknown-preset", &[&id, &"presets.ini", &known.join(", ")])
+        strings::fill("unknown-preset", &[&id, &"models.ini", &known.join(", ")])
     })
 }
 
@@ -1191,7 +1191,7 @@ fn write_unlocked(preset: &str, set: Setter, value: &str) -> Result<(), String> 
     // and the rest of the section belongs to whoever edited it last.
     let mut p = load_one(preset)?;
     set(&mut p, value)?;
-    presets::save(&p).map_err(|e| format!("cannot write presets.ini: {e}"))
+    presets::save(&p).map_err(|e| format!("cannot write models.ini: {e}"))
 }
 
 /// Put llama-server into the state this engine needs: up (and freshly started,
@@ -1229,7 +1229,7 @@ pub(super) fn prepare_server(mode: Mode, port: u16) -> Result<(), String> {
 }
 
 /// Leave the machine as the sweep found it: llama-server running (on the value
-/// presets.ini now names) when it was running before, stopped when it was not.
+/// models.ini now names) when it was running before, stopped when it was not.
 pub(super) fn restore_server(was_running: bool) -> Result<(), String> {
     let _gate = super::interrupt::gate();
     put_server_back(was_running)
@@ -1304,7 +1304,7 @@ pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) 
     );
     let Some(key) = &opts.key else {
         let mut out = format!(
-            "run of preset {} as it is ({reps}); presets.ini not changed",
+            "run of preset {} as it is ({reps}); models.ini not changed",
             opts.preset
         );
         for leg in legs.iter().filter(|l| !l.error.is_empty()) {
@@ -1411,7 +1411,7 @@ fn report_leg(leg: &Leg, mode: Mode) {
 }
 
 /// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
-/// value a sweep will put back is read from the instance's presets.ini through
+/// value a sweep will put back is read from the instance's models.ini through
 /// the seam (the manager's file), not from the per-user one.
 #[cfg(test)]
 pub(crate) fn sweep_config_e2e() {
@@ -1421,10 +1421,10 @@ pub(crate) fn sweep_config_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let user_presets = crate::paths::presets_ini();
     std::fs::create_dir_all(user_presets.parent().unwrap()).expect("config dir");
-    std::fs::write(&user_presets, "[Qwen3.8-27B]\nctx-size = 4096\n").expect("user presets.ini");
+    std::fs::write(&user_presets, "[Qwen3.8-27B]\nctx-size = 4096\n").expect("user models.ini");
     let log = fake::log();
     let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
-        "presets.ini",
+        "models.ini",
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
     );
     fake::scoped(fake::backend(c), || {
@@ -1435,7 +1435,7 @@ pub(crate) fn sweep_config_e2e() {
         log.lock()
             .unwrap()
             .iter()
-            .any(|e| e == "read_file presets.ini"),
+            .any(|e| e == "read_file models.ini"),
         "read from the manager: {log:?}"
     );
 }
@@ -1454,7 +1454,7 @@ pub(crate) fn sweep_checks_values_with_the_save_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let log = fake::log();
     let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
-        "presets.ini",
+        "models.ini",
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nparallel = 2\n",
     );
     let refused = pai_core::checks::Refusal {
@@ -1498,7 +1498,7 @@ mod tests {
         use pai_core::client::InstanceState;
         let log = fake::log();
         let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
-            "presets.ini",
+            "models.ini",
             "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nparallel = 2\n",
         );
         let refused = pai_core::checks::Refusal {
@@ -1643,7 +1643,7 @@ mod tests {
             };
             set(&mut p, value).unwrap_or_else(|e| panic!("{key}: {e}"));
             let ini = presets::render_section(&p);
-            assert!(emits(&ini, key), "{key} never reaches presets.ini");
+            assert!(emits(&ini, key), "{key} never reaches models.ini");
         }
     }
 
