@@ -856,7 +856,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    cancelling the blocking task, which may still act afterwards: give them the save's
    Idle/Asked/Cancelled state; pai-bff's `pai_bff_binary` failed once of 13 runs, likely its
    `free_port` bind-release-rebind race; a status read slower than the limit after a done write
-   answers 504 though the file is saved.)
+   answers 504 though the file is saved: answer 200 with `running: true` instead, as a failed status
+   read does (asked by the web UI session, accepted 2026-11-17, a small slice after 11b); and the save
+   gets its own time limit, 15 s as an estimate until measured, since one 5 s limit covers connect,
+   read, the write with the manager's address check (which may resolve a host name) and the status
+   read (the fe waits 120 s on a non-GET).)
 9. **Control and boot.** Split (coordinator, 2026-11-16): 9a (`POST start|stop|restart` and
    `GET`/`PUT boot`, answered once the service manager accepted the job) is built; 9b, a stop with `SaveStateOnShutdown` saves the slot snapshots first, designed in
    `ARCHITECTURE.md` "Slot snapshots at a stop" (2026-11-16): the instance saves at its own stop, so
