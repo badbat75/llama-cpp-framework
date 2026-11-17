@@ -11,6 +11,9 @@
 // the same to the number fields of Resource / context (155), whose default box
 // the page keeps in `boxed` (156, the mechanics of `boxed.ts`), and 155 leaves
 // a select enabled only while another key's box is unticked (`needsUnticked`).
+// 2h.5 gives the KV cache card the same (164: every field of the card enabled,
+// always), and 132 decides what each of them sends (the state the control
+// shows is the state the page is dirty against, an absent key included).
 // Each field is the same Field the Server page uses, so the page looks the same
 // before and after the save lands.
 //
@@ -447,6 +450,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-k-cache-type'),
         hint: t('preset-k-cache-type-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -455,6 +459,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-v-cache-type'),
         hint: t('preset-v-cache-type-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -464,6 +469,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-flash-attention'),
         hint: t('preset-flash-attention-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -472,6 +478,7 @@ const CARDS: CardFields[] = [
         key: 'cache-ram',
         label: t('preset-cache-ram'),
         hint: t('preset-cache-ram-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -479,6 +486,7 @@ const CARDS: CardFields[] = [
         key: 'cache-reuse',
         label: t('preset-cache-reuse'),
         hint: t('preset-cache-reuse-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -486,6 +494,7 @@ const CARDS: CardFields[] = [
         key: 'ctx-checkpoints',
         label: t('preset-context-checkpoints'),
         hint: t('preset-context-checkpoints-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -493,6 +502,7 @@ const CARDS: CardFields[] = [
         key: 'checkpoint-min-step',
         label: t('preset-checkpoint-step'),
         hint: t('preset-checkpoint-step-hint'),
+        editable: true,
       },
     ],
   },
@@ -980,22 +990,18 @@ function shown(
   }
 }
 
-/** The state of a control whose key the file does not hold. The control shows
- * its absent option, so this is not a value any control carries: it is the
- * state the form is dirty against, since the file not holding the key and the
- * file holding it at its default are two things the save answers the same way
- * (2h.1's 132: picking the option the absence shows is a change). */
-const NOT_IN_FILE = '\u0000'
-
 /** The select of a row as the form's `values` leave it: the state the control
  * shows (2h.1's 132: the state the page compares, so the extra option of 87
- * that a read value became is a state like any other). */
+ * that a read value became is a state like any other). A key the file does not
+ * hold has the row's absent option selected, so that option is its state: the
+ * control shows that one option for the absence, and picking it is no change
+ * (133 sends the key's removal, which is what the file already is). */
 export function selectState(
   row: SelectRow,
   values: Record<string, string>,
 ): string {
   const value = heldFor(row, values)
-  if (value === undefined) return NOT_IN_FILE
+  if (value === undefined) return row.absent
   const state =
     row.reading === undefined ? undefined : readAs(row.reading, value)
   if (state !== undefined && state.on !== undefined)
@@ -1007,7 +1013,6 @@ export function selectState(
  * GUI's spelling of a key that is not there, and an option a row leaves when
  * its key is absent is that same removal. Every other state is the option. */
 export function selectSend(row: SelectRow, state: string): string | null {
-  if (state === NOT_IN_FILE) return null
   if (row.reading === 'flag') return state === 'true' ? 'true' : null
   return state === row.absent ? null : state
 }
@@ -1108,6 +1113,9 @@ const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
 /** The largest number these keys write (the configurator's `emit_i32`). */
 const I32_MAX = 2147483647
 
+/** The smallest number these keys write (the configurator's `emit_i32`). */
+const I32_MIN = -2147483648
+
 /** The text of a number field: an optional sign, digits, nothing else. */
 const INT_TEXT = /^[+-]?\d+$/
 
@@ -1131,6 +1139,7 @@ export function numberError(
   const n = intValue(b.text)
   if (
     n !== null &&
+    n >= I32_MIN &&
     n <= I32_MAX &&
     (r.min === null || n >= r.min) &&
     (r.max === null || n <= r.max)

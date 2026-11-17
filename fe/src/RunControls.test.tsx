@@ -15,7 +15,7 @@ import {
   screen,
   within,
 } from '@testing-library/react'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import strings from './strings/en_US.json'
 import {
@@ -248,64 +248,68 @@ const SESSION_ENDED = () => reply(401, { key: 'session-required', args: [] })
 
 // ── Failure paths first: errors of an action (43) ───────────────────────
 
-test('1c.43: the key picks the message, never the status or the body; status emptied, focus kept, buttons by the last state', async () => {
-  const answers: [string, () => Response | Promise<Response>, string][] = [
-    [
-      '403 client-not-authorized',
-      () => reply(403, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '404 client-no-instance',
-      () => reply(404, { key: 'client-no-instance', args: [] }),
-      en('instance-not-found', 'default'),
-    ],
-    [
-      '503 client-unavailable',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '502 client-service-failed',
-      () =>
-        reply(502, {
-          key: 'client-service-failed',
-          args: ['unit failed: secret detail'],
-        }),
-      en('api-client-service-failed'),
-    ],
-    [
-      '403 carrying client-unavailable (by key)',
-      () => reply(403, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '502 client-other',
-      () => reply(502, { key: 'client-other', args: ['secret detail'] }),
-      en('request-failed'),
-    ],
-    [
-      '422 with an unknown key (no api-other here)',
-      () => reply(422, { key: 'some-check', args: ['secret detail'] }),
-      en('request-failed'),
-    ],
-    [
-      '500 with no key',
-      () => reply(500, { error: 'secret detail' }),
-      en('request-failed'),
-    ],
-    [
-      '500 not JSON',
-      () => reply(500, 'secret detail <b>panic</b>'),
-      en('request-failed'),
-    ],
-    [
-      'network failure',
-      () => Promise.reject(new TypeError('Failed to fetch')),
-      en('request-failed'),
-    ],
-  ]
-  for (const [what, run, text] of answers) {
+/** 1c.43: one test per row, one mount each (as 2h.139 in
+ * PresetSave2.test.tsx: the cleanup between rows is the file's afterEach). */
+const ANSWERS_43: [string, () => Response | Promise<Response>, string][] = [
+  [
+    '403 client-not-authorized',
+    () => reply(403, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '404 client-no-instance',
+    () => reply(404, { key: 'client-no-instance', args: [] }),
+    en('instance-not-found', 'default'),
+  ],
+  [
+    '503 client-unavailable',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '502 client-service-failed',
+    () =>
+      reply(502, {
+        key: 'client-service-failed',
+        args: ['unit failed: secret detail'],
+      }),
+    en('api-client-service-failed'),
+  ],
+  [
+    '403 carrying client-unavailable (by key)',
+    () => reply(403, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '502 client-other',
+    () => reply(502, { key: 'client-other', args: ['secret detail'] }),
+    en('request-failed'),
+  ],
+  [
+    '422 with an unknown key (no api-other here)',
+    () => reply(422, { key: 'some-check', args: ['secret detail'] }),
+    en('request-failed'),
+  ],
+  [
+    '500 with no key',
+    () => reply(500, { error: 'secret detail' }),
+    en('request-failed'),
+  ],
+  [
+    '500 not JSON',
+    () => reply(500, 'secret detail <b>panic</b>'),
+    en('request-failed'),
+  ],
+  [
+    'network failure',
+    () => Promise.reject(new TypeError('Failed to fetch')),
+    en('request-failed'),
+  ],
+]
+
+it.each(ANSWERS_43)(
+  '1c.43: %s: the key picks the message, never the status or the body; status emptied, focus kept, buttons by the last state',
+  async (what, run, text) => {
     const { bff, main } = await loaded({ run })
     const stop = button(main, 'run-stop')
     press(stop)
@@ -323,11 +327,8 @@ test('1c.43: the key picks the message, never the status or the body; status emp
     expect(document.body.textContent, what).not.toContain(
       en('api-other', 'some-check'),
     )
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.43, 41c: after a failed POST the idle poll resumes, 5 s after the last answer', async () => {
   const { bff, main } = await loaded({

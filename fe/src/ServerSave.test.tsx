@@ -14,7 +14,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
   before,
@@ -655,65 +655,69 @@ test('1b.36: a failed sign-in in the dialog keeps it open with its alert and the
   expect(bff.to(...PUT)).toHaveLength(1)
 })
 
-test('1b.37: the key picks the message, not the status; every failure keeps the edits, never the body', async () => {
-  const answers: [string, () => Response | Promise<Response>, string][] = [
-    [
-      '403',
-      () => reply(403, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '503',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    // By key: the status only says it is an error.
-    [
-      '403 carrying client-unavailable',
-      () => reply(403, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '503 carrying client-not-authorized',
-      () => reply(503, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '409 carrying client-unavailable',
-      () => reply(409, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '409 with an unknown key',
-      () => reply(409, { key: 'frobnicated', args: [] }),
-      en('save-failed'),
-    ],
-    [
-      '200 without running',
-      () => reply(200, { revision: 'r-2' }),
-      en('save-failed'),
-    ],
-    ['204', () => reply(204), en('save-failed')],
-    [
-      '200 with a revision that is not a string',
-      () => reply(200, { revision: 2, running: false }),
-      en('save-failed'),
-    ],
-    [
-      '500 with a key',
-      () => reply(500, { key: 'secret-detail', args: [] }),
-      en('save-failed'),
-    ],
-    [
-      'network',
-      () => Promise.reject(new TypeError('Failed to fetch')),
-      en('save-failed'),
-    ],
-    ['422 not json', () => reply(422, 'secret-detail'), en('save-failed')],
-    ['422 without key', () => reply(422, {}), en('save-failed')],
-    ['200 not json', () => reply(200, 'secret-detail'), en('save-failed')],
-  ]
-  for (const [what, answer, text] of answers) {
+/** 1b.37: one test per row, one mount each (as 2h.139 in
+ * PresetSave2.test.tsx: the cleanup between rows is the file's afterEach). */
+const ANSWERS_37: [string, () => Response | Promise<Response>, string][] = [
+  [
+    '403',
+    () => reply(403, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '503',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  // By key: the status only says it is an error.
+  [
+    '403 carrying client-unavailable',
+    () => reply(403, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '503 carrying client-not-authorized',
+    () => reply(503, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '409 carrying client-unavailable',
+    () => reply(409, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '409 with an unknown key',
+    () => reply(409, { key: 'frobnicated', args: [] }),
+    en('save-failed'),
+  ],
+  [
+    '200 without running',
+    () => reply(200, { revision: 'r-2' }),
+    en('save-failed'),
+  ],
+  ['204', () => reply(204), en('save-failed')],
+  [
+    '200 with a revision that is not a string',
+    () => reply(200, { revision: 2, running: false }),
+    en('save-failed'),
+  ],
+  [
+    '500 with a key',
+    () => reply(500, { key: 'secret-detail', args: [] }),
+    en('save-failed'),
+  ],
+  [
+    'network',
+    () => Promise.reject(new TypeError('Failed to fetch')),
+    en('save-failed'),
+  ],
+  ['422 not json', () => reply(422, 'secret-detail'), en('save-failed')],
+  ['422 without key', () => reply(422, {}), en('save-failed')],
+  ['200 not json', () => reply(200, 'secret-detail'), en('save-failed')],
+]
+
+it.each(ANSWERS_37)(
+  '1b.37: %s: the key picks the message, not the status; every failure keeps the edits, never the body',
+  async (what, answer, text) => {
     const { bff, main } = await loaded({ save: answer })
     editPort(main)
     await save(main, bff)
@@ -740,10 +744,8 @@ test('1b.37: the key picks the message, not the status; every failure keeps the 
       }),
       what,
     ).toBeTruthy()
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1b reading order of a reply: 401 first, then server-changed-elsewhere, the client-* keys, a check key', async () => {
   const markers = en('api-comment-markers', 'ModelsDir')

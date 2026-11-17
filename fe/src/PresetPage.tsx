@@ -4,11 +4,12 @@
 // (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
 // Engine field, the Assets card as text and the cards of the settings
 // (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
-// controls and the Resource / context card's number fields are editable, and
-// the save bar at the end of the settings writes what changed (fe/briefs/
-// 02h-preset-save.md, sub-slices 2h.1 and 2h.4, criteria 130 to 149 and 155 to
-// 157, read by key in save.ts as the Server page reads its own); every other
-// control stays disabled, and its settings are changed in pai-config.
+// controls, the Resource / context card's number fields and the KV cache
+// card's controls are editable, and the save bar at the end of the
+// settings writes what changed (fe/briefs/02h-preset-save.md, sub-slices 2h.1,
+// 2h.4 and 2h.5, criteria 130 to 149, 155 to 157 and 164, read by key in
+// save.ts as the Server page reads its own); every other control stays
+// disabled, and its settings are changed in pai-config.
 import {
   Fragment,
   useCallback,
@@ -474,8 +475,9 @@ function focusField(key: string) {
 }
 
 /** The loaded preset as a form: the settings of 2e, the two Embeddings
- * controls of 2h.1 and the number fields of 2h.4 editable, and the save bar of
- * the Server page writing the changed keys (criteria 130 to 141, 155 to 157). */
+ * controls of 2h.1, the number fields of 2h.4 and the KV cache card of 2h.5
+ * editable, and the save bar of the Server page writing the changed keys
+ * (criteria 130 to 141, 155 to 157, 164). */
 function Content({
   doc,
   dropped,

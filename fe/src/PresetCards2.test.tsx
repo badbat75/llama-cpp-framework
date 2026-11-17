@@ -493,9 +493,13 @@ function expectAbsent(main: HTMLElement, f: Row): void {
 // ── One test per field (85, 86, 87, 88, 96, 97, 98, 99) ────────────────
 
 test.each(FIELDS)(
-  '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, and every control is natively disabled',
+  '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85, 2h.164: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, and every control is natively disabled, the controls of the KV cache card editable',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    // 2h.164: the first editable card is the KV cache one; the Sampling
+    // overrides and Advanced cards stay read-only (2e.85) until the parts
+    // that open them. 164: every field of the KV cache card is enabled.
+    const editable = f.card === 'preset-kv-cache'
     const field = fieldOf(main, f.label)
     expect(
       cardOf(main, f.card).contains(field),
@@ -515,8 +519,15 @@ test.each(FIELDS)(
         f.shown,
       )
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
-      expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      // 2h.162: a key present in the file gets its box unticked and enabled.
+      expect(
+        box.disabled,
+        `${f.key}: the box ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
+      expect(
+        input.disabled,
+        `${f.key}: the input ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       // 87 as retargeted by 2h.158: an integer key with a range starting at
       // 0 or above takes the numeric form; an any-whole-number key and a
       // float key a plain input.
@@ -537,19 +548,26 @@ test.each(FIELDS)(
       expect(selectedText(select), `${f.key}: the mapping selects`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
+      expect(
+        select.disabled,
+        `${f.key}: the select ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
     } else {
       const input = inputOfField(main, f.label)
       expect(input.value, `${f.key}: the string of the file exactly`).toBe(
         f.shown,
       )
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(
+        input.disabled,
+        `${f.key}: the input ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       expect(
         input.getAttribute('placeholder') ?? '',
         `${f.key}: no placeholder in 2e`,
       ).toBe('')
     }
     // 85: the native disabled attribute, never aria-disabled, never readonly.
+    // 2h.162: no aria-disabled and no readonly on the editable card either.
     for (const el of [
       control,
       ...(f.kind === 'number'
@@ -558,8 +576,8 @@ test.each(FIELDS)(
     ]) {
       expect(
         (el as HTMLInputElement).disabled,
-        `${f.key}: ${el.tagName} disabled`,
-      ).toBe(true)
+        `${f.key}: ${el.tagName} ${editable ? 'enabled' : 'disabled'}`,
+      ).toBe(!editable)
       expect(
         el.getAttribute('aria-disabled'),
         `${f.key}: never aria-disabled`,
@@ -722,7 +740,8 @@ test('2e.96, 2e.99: a cache type no option lists (q3_k) becomes one extra last o
     expect(selectedText(select), `${value}: the extra option is selected`).toBe(
       value,
     )
-    expect(select.disabled, `${value}: the select disabled`).toBe(true)
+    // 2h.164: the KV cache card is editable, so this select is enabled.
+    expect(select.disabled, `${value}: the select enabled`).toBe(false)
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -882,7 +901,7 @@ test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a ro
   }
 })
 
-test('2e.85: every control of the three cards of 2e.2 is natively disabled, the default boxes included, while every About toggle of 2e.2 stays enabled', async () => {
+test('2e.85, 2h.164: every control of the Sampling overrides and Advanced cards of 2e.2 is natively disabled, the default boxes included, every control of the KV cache card is enabled, while every About toggle of 2e.2 stays enabled', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   const controls = CARDS.flatMap((title) => [
     ...cardOf(main, title).querySelectorAll<HTMLElement>(
@@ -890,16 +909,26 @@ test('2e.85: every control of the three cards of 2e.2 is natively disabled, the 
     ),
   ])
   expect(controls.length, 'the controls of 96, 97 and 98').toBe(CONTROLS)
-  for (const el of controls) {
-    const id = el.getAttribute('id') ?? el.tagName
-    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(true)
-    expect(
-      el.getAttribute('aria-disabled'),
-      `${id}: never aria-disabled`,
-    ).toBeNull()
-    // `readonly` is a text-input attribute (section 0), so the attribute is
-    // the check: a select has no readOnly property.
-    expect(el.getAttribute('readonly'), `${id}: never readonly`).toBeNull()
+  for (const title of CARDS) {
+    // 2h.164: the KV cache card is the editable one; 97 and 98 stay
+    // read-only (2e.85) until the parts that open them.
+    const disabled = title !== 'preset-kv-cache'
+    for (const el of cardOf(main, title).querySelectorAll<HTMLElement>(
+      'input, select, textarea',
+    )) {
+      const id = el.getAttribute('id') ?? el.tagName
+      expect(
+        (el as HTMLInputElement).disabled,
+        `${id}: ${disabled ? 'disabled' : 'enabled'}`,
+      ).toBe(disabled)
+      expect(
+        el.getAttribute('aria-disabled'),
+        `${id}: never aria-disabled`,
+      ).toBeNull()
+      // `readonly` is a text-input attribute (section 0), so the attribute is
+      // the check: a select has no readOnly property.
+      expect(el.getAttribute('readonly'), `${id}: never readonly`).toBeNull()
+    }
   }
   for (const f of FIELDS)
     expect(

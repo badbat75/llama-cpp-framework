@@ -3,10 +3,12 @@
 // repeated in full as text under the control, because a disabled input or
 // select cannot wrap, scroll or be read past its edge. It is built once in the
 // shared field renderer of fe/src/PresetCards.tsx, so every field of 2e.1 and
-// 2e.2 gets it. 2h.4's 160 keeps the rule (134: the line is only for a
-// disabled control): of the Resource / context card, now editable, only
-// Unified KV can be disabled with a value, so the number example here is
-// Cache RAM of the read-only KV cache card. The fields, their controls and
+// 2e.2 gets it. 2h.4's 160 and 2h.5's 164 keep the rule (134: the line is
+// only for a disabled control): of the Resource / context card, now
+// editable, only Unified KV can be disabled with a value, and the KV cache
+// card is editable, so the number example here is MoE cache of the
+// read-only Hardware card and the select example Reasoning effort of the
+// read-only Chat / reasoning card. The fields, their controls and
 // how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
 // the route and the read are PresetPage.test.tsx. The colour and the wrap at
 // 320 px are the designer's review, not jsdom: criterion 118's style is pinned
@@ -45,17 +47,20 @@ const NUM_9 = '172032000'
  * trailing spaces, so trimming or lower-casing changes it. */
 const TEXT_20 = '{"MixedCase":TRUE}  '
 const TEXT_21 = '{"MixedCaseX":TRUE}  '
-const POOL_20 = 'mean-attention-pools'
-const POOL_21 = 'Last-Attention-Pool-X'
-/** An unlisted Pooling value past the limit, with spaces and capitals. */
-const POOL_LONG = 'Last Attention Pool X  '
+const SELECT_20 = 'mean-attention-pools'
+const SELECT_21 = 'Last-Attention-Pool-X'
+/** An unlisted select value past the limit, with spaces and capitals. The
+ * select that carries it, Reasoning effort, is of a card that is still
+ * read-only; the brief's pooling stub has the same shape, but pooling sits
+ * on the editable Embeddings card, which shows no line (134). */
+const SELECT_LONG = 'Last Attention Pool X  '
 
 /** A number value a trim would change, past the number limit. */
 const NUM_PAD = ' 172032000 '
 
 const CTX = en('preset-context-size')
-const RAM = en('preset-cache-ram')
-const KCACHE = en('preset-k-cache-type')
+const MOE = en('preset-moe-cache')
+const REASON = en('preset-reasoning-effort')
 const KWARGS = en('preset-chat-kwargs')
 /** The other editable number fields of the Resource / context card (2h.4). */
 const SLOT = en('preset-per-slot-context')
@@ -204,9 +209,9 @@ function nameOf(el: HTMLElement): string {
 
 // ── 118: the line, its text and its place ───────────────────────────────
 
-test('2e.118: a Cache RAM of 9 characters shows the line: a paragraph with the id preset-full-cache-ram, shown, holding the value', async () => {
-  const { main } = await page({ 'cache-ram': NUM_9 })
-  const line = lineOf(main, 'cache-ram')
+test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the id preset-full-moe-cache-mib, shown, holding the value', async () => {
+  const { main } = await page({ 'moe-cache-mib': NUM_9 })
+  const line = lineOf(main, 'moe-cache-mib')
   expect(line.tagName, 'the line is a paragraph').toBe('P')
   expect(line.textContent, 'the line holds the value').toBe(NUM_9)
   expect(isHidden(line), 'the line is shown').toBe(false)
@@ -214,21 +219,21 @@ test('2e.118: a Cache RAM of 9 characters shows the line: a paragraph with the i
 
 test('2e.118: the line holds the value exactly as written, for a number, a text and an unlisted select value with capitals, a leading space and trailing spaces', async () => {
   const { main } = await page({
-    'cache-ram': NUM_PAD,
+    'moe-cache-mib': NUM_PAD,
     'chat-template-kwargs': TEXT_21,
-    'cache-type-k': POOL_LONG,
+    'reasoning-effort': SELECT_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
   // from a trimmed or normalised copy reads red.
-  for (const value of [NUM_PAD, TEXT_21, POOL_LONG])
+  for (const value of [NUM_PAD, TEXT_21, SELECT_LONG])
     expect(
       value.trim() === value && value.toLowerCase() === value,
       `${value}: trimming and lower-casing both leave it alone, so it pins nothing`,
     ).toBe(false)
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
-    ['cache-ram', 'number', RAM, NUM_PAD],
+    ['moe-cache-mib', 'number', MOE, NUM_PAD],
     ['chat-template-kwargs', 'text', KWARGS, TEXT_21],
-    ['cache-type-k', 'select', KCACHE, POOL_LONG],
+    ['reasoning-effort', 'select', REASON, SELECT_LONG],
   ]
   for (const [key, kind, label, value] of cases) {
     const line = lineOf(main, key)
@@ -245,14 +250,14 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
 })
 
 test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({ 'cache-type-k': POOL_LONG })
-  const select = selectOf(main, KCACHE)
-  const line = lineOf(main, 'cache-type-k')
+  const { main } = await page({ 'reasoning-effort': SELECT_LONG })
+  const select = selectOf(main, REASON)
+  const line = lineOf(main, 'reasoning-effort')
   // The extra option of an unlisted value carries the value as its text, and
   // the line repeats that text as written. A trimmed comparison can never
-  // hold: POOL_LONG ends in spaces, and the green 118 test above pins the
+  // hold: SELECT_LONG ends in spaces, and the green 118 test above pins the
   // line's text to the value as the reply has it.
-  expect(selectedText(select), 'the option is the value').toBe(POOL_LONG)
+  expect(selectedText(select), 'the option is the value').toBe(SELECT_LONG)
   expect(line.textContent, 'the line is the selected option text').toBe(
     selectedText(select),
   )
@@ -260,11 +265,11 @@ test('2e.118: an unlisted select value shows on the line the text of the selecte
 
 test('2e.118: the line sits under its own control, after its unit, before its hint, inside its own field', async () => {
   const { main } = await page({
-    'cache-ram': NUM_9,
+    'moe-cache-mib': NUM_9,
     'chat-template-kwargs': TEXT_21,
   })
   const cases: [string, 'number' | 'text', string, boolean][] = [
-    ['cache-ram', 'number', RAM, true],
+    ['moe-cache-mib', 'number', MOE, true],
     ['chat-template-kwargs', 'text', KWARGS, false],
   ]
   for (const [key, kind, label, hasUnit] of cases) {
@@ -293,15 +298,19 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
 
 test('2e.118, 2h.160: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
   const { main } = await page({
-    'cache-ram': NUM_9,
-    'cache-type-k': POOL_LONG,
+    'moe-cache-mib': NUM_9,
+    'reasoning-effort': SELECT_LONG,
     // The Resource / context card, every key past its limit: 160 says an
     // enabled control shows no line, so none of these has one. Parallel slots
     // is present, so its box is unticked and Unified KV is enabled too.
     'ctx-size': NUM_9,
     parallel: '817203200',
-    'kv-unified': POOL_LONG,
+    'kv-unified': SELECT_LONG,
     'kv-unified-per-slot': NUM_9,
+    // The KV cache card, editable since 2h.5's 164: 134 keeps its long
+    // values off the lines.
+    'cache-ram': NUM_9,
+    'cache-type-k': SELECT_LONG,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
   expect(lines.length, 'exactly the two long fields have a line').toBe(2)
@@ -310,13 +319,15 @@ test('2e.118, 2h.160: one line per long field: each line is in its own field, a 
     'parallel',
     'kv-unified',
     'kv-unified-per-slot',
+    'cache-ram',
+    'cache-type-k',
   ])
     expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
   expect(owners.size, 'no field holds both lines').toBe(2)
   for (const [key, label] of [
-    ['cache-ram', RAM],
-    ['cache-type-k', KCACHE],
+    ['moe-cache-mib', MOE],
+    ['reasoning-effort', REASON],
   ] as const) {
     const field = fieldOf(main, label)
     expect(
@@ -333,7 +344,7 @@ test('2h.160: in the Resource / context card only Unified KV is ever disabled wi
   const long = {
     'ctx-size': NUM_9,
     parallel: '817203200',
-    'kv-unified': POOL_LONG,
+    'kv-unified': SELECT_LONG,
     'kv-unified-per-slot': NUM_9,
     'batch-size': NUM_9,
     'ubatch-size': NUM_9,
@@ -412,12 +423,12 @@ test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem 
 test('2e.119: a number shows no line at 8 characters and its line at 9', async () => {
   expect(NUM_8.length, 'the number stub is 8 characters').toBe(8)
   expect(NUM_9.length, 'the number stub is 9 characters').toBe(9)
-  const short = await page({ 'cache-ram': NUM_8 })
-  expectNoLine(short.main, 'cache-ram')
+  const short = await page({ 'moe-cache-mib': NUM_8 })
+  expectNoLine(short.main, 'moe-cache-mib')
   cleanup()
-  const long = await page({ 'cache-ram': NUM_9 })
+  const long = await page({ 'moe-cache-mib': NUM_9 })
   expect(
-    lineOf(long.main, 'cache-ram').textContent,
+    lineOf(long.main, 'moe-cache-mib').textContent,
     'the 9-character line',
   ).toBe(NUM_9)
 })
@@ -436,16 +447,16 @@ test('2e.119: a text value shows no line at 20 characters and its line at 21', a
 })
 
 test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
-  expect(POOL_20.length, 'the select stub is 20 characters').toBe(20)
-  expect(POOL_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ 'cache-type-k': POOL_20 })
-  expectNoLine(short.main, 'cache-type-k')
+  expect(SELECT_20.length, 'the select stub is 20 characters').toBe(20)
+  expect(SELECT_21.length, 'the select stub is 21 characters').toBe(21)
+  const short = await page({ 'reasoning-effort': SELECT_20 })
+  expectNoLine(short.main, 'reasoning-effort')
   cleanup()
-  const long = await page({ 'cache-type-k': POOL_21 })
+  const long = await page({ 'reasoning-effort': SELECT_21 })
   expect(
-    lineOf(long.main, 'cache-type-k').textContent,
+    lineOf(long.main, 'reasoning-effort').textContent,
     'the 21-character line',
-  ).toBe(POOL_21)
+  ).toBe(SELECT_21)
 })
 
 test('2e.119: no key, no line: an empty values object shows no line on any field of the page', async () => {
@@ -461,28 +472,32 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
     parallel: '8',
     'chat-template-kwargs': '{"short":1}',
     'kv-unified': 'auto',
-    'cache-type-k': 'mean',
+    'reasoning-effort': 'low',
   })
   expectNoLine(main, 'parallel')
   expectNoLine(main, 'chat-template-kwargs')
   expectNoLine(main, 'kv-unified')
-  expectNoLine(main, 'cache-type-k')
+  expectNoLine(main, 'reasoning-effort')
 })
 
 // ── 120: accessibility ──────────────────────────────────────────────────
 
 /** Three long fields of three kinds, the line of each. */
 const LONG = {
-  'cache-ram': NUM_9,
+  'moe-cache-mib': NUM_9,
   'chat-template-kwargs': TEXT_21,
-  'cache-type-k': POOL_LONG,
+  'reasoning-effort': SELECT_LONG,
 }
 const SHORT = {
-  'cache-ram': NUM_8,
+  'moe-cache-mib': NUM_8,
   'chat-template-kwargs': TEXT_20,
-  'cache-type-k': POOL_20,
+  'reasoning-effort': SELECT_20,
 }
-const LONG_KEYS = ['cache-ram', 'chat-template-kwargs', 'cache-type-k'] as const
+const LONG_KEYS = [
+  'moe-cache-mib',
+  'chat-template-kwargs',
+  'reasoning-effort',
+] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -528,11 +543,11 @@ test('2e.120: the line takes no focus: it is not a tab stop, and the tab order o
 
 test('2e.121: the stub values of the brief show exactly these lines and no others', async () => {
   const cases: [Record<string, string>, string | null][] = [
-    [{ 'cache-ram': '172032000' }, '172032000'],
-    [{ 'cache-ram': '17203200' }, null],
+    [{ 'moe-cache-mib': '172032000' }, '172032000'],
+    [{ 'moe-cache-mib': '17203200' }, null],
     [{}, null],
-    [{ 'cache-type-k': POOL_21 }, POOL_21],
-    [{ 'cache-type-k': POOL_20 }, null],
+    [{ 'reasoning-effort': SELECT_21 }, SELECT_21],
+    [{ 'reasoning-effort': SELECT_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
       { 'chat-template-kwargs': '{"enable_thinking":false}' },

@@ -181,9 +181,9 @@ export function fieldAboutToggles(): string[] {
 }
 
 /** The fields the preset page makes editable: 2h.1's 130 (the Embeddings
- * card's two controls) and 2h.4's 155 (the Resource / context card's six),
- * by their label key. Every other field's control stays disabled, so it
- * takes no tab stop. */
+ * card's two controls), 2h.4's 155 (the Resource / context card's six) and
+ * 2h.5's 164 (the KV cache card's seven, all always enabled), by their label
+ * key. Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS = [
   'preset-context-size',
   'preset-parallel-slots',
@@ -193,6 +193,13 @@ const EDITABLE_FIELDS = [
   'preset-u-batch-size',
   'preset-embedding-mode',
   'preset-pooling',
+  'preset-k-cache-type',
+  'preset-v-cache-type',
+  'preset-flash-attention',
+  'preset-cache-ram',
+  'preset-cache-reuse',
+  'preset-context-checkpoints',
+  'preset-checkpoint-step',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
@@ -204,6 +211,10 @@ const BOXED_FIELDS: Record<string, string> = {
   'preset-per-slot-context': 'kv-unified-per-slot',
   'preset-batch-size': 'batch-size',
   'preset-u-batch-size': 'ubatch-size',
+  'preset-cache-ram': 'cache-ram',
+  'preset-cache-reuse': 'cache-reuse',
+  'preset-context-checkpoints': 'ctx-checkpoints',
+  'preset-checkpoint-step': 'checkpoint-min-step',
 }
 
 /** The editable fields with an enable rule (2h.155): Unified KV is enabled
@@ -234,7 +245,7 @@ export function controlEnabled(
 }
 
 /** Every field's tab stops in the order of 91: each field's About toggle,
- * then the controls 2h.1 and 2h.4 made editable and left enabled on this
+ * then the controls 2h.1, 2h.4 and 2h.5 made editable and left enabled on this
  * read (141, 155, 156): a boxed field's default box, named by the box's own
  * text, and its input while the box is unticked. The whole-page tab path of
  * every preset page test is this list, read with the values of its fixture. */

@@ -192,9 +192,14 @@ function form(
   })
 }
 
-/** Makes the form dirty: Embedding mode off, loaded on. */
+/** Makes the form dirty: Embedding mode picked to the option it does NOT show.
+ * 132: a select's state is its selected option, and 2e's 93 gives the off / on
+ * select `off` when the file has no `embeddings` key, so a fixed `off` is no
+ * change on such a read (and no change after a save that sent `off`): the pick
+ * must always be the other option. */
 function makeDirty(main: HTMLElement) {
-  pick(main, MODE, 'false')
+  const select = selectOf(main, MODE)
+  pick(main, MODE, select.value === 'true' ? 'false' : 'true')
 }
 
 /** Lets jsdom's queued tasks (a hashchange, a history traversal) run. */
@@ -636,7 +641,9 @@ test('2h.140: a typed hash and Back while the preset form is dirty are put back 
     HASH,
   )
   expect(selectOf(main, MODE), 'the same form, not a remount').toBe(select)
-  expect(select.value, 'the edit stays').toBe('false')
+  // The default fixture has no embeddings key: 2e.93 shows off, makeDirty
+  // picks the other option, on.
+  expect(select.value, 'the edit stays').toBe('true')
   expect(status(main).textContent, 'the bar status stays as it was').toBe(
     en('save-unsaved'),
   )
@@ -663,7 +670,7 @@ test('2h.140: a typed hash and Back while the preset form is dirty are put back 
   expect(selectOf(second.main, MODE), 'the same form, not a remount').toBe(
     backSelect,
   )
-  expect(selectOf(second.main, MODE).value, 'the edit stays').toBe('false')
+  expect(selectOf(second.main, MODE).value, 'the edit stays').toBe('true')
   fireEvent.click(keepButton(d2))
   await flushTasks()
   expect(
@@ -780,14 +787,14 @@ test('2h.140: the browser Forward while the preset form is dirty is put back and
   const d = await discardDialog()
   expect(window.location.hash, 'Forward is put back').toBe(HASH)
   expect(selectOf(main, MODE), 'the same form, not a remount').toBe(select)
-  expect(selectOf(main, MODE).value, 'the edit stays').toBe('false')
+  expect(selectOf(main, MODE).value, 'the edit stays').toBe('true')
   expect(status(main).textContent, 'the bar status stays as it was').toBe(
     en('save-unsaved'),
   )
   fireEvent.click(keepButton(d))
   await flushTasks()
   expect(window.location.hash, 'Keep editing keeps the preset page').toBe(HASH)
-  expect(selectOf(main, MODE).value, 'the edit is kept').toBe('false')
+  expect(selectOf(main, MODE).value, 'the edit is kept').toBe('true')
   // After Keep editing the page is left for good the ordinary way: Discard
   // cleans the form, and the hash typed then moves.
   fireEvent.click(discardButton(main))

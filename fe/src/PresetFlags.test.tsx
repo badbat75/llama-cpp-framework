@@ -509,8 +509,9 @@ const READINGS: Reading[] = [
     written: undefined,
     extra: 'Off',
   },
-  // 124a: past what the select holds, the value still shows on the extra option,
-  // and the full-value line of 118 repeats it in full (pinned in the 124a test).
+  // 124a: past what the select holds, the value still shows on the extra
+  // option, and the full-value line of 118 is pinned in the 124a test (it is
+  // gone on the editable card, 2h.134).
   {
     key: 'flash-attn',
     value: LONG,
@@ -787,10 +788,12 @@ test('2e.124, 2e.118: a flag select with a value longer than its control shows t
   ).toBe(1)
 })
 
-test('2e.124a: a valued key past what its select holds shows the value trimmed on the extra option, with the aria-hidden full-value line in full, and no written-as line', async () => {
-  // 124a: the selected option already shows the value, so the written-as line of
-  // 124 has nothing to add; what the select clips, the full-value line of 118
-  // repeats. Option and line show the value TRIMMED, not the file's padding.
+test('2e.124a, 2h.134, 2h.164: a valued key past what its select holds shows the value trimmed on the extra option, with no written-as line and no full-value line on the editable card', async () => {
+  // 124a: the selected option already shows the value, so the written-as line
+  // of 124 has nothing to add. The full-value line of 118 used to repeat what
+  // the select clipped; 2h.5's 164 makes the KV cache card editable and 134
+  // takes the line from an enabled control, an opened select showing its
+  // whole value. Option and text show the value TRIMMED, not the file's padding.
   for (const value of [LONG, PADDED]) {
     expect(
       iniTrim(value).length,
@@ -808,23 +811,22 @@ test('2e.124a: a valued key past what its select holds shows the value trimmed o
       `flash-attn ${JSON.stringify(value)}: the option's text is the value trimmed`,
     ).toBe(trimmed)
     expect(
+      select.disabled,
+      '164: the KV cache card is editable, the select is enabled',
+    ).toBe(false)
+    expect(
       writtenOf(main, 'flash-attn'),
       'flash-attn: the extra option shows the value, so no written-as line',
     ).toBeNull()
-    const full = main.querySelector('#preset-full-flash-attn')
-    expect(full, '#preset-full-flash-attn: the full-value line').toBeTruthy()
-    expect(full!.textContent, 'the full-value line holds the whole value').toBe(
-      trimmed,
-    )
     expect(
-      full!.getAttribute('aria-hidden'),
-      '120: the control exposes the value, so the line is hidden',
-    ).toBe('true')
+      main.querySelector('#preset-full-flash-attn'),
+      '134: the enabled select opens and shows the whole value, so no full-value line',
+    ).toBeNull()
     expect(
       select.closest('.field')!.querySelectorAll('.full-value').length,
-      'one line in the field, never two',
-    ).toBe(1)
-    // 124b, 120: the line is not the control's description.
+      'no line in the field',
+    ).toBe(0)
+    // 124b, 120: nothing of the kind is the control's description.
     expect(
       describedIds(select),
       'flash-attn: the select names no full-value line',
@@ -933,11 +935,21 @@ test('2e.124b: the checkbox or select names its written-as line in aria-describe
     vi.unstubAllGlobals()
   }
   // 120, unchanged: the full-value line is named by no aria-describedby, on a
-  // page where a valued key has one (124a).
-  const { main } = await page({ 'flash-attn': LONG, jinja: 'yes' })
+  // page where a full-value line and a written-as line sit side by side. The
+  // valued key's example moved: the KV cache card is editable (2h.5's 164)
+  // and 134 shows no line under an enabled control, so the line here is Chat
+  // kwargs of the read-only Advanced card.
+  const { main } = await page({
+    'chat-template-kwargs': '{"enable_thinking":false}',
+    jinja: 'yes',
+  })
   expect(
-    main.querySelector('#preset-full-flash-attn'),
+    main.querySelector('#preset-full-chat-template-kwargs'),
     'the page has a full-value line',
+  ).toBeTruthy()
+  expect(
+    writtenOf(main, 'jinja'),
+    'and a written-as line beside it',
   ).toBeTruthy()
   const named = [...main.querySelectorAll('[aria-describedby]')].flatMap((el) =>
     describedIds(el),

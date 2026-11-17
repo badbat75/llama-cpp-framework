@@ -455,26 +455,35 @@ test('2h.142 (139): a 422 with a key the fe does not know is api-other with the 
 
 // ── 144: the field's control is disabled ────────────────────────────────
 
-test('2h.144: not-one-of on cache-type-k while the KV cache card is still disabled marks that field, alerts its text, and leaves the focus on Save changes', async () => {
+test('2h.144: not-one-of on Reasoning effort, a field of a card that is still disabled, marks that field, alerts its text, and leaves the focus on Save changes', async () => {
   const { bff, main } = await refused({
     key: 'not-one-of',
-    args: ['cache-type-k', 'q8 weird', 'default, f16, q8_0, q4_0'],
-    field: 'cache-type-k',
+    args: [
+      'reasoning-effort',
+      'ultra',
+      'default, minimal, low, medium, high, xhigh, max',
+    ],
+    field: 'reasoning-effort',
   })
   saveButton(main).focus()
   await save(main, bff)
   const text = en(
     'api-not-one-of',
-    'cache-type-k',
-    'q8 weird',
-    'default, f16, q8_0, q4_0',
+    'reasoning-effort',
+    'ultra',
+    'default, minimal, low, medium, high, xhigh, max',
   )
   await within(main).findByText(en('save-refused', text))
-  const cache = selectOf(main, en('preset-k-cache-type'))
-  // The card is not enabled in this build: the control is natively disabled.
-  expect(cache.disabled, 'the KV cache select is disabled').toBe(true)
-  expectError(cache, text, 'K-cache type (disabled)')
-  expectAlert(main, en('save-refused', text), 'the disabled KV cache field')
+  const effort = selectOf(main, en('preset-reasoning-effort'))
+  // The Chat / reasoning card is not enabled in this build (2h.5 opens the
+  // KV cache card only): the control is natively disabled.
+  expect(effort.disabled, 'the Reasoning effort select is disabled').toBe(true)
+  expectError(effort, text, 'Reasoning effort (disabled)')
+  expectAlert(
+    main,
+    en('save-refused', text),
+    'the disabled Reasoning effort field',
+  )
   // No enabled control of that field, so the focus stays where it was.
   expect(document.activeElement, 'focus stays on Save changes').toBe(
     saveButton(main),

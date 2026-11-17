@@ -131,7 +131,11 @@ prunes at save (2k), New, Clone, Rename, Delete (2l to 2n), a raw-key view (2o).
     | Text | the text trimmed of every white space at both ends (`String.prototype.trim`, which covers every character the bff refuses at an end: U+00A0, U+2028, U+3000 ...; 2026-11-17); empty after trimming: `null` |
 
     A select's extra option (a value the select does not list) can only be the loaded state, so
-    picking it again makes the field unchanged: it is never sent.
+    picking it again makes the field unchanged: it is never sent. Likewise a key absent from the
+    file has the select's absent option as its loaded state, so picking that option is no change;
+    and an off / on key written `false` loads as `off`, which already reads as the absence, so the
+    line stays in the file (the web never removes it; 2e's 122 shows both as `off`, and the GUI's
+    next save drops it, `render_section`; 2026-11-17).
 134. **The two lines under a control while editing.** The written-as line (2e's 124) shows only
     while its field is **unchanged** (it describes the file, which the save leaves as it is); a
     changed field hides it and its control's `aria-describedby` drops its id. The full-value line

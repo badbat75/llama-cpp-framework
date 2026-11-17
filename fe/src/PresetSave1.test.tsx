@@ -50,8 +50,8 @@ const EXTRA_POOL = 'Last-Attention-Pool-X'
  * (2h.156) and Unified KV sits disabled (2h.155: Parallel slots at default). */
 const VALUES = { embeddings: 'true', pooling: 'mean' }
 
-/** The fields 2h.1's 130 and 2h.4's 155 made editable, keyed by the id of
- * their field (`preset-<key>`: the box is `<id>-box`, the input
+/** The fields 2h.1's 130, 2h.4's 155 and 2h.5's 164 made editable, keyed by
+ * the id of their field (`preset-<key>`: the box is `<id>-box`, the input
  * `<id>-control`), so a control's id finds the label key the shared table of
  * test/presetCards.ts gives the enable rules to. */
 const EDITABLE_BY_ID: Record<string, string> = {
@@ -63,6 +63,13 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-ubatch-size': 'preset-u-batch-size',
   'preset-embeddings': 'preset-embedding-mode',
   'preset-pooling': 'preset-pooling',
+  'preset-cache-type-k': 'preset-k-cache-type',
+  'preset-cache-type-v': 'preset-v-cache-type',
+  'preset-flash-attn': 'preset-flash-attention',
+  'preset-cache-ram': 'preset-cache-ram',
+  'preset-cache-reuse': 'preset-cache-reuse',
+  'preset-ctx-checkpoints': 'preset-context-checkpoints',
+  'preset-checkpoint-min-step': 'preset-checkpoint-step',
 }
 
 beforeEach(() => {
@@ -221,7 +228,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156): the Embeddings selects and the Resource / context card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164): the Embeddings selects, the Resource / context card and the KV cache card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -534,32 +541,35 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134 (2h.4 160): an editable control shows no full-value line, Embeddings and Resource / context alike, and the disabled cards keep theirs', async () => {
+test('2h.134 (2h.4 160, 2h.5 164): an editable control shows no full-value line, Embeddings, Resource / context and KV cache alike, and the disabled cards keep theirs', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
+    'reasoning-effort': EXTRA_POOL,
+    // The KV cache card, editable since 2h.5's 164: 134 takes its lines.
     'cache-type-k': EXTRA_POOL,
+    'cache-ram': '172032000',
   })
   // An enabled select opens and an enabled input scrolls, so 134 takes the
   // line away from both, and 160 says the Resource card's number never has
   // one: a ticked box's input is empty, an unticked one is enabled.
-  for (const key of ['pooling', 'ctx-size'])
+  for (const key of ['pooling', 'ctx-size', 'cache-type-k', 'cache-ram'])
     expect(
       fullOf(main, key),
       `${key}: no full-value line under an editable control`,
     ).toBeNull()
   expect(
-    fullOf(main, 'cache-type-k'),
+    fullOf(main, 'reasoning-effort'),
     'the disabled control keeps its line',
   ).toBeTruthy()
 })
 
-test('2h.134: a long value the disabled control cannot show keeps its line, and the same field when enabled has none: Pooling is the pair', async () => {
-  const { main } = await page({ 'cache-type-k': EXTRA_POOL })
-  const line = fullOf(main, 'cache-type-k')!
+test('2h.134: a long value the disabled control cannot show keeps its line: Reasoning effort is the disabled half of the pair, the KV cache select the enabled half (pinned above)', async () => {
+  const { main } = await page({ 'reasoning-effort': EXTRA_POOL })
+  const line = fullOf(main, 'reasoning-effort')!
   expect(text(line), 'the line repeats the value as written').toBe(EXTRA_POOL)
   expect(
-    selectOf(main, en('preset-k-cache-type')).disabled,
+    selectOf(main, en('preset-reasoning-effort')).disabled,
     'the field is a disabled select',
   ).toBe(true)
 })
