@@ -44,6 +44,10 @@ export default function SignIn({
   onCancel?: () => void
 }) {
   const id = useId()
+  // The plain-HTTP notice (fe/briefs/03-insecure-sign-in.md): read once when
+  // the sign-in renders, it cannot change without a new page load. A browser
+  // without the property (undefined) shows nothing.
+  const insecure = window.isSecureContext === false
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [empty, setEmpty] = useState({ username: false, password: false })
@@ -100,6 +104,11 @@ export default function SignIn({
       ) : (
         required && <p className="notice">{t('signin-required')}</p>
       )}
+      {insecure && (
+        <p id={`${id}-insecure`} className="notice">
+          {t('signin-insecure')}
+        </p>
+      )}
       <form className="signin" onSubmit={submit} noValidate>
         {failure !== null && (
           <p role="alert" className="form-error">
@@ -136,7 +145,12 @@ export default function SignIn({
             onChange={(e) => setPassword(e.target.value)}
             aria-invalid={empty.password || undefined}
             aria-describedby={
-              empty.password ? `${id}-password-error` : undefined
+              [
+                empty.password ? `${id}-password-error` : null,
+                insecure ? `${id}-insecure` : null,
+              ]
+                .filter((s) => s !== null)
+                .join(' ') || undefined
             }
           />
           {empty.password && (

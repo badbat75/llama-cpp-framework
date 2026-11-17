@@ -36,6 +36,8 @@ export const EN: Record<string, string> = {
   'signin-empty-password': 'Enter your password.',
   'signin-failed':
     'Signing in failed. Try again; if it keeps failing, the web service may not be running.',
+  'signin-insecure':
+    'This connection is not encrypted, so your password is sent over the network as plain text. To keep it private, sign in on the computer that runs Private AI Framework, or only over a network you trust.',
   'api-session-bad-credentials': 'The user name or password is not correct.',
   'api-session-too-many-attempts':
     'Too many attempts. Try again in {0} seconds.',

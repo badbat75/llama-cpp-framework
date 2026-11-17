@@ -10,10 +10,13 @@ run, one coder run.
 knowing the sign-in password then crosses the network in clear (`PLAN.md` step 10, item 12). The
 sign-in must say so when it is the case, and must not block signing in.
 
-**Grounding.** The bff's `Host` guard accepts `localhost` and any IP literal and refuses every other
-name (403 `request-bad-host`, `PLAN.md` step 10 item 12), so the page is reached as
-`http://localhost:<port>`, `http://127.0.0.1:<port>`, `http://[::1]:<port>` or `http://<an IP of the
-machine>:<port>`. The bff serves no HTTPS today. `pai-config` has no sign-in (it talks to the
+**Grounding.** The bff's `Host` guard accepts any IP literal, the machine's own names (its host
+name, `<name>.local`, `<name>.<domain>` for each search domain; or, when set, the names of `[Bff]
+Hosts` in `bff.ini` instead) and, when it listens on loopback or all interfaces, `localhost`; it
+refuses every other name (403 `request-bad-host`, `PLAN.md` step 10 items 12 and 12b). So the page is
+reached as `http://localhost:<port>`, `http://127.0.0.1:<port>`, `http://[::1]:<port>`, `http://<an
+IP of the machine>:<port>` or `http://<a name of the machine>:<port>` (for example
+`http://myhost.local:8590`). The bff serves no HTTPS today. `pai-config` has no sign-in (it talks to the
 manager on the same machine), so there is nothing to agree with on the GUI side.
 
 ## 0. The decision: one rule, `window.isSecureContext === false`
@@ -34,10 +37,14 @@ once when the sign-in renders (it cannot change without a new page load).
 
 What it gets wrong, accepted:
 
-- **False alarm, same machine by its LAN address**: `http://192.168.1.10:8590` opened on the server
-  machine itself shows the notice, though the password never leaves the machine. Harmless: the text
-  tells the user to sign in on that machine, which they can do through `localhost`. (A name such as
-  `http://myhost.local` would be the same case, but the bff refuses every name but `localhost`.)
+- **False alarm, same machine by its LAN address or name**: `http://192.168.1.10:8590` or
+  `http://myhost.local:8590` opened on the server machine itself shows the notice, though the
+  password never leaves the machine. Harmless: the text tells the user to sign in on that machine,
+  which they can do through `localhost` (when the bff listens on loopback or all interfaces; bound to
+  one LAN address only, `localhost` is refused, and the false alarm stays: accepted). From another
+  device, a machine name over `http` is not trustworthy either (the spec's steps 3 to 5 cover only
+  loopback hosts and `localhost`), so the notice shows, which is right; measured in the three engines
+  for `http://aorus.bombicci.local:8590` (section 3).
 - **False alarm, `localhost` in a browser that does not resolve it to loopback by rule**: the spec
   makes `localhost` trustworthy only then (step 5); `127.0.0.1` is trustworthy always. Harmless.
 - **Missed: an HTTPS proxy in front of the bff on another machine**: the page sees `https`, the hop
@@ -120,11 +127,17 @@ every request with `page.route('http://192.0.2.10:8590/**', ...)`, fetching the 
 stub with `route.fetch({ url })` and `route.fulfill({ response })`
 ([Playwright, `Route`](https://playwright.dev/docs/api/class-route): `fetch`'s `url` "changes the
 request URL. New URL must have same protocol as original one"). The origin is then an IP outside
-loopback over `http`, so the page is not a secure context; the check first asserts
+loopback over `http`, so the page is not a secure context (a machine name over `http`, routed the
+same way, is the same case); the check first asserts
 `window.isSecureContext === false` in the page, so a browser that thinks otherwise fails loudly
 rather than passing on an absent notice. Then: the notice present, before the form; its computed
 background `--surface` and colour `--text`, light and dark; axe-core clean; no sideways scroll at
-320 px; Chromium, Firefox, WebKit. The dialog case is read from the code and the Vitest test.
+320 px; Chromium, Firefox, WebKit. The dialog case is driven the same way (a Server save answered
+401 by the stub, then the bar's Sign in).
+
+Measured 2026-11-17 (Playwright's Chromium, Firefox, WebKit of `fe/ux`): `isSecureContext` is `false`
+at `http://192.0.2.10:8590` and `http://aorus.bombicci.local:8590`, `true` at `http://127.0.0.1:<port>`
+and `http://localhost:<port>`, in all three.
 
 The user checks once on the real LAN bff after the install of item 12: from another device,
 `http://<server IP>:8590/#/sign-in` shows the notice; on the server, `http://localhost:8590` does not.
