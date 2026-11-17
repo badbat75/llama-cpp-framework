@@ -891,7 +891,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    manager-error table is in both `server.rs` and `control.rs`: one helper. Before any non-loopback
    bind the `Host` rule must change with it. A page opened through a hostname alias gets the 403 JSON for `/` too, so no
    fe code runs to explain it: a plain answer naming the localhost address would help (not needed now).
-10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
+10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write. To revisit with item 13:
+    a model is assigned to an instance on a node, not to an engine.
 11b. (Done, 2026-11-17: `PUT /api/presets/{id}/enabled`, `crates/bff/src/presets.rs`, two
    compare-and-swap writes, destination first. Left from it: `checks::preset_id` refuses `.` and `..`
    (pai-core); `DISABLED_FILE_HEADER` moves to `pai-core` (the bff holds a copy a test keeps equal);
@@ -953,7 +954,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
     collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
     labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
-    and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design. Then adding and
+    and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design.
+    **A model belongs to an instance on a node, not to an engine** (user, 2026-11-17, a requirement
+    change): the engine follows from the instance. Today every instance of an engine serves the
+    engine's one `presets.ini` (`launch::server_args`, `--models-preset`; `ARCHITECTURE.md` ~776), so
+    this moves the presets to each instance (the files, the manager's checks and `ModelsMax`, the
+    switch, the Models page under its instance): the architect designs it before the slices. Then adding and
     removing instances from the web UI, llama.cpp first, each with its own port (the manager already
     keeps instances by id: R8); Strata as a second engine in a step of its own (R12).
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
