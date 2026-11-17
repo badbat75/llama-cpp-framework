@@ -140,6 +140,7 @@
   "field-error-number": "Enter a whole number from {0} to {1}.",
   "field-error-number-min": "Enter a whole number of at least {0}.",
   "field-error-whole-number": "Enter a whole number, without a decimal point.",
+  "field-error-decimal": "Enter a number, such as 0.7 (a decimal comma also works).",
   "field-error-comment-markers": "Remove the ; and # characters: the INI file would cut the value there.",
   "api-not-whole-number-in-range": "{0} = `{1}` is not a whole number from {2} to {3}",
   "api-comment-markers": "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters",

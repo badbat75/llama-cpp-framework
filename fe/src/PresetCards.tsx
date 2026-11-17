@@ -597,6 +597,7 @@ const CARDS: CardFields[] = [
         key: 'temp',
         label: t('preset-temperature'),
         hint: t('preset-temperature-hint'),
+        editable: true,
       },
       {
         // Not strings keys: Top-K, Top-P and Min-P are acronyms, so their
@@ -606,6 +607,7 @@ const CARDS: CardFields[] = [
         key: 'top-k',
         label: 'Top-K',
         hint: t('preset-top-k-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -613,6 +615,7 @@ const CARDS: CardFields[] = [
         key: 'top-p',
         label: 'Top-P',
         hint: t('preset-top-p-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -620,6 +623,7 @@ const CARDS: CardFields[] = [
         key: 'min-p',
         label: 'Min-P',
         hint: t('preset-min-p-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -627,6 +631,7 @@ const CARDS: CardFields[] = [
         key: 'repeat-penalty',
         label: t('preset-repeat-penalty'),
         hint: t('preset-repeat-penalty-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -634,6 +639,7 @@ const CARDS: CardFields[] = [
         key: 'presence-penalty',
         label: t('preset-presence-penalty'),
         hint: t('preset-presence-penalty-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -643,6 +649,7 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-backend-sampling'),
         hint: t('preset-backend-sampling-hint'),
+        editable: true,
       },
     ],
   },
@@ -1110,6 +1117,28 @@ const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
   'spec-ngram-map-k4v-min-hits': { min: 1, max: 65535 },
 }
 
+/** 2h.5's 165: the preset float keys, the ones the decimal check of 165 applies
+ * to, the manager's `checks.rs` `PRESET_FLOAT_KEYS`. A later card's keys are
+ * added here before its card is editable, as with `INT_KEYS`. */
+const FLOAT_KEYS: string[] = [
+  'temp',
+  'top-p',
+  'min-p',
+  'repeat-penalty',
+  'presence-penalty',
+]
+
+/** The text of a float field (165), read on the text trimmed and with every `,`
+ * turned into `.`: an optional sign, digits with at most one `.`, an optional
+ * exponent such as `e-3`. A regular expression on the text, because `Number()`
+ * and `parseFloat` accept `Infinity`, hex and trailing junk. */
+const DECIMAL_TEXT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
+
+/** A float field's text as the check reads it and as the save sends it (165). */
+function decimalText(text: string): string {
+  return text.trim().replace(/,/g, '.')
+}
+
 /** The largest number these keys write (the configurator's `emit_i32`). */
 const I32_MAX = 2147483647
 
@@ -1127,13 +1156,20 @@ function intValue(text: string): number | null {
 }
 
 /** The error of a number field's text (157): the trimmed text must be a whole
- * number within the key's range. A ticked box says nothing: the save sends no
- * value for it, and the manager checks nothing either. */
+ * number within the key's range, and for a float key a finite decimal (165). A
+ * ticked box says nothing: the save sends no value for it, and the manager
+ * checks nothing either. */
 export function numberError(
   row: NumberRow,
   b: Boxed | undefined,
 ): string | undefined {
   if (b === undefined || b.ticked) return undefined
+  if (FLOAT_KEYS.includes(row.key)) {
+    const s = decimalText(b.text)
+    return DECIMAL_TEXT.test(s) && Number.isFinite(Number(s))
+      ? undefined
+      : t('field-error-decimal')
+  }
   const r = INT_KEYS[row.key]
   if (r === undefined) return undefined
   const n = intValue(b.text)
@@ -1162,9 +1198,12 @@ function numericMode(row: NumberRow): boolean {
 }
 
 /** What a number field sends (157): the number in decimal, with no sign for a
- * positive value and no leading zeros; a ticked box sends the key's removal. */
-export function numberSend(b: Boxed): string | null {
+ * positive value and no leading zeros; a ticked box sends the key's removal. A
+ * float key sends the text as the check read it (165), so the spelling the user
+ * typed survives: `1e-3` stays `1e-3`. */
+export function numberSend(row: NumberRow, b: Boxed): string | null {
   if (b.ticked) return null
+  if (FLOAT_KEYS.includes(row.key)) return decimalText(b.text)
   const n = intValue(b.text)
   return n === null ? b.text : String(n)
 }

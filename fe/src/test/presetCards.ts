@@ -180,11 +180,20 @@ export function fieldAboutToggles(): string[] {
   return fieldLabels().map((label) => `${en('field-about')} ${label}`)
 }
 
+/** The identity a field is listed under: its label's strings key, or the
+ * literal text where the brief labels it with literal text (Top-K, Top-P and
+ * Min-P of 97). `Label`s compare by it, so a shown field is nameable in the
+ * tables below. */
+function fieldId(field: Label): string {
+  return typeof field === 'string' ? field : field.shown
+}
+
 /** The fields the preset page makes editable: 2h.1's 130 (the Embeddings
- * card's two controls), 2h.4's 155 (the Resource / context card's six) and
- * 2h.5's 164 (the KV cache card's seven, all always enabled), by their label
- * key. Every other field's control stays disabled, so it takes no tab stop. */
-const EDITABLE_FIELDS = [
+ * card's two controls), 2h.4's 155 (the Resource / context card's six),
+ * 2h.5's 164 (the KV cache card's seven, all always enabled) and 2h.5's 164
+ * (the Sampling overrides card's seven, all always enabled), by their label.
+ * Every other field's control stays disabled, so it takes no tab stop. */
+const EDITABLE_FIELDS: Label[] = [
   'preset-context-size',
   'preset-parallel-slots',
   'preset-unified-kv',
@@ -200,10 +209,17 @@ const EDITABLE_FIELDS = [
   'preset-cache-reuse',
   'preset-context-checkpoints',
   'preset-checkpoint-step',
+  'preset-temperature',
+  shown('Top-K'),
+  shown('Top-P'),
+  shown('Min-P'),
+  'preset-repeat-penalty',
+  'preset-presence-penalty',
+  'preset-backend-sampling',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
- * label key mapped to the key in the read's `values`. A key the file lacks
+ * field identity mapped to the key in the read's `values`. A key the file lacks
  * starts its box ticked, and a ticked box disables and empties the input. */
 const BOXED_FIELDS: Record<string, string> = {
   'preset-context-size': 'ctx-size',
@@ -215,6 +231,12 @@ const BOXED_FIELDS: Record<string, string> = {
   'preset-cache-reuse': 'cache-reuse',
   'preset-context-checkpoints': 'ctx-checkpoints',
   'preset-checkpoint-step': 'checkpoint-min-step',
+  'preset-temperature': 'temp',
+  'Top-K': 'top-k',
+  'Top-P': 'top-p',
+  'Min-P': 'min-p',
+  'preset-repeat-penalty': 'repeat-penalty',
+  'preset-presence-penalty': 'presence-penalty',
 }
 
 /** The editable fields with an enable rule (2h.155): Unified KV is enabled
@@ -222,10 +244,10 @@ const BOXED_FIELDS: Record<string, string> = {
  * starts. */
 const ENABLE_RULE: Record<string, string> = { 'preset-unified-kv': 'parallel' }
 
-/** True when 2h.1's 130 or 2h.4's 155 makes the field with this label key
- * editable: its default box is enabled, whatever the file holds. */
-export function isEditableField(labelKey: string): boolean {
-  return EDITABLE_FIELDS.includes(labelKey)
+/** True when 2h.1's 130, 2h.4's 155 or 2h.5's 164 makes this field editable:
+ * its default box is enabled, whatever the file holds. */
+export function isEditableField(field: Label): boolean {
+  return EDITABLE_FIELDS.some((f) => fieldId(f) === fieldId(field))
 }
 
 /** True when the control of the field with this label key is enabled on a
@@ -233,13 +255,13 @@ export function isEditableField(labelKey: string): boolean {
  * a field with an enable rule follows that rule (155). False for a field of a
  * read-only card, so the expectations of 85 stay pinned for every other card. */
 export function controlEnabled(
-  labelKey: string,
+  field: Label,
   values: Record<string, string>,
 ): boolean {
-  if (!isEditableField(labelKey)) return false
-  const boxed = BOXED_FIELDS[labelKey]
+  if (!isEditableField(field)) return false
+  const boxed = BOXED_FIELDS[fieldId(field)]
   if (boxed !== undefined) return boxed in values
-  const rule = ENABLE_RULE[labelKey]
+  const rule = ENABLE_RULE[fieldId(field)]
   if (rule !== undefined) return rule in values
   return true
 }
@@ -255,8 +277,9 @@ export function fieldTabStops(values: Record<string, string>): string[] {
     for (const field of card.fields) {
       const label = labelText(field)
       stops.push(`${en('field-about')} ${label}`)
-      if (typeof field !== 'string' || !isEditableField(field)) continue
-      if (BOXED_FIELDS[field] !== undefined) stops.push(en('field-default'))
+      if (!isEditableField(field)) continue
+      if (BOXED_FIELDS[fieldId(field)] !== undefined)
+        stops.push(en('field-default'))
       if (controlEnabled(field, values)) stops.push(label)
     }
   return stops

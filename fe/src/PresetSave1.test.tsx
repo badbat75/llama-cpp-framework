@@ -70,6 +70,13 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-cache-reuse': 'preset-cache-reuse',
   'preset-ctx-checkpoints': 'preset-context-checkpoints',
   'preset-checkpoint-min-step': 'preset-checkpoint-step',
+  'preset-temp': 'preset-temperature',
+  'preset-top-k': 'Top-K',
+  'preset-top-p': 'Top-P',
+  'preset-min-p': 'Min-P',
+  'preset-repeat-penalty': 'preset-repeat-penalty',
+  'preset-presence-penalty': 'preset-presence-penalty',
+  'preset-backend-sampling': 'preset-backend-sampling',
 }
 
 beforeEach(() => {
@@ -228,7 +235,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164): the Embeddings selects, the Resource / context card and the KV cache card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164): the Embeddings selects, the Resource / context card, the KV cache card and the Sampling overrides card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),

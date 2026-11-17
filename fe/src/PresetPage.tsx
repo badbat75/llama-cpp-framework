@@ -595,7 +595,7 @@ function Content({
       if (b.ticked) {
         if (loaded.values[row.key] !== undefined) values[row.key] = null
       } else if (b.text !== was[row.key]?.text) {
-        values[row.key] = numberSend(b)
+        values[row.key] = numberSend(row, b)
       }
     }
     return values

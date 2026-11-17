@@ -465,7 +465,8 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
     replaced by `.`, must be a finite decimal number (optional sign, digits with at most one `.`,
     an optional exponent such as `e-3`; not `inf` or `nan`). Error `field-error-decimal`. Sent: the
     trimmed text with `,` replaced by `.` (`1,5` sends `1.5`). The loaded `presence-penalty` `1,5`
-    passes the check and, unchanged, is not sent.
+    passes the check and, unchanged, is not sent. After a 200 the field shows the sent text (138):
+    a typed `0,7` becomes `0.7`, what the file now holds; intended (2h.5 review).
 166. **Chat kwargs** (`chat-template-kwargs`, Text): checked when not empty: no `;` or `#`
     (`field-error-comment-markers`, exists), then one JSON object (`JSON.parse` gives an object
     that is not an array or `null`): `field-error-json-object`. The comment check comes first.
