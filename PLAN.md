@@ -959,7 +959,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     change): the engine follows from the instance. Today every instance of an engine serves the
     engine's one `presets.ini` (`launch::server_args`, `--models-preset`; `ARCHITECTURE.md` ~776), so
     this moves the presets to each instance (the files, the manager's checks and `ModelsMax`, the
-    switch, the Models page under its instance): the architect designs it before the slices. Then adding and
+    switch, the Models page under its instance): the architect designs it before the slices. The same
+    model can be on several instances, each with its own preset (user, 2026-11-17). Then adding and
     removing instances from the web UI, llama.cpp first, each with its own port (the manager already
     keeps instances by id: R8); Strata as a second engine in a step of its own (R12).
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
