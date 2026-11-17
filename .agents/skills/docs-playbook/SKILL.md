@@ -275,6 +275,13 @@ Lessons only: the rules are in `AGENTS.md`.
   manager's write), and which checks run per file is `check_contents` in
   `crates/manager/src/manager/service.rs` (`presets_file` then `preset_ids_free` for `presets.ini`,
   `presets_disabled_file` then `preset_ids_free` for the disabled one, each `?` first).
+- The bff's two time limits: `MANAGER_TIMEOUT` (5 s, reads and control verbs) and `WRITE_TIMEOUT`
+  (15 s, the server save and the preset switch), both `lib.rs`, pinned by
+  `the_write_limit_outlasts_the_read_limit` (`src/tests/timeouts.rs`). The 5 s sits in five bff README
+  spots (the instances 503 row, the connect bullet, the server-read paragraph and its 503 row, the
+  list's 503 row): grep `5 s` and say which routes the longer limit covers. A 504 there means only a
+  write's **unknown** outcome: a write that landed is a 200 with `running: true` even when the limit
+  ran out on the read back, so grep `504` in the same file when a commit changes that rule.
 - The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
   `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
   strings key (`preset-load-failed`). The preset page's route is `#/models/<id>` (`fe/src/route.ts`),
@@ -282,7 +289,9 @@ Lessons only: the rules are in `AGENTS.md`.
   (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
 - `cargo test -p pai-bff` prints one block per suite and the tail shows only the last: scope it with
   `cargo test -p pai-bff --test presets --test presets_switch` and grep `test result` to see the
-  suites you mean.
+  suites you mean. When no shell is available, count the test functions in the suite file
+  (`^async fn` and `^#[test]`) to check a README's test count, and keep the green run's date cited to
+  the commit whose report it is.
 - When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
   fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
   case): cite the sha, and paraphrase a string rather than quoting it, its text living in

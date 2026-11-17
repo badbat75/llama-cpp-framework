@@ -77,7 +77,7 @@ runtime (axum).
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for anyone: the connect carries no principal, the session store is never touched, so the page can poll it; the failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
-| `GET /api/presets` | The preset rows for a signed-in user: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-list-and-its-switch)) |
+| `GET /api/presets` | The preset rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-list-and-its-switch)) |
 | `PUT /api/presets/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the preset switched on or off ([below](#the-preset-list-and-its-switch)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
@@ -124,7 +124,9 @@ naming the session's user, what a signed-in route makes ([below](#the-server-fil
   `llama.cpp`, the only engine today (`ENGINE_LLAMA_CPP` in `lib.rs`). The error body is only the
   strings key with empty args, never the manager's detail.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
-  The connect and the calls run on a blocking thread under one 5 s timeout that covers the connect.
+  The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
+  `lib.rs`) that covers the connect. The two routes that write a file, the server save and the
+  preset switch, run under the longer `WRITE_TIMEOUT` ([below](#saving-the-server-file)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
@@ -258,20 +260,26 @@ The file is then read as the session's user, its text hashed with the run's secr
 with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
 the file still holds exactly the text read: a write that lands between the read and the write is
 refused by the manager, answered with the same 409, and nothing is written. The read, the write and
-the status that answers `running` are three calls of one connect. The reply is 200
+the status that answers `running` are three calls of one connect, and the whole save runs under the
+write's own limit: `WRITE_TIMEOUT`, 15 s (`lib.rs`), an estimate that a measured save's figure will
+replace. The reads of the router keep the 5 s `MANAGER_TIMEOUT`. The reply is 200
 `{"revision", "running"}`: the revision of the text the file holds now, and whether the instance's
 process runs (`active` or `activating`); a status read that fails after a write that succeeded
-answers `running: true`. The 503 and the 504 turn on one fact: while the write was never asked a
-time limit that runs out or a stream that dies is 503 `client-unavailable` and the file is what it
-was; from the moment the write was sent its outcome is unknown and the answer is 504
-`client-timeout`. A time limit does not stop the blocking task: the handler and that task share one
-atomic (Idle, Asked, Cancelled in `server.rs`) and settle that fact with a compare and exchange, so
-a task parked in the connect or the read finds the state Cancelled and never writes, and a handler
-that finds the state Asked answers 504.
+answers `running: true`. The 503, the 504 and the 200 of a call nobody waited for turn on one fact:
+while the write was never asked, a time limit that runs out or a stream that dies is 503
+`client-unavailable` and the file is what it was; from the moment the write was sent its outcome is
+unknown and the answer is 504 `client-timeout`; once the write landed the save is done, so a limit
+that runs out on the status read that follows is the save's 200 with `running` true, the safe answer
+for a state the bff cannot read: a 504 there tells the user to look at the server and decide
+whether the file is saved, when the bff knows it is. A time limit does not stop the blocking task:
+the handler and that task share one atomic (Idle, Asked, Done, Cancelled in `server.rs`) and settle
+that fact with a compare and exchange, so a task parked in the connect or the read finds the state
+Cancelled and never writes, a handler that finds the state Asked answers 504, and one that finds it
+Done answers the 200.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"revision", "running"}` | The file was written; `running` is whether the instance's process runs |
+| 200 | `{"revision", "running"}` | The file was written; `running` is whether the instance's process runs, and `true` when the status read failed, or the limit ran out after the write landed, that state being one the bff cannot read |
 | 400 | `{"key": "server-malformed", "args": []}` | Not JSON, another content type, `revision` missing or not text, a value of the wrong type; the manager is not connected to |
 | 401 | `{"key": "session-required", "args": []}` | No session; the manager is not connected to |
 | 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the connect, the read or the write as this user: the session ends, as the read's 403 (a status it refuses after the write is not a failure: 200, `running: true`) |
@@ -280,7 +288,7 @@ that finds the state Asked answers 504.
 | 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
 | 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
-| 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out, or a manager lost at the write |
+| 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
 
 ## The preset list and its switch
@@ -302,8 +310,8 @@ the `{id}` of the URL is a section name, matched in any letter case, never a pat
 
 ### The list
 
-One read of each file, and one row per section, `[{"id", "engine", "engineAvailable", "enabled",
-"model"}]`:
+One read of each file, and one row per section except llama-server's global `[*]`,
+`[{"id", "engine", "engineAvailable", "enabled", "model"}]`:
 
 - `id` as the file spells it; `engine` the engine whose preset file holds the section (`llama.cpp`,
   the only engine today) and `engineAvailable` true for every row, there being no engines route to
@@ -312,6 +320,9 @@ One read of each file, and one row per section, `[{"id", "engine", "engineAvaila
   check, `""` when the section has no such key: every row carries a string.
 - The order is the GUI's: the switched-on sections, then the switched-off ones, each group in file
   order; an id in both files is listed once, as on. The web UI does not sort.
+- llama-server's global `[*]` is not a preset, it is the defaults every preset starts from, so it is
+  never a row, in either file, and the sections beside it keep their place. The switch answers 404
+  for it ([below](#the-switch)).
 - A missing file is an empty group, not an error: no `presets.ini` answers `[]`.
 
 | Status | Body | When |
@@ -319,13 +330,16 @@ One read of each file, and one row per section, `[{"id", "engine", "engineAvaila
 | 200 | the rows, `[]` when there is no preset | the read answered |
 | 401 | `session-required` | no session, the manager not asked |
 | 403 | `session-not-administrator` | the manager refused the call for that user; the session ends |
-| 503 | `client-unavailable` | no manager, or one that outlives the bff's deadline |
+| 503 | `client-unavailable` | no manager, or one that outlives the bff's 5 s read deadline |
 | 502 | `client-other` | anything else, never the manager's detail |
 
 ### The switch
 
 The body is `{"enabled": true|false}`. Both files are read, the section is looked for in each, and
-if it is in neither the answer is 404. Otherwise it moves, unchanged:
+if it is in neither, or the name is llama-server's global `[*]`, the answer is 404
+`no-preset-named` and nothing is written. Otherwise the section moves, unchanged. Every manager call
+of the move, the two reads, the two writes, the read back and the states, runs under one bound, the
+write's 15 s `WRITE_TIMEOUT` ([above](#saving-the-server-file)), not the reads' 5 s:
 
 - **The file the preset lands in is written first**, because a preset in both files reads as
   enabled: switching off writes `presets.ini.disabled` and then `presets.ini`, switching on writes
@@ -338,7 +352,10 @@ if it is in neither the answer is 404. Otherwise it moves, unchanged:
   `the_disabled_header_is_the_configurators_one`). A new `presets.ini` needs no header.
 - An id already where it is asked for answers 200 and writes nothing.
 - The answer is not what the bff computed: after the writes, `presets.ini` is read again and
-  `enabled` is whether the section is in it.
+  `enabled` is whether the section is in it. Once both writes landed the move stands: a limit that
+  runs out on that read back, or on the states asked after it, and a read back that fails, answer the
+  switch's 200, `enabled` the value the move produced and `running` true. A finished move is not a
+  timeout.
 - `running` is whether any instance is `active` or `activating` (asked in the list's order, stopping
   at the first that is, and true when a state cannot be read: the safe answer after a move that
   stands). It is the page's "restart to apply" note: the switch starts, stops and restarts nothing.
@@ -355,33 +372,45 @@ written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"enabled", "running"}` | the move stands, or there was nothing to do |
+| 200 | `{"enabled", "running"}` | the move stands, or there was nothing to do, or the limit ran out on the read back and the states after both writes landed: `enabled` the value the move produced, `running` true |
 | 400 | `presets-malformed` | a body that is not `{"enabled": <bool>}`, or not JSON, the manager not asked |
 | 401 | `session-required` | no session, the manager not connected to |
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
-| 404 | `no-preset-named` | neither file has that section. `args: [id]` when the id is a name a preset can carry at all; `args: []` for one the id check refuses (a newline, a bracket, a path) and for a run of dots |
+| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`, not a preset, for which nothing is moved. `args: [id]` when the id is a name a preset can carry at all; `args: []` for one the id check refuses (a newline, a bracket, a path, the global `*`) and for a run of dots |
 | 409 | `preset-changed-elsewhere` | a compare and swap found its file changed, nothing moved. When it answers the second write the preset is in both files: it reads on, and the next switch of that preset mends it |
 | 413 | `payload-too-large` | a body over the bff's limit |
 | 422 | `{"key", "args", "field"}` | the manager refused the moved section, nothing written |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
-| 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were |
+| 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were, and one that runs out after both writes landed is the 200 above |
 | 502 | `client-other` | anything else, never the manager's detail |
 
 ### A preset in both files
 
 An id in both files is listed once, as on. Switching it off writes the disabled file (its section is
 already there, unchanged, which that file's check accepts) and takes it out of `presets.ini`: the
-state is mended. Switching it back on adds to `presets.ini` a section whose `*` id the preset-id
-check refuses: 422 `invalid-preset-id`, nothing written. Read from the code on 2026-11-17, not
-tested: `PLAN.md` 11b lists the missing tests, and the plain write that creates a new disabled file
-(racing a file that appeared in between) is its other leftover.
+state is mended. The global `*` is the one name that can never be in that state through these
+routes: it is not a preset, the list has no row for it in either file and the switch answers 404
+with nothing written, so only the configurator, which still lists `[*]` as a preset and switches it
+off (`PLAN.md` 11b), can put it in the disabled file, from which the preset-id check then refuses to
+move it back. Read from the code on 2026-11-17, not tested: `PLAN.md` 11b lists the missing tests,
+and the plain write that creates a new disabled file (racing a file that appeared in between) is its
+other leftover.
 
 ### What has run
 
-The bff's own tests only: `tests/presets.rs` and `tests/presets_switch.rs`, whose fake manager
-answers a compare and swap only when the expected text is what it answered for that file in that
+The bff's own tests only: `tests/presets.rs`, `tests/presets_switch.rs` and `tests/server.rs`, whose
+fake manager answers a compare and swap only when the expected text is what it answered for that file
+in that
 test, and records every write, so the order of the two writes and the text of each are pinned.
-Green 2026-11-17 (22 and 45 tests, `cargo test -p pai-bff`). **Nothing here has been called against
+Green 2026-11-17 at 594e15e, rerun the same day (23, 48 and 64 tests in the three suites,
+`cargo test -p pai-bff --test presets --test presets_switch --test server`). Among them: the list
+skipping `[*]` in both files
+(`the_global_section_is_not_a_preset`), the switch's 404 for it with nothing written
+(`switch_for_the_global_section_is_404_and_moves_nothing`), and the 200 for a move whose writes
+landed when the read back, or the states, run out. A read back that fails after a landed move, and
+the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read
+and 15 s of write, are pinned by `the_write_limit_outlasts_the_read_limit`
+(`src/tests/timeouts.rs`). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances`, [above](#running-it)), and on Windows the code is type-checked
 for the GNU target, never run.
