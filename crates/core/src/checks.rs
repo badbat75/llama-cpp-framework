@@ -706,6 +706,14 @@ fn startup_flagged(sections: &[RawSection]) -> usize {
     sections.iter().filter(|s| s.loads_on_startup()).count()
 }
 
+/// How many sections of `text` ask `load-on-startup`, counted as
+/// `startup_count` judges them. `text` is one instance's
+/// `presets@<id>.ini`: `ModelsMax` belongs to the instance, so the count is
+/// read here and the caller compares it with that instance's own.
+pub fn startup_loads(text: &str) -> usize {
+    startup_flagged(&raw_sections(text))
+}
+
 /// Check the text of a `server@<id>.ini`. `presets` is `presets.ini` as it
 /// is now (empty when there is none): its `load-on-startup` presets must fit
 /// the new `ModelsMax`.

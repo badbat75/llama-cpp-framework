@@ -977,8 +977,15 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     navigation: node > instances, each with Server and Presets tabs, then Models (the shared pool)
     under the node; `#/models` opens the pool as today (user, 2026-11-17, through the web UI session). Designed: `ARCHITECTURE.md` "Nodes and instances" (the pool is today's
     `presets.ini`, assignments in `assignments.ini`, the manager renders `presets@<id>.ini` per
-    instance), thirteen slices in its order, after the preset cards. Slice 1 (the render,
-    `pai-core` `assign.rs`) done 2026-11-17.
+    instance), thirteen slices in its order, after the preset cards. Slices 1 (the render,
+    `pai-core` `assign.rs`) and 2 (the manager renders and launches) done 2026-11-17. Left from 2, before
+    an install: the instance unit must not start before the manager has rendered on the first boot after
+    the upgrade (`llama.cpp@.service` has no ordering on the manager: add `After=private-ai-manager.service`
+    in slice 3, and check the Windows SCM start); `render_all` stops at the first failing instance and its
+    start-time result is discarded (keep going, report the failure); a server write re-renders every
+    instance (only the written one would do); missing tests: a render failing after the pool write, the
+    second instance over its max, the D-Bus and pipe `BadFileName` for `presets@<id>.ini`. Clients still
+    cannot write a `[*]` section (decided 2026-11-17); a hand-edited `[*]` is rendered.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances).

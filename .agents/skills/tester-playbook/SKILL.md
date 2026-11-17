@@ -16,6 +16,31 @@ Lessons only: the rules are in `AGENTS.md`.
   y.clone());`) and `move` them in; the originals stay for the asserts after it.
 - Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
   did not exist yet). Recheck such tests once the code exists.
+- The manager's and the core's e2e phases are ONE `#[test]` run in sequence (`src/tests/mod.rs`), so a red
+  stops the run at its FIRST panic: a phase added at the end of the list reports nothing. To show a later
+  phase's red, copy `tests/mod.rs` to the scratchpad, rewrite the body to call only that phase, run
+  `cargo test -p <crate> -- tests::data_root_e2e`, then `cp` the copy back (never `git checkout`) and
+  `grep -n` the registration to confirm the restore. A phase that redirects the data root runs alone.
+- A stub inserted with `edit` lands wherever the anchor matches: the same stub inserted twice (two anchors
+  both matching) is `E0592: duplicate definitions with name`. After inserting a stub, `grep -n "fn <name>"`
+  and read the count; a `pub fn` stub in a lib crate raises no dead-code red, so the compile is the only
+  sign.
+- The shape of a callee read from a summary is a guess: `assign::render(enabled, disabled,
+  assignment: Option<&str>) -> String` (not `&str`) and `ini::text::section_text -> Option<String>`, so the
+  expected render is `render(pool, off, section_text(a, id).as_deref())` (the temporary lives to the end of
+  the statement, so it is fine inside the `assert_eq!`) compared against `read(name)` as an `Option<String>`,
+  not `.as_deref()`. A method's arity is pinned by a source-lint test in the same file
+  (`write_file_if(who, name, contents, expected)`, no key flag): read that test, not the doc comment.
+- The manager's render (slice: per-instance `presets@<id>.ini`): a successful write of `server@<id>.ini`
+  or of a pool file renders it, so an exhaustive listing after a server-file write includes the render;
+  the render text is `assign::render(pool, disabled, section)`, never the pool text (it opens with the
+  generated header). A client write of `presets.ini` with a `[*]` section is refused `invalid-preset-id`
+  `["*"]` (an existing check): a fixture carries the global section only by `std::fs::write` (a hand
+  edit), then a legal pool-file write (e.g. `presets.ini.disabled`) re-renders it in. `* = inherit` on
+  one section assigns EVERY pool preset to it, so a "preset X is the sibling's alone" pin is
+  impossible under it: give the two assignment sections explicit distinct keys (`a = inherit`,
+  `b = inherit`). A phase that writes into `engine_config_dir` after the redirect must
+  `create_dir_all(&sys)` itself: only the CAS phase's `root(&files)` helper does it.
 - A per-line exemption in a section checked by a whole-section rule: the rule runs line by line in code
   order, so a "this line is refused" pin is red today at the refusal key of an EARLIER line the
   exemption will later skip. Assert the expected refusal key, never `is_err()`, and report that red as
@@ -1606,6 +1631,25 @@ Lessons only: the rules are in `AGENTS.md`.
   carry the row's keys (`{ embeddings: 'true', pooling: 'mean' }`).
 - `getByRole('button')` returns `HTMLElement`, so `.disabled` is TS2339 in `npm --prefix fe run typecheck`
   and passes the Vitest run: Vitest never type-checks. Cast `as HTMLButtonElement` at the query.
+- `src/test/presetCards.ts` is the one table behind every whole-page expectation of the preset page
+  (headings, About toggles, tab path). Extending it for a newly editable card turns the older whole-page
+  tests red BY DESIGN (`PresetCards1..5` 2e.91, `PresetContent` 2d.71 and 2d.78, all tab paths): list
+  those in the report as the reds the coder's change greens, and never edit them in the red step. A
+  checkbox's tab stop is named by its TOGGLE text (`<key>-toggle`), not by the field's label, so the
+  table needs a label to toggle mapping; a boxed number adds a stop for its `field-default` box as well.
+- What a text field renders depends on `editable`: read-only is a `<label>` + input (`div.field`, NO
+  `role="group"`), an editable field with a default box is a `<fieldset>` (`role="group"` named by the
+  label). So a "no group named by the label, the textbox carries the name" pin is GREEN on a read-only
+  card and RED on an editable one: pin it in the file whose field is already editable (Chat kwargs) to
+  carry the red, and repeat it as a guard on the new card's field, reporting which is which.
+- `npx vitest run` prints one `FAIL` line per failing test, so `grep -E "^ FAIL" | sed 's/ >.*//' |
+  sort | uniq -c` counts per file and finds an extra flake in a full-suite run (one run showed 27 failed
+  against the stable 26, all listed names identical). Run the slice's two files first (seconds), the full
+  suite once for the counts: the full run is minutes.
+- Run `npx prettier --write <touched files>` BEFORE the final test run: prettier rewrites long
+  `test('<criterion>: ...')` titles into several lines, and a run before that reformats looks like a
+  changed test set. Prettier, ESLint and `tsc -b` stay silent on a pass, so quote the command line, not
+  an output line.
 
 ## Windows service glue (the manager, cfg(windows) entry)
 

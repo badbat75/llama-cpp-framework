@@ -318,6 +318,15 @@ pub fn config_file(name: &str) -> Option<ConfigFile> {
     }
 }
 
+/// `assignments.ini`: which presets each instance is given. The manager owns
+/// it, so a client reads it and never writes it.
+pub const ASSIGNMENTS_FILE: &str = "assignments.ini";
+
+/// The `models_max` of the pool checks: the `load-on-startup` count is judged
+/// per instance, against that instance's own `ModelsMax` and its own render,
+/// so the pool has no cap of its own.
+const NO_MODELS_MAX: Option<i32> = Some(i32::MAX);
+
 /// The group an instance file belongs to on Unix: the instances run as it
 /// (the sysusers.d entry of the Linux package), so they read their file
 /// while other users do not.
@@ -597,7 +606,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// The contents of file `name`, None when it does not exist. An instance
     /// file needs the control authorization: no requester (a transport with
     /// no identity for the call) or a refused one is NotAuthorized, nothing
-    /// read; the preset files need none. A reader of an instance file who
+    /// read; the preset files and [`ASSIGNMENTS_FILE`] need none, and their
+    /// text is read whole. A reader of an instance file who
     /// may not configure (asked without a prompt) gets `OpencodeApiKey`
     /// blanked ([`withhold_api_key`]). A request naming a principal is gated
     /// on that principal alone, whatever the file, and its read is never
@@ -614,9 +624,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if let Some(who) = &who {
                 self.gate_principal(who)?;
             }
-            let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+            // [`ASSIGNMENTS_FILE`] is served for reading only: it is not a
+            // `ConfigFile`, so the gate below never sees it and the write
+            // gate refuses it by name.
+            if config_file(name).is_none() && name != ASSIGNMENTS_FILE {
+                return Err(ManagerError::BadFileName);
+            }
             let mut may_configure = true;
-            if let ConfigFile::Instance(_) = file {
+            if let Some(ConfigFile::Instance(_)) = config_file(name) {
                 match &who {
                     // Gated above: polkit is asked for neither action, and a
                     // member of `pai` may configure, so nothing is withheld.
@@ -745,9 +760,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// The checks `contents` must pass for `file`, and the atomic write of it:
     /// [`check_contents`], the address check of an instance file, then the
-    /// write, creating the directory. Taken under the `writing` lock, by the
-    /// body of [`Self::write_guarded`], so the compare of a compare-and-swap
-    /// and the write it authorizes are one atomic step.
+    /// write, creating the directory, then the render of every instance from
+    /// what is on disk now. Taken under the `writing` lock, by the body of
+    /// [`Self::write_guarded`], so the compare of a compare-and-swap, the write
+    /// it authorizes and the renders it causes are one atomic step.
     fn check_and_write(
         &self,
         file: &ConfigFile,
@@ -761,7 +777,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let dir = crate::paths::engine_config_dir();
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         std::fs::create_dir_all(&dir).map_err(io)?;
-        write_served_file(&dir.join(name), file, contents, &*self.group).map_err(io)
+        write_served_file(&dir.join(name), file, contents, &*self.group).map_err(io)?;
+        self.render_all_locked()
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
@@ -791,6 +808,36 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let answer = run();
         self.record_action("set_boot_enabled", id, Some(&who), &answer);
         answer
+    }
+
+    /// Writes the render `presets@<id>.ini` of every instance from the pool,
+    /// the switched-off pool and `assignments.ini`. The manager calls it at
+    /// its start and after every write of a pool file.
+    pub fn render_all(&self) -> Result<(), ManagerError> {
+        // The same lock a write holds, so a render never mixes with a write.
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        self.render_all_locked()
+    }
+
+    /// The render of every instance, taken under the `writing` lock by
+    /// [`Self::render_all`] and by a write: a render is the pool as it is on
+    /// disk, so it belongs with the write that changed it.
+    fn render_all_locked(&self) -> Result<(), ManagerError> {
+        let dir = crate::paths::engine_config_dir();
+        let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+        let (enabled, disabled) = (on_disk("presets.ini"), on_disk("presets.ini.disabled"));
+        let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        for id in crate::paths::instance_ids() {
+            let path = match crate::paths::instance_presets(&id) {
+                Some(path) => path,
+                None => continue,
+            };
+            // A render holds preset text alone, so it carries the preset
+            // file's mode and needs no group of its own.
+            let text = render_of(&id, &enabled, &disabled);
+            write_served_file(&path, &ConfigFile::Presets, &text, &*self.group).map_err(io)?;
+        }
+        Ok(())
     }
 
     /// Whether `password` is `user`'s, and whether that user may configure:
@@ -936,36 +983,89 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 }
 
 /// The content checks of `file` for `contents`, against the files on disk:
-/// an instance file against `presets.ini`, `presets.ini` against every
-/// instance's `ModelsMax` (each serves it: the lowest decides) and the
-/// disabled presets, the disabled presets against both preset files.
+/// the instance file against the Server rules and its own render, `presets.ini`
+/// and `presets.ini.disabled` against the other preset file and every
+/// instance's render. A render is the pool cut by the instance's section of
+/// `assignments.ini`, so the `load-on-startup` count is judged per instance,
+/// against that instance's `ModelsMax`. A refusal writes nothing.
 fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
     let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+    // The pool the renders are made of once this write lands.
+    let enabled = match file {
+        ConfigFile::Presets => contents.to_string(),
+        _ => on_disk("presets.ini"),
+    };
+    let disabled = match file {
+        ConfigFile::PresetsDisabled => contents.to_string(),
+        _ => on_disk("presets.ini.disabled"),
+    };
     match file {
-        ConfigFile::Instance(_) => checks::server_file(contents, &on_disk("presets.ini")),
+        ConfigFile::Instance(id) => {
+            // The Server rules alone: no pool caps them any more, the
+            // instance's render does, against the `ModelsMax` of this text.
+            checks::server_file(contents, "")?;
+            let models_max = crate::server_cfg::from_text(contents).models_max;
+            check_render(id, &enabled, &disabled, models_max)
+        }
         ConfigFile::Presets => {
-            let models_max = crate::paths::instance_ids()
-                .iter()
-                .filter_map(|id| crate::paths::instance_ini(id))
-                .map(|path| {
-                    crate::server_cfg::load_from(&path)
-                        .models_max
-                        .unwrap_or(checks::LLAMA_MODELS_MAX_DEFAULT)
-                })
-                .min();
-            let old = on_disk("presets.ini");
-            let disabled = on_disk("presets.ini.disabled");
-            checks::presets_file(contents, &old, &disabled, models_max)?;
-            checks::preset_ids_free(contents, &old, &disabled)
+            let (old, off) = (on_disk("presets.ini"), on_disk("presets.ini.disabled"));
+            checks::presets_file(contents, &old, &off, NO_MODELS_MAX)?;
+            checks::preset_ids_free(contents, &old, &off)?;
+            check_renders(&enabled, &disabled)
         }
         ConfigFile::PresetsDisabled => {
-            let (old, enabled) = (on_disk("presets.ini.disabled"), on_disk("presets.ini"));
-            checks::presets_disabled_file(contents, &old, &enabled)?;
-            checks::preset_ids_free(contents, &old, &enabled)
+            let (old, enabled_file) = (on_disk("presets.ini.disabled"), on_disk("presets.ini"));
+            checks::presets_disabled_file(contents, &old, &enabled_file)?;
+            checks::preset_ids_free(contents, &old, &enabled_file)?;
+            check_renders(&enabled, &disabled)
         }
     }
+}
+
+/// The text of instance `id`'s render `presets@<id>.ini`, from the pool pair
+/// and the `assignments.ini` on disk: what the checks judge and what
+/// [`Manager::render_all`] writes.
+fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
+    let assignment =
+        std::fs::read_to_string(crate::paths::engine_config_dir().join(ASSIGNMENTS_FILE))
+            .ok()
+            .and_then(|text| pai_core::ini::text::section_text(&text, id));
+    pai_core::assign::render(enabled, disabled, assignment.as_deref())
+}
+
+/// The `load-on-startup` of instance `id`'s render against `models_max`, that
+/// instance's own. The refusal names the instance, last.
+fn check_render(
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    models_max: Option<i32>,
+) -> Result<(), pai_core::checks::Refusal> {
+    let count = pai_core::checks::startup_loads(&render_of(id, enabled, disabled));
+    pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
+        refusal.values.push(id.to_string());
+        refusal
+    })
+}
+
+/// Every instance's render against its own `ModelsMax`, in id order: the
+/// first render over its max refuses.
+fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::Refusal> {
+    for id in crate::paths::instance_ids() {
+        let path = match crate::paths::instance_ini(&id) {
+            Some(path) => path,
+            None => continue,
+        };
+        check_render(
+            &id,
+            enabled,
+            disabled,
+            crate::server_cfg::load_from(&path).models_max,
+        )?;
+    }
+    Ok(())
 }
 
 /// `id` if it is a valid instance id.
@@ -995,9 +1095,12 @@ fn principal_name_is_well_formed(name: &str) -> bool {
     !name.is_empty() && name.len() <= MAX_PRINCIPAL_BYTES && !name.chars().any(char::is_control)
 }
 
-/// The path of served file `name` in the engine's config directory.
+/// The path of served file `name` in the engine's config directory: a
+/// `ConfigFile` and [`ASSIGNMENTS_FILE`], nothing else.
 fn file_path(name: &str) -> Result<std::path::PathBuf, ManagerError> {
-    config_file(name).ok_or(ManagerError::BadFileName)?;
+    if config_file(name).is_none() && name != ASSIGNMENTS_FILE {
+        return Err(ManagerError::BadFileName);
+    }
     Ok(crate::paths::engine_config_dir().join(name))
 }
 
@@ -1599,6 +1702,8 @@ pub(crate) fn manager_e2e() {
             "server@default.ini.tmp".into(),
             "server@default".into(),
             "presets.ini.bak".into(),
+            "presets@a.ini".into(),
+            "presets@default.ini".into(),
             "sub/presets.ini".into(),
             "".into(),
             sys.join("presets.ini").to_string_lossy().into_owned(),
@@ -1732,7 +1837,12 @@ pub(crate) fn manager_e2e() {
         );
         assert_eq!(
             files_in(&sys),
-            set(&["server@default.ini", "presets.ini", "presets.ini.disabled"]),
+            set(&[
+                "server@default.ini",
+                "presets.ini",
+                "presets.ini.disabled",
+                "presets@default.ini"
+            ]),
             "exactly the files written, no temp file left"
         );
         // A new instance file is how an instance is added.
@@ -3292,7 +3402,7 @@ pub(crate) fn manager_checks_e2e() {
         assert_eq!(read("presets.ini").as_deref(), Some(presets), "old kept");
         assert_eq!(
             listing(),
-            ["presets.ini", "server@default.ini"],
+            ["presets.ini", "presets@default.ini", "server@default.ini"],
             "no temp file left"
         );
         assert!(
@@ -3304,12 +3414,26 @@ pub(crate) fn manager_checks_e2e() {
     // ── load-on-startup against the instances' ModelsMax ─────────────────
     {
         let m = manager(true);
+        // The assignments decide what each render loads, so they decide what
+        // each ModelsMax has to hold. The manager writes the file in a later
+        // step; the fixtures write it by hand.
+        let a_none = "[default]\n* = inherit\n\n[lan-2]\n";
+        let a_lan = "[default]\n* = inherit\n\n[lan-2]\na = inherit\n";
+        let a_split = "[default]\nb = inherit\n\n[lan-2]\n* = inherit\n";
+        std::fs::write(sys.join("assignments.ini"), a_none).expect("assignments.ini");
         // default's ModelsMax is 2.
         assert_eq!(
             m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
-            invalid("load-on-startup-over-max", &["3", "2"])
+            invalid("load-on-startup-over-max", &["3", "2", "default"]),
+            "the refusal names the instance whose render is over its max"
         );
         assert_eq!(read("presets.ini").as_deref(), Some(presets));
+        assert_eq!(
+            read("presets@default.ini"),
+            Some(pai_core::assign::render(presets, "", None)),
+            "a refused write leaves the render as it was: it opens with the \
+             generated header, so it is the pool rendered, never the pool text"
+        );
         assert_eq!(
             m.write_file(&alice, "presets.ini", &flagged(&["a", "b"]), false),
             Ok(())
@@ -3322,10 +3446,12 @@ pub(crate) fn manager_checks_e2e() {
                 "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
                 false
             ),
-            invalid("load-on-startup-over-max", &["2", "1"])
+            invalid("load-on-startup-over-max", &["2", "1", "default"])
         );
         assert_eq!(read("server@default.ini").as_deref(), Some(default_ini));
-        // So is a new instance that could not start with them.
+        // So is a new instance that could not start with what its own render
+        // loads: lan-2 inherits a preset and has no room for it.
+        std::fs::write(sys.join("assignments.ini"), a_lan).expect("assignments.ini");
         assert_eq!(
             m.write_file(
                 &alice,
@@ -3333,10 +3459,14 @@ pub(crate) fn manager_checks_e2e() {
                 "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 0\n",
                 false
             ),
-            invalid("load-on-startup-unlimited", &["2"])
+            invalid("load-on-startup-unlimited", &["1", "lan-2"]),
+            "the refusal names the instance whose render loads a preset with no ModelsMax"
         );
         assert!(read("server@lan-2.ini").is_none(), "not written");
-        // Every instance serves presets.ini: the lowest ModelsMax decides.
+        // The cross-instance minimum is gone: each instance is checked
+        // against its own render. default is told one preset, lan-2 all
+        // three, and lan-2's own max of 3 holds them.
+        std::fs::write(sys.join("assignments.ini"), a_split).expect("assignments.ini");
         assert_eq!(
             m.write_file(
                 &alice,
@@ -3348,9 +3478,39 @@ pub(crate) fn manager_checks_e2e() {
         );
         assert_eq!(
             m.write_file(&alice, "presets.ini", &flagged(&["a", "b", "c"]), false),
-            invalid("load-on-startup-over-max", &["3", "2"])
+            Ok(()),
+            "the pool has three presets and no instance is over its own max"
         );
-        assert_eq!(read("presets.ini"), Some(flagged(&["a", "b"])));
+        assert_eq!(
+            read("presets@default.ini"),
+            Some(pai_core::assign::render(
+                &flagged(&["a", "b", "c"]),
+                "",
+                pai_core::ini::text::section_text(a_split, "default").as_deref(),
+            )),
+            "default's render holds the one preset it is told"
+        );
+        assert_eq!(
+            read("presets@lan-2.ini"),
+            Some(pai_core::assign::render(
+                &flagged(&["a", "b", "c"]),
+                "",
+                pai_core::ini::text::section_text(a_split, "lan-2").as_deref(),
+            )),
+            "lan-2's render holds every preset of the pool"
+        );
+        assert_eq!(
+            listing(),
+            [
+                "assignments.ini",
+                "presets.ini",
+                "presets@default.ini",
+                "presets@lan-2.ini",
+                "server@default.ini",
+                "server@lan-2.ini"
+            ],
+            "one render per instance, beside the pool"
+        );
     }
 
     // ── A broken section already on disk blocks no other write ───────────
@@ -3519,6 +3679,247 @@ pub(crate) fn manager_checks_e2e() {
             "old kept"
         );
     }
+}
+
+/// The presets render of every instance: `assignments.ini` is read through
+/// the file interface and never written by the client; the creation of an
+/// instance and every write of a pool file write `presets@<id>.ini`, which
+/// holds the pool sections that instance's section of the assignments
+/// selects, plus the global `[*]` section for every instance.
+#[cfg(test)]
+pub(crate) fn manager_assignments_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+    use pai_core::assign::render;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let alice = Caller(":1.42".into());
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(crate::manager::service::fakes::FakeGroup::new());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    // The two sections really differ, and no `*` sits on `[default]`: it
+    // would assign every preset of the pool to default, leaving nothing to
+    // tell the two renders apart. default is told `a`, lan-2 is told `b`.
+    let assignments = "[default]\na = inherit\n\n[lan-2]\nb = inherit\n";
+    let section = |id: &str| -> String {
+        pai_core::ini::text::section_text(assignments, id).unwrap_or_default()
+    };
+    let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n";
+    // The global `[*]` section reaches the pool only as a hand edit: a
+    // client write of it is refused, `*` is not a preset id.
+    let global = "[*]\ntemp = 0.7\n\n";
+    let pool =
+        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n";
+    let off = "[z]\nmodel = /models/z.gguf\n";
+
+    // ── assignments.ini: the client reads it, and never writes it ────────
+    assert_eq!(
+        m.read_file(Some(&alice), "assignments.ini"),
+        Ok(None),
+        "no assignments.ini is nothing to read"
+    );
+    std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
+    assert_eq!(
+        m.read_file(Some(&alice), "assignments.ini"),
+        Ok(Some(plain(assignments))),
+        "the assignments are read as they stand"
+    );
+    assert_eq!(
+        m.write_file(&alice, "assignments.ini", "[default]\n* = off\n", false),
+        Err(ManagerError::BadFileName),
+        "the client does not write the assignments"
+    );
+    assert_eq!(
+        m.write_file_if(&alice, "assignments.ini", "[default]\n* = off\n", ""),
+        Err(ManagerError::BadFileName),
+        "not even a compare-and-swap"
+    );
+    assert_eq!(
+        read("assignments.ini").as_deref(),
+        Some(assignments),
+        "a refused write leaves the assignments as they were"
+    );
+
+    // ── The render of an instance is its section of the assignments ──────
+    // The pool stands first, so the renders of the created instances hold
+    // presets: default is told `a`, lan-2 is told `b`.
+    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    assert_eq!(
+        m.write_file(&alice, "server@default.ini", default_ini, false),
+        Ok(())
+    );
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(pool, "", Some(section("default").as_str()))),
+        "default's render on the instance's creation"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@lan-2.ini",
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 3\n",
+            false
+        ),
+        Ok(())
+    );
+    let lan2 = read("presets@lan-2.ini").expect("lan-2's render");
+    assert_eq!(
+        lan2,
+        render(pool, "", Some(section("lan-2").as_str())),
+        "lan-2's render is its own section"
+    );
+    assert!(
+        lan2.contains("[b]") && !read("presets@default.ini").unwrap().contains("[b]"),
+        "the two renders differ: b is lan-2's alone"
+    );
+    assert!(
+        read("presets@default.ini").unwrap().contains("[a]") && !lan2.contains("[a]"),
+        "and a is default's alone"
+    );
+    // An instance with no section gets the global section alone; the pool
+    // has none until the hand edit below, so this render carries no preset.
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@lan-3.ini",
+            "[Server]\nPort = 8083\nHostname = 127.0.0.1\n",
+            false
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(pool, "", None)),
+        "no section: no preset of the pool"
+    );
+    assert_eq!(
+        listing(),
+        [
+            "assignments.ini",
+            "presets.ini",
+            "presets@default.ini",
+            "presets@lan-2.ini",
+            "presets@lan-3.ini",
+            "server@default.ini",
+            "server@lan-2.ini",
+            "server@lan-3.ini",
+        ],
+        "one render per instance, and nothing else"
+    );
+
+    // ── Every write of a pool file re-renders every instance ─────────────
+    // A client write of the global `[*]` section is refused: `*` is not a
+    // preset id. It arrives as a hand edit, and the next render takes it
+    // from the file on disk.
+    let on_disk = format!("{global}{pool}");
+    assert!(
+        matches!(
+            m.write_file(&alice, "presets.ini", &on_disk, false),
+            Err(ManagerError::Invalid(r)) if r.key == "invalid-preset-id" && r.values == ["*"]
+        ),
+        "the client cannot write the global section"
+    );
+    assert_eq!(
+        read("presets.ini").as_deref(),
+        Some(pool),
+        "the refused write changed nothing"
+    );
+    std::fs::write(sys.join("presets.ini"), &on_disk).expect("hand-edited pool");
+    assert_eq!(
+        m.write_file(&alice, "presets.ini.disabled", off, false),
+        Ok(())
+    );
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(&on_disk, off, Some(section("default").as_str()))),
+        "the render takes the global section from the pool file on disk"
+    );
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(&on_disk, off, None)),
+        "the global section reaches every instance: lan-3 is the global section alone"
+    );
+    assert_eq!(m.write_file(&alice, "presets.ini", pool, false), Ok(()));
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(pool, off, Some(section("default").as_str()))),
+        "default keeps a alone: the pool's other presets are not its rows"
+    );
+    assert_eq!(
+        read("presets@lan-2.ini"),
+        Some(render(pool, off, Some(section("lan-2").as_str()))),
+        "lan-2 keeps b alone"
+    );
+    assert_eq!(
+        read("presets@lan-3.ini"),
+        Some(render(pool, off, None)),
+        "the client's write replaced the hand-edited global section"
+    );
+    let added = format!("{pool}\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n");
+    assert_eq!(m.write_file(&alice, "presets.ini", &added, false), Ok(()));
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(&added, off, Some(section("default").as_str()))),
+        "the second write of the pool re-renders"
+    );
+
+    // ── A refused write changes no render ────────────────────────────────
+    let broken = format!("{added}\n[bad]\nmodel = /models/bad.gguf\nctx-size = abc\n");
+    let answer = m.write_file(&alice, "presets.ini", &broken, false);
+    assert!(
+        matches!(answer, Err(ManagerError::Invalid(_))),
+        "a pool with a broken section is refused: {answer:?}"
+    );
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(&added, off, Some(section("default").as_str()))),
+        "a refused write leaves every render as it was"
+    );
+    assert_eq!(
+        listing(),
+        [
+            "assignments.ini",
+            "presets.ini",
+            "presets.ini.disabled",
+            "presets@default.ini",
+            "presets@lan-2.ini",
+            "presets@lan-3.ini",
+            "server@default.ini",
+            "server@lan-2.ini",
+            "server@lan-3.ini",
+        ],
+        "a render of an id is never a temp file left behind"
+    );
+
+    // ── The manager's start writes the render of every instance ──────────
+    // Last: the stub panics until the coder lands.
+    assert_eq!(
+        m.render_all(),
+        Ok(()),
+        "the renders are rewritten from what is on disk"
+    );
+    assert_eq!(
+        read("presets@default.ini"),
+        Some(render(&added, off, Some(section("default").as_str()))),
+        "the start render agrees with the last write"
+    );
 }
 
 /// E2E phase for acting for a signed-in user in the core: a trusted caller
@@ -4590,8 +4991,9 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["presets.ini", "server@default.ini"],
-            "exactly the files written, no temp file left"
+            ["presets.ini", "presets@default.ini", "server@default.ini"],
+            "exactly the files written (the server write renders the instance's \
+             presets file), no temp file left"
         );
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -4953,7 +5355,11 @@ pub(crate) fn manager_write_file_if_e2e() {
             moved,
             "the first write is what stands on disk"
         );
-        assert_eq!(listing(&sys), ["server@slow.ini"], "no temp file left");
+        assert_eq!(
+            listing(&sys),
+            ["presets@slow.ini", "server@slow.ini"],
+            "no temp file left; the landed write renders the instance's presets file"
+        );
     }
 }
 

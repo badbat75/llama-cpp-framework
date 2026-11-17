@@ -564,6 +564,10 @@ pub fn serve() -> zbus::Result<Connection> {
             std::io::stderr(),
         )))),
     );
+    // The instances read `presets@<id>.ini`, so the pool on disk is rendered
+    // before anyone can ask for it. A render that fails leaves the files as
+    // they are: the next write of a pool file renders again.
+    let _ = core.render_all();
     zbus::blocking::connection::Builder::system()?
         .serve_at(OBJECT_PATH, ManagerInterface::new(core))?
         .name(BUS_NAME)?

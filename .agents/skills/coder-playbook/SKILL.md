@@ -1063,3 +1063,49 @@ Lessons only: the rules are in `AGENTS.md`.
 - rustfmt breaks a one-line `let x = if c { a } else { b };` when the if-else text is over 50 chars
   (`single_line_if_else_max_width`, the default): write the multi-line form. Shortening the test with
   `s == ""` is `clippy::is_empty`, which `-D warnings` refuses.
+- Running a web UI test as `npx vitest run fe/src/<File>.test.tsx` from the repo root uses NO config
+  (no `fe/vite.config.ts`, so no jsdom): every test of a DOM file fails at 0 ms with
+  `ReferenceError: window is not defined` and an `afterEach` `dialogs.restore()` on undefined, which
+  reads as a total code break. The one path is `npm --prefix fe test -- src/<File>.test.tsx`.
+- Web UI checkbox row made editable: the draft holds the box state as the strings `"true"`/`"false"`
+  (what `checkboxState` returns), so the send rule is DATA on the row, required beside `absent`
+  (`onSend`/`offSend`: `fit` `"on"`/`"off"`, the flags `"true"`/`"false"`, a key whose engine default
+  is on `null`/`"false"`), and `changed()` loops `checkboxRows()` like `selectRows()`. An editable box
+  takes `disabled={!editable}`, writes the string on click, and needs the editable branch of
+  `editableWritten` (widen it to `SelectRow | CheckboxRow`: a row whose loaded value is not the box's
+  own reading, like `jinja` `0`, spells the written-as line).
+- Web UI select made editable: `readAs('flag', ..)` answers `on` for ANY value outside FALSEY, so
+  `selectState` must take the loaded value when it is one of the row's OWN options first, else a
+  tri-state row's `default` reads as `on` and picking `default` is no change, so no PUT at all. A row
+  that sends its own state (no `absent`) is one optional `ownValue?: true` on the row and one `..` arm
+  in the renderer; a branch on `row.reading === 'flag'` inside `selectSend` is the shape that made
+  `reasoning off` send `null` once the card grew an `auto` option.
+- Web UI: an editable text field with no default box is a plain labelled `LabelField` (the Server page
+  2g.146, the Chat kwargs alike), NOT a `role="group"` named by the label, and `TextField`'s `group`
+  prop is dead once its read-only-only caller is gone. So a test that names a group with its label
+  passes only while the field is read-only: read the brief's wording ("a plain labelled input")
+  before building a group.
+- Web UI: a test that saves a checkbox to `"false"` and then expects checking it again to be clean
+  contradicts its own last section, which pins criterion 133 (a loaded `false` checked sends `null`):
+  138's apply-after-save (`applied()` in `PresetPage.tsx`) makes the sent `"false"` the loaded value,
+  so checking IS a change. PresetCards3's 133 test pins the same round trip as TWO PUTs. Report it.
+- A render the manager writes beside a served file (the `presets@<id>.ini` of a server or pool write)
+  shows in EVERY listing assertion of the manager's phases: survey all of them (`listing(`, `files_in(`,
+  `names()`) before driving `data_root_e2e`, whose ~30 phases run in ONE `#[test]` and show one red at
+  a time. The easy to miss: a phase that lists only the file it wrote (`["server@slow.ini"]` of the
+  writing-lock phase), and one that lists the pair `["presets.ini", "server@default.ini"]`.
+- A tester fixture that puts a served file in place with `std::fs::write` needs
+  `create_dir_all(paths::engine_config_dir())` first: `redirect_for_tests` creates no directory, so the
+  write answers `Os { code: 2, kind: NotFound }` and the whole `data_root_e2e` dies at phase 1.
+- `checks::preset_sections` runs `preset_id` on every CHANGED section, so a pool `presets.ini` holding
+  the global `[*]` section is refused (`invalid-preset-id`, `["*"]`) while `assign::render` treats that
+  very section as the global one it always copies first: a gap in the design, not a coder fix. Never add
+  the `*` exemption alone: the GUI and `pai` would then accept a preset named `*`, and llama.cpp
+  cascades the global section onto EVERY preset (`common/preset.cpp` `cascade`, `docs/preset.md`), so
+  `load-on-startup = true` there loads every model, and a render count that counts `[*]` as one section
+  under-counts. Take the ruling from the architect.
+- Prove a hypothesis where no one's tests live: patch the production file in the `/tmp/opencode/<x>`
+  copy and run there. When the whole `data_root_e2e` goes green with that one line, that is the
+  evidence the coordinator needs, and the real tree is left exactly as the tests describe.
+- A tester's `for who in [&alice]` is `clippy::single_element_loop` under `--all-targets`: report it,
+  and show the production code is clean with plain `cargo clippy -p <crate> -- -D warnings`.

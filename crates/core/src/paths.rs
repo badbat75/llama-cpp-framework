@@ -256,6 +256,13 @@ pub fn instance_ini(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| engine_config_dir().join(format!("server@{id}.ini")))
 }
 
+/// `presets@<id>.ini` in `engine_config_dir()`, the presets the instance `id`
+/// reads: the pool cut by the instance's section of `assignments.ini`. The
+/// manager writes it, the instance's launch reads it. None for an invalid id.
+pub fn instance_presets(id: &str) -> Option<PathBuf> {
+    valid_instance_id(id).then(|| engine_config_dir().join(format!("presets@{id}.ini")))
+}
+
 /// The ids of the regular files `server@<valid id>.ini` in
 /// `engine_config_dir()`, sorted; empty when the directory is missing, which
 /// this never creates.

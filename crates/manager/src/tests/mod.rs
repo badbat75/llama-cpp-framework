@@ -38,6 +38,9 @@ fn data_root_e2e() {
     // ── Manager core: the content checks before a write ─────────────────
     crate::manager::service::manager_checks_e2e();
 
+    // ── Manager core: the per-instance presets renders and assignments.ini ─
+    crate::manager::service::manager_assignments_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]

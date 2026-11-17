@@ -6,9 +6,11 @@
 //! HIP devices vanish without it). Process control and the log stay in the
 //! configurator (`runstate.rs`).
 
-/// `true` if the presets file at `path` has at least one section.
+/// `true` if the presets file at `path` has at least one preset section. The
+/// render's global `[*]` holds defaults for every preset, not a preset of its
+/// own, so a file with only that section loads nothing.
 pub fn has_presets_in(path: &std::path::Path) -> bool {
-    !crate::ini::read_all(path).is_empty()
+    crate::ini::read_all(path).iter().any(|s| s.id != "*")
 }
 
 // ── Launch argument assembly (server_args) ───────────────────────────────
@@ -202,7 +204,8 @@ pub enum LaunchError {
     InvalidId,
     /// No `server@<id>.ini` at this path.
     NoConfig(std::path::PathBuf),
-    /// The system `presets.ini` has no section (`start()`'s `has_presets`).
+    /// The instance's `presets@<id>.ini` has no preset section
+    /// (`start()`'s `has_presets`).
     NoPresets,
     /// SaveStateOnShutdown is on and this slot-state directory could not be
     /// created, for this reason.
@@ -210,8 +213,9 @@ pub enum LaunchError {
 }
 
 /// The llama-server launch of instance `id`: `exe` with `server_args()` of
-/// `server@<id>.ini`, the cwd and env `start()` sets. No log, no rotation:
-/// the service manager captures the output.
+/// `server@<id>.ini` and the presets render `presets@<id>.ini`, the cwd and
+/// env `start()` sets. No log, no rotation: the service manager captures the
+/// output.
 pub fn instance_command(
     id: &str,
     exe: &std::path::Path,
@@ -220,7 +224,7 @@ pub fn instance_command(
     if !ini.is_file() {
         return Err(LaunchError::NoConfig(ini));
     }
-    let presets_path = crate::paths::engine_config_dir().join("presets.ini");
+    let presets_path = crate::paths::instance_presets(id).ok_or(LaunchError::InvalidId)?;
     if !has_presets_in(&presets_path) {
         return Err(LaunchError::NoPresets);
     }
@@ -375,24 +379,30 @@ pub(crate) fn instance_launch_e2e() {
     );
 
     // ── Refused for want of presets, as start() refuses (`has_presets`) ──
-    // The instance file exists from here on; the presets are the system
-    // directory's `presets.ini`, and llama-server reads only that file.
+    // The instance file exists from here on; the instance reads the render
+    // of its id (presets@default.ini), never the pool.
     std::fs::write(sys.join("server@default.ini"), "[Server]\nPort = 8081\n")
         .expect("server@default.ini");
     // The per-user presets.ini has a section: it must not count.
     let user_presets = crate::paths::presets_ini();
     std::fs::write(&user_presets, "[user-model]\nmodel = /m/user.gguf\n").expect("user presets");
     let sys_presets = sys.join("presets.ini");
+    let render = sys.join("presets@default.ini");
+    std::fs::write(
+        &sys_presets,
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    )
+    .expect("pool");
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoPresets),
-        "no presets.ini in the engine's directory (the framework's does not count)"
+        "the pool has presets, the render of the instance does not exist (the framework's directory does not count)"
     );
-    std::fs::write(&sys_presets, "; no model yet\n\n").expect("empty presets");
+    std::fs::write(&render, "[*]\ntemp = 0.7\n").expect("render");
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoPresets),
-        "a presets.ini with no section"
+        "a render with only the global section"
     );
     // Every preset switched off: the sections are in the file llama-server
     // does not read.
@@ -407,10 +417,10 @@ pub(crate) fn instance_launch_e2e() {
         "only switched-off presets"
     );
     std::fs::write(
-        &sys_presets,
-        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
+        &render,
+        "[*]\ntemp = 0.7\n\n[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
     )
-    .expect("presets.ini");
+    .expect("render with a preset");
 
     // ── Same launch as start() for the same config ───────────────────────
     // Real keys; `Threads = lots` is nonsense, which load() reads as unset:
@@ -425,8 +435,8 @@ pub(crate) fn instance_launch_e2e() {
     std::fs::write(sys.join("server@default.ini"), &content).expect("server@default.ini");
     std::fs::write(&user_ini, &content).expect("server.ini");
     let cfg = crate::server_cfg::load();
-    // Presets move to the system directory with the instance files (PLAN.md step 1).
-    let expected_args = server_args(&cfg, &sys.join("presets.ini"));
+    // The instance reads the render of its id, not the pool.
+    let expected_args = server_args(&cfg, &sys.join("presets@default.ini"));
     let expected_env = env_vars(&cfg);
     assert!(
         expected_args.windows(2).any(|w| w == ["--port", "8081"]),
@@ -516,12 +526,28 @@ pub(crate) fn instance_launch_e2e() {
         Some(&Some(models.into_os_string())),
         "ModelsDir of server@default.ini"
     );
-    // And each id reads its own file.
+    // And each id reads its own file, and its own render.
+    std::fs::write(
+        sys.join("presets@lan-2.ini"),
+        "[*]\ntemp = 0.7\n\n[lan-model]\nmodel = /m/lan.gguf\n",
+    )
+    .expect("presets@lan-2.ini");
     let cmd = instance_command("lan-2", &exe).expect("launch of server@lan-2.ini");
     assert_eq!(
         port_of(&cmd).as_deref(),
         Some("8090"),
         "port of server@lan-2.ini"
+    );
+    let lan_preset = sys.join("presets@lan-2.ini").to_string_lossy().into_owned();
+    let lan_args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        lan_args
+            .windows(2)
+            .any(|w| w == ["--models-preset", lan_preset.as_str()]),
+        "lan-2 reads its own render: {lan_args:?}"
     );
 
     // ── An unset ModelsDir is the instance's default ─────────────────────
@@ -674,6 +700,25 @@ mod tests {
 
     fn args_for(cfg: &ServerConfig) -> Vec<String> {
         server_args(cfg, Path::new("presets.ini"))
+    }
+
+    // The render's global section `[*]` holds defaults for every preset, not
+    // a preset of its own: a render with only that section loads nothing.
+    #[test]
+    fn has_presets_in_ignores_the_global_section() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("presets@default.ini");
+        assert!(!has_presets_in(&path), "the file does not exist");
+        std::fs::write(&path, "[*]\ntemp = 0.7\n").expect("write render");
+        assert!(
+            !has_presets_in(&path),
+            "a render with only the global section loads no preset"
+        );
+        std::fs::write(&path, "[*]\ntemp = 0.7\n\n[a]\nmodel = a.gguf\n").expect("write render");
+        assert!(
+            has_presets_in(&path),
+            "a preset section beside the global one counts"
+        );
     }
 
     // "auto" (unset / non-positive) MUST omit the flag entirely so llama.cpp
