@@ -1093,7 +1093,58 @@ instance whose `presets@<id>.ini` holds `[m]` (llama-server's model name is the 
 the bff serves; Part 2's hub mode is unchanged in shape, the instance routes simply carry the node
 prefix.
 
+**(i) Answers to the web UI's open points** (`fe/briefs/api-contract.md`, "Planned: nodes and
+instances", numbered as there; the architect, 2026-11-17):
+
+- Rules confirmed: an instance id is 1 to 32 of `a-z`, `0-9`, `-`, not starting with `-`
+  (`paths::valid_instance_id`); a port is 1 to 65535 (`checks::PORT`, the server save's rule, one rule
+  for create and save); tags as in (c), JSON arrays of strings on the wire, the INI's comma list on disk.
+- (1) `POST /api/instances` body `{"engine": string, "id": string, "port": number, "tags": [string]}`,
+  `tags` optional (none). 400 `instance-malformed` (not JSON, a missing field, a wrong type). 422
+  `{key, args, field}` with `field` the body's name: `instance-bad-id` (`id`), `unknown-engine`
+  (`engine`), `not-whole-number-in-range` (`port`), `client-address-in-use` (`port`, `args` `[id]`),
+  `server-bad-tags` (`tags`, `args` `[tag]`); 409 `client-instance-exists` (`args` `[id]`). Every other
+  answer as for every write: 401, 403 (session ended, the guards), 413, 503 before the call is asked,
+  504 `client-timeout` once asked, `WRITE_TIMEOUT` (15 s).
+- (2) `DELETE` the same write rules: 504 `client-timeout` when the outcome is unknown (the fe re-reads
+  the list); 404 `client-no-instance` when `server@<id>.ini` is gone; 409 `client-instance-running`
+  and `client-instance-protected` as in (d).
+- (3) Each list item gains `"removable": <bool>`, false for `default`; the name `default` lives once,
+  in a `pai-core` constant the manager's refusal and the bff share.
+- (4) The bff keeps the file's tags when `Tags` is absent from a `PUT .../server` body; `"Tags": []`
+  clears them, an array sets them. The read gains `Tags` as an array. So today's fe (19 keys) erases
+  nothing, and the GUI keeps them through `ServerConfig.tags`.
+- (5) A created, never-started instance is `inactive` on both OSes: Linux, a unit systemd has not
+  loaded; Windows, `status_failure` already reads a missing service as `Inactive` (`windows.rs`).
+- (6) `client-no-presets` on `start` and on `restart`, checked before the stop (a refused restart
+  leaves the instance running). "No presets" is no section in `presets@<id>.ini` other than `[*]`
+  (llama-server's global section names no model); `.disabled` does not count (never read).
+  `launch::has_presets_in` changes the same way.
+- (7) Every route under `/api/instances/{id}/...` for an id with no `server@<id>.ini` is 404
+  `client-no-instance`: the manager answers a preset read for a missing instance `NoInstance`, as for
+  a write (b).
+- (8) The list is sorted by id (`paths::instance_ids`). One instance's failed status read gives that
+  item `"state": "unknown"`; an unreachable manager or a refusal still fails the whole list as today.
+- (9) Under `api`: `instances` and everything below it, and `engines` (a node's engines are what that
+  node has installed). At `/api` in every mode: `version`, `session`, `node`, `nodes`.
+- (10) The manager's address check also refuses the bff's own listen port (`[Bff] Listen` in
+  `bff.ini`, read at the check) with `client-address-in-use`, `args` `["private-ai-bff"]`. Ports below
+  1024 are not refused (Windows has no privileged ports; on Linux an instance cannot bind one and
+  fails at start). A port held by another program (Strata on 8580) is not checked at create: a probe
+  is racy and the program may be stopped; it shows at `start` as the instance going `failed`.
+
+**Open for the user** (11, asked by the coordinator): a new instance has no preset, and no client can
+add one (the web has no preset create; `pai-config` and `pai` address `default` only), so (6) makes it
+unstartable. Options: (A) `CreateInstance` takes an optional instance to copy the presets from, both
+files copied under the lock and checked against the new instance's `ModelsMax` (small: one argument,
+one field in the add dialog); (B) start with no preset (llama-server's router then serves no model,
+so the instance runs but answers nothing: drops (6)'s refusal for little gain); (C) a preset create on
+the web's Models page (model path and id: a new route and brief, needed sooner or later). Recommended:
+(A) now, so the add dialog ships usable, and (C) as its own later slice.
+
 **Slices**, each test first; Linux, with the Windows code type-checked.
+(i)'s answers go in the slice that touches their code: (6)'s `[*]` rule and (7) in 1, (4) in 5, (3)
+and (8) in 6, (6)'s refusal at start and (10) in 8, (1) and (2) in 9.
 
 1. **Per-instance preset files in the core and the manager.** `paths` gains the two names;
    `instance_command` reads `presets@<id>.ini`; `config_file` accepts `presets@<id>.ini(.disabled)` and
