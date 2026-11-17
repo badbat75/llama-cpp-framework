@@ -807,3 +807,15 @@ Lessons only: the rules are in `AGENTS.md`.
   was untouched. The flag read alone cannot close that, only the CAS can, so `save_failure` keeps a
   bool (`state.load() == WRITE_ASKED`: a task that answered cannot hold Cancelled) with the guard
   arm `Unavailable if write_asked` for a stream that died on a SENT write.
+- The bff has NO shared session-check or timeout helper: "reuse the server read's helpers"
+  means `session::error` and `Sessions::current`/`end` plus the two-line shape
+  (`spawn_blocking` of a closure annotated `-> Result<_, ClientError>`, then
+  `tokio::time::timeout(timeout, ask).await`). A route reading TWO files keeps them in ONE
+  blocking task with `?` between, so the first file's refusal answers before the second read.
+  `GET /api/presets` maps its own three answers (403 + end, 503 for Unavailable and the time
+  limit, 502 `client-other` for the rest, no 404, `ClientError::Service` included in "else"):
+  `control::action_failure` is NOT reusable (it has 404 and `client-service-failed`).
+  Order rule mirrors `pai_app::presets::listed_in` (on-file order, then the off-file sections
+  whose id, compared `eq_ignore_ascii_case`, the on file lacks); a file the manager answers
+  `None` is an empty group, and `ini::parse_sections` already trims values and cuts inline
+  `;`/`#` comments, so `model` needs no parsing of its own.

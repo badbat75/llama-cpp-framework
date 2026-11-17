@@ -239,6 +239,22 @@ Lessons only: the rules are in `AGENTS.md`.
   `clippy::manual_contains` (write `.contains(&x)`), and a field added to a fake that nothing reads is a
   `dead_code` red. The lib test binary of the crate a slice is writing often does not compile until the
   module's helpers are fixed, so its unit tests only run after that: report that they did not run before.
+- A bff route that is not routed yet: EVERY status assert in the new `tests/<route>.rs` reds at the
+  router's 404 (the 405 test too, it greens once the path exists with GET only), so the file is N status
+  reds plus the guards that hold by construction (the sibling route still answers). Say which green is a
+  guard, and prove the red is the missing route, not a broken helper: the same red `left: 404` on every
+  status, one per expected code.
+- The bff does not link `pai-app`: a route listing preset SECTIONS parses through
+  `pai_core::ini::parse_sections`. Its header is the contract for what a fixture yields, read it instead
+  of running a probe crate (pai-core built from a separate workspace: minutes): values TRIMMED, everything
+  from the FIRST `;` or `#` on stripped ("a;b" reads "a", so a fixture value must never contain one), key
+  lookup EXACT-case (`keys.get("model")`), section order kept, a bare `[a]` is a section with no keys. So
+  `model = x ; note` answers "x" and a section without the key answers `""` through `unwrap_or_default`.
+- `fe/briefs/api-contract.md` and the served code can disagree on a 403 key: for `GET /api/presets` the
+  contract lists 403 `client-not-authorized`, while the served signed-in read (`GET /api/server`) answers
+  403 `session-not-administrator` and ENDS the session when the manager refuses the `As` principal (PLAN:
+  a refusal ends the session). Pin the served sibling, and report the contract line to the coordinator as
+  the one assert to change if they choose the contract's key.
 
 ## Text pins and source lints
 

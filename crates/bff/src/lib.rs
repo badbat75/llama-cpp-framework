@@ -5,6 +5,7 @@ pub mod bff;
 mod control;
 pub mod listen;
 mod origin;
+mod presets;
 pub mod serve;
 mod server;
 pub mod session;
@@ -32,9 +33,10 @@ const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
 /// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its
-/// files under `/assets/`. The revision secret is drawn from the OS, and a
-/// bff that cannot draw one has no revision to hand out: the service builds
-/// itself with [`try_router`], which answers that as an error.
+/// files under `/assets/`, and the preset list at `GET /api/presets`. The
+/// revision secret is drawn from the OS, and a bff that cannot draw one has no
+/// revision to hand out: the service builds itself with [`try_router`], which
+/// answers that as an error.
 pub fn router() -> axum::Router {
     try_router().expect("the OS random source")
 }
@@ -85,7 +87,8 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// session: `GET /api/instances/{id}/server` and its save
 /// `PUT /api/instances/{id}/server`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
-/// `PUT /api/instances/{id}/boot`. The boot read
+/// `PUT /api/instances/{id}/boot`, and the preset list
+/// `GET /api/presets`. The boot read
 /// `GET /api/instances/{id}/boot` needs none, so it is served beside them.
 /// One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
@@ -130,12 +133,19 @@ pub fn router_with_session(
             )
         }
     };
+    let presets = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |headers: axum::http::HeaderMap| {
+            presets::list(connect.clone(), timeout, sessions.clone(), headers)
+        }
+    };
     router_with(connect.clone(), timeout)
         .merge(session::routes(sessions.clone()))
         .route(
             "/api/instances/{id}/server",
             axum::routing::get(read).put(save),
         )
+        .route("/api/presets", axum::routing::get(presets))
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn(origin::guard))

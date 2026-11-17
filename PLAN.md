@@ -77,8 +77,8 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it, in order: slice 11 (the preset
-list) and 11b (the on/off switch); then the user's run on their machine. After it: 11c, 11e, 11d, 11f.
+presets and switches them on or off. Left for it: slice 11b (the preset on/off
+switch); then the user's run on their machine. After it: 11c, 11e, 11d, 11f.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -937,12 +937,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    that Fit is allowed only with `ctx-size` and `n-gpu-layers` at their defaults is unchanged. `server.ini` and
    `settings.ini` keep `parse_bool`. The web UI applies the same rule (its brief 02e criteria 101, 102, 104). Small, in
    `pai-core` with `pai-app`'s reader; before the MVP's run.
-11. **The preset list.** `GET /api/presets` for any signed-in user: `[{id, engine, engineAvailable,
-   enabled, model}]` (`model` the section's key as the file holds it, `""` when absent, unchanged by
-   the bff), engine from the file holding the section, in `presets::load_listed`'s order (on
-   first, then off, file order; an id in both files once, as on); errors `{key, args: []}`: 401, 403
-   `client-not-authorized`, 503 `client-unavailable`, 502 `client-other` (the web UI's Models page,
-   `fe/briefs/02-models.md`).
+11. (Done, 2026-11-17: `GET /api/presets`, `crates/bff/src/presets.rs`. A `[*]` section lists as a
+    preset named `*`, as in the GUI.)
 
 Later slices (not yet written): the presets page, the gateway, the benchmark portal, LAN access.
 
