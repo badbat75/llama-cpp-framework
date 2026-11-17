@@ -220,6 +220,26 @@ Lessons only: the rules are in `AGENTS.md`.
   when an extra names it): pin the no-Host path as accepted (HTTP/1.0, `curl`), and give every refusal a
   shape where only that rule can answer (a non-text `Host` with no origin header, a non-text `Origin`
   with no `Host`), else one red hides behind the other.
+- A rule that becomes a function of an INJECTED context (the `Host` rule of the listen address): the
+  accept side is GREEN at once, a stub that ignores the new argument keeps today's answer, so the reds
+  are only the refusals the new context adds. Report the green accepts as guards, name them, and give
+  the refusal both shapes (the rebinding pair, and the bare `Host` with no fetch metadata).
+  `tests/origin.rs` now: `app_with_hosts(hosts: &[&str], listen: SocketAddr)`, `new_app()` is a loopback
+  listen, so every pre-existing loopback test keeps its meaning; a LAN-name test hands
+  `LISTEN_LAN = 192.168.50.210:8590`, a localhost test a loopback or the wildcard.
+  A "a trailing dot is the SAME name" rule (the FQDN root): only the ACCEPT side is red, every refusal
+  the rule must keep is green today (a `Host` of `.` / `..` / `name..` / `localhost..` is refused now,
+  and stays refused: the test is the guard that a fix strips ONE ending dot and not all of them, so
+  report it as green, and make the double dot use a name whose bare form IS in the list, where a fix
+  that strips all dots goes red). A blank-host-name rule: the `Some(hosts)` side is green at once (the
+  list path never reads the host name), only the automatic-names list is red.
+  For a `tests/*.rs` file, proving the asserts a first red blocks: `cp tests/x.rs tests/zz_probe.rs`
+  (a copy in `tests/` is its own binary, helpers included), `sed -i '<ranges>d'` the predecessors,
+  `cargo test -p <crate> --test zz_probe -- <filter>`, then `rm` the copy BEFORE clippy and `git status`
+  (one sed call, both ranges against the original line numbers).
+- The header value lists `at_host`/`host_line` build are `Vec<(&str, HeaderValue)>`: they fit only
+  `ask_raw`/`sign_in_raw`/`boot_raw`. Handing one to a text helper (`post_with`, `delete_session_with`,
+  `put_with`, which take `&[(&str, &str)]`) is E0308, one error per call site.
 - `App::sign_in` asks the fake authenticator: after it, compare `asked()` with the baseline taken right
   after the sign-in, never with `is_empty()`.
 - The bff's save replies `{"revision", "running"}` only, so a SECOND save in one test builds its body by
@@ -1171,6 +1191,15 @@ Lessons only: the rules are in `AGENTS.md`.
   `setTimeout(0)` in `act`. jsdom's `HTMLDialogElement` lacks `showModal`/`close`. Scope queries to
   their section (header controls break whole-main queries). After an interrupted session run the file
   first. Mutation runs go in a scratch copy of `fe/` with `node_modules` symlinked.
+ - A mutant that swaps one table value for a value the SAME table computes is EQUIVALENT, not a coverage
+   gap: `selectState`'s `row.absent` equals `row.options[0].value` for all 19 select rows of
+   `PresetCards.tsx`, so `options[0].value` cannot red any test. Prove equivalence by scanning the table
+   (python over the source, one line per row: key, absent, first option), and kill the NEAR mutant
+   (`absent: 'f32'`, a row whose absent is not the first option): that one is killable, and the case you
+   write for it pins the equality the equivalent mutant destroyed.
+ - A number field's `inputmode` is DERIVED from the range table (`numericMode` reads `INT_KEYS[].min`), so
+   a mutant that gives one key a minimum fires the input-mode pins too: count those reds as collateral of
+   one change, not as extra coverage.
 - A hand check against the real bff: drive the snap's `geckodriver --port <free>` over plain WebDriver
   HTTP from `python3 -I` (`-headless`, screenshots as base64 over HTTP, 2 s after each load; Firefox
   stops at 500 px wide). Kill it with `snap run --shell firefox.geckodriver -c 'kill -TERM <pid>'`. The
@@ -1338,6 +1367,26 @@ Lessons only: the rules are in `AGENTS.md`.
   count / strings-parity / card-order test of the content test, the page test's tab path, the heading-order
   and About-list tests, and `App.test.tsx`'s strings test (the key list the coder has to land). Count them
   in the report as collateral reds of the shared list, with one line per file.
+- fe: making an EXISTING card editable is done in the shared table, not in a page test: add its label keys
+  to `EDITABLE_FIELDS` and, for a number field with a default box, its label key to `BOXED_FIELDS`
+  (`fe/src/test/presetCards.ts`). `fieldTabStops` and `controlEnabled` derive from it, so the collateral reds
+  before the coder are exactly the tab-path tests (`2e.91` in each PresetCards file, `2d.71` and `2d.78` in
+  PresetContent): a card with 3 selects and 4 boxed numbers adds 11 stops (4 boxes + 7 controls). The reds
+  AFTER the coder are the read-only pins of the same card: `PresetFullValue` (134: a full-value line shows
+  only under a DISABLED control, so every long `cache-ram` / `cache-type-k` line of the card vanishes) and
+  `PresetCards2`'s `${key}: the select disabled` / unit / inputmode pins. List them for the coordinator, do
+  not edit them.
+- fe: React skips `onChange` on a DISABLED control, so `fireEvent.change` on a not-yet-editable field records
+  nothing: the form stays clean, the Save button stays `aria-disabled`, and a `save()` helper's `waitFor`
+  times out ~1 s later at `expected [] to have a length of 1`. That is the right red for a card the page keeps
+  read-only, and it is why every "sends" test of a card that is not editable yet reds at the PUT count while
+  every "enabled" test reds at `expected true to be false` on `.disabled`. A client-check test of such a card
+  reds at `Unable to find ... save-invalid` (typing did nothing, so no check ran), NOT at the error text: say
+  so, the coder must not read it as a missing string.
+- fe: `presetDoc(values, extra)` puts `extra.values` OVER the whole default `values` object, so a preset-page
+  fixture that names only its own card's keys drops `model` and `spec-type` too: the page renders (the Assets
+  card shows them as unset), so the fixture of a card slice needs no `model`. A key the file lacks is ABSENT
+  from `values`: a `''` entry is a value, not an absence, and shows as an extra option, not `default`.
 - fe: inside a card there is no group and no note per field: only the card's group and the card's note (a
   note per field was the draft card's shape, the preset cards have none), so a structural page test can
   assert a card is the region's first child and that every row is a group with its legend. A checkbox whose
@@ -1439,6 +1488,22 @@ Lessons only: the rules are in `AGENTS.md`.
   wildcard listener, so the test proves the bind-all with no second interface).
 - `vec![("host", host), ("origin", format!("http://{host}").as_str())]` is E0716 (the temporary dies at
   the end of the `let`): bind the `format!` in its own `let` and take `origin.as_str()`.
+- A guard rule whose input moves to "computed once at the start, passed into the router": turn the
+  test file's `new_app()` into `app_with_hosts(&[])` and build the router in a new sibling
+  (`router_with_session_and_hosts`), so every existing test keeps running and pins the empty-list
+  case for free, one builder and no twins. Stub the sibling delegating (old arity, `_hosts` inert):
+  the accept tests red `left: 403 right: 204`, the test that expects the LATER rule's key on a
+  request the new name rule must let through reds `right: request-cross-origin`, and every
+  pre-existing refusal plus the "IPs are answered whatever the list holds" test green BY CONSTRUCTION:
+  name those guards in the report.
+- "The config list replaces the automatic names, it does not widen them" is pinned by putting one of
+  the automatic names (`aorus.local`) in the refusal list beside a list that holds only a longer one
+  (`aorus.bombicci.local`). A name set compared as a set: one generic `fn sorted<S: AsRef<str>>(names:
+  &[S]) -> Vec<String>` sorts the `Vec<String>` the code returns and the `&[&str]` literal alike. Of a
+  `resolv.conf` reader pin the lowercase keywords (glibc's are `search`/`domain`, do NOT pin `SEARCH`),
+  the case of the host name and of the `Hosts` value, a tab-separated list, a bare `search` line, `#`
+  and `;` comments, `nameserver`/`options` lines, and that an empty `Hosts` value sets nothing, the
+  same answer `parse_hosts` gives for that file, so the chain `parse_hosts` then `host_names` holds.
 
 ## Web UI (fe/) navigation and CSS pins
 
@@ -1482,6 +1547,22 @@ Lessons only: the rules are in `AGENTS.md`.
   means hand-reverting the setup edits (imports, `beforeEach`, `afterEach`): a file the slice created
   is untracked, so `git checkout` cannot restore it. Truncate at a known line and edit the header,
   the import list and the hooks by hand, then re-run the file to show it reds on its own criteria.
+- jsdom has no `Window.isSecureContext` at all (grep of `node_modules/jsdom/lib`: no implementation), so
+  `window.isSecureContext` is `undefined` in every fe test: the "property absent" case is jsdom's own
+  state and a `true` case is a real guard, both green. Set it with
+  `Object.defineProperty(window, 'isSecureContext', { value, configurable: true })`, and remove it with
+  `delete` in the `afterEach`, after `cleanup()`.
+- A rule of a shared component (the sign-in, shown in `main` and in the session-ended dialog) is one
+  rule: test the page case and the dialog case in the same file. The dialog needs no new page: the
+  preset page's Embedding mode select, Save, a `presetSave` answered 401
+  (`{ key: 'session-required' }`), the bar's Sign in, then `screen.getByRole('dialog', { name: en('signin-title') })`
+  and the `stubDialog().opened` pin, all in one mount.
+- A preset page's card controls are NOT in the document when its h1 is (the cards render with the read):
+  a `getByRole('combobox', ...)` right after the h1 reds "Unable to find an accessible element with the
+  role combobox", which hides the slice's real red. Use `findByRole`, and assert the fixture's `values`
+  carry the row's keys (`{ embeddings: 'true', pooling: 'mean' }`).
+- `getByRole('button')` returns `HTMLElement`, so `.disabled` is TS2339 in `npm --prefix fe run typecheck`
+  and passes the Vitest run: Vitest never type-checks. Cast `as HTMLButtonElement` at the query.
 
 ## Windows service glue (the manager, cfg(windows) entry)
 

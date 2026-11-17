@@ -38,10 +38,18 @@ getrandom = { version = "0.3.4", features = ["std"] }
 # drawn above; the version already in the lock.
 siphasher = "1.0.4"
 
+# This machine's own names (listen.rs): `gethostname(2)`, there being no file
+# that is the host name; the version already in the lock (pai-manager's
+# accounts).
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["hostname"] }
+
 # `pai-bff service` under the Windows service dispatcher (serve.rs), as
-# pai-manager's services.
+# pai-manager's services, and the machine's DNS host name and domain
+# (`GetComputerNameExW`, listen.rs).
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8.1"
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 pai-core = { path = "../core", features = ["test-support"] }

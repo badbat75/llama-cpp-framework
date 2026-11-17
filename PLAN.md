@@ -948,7 +948,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     install and `Listen = 0.0.0.0:8590` in `/etc/private-ai/bff.ini` with the user's go-ahead; the docs
     pass (`crates/bff/README.md` lines 3, 19-20, 43-60, `ARCHITECTURE.md` ~29, 84, 97, 182, 245; say the
     session cookie is bound to the host, not the port); pin more hostile hosts in `origin.rs`'s
-    refusal test (`0x7f.1`, `1.2.3.4.evil.example`, `[::1].evil`, a zone id). **12b. The machine's names**
+    (the hostile hosts are pinned since 12b). **12b. The machine's names**
+    (code done 2026-11-17; left: build, install, the docs pass, and an item of `[Bff] Hosts` or a
+    resolv.conf domain ending in two dots keeps one, e.g. `foo..` gives `foo.`: admin config only)
     (user, 2026-11-17): beside the IP literals and `localhost`, the `Host` guard accepts this machine's
     names, read at the bff's start: its host name, `<name>.local` and `<name>.<domain>` for each
     `search`/`domain` of `/etc/resolv.conf` (Linux; on Windows the computer name and its DNS domain);

@@ -36,18 +36,31 @@
 //!
 //! The name the request is addressed at is checked for every request, the
 //! reads and the sign-in included: a `Host` header that is there must name
-//! this bff (`localhost` in any case, or an IP literal: an IPv4 address, an
-//! IPv6 one in brackets, each with an optional port), and one that is not text
-//! names nothing. The bff listens on the address the administrator chose
-//! (`listen.rs`), so the address a request came to is never the question, a
-//! NAME is: a request addressed at a name that is neither `localhost` nor an
-//! address is refused, and that is what stops a DNS rebinding. A page of a
-//! foreign site reaches this bff only once its own name resolves to this
-//! machine, and then the `Origin` it sends matches the `Host` so every rule
-//! above passes. The cookie is bound to the host that set it, so a rebinding
-//! carries no session and the routes behind a session are safe on their own;
-//! the sign-in asks for no session, so the `Host` rule is what keeps a page at
-//! a foreign name from trying passwords at this bff.
+//! this bff, and one that is not text names nothing. It names this bff when it
+//! is one of this machine's names, which the service reads at its start and
+//! hands the guard (`listen::host_names`: the host name, that name under
+//! `.local` and under each `resolv.conf` search domain, or the `[Bff] Hosts`
+//! of `bff.ini` when that sets them), or an IP literal (an IPv4 address, an
+//! IPv6 one in brackets, each with an optional port), or `localhost`. One
+//! trailing dot on the name is the root of the DNS tree and names nothing of
+//! its own, so the guard reads `aorus.bombicci.local.` as
+//! `aorus.bombicci.local` and `localhost.` as `localhost`; it takes one dot,
+//! never more, so `.` and `..` and `name..` name no host and are refused. The
+//! name is read in any case and its port is not the question, the port is the
+//! `Origin` rule's. `localhost` and the loopback addresses (`127.0.0.0/8` and
+//! `[::1]`) are answered where the listen serves the loopback, a loopback
+//! address or the wildcard: a bff bound to one LAN address is not reachable at
+//! the loopback at all, so there such a `Host` names a host this bff is not.
+//! Every other address is answered whatever the listen.
+//!
+//! A request addressed at a name that is none of these is refused, and that is
+//! what stops a DNS rebinding: a page of a foreign site reaches this bff only
+//! once its own name resolves to this machine, and a name built on one of ours
+//! (`aorus.bombicci.local.evil.example`) is not in the list. The cookie is
+//! bound to the host that set it, so a rebinding carries no session and the
+//! routes behind a session are safe on their own; the sign-in asks for no
+//! session, so the `Host` rule is what keeps a page at a foreign name from
+//! trying passwords at this bff.
 //!
 //! The checks run before the session store is looked at, so a refusal never
 //! touches it, never starts an idle deadline, and never sets a cookie. Each is
@@ -61,12 +74,14 @@
 
 use crate::session::error;
 use axum::extract::rejection::{BytesRejection, FailedToBufferBody};
+use axum::extract::State;
 use axum::http::header::{HeaderName, HOST};
 use axum::http::uri::Authority;
 use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::Response;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// The cap on a body the bff reads: one layer of this many bytes stands in
 /// front of every route (`lib.rs`), so a body of exactly this size is read and
@@ -87,12 +102,56 @@ fn refusal() -> Response {
     error(StatusCode::FORBIDDEN, "request-cross-origin", &[])
 }
 
-/// The answer to a `Host` that names a host this bff is not: the bff listens
-/// on the address the administrator chose (`listen.rs`), so a name that is
-/// neither `localhost` nor an address is a page reaching it under a name it
-/// does not serve.
+/// The answer to a `Host` that names a host this bff is not: the bff answers
+/// at its machine's names, at `localhost` and the loopback where its listen
+/// serves them, and at every other address, so a name outside those is a page
+/// reaching it under a name it does not serve.
 fn bad_host() -> Response {
     error(StatusCode::FORBIDDEN, "request-bad-host", &[])
+}
+
+/// What the `Host` guard answers as this bff: the machine's names and the
+/// address the bff is bound to. The service builds it once at its start
+/// (`listen::host_names`, `listen::config_path`), a test hands it the names and
+/// the listen it wants, so no test reads the real host name,
+/// `/etc/resolv.conf` or `bff.ini`. Cloned into the guard's state, shared
+/// between the router and every request.
+#[derive(Clone)]
+pub(crate) struct HostPolicy {
+    /// The names answered beside `localhost` and the addresses, lowercase as
+    /// `listen::host_names` gives them, none with a trailing dot: the guard
+    /// reads the `Host` line in any case and takes its trailing dot off. A
+    /// router that is handed none answers only `localhost` (under the listen
+    /// rule) and the addresses.
+    names: Arc<Vec<String>>,
+    /// The address the bff listens on, which decides whether `localhost` and
+    /// the loopback addresses are answered.
+    listen: SocketAddr,
+}
+
+impl HostPolicy {
+    /// The policy of one router: `names` beside `localhost` and the addresses,
+    /// and `listen`, the address the bff is bound to.
+    pub(crate) fn new(names: Vec<String>, listen: SocketAddr) -> Self {
+        Self {
+            names: Arc::new(names),
+            listen,
+        }
+    }
+
+    /// The policy of a router with no name of the machine and a loopback
+    /// listen: `localhost`, the loopback addresses and every other address are
+    /// answered, as they were before the machine had names to hand.
+    pub(crate) fn loopback() -> Self {
+        Self::new(Vec::new(), SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+    }
+
+    /// Whether the listen serves the loopback: it is bound to a loopback
+    /// address, so it is reachable there, or to the wildcard (`0.0.0.0`,
+    /// `[::]`), so it is reachable at every address of the machine.
+    fn serves_loopback(&self) -> bool {
+        self.listen.ip().is_loopback() || self.listen.ip().is_unspecified()
+    }
 }
 
 /// The answer to a body the extractor refused: over [`MAX_BODY`] a 413
@@ -112,11 +171,12 @@ pub(crate) fn body_refusal(rejection: &BytesRejection, malformed: &str) -> Respo
 /// is not this bff, or either of those headers twice or with bytes that are not
 /// text.
 pub(crate) async fn guard(
+    State(policy): State<HostPolicy>,
     request: Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
     let headers = request.headers();
-    if !is_our_host(headers) {
+    if !is_our_host(headers, &policy) {
         return bad_host();
     }
     if is_read(request.method()) || is_this_bff(headers) {
@@ -184,10 +244,10 @@ fn is_this_bff(headers: &HeaderMap) -> bool {
     theirs == ours
 }
 
-/// Whether the `Host` line names a host this bff is. A request with no `Host`
-/// at all is answered: HTTP/1.0 sends none, and that is `curl`, the CLI and a
-/// raw client, with no name to check.
-fn is_our_host(headers: &HeaderMap) -> bool {
+/// Whether the `Host` line names a host this bff is, as `policy` defines it. A
+/// request with no `Host` at all is answered: HTTP/1.0 sends none, and that is
+/// `curl`, the CLI and a raw client, with no name to check.
+fn is_our_host(headers: &HeaderMap, policy: &HostPolicy) -> bool {
     let mut hosts = headers.get_all(HOST).into_iter();
     match (hosts.next(), hosts.next()) {
         (None, _) => true,
@@ -196,27 +256,46 @@ fn is_our_host(headers: &HeaderMap) -> bool {
             .ok()
             .map(|text| text.to_ascii_lowercase())
             .and_then(|text| host_and_port(&text, OURS))
-            .is_some_and(|(host, _)| is_our_name(&host)),
+            .is_some_and(|(host, _)| is_our_name(&host, policy)),
         // Two `Host` lines name two hosts, at least one of them not ours.
         (Some(_), Some(_)) => false,
     }
 }
 
 /// Whether the host of a `Host` line, lowercased, is a name this bff answers
-/// as: `localhost`, or an IP literal (an IPv4 address, an IPv6 one written in
-/// brackets). The bff listens on the address the administrator chose
-/// (`listen.rs`), so an address is never the question. Any other name is a page
-/// that believes it sits there while the name resolves to this machine.
-fn is_our_name(host: &str) -> bool {
-    if host == "localhost" {
+/// as: one of the machine's names, an IP literal (an IPv4 address, an IPv6 one
+/// written in brackets), or `localhost`, each read with one trailing dot
+/// removed: that dot is the root of the DNS tree and names nothing of its own,
+/// so `aorus.bombicci.local.` is the name `aorus.bombicci.local` and
+/// `localhost.` is `localhost`. One dot is all the rule takes off, so `.` and
+/// `..` and a name with two of them at the end name no host and are refused:
+/// the list holds no entry with a trailing dot (`listen::host_names`).
+/// `localhost` and a loopback address are answered only where the listen
+/// serves the loopback: the bff bound to one LAN address is not reachable
+/// there. Every other address is answered whatever the listen, the bff is
+/// where the address says it is. Any other name is a page that believes it
+/// sits here while the name resolves to this machine.
+fn is_our_name(host: &str, policy: &HostPolicy) -> bool {
+    let name = host.strip_suffix('.').unwrap_or(host);
+    if policy.names.iter().any(|listed| listed == name) {
         return true;
     }
-    // An IPv6 literal is bracketed on the wire; its address is what parses.
-    let address = host
+    match as_address(name) {
+        Some(address) => !address.is_loopback() || policy.serves_loopback(),
+        // Not an address: only `localhost`, which stands for the loopback.
+        None => name == "localhost" && policy.serves_loopback(),
+    }
+}
+
+/// The address a `Host` line's host is, `None` when it is a name: an IPv4
+/// address, an IPv6 one written in brackets on the wire (its brackets come off
+/// before the parse, and an IPv6 with a zone id parses as no address).
+fn as_address(host: &str) -> Option<IpAddr> {
+    let text = host
         .strip_prefix('[')
         .and_then(|bracketed| bracketed.strip_suffix(']'))
         .unwrap_or(host);
-    address.parse::<Ipv4Addr>().is_ok() || address.parse::<Ipv6Addr>().is_ok()
+    text.parse().ok()
 }
 
 /// The host and port an absolute origin names, the scheme's default port when

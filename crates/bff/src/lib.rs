@@ -45,20 +45,43 @@ pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15
 /// files under `/assets/`, the preset list at `GET /api/presets`, and the
 /// preset switch at `PUT /api/presets/{id}/enabled`. The revision secret is
 /// drawn from the OS, and a bff that cannot draw one has no
-/// revision to hand out: the service builds itself with [`try_router`], which
+/// revision to hand out: the service builds itself with [`try_router_at`], which
 /// answers that as an error.
 pub fn router() -> axum::Router {
     try_router().expect("the OS random source")
 }
 
-/// The routes of [`router`], with the revision secret drawn from the OS
-/// here. The error is the OS's random source: the bff must not start
-/// without a secret, a secret fixed in the code would let anyone who reads
-/// the binary check a guess about a file they are not allowed to read.
+/// The routes of [`router`], at the address the service is bound to: the
+/// revision secret drawn from the OS here, and the names the `Host` guard
+/// answers beside `localhost` and the addresses read from this machine at its
+/// start, from its host name and the search domains of its resolver
+/// configuration, or the `[Bff] Hosts` of `bff.ini` when that sets them
+/// (`listen::host_names`). The error is the OS's random source: the bff must
+/// not start without a secret, a secret fixed in the code would let anyone who
+/// reads the binary check a guess about a file they are not allowed to read.
+pub fn try_router_at(listen: std::net::SocketAddr) -> Result<axum::Router, std::io::Error> {
+    let names = listen::host_names(
+        &listen::hostname(),
+        &listen::resolv_conf(),
+        listen::load_hosts(&listen::config_path()).as_deref(),
+    );
+    system_router(origin::HostPolicy::new(names, listen))
+}
+
+/// The routes of [`router`], as [`try_router_at`] builds them with no name of
+/// the machine and a loopback listen: `localhost` and the addresses are
+/// answered, which is what a test of the routes asks for, the machine's own
+/// names read by no test.
 pub fn try_router() -> Result<axum::Router, std::io::Error> {
+    system_router(origin::HostPolicy::loopback())
+}
+
+/// The routes over the system's manager and authenticator, the secret drawn
+/// from the OS here, the guard handed `policy`.
+fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Error> {
     let mut key = [0u8; 16];
     getrandom::fill(&mut key)?;
-    Ok(router_with_session_and_write_timeout(
+    Ok(router_with_policy(
         std::sync::Arc::new(system_connect),
         MANAGER_TIMEOUT,
         WRITE_TIMEOUT,
@@ -67,6 +90,7 @@ pub fn try_router() -> Result<axum::Router, std::io::Error> {
         ))),
         std::sync::Arc::new(std::time::Instant::now),
         key,
+        policy,
     ))
 }
 
@@ -141,6 +165,31 @@ pub fn router_with_session_and_write_timeout(
     auth: std::sync::Arc<dyn session::Authenticator>,
     clock: session::Clock,
     key: [u8; 16],
+) -> axum::Router {
+    router_with_policy(
+        connect,
+        timeout,
+        write_timeout,
+        auth,
+        clock,
+        key,
+        origin::HostPolicy::loopback(),
+    )
+}
+
+/// The routes, the guard handed `policy`: this machine's names and the address
+/// the bff is bound to. Every public builder is a call of this one with a
+/// policy: the service computes its own ([`try_router_at`]),
+/// [`router_with_session_and_hosts`] takes the two as arguments, the rest answer
+/// `localhost` and the addresses only, at a loopback listen.
+fn router_with_policy(
+    connect: Connect,
+    timeout: std::time::Duration,
+    write_timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    policy: origin::HostPolicy,
 ) -> axum::Router {
     use axum::extract::Path;
     let sessions = session::sessions(auth, clock);
@@ -224,8 +273,34 @@ pub fn router_with_session_and_write_timeout(
         .route("/api/presets/{id}/enabled", axum::routing::put(set_enabled))
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
-        .layer(axum::middleware::from_fn(origin::guard))
+        .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
         .layer(axum::middleware::from_fn(framing))
+}
+
+/// `router_with_session` with the names the `Host` guard answers beside
+/// `localhost` and the IP literals: this machine's names, computed once at the
+/// bff's start (`listen::host_names`), and the `[Bff] Hosts` of its config
+/// file (`listen::parse_hosts`) when that sets them; and with `listen`, the
+/// address the bff is bound to, which decides whether `localhost` and the
+/// loopback addresses are answered.
+pub fn router_with_session_and_hosts(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    hosts: Vec<String>,
+    listen: std::net::SocketAddr,
+) -> axum::Router {
+    router_with_policy(
+        connect,
+        timeout,
+        timeout,
+        auth,
+        clock,
+        key,
+        origin::HostPolicy::new(hosts, listen),
+    )
 }
 
 /// The two headers every reply carries: `X-Frame-Options: DENY` keeps a page

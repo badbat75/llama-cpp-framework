@@ -196,7 +196,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - The bff listens on any `ip:port` (`listen.rs`, plain HTTP, no loopback gate) and `origin.rs` guards
   the NAME: `is_our_host`/`is_our_name` accept `localhost` and any IP literal (bracketed IPv6), refuse
   any other name; the Origin rule is separate and unchanged. Dropping a `ListenError` variant means
-  deleting its key from `cli.toml` in the same change, `binding_lint` fails on an unused one.
+  deleting its key from `cli.toml` in the same change, `binding_lint` fails on an unused one. The
+  trailing dot: `is_our_name` strips ONE dot from the `Host` before the list/address/`localhost`
+  check, so `localhost.` and `fqdn.` read bare while `.`, `..` and `name..` stay refused, and the
+  `Origin` comparison keeps both spellings whole; `listen::list_name` (trim, lowercase, one dot off)
+  is the one shaper of every list entry (the built name, a `resolv.conf` domain, a `Hosts` item), so
+  no entry ends with a dot and `search .` adds nothing; a host name empty once trimmed builds NO
+  automatic name, and the `Hosts` override applies whatever the host name is.
 - pai-bff's session reply (GET/POST `/api/session`) is exactly `{"user"}`: `Identity` holds the user
   name alone (every session is a `pai` member, sign-in 403s anyone else). The server document's
   `withheld` comes only from the manager's `ManagerFile.withheld` flag: set, the bff blanks
@@ -430,6 +436,17 @@ Lessons only: the rules are in `AGENTS.md`.
   name is a truncation of it, so it never matches. `SidTypeAlias` alone is not enough: a trusted
   domain's local group reports the same type, so the domain must equal the computer's name
   (case-insensitively; the call reports it upper-case).
+- The machine's names by system call (bff `listen::hostname`/`resolv_conf`): nix 0.31
+  `unistd::gethostname()` takes no buffer and returns `Result<OsString>` (the `hostname` feature, so
+  the name is read with `to_string_lossy()`). windows-sys 0.61 `GetComputerNameExW` needs
+  `Win32_System_SystemInformation` alone: its signature names only core types
+  (`COMPUTER_NAME_FORMAT` is an `i32` alias with the `ComputerNameDns*` consts beside it, `PWSTR` is
+  `*mut u16`, so `name.as_mut_ptr()` needs no cast), `nsize` in and out, the length written without
+  the NUL. There is no system call for the DNS domain on unix (`getdomainname(2)` is the NIS domain,
+  `man 2`), so `/etc/resolv.conf` stays the source there; on Windows the domain is handed to
+  `host_names` as a synthetic `search <domain>` line. No test of the crate reads the machine (the
+  fixtures pin `host_names` alone), so its suite stays green with those two calls broken: check the
+  parity by hand (`python3 -c "import socket; print(socket.gethostname())"`).
 - `pipe_server.rs`'s text test slices `fn client_facts(` and `fn group_sid(` each to the first
   `\n}\n` and wants `ADMIN_GROUP` and `local_alias_sid(` literally inside them, and forbids
   `OnceLock`, `LazyLock` and `static PAI` anywhere in the file: the `pai` SID is looked up per
@@ -1017,3 +1034,14 @@ Lessons only: the rules are in `AGENTS.md`.
    heredoc (`cat >> file <<'EOF'`) and check `git diff --stat`.
 - Web UI: a helper shared by two pages takes each caller's rule as a named parameter, never one page's
   rule (fe session, 2h.4).
+- A middleware that needs per-router facts uses `axum::middleware::from_fn_with_state(policy, guard)`:
+  the router's state stays `()`, the fn's first parameter is `State<T>` (so `State<HostPolicy>`),
+  then `Request`, then `Next`, and `T: Clone + Send + Sync + 'static` (a `Vec` inside an `Arc`).
+  `from_fn` is the same call with `()` state.
+- One `Host` name rule over both families: strip the brackets and `text.parse::<IpAddr>()` covers IPv4
+  and IPv6 (an IPv6 with a zone id parses as no address, `Ipv4Addr`/`Ipv6Addr` each need their own
+  parse). `IpAddr::is_loopback()` is `127.0.0.0/8` and `::1`, `is_unspecified()` is `0.0.0.0`/`[::]`,
+  so "the listen serves the loopback" is those two.
+- A `tool_use` call the harness rejects for a bad parameter key (`new_string` for `newString`) can
+  still write its arguments into the file: the file gained `</parameter>` and `<parameter=newString>`
+  lines. After any rejected edit, `grep -n "parameter>" <file>` before the next one.

@@ -19,7 +19,7 @@ pub enum ServeError {
     Key(std::io::Error),
 }
 
-/// Serve [`crate::try_router`] on `addr` until `stop` resolves, then let the
+/// Serve [`crate::try_router_at`] on `addr` until `stop` resolves, then let the
 /// open requests finish and return. Each request carries the client's
 /// address (`ConnectInfo`), which the sign-in lockout reads.
 pub fn serve(
@@ -37,7 +37,7 @@ pub fn serve(
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(ServeError::Bind)?;
-        let app = crate::try_router().map_err(ServeError::Key)?;
+        let app = crate::try_router_at(addr).map_err(ServeError::Key)?;
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),

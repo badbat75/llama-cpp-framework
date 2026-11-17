@@ -1,7 +1,8 @@
 //! The same-origin guard: `POST` and `DELETE /api/session`, the control verbs
 //! `POST /api/instances/{id}/{start,stop,restart}` and the boot write
-//! `PUT /api/instances/{id}/boot`, through `pai_bff::router_with_session` with
-//! a fake manager client and a fake authenticator (never the real bus, pipe,
+//! `PUT /api/instances/{id}/boot`, through `pai_bff::router_with_session` and,
+//! for the machine's names, `pai_bff::router_with_session_and_hosts`, with a
+//! fake manager client and a fake authenticator (never the real bus, pipe,
 //! systemd or SCM). Each request runs under a deadline, so a bff that waits on
 //! the manager fails instead of hanging.
 //!
@@ -57,6 +58,28 @@
 //!   and an IPv6 included, each with an optional port, in any case. A request
 //!   with no `Host` at all passes: HTTP/1.0 sends none, and that is `curl`,
 //!   the CLI and a raw client.
+//! - Beside `localhost` and the IP literals the guard answers this machine's
+//!   names: the list the service computes at its start, from the host name and
+//!   the `resolv.conf` search domains, or the `[Bff] Hosts` of its config file
+//!   when that sets them. The app here is handed the list itself, so no test
+//!   reads the real host name nor `/etc/resolv.conf`. A name in the list is
+//!   this bff, in any case, with a port and without one; a name that is not in
+//!   it is refused whatever it is a prefix of, and the list replaces the
+//!   automatic names, it does not widen them. `localhost` and the addresses are
+//!   answered whatever the list holds, under the listen rule next. A name of
+//!   the list written as a fully qualified domain, with its trailing dot, is
+//!   the same name: one trailing dot is the root of the DNS tree and names
+//!   nothing of its own, so `aorus.bombicci.local.` is answered as
+//!   `aorus.bombicci.local` and `localhost.` as `localhost`. A `Host` of only
+//!   dots, or with two of them at the end, names no host and is refused.
+//! - `localhost` and the loopback addresses (`127.0.0.0/8`, `[::1]`) are
+//!   answered when the bff listens on a loopback or an unspecified address
+//!   (`127.0.0.1:8590`, `[::1]:8590`, `0.0.0.0:8590`, `[::]:8590`), and refused
+//!   403 `request-bad-host` when it is bound to one LAN address only
+//!   (`192.168.50.210:8590`): there the bff is not reachable at the loopback at
+//!   all, so such a `Host` names a host this bff is not. The app here is handed
+//!   the listen address as the service reads it from `bff.ini`. Every other IP
+//!   literal and every name of the list are answered at any of these listens.
 //! - A method that is not a read (`GET`, `HEAD`, `OPTIONS`) is guarded, so a
 //!   `PATCH` from a foreign page is 403 `request-cross-origin` and not the
 //!   route's 405. From this bff's own page a `PATCH` is still the route's to
@@ -142,6 +165,33 @@ const CREDENTIALS: &str = r#"{"username":"alice","password":"correct horse"}"#;
 
 /// The origin of a page served by the bff itself.
 const SAME_ORIGIN: &str = "http://localhost:3000";
+
+/// A name of this machine the `Host` guard is handed: the host name under one
+/// of the `resolv.conf` search domains.
+const MACHINE: &str = "aorus.bombicci.local";
+
+/// The same name with the bff's LAN port.
+const MACHINE_HOST: &str = "aorus.bombicci.local:8590";
+
+/// The address the bff is bound to where a test says no other: a loopback one,
+/// so `localhost` and the loopback addresses are answered as they always were.
+const LISTEN_LOOPBACK: &str = "127.0.0.1:8590";
+
+/// The same on the IPv6 loopback.
+const LISTEN_V6_LOOPBACK: &str = "[::1]:8590";
+
+/// The wildcard, on both families: every address of the machine, the loopback
+/// included, is served.
+const LISTEN_WILDCARD: &str = "0.0.0.0:8590";
+
+/// The wildcard, IPv6.
+const LISTEN_V6_WILDCARD: &str = "[::]:8590";
+
+/// One LAN address only: the loopback is not served there.
+const LISTEN_LAN: &str = "192.168.50.210:8590";
+
+/// The address the bff is bound to at [`LISTEN_LAN`], as a client writes it.
+const LAN: &str = "192.168.50.210:8590";
 
 /// The origin of a page of another web app on the same machine: the same site,
 /// another port, so a browser sends the session cookie with its request.
@@ -295,8 +345,20 @@ struct App {
 }
 
 /// The app: a manager that accepts everything and whose boot flag starts
-/// `false`.
+/// `false`. Its `Host` guard is handed no name of the machine and a loopback
+/// listen, so it answers `localhost`, the loopback addresses and the IP
+/// literals.
 fn new_app() -> App {
+    app_with_hosts(&[], addr(LISTEN_LOOPBACK))
+}
+
+/// The same, with the names the `Host` guard answers beside `localhost` and
+/// the IP literals: the list the service computes at its start
+/// (`listen::host_names`, from the host name and `resolv.conf`), given here as
+/// a fixture, never read off the machine; and with the address the bff is
+/// bound to, which decides whether `localhost` and the loopback addresses are
+/// among them.
+fn app_with_hosts(hosts: &[&str], listen: SocketAddr) -> App {
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
     let principals = Principals::default();
@@ -316,8 +378,15 @@ fn new_app() -> App {
     let auth = Arc::new(FakeAuth {
         calls: Arc::new(Mutex::new(Vec::new())),
     });
-    let router =
-        pai_bff::router_with_session(connect, TIMEOUT, auth.clone(), clock.clock(), REVISION_KEY);
+    let router = pai_bff::router_with_session_and_hosts(
+        connect,
+        TIMEOUT,
+        auth.clone(),
+        clock.clock(),
+        REVISION_KEY,
+        hosts.iter().map(|host| (*host).to_string()).collect(),
+        listen,
+    );
     App {
         router,
         clock,
@@ -691,6 +760,13 @@ impl Reply {
         assert_eq!(self.status, StatusCode::OK, "signed in: {}", self.body);
         assert_eq!(self.json(), json!({ "user": user }), "{}", self.body);
     }
+}
+
+/// The address the bff is bound to, from the text a client writes it in: the
+/// value the service reads from `bff.ini` (`listen.rs`) and hands to the router.
+fn addr(text: &str) -> SocketAddr {
+    text.parse()
+        .unwrap_or_else(|e| panic!("a socket address ({e})"))
 }
 
 /// The headers of a browser request from a page served at `origin` on this
@@ -1414,6 +1490,14 @@ async fn a_host_that_is_a_foreign_name_is_refused() {
         "mypc.local:8590",
         "[not-an-address]:8590",
         "192.168.1.10:85909",
+        // Text that looks like an address and is none: a hex octet, a name
+        // that opens with four numbers, a bracketed address with a name behind
+        // it, and a zone id in the encoding a URL carries it in (`%25`). The
+        // rule reads the address, it does not read the text around one.
+        "0x7f.1",
+        "1.2.3.4.evil.example",
+        "[::1].evil",
+        "[fe80::1%25eth0]",
     ] {
         let app = new_app();
         // The test's own sign-in sends no `Host`, the shape of `curl`: the
@@ -1596,6 +1680,574 @@ async fn an_ip_host_off_loopback_is_answered() {
         app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
             .await
             .assert_signed_in_as("alice");
+    }
+}
+
+// ── The machine's own names, handed to the guard as a list ──────────────
+
+/// A name of this machine that is in the list the guard was handed is this bff,
+/// in any case, with a port and without one: the signed-in user's page reads
+/// and writes at it, the sign-in is checked there, the session signed in at
+/// that name is readable there, and a write whose `Origin` names that same host
+/// and port is answered. These are the spellings of the administrator's own
+/// browser opening `http://aorus.bombicci.local:8590`.
+#[tokio::test]
+async fn a_machine_name_in_the_list_is_answered() {
+    for host in [
+        MACHINE,
+        MACHINE_HOST,
+        "AORUS.BOMBICCI.LOCAL:8590",
+        "Aorus.Bombicci.Local",
+    ] {
+        // The bff is bound to its LAN address, which is where a page at this
+        // name reaches it.
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        // The test's own sign-in sends no `Host`, the shape of `curl`: the
+        // cookie it sets is the one these requests carry.
+        let cookie = app.sign_in().await;
+
+        // The page served at this name: `Host` and `Origin` both name it.
+        let origin = format!("http://{host}");
+        let extra = vec![("host", host), ("origin", origin.as_str())];
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra).await.assert_accepted();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_enabled(true);
+        app.sign_in_with("alice", &extra).await.assert_ok();
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
+
+        // The client naming only the name it dialed (`curl`, the CLI, a proxy):
+        // no fetch metadata, the reads answer, and a session signed in at that
+        // name is readable at it.
+        let named = host_line(host);
+        let r = app
+            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await;
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Host: {host}: {}",
+            r.body
+        );
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_ok();
+        let reply = app.sign_in_raw(CREDENTIALS, &named).await;
+        reply.assert_ok();
+        let at = reply.set_cookie.expect("a session cookie");
+        app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// A name that is not in the list stays refused: a foreign name, a name that
+/// starts with one of ours (the rebinding's shape, where the page's `Origin`
+/// and the `Host` line are both the attacker's, so only the name rule answers),
+/// and the machine's own automatic names when the list handed to the guard does
+/// not hold them. The refusal is 403 `request-bad-host`, before the session is
+/// read, before the manager is connected to and before the password is checked.
+#[tokio::test]
+async fn a_name_outside_the_injected_list_is_refused() {
+    for host in [
+        "evil.example",
+        "evil.example:8590",
+        "aorus.bombicci.local.evil.example",
+        "aorus.bombicci.local.evil.example:8590",
+        "aorus.evil.example",
+        "AORUS.BOMBICCI.LOCAL.EVIL.EXAMPLE",
+        // Not in the list this guard was handed: the list replaces the
+        // automatic names, it does not widen them.
+        "aorus",
+        "aorus.local",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        let cookie = app.sign_in().await;
+        let before = app.asked();
+
+        // The rebinding: the page's `Origin` and the `Host` line are both this
+        // name, so the origin rule passes and the name rule refuses.
+        let rebinding = at_host(host);
+        for uri in VERBS {
+            app.ask_raw(Method::POST, uri, Some(&cookie), None, None, &rebinding)
+                .await
+                .assert_bad_host();
+        }
+        app.boot_raw(&cookie, &rebinding).await.assert_bad_host();
+        app.sign_in_raw(CREDENTIALS, &rebinding)
+            .await
+            .assert_bad_host();
+
+        // The `Host` on its own, with no fetch metadata: `curl` naming a host
+        // this bff does not serve.
+        let named = host_line(host);
+        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/session",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+
+        app.assert_asks_nothing(&format!("Host: {host}"));
+        assert_eq!(app.asked(), before, "the authenticator was asked");
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+
+    // A name of ours passes the name rule, and the origin rule keeps deciding:
+    // the same name on another port is a page of another web app on this
+    // machine, so it is `request-cross-origin`, not `request-bad-host`.
+    let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+    let cookie = app.sign_in().await;
+    let before = app.asked();
+    let other_port = format!("http://{MACHINE}:9999");
+    let extra = vec![("host", MACHINE_HOST), ("origin", other_port.as_str())];
+    for uri in VERBS {
+        app.post_with(uri, &cookie, &extra)
+            .await
+            .assert_cross_origin();
+    }
+    app.put_with("/api/instances/default/boot", &cookie, &extra)
+        .await
+        .assert_cross_origin();
+    app.delete_session_with(&cookie, &extra)
+        .await
+        .assert_cross_origin();
+    app.assert_asks_nothing(&format!("Host: {MACHINE_HOST}, Origin: {other_port}"));
+    assert_eq!(app.asked(), before, "the authenticator was asked");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// The list of the machine's names does not replace `localhost` and the IP
+/// literals: with a list that holds one name, the loopback names and every
+/// address, the machine's LAN address and the wildcard included, are answered
+/// as before, a read and a write from that address alike. The bff here is bound
+/// to the wildcard, which serves the loopback too.
+#[tokio::test]
+async fn localhost_and_an_ip_are_answered_with_a_name_list() {
+    for host in [
+        "localhost:8590",
+        "LOCALHOST",
+        "127.0.0.1:8590",
+        "[::1]:8590",
+        "192.168.1.10:8590",
+        "0.0.0.0:8590",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_WILDCARD));
+        let cookie = app.sign_in().await;
+        let origin = format!("http://{host}");
+        let extra = vec![("host", host), ("origin", origin.as_str())];
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra).await.assert_accepted();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_enabled(true);
+        app.sign_in_with("alice", &extra).await.assert_ok();
+        let named = host_line(host);
+        let r = app
+            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await;
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Host: {host}: {}",
+            r.body
+        );
+    }
+}
+
+// ── A trailing dot is the root: one name with the bare one ──────────────
+
+/// A name of the list written as a fully qualified domain, with its trailing
+/// dot (the root of the DNS tree, the spelling a browser keeps in the address
+/// bar and in the `Host` and `Origin` lines of the request), is the same name:
+/// it is answered with the dot and without it, in any case, with a port and
+/// without one. The administrator who typed `http://aorus.bombicci.local.:8590`
+/// reads, signs in, and writes at it: the write's `Origin` names that same host
+/// and port, so the origin rule compares the two spellings whole and passes.
+#[tokio::test]
+async fn a_trailing_dot_on_a_machine_name_is_the_same_name() {
+    for host in [
+        "aorus.bombicci.local.",
+        "aorus.bombicci.local.:8590",
+        "AORUS.BOMBICCI.LOCAL.",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        let cookie = app.sign_in().await;
+
+        // The client naming only the name it dialed: the reads answer, and the
+        // sign-in is checked at it.
+        let named = host_line(host);
+        let r = app
+            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await;
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Host: {host}: {}",
+            r.body
+        );
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_ok();
+        let reply = app.sign_in_raw(CREDENTIALS, &named).await;
+        reply.assert_ok();
+        let at = reply.set_cookie.expect("a session cookie");
+        app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
+            .await
+            .assert_signed_in_as("alice");
+
+        // The page served at that spelling: its writes, `Origin` naming the
+        // same host and port.
+        let origin = format!("http://{host}");
+        let extra = vec![("host", host), ("origin", origin.as_str())];
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra).await.assert_accepted();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_enabled(true);
+        app.sign_in_with("alice", &extra).await.assert_ok();
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
+    }
+
+    // The write the rule names: a `Host` with the dot and the port, an `Origin`
+    // naming that same host and port.
+    let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+    let cookie = app.sign_in().await;
+    let extra = vec![
+        ("host", "aorus.bombicci.local.:8590"),
+        ("origin", "http://aorus.bombicci.local.:8590"),
+    ];
+    for uri in VERBS {
+        app.post_with(uri, &cookie, &extra).await.assert_accepted();
+    }
+    app.put_with("/api/instances/default/boot", &cookie, &extra)
+        .await
+        .assert_enabled(true);
+}
+
+/// `localhost.` is `localhost`, the fully qualified spelling of the same host,
+/// answered wherever `localhost` is: at a loopback listen and at the wildcard,
+/// which serve the loopback. At a listen bound to one LAN address it is
+/// refused, as the name without the dot is there: the bff is not reachable at
+/// the loopback at all.
+#[tokio::test]
+async fn localhost_with_a_trailing_dot_is_localhost() {
+    for listen in [
+        LISTEN_LOOPBACK,
+        LISTEN_V6_LOOPBACK,
+        LISTEN_WILDCARD,
+        LISTEN_V6_WILDCARD,
+    ] {
+        for host in ["localhost.", "localhost.:8590", "LOCALHOST."] {
+            let app = app_with_hosts(&[MACHINE], addr(listen));
+            let cookie = app.sign_in().await;
+
+            let named = host_line(host);
+            app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+                .await
+                .assert_ok();
+
+            let origin = format!("http://{host}");
+            let extra = vec![("host", host), ("origin", origin.as_str())];
+            for uri in VERBS {
+                app.post_with(uri, &cookie, &extra).await.assert_accepted();
+            }
+            app.put_with("/api/instances/default/boot", &cookie, &extra)
+                .await
+                .assert_enabled(true);
+            app.sign_in_with("alice", &extra).await.assert_ok();
+        }
+    }
+
+    // Where the listen serves no loopback, the dotted spelling is refused like
+    // the bare one, and the session is left where it was.
+    let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+    let cookie = app.sign_in().await;
+    let before = app.asked();
+    for host in ["localhost.", "localhost.:8590"] {
+        let named = host_line(host);
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        let rebinding = at_host(host);
+        app.boot_raw(&cookie, &rebinding).await.assert_bad_host();
+        app.sign_in_raw(CREDENTIALS, &rebinding)
+            .await
+            .assert_bad_host();
+    }
+    app.assert_asks_nothing("Host: localhost.");
+    assert_eq!(app.asked(), before, "the authenticator was asked");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// A `Host` that is nothing but dots names no host and is refused: the root
+/// `.`, a name with two trailing dots (only one of them is the root), and
+/// `localhost..`. The trailing dot that makes a name of the list and its dotted
+/// spelling one name is the LAST one, and one only: this is what the rule must
+/// not normalize away.
+#[tokio::test]
+async fn a_host_of_only_dots_is_refused() {
+    for host in [
+        ".",
+        "..",
+        "aorus.bombicci.local..",
+        "aorus.bombicci.local..:8590",
+        "localhost..",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        let cookie = app.sign_in().await;
+        let before = app.asked();
+
+        // The rebinding's shape: `Host` and `Origin` both this name, so only
+        // the name rule answers.
+        let rebinding = at_host(host);
+        for uri in VERBS {
+            app.ask_raw(Method::POST, uri, Some(&cookie), None, None, &rebinding)
+                .await
+                .assert_bad_host();
+        }
+        app.boot_raw(&cookie, &rebinding).await.assert_bad_host();
+        app.sign_in_raw(CREDENTIALS, &rebinding)
+            .await
+            .assert_bad_host();
+
+        // The `Host` on its own, with no fetch metadata.
+        let named = host_line(host);
+        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/session",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+
+        app.assert_asks_nothing(&format!("Host: {host}"));
+        assert_eq!(app.asked(), before, "the authenticator was asked");
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+// ── The address the bff is bound to ─────────────────────────────────────
+
+/// `localhost` and the loopback addresses are answered when the bff is bound to
+/// a loopback address or to the wildcard: those listens serve the loopback, so
+/// the signed-in user's page reads and writes at them, the sign-in is checked
+/// there, and the session signed in at one is readable at it. These are the
+/// `Listen` values of `bff.ini` on the administrator's own machine.
+#[tokio::test]
+async fn a_loopback_host_is_answered_at_a_loopback_listen() {
+    for listen in [
+        LISTEN_LOOPBACK,
+        LISTEN_V6_LOOPBACK,
+        LISTEN_WILDCARD,
+        LISTEN_V6_WILDCARD,
+    ] {
+        for host in [
+            "localhost:8590",
+            "LOCALHOST",
+            "127.0.0.1:8590",
+            "127.0.0.53:8590",
+            "[::1]:8590",
+        ] {
+            let app = app_with_hosts(&[MACHINE], addr(listen));
+            let cookie = app.sign_in().await;
+
+            // The page served at this name: `Host` and `Origin` both name it.
+            let origin = format!("http://{host}");
+            let extra = vec![("host", host), ("origin", origin.as_str())];
+            for uri in VERBS {
+                app.post_with(uri, &cookie, &extra).await.assert_accepted();
+            }
+            app.put_with("/api/instances/default/boot", &cookie, &extra)
+                .await
+                .assert_enabled(true);
+            app.sign_in_with("alice", &extra).await.assert_ok();
+            app.delete_session_with(&cookie, &extra)
+                .await
+                .assert_accepted();
+
+            // The client naming only the name it dialed (`curl`, the CLI, a
+            // proxy): the reads answer and the session it signs in with is
+            // readable at it.
+            let named = host_line(host);
+            let r = app
+                .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+                .await;
+            assert_eq!(
+                r.json(),
+                json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+                "Listen {listen}, Host: {host}: {}",
+                r.body
+            );
+            app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+                .await
+                .assert_ok();
+            let reply = app.sign_in_raw(CREDENTIALS, &named).await;
+            reply.assert_ok();
+            let at = reply.set_cookie.expect("a session cookie");
+            app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
+                .await
+                .assert_signed_in_as("alice");
+        }
+    }
+}
+
+/// The same names are refused when the bff is bound to one LAN address only:
+/// there the loopback is not served at all, so a `Host` naming `localhost` or
+/// an address of `127.0.0.0/8` or `[::1]` is a request addressed at a host this
+/// bff is not. It is 403 `request-bad-host` for the reads and the sign-in,
+/// before the session is read, before the manager is connected to and before
+/// the password is checked, and the session of the signed-in user survives.
+#[tokio::test]
+async fn a_loopback_host_is_refused_at_a_lan_only_listen() {
+    for host in [
+        "localhost:8590",
+        "localhost",
+        "LOCALHOST:8590",
+        "127.0.0.1:8590",
+        "127.5.6.7",
+        "[::1]:8590",
+        "[::1]",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        // The test's own sign-in sends no `Host`, the shape of `curl`: the
+        // cookie it sets is the one these requests carry.
+        let cookie = app.sign_in().await;
+        let before = app.asked();
+
+        // The rebinding: the page's `Origin` and the `Host` line are both this
+        // name, so the origin rule passes and the name rule refuses.
+        let rebinding = at_host(host);
+        for uri in VERBS {
+            app.ask_raw(Method::POST, uri, Some(&cookie), None, None, &rebinding)
+                .await
+                .assert_bad_host();
+        }
+        app.boot_raw(&cookie, &rebinding).await.assert_bad_host();
+        app.ask_raw(
+            Method::DELETE,
+            "/api/session",
+            Some(&cookie),
+            None,
+            None,
+            &rebinding,
+        )
+        .await
+        .assert_bad_host();
+        app.sign_in_raw(CREDENTIALS, &rebinding)
+            .await
+            .assert_bad_host();
+
+        // The `Host` on its own, with no fetch metadata: `curl` naming a host
+        // that is not served at the address the bff is bound to.
+        let named = host_line(host);
+        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/session",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+
+        app.assert_asks_nothing(&format!("Host: {host} at Listen {LISTEN_LAN}"));
+        assert_eq!(app.asked(), before, "the authenticator was asked");
+        // The session is where the sign-in left it: the guard answered before
+        // the session was read.
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// The LAN-only listen changes nothing for the other addresses: the address the
+/// bff is bound to, the wildcard, a link-local IPv6 and another address of the
+/// machine are answered as before, a read and a write from that address alike.
+/// The name rule is about a page that believes it sits at a name of ours, and
+/// the listen decides only the loopback names.
+#[tokio::test]
+async fn a_lan_only_listen_answers_the_other_addresses() {
+    for host in [
+        LAN,
+        "192.168.50.210",
+        "0.0.0.0:8590",
+        "192.168.1.10:8590",
+        "[fe80::1]:8590",
+    ] {
+        let app = app_with_hosts(&[MACHINE], addr(LISTEN_LAN));
+        let cookie = app.sign_in().await;
+
+        // The page served at this address: `Host` and `Origin` both name it.
+        let origin = format!("http://{host}");
+        let extra = vec![("host", host), ("origin", origin.as_str())];
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra).await.assert_accepted();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_enabled(true);
+        app.sign_in_with("alice", &extra).await.assert_ok();
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
+
+        // The client naming only the address it dialed.
+        let named = host_line(host);
+        let r = app
+            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await;
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Listen {LISTEN_LAN}, Host: {host}: {}",
+            r.body
+        );
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_ok();
     }
 }
 
