@@ -445,3 +445,76 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   `running: true`, and writes get 15 s ("Writes and their time limit", above). A negative
   `ModelsMax` is refused by the served `PUT` (422 `not-whole-number-in-range`, field `ModelsMax`,
   `server_cfg::check`).
+
+## Planned: nodes and instances (PLAN step 10 item 13), not built
+
+**Nothing in this section is served.** It records the routes as designed in `ARCHITECTURE.md`,
+"Nodes and instances" (f) (commit 94632a8; the record is the authority), and the designer's open
+points from reading it against the fe on 2026-11-17. The sections above stay the contract of what is
+built until a slice moves a route here into them.
+
+### As designed
+
+- `GET /api/node`, anyone: `{"name": <host name>, "api": "/api"}`. `api` is the path prefix of this
+  node's routes; hub mode (Part 2) answers `GET /api/nodes` with the same objects, `api` =
+  `/api/nodes/<node>`.
+- `GET /api/instances`, anyone: items `{"id", "engine", "state", "port", "tags"}`; `port` the
+  configured one (a running instance may still use the previous port until a restart), `tags` a list
+  of labels (0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no duplicates). Labels only: nothing routes on
+  them (user, 2026-11-17).
+- `POST /api/instances`, administrator: `{"engine", "id", "port", "tags"}`, 201 `{"id"}`. Writes
+  `server@<id>.ini` (port, tags, everything else default, folders unset) and an empty
+  `presets@<id>.ini`; boot start off; starts nothing.
+- `DELETE /api/instances/{id}`, administrator: 204. Removes the service registration, the preset pair,
+  then `server@<id>.ini`; models, snapshots and the Windows log stay.
+- New keys: `client-instance-exists` (409), `client-instance-running` (409, the instance is not
+  `inactive` or `failed`), `client-instance-protected` (409, `default`), `client-no-presets` (409, on
+  start), `server-bad-tags` (422, `args` the tag); `client-address-in-use`, `client-no-instance` and
+  `unknown-engine` as today.
+- The preset routes move: `GET /api/instances/{id}/presets`, `GET` and `PUT
+  /api/instances/{id}/presets/{preset}`, `PUT .../presets/{preset}/enabled`, same bodies, revisions
+  and errors, on `presets@<id>.ini` and its `.disabled`; `running` reads that one instance. A preset id
+  is unique within one instance, not across instances. `/api/presets...` answer for `default` until
+  the web UI reads the new routes, then are removed in the same step.
+- Tags are edited through `PUT /api/instances/{id}/server` (`Tags` a server key; the read gains it).
+
+### Open points for the platform side
+
+1. **`POST` body and answers.** Is `tags` a JSON array of strings (as the list gives) or the INI's
+   comma string? Is `port` a JSON number? Every refusal with status, key, `args` and `field`: a bad id
+   (which key? `field` `id`), a taken id (`client-instance-exists`, `field` `id`?), a port out of 1 to
+   65535 (`not-whole-number-in-range`, `field` `Port` or `port`?), `client-address-in-use` (`args`
+   `[id]` of the other instance, `field`?), `server-bad-tags` (`field` `Tags` or `tags`?),
+   `unknown-engine`, a malformed body (400, which key?). Do 401, 403 `session-not-administrator`
+   (session ended), 413, the guard's 403s, 503 before the write and 504 after it apply as for every
+   write, with the 15 s limit?
+2. **`DELETE` answers.** The same question for 504: a remove whose outcome is unknown (the fe then
+   re-reads the list). Does a remove of an id the list still shows but whose file is gone answer 404
+   `client-no-instance`?
+3. **Protected before trying.** The fe must not hard-code `default`. Proposed: a `"removable":
+   <bool>` (or `"protected"`) field in each list item, so the Remove control is not offered for it.
+4. **`Tags` in `PUT .../server`.** The rule "a key absent from `values` is unset" means today's fe
+   (19 keys) would erase the tags at every server save once the bff reads `Tags`. Proposed: the read
+   gains `Tags` (as an array or a string: which?) and the fe sends it in the same release as the bff
+   accepts it; or the bff keeps the file's tags when `Tags` is absent.
+5. **A new instance's state.** What does the list say for a created, never-started instance on Windows,
+   where no `llama.cpp_<id>` service exists until `Start`? It must be a state (`inactive`), not a
+   failed list.
+6. **`client-no-presets` exactly.** On `start` only, or on `restart` too (before or after the stop)?
+   Does a preset only in `presets@<id>.ini.disabled`, or only `[*]`, count as none? Note: today's
+   `launch::instance_command` still reads the engine's `presets.ini` (slice 1 changes it).
+7. **The preset routes under a missing instance.** Proposed: 404 `client-no-instance` (not
+   `no-preset-named`), so a page whose instance was removed in another tab says the instance is gone.
+8. **The list.** Ordered by id (`paths::instance_ids` sorts)? Does one instance's failed `Status` fail
+   the whole list, or give that item a state such as `unknown`?
+9. **`api` and the other routes.** Which routes live under `api` (instances, their presets, server,
+   boot, verbs) and which stay at `/api` in hub mode (`version`, `session`, `node`, `engines`)? The
+   fe accepts only a same-origin path starting with `/api/` or equal to `/api`, never a full URL.
+10. **Ports the manager does not see.** `check_address` compares only instances: a port below 1024
+    (the instance runs unprivileged) or one held by another program (the bff's own listen port, another
+    server) is accepted and fails at `start` as `client-service-failed`. Refuse those at create, or
+    leave it to the start?
+11. **No way to add a preset to a new instance.** The new `presets@<id>.ini` has no section, so
+    `start` is `client-no-presets`, and neither the web UI (no preset create yet) nor `pai-config` or
+    `pai` (they address `default` only) can add one. Item 13 needs an answer before the add dialog
+    ships (a user question in the designer's report).
