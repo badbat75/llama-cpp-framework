@@ -29,6 +29,7 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
+  expectedInputMode,
   fieldTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
@@ -492,7 +493,7 @@ function expectAbsent(main: HTMLElement, f: Row): void {
 // ── One test per field (85, 86, 87, 88, 96, 97, 98, 99) ────────────────
 
 test.each(FIELDS)(
-  '2e.96, 2e.97, 2e.98, 2e.87, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, and every control is natively disabled',
+  '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, and every control is natively disabled',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
     const field = fieldOf(main, f.label)
@@ -516,11 +517,13 @@ test.each(FIELDS)(
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
       expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
       expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
-      // 87: an integer key takes the numeric form, a float key a plain input.
+      // 87 as retargeted by 2h.158: an integer key with a range starting at
+      // 0 or above takes the numeric form; an any-whole-number key and a
+      // float key a plain input.
       expect(
         input.getAttribute('inputmode'),
-        `${f.key}: ${f.integer ? 'numeric' : 'plain'}`,
-      ).toBe(f.integer ? 'numeric' : null)
+        `${f.key}: ${expectedInputMode(f.key, f.integer) ?? 'plain'}`,
+      ).toBe(expectedInputMode(f.key, f.integer))
     } else if (f.kind === 'select') {
       const select = selectOf(main, f.label)
       expect(optionTexts(select), `${f.key}: the options in order`).toEqual(
@@ -780,14 +783,23 @@ test('2e.89, 2e.96: Cache RAM shows the unit MiB after the input as a literal, a
       ).toBe(0)
 })
 
-test('2e.87, 2e.96, 2e.97: an integer key of 2e.2 takes the numeric form of the input and a float key a plain text input', async () => {
+test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeric form of the input, an any-whole-number key and a float key a plain text input', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   for (const f of FIELDS.filter((x) => x.kind === 'number')) {
     const input = inputOf(groupBox(main, f.label), f.label)
     expect(
       input.getAttribute('inputmode'),
-      `${f.key}: ${f.integer ? 'numeric' : 'plain'}`,
-    ).toBe(f.integer ? 'numeric' : null)
+      `${f.key}: ${expectedInputMode(f.key, f.integer) ?? 'plain'}`,
+    ).toBe(expectedInputMode(f.key, f.integer))
+  }
+  // 158 names these keys: the two any-whole-number keys get none, the
+  // ranged ones keep numeric (the loop above pins both sides).
+  for (const key of ['cache-ram', 'top-k']) {
+    const f = FIELDS.find((x) => x.key === key)!
+    expect(
+      inputOf(groupBox(main, f.label), f.label).getAttribute('inputmode'),
+      `${key}: no input mode (158)`,
+    ).toBeNull()
   }
 })
 
@@ -934,7 +946,7 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldTabStops(),
+    ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
 })

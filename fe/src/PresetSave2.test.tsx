@@ -17,7 +17,7 @@ import {
 } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
   before,
@@ -540,23 +540,24 @@ test('2h.138: an edit made while the PUT runs stays on screen and is dirty again
 
 // ── 139: every answer that is not the 200 of 138 ───────────────────────
 
-test('2h.139: any answer that is not a shaped 200 shows save-failed in the bar alert, puts the status back to save-unsaved and keeps the edits, dirty', async () => {
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['500 with a key', () => reply(500, { key: 'secret-detail', args: [] })],
-    ['204', () => reply(204)],
-    ['200 without running', () => reply(200, { revision: 'r2' })],
-    ['200 without a revision', () => reply(200, { running: false })],
-    [
-      '200 with a revision that is not a string',
-      () => reply(200, { revision: 2, running: false }),
-    ],
-    ['200 that is not JSON', () => reply(200, 'secret-detail')],
-    [
-      'a network failure',
-      () => Promise.reject(new TypeError('Failed to fetch')),
-    ],
-  ]
-  for (const [what, answer] of answers) {
+/** 139: one test per row, one mount each (as 2h.150 in
+ * PresetSave3.test.tsx: the cleanup between rows is the file's afterEach). */
+const ANSWERS_139: [string, () => Response | Promise<Response>][] = [
+  ['500 with a key', () => reply(500, { key: 'secret-detail', args: [] })],
+  ['204', () => reply(204)],
+  ['200 without running', () => reply(200, { revision: 'r2' })],
+  ['200 without a revision', () => reply(200, { running: false })],
+  [
+    '200 with a revision that is not a string',
+    () => reply(200, { revision: 2, running: false }),
+  ],
+  ['200 that is not JSON', () => reply(200, 'secret-detail')],
+  ['a network failure', () => Promise.reject(new TypeError('Failed to fetch'))],
+]
+
+it.each(ANSWERS_139)(
+  '2h.139: %s: any answer that is not a shaped 200 shows save-failed in the bar alert, puts the status back to save-unsaved and keeps the edits, dirty',
+  async (what, answer) => {
     const { bff, main } = await form(
       { embeddings: 'true', pooling: 'mean' },
       answer,
@@ -580,10 +581,8 @@ test('2h.139: any answer that is not a shaped 200 shows save-failed in the bar a
       isHidden(writtenOf(main, 'embeddings')),
       `${what}: the field is still changed, so 134 keeps the written-as line hidden`,
     ).toBe(true)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── 140: leaving while dirty ────────────────────────────────────────────
 

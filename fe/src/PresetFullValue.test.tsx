@@ -1,13 +1,16 @@
-// The full-value line of the read-only preset page (fe/briefs/02e-preset-cards.md,
+// The full-value line of the preset page (fe/briefs/02e-preset-cards.md,
 // criteria 118 to 121): a value longer than its disabled control shows is
 // repeated in full as text under the control, because a disabled input or
 // select cannot wrap, scroll or be read past its edge. It is built once in the
 // shared field renderer of fe/src/PresetCards.tsx, so every field of 2e.1 and
-// 2e.2 gets it. The fields, their controls and how a value is shown are
-// PresetCards1.test.tsx and PresetCards2.test.tsx; the route and the read are
-// PresetPage.test.tsx. The colour and the wrap at 320 px are the designer's
-// review, not jsdom: criterion 118's style is pinned as the CSS rule, the way
-// App.test.tsx pins the banner's.
+// 2e.2 gets it. 2h.4's 160 keeps the rule (134: the line is only for a
+// disabled control): of the Resource / context card, now editable, only
+// Unified KV can be disabled with a value, so the number example here is
+// Cache RAM of the read-only KV cache card. The fields, their controls and
+// how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
+// the route and the read are PresetPage.test.tsx. The colour and the wrap at
+// 320 px are the designer's review, not jsdom: criterion 118's style is pinned
+// as the CSS rule, the way App.test.tsx pins the banner's.
 // The line is only for a read-only page, so the last test pins that the
 // editable Server form shows none, whatever its values hold.
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -54,6 +57,10 @@ const CTX = en('preset-context-size')
 const RAM = en('preset-cache-ram')
 const KCACHE = en('preset-k-cache-type')
 const KWARGS = en('preset-chat-kwargs')
+/** The other editable number fields of the Resource / context card (2h.4). */
+const SLOT = en('preset-per-slot-context')
+const BATCH = en('preset-batch-size')
+const UBATCH = en('preset-u-batch-size')
 
 beforeEach(() => startAt(HASH))
 
@@ -197,9 +204,9 @@ function nameOf(el: HTMLElement): string {
 
 // ── 118: the line, its text and its place ───────────────────────────────
 
-test('2e.118: a Context size of 9 characters shows the line: a paragraph with the id preset-full-ctx-size, shown, holding the value', async () => {
-  const { main } = await page({ 'ctx-size': NUM_9 })
-  const line = lineOf(main, 'ctx-size')
+test('2e.118: a Cache RAM of 9 characters shows the line: a paragraph with the id preset-full-cache-ram, shown, holding the value', async () => {
+  const { main } = await page({ 'cache-ram': NUM_9 })
+  const line = lineOf(main, 'cache-ram')
   expect(line.tagName, 'the line is a paragraph').toBe('P')
   expect(line.textContent, 'the line holds the value').toBe(NUM_9)
   expect(isHidden(line), 'the line is shown').toBe(false)
@@ -207,7 +214,7 @@ test('2e.118: a Context size of 9 characters shows the line: a paragraph with th
 
 test('2e.118: the line holds the value exactly as written, for a number, a text and an unlisted select value with capitals, a leading space and trailing spaces', async () => {
   const { main } = await page({
-    'ctx-size': NUM_PAD,
+    'cache-ram': NUM_PAD,
     'chat-template-kwargs': TEXT_21,
     'cache-type-k': POOL_LONG,
   })
@@ -219,7 +226,7 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
       `${value}: trimming and lower-casing both leave it alone, so it pins nothing`,
     ).toBe(false)
   const cases: [string, 'number' | 'text' | 'select', string, string][] = [
-    ['ctx-size', 'number', CTX, NUM_PAD],
+    ['cache-ram', 'number', RAM, NUM_PAD],
     ['chat-template-kwargs', 'text', KWARGS, TEXT_21],
     ['cache-type-k', 'select', KCACHE, POOL_LONG],
   ]
@@ -284,21 +291,31 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
   }
 })
 
-test('2e.118: one line per long field: each line is in its own field and a short field of the same card has none', async () => {
+test('2e.118, 2h.160: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
   const { main } = await page({
-    'ctx-size': NUM_9,
+    'cache-ram': NUM_9,
     'cache-type-k': POOL_LONG,
-    parallel: '8',
-    'kv-unified': 'auto',
+    // The Resource / context card, every key past its limit: 160 says an
+    // enabled control shows no line, so none of these has one. Parallel slots
+    // is present, so its box is unticked and Unified KV is enabled too.
+    'ctx-size': NUM_9,
+    parallel: '817203200',
+    'kv-unified': POOL_LONG,
+    'kv-unified-per-slot': NUM_9,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
   expect(lines.length, 'exactly the two long fields have a line').toBe(2)
-  expectNoLine(main, 'parallel')
-  expectNoLine(main, 'kv-unified')
+  for (const key of [
+    'ctx-size',
+    'parallel',
+    'kv-unified',
+    'kv-unified-per-slot',
+  ])
+    expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
   expect(owners.size, 'no field holds both lines').toBe(2)
   for (const [key, label] of [
-    ['ctx-size', CTX],
+    ['cache-ram', RAM],
     ['cache-type-k', KCACHE],
   ] as const) {
     const field = fieldOf(main, label)
@@ -307,6 +324,64 @@ test('2e.118: one line per long field: each line is in its own field and a short
       `${key}: its line is in its own field`,
     ).toBeTruthy()
   }
+})
+
+test('2h.160: in the Resource / context card only Unified KV is ever disabled with a value, a ticked box leaves its input empty, and the card shows no line', async () => {
+  // Every key present, each value past the limit of 119: Parallel slots' box
+  // is unticked, so Unified KV is enabled (155) and every input is enabled
+  // (156). 134: an enabled control shows no line, so the card has none.
+  const long = {
+    'ctx-size': NUM_9,
+    parallel: '817203200',
+    'kv-unified': POOL_LONG,
+    'kv-unified-per-slot': NUM_9,
+    'batch-size': NUM_9,
+    'ubatch-size': NUM_9,
+  }
+  const enabled = await page(long)
+  for (const label of [CTX, SLOT, BATCH, UBATCH]) {
+    const input = within(enabled.main).getByRole('textbox', {
+      name: label,
+    }) as HTMLInputElement
+    expect(
+      input.disabled,
+      `${label}: the input is enabled, it can scroll`,
+    ).toBe(false)
+  }
+  expect(
+    selectOf(enabled.main, en('preset-unified-kv')).disabled,
+    'Unified KV is enabled while Parallel slots is unticked',
+  ).toBe(false)
+  expect(
+    enabled.main.querySelectorAll('[id^="preset-full-"]').length,
+    'an enabled control shows no line',
+  ).toBe(0)
+  cleanup()
+  // Every key absent: every box is ticked (156), so every input is disabled
+  // AND EMPTY (160: a ticked box has no value to show, so it never has a
+  // line), and Unified KV is the one control disabled while holding a value.
+  const dflt = await loaded({ preset: () => reply(200, exactOf({})) })
+  for (const label of [CTX, SLOT, BATCH, UBATCH]) {
+    const input = within(dflt.main).getByRole('textbox', {
+      name: label,
+    }) as HTMLInputElement
+    expect(input.disabled, `${label}: a ticked box disables its input`).toBe(
+      true,
+    )
+    expect(input.value, `${label}: and leaves it empty`).toBe('')
+  }
+  const kv = selectOf(dflt.main, en('preset-unified-kv'))
+  expect(
+    kv.disabled,
+    'Unified KV: the card control disabled with a value',
+  ).toBe(true)
+  expect(selectedText(kv), 'and the value it holds is what it shows').not.toBe(
+    '',
+  )
+  expect(
+    dflt.main.querySelectorAll('[id^="preset-full-"]').length,
+    'the card shows no line: 134 needs a disabled control, 160 a long value',
+  ).toBe(0)
 })
 
 test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem and wrapping anywhere', () => {
@@ -337,12 +412,12 @@ test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem 
 test('2e.119: a number shows no line at 8 characters and its line at 9', async () => {
   expect(NUM_8.length, 'the number stub is 8 characters').toBe(8)
   expect(NUM_9.length, 'the number stub is 9 characters').toBe(9)
-  const short = await page({ 'ctx-size': NUM_8 })
-  expectNoLine(short.main, 'ctx-size')
+  const short = await page({ 'cache-ram': NUM_8 })
+  expectNoLine(short.main, 'cache-ram')
   cleanup()
-  const long = await page({ 'ctx-size': NUM_9 })
+  const long = await page({ 'cache-ram': NUM_9 })
   expect(
-    lineOf(long.main, 'ctx-size').textContent,
+    lineOf(long.main, 'cache-ram').textContent,
     'the 9-character line',
   ).toBe(NUM_9)
 })
@@ -398,16 +473,16 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 
 /** Three long fields of three kinds, the line of each. */
 const LONG = {
-  'ctx-size': NUM_9,
+  'cache-ram': NUM_9,
   'chat-template-kwargs': TEXT_21,
   'cache-type-k': POOL_LONG,
 }
 const SHORT = {
-  'ctx-size': NUM_8,
+  'cache-ram': NUM_8,
   'chat-template-kwargs': TEXT_20,
   'cache-type-k': POOL_20,
 }
-const LONG_KEYS = ['ctx-size', 'chat-template-kwargs', 'cache-type-k'] as const
+const LONG_KEYS = ['cache-ram', 'chat-template-kwargs', 'cache-type-k'] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -453,8 +528,8 @@ test('2e.120: the line takes no focus: it is not a tab stop, and the tab order o
 
 test('2e.121: the stub values of the brief show exactly these lines and no others', async () => {
   const cases: [Record<string, string>, string | null][] = [
-    [{ 'ctx-size': '172032000' }, '172032000'],
-    [{ 'ctx-size': '17203200' }, null],
+    [{ 'cache-ram': '172032000' }, '172032000'],
+    [{ 'cache-ram': '17203200' }, null],
     [{}, null],
     [{ 'cache-type-k': POOL_21 }, POOL_21],
     [{ 'cache-type-k': POOL_20 }, null],

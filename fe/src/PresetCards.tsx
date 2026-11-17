@@ -7,9 +7,12 @@
 // Every control of a card is natively disabled (criterion 85): the page shows
 // the file for it and sends nothing. 2h.1 makes the Embeddings card's two
 // controls editable (criterion 130): the row says which with `editable`, and
-// the page's form edits those and its save bar writes what changed. Each field
-// is the same Field the Server page uses, so the page looks the same before
-// and after the save lands.
+// the page's form edits those and its save bar writes what changed. 2h.4 gives
+// the same to the number fields of Resource / context (155), whose default box
+// the page keeps in `boxed` (156, the mechanics of `boxed.ts`), and 155 leaves
+// a select enabled only while another key's box is unticked (`needsUnticked`).
+// Each field is the same Field the Server page uses, so the page looks the same
+// before and after the save lands.
 //
 // 2e.3 adds the rows of its tables (criteria 101, 102) and, with them, the
 // kinds the renderer had not met: the checkbox, the note of a card (90) and
@@ -23,6 +26,7 @@
 // Speculative decoding card (112) and, with it, the group row of 90: a card row
 // that is the GUI's bold sub-heading and the rows under it, so a card's rows
 // nest and the one renderer still shows them all.
+import { boxText, boxedFrom, type Boxed } from './boxed.ts'
 import Card from './Card.tsx'
 import {
   CheckboxField,
@@ -83,6 +87,10 @@ type SelectRow = RowBase & {
   options: Option[]
   absent: string
   normalize?: boolean
+  /** 2h.4's 155: an enabled select is disabled while one of these keys has its
+   * default box ticked (Unified KV sizes a cache shared by the slots, so it
+   * needs Parallel slots). */
+  needsUnticked?: string[]
 }
 
 /** A text: one monospace input showing the string as it is. The unit, when the
@@ -349,6 +357,7 @@ const CARDS: CardFields[] = [
         key: 'ctx-size',
         label: t('preset-context-size'),
         hint: t('preset-context-size-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -356,6 +365,7 @@ const CARDS: CardFields[] = [
         key: 'parallel',
         label: t('preset-parallel-slots'),
         hint: t('preset-parallel-slots-hint'),
+        editable: true,
       },
       {
         kind: 'select',
@@ -365,6 +375,8 @@ const CARDS: CardFields[] = [
         absent: 'default',
         label: t('preset-unified-kv'),
         hint: t('preset-unified-kv-hint'),
+        editable: true,
+        needsUnticked: ['parallel'],
       },
       {
         kind: 'number',
@@ -372,6 +384,7 @@ const CARDS: CardFields[] = [
         key: 'kv-unified-per-slot',
         label: t('preset-per-slot-context'),
         hint: t('preset-per-slot-context-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -379,6 +392,7 @@ const CARDS: CardFields[] = [
         key: 'batch-size',
         label: t('preset-batch-size'),
         hint: t('preset-batch-size-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -386,6 +400,7 @@ const CARDS: CardFields[] = [
         key: 'ubatch-size',
         label: t('preset-u-batch-size'),
         hint: t('preset-u-batch-size-hint'),
+        editable: true,
       },
     ],
   },
@@ -997,15 +1012,163 @@ export function selectSend(row: SelectRow, state: string): string | null {
   return state === row.absent ? null : state
 }
 
-/** The rows the form edits (130), in the page's order: the table nests a
- * group's rows, so the page asks this list which keys it owns. */
-export function editableRows(): SelectRow[] {
-  const rows: SelectRow[] = []
+/** The rows of every card, in the page's order, a group's rows in place of the
+ * group: the table nests them, so the page asks this list which keys it owns. */
+function fieldRows(): FieldRow[] {
+  const rows: FieldRow[] = []
   for (const card of CARDS)
     for (const row of card.rows)
-      for (const one of row.kind === 'group' ? row.rows : [row])
-        if (one.kind === 'select' && one.editable === true) rows.push(one)
+      for (const one of row.kind === 'group' ? row.rows : [row]) rows.push(one)
   return rows
+}
+
+/** The select rows the form edits (130), in the page's order. */
+export function editableRows(): SelectRow[] {
+  return fieldRows().filter(
+    (one): one is SelectRow => one.kind === 'select' && one.editable === true,
+  )
+}
+
+/** The number rows the form edits (2h.4's 155), in the page's order: the order
+ * their fields sit in, which is the order a save reports its failures in. */
+export function numberRows(): NumberRow[] {
+  return fieldRows().filter(
+    (one): one is NumberRow => one.kind === 'number' && one.editable === true,
+  )
+}
+
+/** 2h.4's 157: the range of every preset integer key, the brief's table: the
+ * bounds the manager's `checks.rs` `PRESET_INT_KEYS` applies. `null` is no
+ * bound; every key's value is at most `I32_MAX`, the largest number the file
+ * writes. A later card's keys are here before the card is editable. */
+function bounded(keys: string[], min: number | null, max: number | null) {
+  return Object.fromEntries(keys.map((key) => [key, { min, max }]))
+}
+
+const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
+  // Any whole number: the table's first row, and the layer counts of its last.
+  ...bounded(
+    [
+      'cache-ram',
+      'reasoning-budget',
+      'n-predict',
+      'top-k',
+      'n-gpu-layers',
+      'n-cpu-moe',
+      'n-cpu-ffn',
+      'n-gpu-layers-draft',
+    ],
+    null,
+    null,
+  ),
+  ...bounded(
+    [
+      'ctx-size',
+      'spec-draft-n-min',
+      'spec-draft-n-ubatch',
+      'moe-cache-mib',
+      'ctx-checkpoints',
+      'checkpoint-min-step',
+    ],
+    0,
+    null,
+  ),
+  ...bounded(
+    [
+      'parallel',
+      'kv-unified-per-slot',
+      'batch-size',
+      'ubatch-size',
+      'cache-reuse',
+      'fit-ctx',
+      'image-min-tokens',
+      'image-max-tokens',
+      'spec-draft-n-max',
+    ],
+    1,
+    null,
+  ),
+  ...bounded(
+    [
+      'spec-ngram-mod-n-match',
+      'spec-ngram-simple-size-n',
+      'spec-ngram-simple-size-m',
+      'spec-ngram-map-k-size-n',
+      'spec-ngram-map-k-size-m',
+      'spec-ngram-map-k4v-size-n',
+      'spec-ngram-map-k4v-size-m',
+    ],
+    1,
+    1024,
+  ),
+  ...bounded(['spec-ngram-mod-n-min', 'spec-ngram-mod-n-max'], 0, 1024),
+  'spec-ngram-map-k4v-min-hits': { min: 1, max: 65535 },
+}
+
+/** The largest number these keys write (the configurator's `emit_i32`). */
+const I32_MAX = 2147483647
+
+/** The text of a number field: an optional sign, digits, nothing else. */
+const INT_TEXT = /^[+-]?\d+$/
+
+/** The number a number field's text gives, `null` for a text that is no whole
+ * number. */
+function intValue(text: string): number | null {
+  const s = text.trim()
+  return INT_TEXT.test(s) ? Number(s) : null
+}
+
+/** The error of a number field's text (157): the trimmed text must be a whole
+ * number within the key's range. A ticked box says nothing: the save sends no
+ * value for it, and the manager checks nothing either. */
+export function numberError(
+  row: NumberRow,
+  b: Boxed | undefined,
+): string | undefined {
+  if (b === undefined || b.ticked) return undefined
+  const r = INT_KEYS[row.key]
+  if (r === undefined) return undefined
+  const n = intValue(b.text)
+  if (
+    n !== null &&
+    n <= I32_MAX &&
+    (r.min === null || n >= r.min) &&
+    (r.max === null || n <= r.max)
+  )
+    return undefined
+  return r.min === null
+    ? t('field-error-whole-number')
+    : r.max === null
+      ? t('field-error-number-min', String(r.min))
+      : t('field-error-number', String(r.min), String(r.max))
+}
+
+/** The keyboard a number field asks for (158): `numeric` only for a key whose
+ * range starts at 0 or above, since a phone's numeric keyboard may have no
+ * minus key. The keys of the table's rows with no minimum, and every float,
+ * get none. Read from `INT_KEYS`, the same table 157 checks the value against. */
+function numericMode(row: NumberRow): boolean {
+  const min = INT_KEYS[row.key]?.min ?? null
+  return row.integer && min !== null && min >= 0
+}
+
+/** What a number field sends (157): the number in decimal, with no sign for a
+ * positive value and no leading zeros; a ticked box sends the key's removal. */
+export function numberSend(b: Boxed): string | null {
+  if (b.ticked) return null
+  const n = intValue(b.text)
+  return n === null ? b.text : String(n)
+}
+
+/** The box state of every number field the form edits, as `values` leaves it
+ * (156): a key the file lacks has its box ticked, with nothing to show. */
+export function numberStates(
+  values: Record<string, string>,
+): Record<string, Boxed> {
+  const states: Record<string, Boxed> = {}
+  for (const row of numberRows())
+    states[row.key] = boxedFrom(held(values, row.key))
+  return states
 }
 
 /** The written-as line of an editable row (134): the spelling the file holds,
@@ -1072,19 +1235,28 @@ export function fieldId(key: string): string {
  * shows: the form's draft for an editable row, the read's values for every
  * other one. `loaded` is the value the read gave, which the written-as line of
  * an editable row describes, and `onEdit` what a pick of an editable control
- * leaves in the draft. `errors` is the field error of a save refusal, by key
- * (2h's 142): it marks the field the refusal named. */
+ * leaves in the draft. `boxed` is the box state of the number fields the form
+ * edits (2h.4's 156), `onTick` and `onBoxText` what its controls report; a row
+ * that is not in `boxed` shows the file and is disabled. `errors` is the field
+ * error of a save refusal, by key (2h's 142): it marks the field the refusal
+ * named. */
 function PresetField({
   row,
   values,
   loaded,
   onEdit,
+  boxed,
+  onTick,
+  onBoxText,
   errors,
 }: {
   row: FieldRow
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  boxed: Record<string, Boxed>
+  onTick: (key: string, ticked: boolean) => void
+  onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
 }) {
   if (row.kind === 'note') return <p className="note">{row.text}</p>
@@ -1108,12 +1280,30 @@ function PresetField({
       ? undefined
       : readAs(row.reading, value)
   if (row.kind === 'number') {
+    // A number field the form edits (155, 156): the page owns the box state, so
+    // the row is in `boxed`; the input is empty and disabled while the box is
+    // ticked, and shows the text it holds when it is not.
+    const b = boxed[row.key]
+    if (b !== undefined)
+      return (
+        <DefaultBoxField
+          {...common}
+          disabled={false}
+          box={t('field-default')}
+          numeric={numericMode(row)}
+          unit={row.unit}
+          ticked={b.ticked}
+          text={boxText(b)}
+          onTick={(ticked) => onTick(row.key, ticked)}
+          onText={(text) => onBoxText(row.key, text)}
+        />
+      )
     const text = value ?? ''
     return (
       <DefaultBoxField
         {...common}
         box={t('field-default')}
-        numeric={row.integer}
+        numeric={numericMode(row)}
         unit={row.unit}
         ticked={value === undefined}
         text={text}
@@ -1205,10 +1395,15 @@ function PresetField({
   const written = editable
     ? editableWritten(row, values, loaded)
     : state?.written
+  // 155: a select that needs another key's default box unticked is disabled
+  // while that box is ticked, and keeps the state it holds.
+  const locked =
+    row.kind === 'select' &&
+    row.needsUnticked?.some((key) => boxed[key]?.ticked === true) === true
   return (
     <SelectField
       {...common}
-      disabled={editable ? false : true}
+      disabled={editable && !locked ? false : true}
       options={select.options}
       value={select.value}
       full={full}
@@ -1231,12 +1426,18 @@ function PresetRow({
   values,
   loaded,
   onEdit,
+  boxed,
+  onTick,
+  onBoxText,
   errors,
 }: {
   row: Row
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  boxed: Record<string, Boxed>
+  onTick: (key: string, ticked: boolean) => void
+  onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
 }) {
   if (row.kind === 'group') {
@@ -1252,6 +1453,9 @@ function PresetRow({
               values={values}
               loaded={loaded}
               onEdit={onEdit}
+              boxed={boxed}
+              onTick={onTick}
+              onBoxText={onBoxText}
               errors={errors}
             />
           ))}
@@ -1265,6 +1469,9 @@ function PresetRow({
       values={values}
       loaded={loaded}
       onEdit={onEdit}
+      boxed={boxed}
+      onTick={onTick}
+      onBoxText={onBoxText}
       errors={errors}
     />
   )
@@ -1272,18 +1479,25 @@ function PresetRow({
 
 /** The cards, in the order of the table, each with the fields of its rows. The
  * page's form (`values`, the draft it edits, and `loaded`, the read's values)
- * writes a change of an editable row into `onEdit`; a page that only shows the
- * file leaves every control disabled. `errors` marks the fields a save refusal
- * named (2h's 142), by key. */
+ * writes a change of an editable row into `onEdit`, and the box state of its
+ * number fields into `boxed` through `onTick` and `onBoxText`; a page that only
+ * shows the file leaves every control disabled and passes an empty `boxed`.
+ * `errors` marks the fields a save refusal named (2h's 142), by key. */
 export default function PresetCards({
   values,
   loaded,
   onEdit,
+  boxed,
+  onTick,
+  onBoxText,
   errors,
 }: {
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
+  boxed: Record<string, Boxed>
+  onTick: (key: string, ticked: boolean) => void
+  onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
 }) {
   return (
@@ -1297,6 +1511,9 @@ export default function PresetCards({
               values={values}
               loaded={loaded}
               onEdit={onEdit}
+              boxed={boxed}
+              onTick={onTick}
+              onBoxText={onBoxText}
               errors={errors}
             />
           ))}

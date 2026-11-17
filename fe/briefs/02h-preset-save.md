@@ -297,7 +297,9 @@ The Server page's rules, unchanged, on the preset page. Nothing new to render: t
     is checked, changed or not (the manager checks the whole section anyway; 01's 5.4): the text
     trimmed must be an optional `+` or `-` then digits, with a value in the key's range (table
     below, `checks.rs` `PRESET_INT_KEYS`). Failure: the field's error, focus on the first failing
-    control in DOM order, the bar's alert `save-invalid` (01's 31). Sent: the number in decimal with
+    control in DOM order, the bar's alert `save-invalid` (01's 31). An unticked box with an empty
+    text fails too, with the same row text: unticking says "not the default", so a value is asked
+    for (2h.4 review). Sent: the number in decimal with
     no sign for a positive value and no leading zeros (`+0172032` sends `172032`, as the GUI's
     `emit_i32`).
 

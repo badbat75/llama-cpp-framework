@@ -4,9 +4,10 @@
 // (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
 // Engine field, the Assets card as text and the cards of the settings
 // (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
-// controls are editable and the save bar at the end of the settings writes
-// what changed (fe/briefs/02h-preset-save.md, sub-slice 2h.1, criteria 130 to
-// 149, read by key in save.ts as the Server page reads its own); every other
+// controls and the Resource / context card's number fields are editable, and
+// the save bar at the end of the settings writes what changed (fe/briefs/
+// 02h-preset-save.md, sub-slices 2h.1 and 2h.4, criteria 130 to 149 and 155 to
+// 157, read by key in save.ts as the Server page reads its own); every other
 // control stays disabled, and its settings are changed in pai-config.
 import {
   Fragment,
@@ -18,6 +19,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { tickBox, type Boxed } from './boxed.ts'
 import Card from './Card.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
@@ -25,6 +27,10 @@ import PageHeading from './PageHeading.tsx'
 import PresetCards, {
   editableRows,
   fieldId,
+  numberError,
+  numberRows,
+  numberSend,
+  numberStates,
   selectSend,
   selectState,
 } from './PresetCards.tsx'
@@ -432,28 +438,44 @@ async function sendPresetSave(
   return saveAnswer(reply, (key) => presetKey(key, id), REFUSALS)
 }
 
-/** The control of the field a refusal names, when this page renders it: a key
- * of the Assets card, or one 2h shows nowhere, has no control here (143). */
-function fieldControl(
-  key: string,
+/** The control with the given id, when this page renders it. */
+function controlWithId(
+  id: string,
 ): HTMLInputElement | HTMLSelectElement | null {
-  const control = document.getElementById(`${fieldId(key)}-control`)
+  const control = document.getElementById(id)
   return control instanceof HTMLInputElement ||
     control instanceof HTMLSelectElement
     ? control
     : null
 }
 
+/** The control of the field a refusal names, when this page renders it: a key
+ * of the Assets card, or one 2h shows nowhere, has no control here (143). */
+function fieldControl(
+  key: string,
+): HTMLInputElement | HTMLSelectElement | null {
+  return controlWithId(`${fieldId(key)}-control`)
+}
+
 /** Puts the focus on the marked field's control (142). A disabled control
- * takes no focus, so the focus stays where it was (144). */
+ * takes no focus, so the field's next one is tried: the default box, first in
+ * the field (144). With no enabled control the focus stays where it is. */
 function focusField(key: string) {
-  const control = fieldControl(key)
-  if (control !== null && !control.disabled) control.focus()
+  const id = fieldId(key)
+  for (const control of [
+    controlWithId(`${id}-control`),
+    controlWithId(`${id}-box`),
+  ]) {
+    if (control !== null && !control.disabled) {
+      control.focus()
+      return
+    }
+  }
 }
 
 /** The loaded preset as a form: the settings of 2e, the two Embeddings
- * controls of 2h.1 editable, and the save bar of the Server page writing the
- * changed keys (criteria 130 to 141). */
+ * controls of 2h.1 and the number fields of 2h.4 editable, and the save bar of
+ * the Server page writing the changed keys (criteria 130 to 141, 155 to 157). */
 function Content({
   doc,
   dropped,
@@ -479,6 +501,11 @@ function Content({
     values: doc.values,
   })
   const [draft, setDraft] = useState<Record<string, string>>(doc.values)
+  // The box state of the number fields the form edits (156): the text a field
+  // holds is kept while its box is ticked, so unticking gives it back.
+  const [boxed, setBoxed] = useState<Record<string, Boxed>>(() =>
+    numberStates(doc.values),
+  )
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
@@ -495,10 +522,10 @@ function Content({
 
   // 132: a field is changed when its control's state is not the state the read
   // gave it, so picking the same option, or the extra option of 87 that a read
-  // value became, is no change.
-  const dirty = editableRows().some(
-    (row) => selectState(row, draft) !== selectState(row, loaded.values),
-  )
+  // value became, is no change. The number fields count the same way, so the
+  // dirtiness and the body of the save come from one function (157).
+  const changes = changed()
+  const dirty = Object.keys(changes).length > 0
   useDirtyReport(dirty, onDirty)
   useWarnOnLeave(dirty)
 
@@ -523,7 +550,35 @@ function Content({
     setPhase('idle')
   }
 
-  /** The changed keys as the body of 133 spells them. */
+  /** A number field's box (156): the tick keeps the text the input held, and an
+   * input that comes back empty takes the focus, so it is written before the
+   * rest of the page is read (the mechanics in `boxed.ts`). */
+  function tickBoxed(key: string, ticked: boolean) {
+    const b = boxed[key]
+    if (b === undefined) return
+    tickBox(
+      b,
+      ticked,
+      (next) => setBoxed((p) => ({ ...p, [key]: next })),
+      fieldControl(key),
+      'when-empty',
+    )
+    fields.clear(key)
+    setPhase('idle')
+  }
+
+  /** What the user typed in a number field. The box is unticked, that being the
+   * only state in which its input is writable. */
+  function textBoxed(key: string, text: string) {
+    setBoxed((p) => ({ ...p, [key]: { ticked: false, text } }))
+    fields.clear(key)
+    setPhase('idle')
+  }
+
+  /** The changed keys as the body of 133 spells them. A number field with its
+   * box ticked is a key to remove, and a key the file never had is sent as
+   * nothing; with the box unticked, the field sends the number its text holds
+   * (157). */
   function changed(): Record<string, string | null> {
     const values: Record<string, string | null> = {}
     for (const row of editableRows()) {
@@ -531,14 +586,43 @@ function Content({
       if (state === selectState(row, loaded.values)) continue
       values[row.key] = selectSend(row, state)
     }
+    const was = numberStates(loaded.values)
+    for (const row of numberRows()) {
+      const b = boxed[row.key]
+      if (b === undefined) continue
+      if (b.ticked) {
+        if (loaded.values[row.key] !== undefined) values[row.key] = null
+      } else if (b.text !== was[row.key]?.text) {
+        values[row.key] = numberSend(b)
+      }
+    }
     return values
   }
 
   /** Save changes: the bar of 135 to 149. */
   async function save() {
-    if (saving.current || !dirty) return
+    if (saving.current) return
+    // 157: every enabled number field whose box is unticked is checked, changed
+    // or not (the manager checks the whole section anyway). A failure marks its
+    // field, tells the bar, and puts the focus on the first failing control in
+    // the order the fields are on screen: nothing is sent, and the bar keeps
+    // saying what is not saved.
+    const failures = numberRows()
+      .map((row) => [row.key, numberError(row, boxed[row.key])] as const)
+      .filter((one): one is [string, string] => one[1] !== undefined)
+    if (failures.length > 0) {
+      // Rendered first, so the focused control is announced with its error.
+      flushSync(() => {
+        alerts.setAlert({ text: t('save-invalid') })
+        fields.set(Object.fromEntries(failures))
+      })
+      focusField(failures[0]![0])
+      return
+    }
+    if (!dirty) return
     const sent = draft
-    const values = changed()
+    const sentBoxed = boxed
+    const values = changes
     saving.current = true
     setPhase('saving')
     alerts.setAlert(null)
@@ -552,8 +636,11 @@ function Content({
       }
       setLoaded(next)
       // What was sent is the clean state now. An edit made during the PUT
-      // stays on screen, dirty against the new loaded values (01's 33b).
+      // stays on screen, dirty against the new loaded values (01's 33b). The
+      // box memory is reset with it, so a key the save removed comes back
+      // empty (156).
       setDraft((d) => (d === sent ? next.values : d))
+      setBoxed((b) => (b === sentBoxed ? numberStates(next.values) : b))
       setPhase(answer.running ? 'saved-restart' : 'saved')
       return
     }
@@ -607,6 +694,7 @@ function Content({
   function discard() {
     if (saving.current || !dirty) return
     setDraft(loaded.values)
+    setBoxed(numberStates(loaded.values))
     alerts.setAlert(null)
     fields.set({})
     setPhase('idle')
@@ -650,6 +738,9 @@ function Content({
           values={draft}
           loaded={loaded.values}
           onEdit={edit}
+          boxed={boxed}
+          onTick={tickBoxed}
+          onBoxText={textBoxed}
           errors={fields.errors}
         />
         <SaveBar

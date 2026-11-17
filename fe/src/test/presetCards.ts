@@ -145,6 +145,31 @@ export function cardHeadingKeys(): string[] {
   return PRESET_CARDS.map((card) => card.heading)
 }
 
+/** The integer keys that get NO input mode (2h.158): the any-whole-number
+ * keys of 157's first row and the layer counts of its last row. A phone's
+ * numeric keyboard may have no minus key (MDN, `inputmode`), so the fe adds
+ * none: every other integer key keeps `inputmode="numeric"`. */
+export const NO_INPUT_MODE_KEYS: string[] = [
+  'cache-ram',
+  'top-k',
+  'n-predict',
+  'reasoning-budget',
+  'n-gpu-layers',
+  'n-cpu-moe',
+  'n-cpu-ffn',
+  'n-gpu-layers-draft',
+]
+
+/** The input mode a number field takes (87 as superseded by 2h.158):
+ * `numeric` for an integer key with a range starting at 0 or above, none
+ * for a float key and for the keys of NO_INPUT_MODE_KEYS. */
+export function expectedInputMode(
+  key: string,
+  integer?: boolean,
+): string | null {
+  return integer && !NO_INPUT_MODE_KEYS.includes(key) ? 'numeric' : null
+}
+
 /** Every field's label, in card and field order (92, 93, 96, 97, 98). */
 export function fieldLabels(): string[] {
   return PRESET_CARDS.flatMap((card) => card.fields.map(labelText))
@@ -155,28 +180,73 @@ export function fieldAboutToggles(): string[] {
   return fieldLabels().map((label) => `${en('field-about')} ${label}`)
 }
 
-/** The fields 2h.1 makes editable (fe/briefs/02h-preset-save.md, criterion
- * 130: the Embeddings card's two controls, by their label key). Every other
- * field's control stays disabled, so it takes no tab stop. */
-const EDITABLE_FIELDS = ['preset-embedding-mode', 'preset-pooling']
+/** The fields the preset page makes editable: 2h.1's 130 (the Embeddings
+ * card's two controls) and 2h.4's 155 (the Resource / context card's six),
+ * by their label key. Every other field's control stays disabled, so it
+ * takes no tab stop. */
+const EDITABLE_FIELDS = [
+  'preset-context-size',
+  'preset-parallel-slots',
+  'preset-unified-kv',
+  'preset-per-slot-context',
+  'preset-batch-size',
+  'preset-u-batch-size',
+  'preset-embedding-mode',
+  'preset-pooling',
+]
 
-/** True when 2h.1 makes the field with this label key editable
- * (fe/briefs/02h-preset-save.md, criterion 130). */
+/** The editable fields whose control sits behind a default box (2h.156): the
+ * label key mapped to the key in the read's `values`. A key the file lacks
+ * starts its box ticked, and a ticked box disables and empties the input. */
+const BOXED_FIELDS: Record<string, string> = {
+  'preset-context-size': 'ctx-size',
+  'preset-parallel-slots': 'parallel',
+  'preset-per-slot-context': 'kv-unified-per-slot',
+  'preset-batch-size': 'batch-size',
+  'preset-u-batch-size': 'ubatch-size',
+}
+
+/** The editable fields with an enable rule (2h.155): Unified KV is enabled
+ * while Parallel slots' box is unticked, which is how a key the file holds
+ * starts. */
+const ENABLE_RULE: Record<string, string> = { 'preset-unified-kv': 'parallel' }
+
+/** True when 2h.1's 130 or 2h.4's 155 makes the field with this label key
+ * editable: its default box is enabled, whatever the file holds. */
 export function isEditableField(labelKey: string): boolean {
   return EDITABLE_FIELDS.includes(labelKey)
 }
 
-/** Every field's tab stops in the order of 91, as 2h.1 leaves them: each
- * field's About toggle, plus the control of an editable field (141). The
- * whole-page tab path of every preset page test is this list. */
-export function fieldTabStops(): string[] {
+/** True when the control of the field with this label key is enabled on a
+ * read that holds `values`: a boxed field's input follows its box (156), and
+ * a field with an enable rule follows that rule (155). False for a field of a
+ * read-only card, so the expectations of 85 stay pinned for every other card. */
+export function controlEnabled(
+  labelKey: string,
+  values: Record<string, string>,
+): boolean {
+  if (!isEditableField(labelKey)) return false
+  const boxed = BOXED_FIELDS[labelKey]
+  if (boxed !== undefined) return boxed in values
+  const rule = ENABLE_RULE[labelKey]
+  if (rule !== undefined) return rule in values
+  return true
+}
+
+/** Every field's tab stops in the order of 91: each field's About toggle,
+ * then the controls 2h.1 and 2h.4 made editable and left enabled on this
+ * read (141, 155, 156): a boxed field's default box, named by the box's own
+ * text, and its input while the box is unticked. The whole-page tab path of
+ * every preset page test is this list, read with the values of its fixture. */
+export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
   for (const card of PRESET_CARDS)
     for (const field of card.fields) {
       const label = labelText(field)
       stops.push(`${en('field-about')} ${label}`)
-      if (typeof field === 'string' && EDITABLE_FIELDS.includes(field))
-        stops.push(label)
+      if (typeof field !== 'string' || !isEditableField(field)) continue
+      if (BOXED_FIELDS[field] !== undefined) stops.push(en('field-default'))
+      if (controlEnabled(field, values)) stops.push(label)
     }
   return stops
 }

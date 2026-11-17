@@ -33,6 +33,7 @@ import {
   fieldTabStops,
   saveBarTabStops,
   isEditableField,
+  controlEnabled,
 } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -440,24 +441,28 @@ test('2e.84: the Notice preset-partly-editable (2h.1 130) is a bordered paragrap
 
 // ── The shared rules of the cards (85, 86, 89, 90) ──────────────────────
 
-test('2e.85: every control of the two cards is natively disabled, the default boxes included, while every About toggle stays enabled and the Engine select stays enabled', async () => {
+test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled and the Engine select stays enabled', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const values = docOf(SET).values
   const controls = RESOURCE_CARDS.flatMap((title) => [
     ...cardOf(main, title).querySelectorAll<HTMLElement>(
       'input, select, textarea',
     ),
   ])
   expect(controls.length, 'the controls of 92 and 93').toBe(CONTROLS)
-  // 2h.1's 130: the Embeddings card's two controls lose disabled.
-  const editable: HTMLElement[] = [
-    selectOf(main, en('preset-embedding-mode')),
-    selectOf(main, en('preset-pooling')),
-  ]
+  // 2h.1's 130 and 2h.4's 155: the two cards are editable, so their controls
+  // lose disabled. A number's default box is always enabled (155); its input
+  // follows the box, which a key the file holds leaves unticked (156).
+  const rowOf = (id: string): Row | undefined =>
+    FIELDS.find((f) => `preset-${f.key}` === id.replace(/-(box|control)$/, ''))
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
-    expect((el as HTMLInputElement).disabled, `${id}: disabled`).toBe(
-      !editable.includes(el),
-    )
+    const f = rowOf(id)
+    expect(f, `${id}: the control of a field of 92 or 93`).toBeTruthy()
+    const enabled = id.endsWith('-box')
+      ? isEditableField(f!.label)
+      : controlEnabled(f!.label, values)
+    expect((el as HTMLInputElement).disabled, `${id}: enabled`).toBe(!enabled)
     expect(
       el.getAttribute('aria-disabled'),
       `${id}: never aria-disabled`,
@@ -543,7 +548,7 @@ test('2e.89, 2e.90: no 2e.1 field carries a unit and no card of 2e.1 has a note 
 // ── The field table (87, 92, 93, 94) ────────────────────────────────────
 
 test.each(FIELDS)(
-  '2e.92, 2e.93, 2e.87, 2e.85: $key is a $kind named by its label inside its card and shows the set value $set with every control disabled',
+  '2e.92, 2e.93, 2e.87, 2e.85 (2h.1 130, 2h.4 155): $key is a $kind named by its label inside its card and shows the set value $set, its controls enabled in an editable card',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
     const label = en(f.label)
@@ -562,8 +567,11 @@ test.each(FIELDS)(
         f.shown,
       )
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
-      expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      // 2h.4's 155: an editable card's box is enabled, and 156 leaves its
+      // unticked input enabled; a read-only card keeps both disabled.
+      const editable = isEditableField(f.label)
+      expect(box.disabled, `${f.key}: the box disabled`).toBe(!editable)
+      expect(input.disabled, `${f.key}: the input disabled`).toBe(!editable)
       // 87: an integer key takes the numeric form of the input.
       expect(input.getAttribute('inputmode'), `${f.key}: numeric`).toBe(
         'numeric',
@@ -738,7 +746,7 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldTabStops(),
+    ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
 })

@@ -24,12 +24,21 @@ type Common = {
   written?: { id: string; text: string }
 }
 
-/** What a control's accessibility tree names: in `aria-describedby` the error
- * first and then the written-as line, keeping the ids already there and their
- * order; `aria-invalid` only when there is an error. The full-value line is
- * named by no control, since the control already exposes that value. */
-function describes(id: string, error: string | undefined, writtenId?: string) {
+/** What a control's accessibility tree names: in `aria-describedby` the unit
+ * first, then the error, then the written-as line, keeping the ids already
+ * there and their order; `aria-invalid` only when there is an error. The
+ * full-value line is named by no control, since the control already exposes
+ * that value. A unit is a description (criterion 159): "Cache RAM, edit text,
+ * MiB" is read, so the unit element takes the id `<field id>-unit` and is
+ * never named by `aria-hidden`. */
+function describes(
+  id: string,
+  error: string | undefined,
+  unitId?: string,
+  writtenId?: string,
+) {
   const ids: string[] = []
+  if (unitId !== undefined) ids.push(unitId)
   if (error !== undefined) ids.push(`${id}-error`)
   if (writtenId !== undefined) ids.push(writtenId)
   return ids.length === 0
@@ -232,6 +241,7 @@ export function DefaultBoxField({
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
+  const unitId = unit === undefined ? undefined : `${id}-unit`
   return (
     <GroupField id={id} label={label} hint={hint} error={error} full={full}>
       <Check
@@ -250,9 +260,13 @@ export function DefaultBoxField({
         value={text}
         disabled={disabled || ticked}
         onChange={(e) => onText(e.target.value)}
-        {...describes(id, error)}
+        {...describes(id, error, unitId)}
       />
-      {unit !== undefined && <span className="unit">{unit}</span>}
+      {unit !== undefined && (
+        <span id={unitId} className="unit">
+          {unit}
+        </span>
+      )}
     </GroupField>
   )
 }
@@ -343,7 +357,7 @@ export function CheckboxField({
         disabled={disabled}
         inactive={inactive}
         onChange={onChange}
-        aria={describes(id, error, written?.id)}
+        aria={describes(id, error, undefined, written?.id)}
       />
       {children}
     </GroupField>
@@ -405,6 +419,7 @@ export function TextField({
   disabled?: boolean
   onChange: (value: string) => void
 }) {
+  const unitId = unit === undefined ? undefined : `${id}-unit`
   return (
     <LabelField id={id} label={label} hint={hint} error={error} full={full}>
       <input
@@ -415,9 +430,13 @@ export function TextField({
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        {...describes(id, error)}
+        {...describes(id, error, unitId)}
       />
-      {unit !== undefined && <span className="unit">{unit}</span>}
+      {unit !== undefined && (
+        <span id={unitId} className="unit">
+          {unit}
+        </span>
+      )}
     </LabelField>
   )
 }
@@ -459,7 +478,7 @@ export function SelectField({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value, e.target.selectedIndex >= 0)}
-        {...describes(id, error, written?.id)}
+        {...describes(id, error, undefined, written?.id)}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

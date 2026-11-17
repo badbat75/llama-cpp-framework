@@ -8,6 +8,7 @@
 import { useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { call, isRecord } from './api.ts'
+import { boxText, tickBox, type Boxed } from './boxed.ts'
 import Card from './Card.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import {
@@ -60,9 +61,6 @@ const LOG_LEVELS = [
   'TRACE:4',
   'DEBUG:5',
 ]
-
-/** A text input behind a default, auto or No key box. */
-type Boxed = { ticked: boolean; text: string }
 
 /** What the controls hold, by INI key; Hostname is the rows' checked state. */
 type Draft = {
@@ -482,11 +480,16 @@ export default function ServerForm({
   const text = (key: BoxedKey) => (text: string) =>
     edit(key, { ...draft[key], text })
 
-  /** A thread count's auto box: unticking focuses its emptied textbox (5.2). */
-  const tickAuto = (key: 'Threads' | 'ThreadsBatch') => (ticked: boolean) => {
-    flushSync(() => tick(key)(ticked))
-    if (!ticked) element(`${key}-control`)?.focus()
-  }
+  /** A thread count's auto box: unticking always focuses its textbox, empty or
+   * not, so the count is typed at once (5.2). */
+  const tickAuto = (key: 'Threads' | 'ThreadsBatch') => (ticked: boolean) =>
+    tickBox(
+      draft[key],
+      ticked,
+      (b) => edit(key, b),
+      element(`${key}-control`),
+      'always',
+    )
 
   /** Bind to keeps one row checked and 0.0.0.0 alone (5.3). */
   function toggleRow(i: number) {
@@ -585,7 +588,6 @@ export default function ServerForm({
     phase === 'saving' ? phase : dirty ? 'unsaved' : ended ? 'idle' : phase
   const shownBox = (b: Boxed, fallback: unknown) =>
     b.ticked ? shown(fallback) : b.text
-  const autoBox = (b: Boxed) => (b.ticked ? '' : b.text)
 
   return (
     <>
@@ -632,7 +634,7 @@ export default function ServerForm({
           error={errors.OpencodeApiKey}
           box={t('field-no-key')}
           ticked={v.OpencodeApiKey.ticked}
-          value={autoBox(v.OpencodeApiKey)}
+          value={boxText(v.OpencodeApiKey)}
           onTick={tick('OpencodeApiKey')}
           onText={text('OpencodeApiKey')}
         />
@@ -646,7 +648,7 @@ export default function ServerForm({
           box={t('field-auto')}
           numeric
           ticked={v.Threads.ticked}
-          text={autoBox(v.Threads)}
+          text={boxText(v.Threads)}
           onTick={tickAuto('Threads')}
           onText={text('Threads')}
         />
@@ -658,7 +660,7 @@ export default function ServerForm({
           box={t('field-auto')}
           numeric
           ticked={v.ThreadsBatch.ticked}
-          text={autoBox(v.ThreadsBatch)}
+          text={boxText(v.ThreadsBatch)}
           onTick={tickAuto('ThreadsBatch')}
           onText={text('ThreadsBatch')}
         />

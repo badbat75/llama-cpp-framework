@@ -156,6 +156,7 @@ export const EN: Record<string, string> = {
   'discard-confirm': 'Discard changes',
   'field-error-number': 'Enter a whole number from {0} to {1}.',
   'field-error-number-min': 'Enter a whole number of at least {0}.',
+  'field-error-whole-number': 'Enter a whole number, without a decimal point.',
   'field-error-comment-markers':
     'Remove the ; and # characters: the INI file would cut the value there.',
   'api-not-whole-number-in-range':

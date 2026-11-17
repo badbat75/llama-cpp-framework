@@ -1458,6 +1458,32 @@ test('1b.28a: unticking brings back the text held before the tick; focus stays o
   expect(box(main, 'Batch threads').value).toBe('16')
 })
 
+test('1b.28a (5.2): unticking a threads box whose text comes back non-empty focuses it too', async () => {
+  const { main } = await loaded()
+  // Batch threads, loaded 16: the tick empties it, the untick puts 16 back
+  // and moves the focus into the box.
+  toggle(main, 'Batch threads', en('field-auto'))
+  expect(box(main, 'Batch threads').value).toBe('')
+  toggle(main, 'Batch threads', en('field-auto'))
+  expect(box(main, 'Batch threads').value).toBe('16')
+  expect(document.activeElement, 'Batch threads: focus follows the text').toBe(
+    box(main, 'Batch threads'),
+  )
+
+  // CPU threads, loaded on auto: unticked to type, then ticked, then unticked.
+  if (check(main, 'CPU threads', en('field-auto')).checked) {
+    toggle(main, 'CPU threads', en('field-auto'))
+  }
+  type(box(main, 'CPU threads'), '8')
+  toggle(main, 'CPU threads', en('field-auto'))
+  expect(box(main, 'CPU threads').value).toBe('')
+  toggle(main, 'CPU threads', en('field-auto'))
+  expect(box(main, 'CPU threads').value).toBe('8')
+  expect(document.activeElement, 'CPU threads: focus follows the text').toBe(
+    box(main, 'CPU threads'),
+  )
+})
+
 test('1b.28a: a field loaded on No key comes back empty', async () => {
   const { main } = await loaded({
     server: () => reply(200, serverDoc({ OpencodeApiKey: null })),

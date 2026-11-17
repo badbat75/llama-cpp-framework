@@ -32,6 +32,7 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
+  expectedInputMode,
   fieldTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
@@ -559,7 +560,7 @@ function notesOf(card: HTMLElement): HTMLElement[] {
 // ── One test per field (85, 86, 87, 88, 101, 102, 104) ─────────────────
 
 test.each(FIELDS)(
-  '2e.101, 2e.102, 2e.87, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set as the reply holds it, and every control is natively disabled',
+  '2e.101, 2e.102, 2e.87, 2h.158, 2e.85: $key is a $kind named by $label inside its card, shows the set value $set as the reply holds it, and every control is natively disabled',
   async (f) => {
     const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
     const field = fieldOf(main, f.label)
@@ -581,11 +582,13 @@ test.each(FIELDS)(
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
       expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
       expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
-      // 87: every number of 101 and 102 is an integer key: the numeric form.
+      // 87 as retargeted by 2h.158: every number of 101 and 102 is an
+      // integer key; the ranged ones take the numeric form, the
+      // any-whole-number ones none.
       expect(
         input.getAttribute('inputmode'),
-        `${f.key}: ${f.integer ? 'numeric' : 'plain'}`,
-      ).toBe(f.integer ? 'numeric' : null)
+        `${f.key}: ${expectedInputMode(f.key, f.integer) ?? 'plain'}`,
+      ).toBe(expectedInputMode(f.key, f.integer))
     } else if (f.kind === 'checkbox') {
       const box = checkBoxOf(main, f)
       expect(box.checked, `${f.key}: ${f.set} shows ${f.shown}`).toBe(
@@ -1148,7 +1151,7 @@ test('2e.118, 2e.119, 2e.104: a Budget message of 21 characters shows the full-v
 
 // ── The cards: numbers, units, disabled, in their place (83, 85, 87, 89, 91) ──
 
-test('2e.87: the four number keys of 2e.3 are all integer keys and take the numeric form of the input', async () => {
+test('2e.87, 2h.158: the four number keys of 2e.3 are all integer keys: the numeric form on the ranged two, none on the two any-whole-number keys', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   const numbers = FIELDS.filter((f) => f.kind === 'number')
   expect(
@@ -1163,9 +1166,10 @@ test('2e.87: the four number keys of 2e.3 are all integer keys and take the nume
   for (const f of numbers) {
     expect(f.integer, `${f.key}: the table says integer`).toBe(true)
     const input = inputOf(groupBox(main, f.label), f.label)
-    expect(input.getAttribute('inputmode'), `${f.key}: the numeric form`).toBe(
-      'numeric',
-    )
+    expect(
+      input.getAttribute('inputmode'),
+      `${f.key}: the input mode of 158`,
+    ).toBe(expectedInputMode(f.key, f.integer))
   }
 })
 
@@ -1240,7 +1244,7 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
     en('preset-back'),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-    ...fieldTabStops(),
+    ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
   // A disabled checkbox takes no focus, so each card of 2e.3 offers only its

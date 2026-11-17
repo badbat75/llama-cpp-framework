@@ -56,7 +56,10 @@ const LABELS = [
 /** The 2e cards' fields, in card and field order: each is one tab stop, its
  * About toggle (criterion 91), and nothing else of a 2e card takes focus
  * (criterion 85). The list is test/presetCards.ts. */
-const CARD_TAB_STOPS = [...fieldTabStops(), ...saveBarTabStops()]
+const CARD_TAB_STOPS = [
+  ...fieldTabStops(fullDoc().values),
+  ...saveBarTabStops(),
+]
 
 /** The five group headings of the Speculative decoding card of 2e.5 (criterion
  * 114): the strings text of `preset-draft-model-group`, and the four speculator

@@ -32,6 +32,7 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
+import { controlEnabled, isEditableField } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -43,6 +44,26 @@ const POOLING = en('preset-pooling')
  * option of 87, so the field's loaded state is one the select does not list
  * (133: picking it again makes the field unchanged, so it is never sent). */
 const EXTRA_POOL = 'Last-Attention-Pool-X'
+
+/** The values of the read the 130 test uses: both Embeddings keys, and no key
+ * of the Resource / context card, so every box of that card starts ticked
+ * (2h.156) and Unified KV sits disabled (2h.155: Parallel slots at default). */
+const VALUES = { embeddings: 'true', pooling: 'mean' }
+
+/** The fields 2h.1's 130 and 2h.4's 155 made editable, keyed by the id of
+ * their field (`preset-<key>`: the box is `<id>-box`, the input
+ * `<id>-control`), so a control's id finds the label key the shared table of
+ * test/presetCards.ts gives the enable rules to. */
+const EDITABLE_BY_ID: Record<string, string> = {
+  'preset-ctx-size': 'preset-context-size',
+  'preset-parallel': 'preset-parallel-slots',
+  'preset-kv-unified': 'preset-unified-kv',
+  'preset-kv-unified-per-slot': 'preset-per-slot-context',
+  'preset-batch-size': 'preset-batch-size',
+  'preset-ubatch-size': 'preset-u-batch-size',
+  'preset-embeddings': 'preset-embedding-mode',
+  'preset-pooling': 'preset-pooling',
+}
 
 beforeEach(() => {
   startAt(HASH)
@@ -200,37 +221,34 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130: the Embeddings selects are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
-  const { main } = await page({ embeddings: 'true', pooling: 'mean' })
+test('2h.130 (2h.4 155, 156): the Embeddings selects and the Resource / context card are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+  const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
   ]
   expect(controls.length, 'every field of 2e is on the page').toBeGreaterThan(
     20,
   )
-  const editable: HTMLElement[] = [
-    selectOf(main, MODE),
-    selectOf(main, POOLING),
-  ]
   const engine = selectOf(main, en('preset-engine'))
   for (const el of controls) {
-    const who = el.getAttribute('id') ?? el.tagName
-    if (editable.includes(el)) {
-      expect((el as HTMLSelectElement).disabled, `${who}: editable`).toBe(false)
-      expect(
-        el.getAttribute('aria-disabled'),
-        `${who}: not aria-disabled, it is usable`,
-      ).toBeNull()
-    } else if (el === engine) {
-      // 2e's 70 leaves the Engine select enabled: 2h.1 does not touch it.
-      expect((el as HTMLSelectElement).disabled, `${who}: as 2e left it`).toBe(
-        false,
-      )
-    } else {
-      expect((el as HTMLInputElement).disabled, `${who}: stays disabled`).toBe(
-        true,
-      )
-    }
+    const id = el.getAttribute('id') ?? el.tagName
+    // The 2h.4 card's fields by their ids: `preset-<key>`, its default box
+    // `<id>-box`, its input `<id>-control`.
+    const label = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
+    // 155: a box is enabled in an editable card; 156: its input follows the
+    // box, which a key the file lacks leaves ticked. 130: the Embeddings
+    // selects are always enabled. 70: the Engine select is untouched.
+    const enabled =
+      el === engine ||
+      (label !== undefined &&
+        (id.endsWith('-box')
+          ? isEditableField(label)
+          : controlEnabled(label, VALUES)))
+    expect((el as HTMLInputElement).disabled, `${id}: enabled`).toBe(!enabled)
+    expect(
+      el.getAttribute('aria-disabled'),
+      `${id}: not aria-disabled, a disabled control is natively disabled`,
+    ).toBeNull()
   }
 })
 
@@ -516,23 +534,24 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134: the Embeddings controls show no full-value line, and the disabled cards keep theirs', async () => {
+test('2h.134 (2h.4 160): an editable control shows no full-value line, Embeddings and Resource / context alike, and the disabled cards keep theirs', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
     'cache-type-k': EXTRA_POOL,
   })
-  // An enabled select opens and shows its whole value, so 134 takes the line
-  // away from the Embeddings card only.
-  expect(
-    fullOf(main, 'pooling'),
-    'no full-value line under an editable select',
-  ).toBeNull()
-  for (const key of ['ctx-size', 'cache-type-k'])
+  // An enabled select opens and an enabled input scrolls, so 134 takes the
+  // line away from both, and 160 says the Resource card's number never has
+  // one: a ticked box's input is empty, an unticked one is enabled.
+  for (const key of ['pooling', 'ctx-size'])
     expect(
       fullOf(main, key),
-      `${key}: the disabled control keeps its line`,
-    ).toBeTruthy()
+      `${key}: no full-value line under an editable control`,
+    ).toBeNull()
+  expect(
+    fullOf(main, 'cache-type-k'),
+    'the disabled control keeps its line',
+  ).toBeTruthy()
 })
 
 test('2h.134: a long value the disabled control cannot show keeps its line, and the same field when enabled has none: Pooling is the pair', async () => {
