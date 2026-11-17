@@ -71,3 +71,10 @@ description: What the architect has learned about this project's components, int
   `presets_disabled_file`/`preset_ids_free` letting an unchanged twin through, destination first.
 - `WriteFileIf` refuses a missing file (`Changed`): a design that may create a file needs the plain
   write for that case.
+- A key list that is a permission rule must be pinned against code, not against a brief: the preset
+  keys the configurator writes are reachable as `render_section(&full_preset())` in `pai-app`'s tests
+  (`full_preset` has no `..Default`, so it sets every field); `pai-bff` cannot link `pai-app`, so a
+  shared list goes in `pai-core` `checks.rs`. Brief criteria (such as 02h's 133) describe kinds of
+  controls; the field tables of 02e (92 to 112) name the keys.
+- `ini::text::line_starts_with_key` matches any letter case, llama-server only the exact one: any
+  "already equal, leave it" shortcut must also require the exact spelling.

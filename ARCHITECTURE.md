@@ -635,6 +635,16 @@ Trailing blank lines are cut because `replace_section` appending a new section a
 rewrites the blank lines before it. A bff restart still makes every open page stale (one 409, as for
 the server file). Item 11c's GET sends this revision; 11c's "hash of the file text" is replaced.
 
+**What the read's `values` are** (recorded 2026-11-17, as built in 36a892d): `GET /api/presets/{id}`
+gives each key as `ini::parse_sections` reads it, the value cut at the first `;` or `#` and trimmed,
+the last line of a key winning; not the raw bytes. That is what llama-server reads too (its preset
+PEG ends a value at `[;#]`, `common/preset.cpp:201-202` in the v1.0.0 clone), so the page shows what
+the engine gets. The save needs nothing more for it: an unchanged field is never sent, so a line with
+an inline comment stays byte for byte; a changed one is rewritten whole (its comment goes, as said
+above); `set_key`'s equal-value case compares with the same reading, so a value re-sent unchanged
+writes nothing; and the revision hashes the raw section text, so an edit to a comment alone between
+the read and the save is a 409, which is correct (the file changed) and costs one Reload.
+
 **(b) The key-removal helper and the duplicate rule.** Two transforms in `pai-core` `ini::text`,
 both matching a key line as `replace_key` does (`line_starts_with_key`: any letter case, never a
 comment line, never a longer key such as `ctx-size-draft` for `ctx-size`), only inside the named
@@ -642,8 +652,20 @@ section:
 
 - `remove_key(content, section, key) -> String`: every line of that key removed, its line ending with
   it; every other byte kept. No line of the key: the text unchanged.
-- `set_key(content, section, key, value) -> String`: every line of the key after the first removed,
-  then `replace_key`, so exactly one line remains, at the first occurrence's place.
+- `set_key(content, section, key, value) -> String`: exactly one line of the key remains, at the
+  first occurrence's place. The rule as built (59eaf68, set by the coordinator where this design was
+  silent; reviewed and accepted 2026-11-17 with one change): a key the section holds once, whose value
+  read as `parse_sections` reads it (after the first `=`, trimmed, cut at the first `;` or `#`)
+  equals `value`, leaves the text byte for byte (indentation, spacing, inline comment kept); a
+  differing value rewrites the line whole as `key = value` with the line's own ending (none on an
+  unterminated last line); a key occurring more than once is always collapsed onto the first
+  occurrence, even when every copy holds the value; a missing key is appended as `replace_key` does.
+  **The change (slice 1b):** the byte-for-byte case applies only when that one line spells the key in
+  the exact case given. `CTX-SIZE = 4096` set to `4096` is today left as it is, and llama-server
+  refuses that spelling (`common/preset.cpp:326-330`), so a save that "sets" the key would leave a
+  preset that does not start while answering 200; rewritten, it becomes `ctx-size = 4096`. Why the
+  rest is right: the equal case is what keeps an unchanged key's spelling and comment when the fe
+  re-sends a value already on disk (a second tab saved it first), and the bff then writes nothing.
 
 Which occurrence an edit touches: the first keeps its place, every other goes, so the value written
 is the one every reader takes. The bff normalizes, it does not refuse: a duplicate is a hand-edit
@@ -657,11 +679,49 @@ a 422 without `field`.
 **The body and what the bff refuses before the manager.** 400 `presets-malformed` when the body is not
 `{revision: string, values: object}`, a value is neither a string nor `null`, a set value is empty
 after trimming spaces and tabs (removing is `null`), holds a control character other than tab (CR and
-LF included: they would end the line), or a key is not in the bff's list of web-editable keys. The
-list (a constant in the bff, tested against brief 02h's table 133) is the keys of every control 2h.1
-to 2h.9 enables, so the route is built once for all of 2h; it leaves out `model`, `mmproj`,
-`model-draft`, `spec-type`, the MoE keys (`n-cpu-moe`, `moe-cache-mib`) and anything else until a slice
-enables it. Why a list rather than the contract's key syntax: the manager does not check unknown keys
+LF included: they would end the line), or a key is not in the list of web-editable keys below
+(matched in exact case: `CTX-SIZE` in a body is 400, since llama-server knows keys only in their own
+case). The list is built once for all of 2h.1 to 2h.9, so the route needs no change per sub-slice.
+
+**The web-editable keys** (corrected 2026-11-17; the earlier text pointed at "brief 02h's table
+133", which lists about 20 keys by kind of control, not the list). **The rule:** every key
+`pai-app` `presets::render_section` can write (75 keys, `crates/app/src/presets.rs` 1735-2116 at
+59eaf68), minus the ten that no 2h sub-slice enables. That equals the keys of brief 02e's field
+tables 92, 93, 96, 97, 98, 101, 102, 107 and 112 (the controls 2h.1 to 2h.9 enable), minus the same
+ten; checked key by key on 2026-11-17, the two sets agree. **65 keys**, by card (each written by
+`render_section` at the line given):
+
+| Card (02e table) | Keys | Written at |
+| --- | --- | --- |
+| Resource / context (92) | `ctx-size`, `parallel`, `kv-unified`, `kv-unified-per-slot`, `batch-size`, `ubatch-size` | 1874, 1902, 1910-1913 |
+| Embeddings (93) | `embeddings`, `pooling` | 1922, 1924 |
+| KV cache (96) | `cache-type-k`, `cache-type-v`, `flash-attn`, `cache-ram`, `cache-reuse`, `ctx-checkpoints`, `checkpoint-min-step` | 1934-1936, 1942, 1949, 1956, 1957 |
+| Sampling overrides (97) | `temp`, `top-k`, `top-p`, `min-p`, `repeat-penalty`, `presence-penalty`, `backend-sampling` | 2095-2100, 2109 |
+| Advanced (98) | `load-on-startup`, `chat-template-kwargs` | 1762, 2112 |
+| Chat / reasoning (101) | `jinja`, `prefill-assistant`, `reasoning`, `reasoning-format`, `reasoning-effort`, `reasoning-preserve`, `reasoning-budget`, `reasoning-budget-message`, `n-predict` | 1960, 1964, 1967, 1968, 1975, 1985, 2002, 2005, 2010 |
+| Vision (102) | `mmproj-offload`, `mmproj-device`, `image-min-tokens`, `image-max-tokens` | 1776, 1777, 1781, 1782 |
+| Hardware (107, MoE left out) | `n-gpu-layers`, `n-cpu-ffn`, `op-offload`, `repack`, `no-host`, `lazy-mode`, `load-mode`, `fit`, `fit-ctx`, `fit-target`, `device-draft`, `n-gpu-layers-draft` | 1875, 2026, 2054, 2063, 2070, 2077, 2083, 2087, 2091, 2092, 1871, 1870 |
+| Speculative decoding (112) | `spec-draft-n-max`, `spec-draft-p-min`, `spec-draft-n-min`, `spec-draft-n-ubatch`, `spec-draft-type-k`, `spec-draft-type-v`, `spec-ngram-mod-n-match`, `spec-ngram-mod-n-min`, `spec-ngram-mod-n-max`, `spec-ngram-simple-size-n`, `spec-ngram-simple-size-m`, `spec-ngram-map-k-size-n`, `spec-ngram-map-k-size-m`, `spec-ngram-map-k4v-size-n`, `spec-ngram-map-k4v-size-m`, `spec-ngram-map-k4v-min-hits` | 1799-1861 |
+
+**Written by the configurator, not web-editable (10)**, each until the slice named: `model`,
+`mmproj`, `model-draft`, `spec-type` (the Assets card, 2i); `n-cpu-moe`, `moe-cache-mib` (need the
+model's facts, 2g, user U3); `device`, `split-mode`, `tensor-split` (GPU distribution, 2f);
+`override-tensor` (tensor placement, 2j). A slice that enables one moves it from this list to the
+table, in the same commit as its fe control.
+
+**Where the list lives and how a test pins it.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **The two lists as constants in `pai-core` (`checks::WEB_PRESET_KEYS`, `checks::PRESET_KEYS_NOT_ON_WEB`), the bff reading the first; a `pai-app` test pins them against `render_section`** | Two constants moved from the bff to `pai-core`; one test in `pai-app`, which has both `render_section` and the full fixture | None found: the keys of `render_section(&full_preset())` (`presets.rs` 2774, a struct literal with every field set and no `..Default`, so a new field cannot be left out) read with `ini::parse_sections` must equal the union of the two lists, and the two must be disjoint. A name that is not a key, a key the configurator stops writing, and a new key nobody classified each fail it | **Chosen** |
+| The list in the bff, pinned against a literal copy in its own test, plus `pai-core`'s tables (`PRESET_INT_KEYS` without `moe-cache-mib`, `PRESET_FLOAT_KEYS`, `PRESET_ENUM_KEYS` without `split-mode` must be in it) | No move | The literal copy is the list again; the bool, text and device keys (`embeddings`, `fit`, `jinja`, `no-host`, ...) are in no `pai-core` table, so a wrong name among them passes. This is how about 40 wrong names got into the first draft | Rejected |
+
+`pai-bff` cannot link `pai-app` (its build script needs a llama.cpp clone), which is why the pin sits
+in `pai-app`; the constants go in `checks.rs` beside the other preset key tables the manager uses.
+The bff test keeps the slice-3 cases (`model`, `n-cpu-moe`, `foo` are 400). The fe side (each enabled
+control sends its key) is pinned by the fe tests of each sub-slice, against the same 02e tables.
+
+Why a list rather than the contract's key syntax: the manager does not check unknown keys
 and llama-server refuses to start on one, so a syntax rule would let any web caller stop the next
 start; the list fails closed, and it also answers the contract's open point on `model: null` (400,
 never sent by the fe). A `[` at a value's start needs no rule: the value never starts a line. Then
@@ -759,7 +819,15 @@ and item 11c (the read, with the section revision); 11d is independent.
    its line (the file's other bytes equal, a comment above it kept); `null` removes every line of the
    key; an unlisted key (`model`, `n-cpu-moe`, `foo`) is 400; a value with LF, CR or another control
    character, an empty value, a number, a missing `revision` are 400; `a;b` is 422 `comment-markers`
-   field the key.
+   field the key; `CTX-SIZE` in the body is 400.
+   - **3a. The key lists in `pai-core` (before 3's list test).** `checks::WEB_PRESET_KEYS` (the 65
+     above) and `checks::PRESET_KEYS_NOT_ON_WEB` (the 10). Done when a `pai-app` test passes: the keys
+     of `render_section(&full_preset())`, read with `ini::parse_sections`, equal the union of the two
+     lists, and the lists share no key; renaming one entry of either list (say `min-p` to
+     `min-markers`) makes it fail. The bff's check reads `WEB_PRESET_KEYS`; its own list goes.
+   - **1b. `set_key`'s equal-value case only for the exact spelling (pai-core).** Done when: a section
+     with `CTX-SIZE = 4096`, set to `ctx-size` `4096`, gives `ctx-size = 4096` at that line; `ctx-size
+     = 4096 ; note` set to `4096` stays byte for byte, as today.
 4. **The route `PUT /api/presets/{id}`.** Done when, against the fake manager: a fresh revision writes
    through `write_file_if` with the text read as `expected` and answers 200 with the revision the GET
    then returns; a stale revision, the section moved to the other file, and the manager's `Changed`
