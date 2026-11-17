@@ -3,14 +3,14 @@
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one local
 HTTP service that serves the web UI built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state, the run verbs, the start-at-boot flag
-and, for a signed-in user, an instance's server file read and saved, the preset list and the preset
-on/off switch; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
+and, for a signed-in user, an instance's server file read and saved, the preset list, the preset
+on/off switch and one preset's read; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
 The web UI is for administrators only, members of the group `pai` (user, 2026-11-15): the Overview
 (version, instances) shows without sign-in, a right password of a `pai` member signs in, a right
 password of anyone else is 403 `session-not-administrator` (`fe/briefs/api-contract.md`). Behind
 sign-in it has an instance page (the server file, Start, Stop, Restart, start at boot: all served)
-and a Models page (the preset list and the on/off switch per preset: served,
-[below](#the-preset-list-and-its-switch)); the preset page and its save are not
+and a Models page (the preset list, the on/off switch per preset and a preset page of its own,
+read-only: all served, [below](#the-preset-routes)); the preset's save is not
 ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
@@ -77,8 +77,9 @@ runtime (axum).
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for anyone: the connect carries no principal, the session store is never touched, so the page can poll it; the failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
-| `GET /api/presets` | The preset rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-list-and-its-switch)) |
-| `PUT /api/presets/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the preset switched on or off ([below](#the-preset-list-and-its-switch)) |
+| `GET /api/presets` | The preset rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-routes)) |
+| `GET /api/presets/{id}` | One preset for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-preset-page)) |
+| `PUT /api/presets/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the preset switched on or off ([below](#the-preset-routes)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -291,15 +292,16 @@ Done answers the 200.
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
 
-## The preset list and its switch
+## The preset routes
 
-`GET /api/presets` and `PUT /api/presets/{id}/enabled` are the Models page's two routes
-(`crates/bff/src/presets.rs`, built 2026-11-17; `PLAN.md` step 10 items 11 and 11b, the design
-"The switch on and off (item 11b)" in `ARCHITECTURE.md`). Both are behind sign-in and both ask
-`private-ai-manager` on **one connect as the signed-in user**, so it is that user's own membership
-of `pai`, re-checked by the manager at the call, that answers: 401 `session-required` with no
-session (the manager is not connected to, nothing is written), 403 `session-not-administrator` and
-the end of the session when the manager refuses that user.
+`GET /api/presets`, `GET /api/presets/{id}` and `PUT /api/presets/{id}/enabled`
+(`crates/bff/src/presets.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b and 11c, the design
+"The switch on and off (item 11b)" in `ARCHITECTURE.md`): the Models page's list and switch, and the
+read of one preset. All three are behind sign-in and all three ask `private-ai-manager` on **one
+connect as the signed-in user**, so it is that user's own membership of `pai`, re-checked by the
+manager at the call, that answers: 401 `session-required` with no session (the manager is not
+connected to, nothing is written), 403 `session-not-administrator` and the end of the session when
+the manager refuses that user.
 
 What they read and write is the manager's pair of preset files, `presets.ini` and
 `presets.ini.disabled` in the engine's config directory (`paths::engine_config_dir`:
@@ -384,6 +386,50 @@ written first, so a refusal leaves both files as they were.
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were, and one that runs out after both writes landed is the 200 above |
 | 502 | `client-other` | anything else, never the manager's detail |
 
+### The preset page
+
+`GET /api/presets/{id}` (`presets.rs` `read`) is the read of one preset, the route
+`#/models/<id>` reads (`fe/src/PresetPage.tsx`, reached from the Models table's id link): the
+read-only page, its save being `PLAN.md` item 11e. This route only reads. One connect as the
+session's user, one read of each file, under the reads'
+5 s `MANAGER_TIMEOUT`. The `{id}` is a section name, matched in any letter case, never a path, and
+the enabled file is read first: a section in both files answers the `presets.ini` copy, as the list
+does the same id. The answer is exactly seven fields:
+
+- `id`, `engine`, `engineAvailable`: the list row's, the id as the file spells it.
+- `enabled`: which of the two files the section was found in.
+- `values`: the section's keys as that file's parser reads them (`ini::parse_sections`), an object of
+  strings, no path resolution and no check: the key as the file spells it, the value trimmed and cut
+  at the first `;` or `#` (`q8#0` reads as `q8`), a key repeated in the section keeping its last
+  line, and two keys differing only in case being two entries. Verbatim on purpose: a preset the
+  manager would refuse at a save is one the page can still show.
+- `projectUrl`: the section's `; url = ` comment, `""` when it has none. It is a whole-line comment
+  of the section, read by the configurator's reader, now in `pai-core` (`ini::project_url_of` over
+  `ini::comment_value`, 36a892d), so the GUI and the page answer one URL: `;` or `#`, any spacing
+  around the `=`, the first such comment, the word whole (`; urls are below` is prose).
+- `revision`: the server read's keyed SipHash-2-4 of a text, printed as 16 hex digits
+  ([above](#the-server-file-of-an-instance)), the text being the file's name, a newline, and the
+  section as the file holds it: from its header through its last non-blank line, without that line's
+  own ending (`section_revision`). In it: the section's keys, values and comments in the file's
+  spelling and order, and which of the two files holds it, so the preset switched off is another
+  preset to the page. Not in it: a section changed beside it, a section appended to the file, the
+  file's final line break, the blank lines after the section's last line. What would consume it is
+  the preset save, a plan: `PLAN.md` item 11e and "Saving a preset from the web" in
+  `ARCHITECTURE.md`. Nothing sends a revision back until that save exists.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | the seven fields | the read answered |
+| 401 | `session-required` | no session, the manager not connected to |
+| 403 | `session-not-administrator` | the manager refused the read for that user; the session ends, as the list's |
+| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`, never a preset. `args` as the switch's ([above](#the-switch)): `[id]` for a name a preset can carry at all, `[]` for one the id check refuses and for a run of dots |
+| 503 | `client-unavailable` | no manager, one that went away during the read, or one that outlives the 5 s deadline |
+| 502 | `client-other` | anything else, never the manager's detail |
+
+A read runs no content check and writes nothing. `POST` and `DELETE` on the path are 405, and a path
+below it, `/api/presets/alpha/*`, is the ROUTER's own 404: no body and no content type, no key, and
+no connect to the manager.
+
 ### A preset in both files
 
 An id in both files is listed once, as on. Switching it off writes the disabled file (its section is
@@ -403,7 +449,13 @@ fake manager answers a compare and swap only when the expected text is what it a
 in that
 test, and records every write, so the order of the two writes and the text of each are pinned.
 Green 2026-11-17 at 594e15e, rerun the same day (23, 48 and 64 tests in the three suites,
-`cargo test -p pai-bff --test presets --test presets_switch --test server`). Among them: the list
+`cargo test -p pai-bff --test presets --test presets_switch --test server`). The section read adds
+`tests/preset_read.rs`, over the same fake manager: 32 tests, green 2026-11-17 on the tree at
+36a892d, pinning the document's seven fields, the values as the parser holds them, a repeated key's last line, the
+url comment, the global `*`, the router's own 404 below the path, and the revision stable across a
+neighbour section and a final line break (`cargo test -p pai-bff --test preset_read`). The `; url =`
+reader moved with it, into `pai-core`, and its two tests went too
+(`cargo test -p pai-core -- project_url`). In the list and the switch suites: the list
 skipping `[*]` in both files
 (`the_global_section_is_not_a_preset`), the switch's 404 for it with nothing written
 (`switch_for_the_global_section_is_404_and_moves_nothing`), and the 200 for a move whose writes
@@ -450,13 +502,12 @@ its data once when it opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **The bff does not serve** `GET /api/presets/{id}` and `PUT /api/presets/{id}` (a preset's page and
-  its save, `PLAN.md` items 11c and 11e): on a shipped bff the preset page's read gets a 404 with no
-  key, so `#/models/<id>` shows "The preset could not be read." (`preset-load-failed`,
-  `fe/src/PresetPage.tsx`), the page tested against `fe/briefs/api-contract.md` with mocked replies
-  only. The Models page's two calls are served ([above](#the-preset-list-and-its-switch)); the fe is
-  tested against that contract with mocked replies only, never against a real bff, so what those
-  pages show takes a run on a machine. Everything the instance page makes is served: the
+- **The bff does not serve** `PUT /api/presets/{id}` (the preset's save, `PLAN.md` item 11e): by the
+  code the preset page's read is answered ([above](#the-preset-page)), the save being the one preset
+  call of the contract with no route behind it. The Models page's two calls are
+  served ([above](#the-preset-routes)); the fe is tested against that contract with mocked replies
+  only, never against a real bff, so what those pages show takes a run on a machine. Everything the
+  instance page makes is served: the
   server read and its save ([above](#the-server-file-of-an-instance)), the run verbs and
   the boot read and write ([above](#running-it)); the bff serves `/api/session` and the manager
   checks the sign-in, so the pages behind it open: on a shipped install an instance page's server
@@ -497,8 +548,9 @@ manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/sessio
 `tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`
 the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
 manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
-`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/presets.rs` and
-`tests/presets_switch.rs` drive the preset list and the switch over the same fake manager, whose
+`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/presets.rs`,
+`tests/presets_switch.rs` and `tests/preset_read.rs` drive the preset list, the switch and the
+section read over the same fake manager, whose
 compare and swap lands only when the `expected` text is what the fake answered for that file in that
 test (a missing file answers `Changed`, as the real manager does) and every write is recorded as
 `(name, contents, expected)`, so the order of the two writes, the whole text of each and the channel

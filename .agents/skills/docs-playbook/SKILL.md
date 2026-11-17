@@ -121,6 +121,13 @@ Lessons only: the rules are in `AGENTS.md`.
   the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
   run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
   it answers 503 `unavailable`.
+- A preset route change is repeated in eight spots of `crates/bff/README.md`: the intro's served list,
+  the route table's preset rows, the `## The preset routes` lead, its `### The list` / `### The switch`
+  / `### The preset page` sections, `### What has run` (the suite names and test counts), the fe route
+  table's `#/models/<id>` row, the fe "The bff does not serve" bullet, and `## Tests`. Renaming the H2
+  renames its anchor: the root README and `AGENTS.md` carry one sentence each. The `; url =` reader's
+  home is `crates/core/src/ini.rs` (`project_url_of` over `comment_value`) since 36a892d, its tests
+  `cargo test -p pai-core -- project_url`; `crates/config/README.md`'s source map does not name it.
 - The fe can run ahead of the bff: a route the fe calls is served only if `router_with` in
   `crates/bff/src/lib.rs` has it (`fe/briefs/api-contract.md` marks the rest "proposed"). Describe
   such a page as built against the contract, and say what today's bff makes of it (404, no JSON body).
