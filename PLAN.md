@@ -951,8 +951,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
-    collapsible; collapsed it shows, for now, only its engine and its port (user, 2026-11-17), so
-    `GET /api/instances` gains the port (today `{id, engine, state}`). Then adding and
+    collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
+    labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
+    and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design. Then adding and
     removing instances from the web UI, llama.cpp first, each with its own port (the manager already
     keeps instances by id: R8); Strata as a second engine in a step of its own (R12).
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
