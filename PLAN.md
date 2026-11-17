@@ -992,6 +992,19 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     instance (only the written one would do); missing tests: a render failing after the pool write, the
     second instance over its max, the D-Bus and pipe `BadFileName` for `presets@<id>.ini`. Clients still
     cannot write a `[*]` section (decided 2026-11-17); a hand-edited `[*]` is rendered.
+13c. **Strata as the second engine** (user, 2026-11-17): the manager runs and configures a Strata
+    instance beside the llama.cpp ones, after item 13's manager slices (4 to 12), since it needs
+    `CreateInstance`. Decided: the manager writes and launches Strata's own run config and profile
+    (`strata serve` / `strata runtime start --profile`), not `strata.conf` + `strata-start`; the first
+    milestone runs and configures (start, stop, restart; server and model keys read and saved through
+    the manager and the web UI); the Strata serving :8580 today stays untouched until the user decides
+    the switch (a separate go-ahead). One Strata server holds one model, set at start (no router, no
+    models preset). First the architect's design (engine abstraction in the manager, the run config and
+    profile as the instance's files, identities and the API key, packaging or a found install). Input: a
+    read-only inventory of Strata 0.1.60.1's server and model parameters, kept locally (not committed:
+    third-party facts, mappings partly guessed) at `build/linux/strata-params.md`; open there: the
+    engine's own flag list (its `--help` was not run), the JSON-only run-config keys, health and props
+    endpoints.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances).
