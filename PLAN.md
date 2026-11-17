@@ -77,8 +77,8 @@ as not checked, and the step stays open.
 
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
-presets and switches them on or off. Left for it: slice 11b (the preset on/off
-switch); then the user's run on their machine. After it: 11c, 11e, 11d, 11f.
+presets and switches them on or off. Built (2026-11-17); left: the user's run on
+their machine. After it: 11c, 11e, 11d, 11f.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in
@@ -894,10 +894,15 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    bind the `Host` rule must change with it. A page opened through a hostname alias gets the 403 JSON for `/` too, so no
    fe code runs to explain it: a plain answer naming the localhost address would help (not needed now).
 10. **Engines.** `GET /api/engines`, `unknown-engine` refused on a preset write.
-11b. **A preset's on/off.** `PUT /api/presets/{id}/enabled` (administrator), as worded in
-   `fe/briefs/api-contract.md`; the fe side is on main (fe slice 2c, 7dde1d5, against mocks). With it,
-   `checks::preset_id` refuses `.` and `..` (pai-core). The fe no longer reads `canConfigure` (fe slice
-   R4, 1827023): the bff drops it from the session reply (`{user}`) after 6b part 2c.
+11b. (Done, 2026-11-17: `PUT /api/presets/{id}/enabled`, `crates/bff/src/presets.rs`, two
+   compare-and-swap writes, destination first. Left from it: `checks::preset_id` refuses `.` and `..`
+   (pai-core); `DISABLED_FILE_HEADER` moves to `pai-core` (the bff holds a copy a test keeps equal);
+   a missing destination file is created with a plain write, so one created by someone else between
+   the read and the write is overwritten (needs a create-if-absent in the manager); a failed read-back
+   after both writes answers 504 or 502 for a move that stands; switching `[*]` off moves
+   llama-server's global section out of `presets.ini`, as the GUI does (decide whether either should
+   refuse it); tests missing: `Unavailable` between the two writes, asked on while in both files, the
+   `[*]` id; the docs pass (`crates/bff/README.md`, AGENTS.md's overview).)
 11c. **A preset's page, read-only.** `GET /api/presets/{id}` as proposed in `fe/briefs/api-contract.md`
    (b43d293): `{id, engine, engineAvailable, enabled, values: {key: raw string}, projectUrl,
    revision}`, a session needed, 404 `no-preset-named`, 400 `presets-malformed`. No new manager method

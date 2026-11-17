@@ -819,3 +819,24 @@ Lessons only: the rules are in `AGENTS.md`.
   whose id, compared `eq_ignore_ascii_case`, the on file lacks); a file the manager answers
   `None` is an empty group, and `ini::parse_sections` already trims values and cuts inline
   `;`/`#` comments, so `model` needs no parsing of its own.
+- The preset switch (`crates/bff/src/presets.rs` `set_enabled`, `PUT /api/presets/{id}/enabled`) shares
+  the save's write state: `server::WriteState` (`pub(crate)`, `new`/`may_write`/`sent`/`timed_out`), one
+  `Arc` per request. `may_write()` is a CAS Idle -> Asked and answers TRUE when the state is already
+  Asked, because a move is TWO writes: a handler that 504'd on the first leaves its task to ask the
+  second (a test releases its parked write and expects both to land). The second write needs no guard:
+  the state moves to Cancelled only from Idle, so once a write was asked the handler can only 504.
+- The switch answers `enabled` from a `read_file` of `presets.ini` AFTER the last write
+  (`fe/briefs/api-contract.md`: "`enabled` is read back after the write"), the list's rule as well (a
+  section in both files is enabled): seven manager calls, `read presets.ini` between the last write
+  and `list`.
+- The switch's 404 `no-preset-named` args: echo the id only when `checks::preset_id(id).is_ok()` AND it
+  is not all dots. `valid_preset_id` accepts a run of dots, and the contract says `.` and `..` name no
+  preset, so a name that can never be a section is answered with `args: []`.
+- `DISABLED_FILE_HEADER` stays a byte-identical copy in the bff (it links `pai-core`, not `pai-app`):
+  `the_disabled_header_is_the_configurators_one` reads `crates/app/src/presets.rs` as TEXT and pins the
+  literal `const DISABLED_FILE_HEADER: &str = "` in THAT file, so "move the const to `pai-core`" turns a
+  green test red; the same test keeps the two copies equal.
+- The bff's refusal keys are literals in the code, not `strings::t` calls, and no lint pins the set:
+  `server-malformed` and `boot-malformed` have no `en_US.toml` entry, so `presets-malformed`,
+  `preset-changed-elsewhere` and `client-timeout` need none (the fe carries the text). `no-preset-named`
+  is a check key already in `en_US.toml`, with `{0}` the id.

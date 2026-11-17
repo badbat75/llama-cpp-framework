@@ -203,7 +203,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - The bff's fakes: `FakeManager::refused()` gates `read_file` only, so a read-refusal list refuses reads
   and leaves the writes free (that is what pins "the read refused ends the session, nothing is written").
   A list of principals there, not a flag: `Live::write_refused` and `Live::read_refused` are both
-  `Vec<String>` read with `.contains(&principal)`.
+  `Vec<String>` read with `.contains(&principal)`. When a handed harness returns on `refused()` BEFORE
+  the list check, the list field is never read: its setter refuses NOTHING, `-D warnings`'s
+  `field is never read` is the only red naming it, and every test built on that setter answers 200.
  - The `tests/server.rs` fake answers a save at three points, one pair of cells each (`write_outcome` +
    `write_pause_ms`, `read_outcome` + `read_pause_ms`, `connect_outcome` + `connect_pause_ms`, all inert
    by default so adding them greens everything): the 503 and 504 of a save turn on which call was
@@ -212,6 +214,12 @@ Lessons only: the rules are in `AGENTS.md`.
    `write-if <principal> <name>`, `status <id>`): the `As` methods are not logged, and the route's own
    re-read adds a SECOND `read server@default.ini` after the GET's, so the log of a save stopped at its
    read holds two reads, and one stopped at the connect holds one.
+ - A route that reads a file back after its writes (the switch re-reads `presets.ini` so the `enabled`
+   it answers is the text on the machine): the exact-call-list pin of that route lists the read-back
+   too, in the position the route makes the call (read the route's body, not the doc comment of the
+   test). An exact list of six calls beside a sibling test that demands a read after the last write is
+   a contradiction: keep the read-back (it is the contract), extend the list to the calls the route
+   makes, and rename a test called "reads both files once" once the list repeats a read.
 - The race "the route answered and the blocking task went on": dropping the `JoinHandle` of a
   `spawn_blocking` task does NOT stop it, so a save cut off at the connect or the read answers 503 and
   its task writes when its parked call returns. A fixed sleep cannot test it (the write lands when the
@@ -243,7 +251,9 @@ Lessons only: the rules are in `AGENTS.md`.
   router's 404 (the 405 test too, it greens once the path exists with GET only), so the file is N status
   reds plus the guards that hold by construction (the sibling route still answers). Say which green is a
   guard, and prove the red is the missing route, not a broken helper: the same red `left: 404` on every
-  status, one per expected code.
+  status, one per expected code. A test that EXPECTS 404 passes its status assert by accident on that
+  router reply, so pin its body too (key, and `args`): its red is then
+  `left: Content-Type "" right: "application/json"`, which names the missing route.
 - The bff does not link `pai-app`: a route listing preset SECTIONS parses through
   `pai_core::ini::parse_sections`. Its header is the contract for what a fixture yields, read it instead
   of running a probe crate (pai-core built from a separate workspace: minutes): values TRIMMED, everything
@@ -258,6 +268,13 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## Text pins and source lints
 
+- A pin that a source literal IS a text constant of another crate (the bff's disabled-file header, the
+  configurator's `DISABLED_FILE_HEADER`): extract the raw literal, then DECODE it before comparing
+  (a `\` line continuation drops the newline AND the next line's indent; then `\r`, `\n`, `\t`, `\"`,
+  `\\`), and compare the decoded text with the constant read from the other source (cut it from
+  `const NAME: &str = ` to the line's `;`). Do not compare line counts: the extraction starts with the
+  opening line's continuation `\`, so the counts differ by one on an identical text (`left: 4 right: 5`),
+  and a green of a count compare proves nothing about the bytes.
 - A text pin on a file the coder will rewrite: prove it greens on a candidate edit in a temp copy, so
   the red is not a broken helper. A "no old text left" pin must be narrow (pin the code shape, e.g.
   `"+llama.cpp.{"`): doc comments legitimately describe the old format.

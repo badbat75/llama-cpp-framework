@@ -398,13 +398,68 @@ fn revision(text: &str, key: &[u8; 16]) -> String {
     format!("{hash:016x}")
 }
 
-/// The state of one save's write, in one atomic shared by the handler and its
-/// blocking task: `WRITE_IDLE` while the write has not been asked,
-/// `WRITE_ASKED` from the moment the task sends it, `WRITE_CANCELLED` when the
-/// handler's time limit ran out with the write still unasked. Each side moves
-/// Idle to its own state with a compare and exchange, so the pair settles the
-/// write once: a task that finds the state Cancelled sends no write, a handler
-/// that finds it Asked answers 504, the outcome of the sent write unknown.
+/// The state of the write of one request, in one atomic shared by the handler
+/// and its blocking task: `WRITE_IDLE` while no write has been asked,
+/// `WRITE_ASKED` from the moment the task sends one, `WRITE_CANCELLED` when the
+/// handler's time limit ran out with no write asked. Each side moves Idle to
+/// its own state with a compare and exchange, so the pair settles the write
+/// once: a task that finds the state Cancelled sends no write, a handler that
+/// finds it Asked answers 504, the outcome of the sent write unknown. The
+/// server file's save and the preset switch share it.
+pub(crate) struct WriteState(AtomicU8);
+
+impl WriteState {
+    pub(crate) fn new() -> Self {
+        Self(AtomicU8::new(WRITE_IDLE))
+    }
+
+    /// The task's way to a write: true when it may send one. Idle to Asked is
+    /// the only way. Lost to the handler's Cancelled, the handler has answered
+    /// that the manager was never asked to write, so this request is over and
+    /// the task sends nothing. A state already Asked is a write this very task
+    /// sent: its outcome is already unknown, so the task goes on to the next
+    /// write of the same request.
+    pub(crate) fn may_write(&self) -> bool {
+        match self
+            .0
+            .compare_exchange(WRITE_IDLE, WRITE_ASKED, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => true,
+            Err(WRITE_CANCELLED) => false,
+            Err(_) => true,
+        }
+    }
+
+    /// True when the task sent a write, so its outcome is unknown: the answer
+    /// to the manager's `Unavailable` is then 504 `client-timeout`, it was
+    /// reached, and not 503 `client-unavailable`.
+    pub(crate) fn sent(&self) -> bool {
+        self.0.load(Ordering::SeqCst) == WRITE_ASKED
+    }
+
+    /// The answer when the handler's time limit ran out and its task is still
+    /// running. Idle to Cancelled settles it with the task: won, no write was
+    /// ever asked and the task will never ask one, so 503
+    /// `client-unavailable`, the manager not reached; lost, the state is Asked,
+    /// a write is sent and its outcome unknown, so 504 `client-timeout`.
+    pub(crate) fn timed_out(&self) -> Response {
+        if self
+            .0
+            .compare_exchange(
+                WRITE_IDLE,
+                WRITE_CANCELLED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+        } else {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+        }
+    }
+}
+
 const WRITE_IDLE: u8 = 0;
 const WRITE_ASKED: u8 = 1;
 const WRITE_CANCELLED: u8 = 2;
@@ -432,11 +487,10 @@ const WRITE_CANCELLED: u8 = 2;
 /// and the answer is 504 `client-timeout`.
 ///
 /// A time limit does not stop the blocking task: the handler and that task
-/// share one atomic state (the `WRITE_` constants) and settle that fact
-/// together with a compare and exchange, so the answer is the state's last
-/// word. A task parked in the connect or the read when the limit runs out
-/// finds the state Cancelled and sends no write: the 503 stands, the file is
-/// what it was.
+/// share one atomic state ([`WriteState`]) and settle that fact together with a
+/// compare and exchange, so the answer is the state's last word. A task parked
+/// in the connect or the read when the limit runs out finds the state
+/// Cancelled and sends no write: the 503 stands, the file is what it was.
 pub(crate) async fn save(
     connect: Connect,
     timeout: Duration,
@@ -473,7 +527,7 @@ pub(crate) async fn save(
     // and Idle -> Cancelled when the time limit runs out first: from the
     // moment the write is sent its outcome is unknown, and every answer that
     // cannot see it is 504, never 503.
-    let state = Arc::new(AtomicU8::new(WRITE_IDLE));
+    let state = Arc::new(WriteState::new());
     let mine = state.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
         let client = connect(Some(user.as_str()))?;
@@ -487,10 +541,7 @@ pub(crate) async fn save(
         // Idle -> Asked is the only way to the write. Lost, the handler ran
         // out of time and answered 503, so this save is over and its file is
         // left as the browser was told; the value returned is never read.
-        if mine
-            .compare_exchange(WRITE_IDLE, WRITE_ASKED, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
+        if !mine.may_write() {
             return Ok(true);
         }
         client.write_file_if(&name, &text, &current)?;
@@ -505,39 +556,20 @@ pub(crate) async fn save(
             "running": running,
         }))
         .into_response(),
-        Ok(Ok(Err(failure))) => save_failure(
-            &sessions,
-            &session,
-            failure,
-            state.load(Ordering::SeqCst) == WRITE_ASKED,
-        ),
+        Ok(Ok(Err(failure))) => save_failure(&sessions, &session, failure, state.sent()),
         // The answer cannot see the write, and the task keeps running. Idle ->
         // Cancelled settles it with the task: won, the write was never asked
         // and the task will never ask it, so 503 `client-unavailable`, the
         // manager not reached; lost, the state is Asked, the write is sent and
         // its outcome unknown, so 504 `client-timeout`.
-        Err(_) => {
-            if state
-                .compare_exchange(
-                    WRITE_IDLE,
-                    WRITE_CANCELLED,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
-                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
-            } else {
-                error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
-            }
-        }
+        Err(_) => state.timed_out(),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
 
-/// Whether the instance's process runs in this state, the one the save's
-/// `running` answers with.
-fn runs(state: InstanceState) -> bool {
+/// Whether the instance's process runs in this state, the one the save's and
+/// the preset switch's `running` answers with.
+pub(crate) fn runs(state: InstanceState) -> bool {
     matches!(state, InstanceState::Active | InstanceState::Activating)
 }
 
