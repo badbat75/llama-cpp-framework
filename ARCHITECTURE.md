@@ -739,6 +739,37 @@ hand-edited bad value in that section is refused too; other sections are not che
 `invalid-preset-id` and `preset-name-taken`. A field the page does not show as an enabled control is
 the fe's business (brief 02h, 143 and 144).
 
+**(c1) An inline comment on an untouched line (defect found 2026-11-17 in 3eb24b2; decided the same
+day).** `preset_section` runs `comment_markers` on the RAW value of each `PRESET_TEXT_KEYS` line
+(`checks.rs` 639-646; `RawSection` keeps the comment in the raw value, 571-628), so an edited section
+holding `model = a.gguf ; Q8` (or a comment on `mmproj`, `model-draft`, `override-tensor`,
+`chat-template-kwargs`, `reasoning-budget-message`, `fit-target`) is refused 422 `comment-markers` at
+every web save, though the bff leaves that line byte for byte and llama-server reads it cut at the
+comment (`common/preset.cpp:201-202`). The same rule refuses **switching such a preset on**: the
+section is new to `presets.ini`, `presets_file` gets only `presets.ini` as `old`
+(`service.rs` `check_contents`), so it is checked whole, raw lines included; that hits the web switch
+and any client that moves a section unchanged. The GUI's save is not hit because it rewrites the
+section from parsed (cut) values. Every other rule of `preset_section` reads `s.get` (the value cut
+at the comment) or the header, so this is the only raw-line rule; the server file's `server_file`
+also checks raw lines but is not reached by a byte-for-byte edit (outside this design).
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `comment_markers` only on a key line no current preset file holds identically in the section of the same id** | `preset_section` takes the known sections; `presets_file` gains the other file's text, as `presets_disabled_file` already has; one call in `check_contents` | A sender can get past the check only with a `(key, raw value)` pair a root/LocalSystem-owned file already holds in that very section: it cannot introduce a value with `;` or `#`. Any changed key, value or spelling is checked | **Chosen** |
+| B. `comment_markers` on the cut value | One line | Never fires (the cut value has no marker), so a value the GUI or `pai` is about to write with `;` reaches the file and is silently shortened; the check is gone in all but name | Rejected |
+| C. Drop the manager's check, trust the writers' own (`pai-app` `validate_for_save`, the bff's `parse_body`) | Removes code | The manager stops checking a rule for any caller; breaks "the manager does not trust the bff" | Rejected |
+
+**The rule.** A key line of a section in the new text is exempt from `comment_markers` when a section
+with the same id (exact, as the header is kept byte for byte by both the save and the switch) in
+`old` or in the other preset file as it is now holds a key line with the same key and the same raw
+value (both trimmed, as `raw_sections` stores them). Every other rule of the section still runs on
+the whole section (decision c). Lines `set_key` removed while collapsing duplicates need nothing: a
+removed line is not checked. Applies to `WriteFile` and `WriteFileIf` alike (both go through
+`check_contents`) and to both files: `presets_file(new, old, other, models_max)` with `other` =
+`presets.ini.disabled`, `presets_disabled_file(new, old, enabled)` with `old` and `enabled` as known.
+The bff keeps its own `comment_markers` on each set value (a 422 before the manager); `pai-app`
+keeps `validate_for_save`; the manager's check stays the one that holds for every caller.
+
 **(d) The keys and `running`.** `presets-malformed` (400) and `preset-changed-elsewhere` (409) are
 accepted, on the pattern of `server-malformed` and `server-changed-elsewhere`. `running` is true when
 the section was written to `presets.ini` and any instance serving it is `active` or `activating`.
@@ -872,6 +903,21 @@ and item 11c (the read, with the section revision); 11d is independent.
    disabled file is created with the header; a `Changed` on the second write leaves the preset in both
    files and answers 409, and a second switch mends it; switching on a load-on-startup preset past
    `ModelsMax` is 422 with nothing written; already there is 200 with no write.
+6. **Untouched inline comments pass the manager (pai-core `checks.rs`, one call in the manager's
+   `check_contents`; decision c1).** Done when, as `checks` unit tests: `presets_file` with `old`
+   holding `[a]` `model = a.gguf ; Q8` and `ctx-size = 4096`, and `new` the same with `ctx-size = 8192`,
+   is Ok; the same with the model line changed to `model = b.gguf ; Q8` is 422 `comment-markers`
+   `model`; a line added to that section, `reasoning-budget-message = a;b`, is refused; the model line
+   identical but held only by another section `[b]` of `old` is refused; a section new to
+   `presets.ini` that `other` (the disabled file) holds with the comment line, its header equal, is Ok
+   (the switch on); `presets_disabled_file` passes the comment line known from `old` and from
+   `enabled`; a section new to both files with `model = a;b.gguf` is still refused. `check_contents`
+   passes `presets.ini.disabled` as `other`. `pai-app`'s
+   `save_validation_rejects_comment_markers_in_free_text_fields` and the bff's 422 `comment-markers`
+   test stay green unchanged. In the same slice the `comment-markers` text in
+   `crates/core/strings/en_US.toml` and `cli.toml` becomes `{0} contains ';' or '#', which starts a
+   comment in the INI format and cuts the value short; use a value without those characters` (it was
+   "use a path", wrong for `chat-template-kwargs` or `fit-target`).
 
 Then the docs agent updates the contract (the section revision and its 409 wording, the key list
 instead of the key syntax, `presets-malformed` for an empty value, the switch's 409),

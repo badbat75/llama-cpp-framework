@@ -81,3 +81,8 @@ description: What the architect has learned about this project's components, int
 - `serde_json::Map` iterates in key order unless `preserve_order` is on, and that feature differs
   per build in this workspace (on through `pai-app`, off for `pai-bff` alone): never let file bytes
   depend on the order of a JSON object's keys; sort first.
+- `RawSection.keys` holds the RAW value (inline comment included); only `comment_markers` reads it,
+  every other preset rule reads `s.get` (cut). Any raw-line rule must exempt lines a current preset
+  file already holds in the same section, or a byte-for-byte edit (web save, switch on) of a
+  hand-commented line is refused (decision c1). `presets_file` sees only `presets.ini` as `old`
+  unless given the disabled file: a switch on checks the moved section whole.
