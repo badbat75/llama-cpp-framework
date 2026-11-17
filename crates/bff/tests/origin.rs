@@ -10,9 +10,10 @@
 //! domain, and never its port. A page of another web app served by the same
 //! machine on `http://localhost:<other port>` is the same site, so a browser
 //! sends the cookie with its request, a body-less POST included. The bff
-//! listens on loopback, so the port is the only fact that tells one local web
-//! app from another, and the session alone cannot tell a request the signed-in
-//! user's own page sent from one some other local page sent.
+//! listens on the address the administrator chose (`listen.rs`), and a page on
+//! any port of that host is the same site, so the port is the only fact that
+//! tells one web app on it from another: the session alone cannot tell a
+//! request the signed-in user's own page sent from one some other page sent.
 //!
 //! The rule pinned here, and the payload cap the same guard shares:
 //! - A state-changing request (`POST` and `DELETE /api/session`, the three
@@ -45,15 +46,17 @@
 //!   bff's own: the bff cannot tell which one the browser meant, so it takes
 //!   neither.
 //! - The `Host` line decides for every request, the reads and the sign-in
-//!   included. The bff listens on loopback only (`listen.rs`), so a `Host`
-//!   that is not a loopback name is a page that believes it sits at that name
+//!   included. The bff listens on any address the administrator chose
+//!   (`listen.rs`, plain HTTP), so the rule reads the NAME: a `Host` that is a
+//!   name other than `localhost` is a page that believes it sits at that name
 //!   while its name resolves to this machine (a DNS rebinding). It is refused
 //!   403 `{"key": "request-bad-host", "args": []}`, before the session is read
 //!   and before the manager is connected to, and the sign-in is refused the
-//!   same way, so a foreign name gives no answer about a password. A loopback
-//!   name is `localhost`, an address in `127.0.0.0/8`, or `[::1]`, each with
-//!   an optional port, in any case. A request with no `Host` at all passes:
-//!   HTTP/1.0 sends none, and that is `curl`, the CLI and a raw client.
+//!   same way, so a foreign name gives no answer about a password. An accepted
+//!   `Host` is `localhost` or any IP literal, the LAN address, the wildcard
+//!   and an IPv6 included, each with an optional port, in any case. A request
+//!   with no `Host` at all passes: HTTP/1.0 sends none, and that is `curl`,
+//!   the CLI and a raw client.
 //! - A method that is not a read (`GET`, `HEAD`, `OPTIONS`) is guarded, so a
 //!   `PATCH` from a foreign page is 403 `request-cross-origin` and not the
 //!   route's 405. From this bff's own page a `PATCH` is still the route's to
@@ -71,7 +74,7 @@
 //! What is not pinned, because the rule says nothing about it and a browser
 //! never sends it: the case of an `Origin` or a `Sec-Fetch-Site` value (both
 //! are lowercase on the wire), the scheme of a matching `Origin` (the bff is
-//! plain HTTP on loopback, and the rule compares host and port), and which
+//! plain HTTP, and the rule compares host and port), and which
 //! check answers a request that is both cross-origin and over the cap: it is
 //! refused, by either rule.
 
@@ -118,9 +121,9 @@ const MAX_FAILURES: usize = 5;
 /// The key of a request refused for where it came from.
 const CROSS_ORIGIN: &str = "request-cross-origin";
 
-/// The key of a request addressed at a name this bff is not: the bff answers
-/// on loopback only (`listen.rs`), so a `Host` naming any other host is a page
-/// that reached this bff under a name it does not serve (a DNS rebinding).
+/// The key of a request addressed at a name this bff is not: a `Host` naming
+/// a host that is no address and is not `localhost` is a page that reached
+/// this bff under a name it does not serve (a DNS rebinding).
 const BAD_HOST: &str = "request-bad-host";
 
 /// The key of a body over [`MAX_BODY`].
@@ -510,6 +513,16 @@ impl App {
             .get(header::CONTENT_TYPE)
             .map(|v| v.to_str().expect("ascii content-type").to_string())
             .unwrap_or_default();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).to_string(),
+                )
+            })
+            .collect();
         let bytes = response
             .into_body()
             .collect()
@@ -520,6 +533,7 @@ impl App {
             status,
             content_type,
             set_cookie,
+            headers,
             body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
         }
     }
@@ -564,10 +578,39 @@ struct Reply {
     content_type: String,
     /// The session cookie the reply set, as `name=value`, when it set one.
     set_cookie: Option<String>,
+    /// Every header of the reply, the name lowercased as `http` stores it.
+    headers: Vec<(String, String)>,
     body: String,
 }
 
 impl Reply {
+    /// The values the reply carries under `name`, in the order they came.
+    fn values_of(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    /// The two headers that keep another site's page from framing this UI and
+    /// from reading a body as a type it is not, each exactly once: the bff is
+    /// reachable from the LAN over plain HTTP, so a page of anywhere else must
+    /// not be able to show it, and no body may be sniffed into a script. No
+    /// Content-Security-Policy here: that one is agreed with the web UI first.
+    fn assert_security_headers(&self) {
+        for (name, want) in [
+            ("x-frame-options", "DENY"),
+            ("x-content-type-options", "nosniff"),
+        ] {
+            assert_eq!(
+                self.values_of(name),
+                vec![want],
+                "{name} exactly once: {:?}",
+                self.headers
+            );
+        }
+    }
     fn json(&self) -> Value {
         serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", self.body))
@@ -1252,7 +1295,7 @@ async fn a_header_that_is_not_text_is_refused() {
     }
 }
 
-/// A `Host` line that is not text names no loopback host, so the name rule
+/// A `Host` line that is not text names no host of ours, so the name rule
 /// refuses it: the origin headers are absent, so no other rule can answer and
 /// the key names the rule that did. A request addressed at bytes is not a
 /// request to this bff, whatever its `Origin` says.
@@ -1342,18 +1385,23 @@ async fn two_of_the_same_header_are_refused() {
 
 // ── The name the request is addressed at ────────────────────────────────
 
-/// A `Host` that is not a loopback name is refused for every request, the
-/// reads, the sign-in and the session probe included: the bff listens on
-/// loopback only (`listen.rs`), so a page whose origin is `attacker.example`
-/// can only reach this bff under a name that resolves to this machine (a DNS
-/// rebinding), and that page is not this bff's page. The `Origin` matching the
-/// `Host` is the shape of the attack: the origin rule passes every one of
-/// these, only the name rule refuses them. The refusal is 403
-/// `request-bad-host`, before the session is read, before the manager is
-/// connected to, and before the password is checked, so a foreign name gives
-/// no answer about a credential and ends no session.
+/// A `Host` that is a name other than `localhost` is refused for every
+/// request, the reads, the sign-in and the session probe included: the bff
+/// listens on any address the administrator chose (`listen.rs`), so the
+/// address the request went to says nothing about who sent it, and a page
+/// whose origin is `attacker.example` can only reach this bff under a name
+/// that resolves to this machine (a DNS rebinding). An IP literal is never
+/// such a name: it is answered, in every spelling, by
+/// `an_ip_host_off_loopback_is_answered`. The `Origin` matching the `Host` is
+/// the shape of the attack: the origin rule passes every one of these, only
+/// the name rule refuses them. The refusal is 403 `request-bad-host`, before
+/// the session is read, before the manager is connected to, and before the
+/// password is checked, so a foreign name gives no answer about a credential
+/// and ends no session. A bracketed text that is no address, and a port that
+/// is no number, name nothing and are refused with the names: the rule reads
+/// the address, it does not fish it out of the text.
 #[tokio::test]
-async fn a_host_that_is_not_a_loopback_name_is_refused() {
+async fn a_host_that_is_a_foreign_name_is_refused() {
     for host in [
         "attacker.example",
         "ATTACKER.EXAMPLE",
@@ -1362,9 +1410,10 @@ async fn a_host_that_is_not_a_loopback_name_is_refused() {
         "localhost.example:3000",
         "127.0.0.1.evil.example",
         "local.example",
-        "10.0.0.5:3000",
-        "192.168.1.7",
-        "0.0.0.0:8590",
+        "evil.example:8590",
+        "mypc.local:8590",
+        "[not-an-address]:8590",
+        "192.168.1.10:85909",
     ] {
         let app = new_app();
         // The test's own sign-in sends no `Host`, the shape of `curl`: the
@@ -1490,10 +1539,110 @@ async fn a_loopback_host_is_answered_as_today() {
     }
 }
 
+/// The bff listens where the administrator chose (`listen.rs`), so a `Host`
+/// that is any IP literal is this bff's own name: the machine's LAN address,
+/// the wildcard on both families, a link-local and a site IPv6 address, each
+/// bracketed, in any case, with or without a port. The reads answer, the
+/// sign-in is checked, and a write whose `Origin` names that same host and
+/// port is answered: the name rule is about a page that believes it sits at a
+/// name of ours, and an address is not such a belief.
+#[tokio::test]
+async fn an_ip_host_off_loopback_is_answered() {
+    for host in [
+        "192.168.1.10:8590",
+        "192.168.1.10",
+        "10.0.0.5",
+        "0.0.0.0:8590",
+        "[fe80::1]:8590",
+        "[FE80::1]:8590",
+        "[2001:db8::1]:8590",
+    ] {
+        let app = new_app();
+        let cookie = app.sign_in().await;
+
+        // The page served at this address: `Host` and `Origin` both name it.
+        let origin = format!("http://{host}");
+        let extra = vec![("host", host), ("origin", origin.as_str())];
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra).await.assert_accepted();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_enabled(true);
+        app.sign_in_with("alice", &extra).await.assert_ok();
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
+
+        // The client that names only the address it dialed (`curl`, the CLI,
+        // a proxy): no fetch metadata, and the session it signs in with is
+        // readable at that same address.
+        let named = host_line(host);
+        let r = app
+            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .await;
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Host: {host}: {}",
+            r.body
+        );
+        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+            .await
+            .assert_ok();
+        let reply = app.sign_in_raw(CREDENTIALS, &named).await;
+        reply.assert_ok();
+        let at = reply.set_cookie.expect("a session cookie");
+        app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// An IP `Host` is this bff, and the origin rule keeps deciding for a write:
+/// an `Origin` naming another address, the same address on another port, a
+/// loopback name, or another IPv6, is 403 `request-cross-origin`. The manager
+/// is never connected to and the session survives, as with any foreign page.
+#[tokio::test]
+async fn a_write_with_an_origin_naming_another_ip_is_refused() {
+    for (host, origin) in [
+        ("192.168.1.10:8590", "http://192.168.1.11:8590"),
+        ("192.168.1.10:8590", "http://192.168.1.10:9999"),
+        ("192.168.1.10:8590", "http://localhost:8590"),
+        ("10.0.0.5", "http://10.0.0.6"),
+        ("[fe80::1]:8590", "http://[fe80::2]:8590"),
+        ("[2001:db8::1]:8590", "http://[2001:db8::2]:8590"),
+    ] {
+        let extra = vec![("host", host), ("origin", origin)];
+        let app = new_app();
+        let cookie = app.sign_in().await;
+        let before = app.asked();
+        for uri in VERBS {
+            app.post_with(uri, &cookie, &extra)
+                .await
+                .assert_cross_origin();
+        }
+        app.put_with("/api/instances/default/boot", &cookie, &extra)
+            .await
+            .assert_cross_origin();
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_cross_origin();
+        app.sign_in_with("alice", &extra)
+            .await
+            .assert_cross_origin();
+        app.assert_asks_nothing(&format!("Host: {host}, Origin: {origin}"));
+        assert_eq!(app.asked(), before, "the authenticator was asked");
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
 /// A request with no `Host` line is answered as today: HTTP/1.0 (`curl -0.9`)
 /// sends none, and the CLI, the tests and a raw client are that shape. There
-/// is no name to check, the bff answers on loopback only, and a client that
-/// sends no fetch metadata is not a browser's cross-site request.
+/// is no name to check, and a client that sends no fetch metadata is not a
+/// browser's cross-site request.
 #[tokio::test]
 async fn a_request_with_no_host_is_answered_as_today() {
     let app = new_app();
@@ -1718,4 +1867,48 @@ async fn an_ipv6_origin_and_host_are_compared_whole() {
             .await
             .assert_signed_in_as("alice");
     }
+}
+
+// ── The headers every reply carries ─────────────────────────────────────
+
+/// The guard's own replies carry the framing and the sniffing header, each
+/// exactly once: the 403 of a name this bff does not serve, the 403 of a write
+/// from a page of the same site on another port, and the 413 of a body over the
+/// cap. A refusal is a reply the browser shows, and none of the three is built
+/// by a route, so the headers are not something each route sets for itself.
+#[tokio::test]
+async fn a_guard_refusal_carries_the_framing_and_sniffing_headers() {
+    // A name that is not ours, the shape of a DNS rebinding: no origin header,
+    // so the name rule is the one answering.
+    let foreign = new_app();
+    let rebinding = foreign
+        .ask_raw(
+            Method::GET,
+            "/api/instances",
+            None,
+            None,
+            None,
+            &host_line("attacker.example"),
+        )
+        .await;
+    rebinding.assert_bad_host();
+    rebinding.assert_security_headers();
+
+    let app = new_app();
+    let cookie = app.sign_in().await;
+
+    // A write from a page of the same site on another port.
+    let crossed = app
+        .post_with("/api/instances/default/start", &cookie, &from(OTHER_PORT))
+        .await;
+    crossed.assert_cross_origin();
+    crossed.assert_security_headers();
+
+    // A boot body over the cap, refused before the manager is reached.
+    let big = boot_body_of_len(MAX_BODY + 1);
+    let over = app
+        .put("/api/instances/default/boot", &big, Some(&cookie))
+        .await;
+    over.assert_error(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
+    over.assert_security_headers();
 }

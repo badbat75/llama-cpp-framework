@@ -43,9 +43,6 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
             ListenError::Invalid(value) => {
                 strings::fill("bff-listen-invalid", &[&value, &path.display()])
             }
-            ListenError::NotLoopback(addr) => {
-                strings::fill("bff-listen-not-loopback", &[&addr, &path.display()])
-            }
             ListenError::Unreadable(detail) => {
                 strings::fill("bff-config-unreadable", &[&path.display(), &detail])
             }

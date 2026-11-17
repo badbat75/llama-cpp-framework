@@ -565,6 +565,16 @@ impl App {
             .get(header::CONTENT_TYPE)
             .map(|v| v.to_str().expect("ascii content-type").to_string())
             .unwrap_or_default();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).to_string(),
+                )
+            })
+            .collect();
         let bytes = response
             .into_body()
             .collect()
@@ -574,6 +584,7 @@ impl App {
         Reply {
             status,
             content_type,
+            headers,
             body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
         }
     }
@@ -594,10 +605,39 @@ impl App {
 struct Reply {
     status: StatusCode,
     content_type: String,
+    /// Every header of the reply, the name lowercased as `http` stores it.
+    headers: Vec<(String, String)>,
     body: String,
 }
 
 impl Reply {
+    /// The values the reply carries under `name`, in the order they came.
+    fn values_of(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    /// The two headers that keep another site's page from framing this UI and
+    /// from reading a body as a type it is not, each exactly once: the bff is
+    /// reachable from the LAN over plain HTTP, so a page of anywhere else must
+    /// not be able to show it, and no body may be sniffed into a script. No
+    /// Content-Security-Policy here: that one is agreed with the web UI first.
+    fn assert_security_headers(&self) {
+        for (name, want) in [
+            ("x-frame-options", "DENY"),
+            ("x-content-type-options", "nosniff"),
+        ] {
+            assert_eq!(
+                self.values_of(name),
+                vec![want],
+                "{name} exactly once: {:?}",
+                self.headers
+            );
+        }
+    }
     fn json(&self) -> Value {
         serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", self.body))
@@ -1491,4 +1531,48 @@ async fn an_action_moves_the_idle_deadline() {
     gone.get("/api/session", Some(&cookie))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
+}
+
+// ── The headers every reply carries ─────────────────────────────────────
+
+/// A write's replies carry the framing and the sniffing header, each exactly
+/// once: the 204 a control verb answers, the 200 of the boot write, the 401 of
+/// no session and the 404 of an id the manager has no instance for. The last
+/// two are error answers built on the way to the manager, and the 204 has no
+/// body at all, so the headers ride every reply, not only a JSON success.
+#[tokio::test]
+async fn a_write_reply_carries_the_framing_and_sniffing_headers() {
+    let full = app();
+    let cookie = full.sign_in().await;
+
+    let started = full
+        .post("/api/instances/default/start", Some(&cookie))
+        .await;
+    started.assert_accepted();
+    started.assert_security_headers();
+
+    let boot = full
+        .put(
+            "/api/instances/default/boot",
+            json!({ "enabled": true }),
+            Some(&cookie),
+        )
+        .await;
+    boot.assert_enabled(true);
+    boot.assert_security_headers();
+
+    // Refusals: the one that never reaches the manager, and the one the
+    // manager's answer turns into a 404.
+    let anon = app();
+    let no_session = anon.post("/api/instances/default/stop", None).await;
+    no_session.assert_error(StatusCode::UNAUTHORIZED, "session-required");
+    no_session.assert_security_headers();
+
+    let none = app_failing(ClientError::NoInstance);
+    let signed_in = none.sign_in().await;
+    let missing = none
+        .post("/api/instances/nope/start", Some(&signed_in))
+        .await;
+    missing.assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+    missing.assert_security_headers();
 }

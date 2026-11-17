@@ -1,4 +1,6 @@
-//! The address the bff listens on, from its own config file.
+//! The address the bff listens on, from its own config file: any `ip:port` the
+//! administrator chose, the machine's LAN address and the wildcard included,
+//! served plain HTTP.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -8,8 +10,6 @@ use std::path::{Path, PathBuf};
 pub enum ListenError {
     /// `Listen` is not an `ip:port` address (the value as written).
     Invalid(String),
-    /// Not a loopback address: LAN access needs authentication first.
-    NotLoopback(SocketAddr),
     /// The file exists but cannot be read (the IO error).
     Unreadable(String),
 }
@@ -25,7 +25,7 @@ const DEFAULT: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
     8590,
 ));
 
-/// The address an INI text sets.
+/// The address an INI text sets: an `ip:port`, never a host name.
 pub fn parse(text: &str) -> Result<SocketAddr, ListenError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let value = pai_core::ini::parse_sections(text)
@@ -35,11 +35,7 @@ pub fn parse(text: &str) -> Result<SocketAddr, ListenError> {
     let Some(value) = value else {
         return Ok(DEFAULT);
     };
-    let addr: SocketAddr = value.parse().map_err(|_| ListenError::Invalid(value))?;
-    if !addr.ip().is_loopback() {
-        return Err(ListenError::NotLoopback(addr));
-    }
-    Ok(addr)
+    value.parse().map_err(|_| ListenError::Invalid(value))
 }
 
 /// The address the file at `path` sets.

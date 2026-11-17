@@ -12,8 +12,9 @@
 //! - `POST /api/session` `{"username", "password"}`: 200
 //!   `{"user"}` (the whole reply: the web UI no longer reads a role from
 //!   it) and a cookie that is HttpOnly, SameSite=Strict, Path=/, an opaque random id;
-//!   no `Secure` while the bff serves plain HTTP on loopback only (a browser
-//!   would not send it back over http).
+//!   no `Secure` while the bff serves plain HTTP on the address the
+//!   administrator chose (`listen.rs`): a browser would not send a Secure
+//!   cookie back over http.
 //! - Wrong user or password: 401 `session-bad-credentials`, the two not told
 //!   apart; an empty password is refused without asking the authenticator.
 //! - A body that is not `{"username": <text>, "password": <text>}` as JSON:
@@ -282,6 +283,37 @@ impl Reply {
     fn json(&self) -> Value {
         serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", self.body))
+    }
+
+    /// The values the reply carries under `name`, in the order they came:
+    /// `headers` holds every header of the reply, name lowercased, one per
+    /// line.
+    fn values_of(&self, name: &str) -> Vec<&str> {
+        let at = format!("{name}: ");
+        self.headers
+            .lines()
+            .filter(|line| line.starts_with(&at))
+            .map(|line| &line[at.len()..])
+            .collect()
+    }
+
+    /// The two headers that keep another site's page from framing this UI and
+    /// from reading a body as a type it is not, each exactly once: the bff is
+    /// reachable from the LAN over plain HTTP, so a page of anywhere else must
+    /// not be able to show it, and no body may be sniffed into a script. No
+    /// Content-Security-Policy here: that one is agreed with the web UI first.
+    fn assert_security_headers(&self) {
+        for (name, want) in [
+            ("x-frame-options", "DENY"),
+            ("x-content-type-options", "nosniff"),
+        ] {
+            assert_eq!(
+                self.values_of(name),
+                vec![want],
+                "{name} exactly once: {:?}",
+                self.headers
+            );
+        }
     }
 
     fn assert_error(&self, status: StatusCode, key: &str, args: Value) {
@@ -1308,8 +1340,9 @@ async fn the_password_is_never_sent_back() {
 /// The right password: 200 with exactly `{"user": <name>}` (the reply
 /// carries the user alone, no role: fe/briefs/api-contract.md), and
 /// the session cookie with its attributes. No `Secure`: the bff serves plain
-/// HTTP on loopback, where a browser would not send a Secure cookie back
-/// (to add with TLS); no `Domain`, so it stays on this host.
+/// HTTP on the address the administrator chose (`listen.rs`), where a browser
+/// would not send a Secure cookie back (to add with TLS); no `Domain`, so it
+/// stays on this host.
 #[tokio::test]
 async fn signing_in_answers_the_identity_and_sets_the_cookie() {
     let a = app();
@@ -1440,4 +1473,36 @@ async fn delete_ends_the_session_and_clears_the_cookie() {
     );
     let r = get_session(&a.router, Some(&other)).await;
     assert_eq!(r.status, StatusCode::OK, "the other session: {}", r.body);
+}
+
+// ── The headers every reply carries ─────────────────────────────────────
+
+/// The sign-in's replies carry the framing and the sniffing header, each
+/// exactly once: the 200 that sets the session cookie, the 401 of a wrong
+/// password and the 400 of a body that is not the credentials. The 200 answers
+/// with a `Set-Cookie`, so the pin is that the two headers ride beside it, and
+/// the two refusals answer with none.
+#[tokio::test]
+async fn the_session_replies_carry_the_framing_and_sniffing_headers() {
+    let a = app();
+
+    let ok = sign_in(&a.router, "alice", "correct horse").await;
+    ok.assert_user_reply("alice");
+    assert_eq!(ok.set_cookies.len(), 1, "the sign-in sets a cookie");
+    ok.assert_security_headers();
+
+    let wrong = sign_in(&a.router, "alice", "wrong horse").await;
+    wrong.assert_error(
+        StatusCode::UNAUTHORIZED,
+        "session-bad-credentials",
+        json!([]),
+    );
+    assert!(wrong.set_cookies.is_empty(), "{:?}", wrong.set_cookies);
+    wrong.assert_security_headers();
+
+    let mut req = Req::new(Method::POST);
+    req.body = Some(("application/json", "not json".to_string()));
+    let malformed = send(&a.router, req).await;
+    malformed.assert_error(StatusCode::BAD_REQUEST, "session-malformed", json!([]));
+    malformed.assert_security_headers();
 }

@@ -46,7 +46,9 @@ Lessons only: the rules are in `AGENTS.md`.
   A clean rerun IS fast (0.6 s for every pai-bff target on 24 cores, deps cached), and its own log is the
   proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` (not `Checking`), and cargo
   prints that line ONCE for the whole package, so a count of 1 covers the lib test, the bins and every
-  `tests/*.rs` binary (pai-bff: 15 of them). The next plain `cargo test` replays the compile
+  `tests/*.rs` binary (pai-bff: 15 of them). Cargo indents its status lines (`   Compiling pai-bff ...`), so
+  grep `Compiling <pkg>` with NO `^`: an anchored count is 0 on a run that really compiled, and `grep -c`
+  exiting 1 reads as a failure of the chain. The next plain `cargo test` replays the compile
   (`Finished ... in 0.05s`, no `Compiling`) yet its own `Running <bin>` and per-test `ok` lines prove the
   binaries ran. The `-v`
   count of `--crate-name <target>` works only on a run that really checks: a `Fresh` run prints NO
@@ -103,7 +105,8 @@ Lessons only: the rules are in `AGENTS.md`.
   its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
   the real tree.
 - Several filters go in one run: `cargo test -p <crate> -- a b c`; a loop of runs costs minutes each.
-  `cargo test --test a --test b` stops at the first failing binary: add `--no-fail-fast`.
+  `cargo test --test a --test b` stops at the first failing binary: add `--no-fail-fast`, which is a cargo
+  flag, so it goes BEFORE the `--` of a name filter, never after it (after it, libtest rejects it).
 - Format one file with `rustfmt --edition 2021 <file>`, then `cargo fmt -p <crate> --check`.
 - Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
   (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
@@ -1413,6 +1416,29 @@ Lessons only: the rules are in `AGENTS.md`.
   the closers across many tests (five of them, `)]` order, three repair rounds). Add `App::save(cookie,
   doc, overrides)` so each call site is one balanced call, and build the balanced tail by scanning the
   save_body span, never by counting parens by eye.
+- `cargo test -p <crate> <word>` filters TEST names, never target names: `cargo test -p pai-bff listen`
+  ran 2 tests and skipped the `tests/listen.rs` tests whose names hold no "listen". Run a file with
+  `--test <name>`, and account for every `N filtered out` line in the report.
+- Flipping a refusal whose enum variant and strings key both go away: removing the last `Variant(..)`
+  use in the tests is what makes the test binary COMPILE, so the red is the assertion
+  (`left: Err(NotLoopback(0.0.0.0:8590)) right: Ok(0.0.0.0:8590)`), naming the dead variant. The strings
+  key of that variant is pinned by the sentence the executable prints, in `tests/pai_bff_binary.rs`
+  (the red quotes it: "is not a loopback address"); the key's removal from `cli.toml` is already pinned
+  by `crates/config/src/tests/binding_lint.rs` ("in cli.toml but used by no source the CLI reaches"), a
+  lint in ANOTHER crate: report it, add no second lint.
+- A guard that runs before the router (the bff's `origin::guard`): a test that expects the LATER rule's
+  key on a request the EARLIER rule refuses reds `left: {"key":"request-bad-host"} right:
+  {"key":"request-cross-origin"}`, which names the rule that must change; a test that expects
+  acceptance reds `left: 403 right: 204`. Prove the rest of a list element by element with a std-only
+  `rustc --edition 2021` probe of the pure predicate (the host split, the address parse): it prints
+  today's answer for every element, no crate build.
+- Pin the fail-closed shapes beside a new "any IP literal is ours" accept list, in the REFUSAL test: a
+  bracketed text that is no address (`[not-an-address]:8590`) and a port over 65535
+  (`192.168.1.10:85909`), because the authority is parsed before the address is read. Free wildcard
+  port: `TcpListener::bind("0.0.0.0:0")`, then GET `127.0.0.1:<port>` (a loopback client reaches a
+  wildcard listener, so the test proves the bind-all with no second interface).
+- `vec![("host", host), ("origin", format!("http://{host}").as_str())]` is E0716 (the temporary dies at
+  the end of the `let`): bind the `format!` in its own `let` and take `origin.as_str()`.
 
 ## Web UI (fe/) navigation and CSS pins
 

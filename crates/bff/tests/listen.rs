@@ -1,7 +1,8 @@
 //! The address the bff listens on: `Listen` in the `[Bff]` section of
-//! `bff.ini`, loopback only until LAN access has authentication. `parse`
-//! reads the INI text, `load` the file at a path it is given (a tempdir
-//! here, never the real system config).
+//! `bff.ini`, any address the administrator chooses, the LAN and the
+//! wildcard included, served plain HTTP. `parse` reads the INI text, `load`
+//! the file at a path it is given (a tempdir here, never the real system
+//! config).
 
 use pai_bff::listen::{self, ListenError};
 use std::net::SocketAddr;
@@ -18,12 +19,18 @@ fn default_addr() -> SocketAddr {
 
 /// A value that is not `ip:port` is refused with the value as written: no
 /// host name lookup, no default port, no port out of range, no empty value.
+/// A name is refused wherever it sits, loopback included: accepting a LAN
+/// address is not a name lookup.
 #[test]
 fn parse_refuses_a_value_that_is_not_an_address() {
     for value in [
         "not-an-address",
         "localhost:8590",
+        "mypc.local:8590",
+        "evil.example:8590",
+        "HTTP://127.0.0.1:8590",
         "127.0.0.1",
+        "0.0.0.0",
         "8590",
         "127.0.0.1:70000",
         "127.0.0.1:-1",
@@ -39,23 +46,21 @@ fn parse_refuses_a_value_that_is_not_an_address() {
     }
 }
 
-/// Only loopback is served for now: every other address, the wildcard
-/// included, is refused, whatever the port.
+/// Any address is served, whatever the port: the machine's LAN address, the
+/// wildcard on both families, a link-local address, and port 0 (the OS picks
+/// one). Off loopback is the administrator's choice, not a refusal.
 #[test]
-fn parse_refuses_an_address_off_loopback() {
+fn parse_accepts_an_address_off_loopback() {
     for value in [
         "0.0.0.0:8590",
-        "192.168.1.20:8590",
+        "192.168.1.10:8590",
         "10.0.0.5:0",
+        "0.0.0.0:0",
         "[::]:8590",
         "[fe80::1]:8590",
     ] {
         let text = format!("[Bff]\nListen = {value}\n");
-        assert_eq!(
-            listen::parse(&text),
-            Err(ListenError::NotLoopback(addr(value))),
-            "Listen = {value:?}"
-        );
+        assert_eq!(listen::parse(&text), Ok(addr(value)), "Listen = {value:?}");
     }
 }
 
@@ -74,16 +79,17 @@ fn load_refuses_a_file_it_cannot_read() {
     }
 }
 
-/// `load` goes through the same checks as `parse`.
+/// `load` goes through the same checks as `parse`: an address off loopback in
+/// the file is the address it returns, a value that is not an address is the
+/// refusal.
 #[test]
 fn load_refuses_a_bad_value_in_the_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("bff.ini");
     std::fs::write(&path, "[Bff]\nListen = 0.0.0.0:8590\n").expect("write bff.ini");
-    assert_eq!(
-        listen::load(&path),
-        Err(ListenError::NotLoopback(addr("0.0.0.0:8590")))
-    );
+    assert_eq!(listen::load(&path), Ok(addr("0.0.0.0:8590")));
+    std::fs::write(&path, "[Bff]\nListen = 192.168.1.10:8590\n").expect("write bff.ini");
+    assert_eq!(listen::load(&path), Ok(addr("192.168.1.10:8590")));
     std::fs::write(&path, "[Bff]\nListen = nonsense\n").expect("write bff.ini");
     assert_eq!(
         listen::load(&path),

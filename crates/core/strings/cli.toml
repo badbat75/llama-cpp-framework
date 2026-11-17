@@ -18,7 +18,6 @@ best-fits-gpu-encoder-cpu = "the best quality that fits in GPU memory with the i
 bff-bind-failed = "cannot listen on {0}: {1}"
 bff-config-unreadable = "cannot read {0}: {1}"
 bff-listen-invalid = "Listen = {0} in {1} is not an ip:port address"
-bff-listen-not-loopback = "Listen = {0} in {1} is not a loopback address: the service listens only on this machine for now"
 bff-revision-key-failed = "cannot draw the revision secret: {0}"
 bff-serve-failed = "the service stopped serving: {0}"
 bff-service-unavailable = "`pai-bff service` runs only as a Windows service, started by the service manager"

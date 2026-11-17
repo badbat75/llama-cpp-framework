@@ -108,7 +108,10 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// bound to). Every route answers through the same-origin guard
 /// (`origin::guard`), and every body a route reads is capped at
 /// `origin::MAX_BODY` by the one layer that stands in front of the whole
-/// router, so a route added later is capped before it reads anything. `key`
+/// router, so a route added later is capped before it reads anything. Every
+/// reply, the guard's refusal, the cap's 413 and the router's own 404 and 405
+/// included, carries the framing and the sniffing header ([`framing`]), the
+/// layer outside the guard. `key`
 /// is this router's revision secret: the server read's `revision` is
 /// SipHash-2-4 of the file text keyed by it, so one router answers the same
 /// revision for the same text and another router answers another one; the
@@ -222,6 +225,38 @@ pub fn router_with_session_and_write_timeout(
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn(origin::guard))
+        .layer(axum::middleware::from_fn(framing))
+}
+
+/// The two headers every reply carries: `X-Frame-Options: DENY` keeps a page
+/// of any other site from showing this UI in a frame (clickjacking), and
+/// `X-Content-Type-Options: nosniff` keeps a browser from reading a body as a
+/// type it is not (MIME sniffing). The bff answers plain HTTP on the address
+/// the administrator chose, so a reply says both even when no route built it.
+const SECURITY_HEADERS: [(axum::http::HeaderName, axum::http::HeaderValue); 2] = [
+    (
+        axum::http::HeaderName::from_static("x-frame-options"),
+        axum::http::HeaderValue::from_static("DENY"),
+    ),
+    (
+        axum::http::HeaderName::from_static("x-content-type-options"),
+        axum::http::HeaderValue::from_static("nosniff"),
+    ),
+];
+
+/// [`SECURITY_HEADERS`] written on the way out of the whole router: the
+/// outermost layer, so the guard's 403, the body cap's 413 and the 404 and 405
+/// the router answers itself carry them too. `insert` replaces, so each header
+/// stands exactly once whatever a route wrote.
+async fn framing(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    for (name, value) in SECURITY_HEADERS {
+        response.headers_mut().insert(name, value);
+    }
+    response
 }
 
 /// The manager of this system: the D-Bus service on Linux, the named pipe on

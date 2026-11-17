@@ -13,6 +13,8 @@ use tower::ServiceExt;
 struct Reply {
     status: StatusCode,
     content_type: String,
+    /// Every header of the reply, the name lowercased as `http` stores it.
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -36,6 +38,16 @@ async fn send(method: Method, uri: &str) -> Reply {
         .get(header::CONTENT_TYPE)
         .map(|v| v.to_str().expect("ascii content-type").to_string())
         .unwrap_or_default();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).to_string(),
+            )
+        })
+        .collect();
     let body = response
         .into_body()
         .collect()
@@ -46,7 +58,38 @@ async fn send(method: Method, uri: &str) -> Reply {
     Reply {
         status,
         content_type,
+        headers,
         body,
+    }
+}
+
+impl Reply {
+    /// The values the reply carries under `name`, in the order they came.
+    fn values_of(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    /// The two headers that keep another site's page from framing this UI and
+    /// from reading a body as a type it is not, each exactly once: the bff is
+    /// reachable from the LAN over plain HTTP, so a page of anywhere else must
+    /// not be able to show it, and no body may be sniffed into a script. No
+    /// Content-Security-Policy here: that one is agreed with the web UI first.
+    fn assert_security_headers(&self) {
+        for (name, want) in [
+            ("x-frame-options", "DENY"),
+            ("x-content-type-options", "nosniff"),
+        ] {
+            assert_eq!(
+                self.values_of(name),
+                vec![want],
+                "{name} exactly once: {:?}",
+                self.headers
+            );
+        }
     }
 }
 
@@ -185,5 +228,32 @@ async fn the_assets_the_page_names_are_served_with_their_type() {
             r.content_type
         );
         assert!(r.body == expected, "GET {uri}: not the embedded bytes");
+    }
+}
+
+/// The page, every asset it names and the 404 of an asset the build did not
+/// produce are answers of the same router, so each carries the framing and the
+/// sniffing header exactly once too: the embedded files are bytes a browser
+/// renders and sniffs, and the refusal of a path under `/assets/` is a reply
+/// built by no route.
+#[tokio::test]
+async fn the_page_and_its_assets_carry_the_framing_and_sniffing_headers() {
+    let index = std::fs::read_to_string(embedded().join("index.html")).expect("index.html");
+    let refs = asset_refs(&index);
+    assert!(
+        refs.iter().any(|r| r.ends_with(".js")),
+        "the page names no script: {refs:?}"
+    );
+    let missing = get("/assets/no-such-file.js").await;
+    assert_eq!(
+        missing.status,
+        StatusCode::NOT_FOUND,
+        "the asset is not there: {}",
+        String::from_utf8_lossy(&missing.body)
+    );
+    let mut uris = vec!["/", "/assets/no-such-file.js"];
+    uris.extend(refs.iter().map(String::as_str));
+    for uri in uris {
+        get(uri).await.assert_security_headers();
     }
 }

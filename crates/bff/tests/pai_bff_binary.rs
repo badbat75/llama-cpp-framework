@@ -3,7 +3,8 @@
 //! races it): its `bff.ini` is `<root>/system-config/bff.ini`
 //! (`paths::system_config_dir` under the redirect), never the real system
 //! config. No run here binds the default port: a server run names a free
-//! loopback port in its `bff.ini`, every other run must exit before binding.
+//! port in its `bff.ini` (loopback, and the wildcard for the off-loopback
+//! run), every other run must exit before binding.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -69,6 +70,15 @@ fn write_bff_ini(root: &Path, listen: &str) -> PathBuf {
     std::fs::create_dir_all(path.parent().expect("system-config")).expect("system-config");
     std::fs::write(&path, format!("[Bff]\nListen = {listen}\n")).expect("write bff.ini");
     path
+}
+
+/// A port free a moment ago on every interface.
+fn free_wildcard_port() -> u16 {
+    TcpListener::bind("0.0.0.0:0")
+        .expect("bind an ephemeral port on every interface")
+        .local_addr()
+        .expect("local addr")
+        .port()
 }
 
 /// A loopback port free a moment ago.
@@ -152,18 +162,6 @@ fn a_bad_listen_value_is_refused() {
     assert_filled(&r.stderr);
 }
 
-/// An address off loopback is refused (LAN access needs authentication,
-/// which the bff does not have yet): exit 1, the address named.
-#[test]
-fn an_address_off_loopback_is_refused() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    write_bff_ini(dir.path(), "0.0.0.0:8590");
-    let r = pai_bff(dir.path(), &[]);
-    assert_eq!(r.code, Some(1), "stdout: {} stderr: {}", r.stdout, r.stderr);
-    assert!(r.stderr.contains("0.0.0.0:8590"), "{}", r.stderr);
-    assert_filled(&r.stderr);
-}
-
 /// A port another process holds: exit 1 with the address named, not a
 /// panic or a hang.
 #[test]
@@ -230,6 +228,46 @@ fn it_serves_on_the_configured_address() {
 
     let (status, _, _) = get(addr, "/no-such-page").expect("GET /no-such-page");
     assert!(status.contains(" 404 "), "{status}");
+}
+
+/// An address off loopback is the administrator's choice (`listen.rs`): with
+/// `Listen = 0.0.0.0:<port>` the service binds every interface and serves, so
+/// it answers on this machine's own address. Plain HTTP, no authentication
+/// gate on the address.
+#[test]
+fn it_serves_on_a_wildcard_address() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let port = free_wildcard_port();
+    write_bff_ini(dir.path(), &format!("0.0.0.0:{port}"));
+    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().expect("addr");
+    let mut child = Serving(command(dir.path(), &[]).spawn().expect("spawn pai-bff"));
+
+    let deadline = Instant::now() + DEADLINE;
+    let (status, headers, body) = loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut e) = child.0.stderr.take() {
+                let _ = e.read_to_string(&mut err);
+            }
+            panic!("pai-bff exited ({status}) instead of serving on 0.0.0.0:{port}: {err}");
+        }
+        match get(addr, "/api/version") {
+            Ok(reply) => break reply,
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("nothing served on 0.0.0.0:{port} after {DEADLINE:?}: {e}"),
+        }
+    };
+    assert!(status.contains(" 200 "), "{status}\n{body}");
+    assert!(
+        headers.contains("content-type: application/json"),
+        "{headers}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"), "{body}");
+
+    let (status, headers, body) = get(addr, "/").expect("GET /");
+    assert!(status.contains(" 200 "), "{status}\n{body}");
+    assert!(headers.contains("content-type: text/html"), "{headers}");
 }
 
 // ── Stopping as a service ───────────────────────────────────────────────

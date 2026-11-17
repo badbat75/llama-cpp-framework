@@ -1,6 +1,6 @@
 //! The same-origin guard, and the cap on the bodies the routes read.
 //!
-//! The bff answers on loopback, and the browser is the only caller that knows
+//! The bff answers plain HTTP, and the browser is the only caller that knows
 //! about origins. A page served by any other service, on any port of this
 //! machine, can open a request to this bff; it cannot read the answer
 //! cross-origin, and it cannot set the session cookie. What it CAN do is
@@ -35,17 +35,19 @@
 //! verbs exist.
 //!
 //! The name the request is addressed at is checked for every request, the
-//! reads and the sign-in included: a `Host` header that is there must name a
-//! loopback name (`localhost` in any case, an address in `127.0.0.0/8`,
-//! `[::1]`, each with an optional port), and one that is not text names
-//! nothing. A request addressed at any other name is refused, and that is what
-//! stops a DNS rebinding: a page of a foreign site reaches a bff on loopback
-//! only once its own name resolves to this machine, and then the `Origin` it
-//! sends matches the `Host` so every rule above passes. The cookie is bound to
-//! the host that set it, so a rebinding carries no session and the routes
-//! behind a session are safe on their own; the sign-in asks for no session, so
-//! the `Host` rule is what keeps a page at a foreign name from trying
-//! passwords at this bff.
+//! reads and the sign-in included: a `Host` header that is there must name
+//! this bff (`localhost` in any case, or an IP literal: an IPv4 address, an
+//! IPv6 one in brackets, each with an optional port), and one that is not text
+//! names nothing. The bff listens on the address the administrator chose
+//! (`listen.rs`), so the address a request came to is never the question, a
+//! NAME is: a request addressed at a name that is neither `localhost` nor an
+//! address is refused, and that is what stops a DNS rebinding. A page of a
+//! foreign site reaches this bff only once its own name resolves to this
+//! machine, and then the `Origin` it sends matches the `Host` so every rule
+//! above passes. The cookie is bound to the host that set it, so a rebinding
+//! carries no session and the routes behind a session are safe on their own;
+//! the sign-in asks for no session, so the `Host` rule is what keeps a page at
+//! a foreign name from trying passwords at this bff.
 //!
 //! The checks run before the session store is looked at, so a refusal never
 //! touches it, never starts an idle deadline, and never sets a cookie. Each is
@@ -76,7 +78,7 @@ pub(crate) const MAX_BODY: usize = 64 * 1024;
 const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
 
 /// The port this bff is on when the `Host` header names none: the service
-/// answers plain HTTP on loopback (`serve.rs`).
+/// answers plain HTTP (`serve.rs`).
 const OURS: u16 = 80;
 
 /// The answer to a request that did not start on this bff, and so is answered
@@ -85,9 +87,10 @@ fn refusal() -> Response {
     error(StatusCode::FORBIDDEN, "request-cross-origin", &[])
 }
 
-/// The answer to a `Host` that names a host this bff is not: the bff answers on
-/// loopback only (`listen.rs`), so such a request is a page reaching it under a
-/// name it does not serve.
+/// The answer to a `Host` that names a host this bff is not: the bff listens
+/// on the address the administrator chose (`listen.rs`), so a name that is
+/// neither `localhost` nor an address is a page reaching it under a name it
+/// does not serve.
 fn bad_host() -> Response {
     error(StatusCode::FORBIDDEN, "request-bad-host", &[])
 }
@@ -113,7 +116,7 @@ pub(crate) async fn guard(
     next: axum::middleware::Next,
 ) -> Response {
     let headers = request.headers();
-    if !is_loopback_host(headers) {
+    if !is_our_host(headers) {
         return bad_host();
     }
     if is_read(request.method()) || is_this_bff(headers) {
@@ -184,7 +187,7 @@ fn is_this_bff(headers: &HeaderMap) -> bool {
 /// Whether the `Host` line names a host this bff is. A request with no `Host`
 /// at all is answered: HTTP/1.0 sends none, and that is `curl`, the CLI and a
 /// raw client, with no name to check.
-fn is_loopback_host(headers: &HeaderMap) -> bool {
+fn is_our_host(headers: &HeaderMap) -> bool {
     let mut hosts = headers.get_all(HOST).into_iter();
     match (hosts.next(), hosts.next()) {
         (None, _) => true,
@@ -193,17 +196,18 @@ fn is_loopback_host(headers: &HeaderMap) -> bool {
             .ok()
             .map(|text| text.to_ascii_lowercase())
             .and_then(|text| host_and_port(&text, OURS))
-            .is_some_and(|(host, _)| is_loopback_name(&host)),
+            .is_some_and(|(host, _)| is_our_name(&host)),
         // Two `Host` lines name two hosts, at least one of them not ours.
         (Some(_), Some(_)) => false,
     }
 }
 
-/// Whether the host of a `Host` line, lowercased, is one of the names this bff
-/// answers as: `localhost`, an address in `127.0.0.0/8`, the IPv6 loopback
-/// written in brackets. Any other name is a page that believes it sits there
-/// while the name resolves to this machine.
-fn is_loopback_name(host: &str) -> bool {
+/// Whether the host of a `Host` line, lowercased, is a name this bff answers
+/// as: `localhost`, or an IP literal (an IPv4 address, an IPv6 one written in
+/// brackets). The bff listens on the address the administrator chose
+/// (`listen.rs`), so an address is never the question. Any other name is a page
+/// that believes it sits there while the name resolves to this machine.
+fn is_our_name(host: &str) -> bool {
     if host == "localhost" {
         return true;
     }
@@ -212,8 +216,7 @@ fn is_loopback_name(host: &str) -> bool {
         .strip_prefix('[')
         .and_then(|bracketed| bracketed.strip_suffix(']'))
         .unwrap_or(host);
-    address.parse::<Ipv4Addr>().is_ok_and(|v4| v4.is_loopback())
-        || address.parse::<Ipv6Addr>().is_ok_and(|v6| v6.is_loopback())
+    address.parse::<Ipv4Addr>().is_ok() || address.parse::<Ipv6Addr>().is_ok()
 }
 
 /// The host and port an absolute origin names, the scheme's default port when

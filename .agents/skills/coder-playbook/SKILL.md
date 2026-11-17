@@ -193,6 +193,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `bff.rs` a CLI print path, so every message is a `cli.toml` key printed inside those two fns. Its
   `/api/version` body uses `serde_json`, a normal dependency (axum's `json` feature links it anyway).
   `pai_core::ini::parse_sections` does not strip a UTF-8 BOM (`trim` keeps U+FEFF): strip it first.
+- The bff listens on any `ip:port` (`listen.rs`, plain HTTP, no loopback gate) and `origin.rs` guards
+  the NAME: `is_our_host`/`is_our_name` accept `localhost` and any IP literal (bracketed IPv6), refuse
+  any other name; the Origin rule is separate and unchanged. Dropping a `ListenError` variant means
+  deleting its key from `cli.toml` in the same change, `binding_lint` fails on an unused one.
 - pai-bff's session reply (GET/POST `/api/session`) is exactly `{"user"}`: `Identity` holds the user
   name alone (every session is a `pai` member, sign-in 403s anyone else). The server document's
   `withheld` comes only from the manager's `ManagerFile.withheld` flag: set, the bff blanks
@@ -981,3 +985,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - `cargo fmt -p <crate>` rewrites the crate's `tests/*.rs` too. When a test file of the tester's is
   pending a lint, apply rustfmt's diff to your own file by hand (`cargo fmt -p <crate> --check` prints
   it) and report the test file: `cargo clippy -p <crate> -- -D warnings` shows the production code clean.
+- The bff's framing and sniffing headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`)
+  are ONE middleware in `lib.rs` (`framing`), added as the LAST `.layer` of
+  `router_with_session_and_write_timeout`, which is the OUTERMOST position: the guard's 403, the body
+  cap's 413 and the router's own 404 and 405 are answered above every route, so only an outside layer
+  can set them. `HeaderMap::insert` replaces, which is what makes "exactly once" true whatever a route
+  wrote. The two pairs sit in one `const [(HeaderName, HeaderValue); 2]`: both `from_static`s are
+  `const fn` in http 1.5. A Content-Security-Policy, once the web UI agrees one, goes in this layer.
