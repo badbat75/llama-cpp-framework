@@ -295,7 +295,9 @@ authorization (`PLAN.md` step 10, point 4).
     5.4) makes the form dirty: the status reads `save-unsaved`, both buttons enabled. Changing it back
     makes it clean again.
 30. **Discard**: puts every control back to the loaded values; focus stays on the button; status
-    empty. No request.
+    empty. No request. **Changed** (user, 2026-11-18; 02h 198d): the bar's alert follows 30a's
+    clean-form rule, so an alert without a button goes and the 409 with Reload, `session-ended` and
+    `session-revoked` with Sign in stay.
 30a. **The bar's two lines.** The status line (`role="status"`) says what state the form is in, and
     only that: empty while clean, `save-unsaved` while dirty, `save-saving` while the PUT runs,
     `save-saved` or `save-saved-restart` after a successful save until the next edit. A save that
@@ -305,8 +307,9 @@ authorization (`PLAN.md` step 10, point 4).
     dirty form replaces the previous alert: a click that fails the client checks shows `save-invalid`
     in place of whatever alert was there (31); a click that passes them clears the alert at once, at
     the click, not when the answer arrives, and the answer then shows its own (or none, on a 200).
-    Otherwise the alert stays until Discard, a confirmed Reload (35), a successful sign-in in the
-    dialog (36), or (2026-11-17) the form turning clean by an edit when the alert has no button;
+    Otherwise the alert stays until a confirmed Reload (35), a successful sign-in in the
+    dialog (36), or (2026-11-17; Discard 2026-11-18) the form turning clean by an edit or by
+    Discard when the alert has no button;
     editing a field clears only that field's error (31), not the alert.
     **Changed by 2h.4b** ([02h-model-profile-save.md](02h-model-profile-save.md) 198b to 198h, user, 2026-11-17):
     an edit that makes the form clean removes an alert without an answer button (`save-invalid`,
@@ -503,7 +506,8 @@ here and are part of the brief.
   control is announced with `aria-invalid` and its error description.
   ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification))
 - **Discard clears the field errors as well as the alert** (30): an error describes a value that
-  Discard has just thrown away. Decided at the second 1b review.
+  Discard has just thrown away. Decided at the second 1b review. Changed by the user (2026-11-18,
+  02h 198d): an alert with an answer button (Reload, Sign in) now stays after Discard.
 - **A number with no `limits` for its key** is not checked by the fe and is sent as typed (an integer
   when it is a whole number, else the trimmed text), with no new message: `limits` missing is a
   breach of the contract (`api-contract.md`, `GET .../server`), and the bff runs every range check

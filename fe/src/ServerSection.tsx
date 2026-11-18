@@ -1,7 +1,7 @@
 // The Server section of an instance page (fe/briefs/01-server.md, sections
 // 2.5 and 3): the server file read from /api/instances/{id}/server, shown as
 // the form, or the message saying why not.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import ServerForm, {
   type Runs,
@@ -90,18 +90,31 @@ export default function ServerSection({
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
   // Raised to read the file again.
   const [reads, setReads] = useState(0)
+  // The instance the read a Reload asked for (198c).
+  const asked = useRef<string | null>(null)
 
   const reload = () => {
+    asked.current = id
     setAnswer(undefined)
     setReads((n) => n + 1)
   }
 
   useEffect(() => {
+    // The read a Reload asked for is the one asked for THIS instance: the mark
+    // is spent here, so it cannot outlive the instance that asked for it.
+    const wasReload = asked.current === id
+    asked.current = null
     let live = true
     readServer(id).then((a) => {
       if (!live) return
-      if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
-      else setAnswer(a)
+      if (a === 'signed-out' || a === 'revoked') {
+        onSignedOut(a === 'revoked')
+        return
+      }
+      setAnswer(a)
+      // The read answers the page like a first visit, so the focus goes to the
+      // page's h1 (198c).
+      if (wasReload) document.getElementById('page-heading')?.focus()
     })
     return () => {
       live = false

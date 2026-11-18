@@ -413,7 +413,6 @@ export default function ServerForm({
     fromValues(doc.values, doc.defaults, rows),
   )
   const { errors, set: setErrors, clear: clearError } = useFieldErrors<Key>()
-  const alerts = useSaveAlert(renewals)
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
@@ -436,13 +435,20 @@ export default function ServerForm({
 
   useDirtyReport(dirty, onDirty)
   useWarnOnLeave(dirty)
+  // The bar's alert, with the rule of 2h.4b (198b, 198c, 198g): it knows the
+  // form's dirtiness and whether a save is in flight (the flag, not the
+  // status: an edit made while the PUT runs leaves the status of the page), so
+  // an alert about edits goes with them.
+  const alerts = useSaveAlert(renewals, dirty, phase === 'saving')
 
   const element = (suffix: string) =>
     document.getElementById(`${fid}-${suffix}`) as HTMLInputElement | null
 
   // The bar's Reload: it asks before dropping the edits, and the focus goes
-  // back to the button when the answer is kept (35, 38).
-  const askReload = useAsk(true, onReload, () => element('reload')?.focus())
+  // back to the button when the answer is kept (35, 38). A clean form has
+  // nothing to lose, so it reads at once, as the preset page's does (145,
+  // 2h.4b's 198c).
+  const askReload = useAsk(dirty, onReload, () => element('reload')?.focus())
 
   /** Focus on a field: its control, else its default box, else its switch (34b). */
   function focusField(key: string) {
@@ -506,11 +512,14 @@ export default function ServerForm({
     edit('Hostname', checked)
   }
 
+  /** Discard: the fields back to the loaded values and the field marks cleared
+   * (136). The bar's alert is left to `useSaveAlert`: Discard is one more route
+   * to a clean form, so an alert with an answer button stays and one without
+   * goes with the edits (198d). */
   function discard() {
     if (!dirty || saving.current) return
     setDraft(fromValues(loaded.values, doc.defaults, rows))
     setErrors({})
-    alerts.setAlert(null)
     setPhase('idle')
   }
 

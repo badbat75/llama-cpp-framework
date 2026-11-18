@@ -149,8 +149,10 @@ prunes at save (2k), New, Clone, Rename, Delete (2l to 2n), a raw-key view (2o).
     **Save changes** (`save-button`), both `aria-disabled="true"` while clean, sticky with D4's
     scroll padding. ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum),
     [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages))
-136. **Discard**: every control back to its loaded state, field errors and the bar's alert cleared,
-    status empty, focus stays on Discard, no request (01's 30, and its 3.1 ruling).
+136. **Discard**: every control back to its loaded state, every field error cleared, status empty,
+    focus stays on Discard, no request (01's 30, and its 3.1 ruling). The bar's alert follows 198b
+    and 198c (user, 2026-11-18): an alert without an answer button goes; one with its button stays
+    (the 409 with Reload, `session-ended` / `session-revoked` with Sign in).
 137. **Save** on a dirty form: client checks first (none in 2h.1; 2h.4 adds them, 01's 31), then
     `PUT /api/presets/<id>` (the id as the read gave it, encoded as 2d's read encodes it) with
     `{"revision": <loaded revision>, "values": <the changed keys, table 133>}`. While it runs: Save
@@ -401,7 +403,7 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
 (Server): every control back to the state it loaded in.
 
 198b. **Which alerts go.** The rule: **an alert with an answer button stays, an alert without one
-     goes.** At the moment the form turns from dirty to clean by an edit, the bar's alert is
+     goes.** At the moment the form turns from dirty to clean, by an edit or by Discard (198d), the bar's alert is
      removed when it is one of: `save-invalid`; `save-refused` and `save-refused-at`, whatever text
      they carry (a check key's, `api-other`); `save-failed`; `save-timeout`;
      `api-client-not-authorized`; `api-client-unavailable`; `api-no-preset-named` (preset page);
@@ -416,21 +418,30 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
      `api-server-changed-elsewhere` with **Reload** (designer, 2026-11-17): a clean form still holds
      the stale revision, so every later save meets 409 again, and the values on screen are not the
      file's; the alert is the only place that says so, and Reload is still right. On a clean form
-     Reload reads at once, with no dialog (145, 01's 35). Its last clause ("your edits here will be
+     Reload reads at once, with no dialog (145, 01's 35), and on **both** pages focus then goes to
+     the page's `h1`, as 145 sets for the preset page, whether the form turned clean by an edit or
+     by Discard (designer review, 2026-11-18: the Server
+     page's Reload left focus on `body`, with or without the dialog;
+     [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). Its last clause ("your edits here will be
      lost") no longer applies with no edits left; accepted, no new string. Keeping every button
      alert also means no focused element ever disappears (198f).
 198d. **"Clean" by any route.** Typing a text back to its loaded text exactly; re-ticking or
      unticking a checkbox (`jinja`, Fit to VRAM) or a default box back to its loaded state (with the
      text it loaded with); picking a select's loaded option, the extra option of 132a included;
-     Bind to's rows back as loaded (Server page). **Discard** already clears every alert and every
-     field error (136, 01's 30 and 3.1): unchanged, it is not this rule. A 200 sets no alert, so it
-     is not concerned.
+     Bind to's rows back as loaded (Server page); and **Discard** (user, 2026-11-18, questionnaire
+     after the 2h.4b review: "keep the alert and Reload"). Discard is one more route to a clean form
+     under the same rule: an alert with an answer button stays (the 409 with Reload; `session-ended`
+     and `session-revoked` with Sign in), an alert without one goes. Unlike an edit, Discard still
+     clears every field error and resets every control (136, 01's 30 and 3.1), and focus stays on
+     Discard. Reload on the form Discard left clean reads at once, no dialog, focus to the page's
+     `h1` (198c). Both pages. This replaces the earlier "Discard clears every alert". A 200 sets
+     no alert, so it is not concerned.
 198e. **The fields' own errors.** The edit that brings a field back to its loaded value is an edit,
      so 142 and 01's 31 ("editing a field clears its error", also 34a for Bind to) have already
      cleared that field's error: nothing new. A field the user did **not** edit keeps its error and
      `aria-invalid`: a client check on a loaded value (162: `ctx-size` `abc`), or a server refusal of
      an untouched value (144, 198a). It describes the value still on screen and in the file, which
-     the next Save meets again; only Discard clears it (198d).
+     the next Save meets again; only Discard (or a Reload) clears it (198d).
 198f. **Focus and announcement.** Focus does not move: it stays on the control just edited, and
      nothing focusable is removed (Reload and Sign in stay, 198c). The removal is not announced: no
      new live message, no "No changes" text. Removing the `role="alert"` node announces nothing
@@ -442,14 +453,20 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
      `aria-disabled` when reached. **(preference: silence; the user just made the edit)**
 198g. **An answer that lands on a clean form** (edits made and undone while the PUT ran, 01's 33b
      and its 3.1 ruling): an answer of 198b's list sets no alert (the form is clean, the status
-     empty); the session answers and the 409 set theirs as before. So the invariant holds: **a clean
-     form never shows a buttonless alert**.
+     empty); the session answers and the 409 set theirs as before. So the rule holds on every
+     route: **a form that turns clean (by an edit, by Discard, or while a PUT runs) keeps no
+     buttonless alert**. It says nothing of a form that was never dirty: a client-check refusal of
+     a value loaded invalid (157, 166) still shows its alert there (2h.4b review, 2026-11-18).
 198h. **Tests** (no new string). Server page: Port `8080` loaded, typed `8081`, Save answered 503
      `client-unavailable`: the alert shows; Port typed back to `8080`: no `role="alert"`, status
      empty, Save `aria-disabled`, focus still on Port's input; typed `8082`: still no alert. Port
      `abc`, Save: `save-invalid` and Port's error; `8080` typed: both gone. A 409, then Port back:
      the alert and Reload stay; Reload reads at once (one `GET`, no dialog). A 401, then Port back:
-     `session-ended` and Sign in stay. Preset page: `jinja` toggled, 500 (`save-failed`), toggled
+     `session-ended` and Sign in stay. Discard (user, 2026-11-18), on both pages: after a 503,
+     Discard: no alert, every field error gone, focus on Discard; after a 409, Discard: the alert
+     and Reload stay, the controls are back as loaded, focus on Discard; Reload then reads at once
+     (one `GET`, no dialog), focus on the page's `h1`; after a 401, Discard: `session-ended` and
+     Sign in stay. Preset page: `jinja` toggled, 500 (`save-failed`), toggled
      back: gone. `ctx-size` `abc` loaded and untouched, Embedding mode changed, Save: `save-invalid`
      with Context size's error; Embedding mode back: the alert goes, Context size's error and
      `aria-invalid` stay. A 422 `not-one-of` on `pooling`, then Pooling's loaded option picked: its

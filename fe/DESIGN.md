@@ -335,11 +335,13 @@ Each is one React component, reused by every page.
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save
   runs both are `aria-disabled` (a save cannot be called back); the fields stay editable and what
   is typed meanwhile is never overwritten by the answer. Focus moves to an invalid field only after
-  its error is rendered, so it is announced with it. **A clean form shows no alert without a
-  button** (user, 2026-11-17; 02h 198b to 198h): an edit that makes the form clean removes a "Not
-  saved" alert (a check, a refusal, a failure, a timeout, a 403 / 404 / 503 text), silently and
-  without moving focus; an alert with its answer button (Sign in after a session ended, Reload after
-  a 409) stays. Field errors keep their own rule (an edit clears that field's; Discard clears all).
+  its error is rendered, so it is announced with it. **A form that turns clean keeps no alert
+  without a button** (user, 2026-11-17 and, for Discard, 2026-11-18; 02h 198b to 198h): an edit
+  or Discard that makes the form clean removes a "Not saved" alert (a check, a refusal, a failure,
+  a timeout, a 403 / 404 / 503 text), silently and without moving focus; an alert with its answer
+  button (Sign in after a session ended, Reload after a 409) stays, and Reload on a clean form reads
+  at once, with no dialog. Field errors keep their own rule (an edit clears that field's; Discard
+  clears all).
 - **State badge**: the instance state as text plus a shape: filled circle Running (`--success`),
   hollow circle Stopped (`--muted`), half circle Starting / Stopping (`--warning`), cross Failed
   (`--danger`), hollow circle for an unknown state. Never colour alone

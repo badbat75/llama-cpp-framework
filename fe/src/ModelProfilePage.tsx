@@ -567,7 +567,6 @@ function Content({
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
-  const alerts = useSaveAlert(renewals)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
   // A second Save while one runs sends nothing (137).
@@ -586,6 +585,11 @@ function Content({
   const dirty = Object.keys(changes).length > 0
   useDirtyReport(dirty, onDirty)
   useWarnOnLeave(dirty)
+  // The bar's alert, with the rule of 2h.4b (198b, 198c, 198g): it knows the
+  // form's dirtiness and whether a save is in flight (the flag, not the
+  // status: a pick made while the PUT runs sets the status back to idle), so
+  // an alert about edits goes with them.
+  const alerts = useSaveAlert(renewals, dirty, phase === 'saving')
 
   // The bar's Reload asks before dropping the edits, and the focus goes back
   // to the button when the answer is kept (145).
@@ -615,7 +619,7 @@ function Content({
     // 142: the edit answers the refusal that named this field, its own error
     // only: the bar's alert stays for the rest to read.
     fields.clear(key)
-    setPhase('idle')
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
   /** A number field's box (156): the tick keeps the text the input held, and an
@@ -632,7 +636,7 @@ function Content({
       'when-empty',
     )
     fields.clear(key)
-    setPhase('idle')
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
   /** What the user typed in a number field. The box is unticked, that being the
@@ -640,7 +644,7 @@ function Content({
   function textBoxed(key: string, text: string) {
     setBoxed((p) => ({ ...p, [key]: { ticked: false, text } }))
     fields.clear(key)
-    setPhase('idle')
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
   /** The changed keys as the body of 133 spells them. A number field with its
@@ -811,13 +815,14 @@ function Content({
     askSignIn.close(saveId)
   }
 
-  /** Discard: the controls back to the loaded state, the alert and the status
-   * cleared, focus untouched (136). */
+  /** Discard: the controls back to the loaded state, the field marks and the
+   * status cleared, focus untouched (136). The bar's alert is left to
+   * `useSaveAlert`: Discard is one more route to a clean form, so an alert with
+   * an answer button stays and one without goes with the edits (198d). */
   function discard() {
     if (saving.current || !dirty) return
     setDraft(loaded.values)
     setBoxed(numberStates(loaded.values))
-    alerts.setAlert(null)
     fields.set({})
     setPhase('idle')
   }

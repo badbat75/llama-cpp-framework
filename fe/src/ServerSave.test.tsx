@@ -1,7 +1,8 @@
 // Editing and saving the Server form (fe/briefs/01-server.md, slice 1b:
 // section 3, with sections 5.2 to 5.4 and 6): the controls an administrator
 // may change, their dependencies, the save bar, the client checks, the PUT
-// and every answer to it, and leaving with unsaved changes. The whole app
+// and every answer to it, and leaving with unsaved changes. The focus a
+// confirmed Reload leaves on the page h1 is 2h.4b's 198c. The whole app
 // renders at #/instances/default against a fake bff (mocked fetch); "1b.31"
 // is the brief's criterion 31. A user's read-only form is 1a's
 // (InstancePage.test.tsx).
@@ -2899,4 +2900,111 @@ test('S3.6: the time-out reading is keyed on client-timeout, not on the 504: ano
     cleanup()
     vi.unstubAllGlobals()
   }
+})
+
+// ── 2h.4b's 198c: where the focus goes when a Reload reads again ─────────
+
+/** The page's h1: the instance's name (it carries the tabindex -1 that lets
+ * the page hand it the focus, 2.3). */
+function pageH1(main: HTMLElement): HTMLElement {
+  return within(main).getByRole('heading', { level: 1, name: 'default' })
+}
+
+/** The form read as loaded, every Save answered 409, and the read a Reload
+ * asks for answering with Port 9000 on a new revision (35). */
+function conflictPage() {
+  let reads = 0
+  return loaded({
+    server: () =>
+      ++reads === 1
+        ? reply(200, serverDoc())
+        : reply(200, { ...serverDoc({ Port: 9000 }), revision: 'r-9' }),
+    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+  })
+}
+
+/** Port typed to 8581, Save, and the 409 alert up. */
+async function conflictAlert(
+  main: HTMLElement,
+  bff: ReturnType<typeof fakeBff>,
+) {
+  editPort(main)
+  await save(main, bff)
+  await within(main).findByText(en('api-server-changed-elsewhere'))
+  expectAlert(main, en('api-server-changed-elsewhere'))
+}
+
+test('198c: a 409 on a form the user made clean again, Reload reading at once with no dialog: after the read the focus is on the page h1', async () => {
+  const { bff, main } = await conflictPage()
+  await conflictAlert(main, bff)
+  // Port typed back onto its loaded number: the form is clean, the alert and
+  // its Reload stay (198c), and a clean form has nothing to lose.
+  type(box(main, 'Port'), '8580')
+  expect(status(main).textContent, 'the form is clean').toBe('')
+  fireEvent.click(within(main).getByRole('button', { name: en('save-reload') }))
+  expect(screen.queryByRole('dialog'), 'no dialog on a clean form').toBeNull()
+  expect(dialogs.opened, 'no dialog opened').toEqual([])
+  await waitFor(() =>
+    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+  )
+  await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
+  expectNoAlert(main, 'the read ends the 409 alert')
+  expect(status(main).textContent, 'the form is clean after the read').toBe('')
+  // The read answers the page like a first visit, and the focus goes to the
+  // h1, as 145 sets for the model profile page (WCAG 2.4.3).
+  await waitFor(() =>
+    expect(document.activeElement, 'focus on the page h1').toBe(pageH1(main)),
+  )
+})
+
+test('198c: a 409, Reload on a dirty form confirmed: the read lands clean, then the focus is on the page h1', async () => {
+  const { bff, main } = await conflictPage()
+  await conflictAlert(main, bff)
+  expect(
+    box(main, 'Port').value,
+    'the edit is kept while the answer stands',
+  ).toBe('8581')
+  fireEvent.click(within(main).getByRole('button', { name: en('save-reload') }))
+  const ask = dialog(en('discard-title'))
+  fireEvent.click(
+    within(ask).getByRole('button', { name: en('discard-confirm') }),
+  )
+  await waitFor(() =>
+    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+  )
+  await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
+  expectNoAlert(main, 'the read ends the 409 alert')
+  expect(
+    saveButton(main).getAttribute('aria-disabled'),
+    'the form is clean after the read',
+  ).toBe('true')
+  await waitFor(() =>
+    expect(document.activeElement, 'focus on the page h1').toBe(pageH1(main)),
+  )
+})
+
+test('198c: a 409, Reload on a dirty form, Keep editing: the dialog rule is unchanged, focus back on Reload and not on the h1', async () => {
+  const { bff, main } = await conflictPage()
+  await conflictAlert(main, bff)
+  const reload = within(main).getByRole('button', { name: en('save-reload') })
+  reload.focus()
+  fireEvent.click(reload)
+  const ask = dialog(en('discard-title'))
+  const keep = within(ask).getByRole('button', { name: en('discard-keep') })
+  expect(document.activeElement, 'the dialog focuses Keep editing').toBe(keep)
+  fireEvent.click(keep)
+  expect(screen.queryByRole('dialog'), 'the dialog is closed').toBeNull()
+  expect(
+    bff.to('GET', '/api/instances/default/server'),
+    'nothing read while the answer stands',
+  ).toHaveLength(1)
+  expect(document.activeElement, 'focus back on Reload').toBe(
+    within(main).getByRole('button', { name: en('save-reload') }),
+  )
+  expect(
+    document.activeElement,
+    'the kept dialog gives the h1 nothing: the focus rule of 38 stands',
+  ).not.toBe(pageH1(main))
+  expect(box(main, 'Port').value, 'the edit is kept').toBe('8581')
+  expectAlert(main, en('api-server-changed-elsewhere'), 'the alert stays')
 })

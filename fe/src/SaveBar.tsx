@@ -94,14 +94,31 @@ export function useAsk(
 /** The bar's alert of a save, read the same way by the Server page's form and
  * the model profile page (01's 36, 2h's 151 to 153): a `sign-in` alert set when the
  * page's sign-ins were at `at` goes when a later sign-in kept the page, which
- * is what raises `renewals`. */
-export function useSaveAlert(renewals: number): {
+ * is what raises `renewals`.
+ *
+ * The one rule of both pages (2h.4b's 198b, 198c, 198g, 198d): an alert with no
+ * answer button speaks of the edits a save did not keep, so a form with no
+ * edits left (`dirty` false) has nothing for it to say. Every route to a clean
+ * form counts, the edit typed back and Discard alike, so a page's Discard
+ * clears only the field marks and leaves the bar's alert to this rule. The
+ * answer of a save in flight (`saving`) that lands on a clean form sets none,
+ * and the alert does not come back when the form turns dirty again: the next
+ * Save shows its own (01's 30a). The alerts with a button stay, a clean form
+ * still holds the stale revision the 409 names, and Sign in is still the way
+ * back to a session. A Save click the client checks refuse is not the answer
+ * of a save, so it shows its own alert even on a form with nothing to save
+ * (2h's 157, 166: a loaded value). */
+export function useSaveAlert(
+  renewals: number,
+  dirty: boolean,
+  saving: boolean,
+): {
   alert: SaveAlert | null
   setAlert: (alert: SaveAlert | null) => void
   /** A save the session ended: 401 (151), or 403 session-not-administrator (153). */
   sessionEnded: (revoked: boolean) => void
 } {
-  const [stored, setAlert] = useState<SaveAlert | null>(null)
+  const [stored, setStored] = useState<SaveAlert | null>(null)
   const alert =
     stored?.action === 'sign-in' && stored.at !== renewals ? null : stored
   // The sign-in count the answer of a save arrives at (01's 43b).
@@ -109,6 +126,28 @@ export function useSaveAlert(renewals: number): {
   useEffect(() => {
     at.current = renewals
   }, [renewals])
+  // The dirtiness and the running save as the page last rendered them: the
+  // answer of a save reads them after an edit made while it ran (01's 33b).
+  const form = useRef({ dirty, saving })
+  useEffect(() => {
+    form.current = { dirty, saving }
+  }, [dirty, saving])
+  const [wasDirty, setWasDirty] = useState(dirty)
+  if (wasDirty !== dirty) {
+    // An edit is the answer to an alert that speaks of the edits a save did not
+    // keep, so the form with no edits left has nothing for it to say: the alert
+    // goes in the same pass the form turns clean, and stays gone when it turns
+    // dirty again. React re-renders before the screen is written.
+    setWasDirty(dirty)
+    if (!dirty)
+      setStored((a) => (a === null || a.action !== undefined ? a : null))
+  }
+  const setAlert = (a: SaveAlert | null) =>
+    setStored(
+      a?.action === undefined && form.current.saving && !form.current.dirty
+        ? null
+        : a,
+    )
   return {
     alert,
     setAlert,
