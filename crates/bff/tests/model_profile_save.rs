@@ -25,7 +25,7 @@
 //!   so `application/json; charset=utf-8` is served, as every other route's
 //!   body), a value that is neither a string nor
 //!   `null`, a set value empty after trimming spaces and tabs or holding a
-//!   control character other than a tab, a key outside `checks::WEB_PRESET_KEYS`
+//!   control character other than a tab, a key outside `checks::WEB_MODEL_PROFILE_KEYS`
 //!   in the list's exact spelling; 422 `comment-markers` with `field` the key,
 //!   from the bff. All of them reach no manager at all: the body is answered
 //!   before the read. A body over `origin::MAX_BODY` is the extractor's 413

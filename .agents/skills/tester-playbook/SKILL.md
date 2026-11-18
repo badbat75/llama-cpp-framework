@@ -45,6 +45,9 @@ Lessons only: the rules are in `AGENTS.md`.
   order, so a "this line is refused" pin is red today at the refusal key of an EARLIER line the
   exemption will later skip. Assert the expected refusal key, never `is_err()`, and report that red as
   the key-name, not as an existing refusal.
+- A brief that quotes a sentence the tree does not have (`git grep` of the quote: 0 hits, exit 1) names a
+  line: read that line, pin the text that IS there, and report the quote as wrong (a rename campaign's
+  target is the word, not the sentence).
 - Read the file you are extending before writing against it; never work from a remembered or summarised
   API. A context summary recites names (`App::app_writing`, `Outcome::Err(..)`, `rich_cfg()` in a route
   test) that the file does not have, and a whole `read` of a region can render lines that are not there
@@ -1203,6 +1206,19 @@ Lessons only: the rules are in `AGENTS.md`.
   where it exists (members or not, pre-existing or not; `src/ext/Util/ca/scagroup.cpp` at the tag), so a
   MajorUpgrade empties it: keep one with `RemoveOnUninstall="no"`. Raw sources at
   `raw.githubusercontent.com/wixtoolset/wix/v7.0.1/src/ext/Util/...` (`wixext/UtilCompiler.cs`, `ca/`).
+- `linux/package.rs` `texts()` is the ONE source of a package's words: the summary ships as the `.deb`
+  control's `Description:` first line (`deb_control`) and as the `.rpm` spec's `Summary:` (`rpm_spec`,
+  exactly 8 spaces after the colon, so copy the spacing from the source), the long description as the
+  folded body and as `%description`. A word rename in a package text is pinned on `texts()` and on both
+  renderings: `fields_v(..)` then `f.summary`/`f.description` from `texts`, `rpm_spec` over a `scratch()`
+  root (an empty dir renders the header, `%files` aside).
+- A dialog-text pin in `common/msi.rs` is a word list (`for word in [..] { assert!(lower.contains(word)) }`):
+  flipping one word reds at the FIRST missing word, so a paired "refuse the old word" assert never runs in
+  the same test. Prove that refusal's own red with a standalone `rustc` probe that prints each predicate
+  over the exact `Text` attribute (the XML entity `&#13;&#10;` decoded to `\r\n`). Refuse with the stem
+  (`!lower.contains("preset")` refuses `preset` and `presets`), only after checking the new text cannot
+  contain it (one naming `presets.ini` makes that assert unpassable). No test measures a dialog's geometry
+  (the control's `Width`/`Height` are unchecked): a longer text overflows silently, report the numbers.
 - Linux packages: `check_files` (`linux/package.rs`) checks a spec's `%files` against a temp tree as
   rpmbuild does; reuse it for every new path. ROCm libraries find kpack archives at `<lib>/../.kpack`.
   A shared-library fixture follows CMake's symlink chain (`.so -> .so.N -> .so.N.M.P`), compared after

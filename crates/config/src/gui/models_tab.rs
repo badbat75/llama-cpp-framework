@@ -821,7 +821,7 @@ fn wire_gpu_table(app: &AppWindow) {
 
 // ── Discard-guarded navigation (select / New / Clone) ─────────────────
 
-/// The actual model profile switch (the guarded body of `on_select_preset`): load the
+/// The actual model profile switch (the guarded body of `on_select_model_profile`): load the
 /// indexed model profile into the editor and refresh its dependent dropdowns.
 fn do_select_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let st = state.borrow();
@@ -838,7 +838,7 @@ fn do_select_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, index: i
 }
 
 /// Open the model picker in plain "New" mode (the guarded body of
-/// `on_new_preset`). "New…" is always create-from-scratch, independent of any
+/// `on_new_model_profile`). "New…" is always create-from-scratch, independent of any
 /// current selection, so it can never silently turn into a clone.
 fn open_new_dialog(
     app: &AppWindow,
@@ -852,7 +852,7 @@ fn open_new_dialog(
     s.set_show_new_kind_picker(true);
 }
 
-/// Open the model picker in Clone mode (the guarded body of `on_clone_preset`).
+/// Open the model picker in Clone mode (the guarded body of `on_clone_model_profile`).
 /// The clone source is always the selected model profile (the button is disabled
 /// otherwise): stash it and surface its id in the dialog so it's clear what is
 /// being copied.
@@ -1351,7 +1351,7 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 /// wholesale-replace the tuned section. Both New and Clone must route through
 /// this: first free `<id>`, `<id>-2`, …, compared ignoring case, with the
 /// `model profile` fallback for a name that sanitizes to nothing (an empty id would
-/// also be undeletable: on_delete_preset early-returns on one). The rule
+/// also be undeletable: on_delete_model_profile early-returns on one). The rule
 /// itself is `model_profiles::new_model_profile_id`, shared with the Hugging Face download.
 fn deconflicted_id(path_str: &str) -> String {
     let existing: Vec<String> = model_profiles::load_listed()

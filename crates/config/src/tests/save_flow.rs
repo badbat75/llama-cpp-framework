@@ -466,7 +466,7 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
 
     // The same table in BLOCKS: the unit the split is actually cut in. It only
-    // appears once a model header has been read (`preset_split_positions` is 0
+    // appears once a model header has been read (`model_profile_split_positions` is 0
     // until then), so
     // stand one in: 33 blocks is Ornith-1.0-9B (32 trunk + 1 nextn), i.e. 34
     // positions once the output layer is counted.

@@ -132,7 +132,7 @@ fn principals_of(p: &Principals) -> Vec<Option<String>> {
 // ── Fakes ───────────────────────────────────────────────────────────────
 
 /// The failure a test makes the manager answer every coming read with: the
-/// ones a preset-file read can meet.
+/// ones a model profile file read can meet.
 #[derive(Clone)]
 enum Failure {
     /// No manager: not running, no bus, no pipe.

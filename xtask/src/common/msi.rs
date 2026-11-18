@@ -1549,11 +1549,15 @@ mod tests {
             "benchmark results",
             "logs",
             "earlier install",
-            "presets",
+            "model profiles",
         ] {
             assert!(lower.contains(word), "{body:?} names {word}");
         }
         assert!(!lower.contains("configuration"), "{body:?}");
+        assert!(
+            !lower.contains("preset"),
+            "{body:?} says preset, the old word for a model profile"
+        );
         let check = control(&doc, "DeleteUserData");
         assert_eq!(
             check.attribute("ShowCondition"),

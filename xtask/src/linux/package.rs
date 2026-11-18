@@ -982,7 +982,7 @@ fn texts(c: Component, llama_build: &str) -> (&'static str, String) {
                 .to_string(),
         ),
         Component::Cli => (
-            "pai: command line for llama-server, its presets and benchmarks",
+            "pai: command line for llama-server, its profiles and benchmarks",
             "pai, the command line of the framework: server.ini and the per-model models.ini\n\
              through the manager, the server's control and the benchmarks, with the\n\
              benchmark method. It needs no graphics library.\n"
@@ -2222,6 +2222,48 @@ mod tests {
         assert!(description.contains("pai"), "{description}");
         let (summary, _) = texts(Component::Config, "v0.9.0");
         assert!(!summary.contains("CLI"), "{summary}");
+    }
+
+    /// The command line's package text is in the product's current words: a
+    /// model's settings are its model profiles, so the summary names
+    /// profiles. Every other byte of the long description stands.
+    #[test]
+    fn the_cli_package_text_says_model_profiles() {
+        let (summary, description) = texts(Component::Cli, "v0.9.0");
+        assert_eq!(
+            summary, "pai: command line for llama-server, its profiles and benchmarks",
+            "{summary}"
+        );
+        assert_eq!(
+            description,
+            "pai, the command line of the framework: server.ini and the per-model models.ini\n\
+             through the manager, the server's control and the benchmarks, with the\n\
+             benchmark method. It needs no graphics library.\n"
+        );
+    }
+
+    /// The same summary ships in both Linux formats: the `.deb` control's
+    /// `Description:` line and the `.rpm` spec's `Summary:` line.
+    #[test]
+    fn both_linux_formats_ship_the_cli_summary() {
+        const WANT: &str = "pai: command line for llama-server, its profiles and benchmarks";
+        let (summary, description) = texts(Component::Cli, "v0.9.0");
+        let mut f = fields_v(Component::Cli, FW, &[], Some(ENGINE_MIN));
+        f.summary = summary;
+        f.description = &description;
+        let control = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", "");
+        assert!(
+            control.contains(&format!("Description: {WANT}\n")),
+            "{control}"
+        );
+        let dir = scratch("rpm-cli-summary");
+        let spec = rpm_spec(&f, "MIT", "libggml", &dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let line = spec
+            .lines()
+            .find(|l| l.starts_with("Summary:"))
+            .expect("the spec has a Summary");
+        assert_eq!(line, format!("Summary:        {WANT}"), "{spec}");
     }
 
     /// The `%files` lines of a spec, by path: a `%config(...)` line gives

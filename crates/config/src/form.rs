@@ -605,7 +605,7 @@ pub fn form_to_model_profile(f: &ModelProfileForm) -> model_profiles::ModelProfi
 /// `ModelProfileForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
 fn int_fields(f: &ModelProfileForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
-    // The range of each key is `pai_core::checks::PRESET_INT_KEYS`'s, the one
+    // The range of each key is `pai_core::checks::MODEL_PROFILE_INT_KEYS`'s, the one
     // the manager checks models.ini with.
     fn int<'a>(
         key: &'static str,

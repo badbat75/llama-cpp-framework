@@ -1360,3 +1360,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - `crates/core/defaults/assignments.ini` and `defaults/windows/assignments.ini` carry prose in their comment
   header, and no test pins that text (the tests parse the file and compare it with the staged copy), so a
   header rename is two lines; the parser skips the header, the bytes after it stay untouched.
+- A preset-wording comment sweep must also fix doc comments that NAME a symbol renamed by an earlier slice
+  (they read as prose and their target is gone): `checks::PRESET_INT_KEYS`/`WEB_PRESET_KEYS`/
+  `PRESET_KEYS_NOT_ON_WEB` are now `MODEL_PROFILE_INT_KEYS`/`WEB_MODEL_PROFILE_KEYS`/
+  `MODEL_PROFILE_KEYS_NOT_ON_WEB`; the Slint callbacks are `on_select/new/clone/delete_model_profile`,
+  `model_profile_gpu_*`/`model_profile_tensor_*`, the property `model_profile_split_positions`; the fe
+  brief is `02h-model-profile-save.md`. Grep each backticked name in the code before keeping a comment.
+- A WiX `Component Id` (e.g. `DefaultPresetsIni` in llama.cpp.wxs) is MSI identity, not prose: harvested
+  components derive their GUID from Id+path, so renaming it re-GUIDs the component. Words in a `.wxs`
+  comment are prose; a brief pinning "every other byte unchanged" keeps them as they are.

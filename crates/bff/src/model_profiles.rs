@@ -858,7 +858,7 @@ pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> ModelProfi
 /// looked at nowhere: the revision it carries and its edits, sorted by key
 /// ([`Edits`]) whatever the order the body's `values` map came in.
 ///
-/// Every key of `values` must be in `checks::WEB_PRESET_KEYS` (the list lives in
+/// Every key of `values` must be in `checks::WEB_MODEL_PROFILE_KEYS` (the list lives in
 /// `pai-core`, pinned against `pai-app` `model_profiles::render_section`; this crate
 /// keeps no copy of it), matched in the exact spelling of the list: a key in
 /// another letter case is as unknown as a name no reader knows, because

@@ -1408,7 +1408,7 @@ fn gpu_weight_total(sel: &gpu_split::GpuSelection) -> i32 {
 
 // The selection IS the form's `device` + `tensor_split` pair; there is no third
 // copy of it, so a hand-edited INI stays authoritative and nothing can desync.
-// The `preset_gpu_*` callbacks all follow the same two steps: derive the new
+// The `model_profile_gpu_*` callbacks all follow the same two steps: derive the new
 // selection with `gpu_split`, then `set_model_profile_selection` + a refresh.
 
 pub(crate) fn model_profile_selection(app: &AppWindow) -> gpu_split::GpuSelection {
@@ -1429,7 +1429,7 @@ pub(crate) fn set_model_profile_selection(app: &AppWindow, sel: &gpu_split::GpuS
 
 // Same contract for the tensor-placement table: the rules ARE the model profile's
 // `override_tensor` string, with no second copy, so a hand-edited INI stays
-// authoritative. Every `preset_tensor_*` callback derives the new string with
+// authoritative. Every `model_profile_tensor_*` callback derives the new string with
 // `tensor_override`, writes it back here, then refreshes.
 
 /// A Slint row index (`int`) as a Rust one. A negative index can't address a row,

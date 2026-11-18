@@ -3528,7 +3528,7 @@ mod tests {
     }
 
     /// Every integer key the Models tab's form holds to a range
-    /// (`checks::PRESET_INT_KEYS`, the one `form::int_fields` reads) is held
+    /// (`checks::MODEL_PROFILE_INT_KEYS`, the one `form::int_fields` reads) is held
     /// to it by the save: one past either end is refused with the key, the
     /// value and the bounds; both ends pass. Built from the INI keys, so a
     /// key the reader does not fill shows as "not read".

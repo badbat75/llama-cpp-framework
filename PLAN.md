@@ -966,9 +966,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     renamed error keys; the web UI renames next) done 2026-11-18, and 4a3 (`pai bench run --model-profile`,
     the Rust identifiers) and 4a4 (the `models.ini.disabled` header, two shorter refusal
     texts, the bff's doc comments) and 4a5 (strings keys, Slint names, module and test files) and 4a6 (the desktop
-    entry's Comment, the `assignments.ini` header, the Slint comments) too; left in 4a7: the `.deb` long
-    description (`xtask/src/linux/package.rs` ~985), the prose comments of the Rust files; 4b the wire names with the web UI;
-    then the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `docs/`).
+    entry's Comment, the `assignments.ini` header, the Slint comments) too; 4a7 (the CLI package's summary, the MSI's
+    uninstall text, the Rust comments) too; left in 4a8: the comments written into `models.ini` (`crates/app/src/model_profiles.rs`
+    ~1748, ~1770), the render's header (`crates/core/src/assign.rs:101`), the new profile's fallback id `preset`;
+    then the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `installer/TEST-PLAN.md`, `docs/`).
 13a. **Preset becomes profile** (user, 2026-11-17), now item 13's slice 4 (the revised list in
     ARCHITECTURE.md "Revision: profiles"; before `SetModelProfile`, so nothing is renamed twice):
     a model's settings are its **model profile**, an instance's server settings its **server profile**.
@@ -992,6 +993,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     and item 13's slices 5 to 17 together (the Profiles menu, several instances on a node, one server
     profile and N model profiles per instance, the resource checks, the web UI). The rename alone is not
     a milestone: no install is planned at its end. The designer's full UX check closes the milestone.
+    **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on
+    `main` and the web UI session says fe is clean, build and install; that request is the go-ahead for this one
+    install.
+    Before its font slice: `font/woff2` in `crates/bff/build.rs`, and the licence texts of the two Atkinson
+    Hyperlegible fonts, Lucide and React in `installer/licenses/`, staged by `xtask/src/common/licenses.rs`
+    into every package (React's bundle ships today with no licence text in any package).
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is

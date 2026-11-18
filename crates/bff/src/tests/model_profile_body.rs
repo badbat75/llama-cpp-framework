@@ -2,7 +2,7 @@
 //! file, a 400, or a 422, out of the request body, the text of the file and the
 //! model profile's id. No manager, no session, no route and no write: those belong to
 //! the rest of "Saving a model profile from the web" in `ARCHITECTURE.md`. The web page
-//! that sends the body is `fe/briefs/02h-preset-save.md`, its contract
+//! that sends the body is `fe/briefs/02h-model-profile-save.md`, its contract
 //! `fe/briefs/api-contract.md`.
 //!
 //! The rules these tests pin, the design's "Done when" for this step and its
@@ -19,10 +19,10 @@
 //! `pai-app`, so the bytes written must not depend on it); a key that
 //! is null removes every line of that key in the section named
 //! by `id`; a key the web list does not hold is 400 and nothing else of the body
-//! is applied; that list is `pai_core::checks::WEB_PRESET_KEYS` (this crate
+//! is applied; that list is `pai_core::checks::WEB_MODEL_PROFILE_KEYS` (this crate
 //! keeps no copy of it), matched in the exact spelling, so a key of the list in
 //! another letter case is 400 like an unknown one, and the keys of
-//! `checks::PRESET_KEYS_NOT_ON_WEB` are 400 with it; a value with a control
+//! `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB` are 400 with it; a value with a control
 //! character other than a tab, an empty value after trimming spaces and tabs, a
 //! value whose first or last character is a Unicode space other than a space or
 //! a tab (the reader trims every Unicode space, so it would come back shorter
