@@ -988,6 +988,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     file: the architect revises item 13's record (the server-profile pool and its files, how an instance
     names its server profile, the checks, protocol and API, what slice 4 keeps) before any rename lands;
     the file names above stand for the model side.
+    **Next milestone (user, 2026-11-18): profiles and instances working end to end**: the rename (13a)
+    and item 13's slices 5 to 17 together (the Profiles menu, several instances on a node, one server
+    profile and N model profiles per instance, the resource checks, the web UI). The rename alone is not
+    a milestone: no install is planned at its end. The designer's full UX check closes the milestone.
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
