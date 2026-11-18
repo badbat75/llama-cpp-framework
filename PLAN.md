@@ -961,37 +961,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     is agreed with the web UI session first. Left from the web UI session's UX pass: hashed assets with
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
-13a. Sub-slices 4a1 (the files: `models.ini`, `models.ini.disabled`, `models@<id>.ini`), 4a2 (`pai
-    model-profile`, the word in displayed texts) and 4b (the bff's `/api/profiles/model` routes and the six
-    renamed error keys; the web UI renames next) done 2026-11-18, and 4a3 (`pai bench run --model-profile`,
-    the Rust identifiers) and 4a4 (the `models.ini.disabled` header, two shorter refusal
-    texts, the bff's doc comments) and 4a5 (strings keys, Slint names, module and test files) and 4a6 (the desktop
-    entry's Comment, the `assignments.ini` header, the Slint comments) too; 4a7 (the CLI package's summary, the MSI's
-    uninstall text, the Rust comments) and 4a8 (the comments written into `models.ini`, the render's header, the new profile's fallback
-    id `model-profile`) too: the code is done; left: the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `installer/TEST-PLAN.md`, `docs/`).
-13a. **Preset becomes profile** (user, 2026-11-17), now item 13's slice 4 (the revised list in
-    ARCHITECTURE.md "Revision: profiles"; before `SetModelProfile`, so nothing is renamed twice):
-    a model's settings are its **model profile**, an instance's server settings its **server profile**.
-    Everywhere: displayed text (GUI, CLI, web UI), strings keys, docs, ARCHITECTURE and PLAN, code names,
-    API routes and error keys, CLI commands, and the files: `presets.ini` -> `models.ini`,
-    `presets.ini.disabled` -> `models.ini.disabled`, the rendered `presets@<id>.ini` -> `models@<id>.ini`;
-    `server@<id>.ini` and `assignments.ini` keep their names. No migration (pre-release): the installed
-    files are renamed by hand. What stays: llama.cpp's own words (the `--models-preset` flag, its
-    `docs/preset.md`), the benchmark specs and bench.db's recorded data. The web UI session renames
-    `fe/` in step with the API, at an agreed pause. Strata (13c) also calls its override files
-    "profiles": its design names them so the two are not confused.
-    Then (user, 2026-11-17, same day) the shape changes: the node's menu has **Profiles** with two
-    children, **Server** and **Model**: two shared pools. An instance is given ONE server profile and N
-    model profiles; its page only makes those associations. The server profile holds the port and the
-    tags, so it serves one instance at a time; both kinds are per engine (a llama.cpp profile serves only
-    llama.cpp instances; Strata's come with 13c). So `server@<id>.ini` stops being an instance's own
-    file: the architect revises item 13's record (the server-profile pool and its files, how an instance
-    names its server profile, the checks, protocol and API, what slice 4 keeps) before any rename lands;
-    the file names above stand for the model side.
-    **Next milestone (user, 2026-11-18): profiles and instances working end to end**: the rename (13a)
-    and item 13's slices 5 to 17 together (the Profiles menu, several instances on a node, one server
-    profile and N model profiles per instance, the resource checks, the web UI). The rename alone is not
-    a milestone: no install is planned at its end. The designer's full UX check closes the milestone.
+13a. **Next milestone (user, 2026-11-18): profiles and instances working end to end**: item 13's
+    slices 5 to 17 together (the Profiles menu, several instances on a node, one server
+    profile and N model profiles per instance, the resource checks, the web UI). The designer's full UX
+    check closes the milestone.
     **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on
     `main` and the web UI session says fe is clean, build and install; that request is the go-ahead for this one
     install.
