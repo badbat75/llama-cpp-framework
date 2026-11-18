@@ -7,7 +7,7 @@ today's shell, after H3 (the mark) and H4 (the theme button). Too big for one cy
 |---|---|---|---|
 | **H5a** | the banner: transparent, the tools group pushed to the end, icon-only theme button and hidden user name below 480 px | one wrapper `div` | 7 |
 | **H5b** | the nav: transparent, pills, the `--accent-soft` current entry replacing the inset bar, group labels and rules, the 320 px menu | none | 7 |
-| **H5c** | the three carried issues: Discard's focus scroll, the About button under the save bar, the save bar with 200 % text | none (one CSS rule; the UX check's text-size method) | 5 |
+| **H5c** | the three carried issues: Discard's focus scroll, the About button under the save bar, the save bar with 200 % text; the current nav entry in forced colours | none (two CSS rules; the UX check's text-size method) | 6 |
 
 Order: H5a, then H5b (both edit the shell's rules; H5b's current-entry rule also covers the banner's
 Sign in link). H5c touches only the save bar and can land before, between or after them. No strings
@@ -40,7 +40,10 @@ Labels: **measured**, **read** (with its URL), **assumed**, **preference**.
   `--accent-soft` is P15, 6.04 / 6.93, already pinned ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color),
   [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)). In forced colours the fill goes and the
   weight stays, as the bar's colour did before. Weight stays 600, not the mockup's 700, so the 600
-  pin holds (rendered the same).
+  pin holds (rendered the same). **Decided by the coordinator, 2026-11-18 (the designer's stated
+  preference, adopted; it goes in with H5c, criterion H5c.6):** in forced colours the current entry
+  takes `Highlight` / `HighlightText` with `forced-color-adjust: none`, mirroring the pressed theme
+  button (H4.11), so it keeps a fill there too.
 - **Hover** on nav links stays the underline (links, not controls; H2's "no hover on controls"
   stands). The mockup's `--surface` hover fill is not taken (a preference).
 - **The Menu button keeps its text**, no icon until H8.
@@ -193,7 +196,16 @@ setting is not reachable from Playwright, assumed): at 320 by 568 and 1280 by 72
 bar computes `position: static`, no sideways scroll, and every field, tabbed to, is not under it.
 `build/ux-review/` drops the inline `font-size: 200%` method.
 
-**What the tester pins (H5c)**: H5c.1 and H5c.2 as stylesheet text (the declaration, its order after
+**H5c.6 The current nav entry in forced colours** (section 0, decided 2026-11-18). Inside an
+`@media (forced-colors: active)` block, a rule whose selector list is exactly
+`.nav a[aria-current='page']`, `.nav a[aria-current='true']`, `a.session[aria-current='page']`
+declares `forced-color-adjust: none`, `background: Highlight`, `color: HighlightText`, as the
+`.theme-switch[aria-pressed='true']` rule there does. The H5b.3 pin "the only rule naming
+`aria-current='true'`" becomes "the only top-level rule": this forced-colours rule is the second.
+The UX pass checks in Firefox's forced colours that the focus ring on a current pill is still seen.
+
+**What the tester pins (H5c)**: H5c.6 as stylesheet text (the block by matched braces, the selector
+list, the three declarations); H5c.1 and H5c.2 as stylesheet text (the declaration, its order after
 `html:has(.save-bar)`, the media rule by matched braces). H5c.3 to H5c.5 are the designer's.
 
 ## 4. What only the designer's UX pass sees (after each cycle)

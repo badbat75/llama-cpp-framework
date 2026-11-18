@@ -265,8 +265,12 @@ Slice briefs: H1 is split into **H1a** (tokens, both themes, system fonts) and *
 after the platform's "fonts backend ready"), `fe/briefs/06-hearth-h1-tokens.md`; H2 into **H2a**
 (controls) and **H2b** (containers), `fe/briefs/06-hearth-h2-controls.md`; H3 is
 `fe/briefs/07-hearth-h3-mark.md`, H4 `fe/briefs/07-hearth-h4-theme.md`, H5 is split into **H5a**
-(banner), **H5b** (nav) and **H5c** (three carried save-bar issues), `fe/briefs/07-hearth-h5-shell.md`.
-Those briefs win where they differ from this table.
+(banner), **H5b** (nav) and **H5c** (three carried save-bar issues), `fe/briefs/07-hearth-h5-shell.md`;
+H6 into **H6a** (tiles) and **H6b** (start at boot, signed in), `fe/briefs/08-hearth-h6-overview.md`;
+H7 is `fe/briefs/08-hearth-h7-signin.md`; H8 into **H8a** (component, shell) and **H8b** (pages),
+`fe/briefs/08-hearth-h8-icons.md`; H9 into **H9a** (index look) and **H9b** (rail),
+`fe/briefs/08-hearth-h9-jump.md`; H10, **H11a** (summary, collapsed Assets) and **H11b** (Engine as a
+row), `fe/briefs/08-hearth-h10-h11.md`. Those briefs win where they differ from this table.
 
 Each row is one test-first cycle (12 criteria at most, the playbook's limit). "Restyle" = CSS and tokens
 only: checked by the designer's UX pass (`fe/ux`) and the stylesheet-text tests (as
