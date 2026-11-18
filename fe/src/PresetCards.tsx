@@ -13,7 +13,9 @@
 // a select enabled only while another key's box is unticked; 2h.7 generalises
 // that rule to `enabledWhen` (176: "enabled when a box is unticked, a box is
 // checked, a file key is present"), on rows and on a card, and gives the
-// Vision card its editable controls.
+// Vision card its editable controls. 2h.8 gives the Hardware card's Fit trio
+// the same, with the text of 184 that follows the two default boxes live, and
+// the invalid `fit` of 185, which blocks the save as a client check does.
 // 2h.5 gives the KV cache card the same (164: every field of the card enabled,
 // always), and 132 decides what each of them sends (the state the control
 // shows is the state the page is dirty against, an absent key included).
@@ -70,7 +72,8 @@ type Reading = 'flag' | 'truthy' | 'valued' | 'fit'
  * - `unticked`: the number field's default box is unticked (155: Unified KV
  *   sizes a cache shared by the slots, so it needs Parallel slots);
  * - `checked`: the checkbox row's box is ticked, live from the draft (176:
- *   Vision GPU needs Vision on GPU checked);
+ *   Vision GPU needs Vision on GPU checked; 2h.8's 186: the Fit pair needs Fit
+ *   to VRAM checked);
  * - `file`: the key is present in the read's values and not empty (176: the
  *   Vision card's controls do nothing without an MMProj, a key this page
  *   cannot edit). The Hardware card of 177 adds rows of its own. */
@@ -138,10 +141,17 @@ type CheckboxRow = RowBase & {
   offSend: string | null
   /** A box the configurator only lets the user set under a rule (criterion
    * 108: Fit to VRAM sizes the context and the GPU layers, so it is allowed
-   * while both are absent). Each key of `needsAbsent` must be absent; when one
-   * is not, the text is `notAllowed`. The box keeps showing the file's reading
-   * either way (criterion 127). */
-  allowed?: { needsAbsent: string[]; notAllowed: string }
+   * while both are absent). Each field of `needsAbsent` is a key that must be
+   * at default; when one is not, the text is `notAllowed` while the box is
+   * unchecked and, once it is checked, the `setOne` text of 2h.8's 184 of the
+   * key that is set, naming what the fit can still do, and `setAll` when every
+   * one is. The box keeps showing the file's reading either way (criterion
+   * 127). */
+  allowed?: {
+    needsAbsent: { key: string; setOne: string }[]
+    notAllowed: string
+    setAll: string
+  }
 }
 
 /** A device select (criterion 103): the empty option, then the file's value
@@ -282,7 +292,7 @@ const CARDS: CardFields[] = [
     title: t('preset-hardware-config'),
     // 2h.7's 175: the seven rows the table enables always, and the draft pair
     // behind `model-draft` (177), all editable. The MoE pair stays disabled
-    // until 2g reads the model (178), and the Fit trio is 2h.8.
+    // until 2g reads the model (178); the Fit trio joined with 2h.8.
     rows: [
       {
         kind: 'number',
@@ -379,11 +389,16 @@ const CARDS: CardFields[] = [
         onSend: 'on',
         offSend: 'off',
         allowed: {
-          needsAbsent: ['ctx-size', 'n-gpu-layers'],
+          needsAbsent: [
+            { key: 'ctx-size', setOne: t('preset-fit-layers-only') },
+            { key: 'n-gpu-layers', setOne: t('preset-fit-context-only') },
+          ],
           notAllowed: t('preset-fit-not-allowed'),
+          setAll: t('preset-fit-nothing'),
         },
         label: t('preset-fit-to-vram'),
         hint: t('preset-fit-to-vram-hint'),
+        editable: true,
       },
       {
         kind: 'number',
@@ -391,6 +406,8 @@ const CARDS: CardFields[] = [
         key: 'fit-ctx',
         label: t('preset-fit-min-context'),
         hint: t('preset-fit-min-context-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'checked', key: 'fit' }],
       },
       {
         kind: 'text',
@@ -398,6 +415,8 @@ const CARDS: CardFields[] = [
         key: 'fit-target',
         label: t('preset-fit-free-vram'),
         hint: t('preset-fit-free-vram-hint'),
+        editable: true,
+        enabledWhen: [{ rule: 'checked', key: 'fit' }],
       },
       // 177: the pair works only with a Draft model file, which this page does
       // not pick, so its note sits before Draft device while the file has none.
@@ -1174,6 +1193,37 @@ export function checkboxSend(
   return checked ? row.onSend : row.offSend
 }
 
+/** The checkbox of a row as the state the page is dirty against (132), which
+ * for the `fit` reading of 2h.8's 185 is a state of its own when the value is
+ * one the engine refuses (128): the field loads unchecked and invalid, and
+ * that is not the state an `off` value shows, so a click off it is a change
+ * even when the box ends where an off value's box sits. */
+export function checkboxDirty(
+  row: CheckboxRow,
+  values: Record<string, string>,
+): 'invalid' | 'on' | 'off' {
+  const value = heldFor(row, values)
+  const state =
+    row.reading === undefined || value === undefined
+      ? undefined
+      : readAs(row.reading, value)
+  if (state?.error !== undefined) return 'invalid'
+  return (state === undefined ? row.absent : state.on === true) ? 'on' : 'off'
+}
+
+/** 2h.8's 185: the field error of an editable checkbox: a value the engine
+ * refuses to start with, which the manager's checks do not read, so the page's
+ * save must. Read from the draft, so the first click clears it. */
+export function checkboxError(
+  row: CheckboxRow,
+  values: Record<string, string>,
+): string | undefined {
+  const value = heldFor(row, values)
+  return row.reading === undefined || value === undefined
+    ? undefined
+    : readAs(row.reading, value).error
+}
+
 /** The device select of a row as the form's `values` leave it (2h.7's 179):
  * the device the key holds, and the empty string for a key the file lacks,
  * the value of the empty option of 103. */
@@ -1237,13 +1287,16 @@ export function textRows(): TextRow[] {
   )
 }
 
-/** The rows the save checks (157, 166): the editable number and text rows, in
- * the order the fields sit on screen, which is the order a save reports its
- * first failure in. */
-export function checkRows(): (NumberRow | TextRow)[] {
+/** The rows the save checks (157, 166, and 2h.8's 185 for a checkbox whose
+ * value the engine refuses), in the order the fields sit on screen, which is
+ * the order a save reports its first failure in. */
+export function checkRows(): (NumberRow | TextRow | CheckboxRow)[] {
   return fieldRows().filter(
-    (one): one is NumberRow | TextRow =>
-      (one.kind === 'number' || one.kind === 'text') && one.editable === true,
+    (one): one is NumberRow | TextRow | CheckboxRow =>
+      (one.kind === 'number' ||
+        one.kind === 'text' ||
+        one.kind === 'checkbox') &&
+      one.editable === true,
   )
 }
 
@@ -1367,7 +1420,9 @@ const WORD_VALUES: Record<string, string[]> = {
 /** The error of a number field's text (157): the trimmed text must be a whole
  * number within the key's range, and for a float key a finite decimal (165). A
  * ticked box says nothing: the save sends no value for it, and the manager
- * checks nothing either. */
+ * checks nothing either. A key that takes the words of `WORD_VALUES` names them
+ * in its refusal (2h.8's 182a), so the general text of the other keys stays
+ * untouched. */
 export function numberError(
   row: NumberRow,
   b: Boxed | undefined,
@@ -1391,6 +1446,7 @@ export function numberError(
     (r.max === null || n <= r.max)
   )
     return undefined
+  if (WORD_VALUES[row.key] !== undefined) return t('field-error-gpu-layers')
   return r.min === null
     ? t('field-error-whole-number')
     : r.max === null
@@ -1442,7 +1498,19 @@ const TEXT_KEYS: Record<string, (text: string) => string | undefined> = {
     text.includes(';') || text.includes('#')
       ? t('field-error-comment-markers')
       : undefined,
+  // 2h.8's 186: `checks::fit_target`. The comment markers first, then the list
+  // of MiB: whole numbers, no sign, separated by commas with the space around
+  // each allowed and no empty item.
+  'fit-target': (text) =>
+    text.includes(';') || text.includes('#')
+      ? t('field-error-comment-markers')
+      : FIT_TARGET_TEXT.test(text)
+        ? undefined
+        : t('field-error-fit-target'),
 }
+
+/** The list of MiB of 2h.8's 186, read on the text trimmed (166). */
+const FIT_TARGET_TEXT = /^\d+(?:[ \t]*,[ \t]*\d+)*$/
 
 /** The error of a text that is not one JSON object (166): `JSON.parse` must
  * give an object that is not an array and not `null`; a parse error is the
@@ -1490,7 +1558,10 @@ export function numberStates(
 
 /** The written-as line of an editable row (134): the spelling the file holds,
  * which the save leaves as it is, so it stands only while the control is at
- * the state the read gave. A row whose key is not a boolean has no line. */
+ * the state the read gave. A row whose key is not a boolean has no line. A
+ * box compares the third state of 2e's 128 (2h.8's 185): a value the engine
+ * refuses is a state no click returns to, so once the box is changed the line
+ * goes, whatever the state the file's reading shows. */
 function editableWritten(
   row: SelectRow | CheckboxRow,
   draft: Record<string, string>,
@@ -1498,7 +1569,7 @@ function editableWritten(
 ): string | undefined {
   const same =
     row.kind === 'checkbox'
-      ? checkboxState(row, draft) === checkboxState(row, loaded)
+      ? checkboxDirty(row, draft) === checkboxDirty(row, loaded)
       : selectState(row, draft) === selectState(row, loaded)
   if (!same) return undefined
   const raw = heldFor(row, loaded)
@@ -1565,14 +1636,28 @@ export function fieldId(key: string): string {
   return `preset-${key}`
 }
 
+/** 2h.8's 184: is the number field a row's `allowed` rule reads at default
+ * right now? A field the form edits answers with its box (unticked: the user
+ * set it), a key the form does not own with the value the control shows. */
+function atDefault(
+  key: string,
+  values: Record<string, string>,
+  boxed: Record<string, Boxed>,
+): boolean {
+  const b = boxed[key]
+  return b === undefined ? held(values, key) === undefined : b.ticked
+}
+
 /** 2h.7's 176: is the row's control disabled by a rule of its `enabledWhen`?
  * The `unticked` rules read the box state of the number fields (155), the
  * `checked` rule the draft, live from the box the user sees, and the `file`
  * rules the values the read gave (the key is not editable on this page). A
  * locked control keeps the state it holds: its draft stays, and a change
  * made while it was enabled is sent as for any other editable row. The page's
- * Save applies the same gate to its check of 157 and 166: it reports no error
- * on a field the user cannot edit. */
+ * Save applies the same gate to its check of 157 and 166: what the page sends,
+ * it checks, so a locked field is checked when its draft differs from the
+ * loaded value (the save sends it) and skipped when it is the loaded value
+ * (176, 2026-11-18). */
 export function ruleLocked(
   row: RowBase,
   draft: Record<string, string>,
@@ -1585,6 +1670,19 @@ export function ruleLocked(
     const box = checkboxRows().find((r) => r.key === one.key)
     return box === undefined || !checkboxState(box, draft)
   })
+}
+
+/** 176: the control a rule follows, the one control that unlocks a field the
+ * rule locks, read from the row's `enabledWhen` and not from its key: the
+ * checkbox of a `checked` rule (Fit to VRAM for the Fit pair, Vision on GPU for
+ * Vision GPU) and the default box of the field an `unticked` rule names
+ * (Parallel slots for Unified KV). A `file` rule names a key this page does not
+ * edit, so it gives no control. The id of a Field's control: a checkbox is
+ * `<id>-control`, a number field's default box `<id>-box`. */
+export function unlockControl(row: RowBase): string | undefined {
+  const rule = (row.enabledWhen ?? []).find((one) => one.rule !== 'file')
+  if (rule === undefined) return undefined
+  return `${fieldId(rule.key)}-${rule.rule === 'checked' ? 'control' : 'box'}`
 }
 
 /** One field of a card, in the form its row names. `values` is what the control
@@ -1653,20 +1751,27 @@ function PresetField({
     // the row is in `boxed`; the input is empty and disabled while the box is
     // ticked, and shows the text it holds when it is not.
     const b = boxed[row.key]
-    if (b !== undefined)
+    if (b !== undefined) {
+      // The same gate as the select's: the input is natively disabled when the
+      // rule of 176 locks it, and the full-value line of 118 shows under a
+      // control that is disabled now (134).
+      const disabled = !editable || locked
+      const text = boxText(b)
       return (
         <DefaultBoxField
           {...common}
-          disabled={locked}
+          disabled={disabled}
           box={t('field-default')}
           numeric={numericMode(row)}
           unit={row.unit}
           ticked={b.ticked}
-          text={boxText(b)}
+          text={text}
+          full={disabled ? fullValue(row, text) : undefined}
           onTick={(ticked) => onTick(row.key, ticked)}
           onText={(text) => onBoxText(row.key, text)}
         />
       )
+    }
     const text = value ?? ''
     return (
       <DefaultBoxField
@@ -1684,15 +1789,24 @@ function PresetField({
   }
   if (row.kind === 'checkbox') {
     // A box the configurator only allows under a rule (108) says so in its own
-    // text. The rule says nothing about the box itself: what the box shows is
-    // what the engine does with the file's value, allowed or not (127), and a
-    // value the engine refuses carries the field's error (128).
+    // text, and 2h.8's 184 gives the text that says what the fit can still do
+    // once the box is checked. The rule says nothing about the box itself: what
+    // the box shows is what the engine does with the file's value, allowed or
+    // not (127), and a value the engine refuses carries the field's error (128).
+    const checked = state === undefined ? row.absent : state.on === true
     const rule = row.allowed
+    const set =
+      rule === undefined
+        ? []
+        : rule.needsAbsent.filter((one) => !atDefault(one.key, values, boxed))
     const toggle =
-      rule === undefined ||
-      rule.needsAbsent.every((key) => held(values, key) === undefined)
+      rule === undefined || set.length === 0
         ? row.toggle
-        : rule.notAllowed
+        : !checked
+          ? rule.notAllowed
+          : set.length === rule.needsAbsent.length
+            ? rule.setAll
+            : set[0]!.setOne
     // An editable box's line is the loaded value's spelling, which the save
     // leaves as it is, so it stands only while the box is at the state the read
     // gave (134).
@@ -1704,7 +1818,7 @@ function PresetField({
         {...common}
         disabled={!editable || locked}
         toggle={toggle}
-        checked={state === undefined ? row.absent : state.on === true}
+        checked={checked}
         written={
           written === undefined
             ? undefined
@@ -1722,13 +1836,16 @@ function PresetField({
     // value (criterion 87). An editable text field (164) holds the text the
     // form's draft gives, typed as it stands, and its input is open.
     const text = editable ? (values[row.key] ?? '') : (value ?? '')
+    // The same gate as the select's: 134 keeps the full-value line of 118 under
+    // a control that is disabled now, one a rule of 176 locks included.
+    const disabled = !editable || locked
     return (
       <TextField
         {...common}
-        disabled={!editable || locked}
+        disabled={disabled}
         value={text}
         unit={row.unit}
-        full={editable ? undefined : fullValue(row, text)}
+        full={disabled ? fullValue(row, text) : undefined}
         placeholder=""
         onChange={(text) => (editable ? onEdit(row.key, text) : undefined)}
       />

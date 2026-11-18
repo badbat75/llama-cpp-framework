@@ -6,10 +6,10 @@
 // (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
 // card's controls, the Vision card's controls and the Hardware card's rows are
-// editable (the Fit trio and the two MoE rows of the last stay read-only), and
+// editable (the two MoE rows of the last stay read-only), and
 // the save bar at the end of the settings writes what changed
-// (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5 and 2h.7,
-// criteria 130 to 149, 155 to 157, 164, 175 to 182, read by key in
+// (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5, 2h.7 and 2h.8,
+// criteria 130 to 149, 155 to 157, 164, 175 to 182 and 183 to 188, read by key in
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config.
 import {
@@ -29,6 +29,8 @@ import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
 import PresetCards, {
   checkRows,
+  checkboxDirty,
+  checkboxError,
   checkboxRows,
   checkboxSend,
   checkboxState,
@@ -47,6 +49,7 @@ import PresetCards, {
   textError,
   textRows,
   textSend,
+  unlockControl,
 } from './PresetCards.tsx'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
@@ -487,6 +490,26 @@ function focusField(key: string) {
   }
 }
 
+/** The rows the save of its own check reads: the kind `checkRows` answers. */
+type CheckedRow = ReturnType<typeof checkRows>[number]
+
+/** Puts the focus where a check of the save sends the user (142, and 176's
+ * "what the page sends, it checks"): the marked field's control when the field
+ * is enabled, and for a field a rule of 176 locks the control that rule
+ * follows, the one control that unlocks it. A disabled control takes no focus,
+ * so with no enabled control the focus stays where it is. */
+function focusFailure(row: CheckedRow, locked: boolean) {
+  if (locked) {
+    const id = unlockControl(row)
+    const control = id === undefined ? null : controlWithId(id)
+    if (control !== null && !control.disabled) {
+      control.focus()
+      return
+    }
+  }
+  focusField(row.key)
+}
+
 /** The loaded preset as a form: the settings of 2e, the two Embeddings
  * controls of 2h.1, the number fields of 2h.4 and the KV cache card of 2h.5
  * editable, and the save bar of the Server page writing the changed keys
@@ -607,9 +630,11 @@ function Content({
       values[row.key] = selectSend(row, state)
     }
     for (const row of checkboxRows()) {
-      const state = checkboxState(row, draft)
-      if (state === checkboxState(row, loaded.values)) continue
-      values[row.key] = checkboxSend(row, state)
+      // 2h.8's 185: an invalid `fit` is a state of its own, so a click off it
+      // is a change even when the box ends at the state an `off` value shows.
+      const state = checkboxDirty(row, draft)
+      if (state === checkboxDirty(row, loaded.values)) continue
+      values[row.key] = checkboxSend(row, checkboxState(row, draft))
     }
     // 2h.7's 179: a device select at the empty option is the key's removal.
     for (const row of deviceRows()) {
@@ -638,33 +663,44 @@ function Content({
   /** Save changes: the bar of 135 to 149. */
   async function save() {
     if (saving.current) return
-    // 157, 166: every enabled number field whose box is unticked, and every
-    // text field with a text that is not empty, is checked, changed or not
-    // (the manager checks the whole section anyway). A field a rule of 176
-    // locks right now is skipped, by the gate that disables it: the page
-    // reports no error on a field the user cannot edit. A failure marks its
-    // field, tells the bar, and puts the focus on the first failing control
-    // in the order the fields are on screen: nothing is sent, and the bar
-    // keeps saying what is not saved.
+    // 157, 166, 185: every enabled number field whose box is unticked, every
+    // text field with a text that is not empty, and every editable checkbox
+    // holding a value the engine refuses, is checked, changed or not (the
+    // manager checks the whole section anyway). 176: a field a rule locks
+    // right now is checked too when its draft differs from the loaded value,
+    // because the save sends that draft; a locked field that still holds the
+    // loaded value is sent as it is and stays unchecked, by the gate that
+    // disables it. A failure marks its field, tells the bar, and puts the
+    // focus on the first failing control in the order the fields are on
+    // screen: for a row a rule locks, on the control the rule follows.
+    // Nothing is sent, and the bar keeps saying what is not saved.
     const failures = checkRows()
-      .filter((row) => !ruleLocked(row, draft, loaded.values, boxed))
+      .filter(
+        (row) =>
+          !ruleLocked(row, draft, loaded.values, boxed) || row.key in changes,
+      )
       .map(
         (row) =>
           [
-            row.key,
+            row,
             row.kind === 'number'
               ? numberError(row, boxed[row.key])
-              : textError(row, draft[row.key] ?? ''),
+              : row.kind === 'text'
+                ? textError(row, draft[row.key] ?? '')
+                : checkboxError(row, draft),
           ] as const,
       )
-      .filter((one): one is [string, string] => one[1] !== undefined)
+      .filter((one): one is [CheckedRow, string] => one[1] !== undefined)
     if (failures.length > 0) {
       // Rendered first, so the focused control is announced with its error.
       flushSync(() => {
         alerts.setAlert({ text: t('save-invalid') })
-        fields.set(Object.fromEntries(failures))
+        fields.set(
+          Object.fromEntries(failures.map(([row, error]) => [row.key, error])),
+        )
       })
-      focusField(failures[0]![0])
+      const [row] = failures[0]!
+      focusFailure(row, ruleLocked(row, draft, loaded.values, boxed))
       return
     }
     if (!dirty) return

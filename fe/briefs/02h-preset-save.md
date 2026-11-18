@@ -519,6 +519,25 @@ the Server page** (it changes 01's 30a: the cross-reference is there). Numbered 
     `form.mmproj_device` while disabled (MP 1091-1097) and the save writes it whatever the switch
     (`presets.rs` 1776-1777). Why: the control shows what the file will hold (nothing hidden is
     written, nothing shown is dropped) and re-checking brings the pick back. The same holds for Unified KV under Parallel slots' box.
+    **What the page sends, it checks** (2026-11-18, the 2h.8 review; one rule for every
+    rule-locked field: Vision GPU, Unified KV, Fit min context, Fit free VRAM, and the Draft pair
+    if a later rule makes it live): at Save, a locked field whose draft **differs from the loaded
+    value** is checked like an enabled one (157, 166, 185), since 176 sends it; a locked field
+    whose draft is the loaded value is skipped (not sent; a bad loaded value is the manager's to
+    refuse, 144). On failure: the field's error and `aria-invalid` on the locked field (dashed),
+    the bar's `save-invalid`, nothing sent, and focus on **the checkbox the rule follows** (Fit to
+    VRAM, Vision on GPU, Parallel slots' default box), the one control that unlocks the field, in
+    the 157 order of failures (the locked field's place). Example: Fit min context `0`, then Fit to
+    VRAM unchecked: Save sends nothing, "Enter a whole number of at least 1." (`field-error-number-min`, 157's table) shows
+    under Fit min context, focus on Fit to VRAM; checking it re-enables the field to fix. Why not
+    the alternatives: sending it unchecked lets the manager answer 422 on a field the user cannot
+    reach, with focus left on Save changes (seen in the 2h.8 review); dropping the draft breaks
+    176; refusing the untick hides the rule. Reverses the 2h.7 fix only for changed drafts. The
+    test pinning `{"fit":"off","fit-ctx":"0"}` sent becomes: no PUT, the error under Fit min
+    context, focus on `preset-fit-control`.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
+    [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion),
+    [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order))
 177. **Draft placement** (MP 632, 660-665): Draft device and Draft GPU layers are enabled only when
     the read's `model-draft` is present and not empty. While it is absent a note row
     `preset-draft-file-off` sits before Draft device (where the GUI shows its embedded-MTP note,
@@ -550,6 +569,21 @@ picking `mlock` sends `{"load-mode":"mlock"}`. **Strings (3 new)**: `preset-visi
     `preset-moe-later` | MoE CPU layers and MoE cache stay as the file has them: this page cannot
     yet read whether the model has experts. Change them in pai-config on the server machine.
     (Removed by 2g.)
+182a. **The refusal of GPU layers and Draft GPU layers names the words** (from the 2h.7 review):
+    these two fields take a whole number or the exact texts `auto` and `all` (2h.4's note under its
+    table), so their refusal says so; the general `field-error-whole-number` would hide the words
+    from a user who typed `1.5` or `ALL`. Smallest change: one new error text shared by both
+    fields, the hints unchanged (the error is where a user who does not know the words lands; the
+    hint stays the GUI's, whose slider takes no words). The words stay lower case in the text, as
+    they must be typed. Everything else of 2h.4 holds (when it shows, the bar's `save-invalid`,
+    focus, the row text past 2147483647). `n-cpu-moe` and `n-cpu-ffn`, which take no word, keep
+    `field-error-whole-number`.
+    ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
+    [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion))
+    **Tests**: on GPU layers and on Draft GPU layers (with a `model-draft`, so it is enabled), `1.5`
+    and `ALL` each block Save with `field-error-gpu-layers`; `auto` and `all` pass; on Dense FFN CPU
+    layers (`n-cpu-ffn`) `1.5` shows `field-error-whole-number`. **String (1 new)**:
+    `field-error-gpu-layers` | Enter a whole number, auto or all.
 
 ## 2h.8. Fit to VRAM, Fit min context, Fit free VRAM
 

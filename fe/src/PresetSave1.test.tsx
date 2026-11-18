@@ -116,9 +116,10 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-image-min-tokens': 'preset-min-image-tokens',
   'preset-image-max-tokens': 'preset-max-image-tokens',
   // 2h.7's 175: the Hardware card, its seven always-on rows and the draft
-  // pair (177's rule). The Fit trio (`fit`, `fit-ctx`, `fit-target`) and the
-  // two MoE rows (178) stay out of the list, so the test demands them
-  // disabled; `n-cpu-ffn` and `n-gpu-layers` are boxed (156).
+  // pair (177's rule). 2h.8's 183 and 186: the Fit trio, `fit` always enabled
+  // and its two dependents while its box reads checked. Only the two MoE rows
+  // (178) stay out of the list, so the test demands them disabled;
+  // `n-cpu-ffn`, `n-gpu-layers` and `fit-ctx` are boxed (156).
   'preset-n-gpu-layers': 'preset-gpu-layers',
   'preset-n-cpu-ffn': 'preset-dense-ffn-cpu-layers',
   'preset-op-offload': 'preset-op-offload',
@@ -126,6 +127,9 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-no-host': 'preset-no-host-buffer',
   'preset-lazy-mode': 'preset-lazy-tensors',
   'preset-load-mode': 'preset-load-mode',
+  'preset-fit': 'preset-fit-to-vram',
+  'preset-fit-ctx': 'preset-fit-min-context',
+  'preset-fit-target': 'preset-fit-free-vram',
   'preset-device-draft': 'preset-draft-device',
   'preset-n-gpu-layers-draft': 'preset-draft-gpu-layers',
 }
@@ -286,7 +290,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card and the Hardware card (but its Fit trio and its two MoE rows) are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card and the Hardware card, its Fit trio included and its two MoE rows excepted, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -602,7 +606,7 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and the disabled cards keep theirs', async () => {
+test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and a control a rule disables keeps its own', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
@@ -619,12 +623,16 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175): an editable control shows
     'load-mode': EXTRA_POOL,
     'lazy-mode': EXTRA_POOL,
     'n-gpu-layers': '172032000',
-    // The cards still read-only keep the line of 118: a select, a text and a
-    // number. Fit free VRAM is the Hardware card's text of the Fit trio
-    // (2h.8); the Speculative decoding card is 2h.9's, so a cache-type select
-    // and a draft number are its examples.
-    'spec-draft-type-k': EXTRA_POOL,
+    // 2h.8's 183 and 186 made the Fit trio editable, so its controls are
+    // disabled by the rule and not by the card: with the Fit to VRAM box off,
+    // 134 keeps the line under the number's input and the text input, as it
+    // keeps it under the Draft K-cache type select 175 disables. The
+    // Speculative decoding card is 2h.9's, so its draft number is a disabled
+    // input of a card that is not editable at all.
+    fit: 'off',
+    'fit-ctx': '172032000',
     'fit-target': LONG_TEXT,
+    'spec-draft-type-k': EXTRA_POOL,
     'spec-draft-n-max': '172032000',
   })
   // An enabled select opens and an enabled input scrolls, so 134 takes the
@@ -646,12 +654,38 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175): an editable control shows
       fullOf(main, key),
       `${key}: no full-value line under an editable control`,
     ).toBeNull()
-  // The read-only card keeps its line: a select, a text and a number.
-  for (const key of ['spec-draft-type-k', 'fit-target', 'spec-draft-n-max'])
+  // A control that is disabled now, by 175, 186 or a card 2h.9 has not made
+  // editable, keeps the line of 118: a select, a number's input and a text
+  // input.
+  for (const key of [
+    'spec-draft-type-k',
+    'fit-ctx',
+    'fit-target',
+    'spec-draft-n-max',
+  ])
     expect(
       fullOf(main, key),
       `${key}: the disabled control keeps its line`,
     ).toBeTruthy()
+  cleanup()
+  // The same three fields with the Fit box checked: 186 enables the number's
+  // input and the text input, so 134 takes their two lines away and 175 leaves
+  // the select on its own.
+  const on = await page({
+    fit: 'on',
+    'fit-ctx': '172032000',
+    'fit-target': LONG_TEXT,
+    'spec-draft-type-k': EXTRA_POOL,
+  })
+  for (const key of ['fit-ctx', 'fit-target'])
+    expect(
+      fullOf(on.main, key),
+      `${key}: 186 enables the control, so no line`,
+    ).toBeNull()
+  expect(
+    fullOf(on.main, 'spec-draft-type-k'),
+    'the select 175 disables keeps its line',
+  ).toBeTruthy()
 })
 
 test("2h.134 (2h.6 170, 2h.7 175): a long value the disabled control cannot show keeps its line: the Speculative decoding card's Draft K-cache type select is the disabled half of the pair, Reasoning effort the enabled half (pinned above)", async () => {

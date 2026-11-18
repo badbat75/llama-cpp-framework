@@ -196,7 +196,9 @@ function fieldId(field: Label): string {
  * 2h.6's 170 (the Chat / reasoning card's nine, all always enabled),
  * 2h.7's 175 (the Vision card's four, enabled by 176's rule),
  * 2h.7's 175 (the Hardware card's seven always rows, and the draft pair
- * enabled by 177's rule; the Fit trio and the two MoE rows stay out),
+ * enabled by 177's rule; the two MoE rows stay out),
+ * 2h.8's 183, 186 (the Hardware card's Fit trio: Fit to VRAM always enabled,
+ * Fit min context and Fit free VRAM enabled while its box is checked),
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
@@ -244,6 +246,9 @@ const EDITABLE_FIELDS: Label[] = [
   'preset-no-host-buffer',
   'preset-lazy-tensors',
   'preset-load-mode',
+  'preset-fit-to-vram',
+  'preset-fit-min-context',
+  'preset-fit-free-vram',
   'preset-draft-device',
   'preset-draft-gpu-layers',
 ]
@@ -273,6 +278,7 @@ const BOXED_FIELDS: Record<string, string> = {
   'preset-max-image-tokens': 'image-max-tokens',
   'preset-gpu-layers': 'n-gpu-layers',
   'preset-dense-ffn-cpu-layers': 'n-cpu-ffn',
+  'preset-fit-min-context': 'fit-ctx',
   'preset-draft-gpu-layers': 'n-gpu-layers-draft',
 }
 
@@ -295,7 +301,9 @@ type Rule = { present: string[]; checked?: string }
  * file holds starts; every Vision control is enabled while the read's `mmproj`
  * is present and not empty, and Vision GPU also needs Vision on GPU checked;
  * Draft device and Draft GPU layers are enabled while the read's
- * `model-draft` is present and not empty (177). */
+ * `model-draft` is present and not empty (177), and Fit min context and Fit
+ * free VRAM are enabled while the Fit to VRAM box reads checked at load
+ * (2h.8's 186). */
 const ENABLE_RULE: Record<string, Rule> = {
   'preset-unified-kv': { present: ['parallel'] },
   'preset-vision-on-gpu': { present: ['mmproj'] },
@@ -304,6 +312,49 @@ const ENABLE_RULE: Record<string, Rule> = {
   'preset-max-image-tokens': { present: ['mmproj'] },
   'preset-draft-device': { present: ['model-draft'] },
   'preset-draft-gpu-layers': { present: ['model-draft'] },
+  // 2h.8's 186: both Fit dependents are enabled only while the Fit to VRAM
+  // box is checked, which is the load state below and the user's clicks.
+  'preset-fit-min-context': { present: [], checked: 'fit' },
+  'preset-fit-free-vram': { present: [], checked: 'fit' },
+}
+
+/** The flag spellings 2e.3c's 127 reads as on for `fit` (`common/arg.cpp`
+ * `is_truthy`, compared trimmed), and the four it reads as off
+ * (`is_falsey`). Any other value is invalid: 128 shows the box unchecked. */
+const FIT_ON = ['on', 'enabled', 'true', '1']
+
+/** True when 2e.3c's 127 shows the Fit to VRAM box checked on a read: the key
+ * absent (llama.cpp's own default is on), or one of the four on words. */
+export function fitCheckedAtLoad(values: Record<string, string>): boolean {
+  const value = values['fit']
+  if (value === undefined) return true
+  return FIT_ON.includes(value.trim())
+}
+
+/** True when 2h.8's 184 counts the key as "set": the field's default box is
+ * unticked, which is a key the file holds with a value (2e's 86: an empty
+ * value reads as absent). */
+function keySet(values: Record<string, string>, key: string): boolean {
+  return values[key] !== undefined && values[key] !== ''
+}
+
+/** The strings key of the toggle text that names the Fit to VRAM checkbox
+ * (2h.8's 184), from what the read leaves the two default boxes and the box's
+ * own state. */
+export function fitToggleKey(values: Record<string, string>): string {
+  const ctx = keySet(values, 'ctx-size')
+  const layers = keySet(values, 'n-gpu-layers')
+  if (!ctx && !layers) return 'preset-fit-allowed'
+  if (!fitCheckedAtLoad(values)) return 'preset-fit-not-allowed'
+  if (ctx && layers) return 'preset-fit-nothing'
+  if (ctx) return 'preset-fit-layers-only'
+  return 'preset-fit-context-only'
+}
+
+/** The toggle text that names the Fit to VRAM checkbox (2h.8's 184), from
+ * what the read leaves the two default boxes and the box's own state. */
+export function fitToggleText(values: Record<string, string>): string {
+  return en(fitToggleKey(values))
 }
 
 /** The flag spellings 2e's 122 reads as unchecked. Any other value, the empty
@@ -311,6 +362,7 @@ const ENABLE_RULE: Record<string, Rule> = {
 const FLAG_UNCHECKED = ['off', 'disabled', 'false', '0']
 
 function flagChecked(values: Record<string, string>, key: string): boolean {
+  if (key === 'fit') return fitCheckedAtLoad(values)
   const value = values[key]
   return value === undefined || !FLAG_UNCHECKED.includes(value)
 }
@@ -364,6 +416,10 @@ export function fieldTabStops(values: Record<string, string>): string[] {
         if (isEditableField(field) && ruleHolds(field, values))
           stops.push(en('field-default'))
       if (!controlEnabled(field, values)) continue
+      if (fieldId(field) === 'preset-fit-to-vram') {
+        stops.push(fitToggleText(values))
+        continue
+      }
       const toggle = CHECKBOX_TOGGLES[fieldId(field)]
       stops.push(toggle === undefined ? label : en(toggle))
     }

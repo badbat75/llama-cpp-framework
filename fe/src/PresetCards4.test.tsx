@@ -12,10 +12,12 @@
 // what 2e.3 adds in PresetCards3.test.tsx; here they are pinned for the
 // Hardware card. 2h.7's 175 to 180 retarget what 2e left read-only: the seven
 // `always` rows and the draft pair (behind `model-draft`, 177) are enabled, the
-// Fit trio (2h.8) and the two MoE rows (178) stay natively disabled, the card
-// holds the two note rows of 177 and 178, and load-mode is matched exactly
+// Fit trio is enabled by 2h.8 (the box always, its two dependents while the box
+// is checked, 183 and 186), the two MoE rows (178) stay natively disabled, the
+// card holds the two note rows of 177 and 178, and load-mode is matched exactly
 // (180): `MLOCK` is the extra option `MLOCK`. The editing itself (the draft,
-// what a save sends, the checks) is PresetSave13.test.tsx.
+// what a save sends, the checks) is PresetSave13.test.tsx, and for the Fit trio
+// PresetSave14.test.tsx.
 // The checkbox is pinned here for the `on` value of the 109 stub
 // and for the absent key only: every row of the 129 table, with the written-as
 // line and the field error, is pinned in PresetFlags.test.tsx. The route and
@@ -49,6 +51,9 @@ import {
   controlEnabled,
   expectedInputMode,
   fieldTabStops,
+  fitCheckedAtLoad,
+  fitToggleKey,
+  fitToggleText,
   saveBarTabStops,
 } from './test/presetCards.ts'
 
@@ -114,17 +119,19 @@ const SAME = en('preset-device-same-as-model')
 /** The card of 107. */
 const CARD = 'preset-hardware-config'
 
-/** When 2h.7's 175 to 178 leaves a row's controls enabled. */
-type Enable = 'always' | 'model-draft' | 'read-only'
+/** When 2h.7's 175 to 178 and 2h.8's 183 to 186 leave a row's controls
+ * enabled. */
+type Enable = 'always' | 'model-draft' | 'fit-checked' | 'read-only'
 
 /** One row of the field table of 107. */
 type Row = {
   /** The key of the section's `values`. */
   key: string
-  /** The table's last column (107), as 2h.7's 175 to 178 retargets it:
-   * `always` is editable; `model-draft` is enabled while the read's
-   * `model-draft` is present and not empty (177); `read-only` stays disabled
-   * (the Fit trio, until 2h.8; the two MoE rows, until 2g, 178). */
+  /** The table's last column (107), as 2h.7's 175 to 178 and 2h.8's 183 to 186
+   * retarget it: `always` is editable; `model-draft` is enabled while the read's
+   * `model-draft` is present and not empty (177); `fit-checked` is enabled while
+   * the Fit to VRAM box reads checked (186); `read-only` stays disabled (the two
+   * MoE rows, until 2g, 178). */
   enable: Enable
   /** The label as the page shows it: the strings text of 110. */
   label: string
@@ -256,7 +263,8 @@ const FIELDS: Row[] = [
   {
     key: 'fit',
     label: en('preset-fit-to-vram'),
-    enable: 'read-only',
+    // 183: the box is always editable: the rule of 108 picks its text only.
+    enable: 'always',
     hint: 'preset-fit-to-vram-hint',
     kind: 'checkbox',
     // 127: the box is checked when `fit` is absent (llama.cpp's default) and
@@ -270,7 +278,8 @@ const FIELDS: Row[] = [
   {
     key: 'fit-ctx',
     label: en('preset-fit-min-context'),
-    enable: 'read-only',
+    // 186: the dependent of the box, enabled while it is checked.
+    enable: 'fit-checked',
     hint: 'preset-fit-min-context-hint',
     kind: 'number',
     integer: true,
@@ -280,7 +289,8 @@ const FIELDS: Row[] = [
   {
     key: 'fit-target',
     label: en('preset-fit-free-vram'),
-    enable: 'read-only',
+    // 186: the other dependent of the box.
+    enable: 'fit-checked',
     hint: 'preset-fit-free-vram-hint',
     kind: 'text',
     unit: 'MiB',
@@ -601,7 +611,7 @@ function unitsOf(main: HTMLElement, f: Row): string[] {
 }
 
 /** What Fit to VRAM shows: the checkbox's state and the text that names it,
- * which 108 picks between `preset-fit-allowed` and `preset-fit-not-allowed`. */
+ * which 108 and 2h.8's 184 pick from the two keys' states and the box's. */
 function fitState(main: HTMLElement): [boolean, string] {
   const box = checkBoxOf(
     main,
@@ -624,16 +634,20 @@ function fitShows(
 
 // ── One test per field (85, 86, 87, 88, 89, 107, 109) ──────────────────
 
-/** True when 2h.7's 175 to 178 leaves this row's controls enabled on a read
- * that holds `values`: the seven `always` rows (175), and the draft pair while
- * the read's `model-draft` is present and not empty (177). The Fit trio (kept
- * read-only until 2h.8) and the two MoE rows (kept read-only until 2g, 178)
- * are never enabled. The box of an editable number is enabled too (156);
- * whether its input is, follows the box, which is `controlEnabled`. */
+/** True when 2h.7's 175 to 178 and 2h.8's 183 and 186 leave this row's
+ * controls enabled on a read that holds `values`: the seven `always` rows
+ * (175), the Fit to VRAM box (183), the two Fit dependents while the box
+ * reads checked (186), and the draft pair while the read's `model-draft` is
+ * present and not empty (177). The two MoE rows (kept read-only until 2g,
+ * 178) are never enabled. The box of an editable number is enabled too
+ * (156); whether its input is, follows the box, which is `controlEnabled`.
+ * A number's box is ticked (the value at default, so the input disabled)
+ * exactly when the file lacks the key. */
 function rowEnabled(f: Row, values: Record<string, string>): boolean {
   const on =
     f.enable === 'always' ||
-    (f.enable === 'model-draft' && (values['model-draft'] ?? '') !== '')
+    (f.enable === 'model-draft' && (values['model-draft'] ?? '') !== '') ||
+    (f.enable === 'fit-checked' && fitCheckedAtLoad(values))
   if (controlEnabled(f.label, values))
     expect(
       on,
@@ -837,13 +851,13 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware 
 
 // ── Fit to VRAM, the rule 2e.4 takes from the GUI (108, 109) ────────────
 
-test('2e.108, 2e.127: the rule of 108 picks only the toggle text, preset-fit-allowed when Context size and GPU layers are both absent and preset-fit-not-allowed when not: the box keeps the file reading of 127, so `fit: true` shows checked in every row', async () => {
-  for (const [ctx, layers, allowed] of [
-    [undefined, undefined, true],
-    ['172032', undefined, false],
-    [undefined, '99', false],
-    ['172032', '99', false],
-  ] as [string | undefined, string | undefined, boolean][]) {
+test("2e.108, 2e.127, 2h.184: the rule picks the toggle text: preset-fit-allowed when Context size and GPU layers are both absent, preset-fit-not-allowed when not and the box unchecked, and 184's set text when not and checked: the box keeps the file reading of 127, so `fit: true` shows checked in every row", async () => {
+  for (const [ctx, layers] of [
+    [undefined, undefined],
+    ['172032', undefined],
+    [undefined, '99'],
+    ['172032', '99'],
+  ] as [string | undefined, string | undefined][]) {
     const values: Record<string, string> = { fit: 'true' }
     if (ctx !== undefined) values['ctx-size'] = ctx
     if (layers !== undefined) values['n-gpu-layers'] = layers
@@ -853,10 +867,12 @@ test('2e.108, 2e.127: the rule of 108 picks only the toggle text, preset-fit-all
     fitShows(
       main,
       // 127: `true` is an on value, so the box is checked whatever the rule
-      // says: llama-server runs the fit there and the text tells the user
-      // what the configurator needs for a full one.
+      // says: llama-server runs the fit there and 184's text tells the user
+      // what the fit can still do.
       true,
-      allowed ? 'preset-fit-allowed' : 'preset-fit-not-allowed',
+      // 108 with the box unchecked gives the not-allowed text, 184 with the
+      // box checked the text naming what is left to fit.
+      fitToggleKey(values),
       `ctx-size ${ctx ?? 'absent'}, n-gpu-layers ${layers ?? 'absent'}`,
     )
     cleanup()
@@ -864,12 +880,12 @@ test('2e.108, 2e.127: the rule of 108 picks only the toggle text, preset-fit-all
   }
 })
 
-test('2e.109: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-not-allowed, values {fit: on} checks it with preset-fit-allowed, values {} checks it, fit TRUE alone is refused so unchecked with the field error', async () => {
-  // Every key of 107 set, and the read holds n-gpu-layers: not allowed, so the
-  // not-allowed text of 108. The file's `fit` is `on`, so the box is checked:
+test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-nothing, values {fit: on} checks it with preset-fit-allowed, values {} checks it, fit TRUE alone is refused so unchecked with the field error', async () => {
+  // Every key of 107 set, and the read holds n-gpu-layers: 184's last row,
+  // the nothing-to-fit text. The file's `fit` is `on`, so the box is checked:
   // 127 replaces the unchecked 109 read from 108.
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
-  fitShows(main, true, 'preset-fit-not-allowed', 'the stub of 109')
+  fitShows(main, true, 'preset-fit-nothing', 'the stub of 109')
   cleanup()
   vi.unstubAllGlobals()
   // `values` {fit: "on"}: allowed, and `on` is on.
@@ -903,12 +919,12 @@ test('2e.109: the stub of 109 shows as 127 and 128 read it: every key set checks
   fitShows(off.main, false, 'preset-fit-allowed', 'fit false')
   cleanup()
   vi.unstubAllGlobals()
-  // `fit` on with GPU layers set: checked, with the GUI's text: the engine
-  // still fits (127), the text says what the configurator needs (108).
+  // `fit` on with GPU layers set: checked, with 184's text: the engine
+  // still fits (127), the text says the context is what is left to fit.
   const layers = await loaded({
     preset: () => reply(200, exactOf({ fit: 'on', 'n-gpu-layers': '99' })),
   })
-  fitShows(layers.main, true, 'preset-fit-not-allowed', 'fit on, layers set')
+  fitShows(layers.main, true, 'preset-fit-context-only', 'fit on, layers set')
 })
 
 // ── The two selects 2e.4 adds (107) ────────────────────────────────────
@@ -1201,7 +1217,7 @@ test('2e.87, 2h.158: the six number keys of 107 are all integer keys: the numeri
   }
 })
 
-test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (the Fit trio, the two MoE rows, and the draft pair while the read holds no model-draft), never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
+test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (the two MoE rows, and the draft pair while the read holds no model-draft), the Fit trio enabled per 183 and 186, never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
   const doc = docOf(SET)
   const { main } = await loaded({ preset: () => reply(200, doc) })
   const controls = [
@@ -1323,7 +1339,8 @@ test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the Engine About
     stops.push(`${en('field-about')} ${f.label}`)
     if (!rowEnabled(f, doc.values)) continue
     if (f.kind === 'number') stops.push(en('field-default'))
-    stops.push(f.label)
+    // Fit to VRAM is named by 184's toggle text, not by its label.
+    stops.push(f.key === 'fit' ? fitToggleText(doc.values) : f.label)
   }
   expect(
     mainTabbable(cardOf(main, CARD)),
@@ -1365,9 +1382,11 @@ test('2e.110: the card, every label, hint, toggle, option and the empty device o
         `${f.key}: the options of the table`,
       ).toEqual(f.options)
   }
-  // The two texts of 108, each in the state that shows it.
-  expect(fitState(main)[1], 'not allowed: the toggle text of 110').toBe(
-    en('preset-fit-not-allowed'),
+  // The texts of 108 and 184, each in the state that shows it: the stub of
+  // 109 holds both keys, so 184's last text; an exact {fit: true} holds
+  // neither, so 108's allowed text.
+  expect(fitState(main)[1], 'both set: the toggle text of 110').toBe(
+    en('preset-fit-nothing'),
   )
   cleanup()
   vi.unstubAllGlobals()

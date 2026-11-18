@@ -5,7 +5,9 @@
 // written-as line, the off / on flag, the two word selects matched exactly),
 // the draft pair behind `model-draft` with its note, MoE CPU layers and MoE
 // cache always disabled with their note, their values kept and never sent and
-// never checked, the Fit trio still read-only with its full-value lines (134),
+// never checked, and the two MoE rows the only controls the card leaves
+// disabled once every key is there (130, with 2h.8's 183 and 186, whose own
+// editing is 2h.14's in PresetSave14.test.tsx),
 // the load-mode exact match (180), the two notes as plain paragraphs (181)
 // and their exact strings (182). The card's read-only look is 2e's 107, in
 // PresetCards4.test.tsx; the helpers are those of PresetSave12.test.tsx,
@@ -45,9 +47,6 @@ const REPACK = en('preset-repack')
 const NO_HOST = en('preset-no-host-buffer')
 const LAZY = en('preset-lazy-tensors')
 const LOAD = en('preset-load-mode')
-const FIT_ON = en('preset-fit-allowed')
-const FIT_CTX = en('preset-fit-min-context')
-const FIT_TARGET = en('preset-fit-free-vram')
 const DRAFT_DEV = en('preset-draft-device')
 const DRAFT_LAYERS = en('preset-draft-gpu-layers')
 /** The text of Draft device's empty option (2e's 103, 107; follows-model is
@@ -61,9 +60,8 @@ const DRAFT_OFF_TEXT =
   'Draft device and Draft GPU layers apply only to a Draft model file, and this preset has none (Assets).'
 const MOE_LATER_TEXT =
   'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.'
-/** The number and the text past the full-value line's limits (119). */
+/** The number past the full-value line's 8 characters of a number (119). */
 const NUM_9 = '172032000'
-const TEXT_21 = '{"MixedCaseX":TRUE}  '
 
 /** What the read gives: every key of the card present, each a value the
  * configurator itself would write (so no written-as line). */
@@ -657,45 +655,40 @@ test('2h.182: the new strings preset-draft-file-off and preset-moe-later are the
   expect(en('preset-moe-later')).toBe(MOE_LATER_TEXT)
 })
 
-// ── 175, 134: the Fit trio stays read-only ───────────────────────────
+// ── 178 with 2h.8's 183, 186: what the card leaves disabled ───────────
 
-test('2h.175, 2h.134: Fit to VRAM, Fit min context and Fit free VRAM stay natively disabled, and the long values under them show the full-value line', async () => {
-  const { main } = await form({
-    ...without('n-gpu-layers'),
-    fit: 'on',
-    'fit-ctx': NUM_9,
-    'fit-target': TEXT_21,
-  })
-  const fit = within(main).getByRole('checkbox', {
-    name: FIT_ON,
-  }) as HTMLInputElement
-  expect(fit.disabled, 'Fit to VRAM stays disabled (2h.8)').toBe(true)
-  expect(fit.checked, 'fit on shows checked').toBe(true)
+test('2h.178, 2h.130, 2h.183, 2h.186: with every key of the card present, MoE CPU layers and MoE cache are the only controls of the Hardware card left natively disabled, and the Fit trio is not one of them', async () => {
+  // Every key present: every default box unticked (156), the draft pair
+  // enabled by 177 and the Fit dependents enabled by 186. So the card's only
+  // disabled controls are the two MoE rows of 178, each its default box and
+  // its input. 2h.8's 183 took `fit`, `fit-ctx` and `fit-target` out of this
+  // list (their editing and their enable rule are 2h.14's, in
+  // PresetSave14.test.tsx), and 134 gives a long value under a control a rule
+  // disables the full-value line (PresetSave1.test.tsx and
+  // PresetFullValue.test.tsx).
+  const { main } = await form()
+  const card = headingOf(main, HEADING).closest('section') as HTMLElement
+  const controls = [...card.querySelectorAll<HTMLElement>('input, select')]
   expect(
-    checkBox(main, FIT_CTX).disabled,
-    'Fit min context box stays disabled (2h.8)',
-  ).toBe(true)
-  const ctx = box(main, FIT_CTX)
-  expect(ctx.disabled, 'Fit min context input stays disabled').toBe(true)
-  expect(ctx.value, 'the input keeps the file text').toBe(NUM_9)
-  const line = document.getElementById('preset-full-fit-ctx')
+    controls.length,
+    'the card holds the controls of its rows',
+  ).toBeGreaterThan(10)
+  const disabled = controls
+    .filter((el) => (el as HTMLInputElement).disabled)
+    .map((el) => el.getAttribute('id') ?? el.tagName)
+    .sort()
   expect(
-    line,
-    '134: a disabled control shows the full-value line',
-  ).not.toBeNull()
-  expect(
-    line!.getAttribute('aria-hidden'),
-    '120: the line is aria-hidden',
-  ).toBe('true')
-  expect(line!.textContent, 'the line holds the value as written').toBe(NUM_9)
-  const target = within(main).getByRole('textbox', {
-    name: FIT_TARGET,
-  }) as HTMLInputElement
-  expect(target.disabled, 'Fit free VRAM input stays disabled').toBe(true)
-  expect(target.value, 'the input keeps the file text').toBe(TEXT_21)
-  const tline = document.getElementById('preset-full-fit-target')
-  expect(tline, '134: the text shows its full-value line too').not.toBeNull()
-  expect(tline!.textContent, 'the line holds the value as written').toBe(
-    TEXT_21,
-  )
+    disabled,
+    'the two MoE rows, and nothing else, are natively disabled',
+  ).toEqual([
+    'preset-moe-cache-mib-box',
+    'preset-moe-cache-mib-control',
+    'preset-n-cpu-moe-box',
+    'preset-n-cpu-moe-control',
+  ])
+  for (const el of controls)
+    expect(
+      el.getAttribute('aria-disabled'),
+      `${el.getAttribute('id')}: a disabled control is natively disabled, never aria-disabled`,
+    ).toBeNull()
 })

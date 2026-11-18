@@ -4,18 +4,19 @@
 // select cannot wrap, scroll or be read past its edge. It is built once in the
 // shared field renderer of fe/src/PresetCards.tsx, so every field of 2e.1 and
 // 2e.2 gets it. 2h.4's 160 and 2h.5's 164 keep the rule (134: the line is
-// only for a disabled control): of the Resource / context card, now
-// editable, only Unified KV can be disabled with a value, and the KV cache and
-// Advanced cards are editable, so every example here is of a card that is
-// still read-only: the number, the text and the select are MoE cache and Fit
-// free VRAM of the Hardware card (178 keeps the MoE rows disabled, 2h.8 the
-// Fit trio) and the Draft K-cache type of the Speculative decoding card, the
-// select 2h.7's 175 left read-only with Lazy tensors. The fields, their controls and
-// how a value is shown are PresetCards1.test.tsx and PresetCards2.test.tsx;
-// the route and the read are PresetPage.test.tsx. The colour and the wrap at
-// 320 px are the designer's review, not jsdom: criterion 118's style is pinned
-// as the CSS rule, the way App.test.tsx pins the banner's.
-// The line is only for a read-only page, so the last test pins that the
+// only for a control that is disabled now, a rule's lock of 176 included), and
+// 2h.8's 183 to 186 left no read-only field anywhere on the preset page: every
+// card is editable now. So every example here is of a control a rule disables,
+// one per kind: Fit free VRAM of the Hardware card as the text input and as
+// the number box, both disabled while the Fit to VRAM box is off (186), and
+// the Draft K-cache type of the Speculative decoding card, the select 2h.7's
+// 175 disables while the model carries no draft. The fields, their controls
+// and how a value is shown are PresetCards1.test.tsx and
+// PresetCards2.test.tsx; the route and the read are PresetPage.test.tsx. The
+// colour and the wrap at 320 px are the designer's review, not jsdom:
+// criterion 118's style is pinned as the CSS rule, the way App.test.tsx pins
+// the banner's.
+// The line is only for a disabled control, so the last test pins that the
 // editable Server form shows none, whatever its values hold.
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
@@ -69,6 +70,7 @@ const MOE = en('preset-moe-cache')
  * mode became editable, so 134 takes their line away; 2h.9 is the Speculative
  * decoding card's own slice). */
 const FIT = en('preset-fit-free-vram')
+const MIN_CTX = en('preset-fit-min-context')
 const DRAFT_K = en('preset-draft-k-cache-type')
 /** The other editable number fields of the Resource / context card (2h.4). */
 const SLOT = en('preset-per-slot-context')
@@ -229,6 +231,9 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
   const { main } = await page({
     'moe-cache-mib': NUM_PAD,
     'fit-target': TEXT_21,
+    // 2h.8's 186: the Fit fields are editable, so the free-VRAM input is
+    // disabled only while the Fit to VRAM box is off.
+    fit: 'off',
     'spec-draft-type-k': SELECT_LONG,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
@@ -275,6 +280,7 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
   const { main } = await page({
     'moe-cache-mib': NUM_9,
     'fit-target': TEXT_21,
+    fit: 'off',
   })
   const cases: [string, 'number' | 'text', string, boolean][] = [
     ['moe-cache-mib', 'number', MOE, true],
@@ -330,15 +336,25 @@ test('2e.118, 2h.160, 2h.170, 2h.175: one line per long field: each line is in i
     'reasoning-effort': SELECT_LONG,
     'reasoning-budget': NUM_9,
     'n-predict': NUM_9,
-    // The Hardware card, editable since 2h.7's 175 except the Fit trio (2h.8)
-    // and the MoE rows (178): its number's box is unticked by the key, so its
-    // input is enabled, and its three selects are always enabled.
+    // The Hardware card, editable since 2h.7's 175 and 2h.8's 183: its
+    // number's box is unticked by the key, so its input is enabled, and its
+    // three selects are always enabled. The MoE pair and the Fit trio are the
+    // exceptions: 178 keeps the MoE cache box disabled until 2g, and with the
+    // Fit to VRAM box off 186 leaves the min-context input and the free-VRAM
+    // input disabled. 134 keeps the line under a control disabled now, so these
+    // three long values get one.
     'n-gpu-layers': NUM_9,
     'lazy-mode': SELECT_LONG,
     'load-mode': SELECT_LONG,
+    fit: 'off',
+    'fit-ctx': NUM_9,
+    'fit-target': TEXT_21,
   })
   const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
-  expect(lines.length, 'exactly the two long fields have a line').toBe(2)
+  expect(
+    lines.length,
+    'exactly the four long disabled fields have a line',
+  ).toBe(4)
   for (const key of [
     'ctx-size',
     'parallel',
@@ -358,16 +374,28 @@ test('2e.118, 2h.160, 2h.170, 2h.175: one line per long field: each line is in i
   ])
     expectNoLine(main, key)
   const owners = new Set(lines.map((l) => l.closest('.field')))
-  expect(owners.size, 'no field holds both lines').toBe(2)
-  for (const [key, label] of [
-    ['moe-cache-mib', MOE],
-    ['spec-draft-type-k', DRAFT_K],
+  expect(owners.size, 'no field holds both lines').toBe(4)
+  // The four owners, each of them a control disabled right now in this fixture,
+  // which is what 134 asks for: MoE cache, disabled until 2g (178); the Draft
+  // K-cache type, of the Speculative decoding card, not editable before 2h.9's
+  // 189; and Fit min context and Fit free VRAM, locked by 186 while the Fit to
+  // VRAM box is off.
+  for (const [key, kind, label] of [
+    ['moe-cache-mib', 'number', MOE],
+    ['spec-draft-type-k', 'select', DRAFT_K],
+    ['fit-ctx', 'number', MIN_CTX],
+    ['fit-target', 'text', FIT],
   ] as const) {
     const field = fieldOf(main, label)
     expect(
       field.querySelector(`#preset-full-${key}`),
       `${key}: its line is in its own field`,
     ).toBeTruthy()
+    const control = controlOf(main, kind, label) as HTMLInputElement
+    expect(
+      control.disabled,
+      `${key}: 134: the line sits under a control that is disabled right now`,
+    ).toBe(true)
   }
 })
 
@@ -470,10 +498,10 @@ test('2e.119: a number shows no line at 8 characters and its line at 9', async (
 test('2e.119: a text value shows no line at 20 characters and its line at 21', async () => {
   expect(TEXT_20.length, 'the text stub is 20 characters').toBe(20)
   expect(TEXT_21.length, 'the text stub is 21 characters').toBe(21)
-  const short = await page({ 'fit-target': TEXT_20 })
+  const short = await page({ 'fit-target': TEXT_20, fit: 'off' })
   expectNoLine(short.main, 'fit-target')
   cleanup()
-  const long = await page({ 'fit-target': TEXT_21 })
+  const long = await page({ 'fit-target': TEXT_21, fit: 'off' })
   expect(
     lineOf(long.main, 'fit-target').textContent,
     'the 21-character line',
@@ -505,6 +533,7 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
   const { main } = await page({
     parallel: '8',
     'fit-target': '{"short":1}',
+    fit: 'off',
     'kv-unified': 'auto',
     'spec-draft-type-k': 'auto',
   })
@@ -516,18 +545,29 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
 
 // ── 120: accessibility ──────────────────────────────────────────────────
 
-/** Three long fields of three kinds, the line of each. */
+/** Long fields of every kind the line covers, and the short ones. */
 const LONG = {
   'moe-cache-mib': NUM_9,
+  // Fit min context, the number disabled by 2h.8's 186 rule, and Fit free
+  // VRAM, the text disabled by the same rule.
+  'fit-ctx': NUM_9,
   'fit-target': TEXT_21,
+  fit: 'off',
   'spec-draft-type-k': SELECT_LONG,
 }
 const SHORT = {
   'moe-cache-mib': NUM_8,
+  'fit-ctx': NUM_8,
   'fit-target': TEXT_20,
+  fit: 'off',
   'spec-draft-type-k': SELECT_20,
 }
-const LONG_KEYS = ['moe-cache-mib', 'fit-target', 'spec-draft-type-k'] as const
+const LONG_KEYS = [
+  'moe-cache-mib',
+  'fit-ctx',
+  'fit-target',
+  'spec-draft-type-k',
+] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
   const { main } = await page(LONG)
@@ -580,7 +620,10 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
     [{ 'spec-draft-type-k': SELECT_20 }, null],
     [{ 'kv-unified': 'auto' }, null],
     [
-      { 'fit-target': '{"enable_thinking":false}' },
+      // The text example of the brief's list is chat-template-kwargs, editable
+      // since 2h.5's 164, so the same 25-character JSON is shown on the one
+      // text field a rule disables (186).
+      { 'fit-target': '{"enable_thinking":false}', fit: 'off' },
       '{"enable_thinking":false}',
     ],
   ]

@@ -159,10 +159,13 @@ export const EN: Record<string, string> = {
   'field-error-number': 'Enter a whole number from {0} to {1}.',
   'field-error-number-min': 'Enter a whole number of at least {0}.',
   'field-error-whole-number': 'Enter a whole number, without a decimal point.',
+  'field-error-gpu-layers': 'Enter a whole number, auto or all.',
   'field-error-decimal':
     'Enter a number, such as 0.7 (a decimal comma also works).',
   'field-error-comment-markers':
     'Remove the ; and # characters: the INI file would cut the value there.',
+  'field-error-fit-target':
+    'Enter MiB as whole numbers: one number, or one per device separated by commas, such as 2048,1024.',
   'field-error-json-object':
     'Enter one JSON object in braces, such as {"enable_thinking": false}.',
   'api-not-whole-number-in-range':
@@ -494,6 +497,14 @@ export const EN: Record<string, string> = {
   'preset-fit-not-allowed': 'needs Context size and GPU layers at default',
   'preset-fit-invalid':
     'llama-server refuses this value, so this preset does not start. Use on or off.',
+  // The three lose the trailing period, to read as one family with
+  // preset-fit-allowed and preset-fit-not-allowed (2h.8 review).
+  'preset-fit-layers-only':
+    'auto-fit the GPU layers only: Context size is set (-fit on)',
+  'preset-fit-context-only':
+    'auto-fit the context only: GPU layers is set, so llama.cpp keeps your layers (-fit on)',
+  'preset-fit-nothing':
+    'nothing to fit: Context size and GPU layers are both set (-fit on)',
   'preset-fit-min-context': 'Fit min context',
   'preset-fit-min-context-hint':
     "The smallest context Fit to VRAM may cut down to. Only used with Fit to VRAM on.\nDefault: 4096 (llama.cpp's own).\nFlag: --fit-ctx",

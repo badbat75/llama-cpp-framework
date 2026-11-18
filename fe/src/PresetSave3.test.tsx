@@ -74,12 +74,19 @@ async function loaded(
 }
 
 /** The page, dirty: Embedding mode off, and the save answered `body`.
- * `n-gpu-layers` is in the read so the Hardware card's 157 row has an enabled
- * control to mark and focus (2h.7's 175 made it editable, and the key leaves
- * its default box unticked, 156). */
+ * `n-gpu-layers` and `fit-ctx` are in the read so the Hardware card's 157 row
+ * has an enabled control to mark and focus (2h.7's 175 made GPU layers
+ * editable and 2h.8's 183 the Fit min context, and the keys leave their default
+ * boxes unticked, 156). `fit-ctx` is the value the `min-above-max` row below
+ * names in its args, the number the manager refused. */
 async function refused(body: Record<string, unknown>) {
   const { bff, main } = await loaded(
-    { embeddings: 'true', pooling: 'weird', 'n-gpu-layers': '99' },
+    {
+      embeddings: 'true',
+      pooling: 'weird',
+      'n-gpu-layers': '99',
+      'fit-ctx': '8192',
+    },
     () => reply(422, body),
   )
   pick(main, MODE, 'false')
@@ -313,14 +320,20 @@ const TABLE_150: [
     },
     'text',
     en('preset-fit-min-context'),
-    false,
+    // 2h.8's 183 made Fit min context editable: the read's key leaves its box
+    // unticked and 186 leaves the field enabled while Fit to VRAM reads
+    // checked, so its input is enabled and takes the focus (144).
+    true,
   ],
   [
     'fit-target-format: fit-target',
     { key: 'fit-target-format', args: ['2048,x', 'use'] },
     'text',
     en('preset-fit-free-vram'),
-    false,
+    // 2h.8's 183 made Fit free VRAM editable and 186 leaves it enabled while
+    // Fit to VRAM reads checked, which it does with no `fit` in the read
+    // (2h.127), so its input is enabled and takes the focus.
+    true,
   ],
   [
     'moe-cache-with-tensor-split: moe-cache-mib',

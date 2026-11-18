@@ -1189,15 +1189,16 @@ function errorOf(main: HTMLElement, key: string): HTMLElement | null {
 function expectFit(main: HTMLElement, r: FitReading): void {
   const shown = JSON.stringify(r.value)
   const box = checkBoxOf(main, flagOf('fit'))
-  // 129: the box stays disabled in every row.
-  expect(box.disabled, `fit ${shown}: the box is disabled`).toBe(true)
+  // 2h.8's 183: the box is editable in every row, whatever the two default
+  // boxes and its own state: what the rule picks is the text, never the box.
+  expect(box.disabled, `fit ${shown}: 183: the box is enabled`).toBe(false)
   // 127: the box shows what llama-server does.
   expect(box.checked, `fit ${shown}: 127: the box`).toBe(r.checked)
-  // 108, untouched: Context size and GPU layers are both absent in these rows,
-  // so the toggle text is the allowed one.
+  // 2h.8's 184: Context size and GPU layers are both at default in these rows,
+  // so the text is the allowed one, whatever the box and its value.
   expect(
     (box.closest('label')?.textContent ?? '').trim(),
-    `fit ${shown}: 108: the toggle text`,
+    `fit ${shown}: 184: the toggle text`,
   ).toBe(en('preset-fit-allowed'))
   // 127, 124: the written-as line of the spelling the file holds.
   const line = writtenOf(main, 'fit')
@@ -1287,54 +1288,109 @@ test.each(FIT)(
   },
 )
 
-// ── 127: the allowed rule of 108 only picks the toggle's text ──────────
+// ── 2h.8's 184: the rule of 108 picks the toggle's text, and 183 the box ──
 
-test('2e.127, 2e.108, 2e.129: Fit to VRAM shows what the engine does where the configurator is not allowed: the four combinations of the box and the two toggle texts, and the error follows the value, not the rule', async () => {
-  // 108's rule stands for the toggle text; 127 takes from it the power to
-  // uncheck the box: `fit` on with Context size set, or with GPU layers set, is
-  // checked with the not-allowed text, and an absent `fit` is checked there
-  // too, the engine's own default. A refused value keeps its error beside the
-  // not-allowed text.
-  for (const [values, checked, toggleKey, hasError] of [
-    [{ fit: 'on' }, true, 'preset-fit-allowed', false],
-    [{ fit: 'off' }, false, 'preset-fit-allowed', false],
-    [{ fit: 'on', 'ctx-size': '8192' }, true, 'preset-fit-not-allowed', false],
-    [
-      { fit: 'on', 'n-gpu-layers': '99' },
-      true,
-      'preset-fit-not-allowed',
-      false,
-    ],
-    [{ 'n-gpu-layers': '99' }, true, 'preset-fit-not-allowed', false],
-    [
-      { fit: 'off', 'ctx-size': '172032', 'n-gpu-layers': '99' },
-      false,
-      'preset-fit-not-allowed',
-      false,
-    ],
-    [
-      { fit: 'TRUE', 'ctx-size': '8192' },
-      false,
-      'preset-fit-not-allowed',
-      true,
-    ],
-  ] as [Record<string, string>, boolean, string, boolean][]) {
-    const { main } = await page(values)
-    const box = checkBoxOf(main, flagOf('fit'), en(toggleKey))
-    const shown = JSON.stringify(values)
-    expect(box.checked, `${shown}: 127: the box`).toBe(checked)
+/** One row of 184's table: the two default boxes and the box's state, with the
+ * text the field shows. The box's state is 2e.3c's 127 (the file's value, an
+ * absent `fit` on), and a refused value is 128's (unchecked, with its error).
+ * A `ctx-size` of `""` is at default too: the empty value reads as absent
+ * (2e's 86), so its default box is ticked. */
+type FitTextRow = {
+  /** The read's `values`. */
+  values: Record<string, string>
+  /** The box's state (127). */
+  checked: boolean
+  /** The strings key of the text that names the box (184). */
+  toggle: string
+  /** True when the value carries the field error of 128; absent for none. */
+  error?: boolean
+}
+
+const FIT_TEXT: FitTextRow[] = [
+  // Both at default: the allowed text in every state, the box included (184).
+  { values: { fit: 'on' }, checked: true, toggle: 'preset-fit-allowed' },
+  { values: { fit: 'off' }, checked: false, toggle: 'preset-fit-allowed' },
+  {
+    values: { fit: 'TRUE' },
+    checked: false,
+    toggle: 'preset-fit-allowed',
+    error: true,
+  },
+  {
+    values: { 'ctx-size': '', fit: 'on' },
+    checked: true,
+    toggle: 'preset-fit-allowed',
+  },
+  // Context size set, GPU layers at default.
+  {
+    values: { 'ctx-size': '8192', fit: 'on' },
+    checked: true,
+    toggle: 'preset-fit-layers-only',
+  },
+  {
+    values: { 'ctx-size': '8192', fit: 'off' },
+    checked: false,
+    toggle: 'preset-fit-not-allowed',
+  },
+  // GPU layers set, Context size at default.
+  {
+    values: { 'n-gpu-layers': '99', fit: 'on' },
+    checked: true,
+    toggle: 'preset-fit-context-only',
+  },
+  {
+    values: { 'n-gpu-layers': '99', fit: 'off' },
+    checked: false,
+    toggle: 'preset-fit-not-allowed',
+  },
+  // An absent `fit` is the engine's on (127), so it is a checked box here.
+  {
+    values: { 'n-gpu-layers': '99' },
+    checked: true,
+    toggle: 'preset-fit-context-only',
+  },
+  // Both set: what the fit can still do once the box is checked is nothing.
+  {
+    values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'on' },
+    checked: true,
+    toggle: 'preset-fit-nothing',
+  },
+  {
+    values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'off' },
+    checked: false,
+    toggle: 'preset-fit-not-allowed',
+  },
+  // 185: a refused value keeps its error beside the text the rule picks, and
+  // reads unchecked, so it belongs to the unchecked row of 184.
+  {
+    values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'TRUE' },
+    checked: false,
+    toggle: 'preset-fit-not-allowed',
+    error: true,
+  },
+]
+
+test.each(FIT_TEXT)(
+  '2h.183, 2h.184, 2e.127: fit $values: the box is enabled, checked $checked, named by $toggle, the field error $error',
+  async (r) => {
+    const { main } = await page(r.values)
+    const box = checkBoxOf(main, flagOf('fit'), en(r.toggle))
+    const shown = JSON.stringify(r.values)
+    // 183: the box is always editable. The rule of 108 keeps only the words.
+    expect(box.disabled, `${shown}: 183: the box is enabled`).toBe(false)
+    // 127: the box shows what the engine does with the file's value.
+    expect(box.checked, `${shown}: 127: the box`).toBe(r.checked)
     expect(
       (box.closest('label')?.textContent ?? '').trim(),
-      `${shown}: 108: the toggle text`,
-    ).toBe(en(toggleKey))
+      `${shown}: 184: the toggle text`,
+    ).toBe(en(r.toggle))
+    // 128: the error is the value's, not the rule's.
     expect(
       errorOf(main, 'fit') !== null,
       `${shown}: 128: the error is the value's, not the rule's`,
-    ).toBe(hasError)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+    ).toBe(r.error === true)
+  },
+)
 
 // ── 129a: the Fit to VRAM hint reads as the box does ───────────────────
 
