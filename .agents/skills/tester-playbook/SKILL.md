@@ -5,2486 +5,492 @@ description: What the tester has learned about writing reliable tests. Use when 
 
 Lessons only: the rules are in `AGENTS.md`.
 
-## General
+## Proving a red, and what a run proves
 
-- Never wait without a deadline (`recv_timeout`, `try_wait` loop, `method_timeout`): a test must fail,
+- Never wait without a deadline (`recv_timeout`, a `try_wait` loop, `method_timeout`): a test must fail,
   not hang. `recv_timeout` returns `Disconnected` at once when the thread panicked (a `todo!` stub):
-  report it apart from `Timeout`, or the red reads as a hang.
-- A phase helper that runs the call on a thread (`on(what, &Arc<Client>, impl FnOnce(&Client) -> T +
-  Send + 'static)`) takes a `'static` closure: it cannot borrow a local of the phase (`E0373 closure
-  may outlive the current function`). Bind owned clones next to the call (`let (a, b) = (x.clone(),
-  y.clone());`) and `move` them in; the originals stay for the asserts after it.
-- Check why a test is red, or why it is already green: a test can pass for the wrong reason (the field
-  did not exist yet). Recheck such tests once the code exists.
-- The manager's and the core's e2e phases are ONE `#[test]` run in sequence (`src/tests/mod.rs`), so a red
-  stops the run at its FIRST panic: a phase added at the end of the list reports nothing. To show a later
-  phase's red, copy `tests/mod.rs` to the scratchpad, rewrite the body to call only that phase, run
-  `cargo test -p <crate> -- tests::data_root_e2e`, then `cp` the copy back (never `git checkout`) and
-  `grep -n` the registration to confirm the restore. A phase that redirects the data root runs alone.
-- The same trick proves the pins a first red blocks inside ONE phase of a `src/` file (a phase like
-  `manager_*_e2e` lives in the module, so a `tests/zz_probe.rs` copy cannot reach its `pub(crate) fakes`):
-  append a twin `pub(crate) fn <phase>_probe_e2e()` built by a python transform of the real body (early
-  `assert_eq!(`/`assert!(` → `let _ = (`), register the twin LAST in the scratch `tests/mod.rs` and comment
-  out the real phase there, then neutralize in waves (one wave = the asserts before the next block). Two
-  artefacts of the transform red as `E0282` in a neutralized tuple: a bare `Ok(())`/`Ok(false)` argument
-  needs `Ok::<(), ManagerError>(())`, and an `Err`-only helper closure needs a return-type annotation (a
-  `type VerbAnswers = (Result<(), ManagerError>, ..)` alias, written by rustfmt one element per line).
-  Restore with `cp` + `cmp` and check the registration with `grep -n`; a `grep -c probe` on the file counts
-  its own pre-existing `probe` fixtures, so read those lines rather than trusting the count.
-- Inside ONE phase the asserts are a sequence too, so the first red blocks every later pin of the SAME
-  coder branch: say they go green together, and prove the fixtures with a standalone `rustc --edition 2021`
-  probe of the reader's predicates (`ini::parse_sections` trims both sides, so `Key =` and `Key =   ` are
-  both the empty string, and a section with no key is the same answer).
-- Cheaper than waves for the pins of ONE phase: a twin built by a python transform that wraps every top-level
-  `assert_eq!`/`assert!` (paren-matched across lines) in `probe!(<file line>, { .. })`, where the local macro is
-  `catch_unwind(AssertUnwindSafe(|| $body))` + a downcast of the payload into a `Vec<String>` (one `println!`
-  per entry, `--nocapture`, a no-op panic hook set at the top and `take_hook()` at the end). ONE run lists every
-  red pin and every green one at once, no compile per wave. A refusal a pin expects is then WRITTEN (its assert
-  was neutralized), so a later "writes nothing" pin reds as a cascade: report it as such, it greens with the
-  fix. Rebuild the twin from the CURRENT file only (a stale `probe_fn.rs` inserted and then regenerated is a
-  duplicate definition), remove it by its own `fn` line + first `^}`, and diff the file against the pre-probe
-  backup: that diff is the proof the phase edits survived. Give the twin the attributes that sit above the
-  phase's own `fn` (`#[cfg(test)]`): without them it compiles into the plain lib and fails on the
-  cfg(test)-only imports it copied. Register it by APPENDING one `#[test]` to the module that calls the
-  phases; never rewrite that module's header (it lists its `mod`s).
-- A phase `fn` nothing calls NEVER runs, so the crate's green run says nothing about it: grep the phase name
-  for a call site (the manager's e2e phases run from `data_root_e2e`, `crates/manager/src/tests/mod.rs`) and
-  report a slice that added a phase and left it unregistered.
-- Cheapest way to see the pins of a phase that runs AFTER a red one in `data_root_e2e`: append ONE temporary
-  `#[test]` that calls only that phase and run it with `-- --exact tests::probe_<phase>` (libtest runs just it,
-  so the process-wide data-root redirect of the big sequence is not racing it). Delete the probe and rerun the
-  real sequence; no scratch copy, no transform.
-- A new "only a profile IN USE is judged" gate in a production check reds every pre-existing fixture that saves
-  a name the record does not carry: `left: Ok(()) right: Err(AddressInUse("default"))` (the save lands, the
-  refusal never runs). Keep the expectation, give the record the section of the saved name around those pins
-  (`std::fs::write(sys.join(INSTANCES_FILE), format!("{record}\n[x]\nServerProfile = x\n"))`), and restore the
-  record right after: the record feeds `list_instances()` (exact list), `status`/`start` (`NoInstance` for an
-  unregistered id) and `boot_enabled`, so a section left in place reds a LATER block. One section whose profile
-  file is missing is inert for the renders (the check skips it), so it is safe to carry through them.
-- A "the unreadable section is SKIPPED" accept greens for the wrong reason when the save is of an UNUSED name
-  (an unused save is checked against nothing at all): make the save a name IN USE, so the check runs and walks
-  the skipped sections. Check every expected value against the fixture's own state, not the idea (a `max` in a
-  refusal is a file's number: a phase that lowered it says so in the fixture write above it), and read the
-  renderer before pinning a count: `assign::render` under `* = inherit` renders the disabled pool's sections
-  OFF, so a section parked off the pool does NOT raise the `load-on-startup` count.
-- A refusal whose PATH the design leaves open: pin only `is_err()` and say so in the comment. Once the
-  coordinator closes the rule, replace the loose assert with the exact value: `is_err()` greens on a refusal
-  that names the wrong path (the id built into `server@<id>.ini` where the record is wanted).
-- A stub inserted with `edit` lands wherever the anchor matches: the same stub inserted twice (two anchors
-  both matching) is `E0592: duplicate definitions with name`. After inserting a stub, `grep -n "fn <name>"`
-  and read the count; a `pub fn` stub in a lib crate raises no dead-code red, so the compile is the only
-  sign.
-- The shape of a callee read from a summary is a guess: `assign::render(enabled, disabled,
-  assignment: Option<&str>) -> String` (not `&str`) and `ini::text::section_text -> Option<String>`, so the
-  expected render is `render(pool, off, section_text(a, id).as_deref())` (the temporary lives to the end of
-  the statement, so it is fine inside the `assert_eq!`) compared against `read(name)` as an `Option<String>`,
-  not `.as_deref()`. A method's arity is pinned by a source-lint test in the same file
-  (`write_file_if(who, name, contents, expected)`, no key flag): read that test, not the doc comment.
-- The manager's render (slice: per-instance `presets@<id>.ini`): a successful write of `server@<id>.ini`
-  or of a pool file renders it, so an exhaustive listing after a server-file write includes the render;
-  the render text is `assign::render(pool, disabled, section)`, never the pool text (it opens with the
-  generated header). A client write of `presets.ini` with a `[*]` section is refused `invalid-preset-id`
-  `["*"]` (an existing check): a fixture carries the global section only by `std::fs::write` (a hand
-  edit), then a legal pool-file write (e.g. `presets.ini.disabled`) re-renders it in. `* = inherit` on
-  one section assigns EVERY pool preset to it, so a "preset X is the sibling's alone" pin is
-  impossible under it: give the two assignment sections explicit distinct keys (`a = inherit`,
-  `b = inherit`). A phase that writes into `engine_config_dir` after the redirect must
-  `create_dir_all(&sys)` itself: only the CAS phase's `root(&files)` helper does it.
-- A per-line exemption in a section checked by a whole-section rule: the rule runs line by line in code
-  order, so a "this line is refused" pin is red today at the refusal key of an EARLIER line the
-  exemption will later skip. Assert the expected refusal key, never `is_err()`, and report that red as
-  the key-name, not as an existing refusal.
-- A brief that quotes a sentence the tree does not have (`git grep` of the quote: 0 hits, exit 1) names a
-  line: read that line, pin the text that IS there, and report the quote as wrong (a rename campaign's
-  target is the word, not the sentence).
-- Read the file you are extending before writing against it; never work from a remembered or summarised
-  API. A context summary recites names (`App::app_writing`, `Outcome::Err(..)`, `rich_cfg()` in a route
-  test) that the file does not have, and a whole `read` of a region can render lines that are not there
-  at all: the helpers of the inline `mod tests` of a `src/` file are not the helpers of its
-  `tests/<name>.rs`. Grep for the helper and the constant names you plan to use and read their bodies;
-  a failed `edit` match is the signal to re-read, not to retype.
-- A `#[tokio::test]` runtime is one thread: a fake that sleeps on the async path stops the test, not the
-  route. A sleep inside a fake's method is safe when the route runs that method inside `spawn_blocking`
-  (the bff's save: connect, read, write, status in one blocking task). The bff's session routes
-  (`/api/session`, sign-in) never connect, so a connect hook is inert for them.
-- An independent rerun of cargo commands that prints `Finished ... in 0.0xs` is cargo replaying a cached
-  pass (its fingerprint does match the current sources: `cargo check -v` prints `Fresh <pkg>`). To compile
-  the coder's files yourself: `cargo clean -p <pkg>` first; it covers only the host target, so force the
-  cross target with `cargo clean -p <pkg> --target <triple>`. The rerun's own log proves the compile when
-  it prints `Compiling <pkg>`; a follow-up `cargo check -p <pkg> -v` printing `Fresh <pkg>` confirms the
-  fingerprint (cargo's own `-v` changes no rustc fingerprint). For clippy `-v` is NOT a neutral probe: the
-  clippy driver records `CLIPPY_ARGS`, so any `-v` run reports `Dirty <own pkg>: the environment variable
-  CLIPPY_ARGS changed` and re-checks (that run is proof too, it re-runs every target). Write the `-v` log to a file and grep
-  that file: piped through `head`/`grep -c` the pipe closes early (SIGPIPE), the log truncates, and the
-  `Fresh <own pkg>` line (late in the dep list) reads as missing. A `grep -c` that counts 0 exits 1, so a
-  chained `cargo ...; echo exit=$?; ...; grep -c ...` prints a trailing `Exit code: 1` after green runs:
-  report the per-command `exit=$?` lines, not the chain's. Bare cargo commands here land in
-  `build/windows/cargo-target` (the generated `.cargo/config.toml` pins `target-dir`, on Linux too).
-  A clean rerun IS fast (0.6 s for every pai-bff target on 24 cores, deps cached), and its own log is the
-  proof: right after `cargo clean -p <pkg>` clippy prints `Compiling <pkg>` when it builds the package's
-  own artifacts from scratch, and `Checking <pkg>` when a `cargo test` of the same sources left them
-  cached (checked: pai-manager, `Checking pai-manager` + `Finished in 0.98s`, exit 0: a `Checking` line
-  is the real check, not a replay). cargo prints that line ONCE for the whole package, so a count of 1
-  covers the lib test, the bins and every `tests/*.rs` binary (pai-bff: 15 of them; pai-manager: 2
-  binaries, the 259-test lib, which holds `tests::data_root_e2e`, and a 0-test bin). Cargo indents its status lines (`   Compiling pai-bff ...`), so
-  grep `Compiling <pkg>` with NO `^`: an anchored count is 0 on a run that really compiled, and `grep -c`
-  exiting 1 reads as a failure of the chain. The next plain `cargo test` replays the compile
-  (`Finished ... in 0.05s`, no `Compiling`) yet its own `Running <bin>` and per-test `ok` lines prove the
-  binaries ran. The `-v`
-  count of `--crate-name <target>` works only on a run that really checks: a `Fresh` run prints NO
-  `--crate-name` line at all (checked: 0 after a clean run), so from `-v` take the `Fresh <own pkg>` /
-  `Dirty <own pkg>` line, which says the previous run's fingerprint matches the current sources. To prove a green
-  `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
-  (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
-- A clean rerun of the whole configurator side is cheap, so order it, do not reason about replays: `cargo
-  clean -p` of pai-core, pai-app, pai-config, pai-cli, pai-bff removes 5.2 GiB and the five `cargo test`
-  runs take 2 min total on 24 cores (core 7 s, app --lib 19 s, cli 4 s, config 61 s, bff 21 s). Run the
-  sequence as ONE background script that writes a log per command and appends `exit=$?` per command to one
-  exits file: a shell chain's exit hides which command failed. Each log's single `Compiling pai-<pkg>` is
-  the proof that crate compiled; a log with `Compiling pai-config` AND `Compiling pai-core` AND
-  `Compiling pai-app` is normal (the cleaned crates it links are rebuilt too). Adding pai-manager and the
-  six `cargo fmt` checks: 4 min total (clean 40 s, core 6 s, manager 2 s, app --lib 14 s, cli 1 s,
-  config 17 s, bff 19 s, all exit 0). Adding xtask and the seventh fmt check is cheap: its own compile
-  plus 370 tests run in 2.3 s, and a clean `cargo fmt -p <pkg> --check` writes an EMPTY log (a non-empty
-  fmt log is the diff rustfmt wanted, so report its size, not only its exit).
-- "Prove this diff is comments only": a python pass over `git diff -- <path>` that skips the `+++`/`---`
-  headers, strips the leading `+`/`-`, trims, and counts blank / `//` / other. Report the added and removed
-  counts against `git diff --stat` of the same path (equal counts prove no file of the path was missed),
-  and name any line in the `other` bucket.
-- Two fmt reds that are the script's fault, not the code's: `cargo fmt -p` wants the PACKAGE name
-  (`pai-core`, not `core`: `package \`core\` is not a member of the workspace`, exit 1 with the usage
-  text), and a loop that runs in the script's scratch dir exits 1 with `could not find Cargo.toml`
-  (the test commands inherit the script's `cd`, a later `for` loop does not). Read the log's FIRST line
-  before reporting a fmt exit 1.
-- A rerun script launched detached (`bash run.sh &` inside a background shell) gives NO completion
-  notification (the launcher exits at once). One bounded foreground wait is the right move, not polling:
-  `for i in $(seq 1 180); do grep -q ALLDONE exits.txt && break; sleep 10; done; cat exits.txt`.
-- A `cargo test` rerun always runs the test binary; only its compile can be a replay. `-v` (before
-  `--`) shows `Fresh <pkg>` (fingerprint checked against the current sources) or `Dirty`/`Compiling`.
-  For the independent check after a coder, `cargo clean -p <pkg>` and rerun when in doubt.
-  One probe for both facts when a run's log has 0 `Compiling` lines: `cargo test -p <pkg> --test <a>
-  --test <b> --lib -v -- --list > file` writes to the file, then grep it for `Fresh <pkg>` (current
-  sources) AND for the slice's test names (they are in the binary that ran).
-- One fixture per test: an id from one temp fixture will not match another. Use real names and values
-  captured from the real system; a name-prefix match is tested with every real name sharing the prefix
-  (`llama.cpp-v` starts `llama.cpp-vulkan-v...`), fixtures built from the full real file set.
-- A fake holds whatever you write; the real system can answer differently. A green on a fake is no
-  proof about the real thing.
-- An assert message is a format string: a `{:?}` in it with no argument is a compile error ("1 positional
-  argument in format string, but no arguments were given"). Write `{{:?}}` to name Rust's quoting in the
-  message.
-- `let got: Vec<&str> = log_of_the_call().iter().map(String::as_str).collect();` is E0716 (the cloned Vec
-  is a temporary, freed while `got` borrows it): bind it first (`let recs = log_of_the_call();`).
-- A seam the core does not call yet: a private field only ever written (`action_log` behind a `with_log`
-  setter) raises NO `dead_code`/clippy red in a lib crate (checked: `clippy --all-targets -D warnings`
-  clean), so an unwired setter has no stub red to report and the reds are the assertions.
-- A `cases: [(&str, fn(&dyn ManagerClient) -> Option<ClientError>, Value); N]` table trips
-  `clippy::type_complexity`: alias it (`type Case<'a> = (...)`), and rustfmt wants that alias written
-  multi-line.
-- Prefer `todo!("<fn>")` stubs to a compile error, which hides every other test in the binary, lints
-  included. The exception the coordinator may order for a small pure helper: tests importing a not-yet
-  private `super::` fn/enum red as `E0432: no <name> in <module>`; the whole test binary stops
-  compiling, so say the existing tests in the crate did not run. Assert with `matches!` so the enum
-  needs no `PartialEq`/`Debug` derive. A `todo!` body does NOT excuse the parameters: `-D warnings` fails `unused_variables`, so
-  underscore-prefix them and tell the coder to strip the prefixes. A stub reached only from tests fails
-  clippy with dead code until wired in: say so, add no `allow`; a `pub` stub in a lib crate is not dead
-  code, so there is no dead-code red to report. A new parameter on a core method: a stub that takes it
-  and keeps the old body gives assertion reds in every phase, where a `todo!` stops the e2e at its first
-  call. Rust has no default argument, so a new flag on a shared phase fn (`licenses::stage_in(dir, libs,
-  sources, web_ui: bool)`) is given the arity NOW with the flag inert (`let _ = web_ui;`): the old call
-  sites are updated to pass a constant, every pre-existing test keeps running, and the reds are the new
-  assertions. The constant at the callers is deliberate: it leaves the wiring (the flag's real expression)
-  for the coder, so the caller source lint reds. A new `pub` field on a struct of a BIN crate (xtask) that
-  only tests read is a `field is never read` dead-code red under `-D warnings` (in a lib crate it is not),
-  so say the coder must read it in production.
-- A call-args helper for a caller source lint: pass `what` ending with its `(` and scan the parens from
-  `src[at + what.len()..]` with `depth = 1`. Searching for the `(` again lands on the first NESTED paren
-  (`&licenses::libraries_under(`), so the extracted "arguments" are one sub-expression and the lint's red
-  names a file that is fine.
-- `pub const X: Duration = todo!()` is NOT a stub: const-eval panics at the definition (`E0080`) and
-  stops the crate. Stub a constant with today's behaviour's value; the red is the assertion.
-- To pin a field a variant lacks without breaking the build, match `Variant(p, ..)` / `Variant { .. }`
-  and check the new field through `{:?}`; tell the coder the intended shape. Naming a stub after a local
-  of the caller makes the call `E0618` (the local shadows the fn): rename one and say which.
-- Before handing over a large set of reds, prove they can go green with a throwaway candidate: back up
-  every file it touches (stub, strings, wired files) to the scratchpad, write the candidate, run, copy
-  back, `touch` the restored sources (a `tar` restore keeps old mtimes and cargo runs the stale
-  candidate build), check `git status`. If the permission classifier refuses editing production files,
-  leave that layer unproven, order the asserts so the earlier ones run first, and say so. A data file
-  pinned by a test is the coder's: check by reading that all assertions can hold at once.
-- A file the current slice created is untracked: `git diff` on it prints nothing, which is no sign your
-  edits were lost (`git status --short` shows `??`).
-- A mutant battery (each edit must turn a test red): copy the touched sources to the scratchpad, apply each
-  mutant with `sed -i '<line>s/.*/<text>/'` after printing the line with `sed -n '<line>p'` (the printed line
-  is the proof the address hit what you meant), run the crate's tests, extract the failing test names with
-  `grep -E '^    [a-z_][a-z0-9_:]*$'` (the failure list is 4-space test paths; the `---- name stdout ----`
-  lines carry `----` and filter out), restore with `cp` and prove it with `cmp`. Per-mutant `cargo test` of
-  xtask is ~10 s (deps cached), so nine mutants in one script beat reasoning.
-- A battery with a multi-line edit (move a block, replace 3 lines by 1): drive it from python, not `sed`:
-  a list of `(start, end, new_text)` applied in DESCENDING start order keeps the later addresses valid, and
-  no shell quoting. Restore the file at the TOP of every iteration, not only at the bottom: a script that
-  crashes (a `PosixPath % str` is a TypeError) leaves its mutant in the tree, and a `cargo test` that follows
-  reads as a real red. Run the mutant as ONE test (`--lib -- tests::data_root_e2e`): 0.6 s per mutant.
-- When an e2e is ONE `#[test]`, a mutant of the slice's own check often reds FIRST in an EARLIER phase that
-  exercises the same rule (an address-phase pin of the same `check_address`), so the slice's own pins are
-  unproven by that run. Report the catching pin as the file:line the panic names, and prove the slice's own
-  pins catch it with a probe: back up the crate's `src/tests/mod.rs` (a tracked, modified file: `cp` to the
-  scratchpad first), APPEND `#[test] fn probe_<phase>() { crate::<mod>::<phase>_e2e(); }`, run
-  `--lib -- --exact tests::probe_<phase>`, then `cp` the backup back and `cmp` it. The probe is a red-only
-  tool: it skips the module's process-wide redirect, so run the phase it names alone.
-- Inside the SAME phase an EARLIER pin of the same rule reds first (a mutant of `check_address` named the
-  address pin of the phase's first block, not the new block's), so the new pins stay unproven. Build a twin
-  `pub(crate) fn <block>_probe_e2e()` = the phase's fixture preamble + only the new block (a python slice of
-  the file, inserted after the phase's `^}`) and probe the twin. The backup the loop restores must be taken
-  AFTER the twin is inserted: restoring a PRE-twin backup at the top of the first iteration wipes the twin,
-  so every mutant reds as `E0425: cannot find function <twin>` (a script bug, not a code red). Keep a third
-  pre-twin copy for the final restore and end with `grep -c` of the twin and probe names (0).
-- A python line-address mutant: assert the line's exact text first (the assert caught my `ServerProfile(&other)`
-  against a line that reads `instance_server_profile(&other)`), and when moving a line out of a block insert it
-  at the index AFTER the closing `}` (at the brace's own index it lands inside the block: `E0425: cannot find
-  value`).
-- A strings key has a SECOND copy in the web UI (the bff answers a key, `fe` renders the sentence: a grep for
-  the old wording lands on `fe/src/test/bff.ts` and the brief's copy table), invisible to every Rust strings
-  pin: report it to the coordinator, the fe owner edits it, never edit it as the tester.
-- Dry-run the mutate script on a scratch copy of the file tree first (the python asserts on the exact line text
-  are the proof the address hits): a mutant that fails its assert leaves the tree untouched mid-battery.
-- A strings-file mutant is caught ONLY where the text is rendered: the bff's reply carries the key and its
-  args, so `crates/bff/tests/server.rs` (asserts `client-address-in-use` + `["llama.cpp@zz"]`) stays green, and
-  the pins are `client.rs`'s two byte-for-byte file pins (one per strings file) plus the `text()` fill pin,
-  which only the GUI file's mutant reds (the CLI file is never read by `text()`). A `KEYS` placeholder-count
-  parity pin stays green, the old text carries the same `{0}`.
-- A read-error arm mutated to the default reds in BOTH crates and the manager's is the far one: the core's
-  unit pins (`bff_cfg::tests::a_file_that_cannot_be_read_holds_no_address` first) red at once, and the
-  manager's e2e pin is `manager_profiles_in_use_e2e` inside `tests::data_root_e2e`
-  (`service.rs`: "a bff.ini that cannot be read refuses no save", `left: Err(AddressInUse("private-ai-bff"))`).
-  Run `cargo test -p pai-manager` under the core mutant to prove that pin (cargo rebuilds the mutated core,
-  ~40 s); a readable `bff.ini` fixture keeps every earlier `check_address` phase green.
-- A default duplicated in two crates is judged in one of them: the missing-`bff.ini` default is
-  `core::bff_cfg::listen_at`'s `NotFound` arm AND `bff::listen::load`'s own `NotFound` arm, so a
-  mutant of the core arm is caught ONLY by the manager's e2e (`pai-bff`'s tests stay green). Say which crate
-  carries the pin.
-- A battery script that builds package names as `pai-$crate` fakes reds on `xtask` (its package is plain
-  `xtask`): a cargo spec error exits 101 like a test red, so read a `test result` line in each mutant log
-  before counting a red. A subset rerun of the same script truncates the shared exits file (`: > "$X"`):
-  give every run its own exits file.
-- Never `git stash` or `git checkout --` to compare: other sessions edit the same tree. Run one test on
-  its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
-  the real tree.
-- Several filters go in one run: `cargo test -p <crate> -- a b c`; a loop of runs costs minutes each.
-  `cargo test --test a --test b` stops at the first failing binary: add `--no-fail-fast`, which is a cargo
-  flag, so it goes BEFORE the `--` of a name filter, never after it (after it, libtest rejects it).
-- Format one file with `rustfmt --edition 2021 <file>`, then `cargo fmt -p <crate> --check`.
-- Clippy traps in test code: a doc line starting `1)` (`doc_lazy_continuation`); `&Path::new(..)`
-  (`needless_borrow`); `option_env!("X").expect` (`option_env_unwrap`: use `env!` and accept the
-  compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`); a `///` on a `let`
-  (a closure helper inside an e2e fn) is `unused_doc_comments`, use `//`; `out.push_str(*line)` over a
-  `&[&str]` (`explicit_auto_deref`: write `out.push_str(line)`, the argument coerces on its own).
-- A shared tree runs a slice's suite with OTHER slices' in-progress reds already in it: account for every
-  failing test by name, quote each red's panic text, and show it names the missing production piece of the
-  other slice (e.g. a shipped file "No such file or directory"), not your fixture. Say the counts: mine N,
-  theirs M, and where the files overlap (a test in a file you edited) read its assert to prove the link.
-- A cargo filter is a SUBSTRING, so a new test name can drag in an old one: `-- remove_key set_key`
-  also ran `preset_keys_with_no_check_today_pass` (`preset_keys` holds `set_key`). Account for every
-  non-red line by name, and name new tests so they cannot collide with an existing name.
-- `cargo test` takes ONE filter as its positional; further names are "unexpected argument". Several
-  filters go after `--` (above); a filter that matches only bins prints "0 tests" noise: add `--lib`.
-- `assert_eq!(log_of_String, vec![], ..)` is E0283 (many `String: PartialEq<_>` impls): write
-  `Vec::<String>::new()`, the pattern this repo already uses.
-- A `[(label, |c| ..); N]` table of setters: `as fn(Cfg) -> Cfg` on the first element fixes the element
-  type, so a later closure that captures a local is E0308 "expected fn pointer, found closure". A table of
-  values (`(key, threads, threads_batch)` with `Some(n)`/`None`) has no coercion to fight.
-- A pure function MOVING crates (not wrapped): the behaviour tests move with it, calling `crate::<mod>::<fn>`
-  in the destination's inline `mod tests`. The red is E0425 "cannot find function" on every call site, which
-  stops that crate's whole test binary: report the count and that its existing tests did not run. The source
-  crate keeps ONE behaviour test through the public entry (green before and after the move, machine-derived
-  bounds computed in the test: `cpus + 1` from `available_parallelism`) plus a source lint over the code half
-  that requires the re-export line and forbids `fn <name>(` (a second copy of the rule).
-- Comments never cite PLAN.md step or slice numbers; name the feature.
-- rustfmt reorders consecutive `mod` declarations: a new `pub mod x;` goes in the sorted spot, with its
-  own comment line (it travels with the item). A bare `assert_eq!(a, b)` (no message) over ~60 chars of
-  body is split one-per-line by rustfmt; adding a message keeps it one line. Format each file
-  (`rustfmt --edition 2021 <file>`) as you write, `cargo fmt -p <crate> --check` at the end.
-- A helper that reads a generic writer (`fn written<W: Write>(log: &WriterLog<W>)`) needs `W: Clone` for
-  the `.clone()`: pin it to the concrete buffer (`&WriterLog<Vec<u8>>`) and read a custom sink's own field
-  in the test that uses it.
-- "Unwritable path" that also fails for root: a path component that is a regular file (`ENOTDIR`, both for
-  `create_dir_all` and the open), never a chmod (root ignores modes). A `read_dir` listing is unordered:
-  sort before comparing to a `vec!`.
-- Appending file sink ("path cannot be written loses the record"): making the PARENT a directory is NOT an
-  unwritable case, the sink rightly creates the file there (the assert `!path.exists()` reds on its own
-  file). Pin it as the LOG PATH ITSELF being a directory (`create_dir_all(&path)`, the append open fails
-  `EISDIR`): assert `path.is_dir()` (catches a sink that removes the dir and writes a file) and a
-  `read_dir(&path)` that is empty (catches a fallback written inside). The temp root's own listing misses
-  files created inside a subdirectory, so it is not the "nothing was written" check for a nested path.
-- Compile the test binary early and often with `cargo test -p <crate> --lib -- --list`: it type-checks
-  every test without running one. The shared tree moves under a slice (HEAD changed `Caller` into
-  `Requester` + `AsRequester` while these tests were being written): re-read the seam's signatures before
-  finalising asserts, and read the red to see which seam moved.
-- A test that names an item of an OS-gated module (xtask `Component`, `component_ships_web_ui`, both
-  `#[cfg(target_os = "linux")]`) must carry the same gate, or the Windows and macOS test builds die E0425
-  and E0433 and every other test in the binary stops running. Gate the test, never widen the production gate.
-- "A new enum variant must be a compile error" as a test: a `for v in <Enum>::ALL` loop (the enum's own
-  exhaustive array) around a `match` that lists every variant and has no wildcard, asserted against
-  `<fn>(v)`. The `match` is the red (E0004); the loop source is not. When the enum has no `ALL`, list the
-  variants in the array by hand. Both enums of the xtask licences (`Component`, `Product`) derive
-  `Debug`/`Copy`, so `assert_eq!(.., "{v:?}")` names the case for free.
-- The proof that `cargo check --target <triple> --all-targets` type-checked the `#[cfg(test)]` tests is a
-  second `-v` run AFTER `cargo clean -p <pkg> --target <triple>`: its log carries one rustc line with
-  `--test` beside `--crate-name <pkg>` (a bin crate: two invocations, the plain bin and the test target).
-  A `Fresh` run prints none of them, and `grep -c "Compiling <pkg>"` is 0 on a check (it prints
-  `Checking <pkg>`).
-- `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
-- A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
-  `include_str!` would stop the crate compiling. The same when the PRODUCTION table reads with
-  `include_str!` (xtask's `system_files::files()` for the shipped defaults): the test that pins a new
-  shipped file reads it at runtime, and its red stacks: the missing file first, then `file(<path>)`
-  panics "is not among the system files" until the coder adds the entry. Report both as the coder's.
-- A test file that `include_str!`s a `cfg(windows)` module (the pin of glue that never runs on Linux) is
-  compiled on every target, so the cross check (`cargo check -p <crate> --all-targets --target
-  x86_64-pc-windows-gnu`) is the only sign a path there is wrong; it is relative to the file doing the
-  include, and rustc's help names the directory the file IS in.
-- A staleness or "not written again" rule is tested with `File::set_modified(UNIX_EPOCH + secs)`: no
-  sleeps, both orders. Expected text can come from the code itself on a sibling temp path (`startup.rs`
-  `fresh_entry`), keeping the test free of the machine's binaries.
-- To make a write fail: chmod the directory `0o555`; to make a read fail while the atomic write still
-  succeeds: chmod the FILE `0o000` (a directory in its place fails the rename too: green for the wrong
-  reason). Probe that it really fails (root ignores modes; a passing run hides the skip's `eprintln!`,
-  check with `--nocapture`), restore the mode before asserting; check old content and an unchanged
-  listing (no temp file left).
-- Force a copy fallback by injecting the rename (`&dyn Fn(&Path, &Path)`) and failing it for one path.
-- To make a real rename fail: a DIRECTORY at the target name (a file cannot be renamed onto one,
-  `EISDIR` on Linux, checked with python3's `os.rename`; empty is enough, non-empty is the firmer fixture).
-- A "one deadline bounds the WHOLE request, not one read" pin: a fake that writes its reply one byte
-  every 300 ms (`for byte in text.as_bytes()`, `if write_all(&[*byte]).is_err() { break }` then sleep: a
-  broken pipe is the client giving up, so the fake thread dies with it, no leak). Run the call on a
-  thread with a `recv_timeout` channel: the red reads "did not return within N s", never a hang.
-- A `format!` with no placeholder (a fake's canned reply body) is `clippy::useless_format` under
-  `-D warnings`: write `.to_string()` on the raw string, with single braces.
-- A real chown(2) seam works without root: an owner may give a file any group it is in (`id -Gn`).
-- A fake one-shot runner's `ExitStatus` on Unix: `ExitStatusExt::from_raw(code << 8)`, under
-  `#[cfg(unix)]` (the user's Windows `cargo test --workspace` compiles these tests too).
-- A fake child for an injected spawner: `sh -c '<printf ...>; exec sleep 30'` (`exec`, so your pid is the
-  one killed); "killed and reaped" is `/proc/<pid>` gone, polled with a deadline; `'` is `'"'"'`.
-- A shell snippet is checked with `sh -n` on stdin; an `at(text, needle)` position helper pins presence
-  and order.
-- A throwaway git repo in a test: `-c user.name=.. -c user.email=.. -c commit.gpgsign=false -c
-  tag.gpgsign=false`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`.
-- Review of a check: one that re-observes what was already true before the action proves nothing;
-  mutate first, then check the action undid or kept it.
-- `cargo test -p <crate> --test <name> -- --list` type-checks one integration test binary (and its
-  helpers) without running a test: the cheapest way to see the whole file compile.
-- `crates/bff/tests/pai_bff_binary.rs` spawns the real binary and grabs ports through `free_port()`
-  (bind, release, rebind): one test in 12 flaked on the first cold run after `cargo clean` and never
-  reproduced (11 full-suite greens + a solo `--test` run). Probe solo, then rerun the suite 2-3 times
-  before reporting a red from that binary.
-- A fe/Vitest helper that opens a page (`startAt` + `fakeBff` + `render(<App/>)`) and is called TWICE
-  inside one `test()` (two scenarios in one test): the second render stacks a second `<main>`, so the
-  helper's own `screen.getByRole('main')` reds "Found multiple elements with the role main". `afterEach`
-  cleanup only runs BETWEEN tests, not between two calls in one test. Add `cleanup()` at the top of the
-  helper (the loop helper `cleanAnswers` already does this). This is a test-helper red (a stacked-DOM typo),
-  not the production rule: fix the helper, not the code under test.
-- The dev machine has `fe/dist` built, so `build.rs` embeds it and `tests/fe.rs` `embedded()`
-  (`PAI_BFF_FE_DIR`) points there, NOT at `crates/bff/fe-fixture`: an asset added only to the fixture
-  exercises no served path in `tests/fe.rs` on this machine. Pin a `build.rs` rule (e.g. a
-  `content_type` mapping) as a source lint in `tests/build_script.rs` (its `code()` strips comment
-  lines), and extend the wanted-type chain of `the_assets_the_page_names_are_served_with_their_type`
-  as a guard that fires once a real build ships such an asset.
-- bff oneshot: `Request::builder().header(name, value)` appends (`http-1.5.0/src/request.rs:899`), so
-  the same name twice reaches the router as two values; `HeaderName::from_static` wants the lowercase
-  name. A header the bff cannot read: `HeaderValue::from_bytes` accepts `>= 0x20` except `0x7F`, plus
-  tab (`http-1.5.0/src/header/value.rs:563`) and `to_str` fails on any byte `>= 0x80` (`:249`): that
-  value is on the wire and unreadable, which is the shape a guard must fail closed on.
-- axum 0.8: `get(handler)` answers `HEAD` as well (axum strips the body, so "the body is empty" proves
-  nothing for `HEAD`); a method the path does not route is the router's 405 with an empty body. So the
-  pair "405 for this app's own page, 403 for a foreign page, same verb" is what pins a guard that runs
-  before the router; when a guard checks a verb list (`writes`) rather than the method, pin that half
-  and report the list as the scope question.
-- A pure body-to-value step: build every failure body from the FULL well-typed body with ONE key
-  changed, so the refusal cannot come from a key the test left absent (an absent key has no JSON type,
-  the design leaves it open, a coder reading it as 400 reds a 422 test for the wrong reason).
-  Pin `render_for(cfg, true)` against `false` with the blank-dirs case only: with both dirs set the two
-  renders are identical, so the equality of the whole file cannot tell the flag.
-- The INI value asymmetry a writer must refuse: the bff trims a value with `trim_matches([' ', '\t'])`,
-  the core's reader trims with `str::trim`, which is Unicode-aware (`ini.rs`: `line.trim()`, then
-  `t[eq + 1..].trim()`), so a value with U+00A0 or U+2028 at an END is written whole and read back
-  shorter. `char::is_control()` is the Cc category only, so both slip past the control-character rule. An
-  interior U+00A0 survives the reader (read back identical), so pin that as the guard of the rule's scope
-  and keep the plain space/tab ends accepted (they belong to the trim rule).
-- A `for value in [..]` reds at its first element, so one run proves one element. Prove the rest are red
-  for their own reason with a standalone `rustc --edition 2021` probe that replicates the rule's
-  predicates and the reader's trim and prints the answer per value (20 lines beat copying the crate out of
-  the workspace, where `path = "../core"` deps break).
-- A `pub(crate)` stub in a PRIVATE module, reached only from tests: `-D warnings` fails `dead_code` on
-  the function, the enum and its variants (3 messages, lib and lib test). `pub` does not clear it (the
-  module is private, so the item is still unreachable), and the caller that clears it is a later slice:
-  report the three, add no `allow`.
-- A rule about the `Host` name touches no bff test that sends no `Host` (the `App` helper sends one only
-  when an extra names it): pin the no-Host path as accepted (HTTP/1.0, `curl`), and give every refusal a
-  shape where only that rule can answer (a non-text `Host` with no origin header, a non-text `Origin`
-  with no `Host`), else one red hides behind the other.
-- A rule that becomes a function of an INJECTED context (the `Host` rule of the listen address): the
-  accept side is GREEN at once, a stub that ignores the new argument keeps today's answer, so the reds
-  are only the refusals the new context adds. Report the green accepts as guards, name them, and give
-  the refusal both shapes (the rebinding pair, and the bare `Host` with no fetch metadata).
-  `tests/origin.rs` now: `app_with_hosts(hosts: &[&str], listen: SocketAddr)`, `new_app()` is a loopback
-  listen, so every pre-existing loopback test keeps its meaning; a LAN-name test hands
-  `LISTEN_LAN = 192.168.50.210:8590`, a localhost test a loopback or the wildcard.
-  A "a trailing dot is the SAME name" rule (the FQDN root): only the ACCEPT side is red, every refusal
-  the rule must keep is green today (a `Host` of `.` / `..` / `name..` / `localhost..` is refused now,
-  and stays refused: the test is the guard that a fix strips ONE ending dot and not all of them, so
-  report it as green, and make the double dot use a name whose bare form IS in the list, where a fix
-  that strips all dots goes red). A blank-host-name rule: the `Some(hosts)` side is green at once (the
-  list path never reads the host name), only the automatic-names list is red.
-  For a `tests/*.rs` file, proving the asserts a first red blocks: `cp tests/x.rs tests/zz_probe.rs`
-  (a copy in `tests/` is its own binary, helpers included), `sed -i '<ranges>d'` the predecessors,
-  `cargo test -p <crate> --test zz_probe -- <filter>`, then `rm` the copy BEFORE clippy and `git status`
-  (one sed call, both ranges against the original line numbers).
-- The header value lists `at_host`/`host_line` build are `Vec<(&str, HeaderValue)>`: they fit only
-  `ask_raw`/`sign_in_raw`/`boot_raw`. Handing one to a text helper (`post_with`, `delete_session_with`,
-  `put_with`, which take `&[(&str, &str)]`) is E0308, one error per call site.
-- `App::sign_in` asks the fake authenticator: after it, compare `asked()` with the baseline taken right
-  after the sign-in, never with `is_empty()`.
-- The bff's save replies `{"revision", "running"}` only, so a SECOND save in one test builds its body by
-  hand: the `revision` from the 200, the `values` from the read (`values_with(&read_doc, ..)`). A body
-  built from the 200's document panics in the helper (`expect("values")`).
-- The bff's fakes: `FakeManager::refused()` gates `read_file` only, so a read-refusal list refuses reads
-  and leaves the writes free (that is what pins "the read refused ends the session, nothing is written").
-  A list of principals there, not a flag: `Live::write_refused` and `Live::read_refused` are both
-  `Vec<String>` read with `.contains(&principal)`. When a handed harness returns on `refused()` BEFORE
-  the list check, the list field is never read: its setter refuses NOTHING, `-D warnings`'s
-  `field is never read` is the only red naming it, and every test built on that setter answers 200.
- - The `tests/server.rs` fake answers a save at three points, one pair of cells each (`write_outcome` +
-   `write_pause_ms`, `read_outcome` + `read_pause_ms`, `connect_outcome` + `connect_pause_ms`, all inert
-   by default so adding them greens everything): the 503 and 504 of a save turn on which call was
-   reached, so a test sets the cell AFTER the form's own read, letting the read that carries the
-   revision succeed. Its call log records the trait methods only (`read <name>`,
-   `write-if <principal> <name>`, `status <id>`): the `As` methods are not logged, and the route's own
-   re-read adds a SECOND `read server@default.ini` after the GET's, so the log of a save stopped at its
-   read holds two reads, and one stopped at the connect holds one.
- - A route that reads a file back after its writes (the switch re-reads `presets.ini` so the `enabled`
-   it answers is the text on the machine): the exact-call-list pin of that route lists the read-back
-   too, in the position the route makes the call (read the route's body, not the doc comment of the
-   test). An exact list of six calls beside a sibling test that demands a read after the last write is
-   a contradiction: keep the read-back (it is the contract), extend the list to the calls the route
-   makes, and rename a test called "reads both files once" once the list repeats a read.
-- The race "the route answered and the blocking task went on": dropping the `JoinHandle` of a
-  `spawn_blocking` task does NOT stop it, so a save cut off at the connect or the read answers 503 and
-  its task writes when its parked call returns. A fixed sleep cannot test it (the write lands when the
-  read returns, not after a known delay): give the fake a one-shot GATE (an `AtomicBool` armed by the
-  test and consumed by the next call, which parks in a 5 ms poll loop bounded by a `GATE_LIMIT`, counting
-  `gated` on entry and `released` on exit). The test arms it after the form's read, awaits the 503,
-  asserts `gated == 1` and nothing written, releases, polls the `released` counter with a deadline, then
-  polls `writes()` for a bounded `GRACE` and asserts it empty. Keep the gate OUT of the shared calls log
-  (a `record` there breaks the exact-log asserts of the sibling tests); give it its own counters. Parking
-  inside the fake's method is safe because the save's connect/read/write run in `spawn_blocking`, and a
-  `tokio::time::sleep` poll loop after the route answered is safe (the single-thread runtime gets to poll
-  the task's completion). `GRACE` is a heuristic bound: a fixed task writes nothing at all, so a green
-  burns the whole `GRACE`; 500 ms against a 200 ms timeout is enough on this machine, and the red exits
-  the loop at once (the write lands ~1 ms after the release).
-- `serde_json::Value` maps in this repo sort keys, so an object's key order in a reply is not the
-  contract: a "the keys are these names, in this order" pin must sort BOTH sides (the `json!` literal
-  arrives alphabetical, a `Vec<&str>` of field names does not).
-- A unit expectation of "the machine's CPU count" is red by construction (dev box 24, the test module's
-  `CPUS` 16): pin the wiring in the unit test (the bound it is handed) and the machine's count through
-  the public API in the integration test (the `limits` maximum accepted, `max + 1` refused naming the key).
-- A test the coder reports as unpassable: check it against the design and the fake's behaviour, and when
-  the expectation is simply wrong, do not just delete the assert, cover an uncovered path of the same rule
-  (the write-refusal 403 was pinned, the read-refusal 403 was not).
-- `-D warnings` scans `tests/*.rs` and `#[cfg(test)]` too: `.iter().any(|u| *u == x)` is
-  `clippy::manual_contains` (write `.contains(&x)`), and a field added to a fake that nothing reads is a
-  `dead_code` red. The lib test binary of the crate a slice is writing often does not compile until the
-  module's helpers are fixed, so its unit tests only run after that: report that they did not run before.
-- A bff route that is not routed yet: EVERY status assert in the new `tests/<route>.rs` reds at the
-  router's 404 (the 405 test too, it greens once the path exists with GET only), so the file is N status
-  reds plus the guards that hold by construction (the sibling route still answers). Say which green is a
-  guard, and prove the red is the missing route, not a broken helper: the same red `left: 404` on every
-  status, one per expected code. A test that EXPECTS 404 passes its status assert by accident on that
-  router reply, so pin its body too (key, and `args`): its red is then
-  `left: Content-Type "" right: "application/json"`, which names the missing route.
-- The bff does not link `pai-app`: a route listing preset SECTIONS parses through
-  `pai_core::ini::parse_sections`. Its header is the contract for what a fixture yields, read it instead
-  of running a probe crate (pai-core built from a separate workspace: minutes): values TRIMMED, everything
-  from the FIRST `;` or `#` on stripped ("a;b" reads "a", so a fixture value must never contain one), key
-  lookup EXACT-case (`keys.get("model")`), section order kept, a bare `[a]` is a section with no keys. So
-  `model = x ; note` answers "x" and a section without the key answers `""` through `unwrap_or_default`.
-- `fe/briefs/api-contract.md` and the served code can disagree on a 403 key: for `GET /api/presets` the
-  contract lists 403 `client-not-authorized`, while the served signed-in read (`GET /api/server`) answers
-  403 `session-not-administrator` and ENDS the session when the manager refuses the `As` principal (PLAN:
-  a refusal ends the session). Pin the served sibling, and report the contract line to the coordinator as
-  the one assert to change if they choose the contract's key.
- - "A write that LANDED is answered 200, not 504, when the read that follows it runs out": 504 stays only
-   where the write's own outcome is unknown. That flips the existing post-write-504 tests (the tester
-   changes them, the coordinator says so) while the write-parked 504 tests stay as the guards of the rule.
-   To slow ONLY the read-back (the route reads the file again after its writes, e.g. the switch's
-   `enabled`): give the fake a positional pause on the n-th read (`Live::set_read_pause_at(3, ms)`, a
-   `read_count` incremented in `read_file`), so the form's own read that carries the revision stays fast.
-   Pin the 200's body with the value the read-back CARRIES (the switch answers the file's, not the move's),
-   and with the value the move produced when the read-back itself is the one that runs out.
- - A new optional parameter on a shared builder (`router_with_session`): add a sibling
-   (`router_with_session_and_write_timeout`) named after the existing seam pattern
-   (`session::routes_with_sign_in_timeout`), keep the old arity delegating, and stub it `pub` (a pub stub
-   in a lib crate is not dead code, no lint red) with the new argument inert, so the reds are the
-   assertions. The old harnesses then need no edit: only the harness that pins the new rule passes the
-   value. Time-limit constants that are private to the bff lib (`MANAGER_TIMEOUT`) are NOT reachable from
-   `tests/*.rs`: say the unit pin must live inside the crate, and pin the rule behaviourally in the
-   integration file (a call that outlives the read limit but not the write limit answers 200 under the
-   write limit, a GET of the same delay answers 503, so the limits really differ).
- - llama-server's global `[*]` section is not a preset: `ini::parse_sections` strips the brackets, so its
-   id is `*`, and `checks::preset_id` refuses `*` - a switch of it is 404 `no-preset-named` with EMPTY
-   `args` (the id never passes the check to be echoed). Test the id raw, url-encoded (`%2A`) and bracketed
-   (`%5B%2A%5D`): axum's `Path` decodes all three to `*`, and the list-exclusion pin needs the section in
-   `presets.ini` with real keys beside a real preset. The same rule answers `.` and `..` with empty args
-   (`preset_id` refuses a path of dots), so a "the id is echoed back" pin takes the plain names.
- - A preset route reads `presets.ini` and `presets.ini.disabled` through `ManagerClient::read_file` (as
-   `src/presets.rs::list` does), NOT an `As*` method: a new preset read needs no new trait method, and its
-   call log is `read presets.ini` then `read presets.ini.disabled` over ONE connect. Keep the fake's files in
-   an `Arc<Mutex<Vec<(String, String)>>>` shared into the connect hook, with the log closing over it: a test
-   can then change a file between two reads (the mid-read 503) while every other test builds its own app.
- - A digest the route computes (the section's revision): take the pinned constants from an INDEPENDENT
-   implementation written outside the repo (a `python3` SipHash-2-4 in the scratchpad, validated by
-   reproducing the vectors published in `tests/server.rs`), paste the hex into the test and name in its
-   comment what it is the hash of. In the test recompute the expected value from the same input as a
-   self-check, and refuse the near misses: the whole file, the section text alone, a neighbour section and
-   the unkeyed hash (`fnv1a`, copied from `tests/server.rs`). Pin the digest's INPUT behaviourally, not only
-   by constants: three files that parse to the SAME keys (one key written twice, the same text in CRLF)
-   answer three tokens, and a file with blank lines after the section answers the token of the one without.
-   A digest of a canonical re-render of the parsed keys passes the constants and fails that.
-  - A helper IN THE TEST FILE that recomputes the digest is the weak link: a SipHash-2-4 written from memory can
-    init `v2 = "genersa" ^ "Parvate"` and `v3 = "sbytesd" ^ "Gomoliris"` (no key at all, the four constants
-    XORed in pairs), which reproduces a broken route for EVERY input, so the helper-vs-route assert greens while
-    both disagree with the pinned constants. Validate such a helper against the published vectors (key `00..0f`:
-    `""` = `726fdb47dd0e0e31`, one `00` = `74f839c593dc67fd`, `00..07` = `93f5f5799a932462`, `00..0e` =
-    `a129ca6149be45e5`) and pin four in the file (empty, one byte, a half block, a full block plus 6: each one
-    separates the broken init from the reference one). The init is `v0 ^= k0; v1 ^= k1; v2 ^= k0; v3 ^= k1`.
-    Name every pinned constant with the bytes it digests: a `the_revision_is_stable_across_another_section` that
-    asserts `REV_NEIGHBOUR` (documented as the digest of `[Bigger]`) against a read of `[Zeta]` greens on a route
-    that digests the WHOLE file, and its "differs from the one-section answer" is then the only red. Each test's
-    expectation is the constant of ITS section.
-   - A fixture that appends a section must append the section CONST verbatim: a `ALPHA_PLUS_ZETA_CRLF` whose
-     `[Zeta]` holds ONE key digests something else than `REV_ZETA` (the digest of the two-key `ZETA`), so the
-     read of it reds `left: 0cc070d44f6d02ae right: 06d798fe3318872c` while the route is right. Fix the
-     fixture, and put `revision_of(&KEY, ON, ZETA)` beside the constant as a self-check, so a fixture that
-     drifts from the const reds. Check a claimed digest mismatch by extracting the test file's own helper
-     (`sed -n '<lines>p' tests/x.rs > helper.rs`, `include!("helper.rs")` in a `rustc --edition 2021` probe):
-     it reproduces the published vectors, so its numbers are the reference (a python SipHash written from
-     memory failed every vector).
-  - When the rule CHANGES the digest's input (the section's text: cut its last non-blank line's own ending, so a
-    last section with no final line break stays put when the break is added or a section is appended): write the
-    scratch program so it prints the value of the OLD rule for every fixture and check those against the constants
-    being replaced (all six matched: the scratch model of the input is the route's, so the new constants are the
-    rule's and not a typo). Compute the new ones from the fixtures, and add the rule to the TEST's helper
-    (`hashed_section`), so every existing `revision_of` use needs no edit. A fixture with NO final break greens
-    under both rules (nothing to cut): its test is a guard that the cut does not eat the section, report it as
-    green, and make the red the form that has an ending to cut.
-  - A path below an existing route (`/api/presets/alpha/%2A` when only `/api/presets/{id}` and
-    `/api/presets/{id}/enabled` are routed) is answered by the ROUTER, not the app: 404 with empty Content-Type,
-    empty body, ZERO connects. The router's 404 carries the app's JSON only where a path exists under the prefix
-    (`*`, `%2A`, `%5B%2A%5D`, `..` reach the handler); a path below it is bare, and a GET of a sub-segment
-    (`alpha/enabled`) is a bare 405, so the app cannot serve one without colliding with the method's route. Pin
-    such a form as its own test (status + `content_type() == ""` + body `""` + `connects() == 0`), never as one
-    element of the app's list: its `left: Content-Type ""` red reads the same as a missing route.
-  - The sandbox clock jumps: a `cargo clippy`/`test` log written AFTER your last edit can say `Finished in
-    0.06s` with zero `Compiling` lines (cargo compares mtimes, and the file's moved backwards), i.e. a replay of
-    an older check. A fresh log with 0 `Compiling` lines is no proof: `cargo clean -p <pkg>` first (the real
-    check of pai-bff's 16 targets prints `Compiling pai-bff` once and finishes in 0.6 s, deps cached).
- - A `Reply` accessor that reads a field of `json()` returns `String`: `json()` hands an owned `Value`, so an
-   `as_str()` of it borrows a temporary (E0716). Read the STATUS before any body field: on the router's 404
-   of an unrouted path the body is empty, so a field read first panics "not JSON (EOF while parsing)", which
-   hides the missing route.
- - The split marker of a source lint that pins "the app calls the core's fn, it keeps no copy" is
-   `mod tests {`, NOT `#[cfg(test)]`: `crates/app/src/presets.rs` has ten `#[cfg(test)]` items from line 66,
-   so a split at the first reads a header with no calls, and the require-needle goes red for the wrong
-   reason. The require-needle (`"<fn>("`) is green today at the call site, so the red of the move is the
-   forbid-needle (`"fn <fn>("`): report which line reds.
-- A design that accepts a CLOSED list of names ("the 84 keys of the brief's table") is not a list to invent:
-  the brief's prose names are often wrong (`frequency-penalty` is `frequency_penalty`, `chat-template` is
-  `chat-template-file`, `rope-scaling-type` does not exist: about 40 of my 64 guesses were not real keys).
-  Rebuild it from the authoritative sources and cross-check both: the check tables (`crates/core/src/checks.rs`
-  `PRESET_INT_KEYS`/`PRESET_FLOAT_KEYS`/`PRESET_ENUM_KEYS`) and the reader that consumes the key
-  (`crates/app/src/presets.rs`), and report how you built it. When the test loops over a constant the coder
-  completes, that list travels in production code: a name that reaches no rule is a key no check guards.
-- A list constant the coordinator orders left EMPTY for the coder: every test that iterates it is vacuously
-  GREEN, so name that in the report and put the red in a presence assert (the constant `contains` two named
-  keys) and in a literal case beside the loop (`foo`). The loop over an excluded list is vacuous too.
-- Verify a design's key list against the writer before pinning them equal, no compile needed: a python pass
-  over the writer's lines. One regex is not enough: the keys arrive as `emit_*(&mut out, "k", ..)` (often
-  split across lines, needs `re.S`), as `format!("k = {}` and as a bare `push_str("k = true\r\n")`: my first
-  pass found 2 of 75. Feed it the design's union, print both diffs.
-- `ini::Section::keys` is a `BTreeMap`: its keys come out sorted, so a `Vec<&str>` of them compares straight
-  against a sorted union. `render_section` has no `if` guard around an `emit_*`, so a fixture with every
-  field set (`full_preset`) yields every key the writer can emit, and a union-equality red prints the
-  writer's own list: read the count there to prove the fixture needs no change.
-- `set_key` appends a key the section does not have AFTER the section's last real line (a blank line at the
-  end of the file stays below it), so two new keys of one body land on the two lines below the line the
-  section ended with. Pin that: write the body keys sorted (the order then holds with and without
-  `preserve_order`), assert the two lines at `from.len() + 1` and `+ 2`, and prove the rest of the file byte
-  for byte with a `replaced` anchor whose window ENDS at the section's last line, repeating that line inside
-  `to` (the file's own last two lines are now the appended ones, so an anchor up to `from.len()-1` never
-  matches). A reverse-order body pins presence once inside the section, not the order: the line index of the
-  key depends on the map order.
-- Element coercion propagates into an array literal, so `(key, Some("12"))` with `key: &&str` compiles where
-  `&[(&str, Option<&str>)]` is wanted: `LIST.iter().chain(std::iter::once(&"foo"))` needs no deref.
-- `todo!("... {id} ...")` interpolates: a brace in the message is `E0425: found format placeholder "{id}"`,
-  which stops the crate. Keep a stub message free of braces.
-- `serde_json`'s `preserve_order` is a **per-invocation** feature here: `pai-app` turns it on, `pai-bff` does
-  not, so the map order of a parsed body depends on the package set of the run (`cargo test -p pai-bff --lib`
-  builds it plain, `-p pai-bff -p pai-app` unifies the features). Cargo.lock records no features, so
-  `cargo tree -p pai-bff -e features -i serde_json` is the proof for the invocation you care about.
-  Pin an order only when it holds in both (write the fixture keys sorted, then the request order equals the
-  map order under both); anything else is presence compared sorted, and the run that changes the order must
-  be reported. Once the production rule is "the edits are applied sorted", the key-order pin DOES hold in
-  both, and to show it red exercise the feature on: `cargo test -p pai-bff --lib
-  --features serde_json/preserve_order <filter>` (2026-11-17). Write the body in an order that is NOT the
-  key order (a block whose body order equals the key order greens by luck), and cover three keys, so a
-  two-key order is not mistaken for the whole rule: the appended-keys test of `tests/preset_body.rs` sends
-  body order, reverse key order and a shuffled three-key body in one test.
-- A non-JSON body reaches the handlers of an axum service that consumes `Result<Bytes, BytesRejection>`:
-  the extractor never looks at Content-Type, so a route that wants the JSON check takes it from the headers
-  (the bff's `json_body` reads the essence before `;`). A test of that sends the header on the request, so
-  the request helper takes the header list and `req.request.headers_mut().extend(list)` (the `Parts::from`
-  form drops the method and URI, `RequestParts::try_into_request` keeps it). One helper that takes the
-  Content-Type as an argument keeps the request to a single value; `Vec::insert` on
-  `request.headers_mut()` appends, which makes a multi-value header and leaves the check's answer unpinned.
-  Pin the accept side of the same rule too (a `charset` suffix is served), and prove each refusal case red
-  on its own by running the list with the case first: one red names one index.
-- A body fixture with a control character goes through `serde_json::to_string`, so the bytes reach the parser
-  escaped as the browser sends them (`\u0000`, not a raw NUL), and write DEL as `\u{7f}` (the character is
-  non-printing in the source).
-- A verb added BESIDE a path that already serves (the `PUT` of a routed `GET /api/presets/{id}`): every status
-  assert of the new file reds `left: 405 right: <expected>`, the 404 tests included (the router's 405 answers
-  before the app can name an unknown id). Two greens need naming: the "PUT is the only write verb" pin greens
-  by construction (POST/DELETE/PATCH are 405 today), and so does a "the session survives every non-refusal"
-  assert (no route ran, so no session was touched).
-- The bff's body cap is the router's `DefaultBodyLimit` (`MAX_CONTENT_LEN`, private to the lib): it answers 413
-  `payload-too-large` BEFORE the origin guard, the session and any manager call, so the test asserts zero
-  connects. Pad a VALUE of the contract's body to cross it, so a 413 cannot be read as a malformed body.
-- "The manager's words never reach the browser" is a `!body.contains(needle)` over EVERY failure reply
-  (400/401/403/404/409/413/502/503/504): cut the needle from the message with
-  `msg.split_whitespace().collect::<Vec<_>>().join(" ")`, never with format magic, so the needle cannot vanish.
-- 503 and 504 of one save are the SAME fake cell (a parked call) told apart by what the test proved: no write
-  asked (file text unchanged, write log empty) is 503 `client-unavailable`; a write already SENT is 504
-  `client-timeout` and the gate release makes the file land AFTER the answer, which is the outcome the answer
-  cannot name. The project's rule: once a write was ASKED its outcome is unknown, so an explicit
-  `Unavailable` answered by the write is 504 `client-timeout` too, not 503 (the server save, the switch's
-  `switch_when_the_write_answers_unavailable_is_504`, and `switch_failure`'s `Unavailable if write_asked`
-  arm all answer that way); 503 is only where no write was asked.
-- Two limits of one route are pinned by their DIFFERENCE: a call slower than the read limit answers 200 under
-  the write limit (a write, and the state read after a landed write), a read of the same delay answers 503.
-  `MANAGER_TIMEOUT` is private to the bff lib, so the integration file pins it behaviourally, and the save
-  limit needs a builder arg (`router_with_session_and_write_timeout`).
-- The bff's fixed-clock seam (`App::clock`) cannot pin an IDLE deadline: the deadline never moves on a stopped
-  clock, so the read after the save answers 401 whatever the route does. Give the App a `tick: Arc<AtomicU64>`
-  and a builder that hands the session `fixed + tick`; `advance(ms)` then a signed-in read pins the move as a
-  number (the session's `now_ms` ticks at 5 ms, so ms units resolve). Every other test leaves the tick at 0.
-- A fake's helper nobody calls is a `-D warnings` red in `tests/*.rs`: an unused gate is 4 fields and 4
-  accessors, an unused setter one more. Build the machinery a test needs, and when a test does not need it,
-  delete it before reporting; the connect refusal needs an outcome cell only (a refused connect opens no
-  stream, so a pause and a gate there are dead weight).
-- The 422 field table: `field` is `args[0]` ONLY for a rule whose first arg is a key. A rule naming a value, a
-  position, a count or nothing maps to its control: `fit-target-format` to `fit-target`,
-  `moe-cache-with-tensor-split` (empty `args`) to `moe-cache-mib`, `load-on-startup-over-max`/`-unlimited` to
-  `load-on-startup`, `preset-no-model` to `model`, `override-no-pattern`/`-no-device` to `override-tensor`. A
-  refusal about the preset's NAME (`invalid-preset-id`, `preset-name-taken`) carries NO `field` member (not
-  null). Read the real `args` from `crates/core/src/checks.rs` (`grep -n '"<key>"'`): the built `field_of`
-  takes `args[0]` and drops the rest, so a table copied from a design's prose reds on `args`, and the
-  `left: 405` of an unrouted route hides it. A rule whose `args` has no key at all (`min-above-max`) has an
-  `args[0]` that is a key, and a rule whose `args` is `[]` has none: pin both.
-- `AsStatusAll` (the instance states behind `running`) is asked for the file that holds the section, so a save
-  of `presets.ini.disabled` ends its exact call list at the WRITE: no `list`, no `status`. Pin that, and pin
-  the safe hint the other way round: a state read that fails AFTER a write that landed is a 200 with
-  `running: true`.
+  report that apart from `Timeout`, or the red reads as a hang.
+- A Rust test that cannot compile is not a red. Before reporting a list of tests that should fail, write
+  a throwaway test that exercises the new signature (call it, print the result, the `panicked at .. not a
+  future` of a non-async block), run it, then delete it and write the real tests. Report the shape.
+- A throwaway is a probe of reachability, not of behaviour: it shows a value is constructible and a call
+  compiles, not that a call site exists. Name it in the report as a probe.
+- When the coder's work already contains the rule, the test you expect red is green. Say so, and add an
+  assertion that fails for a reason you cannot fix: the EN strings the brief gives that `en_US.json`
+  lacks, the key pair that must be equal.
+- In an e2e of many phases in one `#[test]`, a refusal aborts at its own phase, so every later phase is
+  "unproven, not passed". Prove each phase alone, then report the phases the red blocks as blocked,
+  never as passing.
+- When a phase can only be proven in a red state, seed the pre-save state into a file and show the
+  refusal, then write the final test asserting the good outcome. The red of a test that asserts success,
+  naming the exact refusal, is a better report than an artificial case.
+- `cargo test -p <crate>` runs no target when one target fails to compile (`--no-fail-fast` only unrolls
+  the run). Report which binaries did not run, and run the untouched binaries in a second invocation
+  (`--lib --test a --test b`) to show them green.
+- `cargo test -p <crate> <word>` filters test names, never target names: `cargo test -p pai-bff listen`
+  skipped most of `tests/listen.rs`. Run a file with `--test <name>` and account for every
+  `N filtered out` line in the report.
+- A long cargo log: write it to a file (never pipe it through `grep`, the SIGPIPE trap), then grep
+  `test result|Running|^error` for the map and `sed -n '<a>,<b>p'` for each block: the `tail` of a
+  two-binary run cuts the second binary's failure block.
+- A cargo test binary does not inherit the shell environment: a variable set for one run
+  (`RUST_BACKTRACE=1 cargo test ..`) reaches the harness as absent. Prove the harness with
+  `cargo run -p <crate> --bin <name>`, and gate a behaviour on the variable in the test body, not at
+  the module.
+- A unit test over a temp dir is not a data-root e2e, and a temp-dir test is no proof of the e2e: the
+  tree redirects to a per-test temp dir under `PRIVATE_AI_DATA_ROOT`, so it passes with no data-root
+  seam at all, and the same input can fail in the e2e, where the tree is a different shape.
+- `#[test] #[serial]` in a crate's lib is NOT covered by `cargo test --test <name>` (that names an
+  integration binary), nor by a `--test <name> -- <filter>` run. Say which invocation covers it.
+- A file-name rule that applies to one OS only is a `cfg` split, not an extra table row: a row aimed at
+  Windows reds every Linux run of the same test. Pin the Windows half in the `cfg(windows)` block, keep
+  the cross-platform rule in a shared helper, and say what Linux can and cannot prove.
+- "Nothing runs here" is not proof a later guard passes: a source lint over a file no test on this OS
+  compiles (a `cfg(windows)` module) is green on inspection, never "test passed". Say the file is
+  Windows-only.
+- A red test is a contract, not a hint about a name: where a name's shape is genuinely free (a generated
+  temp name, an ephemeral id), assert an observable (a suffix that survives a rename, a pattern), not the
+  literal the coder is free to pick.
+- A shared lock is machine-wide, not per test binary: a test that touches the live `bench.db` path hangs
+  the whole crate's suite behind the other binary's guard for ~120 s, until the lock-holder exits. Tests
+  use a temp db; the shared path is read in a dedicated single-binary run.
+- "No red for this criterion" is verified by the coder's diff: a criterion that is only an absence (the
+  save writes no key) is pinned as `!doc.contains_key(..)`, which greens on day one; a test the coder
+  must EDIT to go green is a stronger pin than a test that merely passes.
 
-## Text pins and source lints
+## The e2e phases (data root, the configurator)
 
-- A byte-exact text transform: build the fixtures from lines (`fn file_of(lines: &[&str], eol: &str)`)
-  and loop the test over `["\n", "\r\n"]`, so both ending styles and the "no CR in an LF file" pin share
-  one body; gate that last assert on `eol == "\n"` (it reds by construction on a CRLF fixture). Count the
-  lines a writer matches with the module's own predicate (`text.lines().filter(|l| line_starts_with_key(l, key)).count()`),
-  so "exactly one line remains" is pinned by the same rule the writer uses, not a re-spelled one.
+- `pai-core`, `pai-app`, `pai-cli` and `pai-manager` each have one plain `#[test] fn data_root_e2e()` in
+  `src/tests/mod.rs`, calling the modules' `<name>_e2e()` phase fns in sequence (`paths::redirect_for_tests`
+  sets `PRIVATE_AI_DATA_ROOT` in-process; no flag, `--ignored` or feature gates it). The GUI has no
+  `data_root_e2e`: its e2e is the single `#[test]` of `crates/config/src/tests/ui_bindings.rs`, which
+  calls `save_flow`'s plain fn (`crates/config/src/tests/mod.rs`).
+- Register a new phase in the body of `data_root_e2e` in the same edit that writes it. A phase that is not
+  called there is invisible to the e2e run: its solo run looks green and the full-suite failure blames
+  the tree.
+- A phase that drives a real save goes through `config_seam_e2e` (`crates/app/src/server_control.rs`:
+  redirect the tree, save through the seam, reload, assert), never through a direct write of
+  the files: that passes without the seam.
+- "Nothing left in the user tree" is a state of the tree, not of the process: assert it at the END of a
+  phase, where it belongs, not as an isolated mid-phase probe.
+- The GUI e2e is one `#[test]`, so a production line that half-did a rename kills it at its first phase
+  and the later phases report nothing. Prove a pre-existing red predates your edit (`cp` the pristine
+  file from your own backup, run, restore, `grep -c` to confirm the restore), name the production line
+  the coder must flip, and say which of your asserts the red blocks.
 
-- A coordinator's decision that changes ONE rule of a writer (the INI `set_key`: an equal value returns
-  the text byte for byte, a rewritten line keeps its OWN ending) leaves the writer's other paths alone:
-  the append path is NOT covered, so an appended last line keeps taking the file's ending (the pre-existing
-  pin of the last-line-header test says so), and a new key lands after the section's LAST real line, not
-  after the sibling you were thinking of. Read the sibling pins of the same function before writing an
-  expectation the decision does not name; two guesses of mine were wrong in one run.
-- A pin of "prefix, one break of an unpinned style, the content": a `trim_end_matches(['\r','\n'])` on the
-  slice taken after the prefix cannot remove the LEADING break, so a `rest.starts_with('\n')` assert beside
-  it is a contradiction and the test is red by construction (red reads `left: "\r\nn-cpu-moe = 8"`). Trim
-  BOTH ends (`trim_matches(['\r','\n'])`) for the content, and keep the break's presence in its own assert.
-- Proving each assert of a multi-assert test reds for its own reason (scratch copy, `//` the predecessors,
-  `cmp` back): a block is the `let fixture = ..` statement AND the `assert_eq!` that follows it, each
-  ended by a paren-balance walk. Commenting the `let` alone leaves its assert live, every variant dies as
-  `E0425: cannot find value` and prints no `test result` line. An assert that only passes when an earlier
-  one of its own fixture group is live is the same trap.
-- A fixture that spells key lines compactly (`ctx-size=8192`) to show untouched bytes: the EXPECTED text of
-  a REWRITTEN line is `key = value` (`set_key`'s rule, ARCHITECTURE.md "Saving a preset from the web"), not
-  the fixture's spelling. A count pin on the compact needle (`matches("ctx-size=")`) drops when the line is
-  rewritten, so its expectation must name what the smaller count proves (the compact spelling survives only
-  on the untouched section's line), and the compact line's byte-for-byte survival gets its own
-  `contains("{needle}{nl}")` pin, with `nl` in the needle so the CRLF pass pins the ending too.
-- In a slice under a coordinator's decision, some reds in the filter are the PRE-EXISTING tests (the
-  previous slice's red the reviewer is now extending: `set_key` glued an appended key to a final-line
-  header). Say which reds predate your edits; `git diff` cannot tell them in a tree a coder left dirty.
+## The cargo harness in this repo
 
-- A pin that a source literal IS a text constant of another crate (the bff's disabled-file header, the
-  configurator's `DISABLED_FILE_HEADER`): extract the raw literal, then DECODE it before comparing
-  (a `\` line continuation drops the newline AND the next line's indent; then `\r`, `\n`, `\t`, `\"`,
-  `\\`), and compare the decoded text with the constant read from the other source (cut it from
-  `const NAME: &str = ` to the line's `;`). Do not compare line counts: the extraction starts with the
-  opening line's continuation `\`, so the counts differ by one on an identical text (`left: 4 right: 5`),
-  and a green of a count compare proves nothing about the bytes.
-- A rename of a FILE NAME splits into three kinds of site, and only two go red: a fixture that CARRIES the
-  name inside prose data (the disabled file's header as the input file of a save test) is data and stays
-  green; a test holding its OWN copy of the prose is red only through the twin-keeper that decodes and
-  compares it to the owner crate's constant; and the owner crate usually has NO verbatim pin at all
-  (`parked.starts_with(DISABLED_FILE_HEADER)` is self-referential, green under any text). So a prose rename
-  needs a NEW verbatim fixture in the owner crate: derive the expected name from the code that owns it
-  (`ConfigFile::Presets.manager_name()`) and add `!HEADER.contains("<old name>")` beside it, so the pin
-  cannot rot with the next rename.
-- Find a text's verbatim pins by grepping a FRAGMENT OF THE SENTENCE (`raise ModelsMax`), never the key:
-  a key grep returns dozens of key/args sites (`Refusal::new("k", &[..])`, `assert_refused("k", &[..])`,
-  the 422 `field` table, the CLI's `e.text()` compare), and every one of those is TEXT-AGNOSTIC, green
-  under any wording. The verbatim value of a strings key exists in `pai-core` only: the renamed-keys table
-  of `checks.rs` and the `parse(include_str!(..))` + `lookup` pairs of `strings.rs`. A wording change that
-  no test quotes (the manager's and the bff's refusals travel as key + args, the app and cli render them
-  through `Refusal::text()`) has NO pin to flip: write the pin in core, in BOTH strings files at once, and
-  report the other crates as green-and-untouched.
-- A tuple pairing `(the manager's file, the name on disk in the user's directory)` (the hand-over's
-  `USER_FILES`): a fixture that builds the per-user directory with the MANAGER's names greens the defect,
-  because the code under test reads exactly those names, and every existing test passes. The fixtures that
-  carry the user-side names must be built from constants for each side (`PRESETS_USER` = `presets.ini` in
-  the dir, `PRESETS_SYS` = `models.ini` in `with_file`/`writes`), and the negative needs the gate of the
-  rule isolated: an offer that requires a per-user `server.ini` reds "offered" only when the manager
-  already holds the server file, else it is green for the missing gate.
-- A text pin on a file the coder will rewrite: prove it greens on a candidate edit in a temp copy, so
-  the red is not a broken helper. A "no old text left" pin must be narrow (pin the code shape, e.g.
-  `"+llama.cpp.{"`): doc comments legitimately describe the old format.
-- Before writing a pin, list the test module's existing helpers and tests (`grep -n "    fn "`): a slice
-  that adds a rule usually lands beside a previous slice's pin of the same file (the preshutdown-at-`start`
-  test was already there, its name one word from the new one). Extend the existing test's asserts, do not
-  add a twin: two tests of one rule make the coder satisfy the looser one.
-- `rustfmt` reflows a multi-line assert message you just wrote, so re-read the region before a follow-up
-  edit: the exact text you wrote is not in the file.
-- A pin of the form "this call is the condition of the start" (`body[..find(".is_current(")]` ends with
-  `if`): the text before the needle ends with the RECEIVER (`if !scm.gate`), not the `if`. Strip the
-  receiver: loop { take trailing identifiers; if what remains ends with `.`, take it and continue, else
-  stop }. A keyword (`if`) is eaten as an identifier if the loop keeps going past a dot-less stop, so the
-  stop is the whole rule. Trace the helper on `if gate`, `if !scm.gate`, `if self.gate`, `let stale = gate`,
-  `debug_assert!(!gate` before trusting the green.
-- A pin "the generation this restart took is the one its thread asks" (a name bound at `.begin(` must
-  reach `.is_current(`): the tolerant reading accepts `let (id, scm, generation) = (.., self.gate.begin(id))`,
-  and needs the begin args and the ask args separately, so `call_arguments(hay, name)` (the manager's helper
-  takes the name WITHOUT `(`) must not be handed a needle with the paren: it appends `(` and starts after it.
-  A `preshutdown_set`-style helper returns a needle that ENDS with `(`, so pass it as `call.trim_end_matches('(')`;
-  the pre-fix search `X((` panics, so a green of such a test also proves the binary carries the fix.
-- A Python mirror of a Rust test helper is the cheapest way to check a set of text pins can all go green at
-  once (patch the glue in a /tmp copy, print ok/RED per pin). Transcribe the helper exactly: a mirror that
-  starts its paren count at the `(` of the call off-balances every needle and reports a false RED.
-- A stub struct whose field no `todo!` body reads fails `-D warnings` with `field <x> is never read` (the
-  only lint red: `clippy::todo` did not fire on `todo!("RestartGate::begin")` in this crate, checked). Say
-  so, add no `allow`: the wiring clears it.
-- A pin on a file that also holds the test reads only the code before `#[cfg(test)]\nmod tests` (in
-  xtask `main.rs`: before `#[cfg(test)]\nmod cli_tests {`, since `mod names_lint;` sits under an earlier
-  `#[cfg(test)]`). A needle the test counts or forbids is split with `concat!` and kept out of the
-  comment and assertion message. A top-level fn's body is found by `"\npub fn <name>("` (test fns are
-  indented; presets.rs has test items before production fns).
-- A pin that a record/line format is "literal text, not a strings-file text" (the manager's log): in the
-  phase, `std::include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/<file>.rs"))`, cut at
-  `"\n#[cfg(test)]\n"` (that is where `mod fakes` starts, so the phases and this test are off the check),
-  then require each field needle (`action=`, `target=`, `caller=`, `principal=`, `outcome=`) and forbid
-  `strings::t(` / `strings::fill(`. The require-needles red today (no renderer yet); the forbid-needles
-  are green by construction (the file has no strings call), so report them as guards, not reds. Check the
-  counts with a `python3` one-off before claiming either.
-- A build script, a GitHub workflow or a `.wxs` cannot run in a test: pin its text with comment lines
-  dropped first. When a workflow step checks reply fields, confirm names and values against the producer
-  by hand (`/api/instances` in `crates/bff/src/lib.rs`, states in `crates/core/src/client.rs`).
-- A `body.contains("Word")` lint greens on a comment naming the word (the handler's `Preshutdown`
-  lint is green today on a comment alone, the code routes through `ends_instance`): require the call
-  shape (`name(`) and the routing (the guard call and the send target), not the bare word.
-- An order pin `find(call) < find(kill)` pins text order, not the executed path: relocating the block
-  into a sibling branch whose text precedes the kill needles greens while the save is skipped at
-  runtime; pin the branch condition around the call. The `.expect("keeps killing the child")` on the
-  kill needle is what stops gaming by removing the kill (keep it).
-- A source lint that ignores test code uses `production_lines` (`tests/control_lint.rs`): it drops
-  `#[cfg(test)]` / `#[cfg(all(test ..` items by brace counting (not `any(test, ..)`, compiled in
-  production). "Only the seam may name X" is one more scan there with a `*_hits(line)` helper and its
-  own test (model: `only_the_seam_reads_the_instances_log`).
-- The configurator's lints (`control_lint`, `binding_lint`, `names_lint`) read files by path
-  (`src_dirs`): a new crate holding configurator or printing code (pai-bff) must be added to each, or
-  they pass while scanning less. If its keys are in `cli.toml` alone, its printing fns go in
-  `CLI_ONLY_FNS` (by a file name no other crate has, never `lib.rs`/`main.rs`) and the file in
-  `CLI_PRINT_PATHS`; `cli_print_paths_hold_no_language` reads only those files. The scans see a key only
-  as `strings::t(` / `strings::fill(` (a bare imported `fill(` is missed; `env!` inside `println!` is
-  flagged as a literal).
-- `strings_t_keys_and_the_language_file_match` derives the used keys from the sources at run time (no
-  key list to edit in `binding_lint.rs`), so a new `cli.toml` key greens with the lint UNTOUCHED, and it
-  also refuses a key in `cli.toml` no CLI-reachable source uses and a `{N}` the call does not fill. A
-  green of that lint is a guard only if the three lists cover the crate: `src_dirs` is
-  `["app", "bff", "cli", "config", "core", "manager"]` in all three lints, `CLI_ONLY_FNS` and
-  `CLI_PRINT_PATHS` match by path tail (`path.ends_with(file)`, so `bff.rs` is a whole crate's stem:
-  keep it unique).
-- `only_the_framework_s_own_files_are_in_its_system_directory` scans every crate's `src` (paths are
-  `crates/<pkg>/src/...` tails, slashes on Windows too: the lint rewrites `\` to `/`), so a file that
-  legitimately names `paths::system_config_dir` for the framework's OWN file goes in `SYSTEM_DIR_ALLOWED`
-  with its reason (today: `paths.rs`, the bff's `listen.rs`, the manager's `action_log.rs`: its log sits
-  in `logs` beside the framework's config dir, so it takes that dir's parent). The scan is
-  production-lines only.
-- `binding_lint` (`rust_fns`) skips only what follows a `mod tests {` line: an e2e phase (a top-level
-  `#[cfg(test)] pub(crate) fn ..._e2e`) counts as production, so calling a `CLI_ONLY_FNS` fn there
-  (`sweep::run`) fails `cli_only_code_is_not_called_from_elsewhere`. Call it from a `#[test]` in the
-  file's `mod tests` under `fake::scoped`, when it reaches no `paths::` (a plan it refuses, `reps: 0`,
-  stops it before anything real).
-- `strings::t`/`fill` return the KEY when missing: assert the message's content and
-  `!text.starts_with("<key>")`, never only equality with `strings::fill("<key>", ..)`.
-- Pin "the text is the strings file's, not built inline": `assert_ne!` the message against the inline
-  `format!` shape FIRST (so the red names that inline text), then require it to start with the template
-  read through the strings API, `strings::t("<key>").split('{').next()` (a missing key reads as the key,
-  so the same assert reds on it). A template that fills the HALF-WRITTEN name greens the file-name
-  contains (the final name is its prefix): pin `!msg.contains("-partial")` too, to pin the final name.
-- A `pai-core` test reads the REAL strings file: `paths::strings_dir()` takes `<exe>/../../share` only
-  when it exists, else `CARGO_MANIFEST_DIR/strings`, so no redirect is needed. A key used by code the
-  CLI reaches goes in `cli.toml` as well as `en_US.toml` (binding_lint), and `fill`'s arity must match
-  the template's placeholders exactly (`mistuned`: `{0}..{N-1}`, no gap, no extra).
-- The names lints (`crates/config/src/tests/names_lint.rs`, `xtask/src/names_lint.rs`) flag old names in
-  code lines (doc comments skipped). In tests split them with `concat!`: `concat!("llama-cpp",
-  "-config")`, `concat!("llama", ".cpp")` for `join("llama.cpp")`, `concat!(r"C:\ProgramData\llama",
-  r".cpp\models")`, `concat!("/opt/llama", ".cpp/...")` (xtask, even in a workflow needle), or a const
-  (`const ENGINE: &str = "llama.cpp"`). Sample paths must not contain the repo's directory name: write
-  `/home/dev/src/pai/...`. Exemptions: only `crates/core/src/migrate.rs` names the old tree
-  (`MIGRATION_NAMES`; `hits` matches the path by its tail); a bare `private-ai-manager` only in
-  `MANAGER_SERVICE_NAMES` and `WINDOWS_SERVICE_MODULE` (use the constant elsewhere); `/opt/llama.cpp`
-  only in `ENGINE_DIR_SOURCE`. Run the whole crate's tests, not just your filter. A new name that must
-  CARRY the service name (`private-ai-manager.log`) is spelled `concat!("private-ai", "-manager.log")`
-  in production code and the same in its test; only whole-line comments are skipped, so a comment on a
-  code line is scanned.
-- Since `src/lib.rs` exists, binary roots (`main.rs`, `bin/*.rs`) are separate crates; a lint may exempt
-  them, never `lib.rs`.
-- Cargo.lock lists dev and build deps of every target, one per line: a walk over it over-reports, never
-  misses (`crates/app/src/tests/deps_lint.rs`). A helper two crates need goes in a test-free file
-  included with `#[path = "..."] mod` (`tests/lock_walk.rs`). The include is relative to the MODULE's
-  directory and resolved on the filesystem: `mod tests` inside `crates/cli/src/cli.rs` has base
-  `crates/cli/src/cli/tests/`, which does not exist, so any include with `..` from there fails
-  (`couldn't find file`, E0583). Declare the include in a module backed by a real directory
-  (`crates/cli/src/tests/mod.rs`: `#[path = "../../../app/src/tests/<x>.rs"] pub(crate) mod <x>;`) and
-  `use crate::tests::<x>;` where needed.
-- Gate lints ("the call sits behind the decision") share one scanner (`crates/app/src/tests/gate_lint.rs`,
-  used by pai-cli's `snapshot_before_stop` and pai-config's `the_stop_worker_saves_snapshots_only_on_the_local_backend`).
-  Two traps: a call needle includes its `(`, so an argument-text walk starts right after the needle at
-  depth 1 (requiring a `(` there fails on the real code); and a gate found inside an `if`-condition whose
-  block holds neither the call nor a `return` must `return false`, NOT fall through to the bound-name
-  fallback: the fallback's "an `if` between gate and call" is satisfied by the gate's own `if`, so a gate
-  guarding only another call would green.
-- No "any `if` between the gate and the call" fallback at all: it greens on the `if` inside `verify` and
-  `modify`, and on an `if` whose condition names nothing of the gate (the GUI worker with its `saves &&`
-  deleted). Enumerate the `if`s (whole-word `if`, condition to the `{` at paren depth 0, block by brace
-  count) and require the gate call, or the name a `let` bound its answer to, as a whole identifier in the
-  condition of the `if` whose block holds the call, un-negated there; negated in a block that returns and
-  holds no call (a guard clause). A name needle is bounded on the right, a call needle is not: a call
-  needle ends with `(`, so its right side is the first argument char (`saves(b)`), and a right-boundary
-  check there fails on the real code (`on_the_fly` is the case the right check must refuse).
-- A scan of the text BEFORE a call must skip a qualified path and keep the stop character: the gate of
-  `if !crate::server_control::gate(..)` is governed by the `!` past the path, of `let on = crate::..::gate(..)`
-  by the `=`. `head[..i]` drops the `!`; taking the name from `head[i..]` keeps the separator space
-  (`" on"`), which matches a plain `if on` by accident and fails the negated guard, so the red names a
-  shape that never existed.
-- Probe the shape table with `rustc --edition 2021` over a `include!` of the helper (its `//!` header must
-  become `//`: E0753 outside a module root): 2 s per run, no Slint link. Run the same table against a copy
-  of the helper taken BEFORE the rewrite: every refusal printing `old=true` is the teeth of the new test.
-- `gate_lint.rs` reaches the crates that use it by `#[path]` and is NOT declared in `crates/app/src/tests/mod.rs`,
-  so `cargo fmt -p pai-app` leaves it alone: the fmt check must name pai-config and pai-cli.
-- A clap doc comment is pinned on what the user reads: `Cli::command().find_subcommand(..)`,
-  `.get_arguments().find(..)`, `.get_help()` (derive joins doc lines with spaces).
-- `benchmarks/schema.sql` is `include_str!`ed by pai-app (`bench/db.rs`) and
-  `the_repo_database_matches_the_schema` compares only columns: a comment between statements changes
-  nothing SQLite records (`sqlite3 -readonly benchmarks/bench.db "select sql from sqlite_master"`), one
-  inside a `CREATE` does.
-- A render that copies INI sections "byte for byte" (the `presets@<id>.ini` render): pin it with a
-  `ini::text::section_text(pool, id)` needle (id WITHOUT brackets: the match is on the stripped,
-  case-insensitive name), `body[from..].find(needle)` walking forward (pins presence AND order) plus
-  `headers(body) == ids` (pins absence and the `[*]` first). Whole-string equality over the
-  concatenated needles over-pins: it also fixes the blank lines the render puts BETWEEN sections,
-  which no design says. Trim the needle's `['\r','\n']` at the END: a section's trailing breaks are
-  not its bytes, and a writer that drops them is right.
-- Two reading traps of that design: an unassigned preset (no key, no `*`) is NOT rendered, so a writer
-  that defaults a missing key to the global switch greens the `*` tests and is wrong; and the pool's
-  `[*]` is in the render always, so every expectation starts with it. A "renders nothing" pin whose
-  expectation is an empty body greens by construction on a stub returning `String::new()`: pair it in
-  the same test with a non-vacuous case (the id absent while another is present), and let the header
-  assert be the red that names the stub there.
-- Prove a pure helper's red set goes green WITHOUT touching production code: build a probe
-  (`rustc --test --edition 2021 probe.rs`, 1 s). Copy the test file, cut the stub `pub fn` block with
-  python (`src[:src.index("pub fn render(")] + src[src.index("#[cfg(test)]"):]`), rewrite
-  `use super::render;` to `use crate::render;`, and `include!` that file from the probe next to a
-  candidate fn and a mini-module copying ONLY the helpers the tests call. `crates/core/src/ini.rs`
-  cannot be `include!`ed whole (`use crate::strings;`, `crate::checks::`), so copy
-  `section_text` with `find_section_header` + `next_section_start` + `line_start_of`.
-- `body.contains(&section(..).trim_end_matches(['\r','\n']))` is `clippy::needless_borrows_for_generic_args`
-  under `-D warnings`; drop the `&` (the argument coerces on its own).
-- The probe's test cut is regenerated from the real file every round (`awk '/^#\[cfg\(test\)\]/{f=1} f'
-  crates/<c>/src/<f>.rs > probe_tests.rs`): a driver that `continue`s on a compile failure leaves its
-  PATCHED cut on disk and reads it back as pristine, so the next case silently tests a stripped module.
-  Write each patched cut to a NEW path and never write the pristine copy.
-- libtest prints the per-test panic text and the `test result:` line on **stdout**: a probe driver that
-  greps only stderr reports a red run as green. Read `run.stdout + run.stderr`, and print the
-  `panicked at` line, so a green says "NO PANIC".
-- Teeth of a pin that sits AFTER a pin red today: `//` the predecessors in the cut only shows the pins
-  whose group is live. For the rest, mutate the CANDIDATE (one `if on {` → `if on || !in_enabled {`, an
-  early `return`), so the earlier pins pass and only the target pin can fire. Four mutations of one
-  candidate, one per pin, is the proof, and the unmutated candidate green is the joint-satisfiability
-  proof of the whole set.
-- A render that takes its line-ending style from the file it reads: an EMPTY pool file makes
-  `ini::detect_eol("")` answer CRLF, so the generated header lands CRLF in an LF render. Pin it as
-  "an LF pool rendered with a CR" and state the assumption (the empty file takes the style of the file
-  that has content).
+- An e2e phase redirects the data tree to a temp dir with `paths::redirect_for_tests`, which asserts the
+  paths follow it and stops before touching a real tree.
+- `--lib` of a binary crate runs the unit tests; `--bins` runs the built binary and exits. `--lib` of
+  `pai-app` prints `0 passed; 0 failed; 36 filtered out` for a filter that names an integration test: the
+  filter belongs to `--test <name>`.
+- `cargo test -p <crate> -- <filter>`: cargo eats the filter for the test target (0 tests, exit 101).
+  Reach a target with `--test <name>`; reach a `#[path]` module's tests with a unique filter (a module
+  prefix), then run the whole crate to show the rest green.
+- `crates/app/src/tests/gate_lint.rs` is pulled in by `#[path]` from `crates/cli/src/tests/mod.rs` (and
+  `crates/config/src/tests/control_lint.rs`), not declared in app's `tests/mod.rs`.
+- The bff's unit-test list is in `crates/bff/src/lib.rs` (its `tests/*.rs` are NOT the unit tests). The
+  bff's `build.rs` embeds the web UI from `PAI_BFF_FE_DIR`, so `cargo test -p pai-bff` fails "the web UI
+  is not built" until `xtask build framework` has run; to test the bff without it, set
+  `PAI_BFF_FE_DIR=<repo>/crates/bff/fe-fixture` (a stub `index.html`). `tests/fe.rs` needs the real
+  `fe/dist`.
+- The manager's D-Bus unit tests are slow and flaky on a loaded machine: green on an idle one, reds at
+  0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
+  `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
+  test).
+- A `tokio::time::sleep` in an async test on a current-thread runtime is real wall clock, not advanced by
+  the test's manual runtime pumps: it burns the whole budget (1200 ms of sleeps, 2.6 s) and greens
+  nothing. Drive the timeout with `tokio::time::pause()`, and use
+  `#[tokio::test(flavor = "multi_thread")]` when a real sleep is wanted.
+- The web UI's tests run from `fe/` only (`npm --prefix fe test`, `npx vitest run` inside `fe`): `npx
+  vitest` from the repo root resolves a different config and lies about the files it ran.
+- The type check that sees the test files is `npm --prefix fe run typecheck`; a bare
+  `tsc -p tsconfig.json` checks the app only, so a test file's own type errors reach only the npm script.
+  `npm --prefix fe run test -- <file>` does not filter (vitest reads the positional as its start command):
+  run `cd fe && npx vitest run src/<file>.test.tsx`.
+- Run `npx prettier --write <touched files>` BEFORE the final test run: prettier rewrites long
+  `test('<criterion>: ...')` titles into several lines, so a run before that reformats looks like a
+  changed test set. It also rewrites comments (a sentence that ends a comment line right after an operator
+  merges with the line below) and breaks an `as` cast on a multi-line type argument: read the diff it
+  makes, a joined comment is cosmetic, a reformatted type assertion is not. Prettier, ESLint and `tsc -b`
+  print nothing on a pass, so quote the command line, not an output line.
+- For a per-file map of failures and the counts of a full run, use
+  `npx vitest run --reporter=json --outputFile=<f>` and read `testResults[].name`,
+  `assertionResults[].fullName` and `failureMessages` with node (`--reporter=basic` does not exist in
+  this vitest; the default reporter's `FAIL` lines are wrapped, so `grep "FAIL src"` finds nothing;
+  `grep -E "^ FAIL" | sed 's/ >.*//' | sort | uniq -c` counts per file).
+- An `edit` can report success on an untracked file and not land on disk: after editing a file the slice
+  created, `grep -n` the new text and read the test NAMES in the run output before reporting. A file the
+  slice created is untracked, so `git diff` prints nothing about it.
 
-- A rename of a DISPLAYED word where the strings KEYS stay (the values are the coder's data): every test that
-  builds its expectation through `strings::t("<key>", ..)` / `fill("<key>", ..)` needs no edit and greens by
-  construction; only the tests that spell the value verbatim go red. Find them with a word n-gram scan
-  (2..=4 grams of each value, both strings files) against every `crates/**/*.rs`, then read each hit: a
-  substring inside a key name, a Rust id (`preset_no_model`), an INI token (`--models-preset`) or a fallback
-  id is not a text pin. Capitalise the expectation as the FILE has it (`Preset` -> `Model profile`).
-  The coupling of a command rename to the values: a new lint over both strings files forbidding the retired
-  command name (`pai preset`), in the crate that already lints them.
-- A CLI verb rename: clap builds each subcommand from a struct field list (`Command::new(name)`), so a help
-  read on `Cli::command()` cannot tell the verbs apart by text: the commands list lives in the binary's
-  `--help` test. Pin the retired verb as its own test (exit 2 + `unrecognized subcommand '<verb>'`); clap's
-  stderr names only that verb, and its usage line is `pai <COMMAND>` with no list, so never assert the list
-  there. The inline parse tests take the verb as an argv string: renaming those argv is the red, and an
-  expect prose naming the command is a second red per phase.
-- Where a brief redacts the words of a rename, the names table in `ARCHITECTURE.md` settles them; report the
-  line. If it renames the strings KEYS and the brief pins VALUES only, the brief governs: say so, and note
-  that the key-based expectations then follow the values on their own.
-- A test whose expectation is a filled string, and a doc comment naming the CLI command, are separate text
-  pins of the same rename: rustfmt reflows the longer value into a multi-line `assert!(..)` (format each
-  file, then `cargo fmt -p <crate> --check`).
-- A shipped data file a test compares against the CHECKED-IN file it ships from (`include_str!(..)` plus
-  `assert_eq!(text, want)`, the pattern of xtask's engine-default tests) is green whatever the file says, and
-  its keys filter drops every `;` line: a comment-header rename needs a new `text.lines().next()` pin, one in
-  the test of EACH copy (the Linux and the Windows default are separate files with separate tests).
-- A generated text (a `.desktop` entry): pin the WHOLE artifact the writer returns, and pair the new wording
-  with `!contains(<old wording>)` on the SAME output, so a half-edit reds. A fixture that reproduces what a
-  PAST release wrote on disk (a stale autostart entry, a 2.4 entry a migration reads) is historical data:
-  leave it and write the assert against what the code WRITES, so the red is independent of what the coder
-  does with the fixture.
+## Stubs, signatures and call sites
 
-- A phase that reads the repo's source at run time (`include_str!`/`std::fs::read_to_string` of a file under
-  the repo, the pattern of the manager's Windows pins) is patched in the REAL file, not in a scratch copy:
-  save the file to the scratchpad, mute one multi-line assert with `sed -i '<a>,<b>s|^|// |'` (the exact
-  range of `assert!(` to its `);`), run, repeat one wave per new pin, then `cp` the copy back and `diff` it
-  (empty). NEVER `set -e` in that script: a test red exits 101, the script dies mid-way and leaves the tree
-  patched. The LAST wave, with every new-rule pin muted, going GREEN is the proof that every other pin in
-  the file holds today, so report those as guards.
-- The reduced `tests/mod.rs` scratch (one phase) drops the unit tests that live in the OTHER `tests/*.rs`
-  files: the same crate's run counts 252 where the full run counts 259. Quote both counts, never one.
-- A green guard placed AFTER an assert that is red today never runs, so it proves nothing in that run: give
-  a green guard its own `#[test]`. Before writing one, grep the module for the string it pins (my `.deb`
-  `llama.cpp (>= 1:1.0.0+pai2)` pin duplicated one already at the deb-relations test of the same file);
-  a duplicate pin of a rule the brief asked "if nothing does" is a defect the reviewer will flag.
-- rpm version comparisons (`rpm-dependencies(7)`, `rpm-vercmp(7)`) order `1:1.0.0-pai2` BELOW
-  `1:1.0.0+pai2`: rpm reads `+` as a tilde-like separator of the Debian spelling, so a `Requires:` built
-  from the deb's `version+paiN` can never be satisfied by the engine's own EVR (epoch, version,
-  `release`). Prove it read-only, no install, in `/tmp`:
-  `rpm --eval '%{lua:print(rpm.vercmp("1:1.0.0-pai2", "1:1.0.0+pai2"))}'` is `-1`, the same pair with
-  `pai1` is `1`, and `dpkg --compare-versions 1:1.0.0+pai2 ge 1:1.0.0+pai1; echo $?` is `0` (the deb side is
-  right). So pin both spellings, one per format, and pin them DERIVED: the expected EVR once as a constant,
-  the spec's `Epoch`/`Version`/`Release` parsed and asserted equal to it, the engine's `Provides` asserted
-  equal to it, and the framework's `Requires` asserted equal to it.
-- An arm of a `cfg(windows)` `match` is source-lint only on Linux, so pair the structural pins with
-  behaviour pins of the OS-neutral function it calls: for `sync(&[])` that means the empty record reads
-  `Ok(empty)` through the real reader (the empty file, the truncated header, the comments-only file) and a
-  sync of the empty list plans the removal of every service of ours (a list-driven sync deletes, so an empty
-  list is not a no-op: that is why the entry must guard it).
-
-## Data-root e2e and the configurator
-
-- A test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is a phase fn, not a `#[test]`:
-  `#[cfg(test)] pub(crate) fn <name>_e2e()` calling `crate::paths::redirect_for_tests(dir.path())` on its
-  own tempdir, called from pai-config's `editable_widgets_track_model_after_edit`
-  (`src/tests/ui_bindings.rs`) or pai-app's `data_root_e2e` (`crates/app/src/tests/mod.rs`). Put the
-  phase ABOVE the module's `mod tests` (`items_after_test_module`). Append a new phase LAST: a red phase
-  hides every later one. To see later phases or blocks red, on a backup copy replace the other calls with
-  `{}` (deleting leaves `#[cfg(..)]` lines dangling) or turn the red block into `if false {`, then
-  restore. The same holds for `manager_checks_e2e`.
-- Proving EVERY block of a multi-block phase reds for its own reason: a `python3` pass that finds the
-  phase's top-level blocks (the lines equal to `    {`, one per `// ──` header plus any inner block the
-  header opens) and, for each block, prefixes ALL THE OTHERS with `if false ` (valid: a statement block
-  becomes an `if` statement, no brace added), runs the filtered test, prints the panic line. The
-  CUMULATIVE prefix (disable the first `i`) proves only the first block: a disabled block never runs, so
-  every later run reports block 1's panic. A block that asserts "nothing was recorded" passes on a stub
-  by design: report it as a guard, not a red. Restore by `cp` and `sha256sum` against the backup, and
-  restore in a `finally` (an exception mid-loop leaves the tree patched; `git diff --stat` after each run
-  shows the patch is gone). Two traps: a `    {` that opens a nested ITEM (a `fn f<B>(..)` whose signature
-  wraps past a `where`, so rustfmt puts the brace on its own line) is not a statement block, `if false {`
-  there is `expected one of #, {, lifetime, or type` and nothing runs, so accept a `    {` only when the
-  previous code line (whole-line comments skipped) ends with `}` or `;`; and a run that prints no
-  `panicked at` is that patch compile error, not a green, so print the run's `error` tail too.
-- Blocks of ONE phase share its data root, so a later block's read expects what an earlier block wrote
-  (a presets file written in block 1): say so in a comment. The cumulative probe then shows a LATER block
-  red on the fixture (`left: Ok(Some(<older text>))`), not on its point: read the red, do not chase it; the
-  throwaway candidate greens the phase in order.
-- Functions that take the directory as a parameter, manager calls refused at authorization or asking
-  only `Status`, and pure helpers are plain `#[test]`s.
-- A unit test whose expectation is a `paths::` default races the e2e redirect on another thread: assert
-  the shape (`ends_with("state")`) and pin the exact value in an e2e phase. Reproduce such a race by
-  looping `cargo test -p <crate> -- <unit> data_root_e2e`.
-- A phase that `set_current_dir`s (the cwd is PROCESS-global) makes every relative path a race with a test
-  running in parallel: read what you wrote by absolute path (`root.path().join("logs/x")`,
-  `env!("CARGO_MANIFEST_DIR")`). It shows as `left: []` in the FULL crate run and passes filtered, so the
-  candidate check runs the whole crate, not only the phase.
-- Needing the variable UNSET: re-run one ignored test in a child (`current_exe() --exact <path>
-  --include-ignored --test-threads 1`, a marker env var, `env_remove` the redirect, a deadline, `"1
-  passed"` in stdout; `system_connect_never_dials_from_a_test_binary`).
-- An e2e expectation that differs per OS branches on `cfg!(..)`, never on the pure function under test.
-  ModelsDir seeding is pinned in pai-app's `config_seam_e2e`, the instance's unset dirs in pai-core's
-  `instance_launch_e2e`.
-- `server_cfg::render` (pai-core) writes ModelsDir, StateDir and Hostname RESOLVED through `paths::`
-  (`render_for(.., leave_dirs_unset)` does not): a unit test rendering a `ServerConfig` sets both, a
-  shipped starting file names the service user's paths. pai-config's `server_form::config_to_form` also
-  seeds the field with `models_dir_or_default()`, so "unset stays unset" at render covers `pai`, not the
-  GUI's Save. `render` also writes an unset `OpencodeApiKey`, and an out-of-range `Port`, `ModelsMax` or
-  thread count, as a commented hint: pin checks on `ServerConfig` values (`server_cfg::check`), not on
-  rendered text.
-- A plain `#[test]` that reaches `server_cfg::save` (any success path) sets `models_dir` and `state_dir`
-  to temp paths: where the dirs are NOT left unset (macOS, `Os::current()`) the save ends with
-  `create_dir_all(cfg.models_dir_or_default())`, so an unset pair creates the real home-derived folder.
-  A unit test must NOT call `paths::redirect_for_tests` (process-wide, never restored: only an e2e phase).
-- A source lint on a call SHAPE (`code.contains("check(cfg, cpus)")`) breaks when production renames a
-  local; the behaviour test that sees the refusal already pins the call. Keep such a lint to the "no
-  second copy of the rule" guard (`!code.contains("fn check(")`) and name the behaviour test in its doc.
-- `#[cfg(test)]` is off in a library compiled as a dependency: items another crate's tests need go
-  behind a `test-support` feature, or the dependent silently takes the real backend. pai-app's fake
-  manager is `#[cfg(test)]`: a GUI path depending on the manager's answer is tested in pai-app with that
-  state passed down as a parameter.
-- In a test build `server_control::backend()` is `fake::current()`: the backend `fake::scoped(b, || ..)`
-  set on this thread (not spawned ones), else a manager over `DiskClient` (every action and probe
-  `Unavailable`; files at the per-user paths). Pin the manager's bytes with `FakeClient` (`with_file`,
-  `files`, `fail_write`, `fail_write_of` to refuse one file mid-sequence, `fake::writes(&log)`;
-  `fake::actions` omits probes and reads); a second fake sharing `files` continues from the first.
-  `os_backend()` is the real choice.
-- To order a llama-server call against a fake's, share one log: `server_control::fake::http_stub(&log)`
-  answers `/models`, `/health` and a slot restore on a loopback port; point `Port` at it in an e2e phase.
-- A raw-socket HTTP fake (`TcpListener` on 127.0.0.1:0, `listener.accept()` yields the tuple
-  `(stream, addr)`): record the request BEFORE answering a step that waits (a `Hang`), else a caller that
-  dies on its deadline reads as "no request was sent" and the red cannot tell the two failures apart.
-  Record the ask once per request, not once per request and once per step (a double record shows as two
-  saves per model). Its own file write is `let _ = std::fs::write(..)`: a panic kills the listener thread
-  and every later call fails "Connection refused" / "the server closed the connection", so the red names a
-  dead fake instead of the behaviour.
-- A "one deadline for the whole run" rule: N models where ONE hangs for the fake's `HANG` (5 s) under a
-  budget of 1 s, and `assert!(took < 4 s)` - a per-model budget would need N x HANG and greens.
-- Moving a leg's logic into `pai-core`: leave the old crate's behaviour tests in place (they drive the
-  public entry, so they keep pinning it through the wrapper) and pin the delegation itself - a source lint
-  over the code half (split at `"\n#[cfg(test)]\n"`) that requires the core call and forbids the old inline
-  shape - plus ONE end-to-end through the public entry. Do not re-test the core's rules in the wrapper.
-- To pin a refusal of a value that looks like a flag (`--port -1`), parse the port raw and filter only the
-  path-like value on `starts_with('-')`: filtering both makes `-1` a missing flag, so a fallback-to-default
-  implementation greens for the wrong reason.
-- The GUI's Server save re-reads the file at once (`refresh_server_snapshot`): fake state meant to change
-  "after the first save" must change before it.
-- A preset range test over `checks::PRESET_INT_KEYS` builds each Preset with `Preset::from_keys` and
-  checks `render_section` writes it back. A range change there also needs `form::form_to_preset`'s
-  `parse_int_in(.., &ini::INT_*)` literal changed (`invalid_numbers_match_what_the_conversion_drops`).
-- A model-header check is testable without libggml-base: write the GGUF with `hf_fit::tests::{gguf,
-  write_sparse, W}` (sparse, so 4 GiB costs nothing) and read it with the pure-Rust `hf_fit` reader;
-  `gguf::read_*` go through `ffi`, which finds no library from a test binary.
-- To pin a launch, build a `Command` and read back `get_program`/`get_args`/`get_envs`/`get_current_dir`;
-  take the exe as a parameter (`paths::llama_server_exe()` finds nothing from a test binary) and compute
-  expected args with `server_args()`.
-- pai-config's Windows code is compiled by nobody: pin each per-OS choice as a pure function of
-  `server_control::Os` tested for every variant, `Os::current()` written with `cfg!`.
-- slint: `ElementHandle` has no visibility query (a `visible: false` element is still found); pin a
-  sometimes-shown note as an `if`. A `Text`'s accessible label is its text. Placeholders:
-  `accessible_placeholder_text()` over `ElementQuery::from_root(app).match_descendants()...find_all()`
-  (one match per ancestor: assert non-empty, never a count). Each page is `if current_tab == N`: set it
-  in the phase and put it back.
-- Who launches binaries with which arguments: login entry `gui [--minimized]` (`startup.rs`), HW Monitor
-  `sdk-devices` (`hwmon/sdk.rs`), xtask's packaging reads `pai-config --version`, the MSI runs `control
-  stop-and-close` (`installer/msi-stop-processes.ps1`). Check them before dropping an argument.
-- An executable is tested from `crates/<c>/tests/*.rs` with `env!("CARGO_BIN_EXE_<bin>")`:
-  `PRIVATE_AI_DATA_ROOT` and a `DBUS_SYSTEM_BUS_ADDRESS` to a missing socket on the CHILD only, a
-  `try_wait` deadline, only commands reaching no backend (a non-test build takes the real manager).
-  A graceful stop: `Command::new("kill").args(["-TERM", &pid])`, expect `code() == Some(0)` (death by
-  signal reads `None`).
-- After a move between crates, diff `-- --list` names against the old crate in a worktree (`LC_ALL=C
-  sort`): only accounted renames. A stub at the move destination keeps tests compiling; tell the coder to
-  replace it with `git mv -f`. For an older commit's worktree (`git worktree add --detach build/<name>
-  <rev>`): copy the gitignored `resources/llama.ico` and `llama-brand-logo.svg`, set
-  `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` and a separate `CARGO_TARGET_DIR`.
- - For a move of a PURE fn (no new deps), the accounting needs no worktree build: per file, take the test
-   half (`awk '/#\[cfg\(test\)\]/{t=1} t'`), `grep -oE "fn [a-z_0-9]+"`, `sort`, and `diff` it against
-   `git show HEAD:<file>` (HEAD is the coder's base while the tree is uncommitted). A pure move shows as
-   the same names lost by the source file and gained by the destination, helpers (`checked_base`, `not_int`)
-   included: count those, do not assume. Names only, so a renamed test would pass uncounted: report the list.
- - After a move, grep the OLD path in every consumer: code (`grep -rn "pai_app::server_cfg" --include=*.rs
-   crates`: a `pub use pai_core::server_cfg::*;` re-export makes the old call path legal, so a hit is not
-   automatically stale) and the docs pages (`crates/config/README.md` names the check's crate: it read
-   `pai-app`; the coder does not edit docs, so the report sends the stale sentence to the `docs` agent).
-- A new argument on a method with many test call sites: a small Python pass that walks each call to its
-  matching paren (skipping string literals and `fn ` definitions) inserting the argument, then `cargo
-  fmt -p`; bump `[(..); N]` array lengths by hand.
-
-- One constant two crates use (the save's budget): pin the VALUE in the owning crate with
-  `assert_eq!(CONST, Duration::from_secs(N))`, a missing const is `E0425` and stops that crate's whole
-  test binary (report which tests did not run); pin each USER's delegation with a source lint over the code
-  half: require the core's path (`slot_save::SAVE_BUDGET`, a needle any of `use pai_core::slot_save::…`,
-  `pai_core::slot_save::…` or `slot_save::…` satisfies) and forbid the copied literal
-  (`concat!("from_secs(", "240)")`, narrow enough not to hit the file's other timeouts).
-- A unit line added to a shipped systemd unit is pinned by appending the exact line to the existing unit
-  test's `for want in [..]` list (`section(&unit, "[Service]")` yields trimmed lines, no leading space:
-  the `format!`'s `\` continuations strip them). The loop reports only the FIRST missing line, so one red
-  pins the whole list: the coder must land every entry.
-
-## Manager, D-Bus, pipe
-
-- A new `ManagerError` variant breaks the exhaustive matches the faces hold over it: `From<ManagerError>`
-  in `dbus.rs` and the expected-mapping in pipe.rs's `every_error_has_its_name_and_reads_back` test.
-  Arm both with `todo!("..: slice N")` naming the faces' slice that owns the mapping; do NOT add the
-  variant to `every_error()` in the core-method slice: the round-trip needs the client's variant, a
-  later slice's, and the error tests stay green on the untouched list.
-- The manager's instance record: `existing_id` asks the SECTIONS of `instances.ini`
-  (`paths::instance_ids`), not a `server@<id>.ini` on disk. So a fixture that wanted an instance by writing
-  its profile file is red (`Err(NoInstance)` on `start`/`restart`/`boot_enabled`/`set_boot_enabled`); it needs
-  the record too: `[id]\nServerProfile = id\n` (the shape `service::write_record` writes, and what
-  `launch::instance_command` reads). `status` and `stop` stay on `valid_id`, so a phase that only probes them
-  needs no record, and a `tests/*.rs`-style fixture that lists the engine config dir grows by one file.
-  A `NoInstance` pin on an id the record now names goes red at `expect_err` (the call answers `Ok`): keep the
-  pin, move it to an id NO section names (a valid id, e.g. `nope`), the message naming the record.
-- The two D-Bus phases have DIFFERENT `call` helpers: `manager_dbus_e2e`'s is a nested
-  `fn call<B>(conn, method, &B) -> Result<Message, (String, String)>` (body by reference, one generic, the
-  reply decoded outside by `body::<T>`), `manager_dbus_waits_e2e`'s is `call<T, B>` running on a thread and
-  handing back a `Receiver<Result<T, String>>`. A neutralized probe block written for one is E0107 in the
-  other (`call::<bool, _>` supplied 2 generics where 1 belong).
-- A phase can give every block its own data root: a local `fn root(files)` that calls
-  `paths::redirect_for_tests` on a fresh tempdir and seeds the served dir; no coupling between blocks,
-  and the "the directory is not there" case gets a root that never saw a `create_dir_all`.
-- A seam called through `&self` gets a fake with `Mutex` logs (seams must be `Sync`), read through an
-  accessor; pin "nothing happened" on a refusal by empty logs plus the error kind.
-- The manager's `FakeService` records every `ServiceControl` call, `status` (the probe) included: a
-  batch that ends with a successful `Status` pins `vec![Call::Status(..)]` in the calls log, never an
-  empty one; write the refusal tests' expectation as "nothing beside the Status probe".
-- A later block of a shared e2e phase asserts its count as a DELTA on a baseline taken INSIDE the block
-  (beside `admins_before`/`bff_before`, take `calls_before` too): an intervening block that ran a probe
-  (`boot_enabled` records `Call::BootEnabled` in the SAME service-calls log as `status`) makes the previous
-  block's absolute count stale (8, not 7). A "the write adds no unit call" assert, with the pipe sibling
-  pinning `vec![]`, goes: `assert_eq!(calls(&c).len(), calls_before, "a file write touches no unit")`.
-- A core method signature change when the transport faces (`dbus.rs`, `pipe.rs`) are off-limits: a local
-  bound (`trait AsRequester { fn as_requester(&self) -> Requester }`, implemented for the old bare
-  `Caller` and the new `Requester`) keeps every face call site compiling; the stub keeps the old body, so
-  the no-principal tests stay green and only the new calls red on assertions. Say in the report that the
-  bound goes away when the faces send the new type. An `Option<&Caller>` parameter goes generic the same
-  way: `foo(None, ..)` stops inferring → `None::<&Caller>` at each test site.
-- A stub that ignores a new rule runs the OLD path, so in a plain unit test a principal `write_file` with
-  an allowing authority writes the real `paths::engine_config_dir()` (Linux `/etc/llama.cpp`, where a
-  `read_file` shows as `Err(Io(PermissionDenied))`: a harmless read, the red names a real path). Keep
-  every call that can succeed (writes, starting an existing instance) in a data-root phase; plain tests
-  only pin refusals the implementation reaches before any path.
-- "A member removed between two calls of ONE manager" (no cache) needs shared mutable state in the fake:
-  seed an `Arc<Mutex<BTreeSet<String>>>` from its fixture list and answer `is_admin` from it (existing
-  tests keep passing, the answers are the same); two managers over different fixtures pin nothing.
-- Proof that every block of a long e2e phase greens: a throwaway candidate implementation, run, then
-  restore. It catches a wrong expectation in a later block (there: an earlier block had rewritten the
-  file the later block compared against). Restore the backup, then re-apply the test fixes you found.
-- Teeth of a refusal block, shown by probing production: script the probe (python: exact anchors, patch,
-  run, `shutil.copy` the snapshot back) and keep the snapshot taken AFTER your test edits and BEFORE the
-  first probe, to prove the restore with `cmp`/`sha256sum`. A red in an EARLIER block of the phase (the
-  coder's own) panics first: disable that block with `if false {` on its opening brace to reach yours.
-  In a loop, the first refusal red hides the block's file-on-disk check: temporarily turn the loop's
-  `assert_eq!` into an outcome `eprintln!` so the block runs on to that assertion. Pick the written
-  content so the content checks ACCEPT it: an ungated write then really lands, and the red reads
-  `left: "<new text>"`, not a check refusal.
-- A "seam X was never asked" assertion stays green under a probe that removes the whole gate (nothing is
-  asked at all): it needs its own probe that REORDERS the production checks, leaving the refusal itself
-  in place.
-- `Authority` has `is_authorized` (may prompt) and `is_authorized_quietly` (never: a challenge is no);
-  `FakeAuthority::new(allow).quietly(q)` logs the quiet ones in `asked_quietly`. A changed D-Bus reply
-  signature is pinned with `r.body().deserialize::<OldShape>().is_err()`.
-- "A slow seam holds up nobody": `fakes::Gate` in `manager/service.rs` (`GateAuthority`,
-  `GateResolver`): wait with `gate.arrived(n)`, run other calls via `on_thread(..)` + `recv_timeout`,
-  open the gate before panicking on a timeout, check `try_recv()` still empty. Pin a race by holding one
-  call at a seam inside the critical section and accepting either serialization.
-- A reservation under a lock released by a `Drop` guard in async code: no `.await` between reservation
-  and guard (cancellation leaks it), every `MutexGuard` on that lock dropped before the guard (else
-  deadlock). A cancelled request leaves its `spawn_blocking` running.
-- A per-connection identity behind a shared `Authority` is a thread-local set around the call
-  (`TokenAuthority::with_caller`): pin it cleared on return and on panic, unseen by other threads.
-- `$MAINPID` exists only for a unit's `ExecStop=` and is unset when systemd knows the main process exited
-  (man 5 systemd.service, `ExecStop=`): pin the unset case through `run(&["save-slots", "default"])` in a
-  plain unit test, first `assert!(std::env::var_os("MAINPID").is_none(), ..)` (a systemd-only name, so the
-  assert never fires in a test, and the run must touch no `paths::`: `data_root_e2e` owns the process-wide
-  data root). A candidate arm that drops the id shows as `unused_variables`: tell the coder to prefix it.
-- zbus 5 without a bus (`zbus::blocking`): `UnixStream::pair()`; server
-  `Builder::async_io_unix_stream(s0).server(Guid::generate())?.p2p().serve_at(..)?.build()` on its own
-  thread; client `.p2p().method_timeout(..)`. Stamp a sender with `client.inner().set_unique_name(":1.42")`
-  (dev feature `bus-impl`). `org.freedesktop.DBus.Error.*` replies come back as `zbus::Error::FDO`,
-  others as `MethodError`. A destination `Some(BUS_NAME)` is accepted on p2p.
-- "No manager": serve at another path (`UnknownObject` as `FDO`) or drop the server (`InputOutput` at
-  once). No system bus: `DBUS_SYSTEM_BUS_ADDRESS=unix:path=<tempdir>/none`, in one test of the binary. To
-  prove a run never dials the real bus, point the variable at a logging Unix listener (`python3 -I`) and
-  run `cargo test` filtered on `bench:: cli:: slot_state gui::` plus the e2e.
-- zbus 5 (async-io) runs every task of a connection on one executor thread: a sync `fn` method blocks
-  every other call on that connection.
-- Another D-Bus service (systemd) is faked by a `#[zbus::interface(name =
-  "org.freedesktop.systemd1.Manager")]` struct served p2p at `/org/freedesktop/systemd1` (snake_case
-  methods become `GetUnitFileState`...). Signatures: local `man 5 org.freedesktop.systemd1`; `is-enabled`
-  states: `man 1 systemctl`.
-- A new `ManagerClient` method needs an impl in `DbusClient`, `PipeClient`, pai-app's `FakeClient` and
-  `DiskClient`, and pai-bff's `tests/instances.rs` and `tests/server.rs` `FakeManager` (implement the
-  test ones yourself). A new `Authority` method: `FakeAuthority`, `GateAuthority` (test), `PolkitAuthority`,
-  `TokenAuthority` (`todo!` stubs).
-- The Linux `Caller` is a bus name, not a uid: "who is this account" needs the bus
-  (`GetConnectionUnixUser`), so it sits on `Authority` (`is_bff`), the uid rule a pure fn; on Windows the
-  thread-local `TokenFacts` of `TokenAuthority`. A pipe test for a missing argument of a NEW method is
-  green before it exists (an unknown method is BadRequest too): recheck it after the coder.
-- A fake's shared log in a returned tuple trips `type_complexity`: alias it in `fakes` (`Checked`).
-- A server or client over `impl Read + Write`: a `Cursor` of peer frames for reads, an
-  `Arc<Mutex<Vec<u8>>>` for writes, an optional failing `ErrorKind`; compare JSON as `serde_json::Value`.
-  A real duplex: `UnixStream::pair()` with `set_read_timeout` (`manager/pipe.rs`,
-  `crates/manager/src/tests/pipe_client.rs`). A frame cap needs a test in both directions on each side.
-  The fakes log in `Arc<Mutex<..>>`, so `Arc<Manager<..>>` is `Send + Sync`: one side of a socket-pair
-  round trip is `thread::spawn(move || serve_stream(&core, caller, server_end))`, and `drop(client)` is
-  what ends it (EOF reads `Ok(None)`), so no channel is needed to stop it.
-- The manager's principal refusals are all `ManagerError::NotAuthorized`, whichever check failed (not
-  the bff, ill-formed name, no member): pipe tests pin `error("NotAuthorized", ..)`, the client's
-  `NotAdministrator` is its own reading of that name.
-- A shared asked-seam log (`asked_admin`) over an e2e block counts one entry per call that REACHES that
-  seam: a call refused at an earlier gate (a non-bff caller stopped by `is_bff` in `check_principal`)
-  adds none. Trace every call of the block through the gate order before writing the expected list, and
-  say the order in the assert message, so the list pins the gate order, not a call count.
-- The manager's log of who acted (`ActionLog` / `Manager::with_log`): pin the record as the fake log's
-  whole lines (`action=".." target=".." caller=".." principal=".." outcome=..`, values `{:?}`-quoted, `-`
-  for no caller/principal, `ok`/`refused` bare, a failure's kind quoted). One hostile-name table where
-  EACH case gets its own manager and its own fake log, so "exactly one record" is provable; pin Rust's own
-  escaping by formatting the same value in the test (`format!("{:?}", caller.0)`), never by hand-writing
-  escapes. A candidate that greens it: each guarded method becomes a wrapper over a `*_inner(&Requester)`
-  plus one `log_call(action, target, who: Option<&Requester>, outcome: Option<&ManagerError>)` (the
-  `Option<&ManagerError>` shape takes both `Result<(), _>` and a `Result<Option<..>, _>` via
-  `.as_ref().err()`); the full crate green with that candidate proves the wrappers are behaviour-preserving.
-  The `log_call` helper goes in `impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R>` (a
-  bare `impl Manager` is E0107: the struct is generic). A failure's outcome: `format!("{e:?}")` cut at the
-  first `(`, then `{:?}`-quoted, so `Service(_)` and `AddressInUse(..)` both give the bare kind name.
-- In a plain `#[test]` of `manager/pipe.rs` (no data root) `Stop` is the only verb that may succeed:
-  `start`, `restart` and `set_boot_enabled` ask `existing_id`, a file on disk. A refusal by a pure check
-  carries any verb (id `../x` is InvalidId, name `server.ini` is BadFileName). A success that needs a
-  real file belongs in `src/tests/pipe_client.rs`. `stop` is FS-free end to end (authorize, `valid_id`,
-  the fake service), so it is the verb for a plain test of a log sink wired on `with_log`; a sink's
-  red is its own `todo!`, not a stray read of `/etc/llama.cpp`.
-- The sinks of the action log (`manager/action_log.rs`): one line per record is pinned as the sink's whole
-  bytes (`{line}\n`, nothing added), the flush by a `Write` that counts its `flush` calls, the no-mixing
-  rule by N threads x M long self-naming payloads through ONE `Arc<Mutex<W>>` writer with `handle.join()`
-  counted, not propagated (the stub panics on every thread; the count goes in the assert message, so the
-  red says "8 writer threads panicked, 96 records asked for: 0 lines").
-  `WriterLog<W>` over `Arc<Mutex<W>>` is what makes the lock span the write AND the flush: the writer
-  accessor returns the `Arc`, so the test reads it and the threads share one log.
-- The FILE sink's no-mixing rule: one temp path, 12 threads x 24 long self-naming records, a
-  `Barrier::new(threads)` waited after EVERY record so all threads enter `record()` at once: red 10/10
-  today (122-145 empty lines per run) from `writeln!`'s two writes. A candidate fix matters:
-  `write!(f, "{line}\n")` is NOT one write (`write_fmt` emits each format fragment separately), it stays
-  red 10/10; `file.write_all(format!("{line}\n").as_bytes())` is one `write(2)`, atomic under `O_APPEND`
-  on Linux and Windows, greens 10/10. Single-write-per-record is not observable deterministically
-  through the public API (no FIFO/seqpacket over a path sink): the thread test is the pin.
-- A path the service derives from `paths::` is pinned in two parts: a pure `<name>_path_in(root: &Path)`
-  for the shape (a Windows path reads on Linux the same, `Path::join` is separator-agnostic: use slashes)
-  and the exact live value in the ONE phase that already redirects (`data_root_e2e`), asserted
-  `starts_with(<tempdir>)` as well, so a real `%ProgramData%` write cannot hide green. A phase's `core`
-  closure is not generic (a closure cannot be): a block that installs a different sink type builds
-  `Manager::new(..).with_log(..)` itself.
-- Gate order is pinned by the fakes' logs, never by an echo shape invented for the reply:
-    `FakePasswords::asked_admin` shows the principal reached the core, and that the gate runs before the
-  action's own check (`SetBootEnabledAs` of `../x` asks the membership, then answers InvalidId); an
-  empty polkit `asked` shows the `Requester` carried the principal, since a call that fell back to the
-  caller's own would ask.
-- `asked_bff` records the caller of every `is_bff` question (the face sends the header's sender), so a
-  phase spanning two stamped connections expects that log by caller, not as one total: `bff_asks(9)`
-  extended with `other_asks(6)`. Only the `As` methods ask it (a plain guarded call asks polkit, not
-  `is_bff`), so the count is the principal calls, not every guarded call.
-- The D-Bus face is pinned with arguments as a tuple in the declared order (`&("alice", "default")`),
-  since zbus maps the members positionally: a reversed implementation answers for the instance named
-  "alice", a red no client test catches (the trait hides the wire). Over p2p a missing method replies
-  `org.freedesktop.DBus.Error.UnknownMethod` (`FDO`), so every new method reds there first; the pipe's
-  red for the same is `BadRequest`. A stub's `todo!` in the core client panics with its own name
-  (`not yet implemented: DbusClient::acting_for`): in the one `data_root_e2e` test that red stops the
-  phase, so the face's red and the client's red are seen in two runs, not one.
-- `set_unique_name` works on the client connection of a p2p pair too, so the bff caller rule (`:1.9`) is
-  pinned from the server face (`Builder::..caller(..)`) and from the client (`the_bff_caller_runs_as_the_principal`)
-  without inventing a seam. Stamp each test's own name; the manager's `Caller` of a p2p server is what was
-  stamped, `None` when nothing was.
-- A new read like `Version()`: at the face pin the body as `(Vec<String>, Vec<String>, u64)` through a
-  tuple `match` (an array pattern of three `String` is E0282, `["x".to_string(); 3]` is E0277: write
-  `["a", "b", "c"].map(String::from)`; `vec![x.clone(); N]` is fine), and pin it against
-  `env!("CARGO_PKG_VERSION")` of the serving crate, not a literal version. The client side pins
-  `Some(..)` and, for a missing method, `Ok(None)`: serve a peer object at the manager's path exposing
-  only a `Ping`, and say in the report that `Ok(None)` on UnknownMethod is the assumed shape (the pipe
-  does that, the bus face's answer is the coder's).
-- The object path `/org/privateai/Manager1` is private to `crates/core/src/client/dbus.rs`, so a fake-peer
-  interface repeats the literal with a comment that it follows the client. The core client's own tests
-  (`crates/core/src/client/dbus.rs::tests`) use `#[tokio::test]` + `zbus::connection::Builder` + a local
-  `#[zbus::interface]` peer; the manager's D-Bus tests use `zbus::blocking` on a thread.
-- A bound client's own type is the coder's: pin the frame it sends through a helper taking
-  `fn(&dyn ManagerClient) -> Option<ClientError>`, so an owned or a borrowed bound client both compile;
-  keep the bound client in a block when the test uses the unbound one after it.
-- `unused_must_use` under `-D warnings` in a threaded test: `join().expect(..)` on a thread returning an
-  `io::Result` yields that result, and so does `recv_timeout(..).expect(..)`: bind each and assert it.
-- Windows decisions are OS-neutral pure functions in `manager/windows.rs` and `pai_core::client::pipe`;
-  only Win32 glue is `cfg(windows)`. Numeric Win32 values come from the local windows-sys source
-  (`~/.cargo/registry/src/*/windows-sys-*/src`), meanings from learn.microsoft.com, a crate's behaviour
-  from its `.crate` on static.crates.io. `SID_NAME_USE` (i32) counts `SidTypeDomain` (3), so
-  `SidTypeAlias` is 4, not 3. Check a Win32 IDENTIFIER the same way before pinning it: the preshutdown
-  window is `SERVICE_CONFIG_PRESHUTDOWN_INFO` with a `SERVICE_PRESHUTDOWN_INFO` (the `PRESHUTDOWN_SERVICE_STATUS`
-  named in a brief is no such name: that pin would never green, so `grep -rn` the crate for the identifier
-  first). A per-instance state that a delayed-start thread shares goes in `ScmService` behind an `Arc`
-  (the service is built once in `entry.rs` and cloned, so a plain field is a per-clone copy; `ScmService`
-  is `Send + Sync`). The Win32 glue a pin reads lives in the submodule `manager/windows/scm.rs`, its text
-  read by `scm_code()` / `scm_fn(name)` in `manager/windows.rs::tests`. A registry test's guard restores
-  every value in `Drop` (no panic there). The SCM reports states on its own: never-started reads
-  `SERVICE_STOPPED` with exit code 1077. A service SID (`NT SERVICE\<name>`) is computable per [MS-LSAT]
-  3.1.1.1.2 (SHA-1 of the upper-case UTF-16LE name; `service_sid`).
-- A seam handed over as pure compile red (no stubs, coordinator's order): prove the test code's own hygiene
-  with `cargo check -p <crate> --all-targets --target x86_64-pc-windows-gnu`: the error list must name ONLY
-  the missing items (E0425), the site counts differing by exactly the `#[cfg(unix)]` test's share; anything
-  else is a typo in the tests. No `running N tests` line in the filtered `cargo test` proves the crate's
-  other tests did not run. A `&[OsString]` seam (from `Command::get_args`) takes lossy UTF-8 internally;
-  build an invalid-UTF-8 `OsString` in a `#[cfg(unix)]` test with `OsStringExt::from_vec` (bytes with
-  0xff), expect U+FFFD in the answer.
-- A token holds the local groups (aliases) its user was in at logon, as SIDs: a check by group name
-  looks the SID up (`LookupAccountNameW`) and compares it whole; a change of membership counts at the
-  next logon. Unverified (fetch failed): UAC sets only the admin groups deny-only, a custom group stays enabled.
-- The manager's render (`presets@<id>.ini`): a render that cannot be written is made by RENAMING the
-  rendered file away (`<name>.held`) and putting a DIRECTORY in its place, so the atomic write's rename
-  fails `EISDIR`; `create_dir_all` on the file that is already there is `AlreadyExists`, not a fixture.
-  Tell the instance that sits AFTER the broken ones (in `assignments.ini`) a preset only the NEW pool has:
-  the red then shows the missing `[d]`, not a one-trailing-newline diff. Pin the start's wiring with the
-  house source lint (`include_str!("dbus.rs")` + `split("#[cfg(test)]")` over the production half): require
-  the report's name and forbid the discarding line (`let _ = core.render_all()`) as a second needle.
-- The manager's seams are NOT symmetric: `read_file(Option<&W>, ..)` answers `Result<Option<ManagerFile>, _>`
-  (compare with the `plain(text)` / `withheld(text)` helpers, never `Ok(Some(text.to_string()))`), while
-  `write_file(&W, ..)` / `write_file_if(&W, ..)` take a reference and have NO caller-less form
-  (`AsRequester` is implemented for `Caller` and `Requester` only), so a "refused with no identity" pin
-  belongs in the D-Bus / pipe phase, not in the service phase.
-- An action-log line is `action="write_file" target="instances.ini" caller=":1.42" principal=- outcome="BadFileName"`:
-  the outcome is `{:?}` of a `&'static str`, so the name is QUOTED (`contains("outcome=BadFileName")` never
-  matches). Pin a refused write's record as a slice of the log from a baseline taken before the calls
-  (`lines.lock().unwrap()[base..]`), and account for every call that records: a read records one line too.
-- `file_path(name)` refuses a name the manager does not serve YET, so a phase pinning "this name becomes
-  readable" must join its path itself (`sys.join(NAME)`) and not `file_path(..).expect(..)`: the expect
-  panics at the phase's first line and hides every assertion red. E2E phases never restore the redirect
-  (there is no `restore_redirect`), they just call `paths::redirect_for_tests`.
-- Adding an instance to a client phase's fixture has side effects: `check_address` loops over
-  `instance_ids()` and reads `server@<id>.ini`, so an instance with NO file is judged as the DEFAULT
-  binding (port 8080, 127.0.0.1) and collides with any wildcard write on 8080. Sorted ids save the expected
-  `AddressInUse("default")` when `default` sorts first, check it by hand. And a write refused by NAME still
-  asks polkit (the gate runs before the name check), so an exact `asked(&c) == vec![(alice, Configure); N]`
-  in the SAME block as your added writes counts them: find that assert before adding a call.
-- A probe that comments out the earlier asserts of a phase must KEEP every `let` the later asserts read
-  (`let before`, `let reported`): commenting a binding makes the probe's red E0425, not an assertion. And
-  re-take the `.bak` in the right order: the probe writes the real file FROM the bak, so an `edit` applied
-  to the real file after a probe lands in the probe's copy (restore, then re-apply the edit).
-- An instance IS a section of `instances.ini` (`paths::instance_ids`), so a fixture that wants an instance
-  writes the record, not only the file: `service.rs`'s `write_record(&dir, &[ids])` helper (one
-  `[id]` + `ServerProfile = id` section per id), the client phases write it inline. The rules that follow:
-  `list_instances()` answers the SECTIONS, so a section with no `server@<id>.ini` is listed (the coder's
-  fixture shape: `[lan-2] ServerProfile = lan-2`, its file arrives with the accepted write) while
-  `existing_id` asks the FILE, so the same id is `NoInstance` for start/stop/boot (one id, two answers,
-  both pinned); `render_all_locked` runs after every accepted write over the sections, so a `models@<id>.ini`
-  render pin needs the record written BEFORE that write; and an exhaustive directory listing after an
-  accepted write gains `instances.ini` (it sorts FIRST, before `models.ini`) plus one render per section.
-  A record whose section's file is missing reads as the default binding (localhost:8080) in the address
-  check, which is what makes a wildcard-on-8080 write collide with it.
-- The startup-count render rule (`checks::startup_loads`): `load-on-startup` counts only the value `true`
-  (`ini::parse_bool` accepts `true`/`false`, never `1`), `ModelsMax` is read from THAT instance's
-  `server@<id>.ini` (not from the pool), and the refusal is `load-on-startup-over-max` with
-  `[count, max, id]`. So a pin of it sets `ModelsMax = 1` in the instance file and puts two
-  `load-on-startup = true` profiles in the pool, with an `assignments.ini` that assigns them to that id.
-- The e2e phases are one `#[test]`: to probe a phase past a red one, comment its CALL in `tests/mod.rs`
-  with a marker (`// DIAG:`) and keep the `#[cfg(..)]` line beside it, then restore from a scratchpad
-  `.bak` with `cp` and `diff` (never `git checkout`); a phase call is one line, so the restore is a diff
-  of seven lines.
-
-## Packaging, installers, CI (xtask)
-
-- Most xtask path code has no test: after a path change check the targets exist by hand and say so.
-  `linux::package::run` reads the real `build/linux/`: pin decisions as pure functions over a
-  `build_root: &Path`. xtask has no `tempfile`: `temp_dir()` + pid behind a `Drop` guard.
-- xtask's `windows/` (`cfg(windows)`) and `macos/` never run on Linux: pin choices as items in `common/`
-  (`common::msi::CARGO_EXES`, `common/macos_pkg.rs`) plus a text check that the per-OS code uses them.
-  Per-OS modules are `#[cfg(unix)]`, so a test importing one needs it too; run `cargo check -p xtask
-  --all-targets --target x86_64-pc-windows-gnu` (and `aarch64-apple-darwin` for the Mac side) before
-  handing over.
-- A caller source lint that reads one call's args and forbids the literals `true`/`false` has two proven
-  survivors (licence scoping): the disjunction `product == Product::Framework || product == Product::Llama`
-  (contains the required needle, no literal), and any call site the lint does not read (`installer_page`'s
-  `web_ui` on Windows, `cfg(windows)` so it never compiles on Linux). Pin EVERY call of the function and
-  refuse `||` in the args; a literal `true` at the linted sites is caught.
-- xtask's CLI: `Cli::try_parse_from` (`cli_tests`); compare `ValueEnum` names via
-  `to_possible_value().unwrap().get_name()`. clap 4 refuses `--flag -1` without `allow_hyphen_values`
-  (`--flag=-1` parses): panic with clap's error so it is not read as a refusal.
-- A new `Component` variant compiles with `todo!` arms in `suffix` (`common/components.rs`) and `texts`
-  (`linux/package.rs`).
-- A new test file beside a big inline `mod tests`: declare `mod <name>;` inside it (`common/msi/tests/`);
-  `use super::*;` reaches private helpers.
-- The `.wxs` is parsed with roxmltree (`<?if?>` are processing instructions, entities decoded); `dacl()`
-  reads `PermissionEx Sddl` into ACEs so an ACL is pinned by meaning. Extension elements are matched by
-  namespace URI (the prefix is not kept). Conditions are pinned by meaning with `holds(cond, props)` and
-  `runs_in(doc, action)` in `common/msi/tests/engine_lifecycle.rs` over named scenarios; with
-  `MajorUpgrade` afterInstallValidate, a "before files are replaced on upgrade" action runs in the OLD
-  package (`UPGRADINGPRODUCTCODE`).
-- MSI facts: conditions never compare versions, so a minimum version of another product is `Upgrade` +
-  `UpgradeVersion OnlyDetect="yes" Minimum=..` plus a `Launch` on its property. An AppSearch signature
-  with no Signature row is a directory search (`appsearch-table`, `drlocator-table` on
-  learn.microsoft.com). WiX schema pages (docs.firegiant.com/wix/schema/wxs|util/<element>/) put the
-  attribute table past offset 100000; what the compiler accepts is in `Compiler.cs` at the pinned tag.
-  Windows Installer removes empty folders it created: a "kept after uninstall" check writes a file there
-  first. An msiexec exit code (1603) alone is any fatal error: pair it with the `/l*v` log message.
-- WiX Util `Group` under a `Component` creates a local group; by default it is REMOVED at every uninstall
-  where it exists (members or not, pre-existing or not; `src/ext/Util/ca/scagroup.cpp` at the tag), so a
-  MajorUpgrade empties it: keep one with `RemoveOnUninstall="no"`. Raw sources at
-  `raw.githubusercontent.com/wixtoolset/wix/v7.0.1/src/ext/Util/...` (`wixext/UtilCompiler.cs`, `ca/`).
-- `linux/package.rs` `texts()` is the ONE source of a package's words: the summary ships as the `.deb`
-  control's `Description:` first line (`deb_control`) and as the `.rpm` spec's `Summary:` (`rpm_spec`,
-  exactly 8 spaces after the colon, so copy the spacing from the source), the long description as the
-  folded body and as `%description`. A word rename in a package text is pinned on `texts()` and on both
-  renderings: `fields_v(..)` then `f.summary`/`f.description` from `texts`, `rpm_spec` over a `scratch()`
-  root (an empty dir renders the header, `%files` aside).
-- A dialog-text pin in `common/msi.rs` is a word list (`for word in [..] { assert!(lower.contains(word)) }`):
-  flipping one word reds at the FIRST missing word, so a paired "refuse the old word" assert never runs in
-  the same test. Prove that refusal's own red with a standalone `rustc` probe that prints each predicate
-  over the exact `Text` attribute (the XML entity `&#13;&#10;` decoded to `\r\n`). Refuse with the stem
-  (`!lower.contains("preset")` refuses `preset` and `presets`), only after checking the new text cannot
-  contain it (one naming `presets.ini` makes that assert unpassable). No test measures a dialog's geometry
-  (the control's `Width`/`Height` are unchecked): a longer text overflows silently, report the numbers.
-- Linux packages: `check_files` (`linux/package.rs`) checks a spec's `%files` against a temp tree as
-  rpmbuild does; reuse it for every new path. ROCm libraries find kpack archives at `<lib>/../.kpack`.
-  A shared-library fixture follows CMake's symlink chain (`.so -> .so.N -> .so.N.M.P`), compared after
-  `canonicalize`; read the soname from the clone, never an older note. ggml loads backends from
-  `GGML_BACKEND_DIR`, then the exe's dir, then cwd, first of equal score winning.
-- Maintainer scripts are run in `Sandbox` (`linux/system_files.rs`): fake `systemctl`,
-  `deb-systemd-invoke`, `getent`, `chown`, `install`, `systemd-tmpfiles`... log their args; `/run`,
-  `/etc/llama.cpp`, `/etc/systemd/system` and other system paths are moved, others refused; `systemctl`
-  logs `has-default=yes|no` to order a copy against a start. Add every new tool a script calls to the
-  fakes. `run_chroot` refuses any `/etc` path not under `$DPKG_ROOT`. Enabled template instances exist
-  only as `multi-user.target.wants` links (`systemctl list-unit-files` lists the template alone): pin
-  the links. rpm scriptlets run the same way, `$1` as argument.
-- The sandbox helper matches whole whitespace-separated tokens (`call`), so a file name inside a
-  path token is never seen: `install -m 0644 ... /usr/share/.../presets.ini` is not a call of
-  `presets.ini`. To pin "the copy of <file> against <action>", add a helper that finds the word
-  and then the file name in the tokens after it.
-- xtask is a bin crate: `cargo test -p xtask --lib` lists 0 tests. Use `cargo test -p xtask --bins
-  --no-fail-fast -- <filters>`, and `--bins -- --list` to type-check all of them.
-- The xtask suite is flaky in its parallel run: `the_engine_prerm_records_the_running_instances_and_stops_them`
-  failed once in six full runs (the recorded list short of `llama.cpp@gpu1.service`) and is green alone,
-  in four further full runs and with `--test-threads=1`; its `Sandbox::new("engine-prerm")` root is
-  `temp_dir()/xtask-scripts-<name>-<pid>`, so the loop's iterations share one directory. Report it as a
-  pre-existing flake, with the reruns that came back green, never as the slice's defect.
-- Packaging facts (this machine): local rpmbuild has no `%systemd_post` (write scriptlets by hand); rpm 6
-  turns a sysusers.d `m` line into `Requires: group(..)`; debhelper snippets to mirror are in
-  `/usr/share/debhelper/autoscripts/`; dbus' trigger is `interest-noawait` (the policy may not be
-  reloaded before a postinst starts a Type=dbus unit). A unit on the system bus cannot use
-  `DynamicUser=` under dbus-daemon (dropped at Hello): use a sysusers.d user. One `StateDirectoryMode=`
-  applies to every `StateDirectory=`: another mode ships as a tmpfiles.d line, applied again by the
-  core's postinst after `systemd-sysusers` (a line whose owner is missing is skipped, exit 65: keep `||
-  true`). Every new header-free or engine-headed file goes on the exclusion list of
-  `the_system_files_and_scripts_name_the_core_package`. `paths::installed_share_dir` is
-  `<exe>/../../share`, so a `/usr/libexec/private-ai` program finds no `cli.toml`.
-- polkit rules (`.rules`, JavaScript) are pinned by meaning: `rules_answer` (`linux/system_files.rs`)
-  runs them under node (a build prerequisite) against a stand-in `polkit` object. polkit facts, from its
-  source (github.com/polkit-org/polkit, `src/polkitbackend/`): a rule returning nothing falls back to
-  the action XML's defaults (`polkitbackendduktapeauthority.c`); uid 0 is always authorized unless
-  `ALWAYS_CHECK` (`polkitbackendinteractiveauthority.c`). The `.deb`/`.rpm` share one staged tree, so a
-  per-format file (`/etc/pam.d/private-ai`) is written by `write_deb_scripts` / `write_rpm_files` into
-  the core's root; the test helper `files_section` reads `%config(noreplace) <path>` lines by path.
-- Check a candidate unit with `systemd-analyze verify` and `systemd-analyze security --offline=true` on
-  a /tmp copy with `ExecStart=/usr/bin/true`. Local man pages (systemd 259) are citable.
-- Version order: `dpkg --compare-versions a gt b`, `rpm --eval '%{lua: print(rpm.vercmp(a, b))}'`
-  (`2.4.0+x` sorts above `2.4.0`); rpm-spec(5), rpm-version(7). Distribution package contents:
-  `apt-get download` into a fresh /tmp dir, `dpkg -c`; Fedora specs via
-  `curl -sL https://src.fedoraproject.org/rpms/<n>/raw/rawhide/f/<n>.spec`; docs.fedoraproject.org
-  blocks scripts, read it through web.archive.org and say so. The predecessor `.deb`/`.rpm` sit in
-  `dist/`.
-- journalctl's refusal texts: systemd's `src/shared/journal-util.c`; `strings` on the installed
-  `libsystemd-shared*.so` gives this version's wording.
-- llama-server: a missing `LLAMA_CACHE` lists empty and a download creates it; only `--slot-save-path`
-  must exist before start.
-- CI workflows (`xtask/src/ci_windows.rs`, `ci_macos.rs`) are pinned as text (`after()` for order,
-  `steps()` per step, `switches(..)` regions); prove helpers with a throwaway workflow. Runner contents:
-  `actions/runner-images` (`windows-2025` is the VS 2026 image: `Windows2025-VS2026-Readme.md`;
-  `macos-15-arm64-Readme.md`). A `pwsh` step exits with the last native `$LASTEXITCODE`: a step printing
-  a command allowed to fail ends with `exit 0` (pin it).
-
-## bff and web UI
-
-- Session reply shape: pin it with `Reply::assert_user_reply(user)` (`tests/session.rs`): the
-  key-count assert (object has exactly one key, `user`) runs before the value assert, so a reply with
-  an extra key reds as "carries more than the user", never as a name typo. Every fake `Identity`
-  literal is `Identity { user }` (no role since the pai-only sign-in slice): dropping a field is
-  pinned by E0063 at each literal. A `grep can_configure tests/` after such a slice must still hit
-  the manager's `(ok, can_configure)` tuple (`tests/authenticator.rs`) and the 403 non-member docs:
-  those are the manager's check, they stay.
-- Server file key withholding (`tests/server.rs`): the `FakeManager` answers
-  `Result<Option<ManagerFile>, ClientError>` via `whole(text)` / `withheld(text)` helpers. The flag
-  alone must null the key: `document()` nulled it only via its own `!can_configure` (kept_here), so
-  withheld=true with a key in the text reds `left: String("sk-test")` against `Value::Null`, an
-  assertion red past the compile red. Three failing integration binaries block every pai-bff test
-  target: bound the red with `cargo test -p pai-bff --no-fail-fast --test <the rest> --lib`.
-- Sign-in split for tests: the manager's `(ok, can_configure)` mapping belongs to `SystemAuthenticator`
-  (fake `ManagerClient` over a `Connect`, plain `#[test]`s in `tests/authenticator.rs`); the HTTP
-  mapping (403 `session-not-administrator` is no credential failure: refusals are a counter of their
-  own per (lowercased name, IP) within the window, refusals + in-flight reaching the limit makes the
-  next request 429, and the 429 check runs first) is pinned in `tests/session.rs` with the `Account`
-  fake holding `answer: Result<Identity, AuthError>`, so the fake models the seam's mapped outcome,
-  not the pair.
-- A "the authenticator was never asked" pin in a test that signs in first compares a baseline taken
-  after the sign-in (`let before = app.asked();` ... `assert_eq!(app.asked(), before, ..)`), never
-  `is_empty()`: `App::sign_in` asks it once by design (the red lands on the assert's own line, as in
-  `tests/origin.rs`). `assert_asks_nothing` keeps its empty checks (connects, calls, principals):
-  sign-in reaches none of those seams, only the authenticator.
-- A counter rule is pinned as `N` sequential requests of that kind (each asked and answered), then the
-  next request 429 without asking, then the same after the window moved (the count expires), then the
-  two counters apart (4 of one + 4 of the other: the 5th of each is asked, and locks). Every pin needs
-  a fresh `App`: one lockout per fixture. A burst is deterministic in the same shape: each request
-  that passes the gate is asked and answers 403, so `403 count == calls` and `403 + 429 == burst`, and
-  the asked count lands exactly on the limit serialized or concurrent.
-- A "does not lock the other pair" test whose authenticator log is by name, not by (name, address):
-  put the asked-while-locked assert right after the locked pair's 429. A later request of the fresh
-  pair (same name, other address) is legitimately asked, and a 403 answers only after the ask, so the
-  name's total ends at `MAX_FAILURES + 1`, never `MAX_FAILURES`.
-- A per-account `hang: Duration` in the fake authenticator (sleep in `authenticate`, before the answer)
-  serves the fast and the hanging account in one fake; let the hanging answer be a 200 so an unbounded
-  check reads `left: 200, right: 503`, the reason for the red. Keep the sleep 20x the injected bound
-  and assert the reply came in less than half the sleep: the bound answers fast, a wait for the answer
-  is an order of magnitude late. Sleeps run in `spawn_blocking`, the runtime joins them at the end.
-- Inject a production const (the sign-in bound) into an integration test with a new `pub` builder in
-  the module that takes it (`session::routes_with_sign_in_timeout(auth, clock, bound)`): one new
-  function, no call site of `router_with_session` changes (other test files keep compiling), a `pub`
-  stub in a lib crate is no dead code, underscore-prefix the unused parameter. Its 10 s production
-  value cannot be waited out: pin it with a source lint over `src/*.rs` (the `const SIGN_IN_TIMEOUT`
-  line carries `from_secs(10)`, and the name appears at least twice: declared and used), never
-  `assert_eq!(crate::SIGN_IN_TIMEOUT, ..)` (a missing const is a compile error that hides the binary).
-- `todo!()` emits no clippy diagnostic on this toolchain (checked with `-W clippy::todo`): stub reds
-  under `-D warnings` are only `dead_code` on fields the stub does not read; underscore-prefix stub
-  params. A `todo!` in an axum handler body unwinds the `oneshot` caller: a test task spawned
-  concurrently reads it as `JoinError::Panic`, not a 503; a panic inside a `spawn_blocking` closure
-  is caught by the `JoinHandle` and mapped by the handler (`unwrap_or`).
-- An axum router is tested with `router().oneshot(request)` and `BodyExt::collect` in `#[tokio::test]`;
-  a route asking the manager through `router_with(connect, timeout)` and a fake `ManagerClient`, every
-  request under `tokio::time::timeout`; a sleeping fake runs in `spawn_blocking`, which the runtime
-  awaits at its end, so keep sleeps short. A new route needs no stub (axum's empty 404 is the red);
-  check the panics point at reply assertions, not the sign-in helper.
-- `ConnectInfo<SocketAddr>` is inserted into extensions for `oneshot`, which hides missing
-  `into_make_service_with_connect_info`: pin the wiring with one request to the binary. The binary's
-  socket test reserves a free port, polls a raw HTTP/1.1 GET over `TcpStream` with a deadline, kills the
-  child in a `Drop` guard.
-- A rate limit or lockout: fake that sleeps in the seam, `multi_thread` runtime, a `JoinSet` of N
-  requests, assert the seam's call count; try the key spellings the backend treats as one.
-- A value sent by role: add a second user to the fake authenticator and `sign_in_as(user)`; assert the
-  secret's text is nowhere in the body, not only the `null`.
-- The embedded page is tested on what the build embedded (`PAI_BFF_FE_DIR` from `build.rs`, `tests/fe.rs`
-  `embedded()`), following `index.html`'s `/assets/...`; only `crates/bff/fe-fixture` exercises CSS.
-  That env var is baked by the build script, so a build script output left by a removed worktree points at
-  a path that no longer exists: `cargo clean -p pai-bff -p pai-core` (plus `--target <triple>` for the
-  cross check) before the rerun, and read `tests/fe.rs` as the observable that the rebuild baked this
-  repo's path (5 tests, byte-for-byte, they red naming the missing dir on a stale one).
-- Read a JSON type from `fe/src/ServerForm.tsx` (`fromValues`/`toValues`) before pinning it
-  (`RocblasUseHipblaslt` is `"on"`/`"off"`).
-- fe tests (Vitest, jsdom): globals off, so call `cleanup()` in `afterEach`; mock fetch with
-  `vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(..))` (bare `vi.fn` types calls as `[][]`).
-  Vitest does not type-check: run `npm --prefix fe run typecheck`. Debian's npm 9.2.0 dies on mismatched
-  peer ranges (`reading 'edgesOut'`): align versions, try installs in a copy of `package.json`.
-- Read new strings through a `text(key)` helper that throws on a missing key. `strings.test.ts` sees a
-  key only as a literal `t('key'` and flags letters between `>` and `<` in a `.tsx`; check JSX text with
-  `ts.createSourceFile(.., ScriptKind.TSX)`, not a regex.
-- Several components read `/api/instances`: a `Response` body reads once, so gate reads
-  (`() => gate.promise.then(() => reply(..))`) instead of sharing one. For a deduplicating read, hold one
-  pending when the next consumer's is due. Focus moves to the `h1` on route change: `navigate()` first.
-  A `hidden` hint is still in `textContent`. A `#` link moves `location.hash` in a later task: wait one
-  `setTimeout(0)` in `act`. jsdom's `HTMLDialogElement` lacks `showModal`/`close`. Scope queries to
-  their section (header controls break whole-main queries). After an interrupted session run the file
-  first. Mutation runs go in a scratch copy of `fe/` with `node_modules` symlinked.
- - A mutant that swaps one table value for a value the SAME table computes is EQUIVALENT, not a coverage
-   gap: `selectState`'s `row.absent` equals `row.options[0].value` for all 19 select rows of
-   `PresetCards.tsx`, so `options[0].value` cannot red any test. Prove equivalence by scanning the table
-   (python over the source, one line per row: key, absent, first option), and kill the NEAR mutant
-   (`absent: 'f32'`, a row whose absent is not the first option): that one is killable, and the case you
-   write for it pins the equality the equivalent mutant destroyed.
- - A number field's `inputmode` is DERIVED from the range table (`numericMode` reads `INT_KEYS[].min`), so
-   a mutant that gives one key a minimum fires the input-mode pins too: count those reds as collateral of
-   one change, not as extra coverage.
-- A mutant sweep: a python driver that applies each mutant with `str.replace` guarded by
-   `count(old) == 1` (a regex pasted into sed dies on `/` and `\\`), runs the named test files, greps
-   `×` + the `Tests ` line, and restores a `.pristine` copy after EACH mutant. A "check only changed
-   fields" mutant (an unchanged loaded value escapes the check) is killed by the untick-and-empty refusal
-   rows: the untick leaves the text equal to the loaded text, so those fields fall out of the changed set.
-- A hand check against the real bff: drive the snap's `geckodriver --port <free>` over plain WebDriver
-  HTTP from `python3 -I` (`-headless`, screenshots as base64 over HTTP, 2 s after each load; Firefox
-  stops at 500 px wide). Kill it with `snap run --shell firefox.geckodriver -c 'kill -TERM <pid>'`. The
-  bff's target dir here is `build/windows/cargo-target`; `grep -a -c <asset name>` on the binary
-  confirms it embeds the new `fe/dist`.
-- Web UI: the fake bff's `deferred()` ignores abort, so a GET held for 15 s or more of fake time
-  must use `held()`, or a timeout test passes without a real browser's behaviour.
-- Web UI: a settings-group checkbox takes its accessible name from the row's `<label>`, not from the
-  group title, so `getByRole('checkbox', { name: <group title> })` finds nothing (the group itself
-  answers to that name). Query it as `box(main, fieldLabel(main, t.<key>))` and keep the group title
-  for the `role=group` query.
-- Web UI: a form control is `aria-disabled` only when it is really inactive (`{cond || undefined}`
-  writes no attribute), so `getAttribute('aria-disabled')` is null on a live control: use the file's
-  `inactive()` helper, and for a "nothing happens" click on a live control read the writes log, not the
-  attribute.
-- Web UI: a 401 on the file read renders the read-failed state with no form, so a test that waits for
-  a section heading (the form) of a withheld document fails on the setup. Pin "the secret is nowhere"
-  with the whole `document.documentElement.outerHTML` (the section heading alone lives in `main`), and
-  after a 27d-style read failure assert `status-error`, the group's absence and that no input is a
-  text box.
-- Web UI: a disabled control is skipped by Tab, so a tab-order test for a non-configuring session
-  reds while the page still disables it, and goes green when the slice makes it live: cite both the
-  tab criterion and the state criterion there.
-- Web UI: session-change tests should split the axes: same `user` with the other `canConfigure` (the
-  page must not move) and a different `user` (the page reloads). Keep the banner's role word in the
-  dedicated role-word test, so the session tests stay green when that wording changes.
-- Web UI: when a later slice adds a control or live region to a page, the earlier slice's tab-order
-  and "no status" tests break by design; update them in place and cite both criteria.
-- Web UI: `input type="password"` is found by `getByLabelText(.., { selector: "input" })`, not by
-  `getByRole("textbox")` (dom-accessibility-api gives it no role here).
-- Web UI: the `EN` table in `fe/src/test/bff.ts` is the mirror App.test.tsx's "1a strings" test compares
-  with `fe/src/strings/en_US.json`, so adding a new key there reds that test (`keys missing or with other
-  text: ['<key>']`) until the coder adds it to `en_US.json`. That is the new string's own red, report it
-  as such. `strings.test.ts` (the "every key the code uses" scan) skips test files, so a test-only EN key
-  never trips it.
-- Web UI: run Vitest from `fe/` (`cd fe && npx vitest run <file>`); `npx`/`npm exec` from the repo root
-  resolves no local vitest. The three checks (`typecheck`, `lint`, `format:check`) do run from the repo
-  root as `npm --prefix fe run ..`. `typecheck` before the suite: it reports an unused helper (TS6133)
-  that Vitest ignores. Keep a run's output small through
-  `grep -E "✓|×|Tests |Test Files |Error|expected|Unable" | cut -c1-200 | head -50`.
-- Web UI: the reds of a big table-driven file are read as a population, not one by one:
-  `grep -E "AssertionError|TestingLibraryElementError" | sort | uniq -c` over the run's output shows in one
-  pass that every red names a missing control and no red is a helper typo (`TypeError`) or an unhandled
-  rejection. Prettier reformats a fresh test file and the fixtures it edited: run
-  `npx prettier --write <files>` from `fe/` before `format:check`, then re-run the file (the format pass
-  must not be trusted to keep the reds).
-- Web UI: `fe/src/test/presetCards.ts` is the shared source of the whole-page assertions, so adding a card
-  to `PRESET_CARDS` for a new slice reds, by design, the earlier slices' tests that list the page:
-  PresetContent's heading-order and tab-order, PresetPage's "one About toggle per field", PresetCards1's
-  card order / tab order / strings, PresetCards2's tab order. They read as "the page has 27 of the 40
-  expected" (`expected [ Array(27) ] to deeply equal [ Array(40) ]`, `expected '1 2 3 3' to be
-  '1 2 3 3 3 3'`), the shape that names the shared list, so report them as the slice's shared-fixture reds
-  and do not touch those files. Prove a red is yours from its assertion shape, never with `git stash`
-  (shared tree, see General).
-- Web UI: a checkbox field is a `role=group` (so `fieldControl()` and the name queries work on it), but its
-  input carries no `aria-describedby`, so `descriptions` is empty: the "the hint text is not on the control"
-  assert is vacuous there, and the hint's presence is pinned only by opening it. `fieldControl()` throws for
-  a control that is not a group (a range), so a table with a range row needs its own query.
-- Web UI: in jsdom an `<option>` has no `checked` (it reads `undefined`, only `selected` exists), so a
-  select's current choice is pinned by `select.selectedIndex` (its option's text, the thing the user
-  reads) or by `.value`, never `input.checked`; note `selectedIndex` is 0 by default, so the
-  "an option is selected" guard is weak and the text compare carries the test.
-- Web UI: the full fe suite has pre-existing flakes in `PresetPage.test.tsx` (2d.56, 2d.63) when the
-  suite is loaded: they pass in their own run. Check a suspect test in its own run before blaming the
-  slice (files are isolated, so one file cannot pollute another); a clean-tree stash of a shared helper
-  only proves what the file-alone run does not.
-- Web UI: the load flakes are not one file's: a heavy new file pushed `RunControls.test.tsx` (1c.44a,
-  S2.1, S2.2, ...) red in the full run (7 and 9 reds, varying: "Test timed out in 5000 ms", a fake-timer
-  advance that lands on `Starting llama-server…`, a body with no `role="main"`), green in its own run and
-  green beside the new file. Prove it is the LOAD and not the file: run the suite with the new file
-  `--exclude`d on a box saturated by 20 `timeout 200 bash -c 'while :; do :; done'` loops (a script file,
-  the shell tool rejects the compound command) and the same reds come back, plus `ModelProfileCards1`,
-  `ModelProfileSave11`, `ModelProfileSave4`. Report them as load flakes naming the probes.
-- Web UI: a shared fixture module for tests is imported with its LITERAL extension (`./test/bff.ts`), so
-  one that renders JSX must be `.tsx`: a `.ts` holding `render(<App />)` reds the whole importing file at
-  transform (`Expected \`>\` but found \`/\``, "0 test"), which reads as a syntax bug in the test.
-- Web UI: "focusable" in jsdom is decided without layout (`getClientRects()` is always empty): filter
-  `a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])` on `disabled`, `inert`,
-  `closest('[inert]')`, `aria-hidden="true"` and `getComputedStyle(el).display === 'none'`.
-- Web UI: while a save is pending the status line AND the Save button read `save-saving`
-  (`SaveBar.tsx`), so a name-based `getByRole('button', { name: SAVE })` fails mid-PUT: capture the
-  element before the click when the test holds the request (`deferred()`).
-- Web UI: to set a text field's value at once (a value typed back exactly, a value cleared), use
-  `fireEvent.change(input, { target: { value } })`; `userEvent.type` appends and needs an `await` per
-  row, and a `type` helper imported bare does not exist (`ReferenceError: type is not defined`).
-- Web UI: to hand a handler a null `document.activeElement`, define an own getter on the `document`
-  instance (shadows the prototype), delete it in `finally`, and probe with your own `hashchange`
-  listener that the stub held when the handlers ran.
-- Web UI: a throw from a React click handler is swallowed at jsdom's listener boundary: fireEvent
-  returns, the test continues, and vitest reports the TypeError as Unhandled at the end, so the
-  assertion after it also reds.
-- bff `Connect` (`Arc<dyn Fn(Option<&str>) -> Result<Client, ClientError> + Send + Sync>`): each test
-  binary's fake connect records the principal it was called with in an `Arc<Mutex<Vec<Option<String>>>>`
-  (`principals_of(&log)` reads it), and every fake closure is written `let connect: Connect =
-  Arc::new(move |principal: Option<&str>| ..)`, so the type is pinned at the closure: against the old
-  zero-argument `Connect` all four binaries red as `E0593: closure is expected to take 0 arguments, but
-  it takes 1 argument` (six sites), which is the signature red, kept separate from the assertion reds.
-- bff principal refusals: give the `FakeManager` (`tests/server.rs`) `as_user: Option<String>` (the
-  account a read answers for) and `refuse: Vec<String>` (`is_admin` is the membership), and answer the
-  read of a refused account with `ClientError::NotAuthorized`, the kind the manager gives every principal
-  refusal. One app then refuses alice and answers bob, so 403, "the session that acted is the session
-  that ends" and "an unrefused user keeps their session" run in one test, each with its own cookie.
-- bff "this refusal ends the session" is pinned as the NEXT request with the same cookie answering 401
-  `session-required` (the reply's `Set-Cookie` clear is not pinned: not in the design, say so in the
-  report). Pin the negatives too, since they are the rule's edge: the same cookie after a 503
-  (`Unavailable`) and after a 502 (`Io`) is still 200, and a 403 on the session-free `/api/instances`
-  ends nothing (that route has no session, and it is where a 403 from the bff's own rule lands).
-- bff idle deadline: `Sessions::current` refreshes the session's `used` stamp on EVERY cookie-bearing
-   request, so a probe (`GET /api/session`) moves the deadline: a "the poll must not keep a session
-   alive" rule is pinned with one app per point and the probe LAST (sign in, advance just under the
-   timeout, run the request under test, land the clock exactly on the sign-in's deadline, probe alive; a
-   second app lands one second past it, probe 401). Never probe mid-test, the probe greens the next
-   point for the wrong reason. The control is the same steps with an action, which does move it. The
-   check is `> IDLE`, so the boundary sits one second past the timeout, and a Duration step is
-   `IDLE - SHORT + Duration::from_secs(1)` (no `+ 1`).
-- bff read-back is not an echo: keep the manager's state in an `Arc<Mutex<bool>>` cell shared by every
-   connect of one app, and let a scripted write leave it at `after_write`, which may differ from the body.
-   Assert the reply against the cell for divergent pairs (asked `true`, left `false`) and pin the calls log
-   as `["set_boot_enabled <id> <asked>", "boot_enabled <id>"]` with ONE principal: the read ran after the
-   write, on the same connect, so a reply that echoes the body, a skipped read and a second
-   session-carrying connect all red.
-- `let app = app();` twice in one test shadows the builder fn: the second call is `E0618: expected
-   function, found App`. Name the apps (`alive`, `gone`). A fake holding a `Result` field cannot
-   `match self.answer.field { Err(e) => .. }` (E0507, moves out of a shared reference): `.as_ref()` plus
-   `e.clone()`.
-- The request helper of a bff test file takes `extra: &[(&str, &str)]` and parses each name with
-   `name.parse::<HeaderName>()`: that is how "a name in the request is never the principal" is pinned for
-   a header (`x-user: root`) as well as a query parameter, one builder for both. The sign-in helper posts
-   `{"username", "password"}` and inserts `ConnectInfo` into the request's extensions (the session route
-   needs it, a control route does not).
-- A stub that keeps the old `connect(None)` call greens the session-free routes (the instances route,
-  sign-in) and reds only the principal and session-end asserts: `left: [None], right: [Some("alice")]`
-  for the principal, `left: 200, right: 403` for the refusal (the stub connects an unrefused principal),
-  `left: 200, right: 401` for the session end. Adapt the existing fakes mechanically (a closure ignoring
-  the argument) so their tests stay green and the reds name the slice.
-- Probe an older commit's sources without touching the shared tree: `git worktree add --detach build/<name>
-  <rev>` (gitignored), copy the test files in, write the worktree's own `.cargo/config.toml` with an
-  ABSOLUTE `target-dir` pointing at the shared tree's (`build/windows/cargo-target`), else cargo rebuilds
-  every dependency; pai-bff needs no `pai-manager` dependency and its `build.rs` falls back to
-  `crates/bff/fe-fixture` when `fe/dist` is missing, so a bff probe compiles in two minutes. Clean up with
-  `git worktree remove --force` (the config you wrote is untracked).
-- bff connects are per ROUTE, not per manager call (ARCHITECTURE.md: "every route behind a session
-  connects as the session's user"): the boot write and its read-back are two calls of ONE connect
-  (`control.rs`'s `boot_write`), so start + stop + restart + `PUT .../boot` is 4 entries in
-  `principals_of` and 5 in the calls log; count routes in the connect assert, the read-back belongs to
-  the calls log. A fake that returns `self.act(..)?` on the write logs no read, so the calls log also
-  pins "no read-back after a failed write".
-- A bff fake whose `verb` fails and whose `set_boot` answers OK makes a `PUT .../boot` answer 200
-  `{"enabled": <state>}`: a test driving the boot route's failure needs `set_boot: Err(..)` as well
-  (builder `app_failing(failure)`: verb and set_boot). A `for app in [app_verbs(..), app_boot_write(..)]`
-  loop that asks every URI on each app is a latent bug: the first app's red stops the loop, the second
-  app's broken half (a verb answered 200) never runs; one app failing both verb and set_boot covers both
-  URI groups in one pass.
-- "The refusal asked the manager for nothing" on a log the test's own helpers also fill (a sign-in, a
-  fake authenticator that never reaches the manager at all): pin it as the log UNCHANGED across the
-  refused request (`let before = app.calls(); .. assert_eq!(app.calls(), before)`). An absolute
-  `vec!["set_boot_enabled ..", "boot_enabled .."]` there is the helper's shape, not the refusal's, and
-  reds on its own.
-- A request that must be refused by one of two rules whose ORDER the design fixes nowhere (a cross-origin
-  body over the cap): pin it as "one of the two codes, and both fakes' logs empty", and write in the file
-  header that the order is not pinned. An axum body-limit layer (`DefaultBodyLimit`) answers before a
-  middleware guard, so a code-pair assert is the only shape that greens either way.
-- A refusal assert on a 204 (`No Content`) prints nothing when its message is the body: write
+- When tests and production call a stub with the same name, the production sites break first, so the red
+  is a compile error, not an assertion; and a `Self { ..Default::default() }` literal in the stub breaks
+  on a new required field. Give the tests an explicit `Default` + `..` constructor so a new field cannot
+  break them.
+- A test that builds a struct literally is the one that reds when a field is added: grep the struct's
+  literal sites before writing the report, and add the field to the shared constructor, not to each test.
+- A new parameter of a public builder: the call sites are the tester's, so add it LAST and give each test
+  file one `const` for its value (free for a route that never reads it): the coder then touches only the
+  production file. Inside the callee the new name must not clash with an existing local: rename the local
+  in the throwaway candidate and tell the coder which name is free.
+- A new trait method: every `impl` of that trait is a call site. The shared bff fake (`FakeClient` =
+  `DiskClient` in `tests/control.rs`) has `impl` blocks in other test binaries: adding the method to the
+  trait breaks their compile and the red reports nothing. Extend the shared fake first.
+- A new method on a test fake that the production code does not call is untested and the fake's
+  `unimplemented!()` never fires; the red comes from a `noticed()`-style list assert. Write the red that
+  way, not on the method itself.
+- A stub that delegates to the old function is not red: it compiles, runs, every assertion greens, which
+  reads as if the signature change already happened. A delegation that silently DROPS the new parameter
+  is the red, not the stub: write `unimplemented!()`, name the signature in the report so the coder knows
+  what to land, and add the parameter to the test's call sites (the tester's), not to the callee.
+- When the stub takes a parameter, pin it as the constant the code must pass (`const _: fn(&_, &str,
+  &str, &[&str]) = ..;`), not as a needle in the body: a source lint drops comments, so a comment naming
+  the needle greens. Pin the argument as DATA (a `starts_with("const ...: &str = \"")`-style assert) and
+  pin the rule that reads it, not its prose (a `cfg`-keyed table, not a literal).
+- When a rule moves into a `cfg`'d module, a needle the existing tests pin is gone: retarget each test
+  (its needle, the module's file, and its cfg-guard: `#[cfg(windows)]` / `cfg!(windows)` / `cfg!(unix)`)
+  and name what Linux can no longer see.
+- Run a source-lint extractor against the file before assuming it found anything: print the extracted
+  body and eyeball it, else a broken regex greens vacuously. A test that asserts "extracted X" on a stub
+  body of the same shape proves the extractor finds the real thing.
+- A helper's name is a contract: grep every use before renaming a test helper (one rename broke 34 call
+  sites in 8 files), and say in the report that the rename is the coder's, not yours.
+- bff connects are per ROUTE, not per manager call: a write and its read-back are ONE connect. Count
+  routes in the connect assert; the read-back belongs to the calls log. A fake that returns
+  `self.act(..)?` on a failed write logs no read, so the calls log also pins "no read-back after a
+  failed write".
+- A refusal assert on a 204 prints nothing when its message is the body: write
   `assert_eq!(status, code, "the body was {:?}", body)`, and in a table loop put the case label on the
   "nothing was asked" assert that runs after it, since the first refusal reds and stops the loop.
-- The port edge of a same-origin rule comes from `SameSite=Strict` comparing the SITE (scheme, host,
-  registrable domain), never the port: a page of another local app on `http://localhost:<other>` sends the
-  cookie. So pin `Origin` against `Host` in the three shapes a browser really sends: same host with
-  another port, the scheme's DEFAULT port written bare (`http://localhost` against `localhost:3000`), and
-  a `Host` naming no port (`localhost`, the Origin carries `:3000`). `Sec-Fetch-Site` is pinned as a
-  table: `same-origin` and `none` pass, `same-site` and `cross-site` are refused, a bare `null` (the
-  literal Firefox sends for a non-HTTP origin) and anything else are refused.
+- "The refusal asked the manager for nothing" on a log the test's own helpers also fill: pin it as the log
+  UNCHANGED across the refused request (`let before = app.calls(); .. assert_eq!(app.calls(), before)`).
+  An absolute list of the helper's own calls is the harness's shape, not the refusal's, and reds on its
+  own.
+- A request that must be refused by one of two rules whose ORDER the design fixes nowhere: pin it as "one
+  of the two codes, and both fakes' logs empty", and write in the file header that the order is not
+  pinned. An axum body-limit layer answers before a middleware guard, so a code-pair assert is the only
+  shape that greens either way.
 
-- fe: the type check that sees test files is `npm --prefix fe run typecheck` (`tsc -b tsconfig.json
-  tsconfig.test.json`); `npx tsc --noEmit -p tsconfig.json` checks the app only, so a test file's own type
-  errors reach only the npm script. `npm --prefix fe run test -- <file>` does not filter (vitest reads the
-  positional as its start command: "command 'start' not found"): run
-  `cd fe && npx vitest run src/<file>.test.tsx`. For per-file counts over the whole suite use
-  `npx vitest run --reporter=json --outputFile=<file>` and read `numFailedTests` with node
-  (`--reporter=basic` is gone in vitest 3.2.4: `reporter.getEntries is not a function`). Format with
-  `npx prettier --write <file>`, then `npm --prefix fe run format:check` from the repo root.
-- fe: a card added to the shared `PRESET_CARDS` list (`fe/src/test/presetCards.ts`) reds EVERY whole-page
-  test of the suite, not only the new file: the card-order and tab-path tests of each cards file, the card
-  count / strings-parity / card-order test of the content test, the page test's tab path, the heading-order
-  and About-list tests, and `App.test.tsx`'s strings test (the key list the coder has to land). Count them
-  in the report as collateral reds of the shared list, with one line per file.
-- fe: making an EXISTING card editable is done in the shared table, not in a page test: add its label keys
-  to `EDITABLE_FIELDS` and, for a number field with a default box, its label key to `BOXED_FIELDS`
-  (`fe/src/test/presetCards.ts`). `fieldTabStops` and `controlEnabled` derive from it, so the collateral reds
-  before the coder are exactly the tab-path tests (`2e.91` in each PresetCards file, `2d.71` and `2d.78` in
-  PresetContent): a card with 3 selects and 4 boxed numbers adds 11 stops (4 boxes + 7 controls). The reds
-  AFTER the coder are the read-only pins of the same card: `PresetFullValue` (134: a full-value line shows
-  only under a DISABLED control, so every long `cache-ram` / `cache-type-k` line of the card vanishes) and
-  `PresetCards2`'s `${key}: the select disabled` / unit / inputmode pins. List them for the coordinator, do
-  not edit them.
-- fe: React skips `onChange` on a DISABLED control, so `fireEvent.change` on a not-yet-editable field records
-  nothing: the form stays clean, the Save button stays `aria-disabled`, and a `save()` helper's `waitFor`
-  times out ~1 s later at `expected [] to have a length of 1`. That is the right red for a card the page keeps
-  read-only, and it is why every "sends" test of a card that is not editable yet reds at the PUT count while
-  every "enabled" test reds at `expected true to be false` on `.disabled`. A client-check test of such a card
-  reds at `Unable to find ... save-invalid` (typing did nothing, so no check ran), NOT at the error text: say
-  so, the coder must not read it as a missing string.
-- fe: `presetDoc(values, extra)` puts `extra.values` OVER the whole default `values` object, so a preset-page
-  fixture that names only its own card's keys drops `model` and `spec-type` too: the page renders (the Assets
-  card shows them as unset), so the fixture of a card slice needs no `model`. A key the file lacks is ABSENT
-  from `values`: a `''` entry is a value, not an absence, and shows as an extra option, not `default`.
-- fe: inside a card there is no group and no note per field: only the card's group and the card's note (a
-  note per field was the draft card's shape, the preset cards have none), so a structural page test can
-  assert a card is the region's first child and that every row is a group with its legend. A checkbox whose
-  text the brief gives in two states (the Fit toggle: allowed and not allowed) is found as the group's only
-  checkbox (`[role="group"]` + `queryAllByRole("checkbox")`, expect one), never by name.
-  `container.querySelector("main")` is an `HTMLElement` (no `.main`): use `container.querySelector('[role="main"]')`.
-- fe: pin a "the hint shows no extra text" rule (the slider maxima, a switch that is not offered) only after
-  proving the needles are absent from the pinned strings themselves: a python pass over the strings table
-  prints the offenders, else the red names the strings table and not the card. Extract the pinned EN texts
-  from `crates/core/strings/en_US.toml` in the same pass: `{0}` is literal there (the tests' `en()` compares
-  exactly), and the GUI strips the " (MiB)" a Slint widget adds, so the table text is the bare sentence.
-- fe: when one card's state depends on the document (the Fit toggle reads the doc's context), give the
-  render helper a handler parameter and a section builder that sends the values EXACTLY (no
-  normalisation, no added keys): "shown exactly" and "an absent key stays absent" are untestable through a
-  builder that rewrites the document. A card whose row table drives three `test.each` blocks needs one
-  helper taking the field kind (`range`, `checkbox`, `select`, `text`, `device select`): the device selects
-  share one list of option texts, so "its option is selected" is the only select assertion that pins a value.
+## Fakes, logs and gates (the manager, D-Bus, the pipe)
 
-- bff: a route's answer is `{"key", "args": []}` and the test binaries share a local `assert_error(status,
-  key)` helper, so a slice that changes only the KEY reds on its `assert_eq!(json!, ..)` (the status assert
-  greens) and the panic prints the whole body: `left: {..."key": String("client-not-authorized")}`,
-  `right: ...String("session-not-administrator")`. Read that pair before chasing: it names which half moved.
-  The key split to keep straight: 403 `session-not-administrator` is what the bff sends exactly when it ends
-  a session on a refusal (`NotAuthorized` on a call made as the signed-in user: the server read, the control
-  verbs, the boot write); 502 `client-not-authorized` is the session-free reads (`GET /api/instances`,
-  `GET .../boot`), where the manager refused the bff itself. The guard for the second lives in
-  `tests/instances.rs` and `tests/control.rs`: run those two tests by name and report them as guards.
-- A long cargo log: `tail -70` of a two-binary run cuts the second binary's failure block (the first
-  binary's summary looks like the whole result). Write it to a file, then grep `test result|Running|^error`
-  for the map and `sed -n '<a>,<b>p'` for each block.
-- `cargo test -p <crate> --no-fail-fast` runs NOTHING when one target fails to compile (cargo stops after
-  the compile step, `--no-fail-fast` only unrolls the run): report which binaries did not run, and run the
-  untouched binaries in a second invocation (`--lib --test a --test b`) to show them green.
-- A keyed hash the code must match: the published SipHash-2-4 vectors are offline in the vendored crate
-  (`~/.cargo/registry/src/*/siphasher-1.0.4/src/tests.rs`, 64 of them: key `00 01 .. 0f`, input the first
-  n of those same bytes, output little-endian). A reference program is two `rustc` lines (build the rlib
-  from that registry source, then `--extern siphasher=...rlib`), no cargo and no network; reproducing all
-  64 is the check, because a hand-written Python SipHash goes wrong in the round: `v1 ^= v0` uses the
-  ROTATED `v0` (`v1 = ROTL(v1,13); v0 = ROTL(v0,32); v1 ^= v0`).
-- Pin the printing convention with the vector: `format!("{:016x}", SipHasher::new_with_key(&key).finish())`
-  of the empty text under `00 01 .. 0f` is the published `726fdb47dd0e0e31`, so one assert pins the
-  algorithm, the key bytes and the hex format at once. Say in the report that the coder's `finish()` must
-  be printed as `{:016x}` (the same `{hash:016x}` shape the FNV revision used).
-- A parameter added to a public router builder: the test call sites are the tester's, so add it LAST and
-  give each test file one `const REVISION_KEY: [u8; 16]` (its value is free for a route that never reads
-  it): the coder then touches only `lib.rs`. Inside the callee the new name must not clash with an
-  existing local (`let (status, key) = ..`): rename the LOCAL in the throwaway candidate and tell the
-  coder which name is free.
-- A byte alphabet check on a `bytes()` closure is `(b'a'..=b'f').contains(&b)`: a `char` range there is
-  E0308 ("expected `u8`, found `char`").
-- Checking a pinned digest of a file's text (a revision of the shipped `server@default.ini`): feed the
-  file's exact bytes through the authors' reference C (`curl` `siphash.c`/`siphash.h`/`vectors.h` from
-  `veorq/SipHash`, CC0; the entry point is `siphash(in, inlen, k, out, outlen)`, the older `siphash24(..)`
-  name is gone), and GATE the program by reproducing all 64 `vectors_sip64` first: a reference that
-  self-validates is a check, a hand-transcribed one is not (mine reds on every value). The `out` bytes
-  are the word little-endian, so `%016llx` of the LE word is the shape `{:016x}` prints.
-- `/tmp/opencode/<name>` is shared with the other agents: a scratch dir of a common name (`sipref`) was
-  already full of the coder's rlib and program built FROM the crate under test. Pick a name of your own;
-  a reference built from the code under test proves nothing.
-- The bff's key-draw failure has no test and none is cheap: `try_router()` (the `getrandom::fill` of the
-  revision secret), `ServeError::Key` and its `bff-revision-key-failed` text have no seam to inject a
-  failing OS random source, so report them as untested, and say that "a restart makes every open form
-  stale" is pinned only indirectly (two test-supplied keys, not two `try_router()` routers).
-
+- `DiskClient`'s `call()` prints `DISK: <verb>` on stdout and `libtest` captures it, so a stdout assert
+  passes solo and fails on a full-suite run (captured, "Call stdout:"). Assert on the recorded calls
+  list, and keep the print for manual `--nocapture` runs: the print of a call the code skipped is the
+  proof, an assert on the print is not.
+- The manager's gate (`GateAuthority`) answers a `Subject` of a NAME, not a SID. Test code cannot mint an
+  identity with a group (that needs the Windows token APIs): to pin a rule over a group (an
+  administrator's extra grant), add a fact to the `Subject`, do not mint a token.
+- The manager's fakes are `manager::service::fakes` (`crates/manager/src/manager/service.rs`); pai-app's
+  test backend is `fake::scoped` (`crates/app/src/server_control.rs`). Grep which one a crate has before
+  naming it.
+- `WriterLog` records `(name, pid)`: a pid-keyed helper (`asked_admin`, `asked_bff`, `set_unique_name`,
+  `is_authorized_quietly`) needs a unique name per test, else a parallel test's write counts as yours.
+- `SYSTEM_DIR_ALLOWED` gates writing a file under the system dirs, and the gate's own list is pinned by a
+  source lint: a new function that writes there needs both, and the pin's needle list must gain the name.
+- A CAS fake that models a save records the write, THEN pauses, THEN compares-and-swaps against the live
+  file (the shipped text as fallback): a pause before the record cannot show "the write reached the
+  manager", and a CAS with no live file cannot show a conflict. A `status` that reads a `running` cell
+  pins the contract's running-after-write rule (true also when the status read fails: a separate outcome
+  cell, not the write's).
+- A keyed digest pin: the published SipHash-2-4 vectors are offline in the vendored crate
+  (`~/.cargo/registry/src/*/siphasher-*/src/tests.rs`, 64 of them) and a reference program is two `rustc`
+  lines, no cargo and no network. GATE any reference by reproducing all 64 first: a self-validating
+  reference is a check, a hand-transcribed one is not. One assert of
+  `format!("{:016x}", SipHasher::new_with_key(&key).finish())` on the published empty-text vector pins the
+  algorithm, the key bytes and the hex format at once. A rename of a name that is an INPUT of such a digest
+  moves EVERY constant keyed on it: enumerate them (`grep -n '"[0-9a-f]\{16\}"' crates/bff/tests/*.rs`),
+  never work from the coder's list, and recompute in a scratch program that reproduces the route's own
+  input.
+- `/tmp/opencode/<name>` is shared with the other agents: pick a name of your own, and never build a
+  reference from the code under test (it proves nothing).
 - A live shared tree (the coder rewriting the same crate while you write): append your section at the
-  file tail and your helpers INSIDE the existing blocks (`impl App`, `impl Reply`, the fake's cells);
-  a parallel merge silently adopts your harness and rewrites the tests around it, so re-read the whole
-  file before every edit and recompile against the CURRENT trait (`read_file_as` with a principal and
-  `write_file_if` with 5 parameters were HEAD fictions; the trait's identity rides the connect).
-- A CAS fake that must model a save: record the write, THEN pause, THEN compare-and-swap against the
-  live file (shipped text as fallback): a pause before the record cannot show "504, the write reached
-  the manager"; a CAS with no live file cannot show 409 Changed. A `status` that reads a `running` cell
-  pins the contract's running-after-write rule (true also when the status read fails: a separate
-  outcome cell, not the write's).
-- Multi-line `app.put(Some(&c), &save_body(&doc, &[("Port", json!(N))]))` call sites: do not hand-balance
-  the closers across many tests (five of them, `)]` order, three repair rounds). Add `App::save(cookie,
-  doc, overrides)` so each call site is one balanced call, and build the balanced tail by scanning the
-  save_body span, never by counting parens by eye.
-- `cargo test -p <crate> <word>` filters TEST names, never target names: `cargo test -p pai-bff listen`
-  ran 2 tests and skipped the `tests/listen.rs` tests whose names hold no "listen". Run a file with
-  `--test <name>`, and account for every `N filtered out` line in the report.
-- Flipping a refusal whose enum variant and strings key both go away: removing the last `Variant(..)`
-  use in the tests is what makes the test binary COMPILE, so the red is the assertion
-  (`left: Err(NotLoopback(0.0.0.0:8590)) right: Ok(0.0.0.0:8590)`), naming the dead variant. The strings
-  key of that variant is pinned by the sentence the executable prints, in `tests/pai_bff_binary.rs`
-  (the red quotes it: "is not a loopback address"); the key's removal from `cli.toml` is already pinned
-  by `crates/config/src/tests/binding_lint.rs` ("in cli.toml but used by no source the CLI reaches"), a
-  lint in ANOTHER crate: report it, add no second lint.
-- A guard that runs before the router (the bff's `origin::guard`): a test that expects the LATER rule's
-  key on a request the EARLIER rule refuses reds `left: {"key":"request-bad-host"} right:
-  {"key":"request-cross-origin"}`, which names the rule that must change; a test that expects
-  acceptance reds `left: 403 right: 204`. Prove the rest of a list element by element with a std-only
-  `rustc --edition 2021` probe of the pure predicate (the host split, the address parse): it prints
-  today's answer for every element, no crate build.
-- Pin the fail-closed shapes beside a new "any IP literal is ours" accept list, in the REFUSAL test: a
-  bracketed text that is no address (`[not-an-address]:8590`) and a port over 65535
-  (`192.168.1.10:85909`), because the authority is parsed before the address is read. Free wildcard
-  port: `TcpListener::bind("0.0.0.0:0")`, then GET `127.0.0.1:<port>` (a loopback client reaches a
-  wildcard listener, so the test proves the bind-all with no second interface).
-- `vec![("host", host), ("origin", format!("http://{host}").as_str())]` is E0716 (the temporary dies at
-  the end of the `let`): bind the `format!` in its own `let` and take `origin.as_str()`.
-- A guard rule whose input moves to "computed once at the start, passed into the router": turn the
-  test file's `new_app()` into `app_with_hosts(&[])` and build the router in a new sibling
-  (`router_with_session_and_hosts`), so every existing test keeps running and pins the empty-list
-  case for free, one builder and no twins. Stub the sibling delegating (old arity, `_hosts` inert):
-  the accept tests red `left: 403 right: 204`, the test that expects the LATER rule's key on a
-  request the new name rule must let through reds `right: request-cross-origin`, and every
-  pre-existing refusal plus the "IPs are answered whatever the list holds" test green BY CONSTRUCTION:
-  name those guards in the report.
-- "The config list replaces the automatic names, it does not widen them" is pinned by putting one of
-  the automatic names (`aorus.local`) in the refusal list beside a list that holds only a longer one
-  (`aorus.bombicci.local`). A name set compared as a set: one generic `fn sorted<S: AsRef<str>>(names:
-  &[S]) -> Vec<String>` sorts the `Vec<String>` the code returns and the `&[&str]` literal alike. Of a
-  `resolv.conf` reader pin the lowercase keywords (glibc's are `search`/`domain`, do NOT pin `SEARCH`),
-  the case of the host name and of the `Hosts` value, a tab-separated list, a bare `search` line, `#`
-  and `;` comments, `nameserver`/`options` lines, and that an empty `Hosts` value sets nothing, the
-  same answer `parse_hosts` gives for that file, so the chain `parse_hosts` then `host_names` holds.
+  file tail and your helpers INSIDE the existing blocks, re-read the whole file before every edit, and
+  recompile against the CURRENT trait. A parallel merge silently adopts your harness and rewrites the
+  tests around it.
 
-## Web UI (fe/) navigation and CSS pins
+## Behaviour that cannot run here (Windows, xtask, packages, CI)
 
-- The browser's Forward is testable after the guard's Keep editing: a typed hash adds a history entry
-  and the guard puts the address back with a traversal, so the history is `[Models, preset, Models]`
-  and `window.history.forward()` (in a task, like `back()`, as `LeaveGuard.test.tsx`'s `pressForward`)
-  re-asks a dirty form. A page reached by `startAt(<hash>)` has no forward entry, so build the history
-  with a typed hash, never with a second render.
-- A rule that lives only in CSS (a sticky save bar, D4's `scroll-padding-bottom`) is pinned by reading
-  `index.css` (`readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')`, comments stripped, then
-  match the selector and the declaration). It is green the day it is written: report it as a guard,
-  not a red, and say which half of the criterion it cannot reach (jsdom has no layout).
-- "Any answer that is not a shaped 200" is one test with a table of answer cases (204, a 200 missing
-  `running`, a 200 missing `revision`, a 200 with a non-string `revision`, a 200 that is not JSON, a
-  500 with a key, a `Promise.reject(new TypeError('Failed to fetch'))`): one page per row and
-  `cleanup(); vi.unstubAllGlobals()` at the end of each iteration, so each row reports its own label.
-  A fe time limit is the one row to leave out when the code has no clock to control (fake timers on a
-  fetch the stub owns pin the stub): report it untested.
-- A 5xx whose body names a secret (`{ key: 'secret-detail' }`) is the fixture that makes "the bar's
-  alert cleared" testable in a slice with no client checks and no keyed answers yet: the alert exists
-  to clear, and the same row asserts the key never reaches `document.body`.
-- A page whose save answers only the generic `save-failed` today: every keyed-answer test reds on the
-  alert TEXT (`Unable to find an element with the text: <brief English>`), and the guard-key test of
-  "anything else is the generic failure" (403 `request-cross-origin`, `request-bad-host`, 413
-  `payload-too-large`, 400 `presets-malformed`) is GREEN by construction: report it as a guard, it is
-  the net the new reading must not break.
-- A fe time-limit test needs no new clock in the page: `api.ts call()` already aborts a non-GET at
-  120 000 ms, so a `held()` PUT plus `advance(119_999)` / `advance(1)` (the `fakeClock`/`flush`/`advance`
-  of `Timeout.test.tsx`: fake `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`Date` only, so
-  the microtasks stay real) shows the abort is wired while the red is the message the page renders.
-  `afterEach` needs `vi.useRealTimers()` beside `vi.unstubAllGlobals()`.
-- `App.test.tsx`'s strings pin (`en_US.json holds the English the brief gives`) lists every `EN` key that
-  `en_US.json` lacks, so adding the slice's strings to `src/test/bff.ts` grows that existing red by one
-  per key: name it as pre-existing (the 2h.2 422 keys were already in it), not as a new failure.
-- A preset page reload test (409 then Reload) needs a stateful read stub: `preset: () => ++reads === 1 ?
-  reply(200, presetDoc({}, { revision: 'r1', values: A })) : reply(200, presetDoc({}, { revision: 'r-9',
-  values: B }))` (`presetDoc`'s `extra` replaces `values` wholesale, not merged), and the second reply
-  can be a failure reply to test the failed read of the same flow.
-- A test file past ~900 lines splits into `<Name>1` / `<Name>2` with the helpers COPIED: a test file
-  imports no other test file, and the copy keeps each file runnable on its own. Splitting one back
-  means hand-reverting the setup edits (imports, `beforeEach`, `afterEach`): a file the slice created
-  is untracked, so `git checkout` cannot restore it. Truncate at a known line and edit the header,
-  the import list and the hooks by hand, then re-run the file to show it reds on its own criteria.
-- jsdom has no `Window.isSecureContext` at all (grep of `node_modules/jsdom/lib`: no implementation), so
-  `window.isSecureContext` is `undefined` in every fe test: the "property absent" case is jsdom's own
-  state and a `true` case is a real guard, both green. Set it with
-  `Object.defineProperty(window, 'isSecureContext', { value, configurable: true })`, and remove it with
-  `delete` in the `afterEach`, after `cleanup()`.
-- A rule of a shared component (the sign-in, shown in `main` and in the session-ended dialog) is one
-  rule: test the page case and the dialog case in the same file. The dialog needs no new page: the
-  preset page's Embedding mode select, Save, a `presetSave` answered 401
-  (`{ key: 'session-required' }`), the bar's Sign in, then `screen.getByRole('dialog', { name: en('signin-title') })`
-  and the `stubDialog().opened` pin, all in one mount.
-- A preset page's card controls are NOT in the document when its h1 is (the cards render with the read):
-  a `getByRole('combobox', ...)` right after the h1 reds "Unable to find an accessible element with the
-  role combobox", which hides the slice's real red. Use `findByRole`, and assert the fixture's `values`
-  carry the row's keys (`{ embeddings: 'true', pooling: 'mean' }`).
-- `getByRole('button')` returns `HTMLElement`, so `.disabled` is TS2339 in `npm --prefix fe run typecheck`
-  and passes the Vitest run: Vitest never type-checks. Cast `as HTMLButtonElement` at the query.
-- `src/test/presetCards.ts` is the one table behind every whole-page expectation of the preset page
-  (headings, About toggles, tab path). Extending it for a newly editable card turns the older whole-page
-  tests red BY DESIGN (`PresetCards1..5` 2e.91, `PresetContent` 2d.71 and 2d.78, all tab paths): list
-  those in the report as the reds the coder's change greens, and never edit them in the red step. A
-  checkbox's tab stop is named by its TOGGLE text (`<key>-toggle`), not by the field's label, so the
-  table needs a label to toggle mapping; a boxed number adds a stop for its `field-default` box as well.
-  A field that needs a row KEY (the n-gram labels repeat: `Lookup n-gram` stands for three keys) joins
-  as `{ label, key, boxed? }`, and the union test is `'key' in field`, NEVER `typeof field === 'object'`:
-  `shown(...)` is an object with no `key`, so `fieldLabel` returns undefined and `labelText` dies
-  `Cannot read properties of undefined (reading 'shown')` in every test that calls `fieldLabels()`
-  (`PresetPage.test.tsx` 2d.67's button list). That red is a helper crash, not a behaviour gap.
-  Prove a table rule for a newly editable card by the DELTA of the tab list: the shared `presetDoc` read
-  holds `spec-type = ngram-mod,draft-mtp`, so the Speculative card adds exactly 9 stops (one
-  `field-default` per boxed field of an ENABLED group, one control stop per control whose key is in the
-  read: a boxed field whose key is ABSENT is ticked, so its box is tabbable and its input is not). Seven
-  tab-path reds by the same 9 is the proof; a delta that differs per fixture means the rule is not read
-  from the fixture.
-  Older tests that pin the newly editable card READ-ONLY stay green in the red step and red after the
-  coder, so list them: grep `src/*.test.tsx` for the card's key prefixes. For 2h.9: `PresetCards5`'s
-  2e.85 `test.each` of 16 "every control is natively disabled" cases and its 2e.91/113 local list of the
-  16 About toggles; `PresetFullValue`'s six tests that use `spec-draft-type-k` as their example of a
-  read-only select with a full-value line; `PresetFlags` 944, `PresetSave1` 635-686, `PresetSave7`
-  256/296. Retargeted in the green step, never in the red step.
-  A control a later slice inserts between the back link and the Engine field (2h.10's jump `<nav>`) is
-  retargeted ONCE, in the shared helper: `pageStartTabStops()` is the stops every whole-page tab test
-  expects before the Engine field, so the five cards files and PresetContent follow without each being
-  edited. Once a jump button carries a card title that title is no longer unique, so "no card `h3` is a tab
-  stop" compares tabbable ELEMENTS (`expect(tabbableElements(main)).not.toContain(h3)`, the h3 from a
-  `queryAllByRole('heading')`), never NAMES: a name list holds the ten titles twice (h3 and button) and a
-  name comparison is true whatever the code does. Per-row 422 alert shapes belong in the fixture table as an
-  expected-alert column (`''` = the plain `save-refused`, else `save-refused-at` + check text + field label +
-  card title), so both shapes stay in one TABLE of one file. A string the brief REMOVES is pinned by its
-  English literal (`expect(within(main).queryByText('Part of these settings ...')).toBeNull()`): `en()`
-  throws for a key the test EN table no longer carries, so the red reads as a helper typo. Pin it ABSENT plus
-  what replaces it where it sits, and scope the query `within(theCard)`: two cards carry the same paragraph
-  (`getMultipleElementsFoundError`), which is a fixture shape, not a code defect.
-- Typing into a control of a card that is not editable yet is a SILENT no-op: `fireEvent.change` on a
-  `disabled` input leaves the value, the form stays clean and the save bar inert, so a refusal test reds
-  at `findByText(en('save-invalid'))` after ~1 s and reads like a missing check. One debug print of
-  `.disabled` / `.value` / the box's `checked` tells it apart in a single run (the box is `<key>-box`,
-  the input `<key>-control`); report the red as "the field is not editable", not as "the check is
-  missing".
-- What a text field renders depends on `editable`: read-only is a `<label>` + input (`div.field`, NO
-  `role="group"`), an editable field with a default box is a `<fieldset>` (`role="group"` named by the
-  label). So a "no group named by the label, the textbox carries the name" pin is GREEN on a read-only
-  card and RED on an editable one: pin it in the file whose field is already editable (Chat kwargs) to
-  carry the red, and repeat it as a guard on the new card's field, reporting which is which.
-- `npx vitest run` prints one `FAIL` line per failing test, so `grep -E "^ FAIL" | sed 's/ >.*//' |
-  sort | uniq -c` counts per file and finds an extra flake in a full-suite run (one run showed 27 failed
-  against the stable 26, all listed names identical). Run the slice's two files first (seconds), the full
-  suite once for the counts: the full run is minutes.
-- Run `npx prettier --write <touched files>` BEFORE the final test run: prettier rewrites long
-  `test('<criterion>: ...')` titles into several lines, and a run before that reformats looks like a
-  changed test set. Prettier, ESLint and `tsc -b` stay silent on a pass, so quote the command line, not
-  an output line.
-- To give every red its own reason in one file of 30, run
-  `npx vitest run <file> --reporter=json --outputFile=/tmp/opencode/x.json` and read
-  `testResults[0].assertionResults[].failureMessages[0]` with `node -e`: it prints title and first
-  message per test. `--reporter=basic` does not exist in this vitest (it dies at startup
-  "Failed to load custom Reporter from basic"), and the default reporter's `FAIL` lines are wrapped
-  with spacing, so `grep "FAIL src"` finds nothing.
-- A `fe/src/PresetSaveN.test.tsx` is self-contained: it imports only `./test/bff.ts` and
-  `./strings.ts` and repeats the helpers of the earlier files ("a test file imports no other test
-  file"). A context summary recites helpers from `fe/src/test/presetCards.ts` (`specGroupEnabled`,
-  `select`, `EDITABLE_FIELDS`) that the file does not have: grep the file's own `function` lines, and
-  read the group table (`GROUPS: { name, fields }`) for the keys, since the card's own keys
-  (`spec-type`, `spec-draft-type-k`) are not all in it.
-- A CSS token contract is testable the day the brief fixes the values: parse `index.css` (comments
-  stripped, rules from `/([^{}]+)\{([^{}]*)\}/g`, nesting = the brace balance before the selector, the
-  way `DisabledLook.test.ts` does it), then pin the token NAME set (sorted, no duplicate: the pair
-  count of `/--[a-z0-9-]+\s*:/g` over the block pins a repeat), the values with a `test.each` over the
-  brief's table, and the contrast floors by computing WCAG in the test (`(L1+0.05)/(L2+0.05)` of
-  sRGB-relative luminance) from the PARSED hexes, never from ratio constants copied from the brief.
-  The brief's own stated ratios go in as the unit-check of that function (21, and two brief figures
-  at `toFixed(2)`): a node probe first, to see the formula reproduces them exactly (it did, 14.03 /
-  4.96 / 3.25), else the unit-check is a red the coder cannot pass.
-- The selector group of that parse is the whole text before the `{`, at-rule prefix included: the dark
-  `:root` reads `@media (prefers-color-scheme: dark) { :root`. So the light block is
-  `!compact.includes('@media')` on the whitespace-stripped selector, the dark block is
-  `includes(':root')` and is split at `indexOf('@media')`, and a `@media (max-width: 47.99rem)` block
-  is located by its matched braces and matched as a WINDOW (a declaration pinned there is green when
-  any nested rule of the window carries it: `font-size: 0.75rem` on `.field-label` satisfies the
-  whole-window regex). Pin "the media block" claims on the window, "the control" claims on the rules.
-- `rem`/`px` literal bans need `(?<![0-9a-zA-Z-])` before `rem`: a bare `rem\s*;` matches inside
-  `0.5rem;`. A colour-function ban written `(^|[^\w-])(rgba?\(|...)` matches the PROPERTY
-  `border-color(`, so the lookbehind must exclude `-` (`[0-9a-z]` + `-`), and the exemptions of a
-  no-literal rule are positions, not selectors: the two `:root` blocks and the backdrop of
-  `src/index.css:556` (the scrim whose alpha today is written in the channel values).
-- The `compact` form of that parse drops WHITESPACE ONLY, so it is the exact-match key: `.nav a` compacts
-  to `.nava` while `a.session` and `.theme-switch` keep their dot and hyphen. A compound selector goes
-  through the exact helper as `topBy('a.session', ..)`; a compact needle that drops the punctuation
-  (`'asession'`, `'.themeswitch'`) finds 0 rules, and the red reads as "the rule is missing" when the rule
-  is there. Descendant selectors (`.session > span`) match through the whitespace-stripped `flat` form.
-  A compact needle in a `includes()` test is looser than it looks: `'.navlabel'` also hits the compacted
-  selector LIST (`.theme-switch,.nav-label`), so list membership uses the split items.
-- Pin "the rule does not exist yet" as a COUNT, not as a declaration: a helper that throws
-  `expected exactly one rule: <what>, found 0` (and `expected exactly one <at-rule> block, found 0`) names
-  the missing rule in its own red. Reading `prop()` of an empty array reds `expected 0 to be 1`, which
-  reads as a fixture typo, and a `never(decls(...), 'x')` over a missing rule greens, so a "the rule keeps
-  this" pin needs a companion count assert (the brief's "exactly one rule" phrase is the shape).
-- The fe suite's total moves between runs of an UNCHANGED baseline (1904 and 1914 in the same 52 files of
-  this tree): account for your own tests by name, and get the baseline count by excluding your files
-  (`npm --prefix fe test -- --exclude src/<A>.test.tsx --exclude src/<B>.test.ts`), never by subtracting
-  the totals. `npm --prefix fe test` runs from the repo root, so the brief's `npx` forms are not needed.
-- A `fireEvent.click` on an `<a>` is not a click a user makes: jsdom follows the link and prints
-  `Not implemented: navigation (except hash changes)`. A focus assertion still passes under it, so the
-  noise hides: for a click whose activation matters use `userEvent.click` (the pattern of
-  `ProfilesNav.test.tsx`).
-- `edit` can report success on an untracked file and not land on disk (seen on this `/mnt/data` tree):
-  after editing a file the slice created, `grep -n` the new text and read the test NAMES in the run output
-  before reporting. A file the slice created is untracked, so `git diff` prints nothing about it.
-- A slice that promises "nothing else changes" (the brief's must-not-change list) is a text guard set:
-  the focus-visible declarations verbatim, every forced-colours block scanned for declarations whose
-  value is not a system colour keyword, every `min-height` collected into one sorted list, and the new
-  shape tokens (`--control-h`, `--border-w`, `--ring-w`) declared in `:root` with NO `var()` use
-  outside it (that last assert is the red that forces the coder to declare the tokens the H1a.1 set
-  test demands). They are green today and they are the net: report them as guards.
-- A guard that is red in a two-file run and green in three solo runs of the same test, with no file
-  touched between (the `min-height` list of the Hearth slice), has no explanation in the tree: rerun
-  the test alone before reporting it, and report the green, not the earlier red.
-- A brief prose count that contradicts the brief's own table (H1a.7 "eight `--fs-` tokens" over a
-  table of seven) is pinned from the table, and reported: the table is what the coder will write.
-- A locator that matches a selector EXACTLY is a rename bomb: H1a.2/3 read the dark block as
-  `sel === ":root"` inside the media block, so a later slice that rewrites that selector reds 55
-  tests (54 `HearthTokens` + 1 `HearthFonts`). That is fine when the brief orders the move (its
-  section 5), but then update the locators in the same step and keep every EXEMPT/WLIST locator in
-  the same file tolerant of both shapes: a prefix match (`indexOf(':root', media)` finds
-  `:root[data-theme='dark']` too) only works AFTER the media split, and an exemption computed over
-  the current text is the green guard the coder's CSS must not break.
-- `compact(sel)` of that parse strips ALL whitespace, so a descendant selector is matched
-  space-free: pin `.theme-switch svg` as `compact: '.theme-switchsvg'`. And a `text:` match is a
-  substring: `text: 'light'` hits the value `light dark` too, so pin a declaration value with an
-  anchored regex (`/^light$/`).
-- The harness's `matchMedia` stub DOES support change events: jsdom 28's `MediaQueryList` extends
-  `EventTarget`, and the stub in `vitest.config.ts`'s inline setup registers listeners natively, so
-  `const mql = matchMedia('(prefers-color-scheme: dark)'); mql.matches = true;
-  mql.dispatchEvent(new Event('change'))` reaches the app's listener, and `removeEventListener`
-  drops it. Prove a harness stub with a throwaway test (write, run, delete) before writing a red
-  that leans on it, and keep the listener bookkeeping in the test file.
-- A new strings key reds two existing pins, report both: `App.test.tsx` "the English the brief
-  gives" lists every `EN` key `src/strings/en_US.json` lacks (that is the coder's key pin), and the
-  same file's reverse lint "every value is used by the code" scans the source, so the key goes in
-  `EN` ONLY in the red step: adding it to `en_US.json` is a red no tester may fix (the production
-  `t('key')` call is the coder's).
-- A new focusable control in the banner goes red in EVERY document-wide tab-order list. Grep the
-  suite for the lists that start at the skip link (`App.test.tsx`, `HearthH2a`, `HearthH2b`,
-  `InstancePage.test.tsx`, `ModelProfileContent`, `ModelProfiles`, `ModelProfilesSwitch`) and insert
-  the new stop in each; a banner-scoped list (`within(nav())` / `within(banner())`) needs nothing.
-  Expect 10-15 such reds and list the files.
-- A button named by `aria-label` is pinned without a labelling helper: `computeAccessibleName` is
-  NOT exported by this `@testing-library/dom` (10.4.2) and jsdom computes no accessible name, so
-  pair `getByRole('button', { name })` (it does honour `aria-label`) with
-  `expect(btn).not.toHaveAttribute('aria-label')`. The visible label of the same button is a span
-  with a class, NOT an `aria-labelledby` target: `getByRole` is the only query that can reach it.
-- jsdom fires no click from Enter or Space on a button, so a "toggles with Enter and Space"
-  criterion has no harness: pin the closest proxy (a native `button` of `type="button"`, no key
-  handler) and report the criterion OPEN.
-- `act` comes from `@testing-library/react`, not from `vitest` (importing it from vitest dies
-  "act is not a function"). Import it in any file that dispatches an event the app's own listener
-  installs outside React's tree.
+- The manager's Windows decisions are OS-neutral in `crates/manager/src/manager/windows.rs`, so
+  `cargo test -p pai-manager` on Linux covers them (its `#[cfg(unix)]` tests included). The Win32 glue
+  under `manager/windows/` is `cfg(windows)`: on Linux it is compiled by nobody, so pin its wiring with
+  source lints over the text, comments dropped (a comment naming a needle never greens it): one
+  `entry_fn(name)` extractor (signature to the `\n}\n` at column 0) plus a needle scan of the fn text.
+- Pin shared service glue by its signature and by what the callers pass, not by its body: the shape
+  (`fn(u32)` + `-> bool` before the body's `{`), the parameter READ, each caller's rule NAME forbidden in
+  the body, and the arguments of `register(` read inside EACH caller's function text (contains its rule,
+  not the other's). A mask name that is a suffix of the other's needs a count that subtracts the prefixed
+  variant, and an assert on the parameter count makes a missing parameter red.
+- Prove "every test of the slice ran" from the run's own output: write the FULL output to a file, then
+  count `grep -c "<module>::tests::<name> "` per name, each 1. Prove the FIRST run compiled the coder's
+  files (the `.fingerprint` dirs predate his mtimes, and the run's `Running unittests ...` binary hash
+  equals a new fingerprint dir), since a second run of the same command is a replay.
+- `crates/manager/src/tests/windows_sync.rs` is declared unconditionally and runs on every OS: it plans
+  the services against `instances.ini`. The Win32 glue itself is still compiled by nobody on Linux.
+- xtask's Rust unit tests (`cargo test -p xtask`) cover the Linux package files by checking generated
+  text: `linux::system_files`'s `rules_answer(js, &args)` runs the polkit rule under `node -`, so a JS
+  needle in `xtask/src/linux/system_files.rs` is a real red (the polkit rules the `.deb` and `.rpm` ship
+  are generated from it).
+- An xtask script's temp file is named `xtask-scripts-{name}-<pid>`: the test creates it before the child
+  starts and its own cleanup removes it, so a test that RUNS the script cannot assert the script's trap.
+  Pin the trap as a source needle, and pin the removal by the file's absence after the call. The same
+  needle shape (a literal list of the directories a script cleans) is how a Windows-only rule that needs
+  real state is pinned here: a contract, not behaviour, so say what it does not prove.
+- `crates/bff/tests/listen.rs`'s `Sandbox` runs the BUILT binary with `--listen`, and `check_address` is
+  the pure validator: the unit tests prove the rule, the binary tests prove it reaches the CLI, and both
+  are needed. Put the fail-closed shapes of the validator in the REFUSAL test (a bracketed text that is
+  no address, a port over 65535), because the authority is parsed before the address is read. A
+  wildcard bind (`0.0.0.0:0`) is proven from a loopback client, no second interface.
+- A runtime file shipped by the package is DATA, not code to rename: `crates/core/defaults/*.ini` (the
+  starting files installed into `/etc/llama.cpp/` and `%ProgramData%\llama.cpp\`), the prompts in
+  `benchmarks/prompts/` (sha256-pinned by a spec's `Prompts = <file>@<sha>` lines), and the campaign
+  reports in `benchmarks/bench.db`. Report the residue as data, not as a miss.
+- The guard for a bff error code is per route: the bff ends a session with 403 `session-not-administrator`
+  when the manager refuses a call made as the signed-in user, and answers 502 `client-not-authorized` on a
+  session-free read where the manager refused the bff itself. The guard for the second lives in
+  `tests/instances.rs` and `tests/control.rs`: run those by name and report them as guards.
 
-## Windows service glue (the manager, cfg(windows) entry)
+## Source lints and text pins
 
-- `crates/manager/src/manager/windows.rs` is the OS-neutral module (no `cfg(windows)` gate): its tests,
-  the `#[cfg(unix)]` ones included, run in `cargo test -p pai-manager` on Linux, so the rerun covers the
-  slice's Windows decisions. The Win32 glue (`windows/entry.rs`) is `cfg(windows)` and is compiled by
-  nobody on Linux: pin its wiring with source lints over the text, comments dropped (a comment naming a
-  needle never greens it), one `entry_fn(name)` extractor (signature to the `\n}\n` at column 0).
-- Glue shared by the two services (the control handler, the status report) must take the service's rule
-  as a parameter: pin the signature shape (`fn(u32)` + `-> bool` before the body's `{`), require the
-  parameter be READ (`raw_service_control_type()`), and forbid each caller's rule NAME in the body
-  (`ends_instance(` / `ends_manager(`), so one rule fixed inside greens red. Pin each caller's wiring by
-  reading the arguments of `register(` inside ITS function text, both ways (contains its rule, not the
-  other's). A mask name that is a SUFFIX of the other's (`controls_accepted` of
-  `manager_controls_accepted`) needs a count that subtracts the prefixed variant; forbid the shared fn's
-  mask parameter being NAMED like one caller's rule, and assert the parameter count (`params.split(',').count() > N`)
-  so a missing mask parameter reds.
-- Verify "every test of the slice ran" from the run's own output: write the FULL output to a file
-  (`cargo test -p pai-manager > file 2>&1`, never piped through `grep`, the SIGPIPE trap), then one
-  `grep -c "manager::windows::tests::<name> "` per name printed with `echo` in a loop; each count must
-  be 1. A second run of the same command (`Finished in 0.0xs`) is a replay of the test binary, fine for
-  listing names: prove the FIRST run compiled the coder's files by checking the fingerprint dirs
-  (`.fingerprint/pai-manager-*`) predate his mtimes, and that the run's `Running unittests ...` binary
-  hash equals a new fingerprint dir.
+- A source lint scans the file's TEXT, not its behaviour, and it drops comments: a needle in a doc comment
+  is not a scan hit. Pin production needles (a bare `ConfigFile::X` reference, not a `use`), and report
+  comments as not scanned, so the gate lands in the code.
+- `src_dirs()` exists in `crates/config/src/tests/binding_lint.rs` and `control_lint.rs`, each its own;
+  `deps_lint.rs` is in `crates/app/src/tests/` and `crates/cli/src/tests/`, `lock_walk.rs` in
+  `crates/app/src/tests/`. Grep for the function you mean.
+- The CLI-only lint has an explicit function list, and the CLI print paths (`server show`, `bench query`,
+  whose output is read in place) have their own: a new function of either kind must be added to the list,
+  and the GUI reaches a gate only through the app's `server_control` / `startup_loads`.
+- A source lint whose name list AND its scan cases are flipped together stays GREEN by construction (the
+  scan is generic over the list): report it as the guard that the rule now covers the new names, not as a
+  red.
+- A rule that lives only in CSS, or only in a script, is pinned by reading the file's text (comments
+  stripped, rules parsed). It is green the day it is written: report it as a guard and say which half of
+  the criterion it cannot reach (jsdom has no layout).
+- A comment line a writer emits is often pinned nowhere (`git grep` of the exact sentence: one hit, the
+  writer itself): the red is a new byte-for-byte assert of each comment line. Prove a "the old word is
+  gone" assert can go green by reading EVERY literal of the writer, and order it AFTER the byte-for-byte
+  asserts: the red that stops the test is the wording one, and that is the red to report.
+- "A section an earlier version saved must still load" is GREEN at once when the parser ignores the lines
+  in question (the INI reader strips `;` comments): report it as a guard. Its fixture is the old text
+  verbatim, CRLF included.
+- Prove a harness stub with a throwaway test (write, run, delete) before writing a red that leans on it:
+  jsdom has no `matchMedia` (the test stubs its own, `fe/src/HearthTheme.test.tsx`) and no
+  `Window.isSecureContext` at all (`fe/src/InsecureSignIn.test.tsx`), so the "property absent" case is
+  jsdom's own state and a `true` case is the real guard.
+- A locator that matches a selector EXACTLY is a rename bomb: a later slice that rewrites that selector
+  reds dozens of tests. That is fine when the brief orders the move, but then update the locators in the
+  same step and keep every exemption in the same file tolerant of both shapes.
+- A seam handed over as pure compile red (no stubs): prove the test code's own hygiene with
+  `cargo check -p <crate> --all-targets --target x86_64-pc-windows-gnu`. The errors must name only the
+  missing items (E0425); anything else is a typo in the tests. A `&[OsString]` seam fed from
+  `Command::get_args` is tested with an invalid-UTF-8 `OsString` built by `OsStringExt::from_vec` in a
+  `#[cfg(unix)]` test.
+- xtask's per-OS modules are `#[cfg(unix)]`: a test importing one needs the same cfg. Run
+  `cargo check -p xtask --all-targets --target x86_64-pc-windows-gnu` before handing over.
+- An older commit's worktree (`git worktree add --detach build/<name> <rev>`, gitignored): copy the
+  gitignored `resources/llama.ico` and `llama-brand-logo.svg`, set
+  `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` and a separate `CARGO_TARGET_DIR`.
+- A new `ManagerClient` method needs an impl in every `impl ManagerClient for` (grep it: `DbusClient`,
+  pai-app's `FakeClient` and `DiskClient`, the `FakeManager` of each `crates/bff/tests/*.rs`).
+- A fake's shared log in a returned tuple trips `type_complexity`: alias it in `fakes` (`Checked`).
+- zbus runs every task of a connection on one executor thread: a sync `fn` method blocks every other call
+  on that connection.
+- To probe a phase past a red one in an e2e `#[test]`, comment its call in `tests/mod.rs` with a marker
+  (`// DIAG:`), and restore with `cp` from a backup plus `diff`, never `git checkout`.
+- A "the rule does not exist yet" pin is a COUNT, not a declaration: a helper that throws
+  `expected exactly one rule: <what>, found 0` names the missing rule in its own red, where reading a
+  property of an empty array reads as a fixture typo and a "never contains" over a missing rule greens.
 
-- Web UI tests (`fe/`, relayed by the web UI session, 2026-11-16): a big fake-clock jump stalls a
-  poll that is rescheduled in a React commit, so advance in 1 s steps; in a sampled loop the a11y
-  role query is the cost, not the poll, so take the node once and read `textContent`; query a group
-  by its `aria-labelledby` target, and scope queries to the group when labels repeat.
-- Web UI: a test that mounts the page more than about four times belongs in `it.each`, one mount per
-  row: two such loops passed Vitest's 5 s limit in full runs (fe session, 2h.4). Never leave a
-  half-converted test file: back it up before the first edit, not after.
-- Never `git checkout --` or `git restore` a file another session may have left dirty (a playbook, a
-  shared test file): on 2026-11-17 a revert dropped 27 lines two sessions had added that day. Undo your
-  own edit by hand.
-- A card made editable invalidates read-only pins outside the slice's file: grep the suite for the
-  field ids first (web UI session, 2h.5). A mutant sweep varies the send predicate per reading (flag,
-  truthy, text, select), not only the card list.
+## The web UI (fe/)
 
-## Renaming a file across crates (a rename sub-slice)
-
-- Flip ONLY what names the file on disk: the constants the tests hand the fake, the call-log literals
-  (`"read models.ini"`, `"write-if alice models.ini"`), the assert messages, the doc comments. NOT the
-  file's own CONTENT: the `DISABLED_FILE_HEADER` prose names the sibling file inside the INI text
-  ("Same format as presets.ini, llama-server only reads presets.ini, back to presets.ini"), and
-  `the_disabled_header_is_the_configurators_one` pins that text equal to `crates/app/src/presets.rs`,
-  which the prose/wire sub-slice renames later. Sed with a per-line skip:
-  `sed -i -e '/Same format as/{b}' -e '/nothing here is offered/{b}' -e '/back to presets\.ini/{b}' -e 's/presets\.ini/models.ini/g' <file>`.
-- A source lint whose name list AND its scan cases are flipped together stays GREEN by construction
-  (`control_lint`'s `CONFIG_NAMES` + cases): the scan is generic over the list. Report it as the guard
-  that the seam rule now covers the new names, not as a red. Its `paths::` function list
-  (`CONFIG_PATHS`: `presets_ini`, `presets_disabled_ini`) does NOT rename (only the file names do).
-- A rename half done shows up as a pre-existing test red you did not cause, and it names the seam that
-  kept the old name: `crates/app/src/server_control.rs` `ConfigFile::name()` still answers `"presets.ini"`
-  while the fake manager's gate (flipped) manages `models.ini`, so the GUI e2e dies at its FIRST phase
-  (save_flow.rs:113) with `client-bad-file-name` "The manager does not manage a file of that name".
-  Prove it predates your edit: `cp` the pristine file from your own backup, run, `cp` the edited one back,
-  `grep -c` to confirm the restore. Then name the production line the coder must flip, and say which
-  asserts of yours the red blocks (the e2e is ONE `#[test]`, so later phases report nothing).
-- The GUI's file names also live in production as bare literals (`models_tab.rs` feeds
-  `delete_target_file`), and a `state.slint` default property: flipping the test's expected string is the
-  red pin, the literals are the coder's.
-- `cargo fmt -p <crate> --check` after a rename: shorter names collapse an `assert_eq!` to one line
-  (rustfmt), so format the touched file, do not hand-wrap.
-- The red shape of a file-name flip on the bff's fake: the route asks for the old name, the fake holds the
-  new one, so it sees no file → 404 `no-preset-named` on every content test, `[]` on the list, and the
-  call-list asserts read `left: ["read presets.ini"] right: ["read models.ini"]` (7 of them: the exact
-  call lists are the real pin of the file names).
-- A name that is an INPUT of a keyed digest moves EVERY constant keyed on it, so enumerate them
-  (`grep -n '"[0-9a-f]\{16\}"' crates/bff/tests/*.rs`), never work from the coder's list (they named 4 of 10,
-  and the near-miss constants `REV_WHOLE_FILE` / `REV_NEIGHBOUR` are keyed too). Recompute in a scratch
-  `rustc` program that `include!`s the test file's own fixtures and `siphash_2_4` / `hashed_section` /
-  `revision_of` (`sed -n '<lines>p'` into `fixtures.rs` + `helper.rs`): print the OLD-name value of every
-  fixture and match it against the constant being replaced (all 10 matched, so the scratch model of the input
-  is the route's), then print the NEW-name ones. Cross-check the new values against the crate the production
-  code links: `rustc --edition 2018 --crate-type lib ~/.cargo/registry/src/*/siphasher-1.0.4/src/lib.rs -o
-  libsiphasher.rlib`, then `--extern siphasher=libsiphasher.rlib` (its `write`/`finish` are trait methods, so
-  the probe needs `use std::hash::Hasher`). Validate BOTH against the published vectors first.
-- A migration test that reads the moved file through `paths::presets_ini()` breaks when that helper's
-  RETURNED name is renamed, not when the migration is: the 2.4 tree's names are data, so pin them by the
-  literal path (`paths::config_dir().join("presets.ini")`) and add the guard of the decision
-  (`!paths::config_dir().join("models.ini").exists()`: the tree move renames nothing).
-- The hand-over (`import_user_config`) has TWO names per file (`migration.rs` `USER_FILES`): it READS the
-  per-user dir under the OLD name (`presets.ini`, `presets.ini.disabled`) and WRITES the manager's new one
-  (`models.ini`, `models.ini.disabled`), pinned by `import_reads_nothing_under_the_managers_own_names`. So in an
-  e2e phase that seeds the per-user dir, the seed and the read-back of the user's file keep `presets.ini`,
-  while the fake's `fail_write_of` key, the `fake::writes` list and the manager's `files.get(..)` are
-  `models.ini`. A seed under `models.ini` is read by NOTHING: the phase that expects a refusal reports
-  `panicked at ...: refused: succeeded` (the import finds no file and answers success), which reads like a
-  broken fake, not a wrong name. Grep the seeds (`grep -rn 'join("models.ini' crates --include=*.rs`) to tell
-  the manager/engine fixtures (`sys.join`, a temp dir) from a per-user seed.
-- The WORD and VERB rename of the same family (displayed texts, the CLI's command name) is pinned at three
-  levels, all in the crates, no fe/: the binary test asserts the retired verb is GONE, not an alias (`pai
-  preset` → exit 2 + stderr `unrecognized subcommand 'preset'`), the help test pins the command list as an
-  exact array (`["server", "model-profile", "control", "bench", "config", "help"]`), and a split-lint scans
-  BOTH strings files for the retired invocation (`line.contains("pai preset")`). The completeness check of
-  the text rename is a grep of the two strings files for the old word: the residue that stays is DATA, so
-  report it as such, not as a miss (`hf-preset-repo` names the file `preset.ini`, `spec-temp` names the
-  token a parser accepts, "a number or `preset`").
-- Auditing a rename slice for a LOST test, without any checkout: compare per changed file
-  (`git show HEAD:<f> | grep -cE '#\[(test|tokio::test)\]'` vs the worktree file). The repo-wide totals are
-  not comparable (HEAD has every file, the worktree grep covers only the diff's), so a total read as
-  "2193 vs 1301" is the script's bug, not a loss. The stronger check is the set of test-fn NAMES
-  (`#[test]\n...fn <name>` in HEAD vs worktree) normalized over the rename vocabulary (`model[_-]?profile`,
-  `preset`, `profile`, `model` → `@`, non-alphanumerics stripped): the verdict is "N lost, M new", and the
-  `^\+.*#\[test\]` grep counts alone cannot tell a rename from a deletion.
-  Normalize the vocabulary on BOTH sides: HEAD may already carry the new word in places an earlier
-  sub-slice renamed (4a5's audit red-flagged 8 fn names as "lost" because only the new side was mapped:
-  HEAD and worktree both had `a_model_profile_...`, and mapping the new side to the old vocabulary made
-  the same name appear in both diffs). Symmetric mapping gave 7/7 OK, counts 55/0/24/32/47/24/49 equal.
-- Same audit for the STRINGS files: compare as key->value maps after normalizing the KEY paths
-  (tomllib, flatten tables to leaves, compare reprs byte-exact): en_US 1095 keys, cli 369, all equal and
-  1:1, values byte-identical. For the Slint files extract `"..."` literals and compare COUNTERS twice:
-  raw (shows the renamed i18n keys: 25 pairs, `delete-preset` -> `delete-model-profile`) and
-  vocabulary-normalized on both sides (the verdict: equal multisets, every raw delta a rename, zero
-  unexplained). `grep -c "FAILED\|panicked"` on a cargo log counts passing test NAMES
-  (`...not_panicked ... ok`): count failures by the `test result: FAILED` lines only.
-- Auditing the same slice for a WEAKENED assertion: extract each assert statement from the diff's removed
-  lines by a balanced-paren scan, per file, normalize with the same vocabulary plus ALL whitespace, and
-  require it as a substring of that file's added blob. Two artifacts to read by hand, never to "fix":
-  rustfmt re-wrapping (a longer name pushes the args one per line; the whitespace strip absorbs it), and a
-  RAW STRING (`r"C:\models\m.gguf"`: a scanner that treats `\` as an escape never closes the string, swallows
-  the statements after it, and reports one merged "unmatched" for two renames).
-- `nohup <script> &` started with `background: true`: the wrapper returns at once and the completion
-  notification says nothing about the script. Give the script a log per command, an `exit=$?` line per
-  command in one exits file and an `ALLDONE` sentinel, and read them when resumed; do the static git audit
-  while it runs. Clean-rerun cost of the whole configurator side on 24 cores: `cargo clean -p` of the seven
-  crates removes 5.6 GiB, then core 5 s, manager 1.6 s, `app --lib` 15 s, cli 1.3 s, config 57 s compile +
-  19 s tests, bff 16 targets, xtask 0.1 s: about 2.5 min.
-
-## Mutation runs (fe/, proving a test has teeth)
-
-- The scratch copy: `rsync -a --exclude node_modules --exclude dist --exclude ux fe/ /tmp/<x>/`, then
-  `ln -s <repo>/fe/node_modules /tmp/<x>/node_modules`. Drive it from a python script that restores
-  the pristine sources (kept OUTSIDE the copy) with `cp` after each mutant, so no mutant survives the
-  run and the repo is never touched. A scripted sweep takes seconds per mutant: 4 test files 7 s, the
-  full `fe` suite 19 s.
-- Names of the failures come from `npx vitest run --reporter=json --outputFile=/tmp/x.json` in the
-  copy: `testResults[].name` is the file and `assertionResults[].fullName` the test, which is what to
-  report (the console output of 19 runs is unreadable).
-- Re-read the source for every patch anchor just before the run: a context summary recites functions
-  the file does not have (a summary named `flagsOf`, `isEditable`, `hasText`, `buildSaveRows`; today
-  the same rules live in the `CARDS` table's `editable` flag, `ruleLocked`, `shown`, `selectState`,
-  `selectSend`, `editableWritten`). A driver that reports "anchor not unique" caught all four. The same holds for a quoted acceptance criterion: re-read it in
-   `fe/briefs/<slice>.md` before retargeting, and grep the bare number (a criterion is a numbered list item
-   ` 196.`, so `/^- \*\*196\*\*/` matches nothing and reads as "the brief has no 196").
-- A mutant is a survivor only after a FULL-suite run: of 19, three were killed by files outside the
-  slice's own (the 176 lock rule is pinned in `PresetCards4.test.tsx`, the sends in `PresetSave12`).
-- The surviving mutants of 2h.7 were the readings no control reaches: a tri-state select's option
-  `default` short-circuits `selectState`, so the flag reading of the word `default` shows only on an
-  off / on row (`no-host`), where 122 makes it ON; and a read-only row is invisible to the save's
-  check (`checkRows` filters `editable === true`) so a mutant that makes it block needs two edits:
-  the check list and the box state it validates against.
-- A patch that only changes a value nothing reads is no test at all: making a checkbox row
-  `editable: true` adds no save row while the page's `boxed` map holds no entry for it. Design the
-  mutant where a real decision is reached, and say in the report which ones cannot be reached.
-
-## Vitest mount budget (fe/, suite timeouts)
-
-- A suite timeout in `fe` is a mount-count problem: every `render(<App />)` of the page costs
-  0.15-0.25 s, so a case with a loop that mounts per iteration (10-30 mounts) passes solo and times
-  out under the full suite. Count mounts per test as (render call sites) x (loop iterations), and keep
-  it at 3: a `for` over data with a mount inside becomes `test.each` over that data (one mount per
-  generated test); N sequential mounts with no loop become N `test(...)` blocks; a nested loop becomes
-  a cross-product list built with `.flatMap`. Keep every assertion and fixture, split, never merge.
-- The mount count of a test is the number of MOUNTS IT MAKES, not the number of mount call sites in
-  its text: a block whose text holds one `loaded(` inside a 9-case loop mounts 9 times. A checker that
-  counts call sites (a regex over the balanced block) is blind to that, and blind to the file-local
-  wrappers of `render` (per file: `open`, `loaded`, `page`, `loadedAfterNavigation`,
-  `loadedAfterSignOutOnOverview`; NOT `form`, which in some files only queries). So: run the site scan
-  over every `test(`/`test.each(` line to find the multi-mount bodies, then READ every body that holds
-  a loop with a mount inside and count its iterations. A 2-3 iteration loop is inside the budget:
-  splitting it into 2-3 `test.each` cases buys nothing and the analyzer's "6" on it is noise.
-- A `.flatMap` that builds a `test.each` table of tuples needs the tuple spelled twice
-  (`flatMap<[boolean, boolean, string, string]>(..)` and `(x): [..] => [..]`): the inner `map` widens
-  to `(string | boolean)[][]` and `tsc` reds `Target requires 4 element(s) but source may have fewer`.
-- Two files' mount helpers behave differently under the same name; `form(` in `SignIn.test.tsx` mounts
-  nothing (the `render(<App />)` is written out beside it), in `fe/src/test/bff.ts` it does. Read the
-  helper.
-- `test.each` over an array of ARRAYS spreads the elements as POSITIONAL arguments: the callback is
-  `(key, value)`, not `([key, value])` (destructuring the first arg is `undefined`). Object items
-  allow `$prop` in the title; array items do not, use `%s`.
-- Titles: a `%s` in a printf title consumes one argument IN ORDER, so a `%s` typed into the prose
-  eats a case value, and a literal `%` must be escaped (`%%`). An apostrophe in the case value forces
-  a double-quoted title.
-- `globalThis.fetch = vi.fn().mockImplementation(fakeBff(...))` is an ASSIGNMENT, not a stub: it
-  survives `vi.unstubAllGlobals()` and it is not a mount, so it stays in the each-body (a
-  `test.each` title cannot inject a value into a callback body).
-- Drop the loop's per-iteration `cleanup()` / `vi.unstubAllGlobals()` in a single-mount each-body
-  when the file's `afterEach` already does cleanup + `vi.unstubAllGlobals()` + the state reset. They
-  MUST stay between the mounts of a multi-mount case, else Testing Library fails
-  `Found multiple elements with the role main`.
-- Splitting raises the file's test count (one case per value) and per-case `expect(` counts are
-  unchanged, because the body travels verbatim. Report the counts.
-- A slow test with <= 3 mounts is NOT this problem: many sequential fetches/timers (a 60 s polling
-  simulation) run their own clock. Such a test is left alone and named in the report.
-- A script that counts mounts per test (heuristic loop lengths) over-counts: read the block it
-  flags. The block's real mount and `expect(` counts come from a balanced-block read at the
-  `test(` line.
-- Vitest runs from `fe/`, one run at a time (`npm --prefix fe test` / `npx vitest run` inside `fe`).
-  `npx vitest` from the repo root resolves a different config and lies about the files it ran.
-
-## Wire renames (routes, error keys, strings keys)
-
-- Before flipping a key, check it exists today (`grep -c '^<key> = ' crates/core/strings/*.toml`, and
-  `grep -rn '"<key>"' crates`): a design's rename list names keys of the whole target state, and four of
-  the ten do not exist yet (`preset-over-memory`, `preset-model-missing`, `client-no-presets`,
-  `preset-engine-mismatch`). Renaming a key that is not there invents a red no coder can pass.
-- A wire rename touches assertions that live in PRODUCTION files (core's `checks.rs` `mod tests`, the
-  manager's `dbus.rs` / `pipe.rs` / `service.rs`, app's `presets.rs`): flip with a LINE-RANGE sed from the
-  file's first test marker (`sed -i '802,$ {s/"old"/"new"/g}'`, the marker line from
-  `grep -n 'cfg(test)'`), never the whole file, and never a whole file where `#[cfg(test)]` sits on
-  single items (app's `presets.rs`: ten of them from line 66, so address the exact lines). Prove the split
-  after: the old spelling must remain ONLY on production lines.
-- A strings-key rename is pinned on both sides in `crates/core/src/checks.rs` (it reads both files with
-  `include_str!`): the new key resolves in `cli.toml` AND `en_US.toml` with today's text byte for byte
-  (the texts were already reworded, so equality is the pin), and `!table.contains_key("<old>")` for each
-  old name. `KEYS.contains` in the existing `every_refusal_key_is_known_and_in_both_strings_files` is what
-  makes the core list part of the rename.
-- The bff's own keys (`model-profiles-malformed`, `model-profile-changed-elsewhere`) are in NO strings
-  file: pin them in `crates/bff/tests` only. The four the manager and core emit are in both files.
-- A route move: pin the OLD path as the router's bare 404 in one new test (status + `content_type == ""`
-  + body `""` + zero connects + the session survives): it is red today (the old route answers 200) and
-  greens when the route is gone. Do not rename the GUI's display keys (`deleted-preset`,
-  `preset-id-charset` in `GUI_ONLY_KEYS`, `by_label(&app, "preset-ctx-size")`): the wire slice renames
-  only the keys the wire emits, and those keys drag every `.slint` and the GUI tabs in.
-- In `data_root_e2e` crates (core, manager, app) a key rename reds at the FIRST phase that asserts it, so
-  the later phases' pins of the same key (the manager's `pipe_client` / `dbus_client` phase asserts) cannot
-  go red on their own today: report them as blocked, and name the phases that DO prove the mechanism
-  (core's `a_refusal_round_trips_through_its_wire_form` for the wire encode, the manager's
-  `every_error_has_its_name_and_reads_back` for the D-Bus name).
-- fe route rename slice: the whole fe suite is the rename surface, so retarget EVERY test file that types
-  the old hash, with a counted node script per group of files (it prints the replacements per file: those
-  totals are the report). Prove the collateral reds are route-driven and not a broken harness: from `fe/`,
-  `npx vitest run --reporter=json --outputFile=<f>`, then with node group the `failureMessages` by message
-  text and check that no `testResults` entry has `status === "failed"` with zero failed assertions (a
-  compile or import error shows up ONLY there, as a file-level failure).
-- A fe helper that wraps an async finder (`findByRole`) is async: `within(findTable(main))` is TS2345
-  (`Promise<HTMLElement>` is not `HTMLElement`) while Vitest runs it happily, so `await` inside the helper
-  and at every call site; `npm --prefix fe run typecheck` names them all in one pass.
-- A rename that DROPS a heading (a list's `h2` folded into the page `h1`): retarget the helpers AND pin the
-  new labelling (`aria-labelledby` is the `h1`'s id, `queryAllByRole('heading', { level: 2 })` empty), so
-  the test pins the rename instead of just following it.
-
-## CLI flag renames (`pai`)
-
-- clap derives a long flag from the FIELD name (`#[arg(long)] pub preset` is `--preset`), so the coder
-  can rename the user-facing name with one attribute (`#[arg(long = "model-profile")]`) and keep the
-  internal name, the way `Command::Preset` carries `#[command(name = "model-profile")]`. So write the
-  parse tests from the ARGUMENT STRINGS only (`Cli::try_parse_from([..]).is_ok()`), never through the
-  Rust field: the test then holds for either way the coder picks.
-- Pin a retired flag in the crate's inline `Cli::try_parse_from` tests, NOT in `tests/pai_binary.rs`: a
-  `pai bench run` that PARSES takes the machine-wide GPU lock and blocks ("Waiting: another process
-  uses the GPUs (...)", it never exits, exit 124 under `timeout 60`), so a binary-level run of that
-  form is a 60 s deadline panic and touches the real lock. In the binary test pin `bench run --help`
-  only (clap prints and exits 0, nothing runs).
-- clap 4.6's refusal wording is learnable BEFORE the rename: run the built binary with a made-up flag
-  (`pai bench run --zzz P`) and read `error: unexpected argument '--zzz' found`. Pin that line
-  (`contains("unexpected argument '--preset' found")`), never the `tip: a similar argument exists:`
-  line that follows (its content depends on the edit distance to the real flags).
-- A help pin bans the FLAG, not the WORD: `bench run --help` legitimately keeps `preset` as the value of
-  `--temp preset` and as the placeholder `<PRESET>`. Assert `contains("--model-profile")` and
-  `!contains("--preset")`.
-- Non-test places carrying a bench flag name, report-only: the shipped prompts
-  (`benchmarks/prompts/bench-prompt-43k-1.0.txt`, `-110k-1.0.txt`) embed the release-2.4 snippet
-  `llama-cpp-config bench sweep --preset <id> ...` and are sha256-pinned by the spec's `Prompts =
-  <file>@<sha>` lines, so editing one breaks the digest (a new file and a new spec version, the
-  spec-reviewer). The same snippet travels in the campaign reports stored in `benchmarks/bench.db`
-  (`grep -a 'bench run --preset'` finds none: the flag is prompt text, not a recorded command line).
-- `bench run` has ONE preset-named flag (the `BenchRun` struct; Query/Answer/Publish have none). The
-  preset-named option VALUE is `--temp preset` (`cli.rs`, `eq_ignore_ascii_case("preset")`) and the
-  spec's `Temp = preset`, and the spec line is inside the published version's digest.
-
-## The word in text a program writes (a text sweep, not keys)
-
-- The surface is more than `.rs` literals: also `crates/core/defaults/*.ini` (the starting files the
-  packages install into `/etc/llama.cpp/` and `%ProgramData%\llama.cpp\`: `models.ini` is EMPTY there,
-  `assignments.ini` carries two `;` lines), xtask's `.desktop` / polkit / unit literals
-  (`xtask/src/linux/system_files.rs`, `package.rs`), and `crates/core/strings/*.toml`. To split production
-  from test code, a python pass printing each hit beside the file's FIRST `#[cfg(test)]` / `mod tests`
-  line (a hit below it is test code); files under a `tests/` directory need no such check, they have no
-  `mod tests` and read as production to that pass.
-- A comment line the writer emits is often pinned nowhere (`git grep` of the exact sentence: one hit, the
-  writer itself): the red is a new byte-for-byte assert of each comment line. Prove the paired
-  `!render.contains("preset")` can go green by reading EVERY literal of the writer
-  (`sed -n '<from>,<to>p' <file> | grep -in preset`): its count is the number of flips the slice makes, so
-  a no-old-word assert over a full-fixture render is a guard, not an unpassable red. Order it AFTER the
-  byte-for-byte asserts: the red that stops the test is the wording one, and that is the red to report.
-- "A section an EARLIER version saved must still load" is GREEN at once (the INI parser strips `;` lines,
-  so the loader never reads a comment): report it as a guard, never as a red. Its fixture is the old header
-  verbatim, CRLF, written as a `\`-continued `const`; the loader seam in app's `model_profiles.rs` is the
-  `#[cfg(test)] pub(crate) read_model_profiles(&path)`.
-- `let lines: Vec<&str> = render_section(&p).lines().collect();` is E0716 (the String temporary dies at the
-  statement's end): bind it first (`let text = render_section(&p);`), the pattern the file's own tests use.
-- Two known flake seams, green 10/10 solo on a warm cache: `crates/bff/tests/session.rs` pins a 20 ms
-  sign-in bound and asserts the reply came before `HANG/2` (200 ms) on a 2-worker tokio runtime, so a
-  cold-compile suite (15 bff test binaries at once) can miss the wall-clock assert; xtask's
-  `linux::system_files` tests spawn `node -` (polkit rules JS) and `sh -n` with
-  `spawn().expect(..)` + `wait_with_output`, so a missing/loaded node is an env red, not a code red.
-  A slice that only recompiles these crates shares the load effect, never the behaviour: judge a flake
-  from the diff's module reach (the session routes never serve assets; the system_files tests never call
-  `licenses::stage_in`; temp dirs are per-test prefixes of one pid).
-- fe: the mount helpers are `startAt(hash)` (the hash ONLY, no strings table, no `hashChange`: that name
-  does not exist in `fe/src/test/bff.ts`) + `fakeBff(options)` + `render(<App />)`, and the teardown is
+- The shared tables are `fe/src/test/bff.ts` and `fe/src/test/modelProfileCards.ts`; the mount helpers are
+  `startAt(hash)` (the hash only), `fakeBff(options)` and `render(<App />)`, with the teardown
   `cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); startAt('')`. `fakeBff` answers a signed-in
-  session and `INSTANCES` (default, coder) by default, and `App` is a DEFAULT export. The Overview table
-  names the same instance ids as the nav, so every nav query needs `within(nav)` (a bare
-  `findByRole('link', { name: 'default' })` reds "Found multiple elements"); a link click in jsdom does
-  not always move `window.location.hash` (the 05b file asserts the h1 focus instead), so pin a close on
-  `aria-expanded` and the landing page by its heading.
-- fe CSS-text pins: the local reader's `TOP` is depth 0, so a rule inside `@media` is INVISIBLE to it. A
-  check that must read the media rules needs its own block scanner (a recursive `{`/`}` walk over the
-  comment-stripped text, the block whose selector starts with `@` is the at-rule, its body scanned
-  again). Run the same check over a scratch CSS string in both directions: the string that must be
-  flagged, and the block the stylesheet ships that must pass. A scratch case is the only proof the check
-  has teeth, and it costs no file touch.
-- Exempt by declarations, never by a name: an allowlist of selector names exempts a rule that only
-  looks the same (`height: 20px` on `.theme-switch-label` greens under a name-based list, and a 20px
-  label clips its text at 200 %). Recognise the sanctioned case by what it declares: a clip box is
-  `clip-path: inset(50%)` + `height: 1px` + `overflow: hidden`, all three, so a rule one declaration
-  short is a violation. A selector list shares one body, so the test reads the body, not each selector.
-- A CSS-only slice of a brief that names one existing test to edit: the slice's new stylesheet assertions
-  and that one edit are the reds, and the DOM/behaviour of the criterion "nothing else moves" is a GREEN
-  guard file (say so per criterion: RED with the one line, GREEN by what guard). Check the older
-  stylesheet files for pins of the values the slice replaces: `HearthH5a.test.ts` H5a.7 pins the pre-H5b
-  nav (`--surface`, `display: block`, the inset `box-shadow`, `--fs-sm`) and says "until H5b.3": it is
-  GREEN today and reds with the coder's CSS, so report it as a conflict for the coordinator, do not edit
-  it unasked.
-- Prettier (the repo's `format:check`) rewrites comments: a sentence ending a comment line right after
-  an operator can be merged with the line below it (`experimentalOperatorPosition` bug), and it wants
-  `as` casts on a multi-line type argument broken across lines. Run `npx --prefix fe prettier --write` on
-  the touched files and read the diff before the format check; a joined comment is cosmetic, a reformat
-  of a type assertion is not.
+  session and the instance list by default, and `App` is a default export.
+- `modelProfileDoc(values, extra)` puts `extra.values` OVER the whole default `values` object, so a
+  fixture that names only its own card's keys drops `model` and `spec-type` too (the page still renders).
+  A key the file lacks is ABSENT from `values`: a `''` entry is a value, not an absence.
+- A card added to the shared card list reds EVERY whole-page test of the suite, not only the new file: the
+  card-order and tab-path tests of each cards file, the count / strings-parity tests, the page test's tab
+  path, the heading-order tests, and `App.test.tsx`'s strings test (the coder's key pin). Count them in
+  the report as collateral reds of the shared list, one line per file.
+- Making an EXISTING card editable is done in the shared table, not in a page test: its label keys in
+  `EDITABLE_FIELDS`, and for a number field with a default box, its label key in `BOXED_FIELDS`.
+  `fieldTabStops` and `controlEnabled` derive from it, so the collateral reds before the coder are the
+  tab-path tests. Prove the table rule by the DELTA of the tab list: a delta that differs per fixture
+  means the rule is not read from the fixture. A checkbox's tab stop is named by its TOGGLE text
+  (`<key>-toggle`), not by the field's label, and a boxed number adds a stop for its `field-default` box.
+- Older tests that pin a newly editable card READ-ONLY stay green in the red step and red after the
+  coder: grep the suite for the card's key prefixes, list them for the coordinator, and never edit them
+  in the red step. A card made editable also invalidates read-only pins in files outside the slice's.
+- `pageStartTabStops()` is the stops every whole-page tab test expects before the first field, so a
+  control a later slice inserts in the banner is retargeted ONCE, in the shared helper. Once a jump
+  button carries a card title, that title is no longer unique: "no card `h3` is a tab stop" compares
+  tabbable ELEMENTS, never NAMES (a name list holds every title twice and is true whatever the code does).
+- Typing into a control of a card that is not editable yet is a SILENT no-op (React skips `onChange` on a
+  disabled control): the value stays, the form stays clean, the save bar stays inert, and a refusal test
+  reds at `findByText(en('save-invalid'))` after ~1 s and reads like a missing check. One debug print of
+  `.disabled` / `.value` / the box's `checked` tells it apart in a single run (the box is `<key>-box`, the
+  input `<key>-control`); report the red as "the field is not editable", not as "the check is missing".
+- What a field renders depends on `editable`: read-only is a `<label>` + input (no `role="group"`), an
+  editable field with a default box is a `<fieldset>` named by the label. So a "no group named by the
+  label, the textbox carries the name" pin is GREEN on a read-only card and RED on an editable one: pin
+  it in the file whose field is already editable to carry the red, repeat it as a guard, report which is
+  which.
+- A card's controls are NOT in the document when its `h1` is (the cards render with the read): a
+  `getByRole('combobox', ..)` right after the `h1` reds "Unable to find an accessible element with the
+  role combobox", which hides the slice's real red. Use `findByRole`, and assert the fixture's `values`
+  carry the row's keys.
+- Inside a card there is no group and no note per field: only the card's group and the card's note, so a
+  structural page test can assert a card is the region's first child and every row a group with its
+  legend. A checkbox whose text the brief gives in two states is found as the group's only checkbox,
+  never by name.
+- A rule of a shared component (the sign-in, shown in `main` and in the session-ended dialog) is one
+  rule: test the page case and the dialog case in the same file. The dialog needs no new page: a Save
+  answered 401 `session-required`, the bar's Sign in, then `getByRole('dialog', { name })`.
+- A page whose save answers only the generic failure today: every keyed-answer test reds on the alert
+  TEXT, and the guard-key test of "anything else is the generic failure" is GREEN by construction: report
+  it as a guard, it is the net the new reading must not break.
+- "Any answer that is not a shaped 200" is ONE test with a table of answer cases (204, a 200 missing a
+  field, a 200 that is not JSON, a 500 with a key, a rejected fetch): one page per row and
+  `cleanup(); vi.unstubAllGlobals()` at the end of each iteration, so each row reports its own label.
+- A time limit needs no new clock: `api.ts` aborts a non-GET at 120 000 ms, so a `held()` request plus
+  `advance(119_999)` / `advance(1)` (the `fakeClock`/`flush`/`advance` pattern of `Timeout.test.tsx`:
+  fake timers only, so the microtasks stay real) shows the abort is wired while the red is the message
+  the page renders. `afterEach` needs `vi.useRealTimers()` beside `vi.unstubAllGlobals()`.
+- A new strings key reds two existing pins, report both: `App.test.tsx` "the English the brief gives"
+  lists every `EN` key `src/strings/en_US.json` lacks (the coder's key pin), and the same file's reverse
+  lint scans the source, so the key goes in the test's `EN` table ONLY in the red step: adding it to
+  `en_US.json` is a red no tester may fix (the production `t('key')` call is the coder's).
+- A new focusable control in the banner goes red in EVERY document-wide tab-order list: grep the suite
+  for the lists that start at the skip link and insert the new stop in each; a banner-scoped list
+  (`within(nav)`) needs nothing.
+- Every nav query needs `within(nav)` (the Overview table names the same instance ids as the nav), and a
+  link click in jsdom does not always move `window.location.hash`: pin a close on `aria-expanded` and the
+  landing page by its heading. The browser's Forward is testable after a leave guard: a typed hash adds a
+  history entry, so build the history with a typed hash, never with a second render.
+- `getByRole('button')` returns `HTMLElement`, so `.disabled` is TS2339 in the type check and passes the
+  Vitest run (Vitest never type-checks): cast at the query. A helper that wraps an async finder is async:
+  `within(findX(main))` is TS2345 until awaited, in the helper and at every call site.
+- `act` comes from `@testing-library/react`, not from vitest (importing it from vitest dies "act is not a
+  function"): import it in any file that dispatches an event the app's own listener installs outside
+  React's tree. `fireEvent.click` on an `<a>` makes jsdom print `Not implemented: navigation`, and a
+  focus assertion still passes under it, so the noise hides: use `userEvent.click` when the activation
+  matters.
+- A button named by `aria-label` is pinned without a labelling helper: `computeAccessibleName` is not
+  exported by this `@testing-library/dom` and jsdom computes no accessible name, so pair
+  `getByRole('button', { name })` (it honours `aria-label`) with `not.toHaveAttribute('aria-label')`.
+  jsdom fires no click from Enter or Space on a button, so "toggles with Enter and Space" has no harness:
+  pin the closest proxy (a native `type="button"`, no key handler) and report the criterion OPEN.
+- A suite timeout in `fe` is a mount-count problem: every `render(<App />)` costs 0.15-0.25 s, so a case
+  with a loop that mounts per iteration passes solo and times out under the full suite. Count the MOUNTS
+  A TEST MAKES, not the call sites in its text (one call site inside a 9-case loop mounts 9 times, and the
+  local wrappers of `render` differ per file: read them), keep it at 3, and turn a `for` with a mount
+  inside into `test.each` over that data; split, never merge. A slow test with 3 mounts or fewer is a
+  clock problem (many sequential fetches or timers), not this one.
+- `test.each` over an array of ARRAYS spreads the elements as POSITIONAL arguments: the callback is
+  `(key, value)`, not `([key, value])`. Object items allow `$prop` in the title, array items use `%s`, and
+  a `%s` consumes one argument IN ORDER, so a `%s` typed into the prose eats a case value and a literal
+  `%` must be escaped. A `.flatMap` that builds a table of tuples needs the tuple type spelled twice, or
+  `tsc` reds `Target requires 4 element(s) but source may have fewer`.
+- `globalThis.fetch = vi.fn().mockImplementation(..)` is an ASSIGNMENT, not a stub: it survives
+  `vi.unstubAllGlobals()` and it is not a mount, so it stays in the each-body (a title cannot inject a
+  value into a callback body). Drop the loop's per-iteration `cleanup()` / `vi.unstubAllGlobals()` when
+  the file's `afterEach` does it; they MUST stay between the mounts of a multi-mount case, else Testing
+  Library fails `Found multiple elements with the role main`.
+- A test file past ~900 lines splits into `<Name>1` / `<Name>2` with the helpers COPIED: a test file
+  imports no other test file, and the copy keeps each file runnable on its own. Splitting one back means
+  hand-reverting the setup edits: truncate at a known line and edit the header, imports and hooks.
+- Mutation runs prove a fe test has teeth: `rsync -a --exclude node_modules --exclude dist --exclude ux
+  fe/ /tmp/<x>/` plus a symlink to the real `node_modules`, driven by a script that restores the pristine
+  sources (kept OUTSIDE the copy) after each mutant, so no mutant survives and the repo is never touched.
+  A mutant is a survivor only after a FULL-suite run (a rule is often pinned in a file outside the
+  slice's own). A patch that only changes a value nothing reads is no test at all.
+- Re-read the source for every patch anchor just before a run, and re-read a quoted acceptance criterion
+  in `fe/briefs/<slice>.md`: a context summary recites helpers the file does not have, and a numbered
+  criterion is a markdown list item, so a bare-text grep for the number finds nothing and reads as "the
+  brief has no such criterion".
+- The fe suite's total moves between runs of an UNCHANGED baseline: account for your own tests by name and
+  get the baseline by EXCLUDING your files, never by subtracting the totals. A guard that is red in a
+  two-file run and green in solo runs of the same test, with no file touched between, has no explanation
+  in the tree: rerun it alone and report the green.
+- A CSS text pin parses the stylesheet (comments stripped, rules from the brace balance, nesting from the
+  balance before the selector). The selector group of that parse is the whole text before the `{`, at-rule
+  prefix included, so the light block is the one with no `@media` and the dark block starts at it; a
+  declaration pinned on a `@media` WINDOW is green when any nested rule of the window carries it, so pin
+  "the media block" claims on the window and "the control" claims on the rules. A whitespace-stripped
+  `compact` form is the exact-match key: `.nav a` compacts to `.nava`, and a needle that drops the
+  punctuation finds 0 rules, which reads as "the rule is missing" when it is there. Exempt a sanctioned
+  case by the DECLARATIONS it carries, never by a selector name (a name-based allowlist exempts a rule
+  that only looks the same), and read a selector list's shared body, not each selector.
+- A contrast rule is computed in the test (sRGB-relative luminance, `(L1+0.05)/(L2+0.05)`) from the
+  PARSED hexes, never from ratio constants copied from the brief; the brief's own stated ratios go in as
+  the unit-check of that function, proven by a node probe first, else the unit-check is a red the coder
+  cannot pass.
+
+## Renames, wire and text
+
+- Before flipping a wire key, check it exists today (`grep -c '^<key> = ' crates/core/strings/*.toml`,
+  `grep -rn '"<key>"' crates`): a design's rename list names keys of the whole target state, and some do
+  not exist yet. Renaming a key that is not there invents a red no coder can pass.
+- A wire rename touches assertions that live in PRODUCTION files (core's `checks.rs` `mod tests`, the
+  manager's D-Bus and pipe modules, the app's model-profile module). Flip with a LINE-RANGE sed from the
+  file's first test marker (the line from `grep -n 'cfg(test)'`), never the whole file, and never a whole
+  file where `#[cfg(test)]` sits on single items. Prove the split after: the old spelling remains ONLY on
+  production lines.
+- The bff's own keys are in NO strings file: pin them in `crates/bff/tests` only. The keys the manager and
+  core emit are in both strings files, and a strings-key rename is pinned on both sides in
+  `crates/core/src/checks.rs`, which reads both with `include_str!`: the new key resolves with today's
+  text byte for byte, and each old name is absent.
+- A route move: pin the OLD path as the router's bare 404 in one new test (status, empty content type,
+  empty body, zero connects, the session survives): red today, greens when the route is gone. Do not
+  rename the GUI's display keys: the wire slice renames only the keys the wire emits, and those drag
+  every `.slint` and the GUI tabs in.
+- In a `data_root_e2e` crate a key rename reds at the FIRST phase that asserts it, so the later phases'
+  pins of the same key cannot go red on their own: report them as blocked, and name the phases that DO
+  prove the mechanism (the wire encode in core, the D-Bus name in the manager).
+- A route's answer is `{"key", "args": []}` with a shared `assert_error(status, key)` helper, so a slice
+  that changes only the KEY reds on the key assert (the status assert greens) and the panic prints both
+  bodies: read that pair, it names which half moved.
+- Flip ONLY what names a file on disk (the constants the tests hand the fake, the call-log literals, the
+  assert messages, the doc comments), NOT the file's own CONTENT: a header's prose names the sibling file
+  inside the INI text, and a test pins that prose equal to a source file a later slice renames. Sed with a
+  per-line skip for those lines.
+- A migration test that reads a moved file through a `paths::` helper breaks when that helper's RETURNED
+  name is renamed, not when the migration is: the old tree's names are data, so pin them by the literal
+  path, and add the guard of the decision (the new name is absent from the moved tree).
+- A hand-over that reads the user's file under the OLD name and writes the manager's new one means a seed
+  under the NEW name is read by NOTHING, and the phase that expects a refusal reports `refused: succeeded`,
+  which reads like a broken fake, not a wrong name. Grep the seeds to tell a temp-dir fixture from a
+  per-user seed.
+- The word and verb rename of the same family is pinned at three levels, all in the crates: the binary
+  test asserts the retired verb is GONE (not an alias), the help test pins the command list as an exact
+  array, and a split lint scans BOTH strings files for the retired invocation. The residue of a text
+  rename that is DATA (a key's name, an accepted option value) is reported as data, not as a miss.
+- Auditing a rename for a LOST test, without any checkout: compare per changed file
+  (`git show HEAD:<f>` vs the worktree file) and normalize the rename vocabulary on BOTH sides (HEAD may
+  already carry the new word where an earlier sub-slice renamed). The repo-wide totals are not comparable,
+  and a `^\+.*#\[test\]` count cannot tell a rename from a deletion; the set of test-fn NAMES can. Same for
+  a WEAKENED assertion: extract each assert from the diff's removed lines by a balanced-paren scan,
+  normalize (vocabulary + all whitespace), and require it as a substring of that file's added blob;
+  rustfmt re-wrapping and a raw string are artifacts to read by hand, never to "fix".
+- Pin a retired CLI flag in the crate's inline `Cli::try_parse_from` tests, NOT in `tests/pai_binary.rs`:
+  a `pai bench run` that PARSES takes the machine-wide GPU lock and blocks forever ("Waiting: another
+  process uses the GPUs", exit 124 under `timeout 60`), so a binary-level run of that form is a deadline
+  panic that touches the real lock. In the binary test pin `bench run --help` only.
+- clap derives a long flag from the FIELD name, so write the parse tests from the ARGUMENT STRINGS only
+  (`Cli::try_parse_from([..]).is_ok()`): the test then holds for either way the coder renames it. Learn
+  the refusal wording BEFORE the rename by running the built binary with a made-up flag, and pin that
+  line, never the `tip: a similar argument exists:` line that follows (it depends on the edit distance to
+  the real flags). A help pin bans the FLAG, not the WORD: `--temp preset` and `<PRESET>` stay.
+- A text sweep covers more than `.rs` literals: the shipped defaults, xtask's unit/polkit/desktop
+  literals, and the strings files. To split production from test code, print each hit beside the file's
+  FIRST `#[cfg(test)]` / `mod tests` line (a hit below it is test code; a file under `tests/` has no
+  `mod tests` and reads as production to that pass). Report the residue that must stay (a name, an
+  accepted option value) as DATA, not as a miss.
+- Never `git checkout --` / `git restore` a file another session may have left dirty (a playbook, a shared
+  test file): a revert once dropped 27 lines two sessions had added that day. Undo your own edit by hand,
+  and re-read the tail of a shared file before the last edit.

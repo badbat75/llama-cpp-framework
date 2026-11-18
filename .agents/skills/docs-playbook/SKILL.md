@@ -54,6 +54,13 @@ Lessons only: the rules are in `AGENTS.md`.
   context window (a small Python `re` script) instead of printing whole lines, and replace with an
   exact, count-checked substring. Re-read a file right before editing it: the coordinator edits
   `AGENTS.md` and `PLAN.md` while you work.
+- Verify a tool's flag or lint name by running the tool, not from memory: a 4-line scratch crate under
+  `/tmp/opencode` and `cargo clippy -- -D warnings` settles which lint a shape triggers (it is
+  `clippy::comparison_to_empty` that refuses `s == ""`, not `clippy::is_empty`; `clippy::err_expect` and
+  `clippy::single_element_loop` confirmed the same way, offline).
+- Pruning a playbook: the line count only falls on whole-bullet deletions and re-wraps, a trim that keeps
+  the same number of lines buys nothing, so `wc -l` after every pass. Grep the code for every file or
+  function a bullet names before keeping it, and keep a `—` only inside a code span quoting data.
 - `cargo clean -p <crate>` with no `--release`/`--profile` removes only that crate's dev-profile
   artifacts in the configured target dir (checked with `cargo clean -n -v`); `-n` is a safe dry run.
 - After a directory move, grep for the old path in both slash styles and for `-p <old-package>`, and fix
