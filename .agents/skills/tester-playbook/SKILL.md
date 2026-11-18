@@ -92,7 +92,13 @@ Lessons only: the rules are in `AGENTS.md`.
   the proof that crate compiled; a log with `Compiling pai-config` AND `Compiling pai-core` AND
   `Compiling pai-app` is normal (the cleaned crates it links are rebuilt too). Adding pai-manager and the
   six `cargo fmt` checks: 4 min total (clean 40 s, core 6 s, manager 2 s, app --lib 14 s, cli 1 s,
-  config 17 s, bff 19 s, all exit 0).
+  config 17 s, bff 19 s, all exit 0). Adding xtask and the seventh fmt check is cheap: its own compile
+  plus 370 tests run in 2.3 s, and a clean `cargo fmt -p <pkg> --check` writes an EMPTY log (a non-empty
+  fmt log is the diff rustfmt wanted, so report its size, not only its exit).
+- "Prove this diff is comments only": a python pass over `git diff -- <path>` that skips the `+++`/`---`
+  headers, strips the leading `+`/`-`, trims, and counts blank / `//` / other. Report the added and removed
+  counts against `git diff --stat` of the same path (equal counts prove no file of the path was missed),
+  and name any line in the `other` bucket.
 - Two fmt reds that are the script's fault, not the code's: `cargo fmt -p` wants the PACKAGE name
   (`pai-core`, not `core`: `package \`core\` is not a member of the workspace`, exit 1 with the usage
   text), and a loop that runs in the script's scratch dir exits 1 with `could not find Cargo.toml`
@@ -801,6 +807,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - A test whose expectation is a filled string, and a doc comment naming the CLI command, are separate text
   pins of the same rename: rustfmt reflows the longer value into a multi-line `assert!(..)` (format each
   file, then `cargo fmt -p <crate> --check`).
+- A shipped data file a test compares against the CHECKED-IN file it ships from (`include_str!(..)` plus
+  `assert_eq!(text, want)`, the pattern of xtask's engine-default tests) is green whatever the file says, and
+  its keys filter drops every `;` line: a comment-header rename needs a new `text.lines().next()` pin, one in
+  the test of EACH copy (the Linux and the Windows default are separate files with separate tests).
+- A generated text (a `.desktop` entry): pin the WHOLE artifact the writer returns, and pair the new wording
+  with `!contains(<old wording>)` on the SAME output, so a half-edit reds. A fixture that reproduces what a
+  PAST release wrote on disk (a stale autostart entry, a 2.4 entry a migration reads) is historical data:
+  leave it and write the assert against what the code WRITES, so the red is independent of what the coder
+  does with the fixture.
 
 ## Data-root e2e and the configurator
 

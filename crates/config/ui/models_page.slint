@@ -1,7 +1,8 @@
-// ModelsPage: the models tab (preset editor). All state lives in AppState
-// (state.slint); this component lays out the widgets against it.
+// ModelsPage: the models tab (model profile editor). All state lives in
+// AppState (state.slint); this component lays out the widgets against it.
 //
-// Layout: preset list (left column) | editor cards (right, grep `heading:`):
+// Layout: model profile list (left column) | editor cards (right, grep
+// `heading:`):
 // Assets → Model info → GPU distribution → Hardware Config → Resource / context →
 // KV cache → Chat / reasoning → Sampling overrides → Advanced →
 // Vision → Speculative decoding, then the FormActions row.
@@ -15,9 +16,9 @@ import { Strings } from "strings.slint";
 // one-way read of the list, written back through `spec_type_with_drafter` so
 // the ngram-* entries survive. Same index sync as EnumComboBox: the click
 // self-assigns `current-index`, and `changed shown` puts it back whenever the
-// list changes from elsewhere (preset switch, Revert, the draft-file picker).
-// A drafter not in `options` (draft-eagle3) shows "none" and round-trips
-// until another one is picked.
+// list changes from elsewhere (model profile switch, Revert, the draft-file
+// picker). A drafter not in `options` (draft-eagle3) shows "none" and
+// round-trips until another one is picked.
 component SpecDrafterComboBox inherits ComboBox {
     in property <[string]> options;
     in property <[string]> labels;
@@ -61,7 +62,7 @@ export component ModelsPage inherits HorizontalLayout {
     padding: 24px;
     spacing: 16px;
 
-    // Left column: preset list
+    // Left column: model profile list
     VerticalLayout {
         width: 240px;
         spacing: 10px;
@@ -91,9 +92,10 @@ export component ModelsPage inherits HorizontalLayout {
             vertical-stretch: 1;
             ListView {
                 // The Rust side already filtered out non-matching rows, so every
-                // delegate is a fixed 36px tall; a data-dependent height confuses
-                // ListView's running-sum layout and the rows render on top of each
-                // other. `p.orig_index` maps back to the full presets vector.
+                // delegate is a fixed 36px tall; a data-dependent height
+                // confuses ListView's running-sum layout and the rows render on
+                // top of each other. `p.orig_index` maps back to the full model
+                // profile list.
                 for p in AppState.model_profiles : SelectableRow {
                     height: 36px;
                     label: p.id;
@@ -146,8 +148,8 @@ export component ModelsPage inherits HorizontalLayout {
                     text: Strings.t("delete");
                     enabled: AppState.selected_model_profile_index >= 0;
                     // Confirmation modal (app.slint), opened by Rust because
-                    // it lists the model files the preset links, which the
-                    // user may delete with it (gui/models_tab.rs). The
+                    // it lists the model files the model profile links, which
+                    // the user may delete with it (gui/models_tab.rs). The
                     // delete is one INI rewrite (plus those files) with no undo.
                     clicked => { AppState.request_delete(); }
                 }
@@ -270,10 +272,10 @@ export component ModelsPage inherits HorizontalLayout {
                     label_width <=> LabelColumn.models;
                     label: Strings.t("n-gram-drafters");
                     hint: Strings.t("n-gram-drafters-hint");
-                    // Always active (presets::spec_type_is_draftless). llama.cpp's
-                    // ngram-cache is left out: its draft length is fixed at 8 and
-                    // the server never saves its lookup caches. A preset naming it
-                    // keeps it in the list, untouched.
+                    // Always active (model_profiles::spec_type_is_draftless).
+                    // llama.cpp's ngram-cache is left out: its draft length is
+                    // fixed at 8 and the server never saves its lookup caches. A
+                    // model profile naming it keeps it in the list, untouched.
                     HorizontalLayout {
                         spacing: 12px;
                         alignment: start;
@@ -424,7 +426,7 @@ export component ModelsPage inherits HorizontalLayout {
                     // mode is layer: the table then edits BLOCKS instead of
                     positions: AppState.model_profile_split_positions;
                     // Split mode tensor's load-time refusals, against this
-                    // preset's mode and this model's header (state.slint).
+                    // model profile's mode and this model's header (state.slint).
                     mode_warning: AppState.model_profile_split_mode_warning;
                     mode_labels: AppState.split_mode_labels;
                     mode_values: AppState.split_mode_values;
@@ -885,9 +887,9 @@ export component ModelsPage inherits HorizontalLayout {
                     label: Strings.t("reasoning");
                     hint: Strings.t("reasoning-hint");
                     // A RadioGroup imperatively sets each button's `checked` on
-                    // selection, which breaks the binding and leaves the pick stale
-                    // on preset switch. SegmentedControl derives its highlight purely
-                    // from `current`, so it stays in sync.
+                    // selection, which breaks the binding and leaves the pick
+                    // stale on model profile switch. SegmentedControl derives
+                    // its highlight purely from `current`, so it stays in sync.
                     SegmentedControl {
                         options: ["auto", "on", "off"];
                         labels: [Strings.t("auto"), Strings.t("on"), Strings.t("off")];
@@ -1135,7 +1137,7 @@ export component ModelsPage inherits HorizontalLayout {
                 // are enabled while spec-type lists their type. Greyed out, not
                 // hidden, so every speculator's knobs are in view; the save drops
                 // the keys of the ngram types spec-type does not name
-                // (presets::prune_unused_ngram_keys).
+                // (model_profiles::prune_unused_ngram_keys).
                 Text {
                     text: Strings.t("draft-model-group");
                     font-size: 12px;

@@ -117,9 +117,9 @@ export component AppWindow inherits Window {
     // the user clicks into any widget.
     forward-focus: shortcuts;
 
-    // Everything `preset_kv_cache_warning` depends on that a widget edits
-    // without a Rust callback of its own (the cache combos bind two-way, flash
-    // attention is a SegmentedControl writing the form). Here, not on
+    // Everything `model_profile_kv_cache_warning` depends on that a widget
+    // edits without a Rust callback of its own (the cache combos bind two-way,
+    // flash attention is a SegmentedControl writing the form). Here, not on
     // ModelsPage, because that page only exists while its tab is shown and a
     // `changed` handler that is not instantiated never fires. The device pin is
     // in the key too, although the GPU table's own callbacks already recompute.
@@ -173,7 +173,7 @@ export component AppWindow inherits Window {
         // F5 = the Refresh button (full disk re-read + re-probe, inheriting
         // the dirty-form discard guard), not just a run-status poll.
         KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.reload_all(); } } }
-        // Ctrl+N works from any tab: jump to Models first, or the preset
+        // Ctrl+N works from any tab: jump to Models first, or the model profile
         // would be created (and selected) on a hidden page.
         KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; AppState.new_model_profile(); } } }
 
@@ -469,9 +469,9 @@ export component AppWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
-            // The second source of a NEW preset (not of a clone, whose
-            // parameters come from another preset): this picker closes and
-            // the Hugging Face dialog takes over. New… already passed the
+            // The second source of a NEW model profile (not of a clone, whose
+            // parameters come from another model profile): this picker closes
+            // and the Hugging Face dialog takes over. New… already passed the
             // discard guard, so the hand-over needs none of its own.
             if AppState.new_dialog_source_id == "" : Button {
                 text: Strings.t("from-hugging-face");
@@ -494,11 +494,11 @@ export component AppWindow inherits Window {
         }
     }
 
-    // The Hugging Face download: the New preset dialog's second source
-    // (src/gui/hf_dialog.rs holds the phases and why). It ends at Download:
-    // the job goes to the background (src/gui/downloads.rs) and this modal
-    // closes, so the main window is free again while the bytes flow; the
-    // Downloads window shows the progress and creates the preset.
+    // The Hugging Face download: the New model profile dialog's second source
+    // (src/gui/hf_dialog.rs holds the phases and why). It ends at Download: the
+    // job goes to the background (src/gui/downloads.rs) and this modal closes,
+    // so the main window is free again while the bytes flow; the Downloads
+    // window shows the progress and creates the model profile.
     if AppState.show_hf_dialog: ModalOverlay {
         title: Strings.t("hf-dialog-title");
         description: Strings.t("hf-dialog-description");
@@ -830,8 +830,8 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Delete preset, and optionally the model files it links (one row each,
-    // every tick cleared at open: keeping the files is the default). Rust
+    // Delete model profile, and optionally the model files it links (one row
+    // each, every tick cleared at open: keeping the files is the default). Rust
     // builds the rows (gui/models_tab.rs over src/linked_files.rs) and owns the
     // ticks: a click on a row or its box goes to `delete_file_toggle`, which
     // rebuilds the list, so no CheckBox here is self-assigned (the TouchArea

@@ -213,6 +213,14 @@ pub(crate) fn migration_e2e() {
     );
     assert!(!old_entry.exists(), "the old entry is removed");
     assert!(new_entry.is_file(), "the new entry is written");
+    // The new entry is written fresh, so it carries the current comment: the
+    // product speaks of model profiles.
+    let new_text = std::fs::read_to_string(&new_entry).expect("new entry");
+    assert!(
+        new_text.contains("Comment=Configure and run llama-server and its model profiles"),
+        "{new_text}"
+    );
+    assert!(!new_text.contains("model presets"), "{new_text}");
     assert!(
         crate::startup::is_enabled() && crate::startup::starts_minimized(),
         "the setting survives, minimized included"

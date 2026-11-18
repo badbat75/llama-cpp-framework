@@ -17,7 +17,7 @@
 //   `TensorOverrideTable` (the tensor-placement table: which tensors go on a
 //   device of their own, i.e. --override-tensor; Models tab)
 // - list rows/panels: `SelectableRow` / `AccentBar`, `ListPanel` (the bordered
-//   list container around the preset list + the New/Clone model picker)
+//   list container around the model profile list + the New/Clone model picker)
 
 import { ComboBox, LineEdit, CheckBox, Slider, Button, Palette } from "std-widgets.slint";
 import { GpuRow, TensorOverrideRow } from "types.slint";
@@ -88,10 +88,10 @@ export global Options {
     // common/arg.cpp), highest precision first. Accepted is not the same as
     // runnable on a given GPU (iq4_nl has no CUDA/HIP FlashAttention kernel,
     // f8_e4m3 has none on Vulkan), so the Models tab checks the picked pair
-    // against the preset's devices: src/kv_cache.rs, whose TYPES this list must
-    // equal after "default" (asserted by the e2e test, src/tests/ui_bindings.rs).
-    // There is no 6-bit K-quant cache type: q5_1 (6.0 bits per value) is the
-    // closest.
+    // against the model profile's devices: src/kv_cache.rs, whose TYPES this
+    // list must equal after "default" (asserted by the e2e test,
+    // src/tests/ui_bindings.rs). There is no 6-bit K-quant cache type: q5_1
+    // (6.0 bits per value) is the closest.
     out property <[string]> cache_types: ["default", "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
     out property <[string]> cache_type_labels: [Strings.t("default"), "f32", "f16", "bf16", "f8_e4m3", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
     // -lm / --load-mode: how llama.cpp brings the weights in. These six are the
@@ -124,9 +124,10 @@ export global Options {
 }
 
 // The 3px accent bar marking the selected row, shared by the nav rail
-// (NavItem), the preset list, and the dialog model list so the selection visual
-// is defined once. The caller sets `y`/`height` (a component root cannot reach
-// `parent`, so the vertical inset lives at the use site).
+// (NavItem), the model profile list, and the dialog model list so the
+// selection visual is defined once. The caller sets `y`/`height` (a
+// component root cannot reach `parent`, so the vertical inset lives at the
+// use site).
 export component AccentBar inherits Rectangle {
     x: 0;
     width: 3px;
@@ -134,14 +135,15 @@ export component AccentBar inherits Rectangle {
     background: Palette.accent-background;
 }
 
-// One row of a selectable list (the preset list, the New/Clone dialog's model
-// list): selection tint + accent bar, hover highlight, a padded elided label,
-// and a list-item accessibility role. `clicked` reports the activation; the
-// CALLER owns the selection state (`selected` is a pure derived read, so the
-// highlight follows the model even after clicks; the same no-self-assignment
-// rule as SegmentedControl). Set `height` at the use site. `muted` dims the
-// label (a preset that is switched off), and `@children` are laid out after it,
-// at the row's right edge (the preset list's on/off switch).
+// One row of a selectable list (the model profile list, the New/Clone
+// dialog's model list): selection tint + accent bar, hover highlight, a
+// padded elided label, and a list-item accessibility role. `clicked` reports
+// the activation; the CALLER owns the selection state (`selected` is a pure
+// derived read, so the highlight follows the model even after clicks; the
+// same no-self-assignment rule as SegmentedControl). Set `height` at the use
+// site. `muted` dims the label (a model profile that is switched off), and
+// `@children` are laid out after it, at the row's right edge (the model
+// profile list's on/off switch).
 export component SelectableRow inherits Rectangle {
     in property <string> label;
     // An optional second, smaller line under the label (the Hugging Face
@@ -191,11 +193,12 @@ export component SelectableRow inherits Rectangle {
     }
 }
 
-// The bordered, rounded container the preset list and the New/Clone model
-// picker both sit in: 1px border + 8px radius over the card surface, a muted
-// placeholder Text when `is_empty`, and the caller's ListView as `@children`.
-// One home for the chrome (and one row height at the use sites) so the two
-// lists can't drift. The caller sets `min-height`/`vertical-stretch`.
+// The bordered, rounded container the model profile list and the New/Clone
+// model picker both sit in: 1px border + 8px radius over the card surface, a
+// muted placeholder Text when `is_empty`, and the caller's ListView as
+// `@children`. One home for the chrome (and one row height at the use sites)
+// so the two lists can't drift. The caller sets `min-height`/
+// `vertical-stretch`.
 export component ListPanel inherits Rectangle {
     in property <bool> is_empty;
     in property <string> empty_text;
@@ -318,11 +321,12 @@ export component AutoSlider inherits HorizontalLayout {
         value: root.shown;
         changed(v) => { root.value = Math.round(v); }
     }
-    // Keep the thumb in sync with external value changes (preset switch,
-    // Revert, GGUF-driven `maximum` change): the std Slider imperatively
-    // overwrites its `value` on every drag, which permanently discards the
-    // declarative init binding above, so updates must be pushed. The guard
-    // avoids re-entering while the drag itself round-trips through `shown`.
+    // Keep the thumb in sync with external value changes (model profile
+    // switch, Revert, GGUF-driven `maximum` change): the std Slider
+    // imperatively overwrites its `value` on every drag, which permanently
+    // discards the declarative init binding above, so updates must be pushed.
+    // The guard avoids re-entering while the drag itself round-trips through
+    // `shown`.
     changed shown => {
         if (sl.value != root.shown) {
             sl.value = root.shown;
@@ -355,9 +359,10 @@ export component AutoSlider inherits HorizontalLayout {
 // `scroll-event` increments/decrements and always returns `accept`, with no
 // `has-focus` guard, unlike its own `ComboBoxBase`, which rejects a scroll it is
 // not focused for. So merely wheeling the page with the pointer passing over a
-// SpinBox silently edited the preset (and ate the scroll, so the page didn't even
-// move). There is no property to disable it and no way to intercept the event
-// (the TouchArea lives INSIDE the widget), so the fix is to stop using it: a
+// SpinBox silently edited the model profile (and ate the scroll, so the
+// page didn't even move). There is no property to disable it and no way to
+// intercept the event (the TouchArea lives INSIDE the widget), so the fix
+// is to stop using it: a
 // LineEdit has no scroll handler at all. `input_type` is what makes it an integer
 // field: `number` accepts ASCII digits ONLY (i-slint-core `accept_text_input`),
 // so no `40.5` can slip a `parse_int`, which is what the SpinBox used to buy us.
@@ -443,9 +448,9 @@ export component SectionCard {
 // `RadioGroup` in a form. The selected state is a PURE derived read of `current`
 // (supplied by the caller as a binding); this component never assigns a bound
 // property imperatively, so, unlike `RadioButton.checked`, the caller's binding
-// is never broken and the highlight follows `current` even after the user clicks
-// (e.g. when the backing model is swapped on a preset switch). Clicks are reported
-// via `activated`; the caller writes the model.
+// is never broken and the highlight follows `current` even after the user
+// clicks (e.g. when the backing model is swapped on a model profile switch).
+// Clicks are reported via `activated`; the caller writes the model.
 export component SegmentedControl inherits HorizontalLayout {
     in property <[string]> options;
     // What each pill shows when that is not its value: `activated` and `current`
@@ -764,16 +769,18 @@ export component FormActions inherits HorizontalLayout {
 // form's `device` + `tensor_split` strings. The .slint side only reports edits,
 // and it addresses devices BY ID, never by row index.
 //
-// The MODE selector sits ABOVE the rows because it decides what they mean, and
-// `effective_mode`, the preset's mode as Rust parsed it (gpu_split::SplitMode),
-// bends the columns to match: `layer` edits blocks where a model is
+// The MODE selector sits ABOVE the rows because it decides what they mean,
+// and `effective_mode`, the model profile's mode as Rust parsed it
+// (gpu_split::SplitMode), bends the columns to match: `layer` edits blocks
+// where a model is
 // known, `row` edits the raw ratio (the bytes follow row fractions, so a block
 // cut would lie), `tensor` the same ratio (weights AND KV are cut along a
 // tensor axis by it, and a blank vector is an EVEN cut there, which the Share
 // column says instead of "auto"), `none` retires the editors entirely: only the
-// head row runs, which the Share column says out loud. The combo's one "layer
-// (default)" entry deliberately merges the old default/layer pair: for a preset
-// they are the same launch in every reachable configuration.
+// head row runs, which the Share column says out loud. The combo's one
+// "layer (default)" entry deliberately merges the old default/layer pair:
+// for a model profile they are the same launch in every reachable
+// configuration.
 //
 // The checked rows come FIRST, in split order: read top to bottom they ARE the
 // --device list and its --tensor-split vector. That is what makes the ≡ drag
@@ -786,8 +793,9 @@ export component FormActions inherits HorizontalLayout {
 // Integrations checkboxes): `checked: row.enabled` and `text: row.weight` are
 // one-way, and a click/edit self-assigns them, permanently breaking THAT
 // delegate's binding. Two rules keep that invisible:
-//   1. toggle / Auto / Even / preset switch / device probe REBUILD the whole row
-//      model, so every delegate gets a fresh binding (gui::refresh_gpu_rows).
+//   1. toggle / Auto / Even / model profile switch / device probe REBUILD
+//      the whole row model, so every delegate gets a fresh binding
+//      (gui::refresh_gpu_rows).
 //   2. a weight edit changes no OTHER row's weight, so it needs no rebuild at
 //      all, which is exactly why the weight fields stay disabled in Auto mode
 //      (leaving Auto seeds every weight; that's what the Even button is for).
@@ -817,9 +825,10 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <string> mode_warning;
     in property <string> split_mode_hint;
     // The split-mode combo model, pushed from Rust (gpu_split::MODE_LABELS /
-    // MODE_VALUES / mode_index). The index binds two-way through to AppState so
-    // a preset switch / Revert reaches the dropdown; a pick reports the VALUE
-    // through `mode_picked`, and Rust writes the form + rebuilds the rows.
+    // MODE_VALUES / mode_index). The index binds two-way through to AppState
+    // so a model profile switch / Revert reaches the dropdown; a pick reports
+    // the VALUE through `mode_picked`, and Rust writes the form + rebuilds
+    // the rows.
     in property <[string]> mode_labels;
     in property <[string]> mode_values;
     in-out property <int> mode_index;

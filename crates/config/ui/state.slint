@@ -74,10 +74,11 @@ export global AppState {
 
     // ── Server tab state ─────────────────────────────────────────────
     // All editable server.ini fields live in one struct (ServerForm), like the
-    // preset side's `form`. Rust drives it via config_to_form / form_to_config
-    // (src/server_form.rs); `server_form_base` is the loaded/saved baseline and
-    // dirty-tracking is a single struct compare. The bind/device dropdowns below
-    // are option lists (not form values), so they stay separate.
+    // model-profile side's `form`. Rust drives it via config_to_form /
+    // form_to_config (src/server_form.rs); `server_form_base` is the
+    // loaded/saved baseline and dirty-tracking is a single struct compare. The
+    // bind/device dropdowns below are option lists (not form values), so they
+    // stay separate.
     // No Slint-side initializer: Rust seeds both structs from disk before the
     // event loop starts (gui::run() → load_server_into_ui), and the display
     // defaults have ONE owner: server_form::config_to_form.
@@ -102,10 +103,10 @@ export global AppState {
     in-out property <[BindRow]> bind_rows;
     callback bind_toggle(string);
 
-    // The split-mode combo model of the PRESET table (gpu_split::MODE_LABELS /
-    // MODE_VALUES, pushed once per row refresh); the index is two-way: Rust
-    // recomputes it from the form value on every refresh, a pick reports back
-    // through model_profile_split_mode_picked.
+    // The split-mode combo model of the MODEL-PROFILE table
+    // (gpu_split::MODE_LABELS / MODE_VALUES, pushed once per row refresh); the
+    // index is two-way: Rust recomputes it from the form value on every
+    // refresh, a pick reports back through model_profile_split_mode_picked.
     in-out property <[string]> split_mode_labels;
     in-out property <[string]> split_mode_values;
 
@@ -121,8 +122,9 @@ export global AppState {
     in-out property <[ModelProfileSummary]> model_profiles;
     in-out property <int> selected_model_profile_index: -1;
     in-out property <ModelProfileForm> form;
-    // Baseline snapshot of the loaded preset (set by Rust whenever the form is
-    // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
+    // Baseline snapshot of the loaded model profile (set by Rust whenever the
+    // form is (re)loaded or saved). Struct inequality drives Save/Revert
+    // enabled.
     in-out property <ModelProfileForm> form_base;
     // The Fit checkbox is live only with Context and GPU layers both at
     // default, the two things the fit sizes (form::fit_allowed, the same rule
@@ -135,9 +137,10 @@ export global AppState {
     in-out property <string> model_profiles_path: "";
     in-out property <string> model_profiles_filter: "";
 
-    // Per-preset GPU distribution table, over `form.device` / `form.tensor_split`.
-    // The distribution is per preset only: server.ini has none, since the
-    // router's own CLI args would override every preset's.
+    // Per-model-profile GPU distribution table, over `form.device` /
+    // `form.tensor_split`. The distribution is per model profile only:
+    // server.ini has none, since the router's own CLI args would override every
+    // model profile's.
     in-out property <[GpuRow]> model_profile_gpu_rows;
     in-out property <int> model_profile_split_mode_index: 0;
     in-out property <string> model_profile_gpu_mode: "layer";
@@ -168,17 +171,17 @@ export global AppState {
         : (model_profile_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
         ? Strings.t("split-tensor-mixed-backends")
         : "";
-    // Whether this preset's device list names both a CUDA and a ROCm device:
-    // gpu_split::mixes_cuda_and_rocm, pushed by refresh_gpu_rows. Slint has no
-    // substring test to derive it here.
+    // Whether this model profile's device list names both a CUDA and a ROCm
+    // device: gpu_split::mixes_cuda_and_rocm, pushed by refresh_gpu_rows. Slint
+    // has no substring test to derive it here.
     in-out property <bool> model_profile_mixes_cuda_rocm;
 
-    // Per-preset tensor-placement table (TensorOverrideTable), over the single
-    // `form.override_tensor` string. Rows and BOTH dropdown models are built in
-    // Rust (src/tensor_override.rs) and are read-only to Slint; every edit is a
-    // whole-string rewrite. Rules are addressed by ROW INDEX, not by an id: the
-    // same pattern may legitimately appear twice (two devices, two halves of a
-    // model), unlike the GPU table's unique device ids.
+    // Per-model-profile tensor-placement table (TensorOverrideTable), over the
+    // single `form.override_tensor` string. Rows and BOTH dropdown models are
+    // built in Rust (src/tensor_override.rs) and are read-only to Slint; every
+    // edit is a whole-string rewrite. Rules are addressed by ROW INDEX, not by
+    // an id: the same pattern may legitimately appear twice (two devices, two
+    // halves of a model), unlike the GPU table's unique device ids.
     in-out property <[TensorOverrideRow]> model_profile_tensor_rows;
     in-out property <string> model_profile_tensor_summary;
     // Non-empty when the value is one llama.cpp would refuse (a rule with no
@@ -203,12 +206,12 @@ export global AppState {
     // The regex Apply would write.
     in-out property <string> tensor_picker_pattern;
     in-out property <bool> tensor_picker_can_apply;
-    // Non-empty when a KV cache the preset builds (the model's, or the draft's)
-    // has no FlashAttention kernel on a backend it runs on, has none compiled
-    // natively for its K-V pair, or cannot load at all (quantized V with flash
-    // attention off). Computed in Rust (src/kv_cache.rs) because it needs the
-    // device list parsed and the probe; recomputed on `kv_cache_inputs_changed`
-    // and whenever the GPU rows are rebuilt.
+    // Non-empty when a KV cache the model profile builds (the model's, or the
+    // draft's) has no FlashAttention kernel on a backend it runs on, has none
+    // compiled natively for its K-V pair, or cannot load at all (quantized V
+    // with flash attention off). Computed in Rust (src/kv_cache.rs) because it
+    // needs the device list parsed and the probe; recomputed on
+    // `kv_cache_inputs_changed` and whenever the GPU rows are rebuilt.
     in-out property <string> model_profile_kv_cache_warning;
     // The option models behind every row's two dropdowns. The KIND list is shared
     // by both tables (canned patterns; last entry = "Custom regex…", the only one
@@ -260,11 +263,12 @@ export global AppState {
     // dense models (`model_info_has_moe`).
     in-out property <bool> model_info_has_moe: false;
     in-out property <string> model_info_moe;
-    // The tail of the MoE cache hint: this preset's --moe-cache-mib floors on the
-    // selected model (moe_cache::Floor::hint), "" when there is none to quote.
-    // A pure callback over the form, so the text follows every placement edit
-    // (n-gpu-layers, n-cpu-moe, override-tensor, device, tensor-split) without a
-    // refresh hook per field. The Models tab's Save refuses below the first number.
+    // The tail of the MoE cache hint: this model profile's --moe-cache-mib
+    // floors on the selected model (moe_cache::Floor::hint), "" when there is
+    // none to quote. A pure callback over the form, so the text follows every
+    // placement edit (n-gpu-layers, n-cpu-moe, override-tensor, device,
+    // tensor-split) without a refresh hook per field. The Models tab's Save
+    // refuses below the first number.
     // The int is `model_info_serial`: the model's tensors live in Rust, where
     // Slint's dependency tracking cannot see them, so the binding passes the
     // serial to be re-evaluated when they change.
@@ -355,7 +359,7 @@ export global AppState {
     out property <bool> draft_file_active: form.model_draft != "";
     out property <bool> embedded_mtp_note: draft_active && !draft_file_active;
 
-    // ── New-preset dialog state ─────────────────────────────────────
+    // ── New model profile dialog state ──────────────────────────────
     in-out property <bool> show_new_kind_picker: false;
     in-out property <string> new_dialog_source_id: "";
     in-out property <[string]> dialog_model_labels;
@@ -363,14 +367,14 @@ export global AppState {
     in-out property <string> dialog_filter: "";
 
     // ── Hugging Face download dialog state (src/gui/hf_dialog.rs) ───
-    // The New preset dialog's second source: search GGUF repositories by name
-    // (or type one), list a repo's GGUF quantizations, pick one and its
+    // The New model profile dialog's second source: search GGUF repositories by
+    // name (or type one), list a repo's GGUF quantizations, pick one and its
     // sidecars, and start its download, which closes the dialog: the transfer
-    // and the preset's creation run in the background (src/gui/downloads.rs,
-    // the Downloads window). Rust drives the phase (`hf_dialog::Phase`, the
-    // int below) and every list and readout; the widgets bind two-way only to
-    // what the user edits (`hf_input`, `hf_token`, `hf_take_mmproj`) plus the
-    // drafter pill, a SegmentedControl.
+    // and the model profile's creation run in the background
+    // (src/gui/downloads.rs, the Downloads window). Rust drives the phase
+    // (`hf_dialog::Phase`, the int below) and every list and readout; the
+    // widgets bind two-way only to what the user edits (`hf_input`, `hf_token`,
+    // `hf_take_mmproj`) plus the drafter pill, a SegmentedControl.
     in-out property <bool> show_hf_dialog: false;
     // 0 idle (typing), 1 searching, 2 searched (results shown), 3 listing,
     // 4 listed.
@@ -432,16 +436,17 @@ export global AppState {
     // click fires `open_downloads`.
     in-out property <string> downloads_summary: "";
 
-    // ── Rename-preset dialog state ──────────────────────────────────
+    // ── Rename model profile dialog state ───────────────────────────
     in-out property <bool> show_rename_dialog: false;
     in-out property <string> rename_old_id: "";
     in-out property <string> rename_new_id: "";
 
     // ── Discard-confirm dialog state ─────────────────────────────────
     // Shown by Rust (gui::confirm_discard_then) when a navigation action
-    // (preset switch, Refresh/reload_all, New…/Clone…/Rename…) would replace
-    // a dirty form. The pending action is stashed Rust-side (gui::State) and
-    // runs only on confirm; cancel drops it and keeps the edits.
+    // (model-profile switch, Refresh/reload_all, New…/Clone…/Rename…) would
+    // replace a dirty form. The pending action is stashed Rust-side
+    // (gui::State) and runs only on confirm; cancel drops it and keeps the
+    // edits.
     in-out property <bool> show_discard_dialog: false;
 
     // ── Import dialog state ─────────────────────────────────────────
@@ -455,15 +460,15 @@ export global AppState {
 
     // ── Delete-confirm dialog state ──────────────────────────────────
     // Rust-driven (gui/models_tab.rs): the Models page's Delete button fires
-    // `request_delete`, which seeds the target, lists the model files the
-    // preset links (src/linked_files.rs: the model with all its shards, the
+    // `request_delete`, which seeds the target, lists the model files the model
+    // profile links (src/linked_files.rs: the model with all its shards, the
     // mmproj, the drafter; only those on disk) and shows this. Every file
-    // starts UNticked (keep is the default); one another preset references,
-    // in either INI file, is shown in use and cannot be ticked. The modal's
-    // Delete button fires the real delete_preset, which removes the section,
-    // then the ticked files and the per-repository folders they leave empty.
-    // The ticks live Rust-side; the rows are a read-only projection rebuilt on
-    // every `delete_file_toggle`.
+    // starts UNticked (keep is the default); one another model profile
+    // references, in either INI file, is shown in use and cannot be ticked. The
+    // modal's Delete button fires the real delete_model_profile, which removes
+    // the section, then the ticked files and the per-repository folders they
+    // leave empty. The ticks live Rust-side; the rows are a read-only
+    // projection rebuilt on every `delete_file_toggle`.
     in-out property <bool> show_delete_dialog: false;
     in-out property <string> delete_target_id: "";
     // The file the section is removed from: models.ini or models.ini.disabled.
@@ -496,12 +501,13 @@ export global AppState {
     // takes no prompt and never samples. See src/bench.rs.
     in-out property <string> bench_mode: "live";
     out property <bool> bench_is_live: bench_mode == "live";
-    // The selectable presets, built in Rust: the checkbox reports through
-    // `bench_toggle_preset` and the whole model is rebuilt, so the row bindings
-    // stay one-way like the GPU table's.
+    // The selectable model profiles, built in Rust: the checkbox reports
+    // through `bench_toggle_model_profile` and the whole model is rebuilt, so
+    // the row bindings stay one-way like the GPU table's.
     in-out property <[BenchModelProfileRow]> bench_model_profiles;
     in-out property <int> bench_selected_count: 0;
-    // The first selected preset, i.e. the denominator of the ratio column.
+    // The first selected model profile, i.e. the denominator of the ratio
+    // column.
     in-out property <string> bench_baseline: "";
 
     // Workload. Both halves are kept across a mode switch (the card shows the
@@ -517,9 +523,9 @@ export global AppState {
     // The prompts a run sends, each ticked one in turn (bench_tab.rs). Rust
     // rebuilds the list when a file changes on disk.
     in property <[BenchPromptRow]> bench_prompts;
-    // "default" here means "leave the preset's own --temp alone", which is a
-    // third instruction, not a missing one. Unchecked with a 0 is the default:
-    // greedy sampling is what makes two runs of one prompt comparable.
+    // "default" here means "leave the model profile's own --temp alone", which
+    // is a third instruction, not a missing one. Unchecked with a 0 is the
+    // default: greedy sampling is what makes two runs of one prompt comparable.
     in-out property <bool> bench_temp_default: false;
     in-out property <string> bench_temp: "0";
     in-out property <string> bench_max_tokens;
@@ -532,7 +538,7 @@ export global AppState {
     in-out property <string> bench_image;
     in-out property <image> bench_image_preview;
     in-out property <string> bench_image_info;
-    // Live only: "single", or one request per slot of the preset at once
+    // Live only: "single", or one request per slot of the model profile at once
     // ("prefill", "decode", "prefill+decode"): bench::Concurrency; "all" runs
     // each of them in turn, as `bench run --concurrency all`.
     in-out property <string> bench_concurrency: "single";
@@ -551,10 +557,10 @@ export global AppState {
     // bench_override_base is the fields' values at the tick (Rust's), what
     // "changed" is measured against.
     in-out property <bool> bench_spec_override;
-    // A/B: one preset key (`none`, or one of the sweepable keys, the same list
-    // as `bench run --key`) and its values, `bench run --values` syntax.
-    // Every step runs once per value, the value written to the selected
-    // presets for it and put back after.
+    // A/B: one model-profile key (`none`, or one of the sweepable keys, the
+    // same list as `bench run --key`) and its values, `bench run --values`
+    // syntax. Every step runs once per value, the value written to the selected
+    // model profiles for it and put back after.
     in-out property <string> bench_ab_key: "none";
     in property <[string]> bench_ab_keys: ["none"];
     in property <[string]> bench_ab_key_labels: [Strings.t("none")];
@@ -567,9 +573,9 @@ export global AppState {
     in-out property <string> bench_n_gen;
 
     // Read-only preview of what Run will actually do: the llama-bench command
-    // line per preset (synthetic), or the HTTP request (live). The twin of the
-    // Server tab's Command Line card, and pushed from Rust for the same reason:
-    // it must be built by the code that builds the real thing.
+    // line per model profile (synthetic), or the HTTP request (live). The twin
+    // of the Server tab's Command Line card, and pushed from Rust for the same
+    // reason: it must be built by the code that builds the real thing.
     in-out property <string> bench_preview: "";
     // What this mode cannot measure, spelled out where the run is started
     // rather than only in the saved report.
@@ -599,8 +605,9 @@ export global AppState {
 
     // ── Integrations tab state ─────────────────────────────────────
     // All read-only projections, pushed by gui::refresh_integrations. There is
-    // no model list here: OpenCode lists every ENABLED preset (the switch in the
-    // Models tab), and the status line says what the tab's Save would change.
+    // no model list here: OpenCode lists every ENABLED model profile (the
+    // switch in the Models tab), and the status line says what the tab's Save
+    // would change.
     in-out property <bool> integration_provider_active: false;
     in-out property <bool> integration_in_sync: true;
     in-out property <string> integration_status: "";
@@ -666,14 +673,16 @@ export global AppState {
     // callback per field.
     callback browse_dir(string) -> string;
 
-    // The (per-preset) GPU distribution table. Every
-    // edit is a whole-selection rewrite in Rust (src/gpu_split.rs): the handler
-    // rewrites the form's `device` + `tensor_split` strings, then REBUILDS the row
-    // model. Devices are addressed by id, never by row index. See GpuSplitTable's
-    // binding note (and why the row ORDER is fixed to the probe's).
-    // `preset_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
-    // places within the split (negative = towards the head). Position 0 is
-    // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
+    // The (per-model-profile) GPU distribution table. Every edit is a
+    // whole-selection rewrite in Rust (src/gpu_split.rs): the handler rewrites
+    // the form's `device` + `tensor_split` strings, then REBUILDS the row
+    // model. Devices are addressed by id, never by row index. See
+    // GpuSplitTable's binding note (and why the row ORDER is fixed to the
+    // probe's).
+    // `model_profile_gpu_move(id, delta)` is the drag handle: move a checked
+    // device `delta` places within the split (negative = towards the head).
+    // Position 0 is llama.cpp's main_gpu, so this is the only way to choose
+    // which GPU leads.
     // `model_profile_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
     // spelling ("default"/"none"/"tensor"/"row"). Rust writes it into the form
     // and rebuilds the rows: the mode decides what the columns mean, so a
@@ -682,22 +691,23 @@ export global AppState {
     callback model_profile_gpu_toggle(string);
     callback model_profile_gpu_move(string, int);
     callback model_profile_gpu_weight(string, int);
-    // The same edit as `preset_gpu_weight` in blocks (see gpu_split::set_blocks).
-    // It is COMMIT-based, not per-keystroke, because a block count is constrained
-    // (giving one device more takes it from another), so unlike a weight it
-    // cannot be applied without rewriting the other rows, and rewriting them on
-    // every keystroke would recreate the very LineEdit being typed into.
+    // The same edit as `model_profile_gpu_weight` in blocks (see
+    // gpu_split::set_blocks). It is COMMIT-based, not per-keystroke, because a
+    // block count is constrained (giving one device more takes it from
+    // another), so unlike a weight it cannot be applied without rewriting the
+    // other rows, and rewriting them on every keystroke would recreate the very
+    // LineEdit being typed into.
     callback model_profile_gpu_blocks(string, int);
     callback model_profile_gpu_auto();
     callback model_profile_gpu_even();
 
     // Tensor-placement table. Same shape as the GPU table's: each one rewrites
-    // the preset's `override_tensor`
-    // string in Rust (src/tensor_override.rs) and rebuilds the row model, except
-    // `preset_tensor_pattern`, the text field, which must NOT rebuild (that would
-    // recreate the LineEdit being typed into and drop the caret), so it refreshes
-    // only the derived strings. The int is the ROW INDEX; the string is the picked
-    // kind id / device id / regex.
+    // the model profile's `override_tensor` string in Rust
+    // (src/tensor_override.rs) and rebuilds the row model, except
+    // `model_profile_tensor_pattern`, the text field, which must NOT rebuild
+    // (that would recreate the LineEdit being typed into and drop the caret),
+    // so it refreshes only the derived strings. The int is the ROW INDEX; the
+    // string is the picked kind id / device id / regex.
     callback model_profile_tensor_add();
     callback model_profile_tensor_remove(int);
     callback model_profile_tensor_kind(int, string);
@@ -716,14 +726,15 @@ export global AppState {
 
     callback select_model_profile(int);
     // A row's on/off switch: (id, the state it was switched TO). Moves the
-    // preset between models.ini and models.ini.disabled; the form is left
-    // alone (see gui::refresh_model_profile_list).
+    // model profile between models.ini and models.ini.disabled; the form is
+    // left alone (see gui::refresh_model_profile_list).
     callback toggle_model_profile_enabled(string, bool);
     callback save_model_profile();
     callback revert_model_profile();
-    // The Delete dialog (its state block above): open it on the selected
-    // preset; tick or untick one file row; dismiss it (Cancel, Esc, the
-    // backdrop), which drops the ticks; and confirm, `delete_preset(id)`.
+    // The Delete dialog (its state block above): open it on the selected model
+    // profile; tick or untick one file row; dismiss it (Cancel, Esc, the
+    // backdrop), which drops the ticks; and confirm,
+    // `delete_model_profile(id)`.
     callback request_delete();
     callback delete_file_toggle(int);
     callback delete_cancel();
@@ -744,12 +755,12 @@ export global AppState {
     callback filter_model_profiles(string);
     callback filter_dialog_models(string);
     // The Hugging Face dialog (src/gui/hf_dialog.rs). `hf_open` comes from the
-    // New preset dialog's "From Hugging Face" button (so it inherits New…'s
-    // discard guard); `hf_submit` (Search or List, by what the field holds),
-    // and `hf_pick_result` run off the event loop; `hf_download` hands the job
-    // to the background downloads and closes the dialog; `hf_dismiss` is Esc,
-    // the backdrop and Close (no transfer ever runs IN the dialog, so it always
-    // closes).
+    // New model profile dialog's "From Hugging Face" button (so it inherits
+    // New…'s discard guard); `hf_submit` (Search or List, by what the field
+    // holds), and `hf_pick_result` run off the event loop; `hf_download` hands
+    // the job to the background downloads and closes the dialog; `hf_dismiss`
+    // is Esc, the backdrop and Close (no transfer ever runs IN the dialog, so
+    // it always closes).
     // `hf_input_problem` and `hf_input_is_query` are pure: the field's error
     // ("" when it is a good spec, a query, or empty) and whether it searches,
     // so the button's label and the hint follow every keystroke.
@@ -773,8 +784,9 @@ export global AppState {
     pure callback hf_input_is_query(string) -> bool;
     // Recompute the "Model info" box from the currently selected model file.
     callback model_changed();
-    // Recompute `preset_kv_cache_warning`: fired by AppWindow when a cache type,
-    // flash attention, the draft state or either device pin changes.
+    // Recompute `model_profile_kv_cache_warning`: fired by AppWindow when a
+    // cache type, flash attention, the draft state or either device pin
+    // changes.
     callback kv_cache_inputs_changed();
     // A row was picked in the draft-model dropdown. The policy (set model_draft +
     // spec_type from the parallel arrays, auto-pin the draft device: the gemma4
@@ -800,8 +812,8 @@ export global AppState {
     // the GUI, without restarting the app.
     callback reload_all();
 
-    // Benchmark tab. `bench_mode_picked` / `bench_toggle_preset` rewrite the
-    // selection in Rust and rebuild the row model (same contract as the GPU
+    // Benchmark tab. `bench_mode_picked` / `bench_toggle_model_profile` rewrite
+    // the selection in Rust and rebuild the row model (same contract as the GPU
     // table: a row's checkbox binding is one-way, so anything that changes
     // another row must rebuild). `bench_changed` is the catch-all a workload
     // field's `edited` fires: it re-renders the preview from the same code that

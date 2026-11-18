@@ -1,12 +1,12 @@
 // Downloads: an independent root window (like HwWindow and LogWindow), shown
 // non-modally beside the main configurator. It lists the Hugging Face downloads
-// the New preset dialog handed to the background (src/gui/downloads.rs): one
-// card per job, with its state, the overall and per-file progress while bytes
-// flow, the outcome (the preset created, the cancel note, the error), and the
-// buttons that act on it by id: Cancel (while downloading), Resume (after a
-// failure or a cancel), Show (selects the created preset in the Models tab,
-// through the discard guard) and Dismiss (a finished row). Closing the window
-// cancels nothing. Rust pushes every row pre-formatted and rewrites a row in
+// the New model profile dialog handed to the background (src/gui/downloads.rs):
+// one card per job, with its state, the overall and per-file progress while
+// bytes flow, the outcome (the model profile created, the cancel note, the
+// error), and the buttons that act on it by id: Cancel (while downloading),
+// Resume (after a failure or a cancel), Show (selects the created model profile
+// in the Models tab, through the discard guard) and Dismiss (a finished row).
+// Closing the window cancels nothing. Rust pushes every row pre-formatted and rewrites a row in
 // place on progress, so no unit math and no state lives here.
 //
 // The strip at the top is the tray's Quit asking first while a download runs:

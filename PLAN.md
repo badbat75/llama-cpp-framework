@@ -965,8 +965,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     model-profile`, the word in displayed texts) and 4b (the bff's `/api/profiles/model` routes and the six
     renamed error keys; the web UI renames next) done 2026-11-18, and 4a3 (`pai bench run --model-profile`,
     the Rust identifiers) and 4a4 (the `models.ini.disabled` header, two shorter refusal
-    texts, the bff's doc comments) and 4a5 (strings keys, Slint names, module and test files) too; left in
-    4a6: the desktop entry's Comment, the `assignments.ini` default header, the comments' prose; 4b the wire names with the web UI;
+    texts, the bff's doc comments) and 4a5 (strings keys, Slint names, module and test files) and 4a6 (the desktop
+    entry's Comment, the `assignments.ini` header, the Slint comments) too; left in 4a7: the `.deb` long
+    description (`xtask/src/linux/package.rs` ~985), the prose comments of the Rust files; 4b the wire names with the web UI;
     then the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `docs/`).
 13a. **Preset becomes profile** (user, 2026-11-17), now item 13's slice 4 (the revised list in
     ARCHITECTURE.md "Revision: profiles"; before `SetModelProfile`, so nothing is renamed twice):

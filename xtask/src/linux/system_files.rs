@@ -3171,6 +3171,14 @@ exit 0
             .unwrap_or_else(|e| panic!("{}: {e}", checked_in.display()));
         let text = file(DEFAULT_ASSIGNMENTS);
         assert_eq!(text, want);
+        // The header tells the administrator what the file is in the product's
+        // current words: the instance is given model profiles.
+        assert_eq!(
+            text.lines().next().unwrap_or_default(),
+            "; Which model profiles each llama.cpp instance is given, one section per instance.",
+            "{text}"
+        );
+        assert!(!text.contains("; Which presets"), "{text}");
         let keys: Vec<&str> = text
             .lines()
             .map(str::trim)

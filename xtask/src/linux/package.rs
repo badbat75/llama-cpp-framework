@@ -1243,7 +1243,7 @@ fn desktop_entry() -> String {
     "[Desktop Entry]\n\
      Type=Application\n\
      Name=Private AI Framework\n\
-     Comment=Configure and run llama-server and its model presets\n\
+     Comment=Configure and run llama-server and its model profiles\n\
      Exec=pai-config\n\
      Icon=org.privateai.Config\n\
      Terminal=false\n\
@@ -1620,6 +1620,7 @@ mod tests {
         for line in [
             "Type=Application",
             "Name=Private AI Framework",
+            "Comment=Configure and run llama-server and its model profiles",
             "Exec=pai-config",
             "Icon=org.privateai.Config",
             "StartupWMClass=org.privateai.Config",

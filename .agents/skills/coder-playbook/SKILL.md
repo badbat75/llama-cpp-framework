@@ -1338,3 +1338,25 @@ Lessons only: the rules are in `AGENTS.md`.
   in the text AFTER the `//` of each line, never prose, with a KEEP list for names that stay
   (`read_presets`, `presets.ini`, `Presets.ini`) and a printed list of every rewritten line. 32 pointers in
   8 files moved; the prose ("the preset list") is the docs pass.
+- Comment prose in a vocabulary rename (the `.slint` pass, 4a6): an exact old→new pair script fails on
+  wrapped prose (the break splits the pair) and a global word map breaks words ("preset's", "preset files"),
+  so work by WHOLE BLOCKS: exact `indent + text` of the comment (the `//` prefixes stripped) → the reworded
+  block, longest key first, assert exact match, print the misses, rerun until the list is empty. The file's
+  own property/callback names are the ground truth for a stale pointer (`presets::` → `model_profiles::`,
+  `preset_gpu_move` → `model_profile_gpu_move`: the names 4a5 gave them in `state.slint`).
+- Width rules when reflowing comments: `.slint` comments cap at 80 columns, and a box heading
+  (`// ──── STATE ────`) keeps its ORIGINAL rule width, the two rules of the box align to each other:
+  compute the fill from the original total (`len(text) - len(heading) - 5`), never from 80. Only reflow the
+  blocks you touch: a `.slint` has pre-existing wider lines (the file header).
+- Proof a `.slint` (or any) pass is comment-only: every added diff line, `strip_prefix(TRIM_CHARS)`
+  (`&*—-`), starts with `//`; then `grep -ic preset <file>` is 0. binding_lint strips whole-line comments,
+  so comment edits cannot trip it; the file still compiles, so the crate's tests rerun as normal.
+- Not prose in this rename: the literal fallback profile id `"preset"` (`model_profiles::new_model_profile_id`,
+  the id a section falls back to, `hf.rs` quotes it backticked); the 2.4 `.desktop` Comment text kept in the
+  migration fixtures (`app/src/startup.rs` ×2, `app/src/migration.rs`); xtask's MSI needle `"presets"`
+  (`common/msi.rs`, a search inside the generated XML). The `.desktop` text a NEW install writes
+  (`startup.rs::entry_text`, `xtask/src/linux/package.rs::desktop_entry`) IS product text: the tester pinned
+  both, and the migrated entry is written fresh so it carries the new comment.
+- `crates/core/defaults/assignments.ini` and `defaults/windows/assignments.ini` carry prose in their comment
+  header, and no test pins that text (the tests parse the file and compare it with the staged copy), so a
+  header rename is two lines; the parser skips the header, the bytes after it stay untouched.

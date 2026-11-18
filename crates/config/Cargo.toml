@@ -21,8 +21,8 @@ path = "src/main.rs"
 # The modules shared with pai-manager (paths, INI, server config, the
 # launch, strings).
 pai-core = { path = "../core" }
-# The configurator's logic without a GUI (presets, benchmarks, HF, GGUF, the
-# configuration, the server control seam), shared with the command line (pai-cli).
+# The configurator's logic without a GUI (model profiles, benchmarks, HF, GGUF,
+# the configuration, the server control seam), shared with the command line (pai-cli).
 pai-app = { path = "../app" }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "accessibility", "unstable-winit-030", "system-tray"] }
 anyhow = "1"

@@ -102,13 +102,14 @@ pub struct ModelProfile {
     /// the Models tab shows it beside the GPU table and clears it on request.
     pub placement_note: String,
     /// Load this model as soon as the router starts (`load-on-startup`, a
-    /// preset-only key: no command-line flag, the router reads it from the
-    /// model profile). Only at startup: a model profile added by a later reload of the file
-    /// is listed but not loaded. false = omit the key, llama.cpp's default (load
-    /// on the first request). The router refuses to start when more model profiles
-    /// carry it than `--models-max` allows, and with `--models-max 0`
-    /// (unlimited) whenever any does (`server-models.cpp`, `load_models`); Save
-    /// and the on switch refuse that in advance (`check_startup_count`).
+    /// model-profile-only key: no command-line flag, the router reads it from
+    /// the model profile). Only at startup: a model profile added by a later
+    /// reload of the file is listed but not loaded. false = omit the key,
+    /// llama.cpp's default (load on the first request). The router refuses to
+    /// start when more model profiles carry it than `--models-max` allows, and
+    /// with `--models-max 0` (unlimited) whenever any does
+    /// (`server-models.cpp`, `load_models`); Save and the on switch refuse that
+    /// in advance (`check_startup_count`).
     pub load_on_startup: bool,
     pub mmproj: String,
     /// GPU-offload the multimodal projector, the mmproj/CLIP image encoder

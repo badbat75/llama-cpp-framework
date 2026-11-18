@@ -2,9 +2,10 @@
 
 export struct ModelProfileSummary {
     id: string,
-    // Index into the full (unfiltered) presets vector on the Rust side. The list
-    // model only holds rows that pass the filter, so the `for` index is NOT a
-    // stable handle; `orig_index` is what select_model_profile()/highlighting use.
+    // Index into the full (unfiltered) model-profile vector on the Rust side.
+    // The list model only holds rows that pass the filter, so the `for` index
+    // is NOT a stable handle; `orig_index` is what select_model_profile()/
+    // highlighting use.
     orig_index: int,
     // Switched on (its section is in models.ini, so llama-server offers it) or
     // off (parked in models.ini.disabled). See src/model_profiles.rs's module header.
@@ -24,8 +25,8 @@ export struct ModelProfileForm {
     // `; placement =` comment in the INI, shown read-only on the GPU
     // distribution card, whose Clear button empties it.
     placement_note: string,
-    // load-on-startup (checked = on): a preset-only key with no negative form, so a
-    // plain bool like no_host; off omits the key.
+    // load-on-startup (checked = on): a model-profile-only key with no negative
+    // form, so a plain bool like no_host; off omits the key.
     load_on_startup: bool,
     mmproj: string,
     // --mmproj-offload: run the image encoder on GPU (llama.cpp's default) or
@@ -205,8 +206,9 @@ export struct ModelProfileForm {
     // entry "default" omits the key (llama.cpp's auto). One enum, not two
     // checkboxes: mlock and mmap are mutually exclusive states of it.
     load_mode: string,
-    // -fit on|off (checked = on). Always written to the preset, off by default:
-    // llama.cpp's own default is on, and it would cut a "default" n-gpu-layers.
+    // -fit on|off (checked = on). Always written to the model profile, off by
+    // default: llama.cpp's own default is on, and it would cut a "default"
+    // n-gpu-layers.
     fit: bool,
     // --fit-ctx (integer text + "default" box) and --fit-target (free text, MiB
     // per device; empty = omit the key, so no `_default` twin). Both are read
@@ -274,7 +276,8 @@ export struct ServerForm {
     // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
     // "on" are different instructions, and only "off" cures the gfx1201 16-bit
     // GEMM failure (see src/server_cfg.rs). A dropdown over Options.tri_states,
-    // and the same form::tri_state / tri_bool pair the preset tri-states use.
+    // and the same form::tri_state / tri_bool pair the model-profile tri-states
+    // use.
     rocblas_use_hipblaslt: string,
     // GGML_CUDA_ALLREDUCE (the SDK tuning card's multi-GPU half): "default"
     // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
@@ -319,12 +322,13 @@ export struct ServerForm {
     api_key_nokey: bool,
 }
 
-// One selectable row of the Benchmark tab's preset list. The unit of a
-// benchmark is the PRESET, not the model file: two presets may point at the same
-// `.gguf` with different placement, KV types or drafters, and comparing exactly
-// that pair is the most useful thing the tab does. `model` is the file's base
-// name, shown under the id so such a pair reads as one file twice rather than as
-// a mistake. Built entirely in Rust (gui/bench_tab.rs) and read-only to Slint:
+// One selectable row of the Benchmark tab's model-profile list. The unit of a
+// benchmark is the MODEL PROFILE, not the model file: two model profiles may
+// point at the same `.gguf` with different placement, KV types or drafters, and
+// comparing exactly that pair is the most useful thing the tab does. `model` is
+// the file's base name, shown under the id so such a pair reads as one file
+// twice rather than as a mistake. Built entirely in Rust (gui/bench_tab.rs) and
+// read-only to Slint:
 // the row checkbox reports through a callback that rebuilds the model, the same
 // contract as GpuRow.
 // One prompt of the Benchmark tab's list: a shipped one (the two the standard
@@ -371,8 +375,8 @@ export struct BenchResultRow {
     mean: string,
     sd: string,
     samples: int,
-    // Against the first selected preset: "1.00x" for the baseline itself, "-"
-    // where the baseline never ran this test.
+    // Against the first selected model profile: "1.00x" for the baseline
+    // itself, "-" where the baseline never ran this test.
     ratio: string,
     // What the number alone would hide: a prefix-cache hit that invalidates a
     // prefill row, the drafter's acceptance on a decode row. Empty when there is
@@ -410,7 +414,8 @@ export struct GpuRow {
 }
 
 // One rule of the tensor-placement table (TensorOverrideTable in
-// components.slint), the widget behind the preset's `override_tensor` string.
+// components.slint), the widget behind the model profile's `override_tensor`
+// string.
 // Same shape as GpuRow: built entirely in Rust (src/tensor_override.rs) and
 // read-only to Slint: the delegates report edits through the page's callbacks,
 // which rewrite the one form string and rebuild the whole model. Rows are
@@ -438,18 +443,18 @@ export struct TensorOverrideRow {
     problem: string,
 }
 
-// One file the preset being deleted links (the Delete preset modal in
-// app.slint), built in Rust (src/linked_files.rs `LinkedFile`, pushed by
-// gui/models_tab.rs). Like the tensor picker's ticks, `checked` is never
+// One file the model profile being deleted links (the Delete model profile
+// modal in app.slint), built in Rust (src/linked_files.rs `LinkedFile`, pushed
+// by gui/models_tab.rs). Like the tensor picker's ticks, `checked` is never
 // self-assigned: a click goes to Rust, which rebuilds the list.
 export struct DeleteFileRow {
     // `Model: name.gguf (2 shards)`.
     label: string,
-    // The size, then the folder, or the other presets that use the file.
+    // The size, then the folder, or the other model profiles that use the file.
     detail: string,
-    // Ticked: deleted from disk with the preset. Starts false.
+    // Ticked: deleted from disk with the model profile. Starts false.
     checked: bool,
-    // Another preset references it: cannot be ticked.
+    // Another model profile references it: cannot be ticked.
     in_use: bool,
 }
 
@@ -520,7 +525,8 @@ export struct DownloadRow {
     // `org/repo  ·  Q4_K_M`, and what the pick fetches.
     title: string,
     detail: string,
-    // Downloading, Cancelling, Creating the preset, Done, Failed, Cancelled.
+    // Downloading, Cancelling, Creating the model profile, Done, Failed,
+    // Cancelled.
     state: string,
     // The transfer's readout: shown while bytes flow.
     show_progress: bool,
@@ -528,8 +534,8 @@ export struct DownloadRow {
     file: string,
     overall_fraction: float,
     file_fraction: float,
-    // The outcome (the preset created, the cancel note, the error) and a note
-    // (a Show that could not run yet). `is_error` paints `message` red.
+    // The outcome (the model profile created, the cancel note, the error) and a
+    // note (a Show that could not run yet). `is_error` paints `message` red.
     message: string,
     is_error: bool,
     note: string,

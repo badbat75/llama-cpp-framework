@@ -58,10 +58,10 @@ export component ServerPage inherits ScrollView {
                 label_width <=> LabelColumn.server;
                 label: Strings.t("bind-to");
                 hint: Strings.t("bind-to-hint");
-                // One-way `checked`, same contract as the Benchmark tab's preset
-                // rows: the click self-assigns and breaks THIS delegate's
-                // binding, which stays invisible because every toggle rebuilds
-                // the model (gui/server_tab.rs `bind_toggle`).
+                // One-way `checked`, same contract as the Benchmark tab's
+                // model-profile rows: the click self-assigns and breaks THIS
+                // delegate's binding, which stays invisible because every
+                // toggle rebuilds the model (gui/server_tab.rs `bind_toggle`).
                 VerticalLayout {
                     spacing: 2px;
                     for row in AppState.bind_rows : CheckBox {
@@ -290,8 +290,8 @@ export component ServerPage inherits ScrollView {
                 hint: Strings.t("hipblaslt-hint");
                 // TRI-state, not a checkbox: unset (never export the variable)
                 // is a third instruction, and it is the framework default,
-                // same reason as the preset tab's Flash Attention control
-                // (form.rs's tri_state / tri_bool). A dropdown like the
+                // same reason as the model-profile tab's Flash Attention
+                // control (form.rs's tri_state / tri_bool). A dropdown like the
                 // AllReduce one below, so the card's two knobs read alike.
                 EnumComboBox {
                     options: Options.tri_states;

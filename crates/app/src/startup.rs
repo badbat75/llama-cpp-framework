@@ -229,7 +229,7 @@ mod linux {
             "[Desktop Entry]\n\
              Type=Application\n\
              Name=Private AI Framework\n\
-             Comment=Configure and run llama-server and its model presets\n\
+             Comment=Configure and run llama-server and its model profiles\n\
              Exec={}\n\
              Icon=org.privateai.Config\n\
              Terminal=false\n\
@@ -1015,6 +1015,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The whole entry an enable writes, byte for byte. The desktop shows
+    /// `Name` and `Comment` in its startup panel, so both carry the product's
+    /// current words: the entry says model profiles, not presets.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_autostart_entry_carries_the_current_comment() {
+        let exe = std::path::Path::new("/usr/bin/pai-config");
+        assert_eq!(
+            super::linux::entry_text(exe, true),
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=Private AI Framework\n\
+             Comment=Configure and run llama-server and its model profiles\n\
+             Exec=\"/usr/bin/pai-config\" gui --minimized\n\
+             Icon=org.privateai.Config\n\
+             Terminal=false\n\
+             X-GNOME-Autostart-enabled=true\n"
+        );
+    }
+
     /// A 2.4 autostart entry, as that release wrote it, `minimized` and
     /// switched on or off by GNOME's startup panel.
     #[cfg(target_os = "linux")]
@@ -1049,6 +1069,13 @@ mod tests {
             let text = std::fs::read_to_string(&new).expect("new entry");
             assert_eq!(parse_entry(&text), (true, minimized), "{text}");
             assert!(text.contains("Name=Private AI Framework"), "{text}");
+            // The migrated entry is written fresh, so it carries the current
+            // comment, not the one the 2.4 entry had.
+            assert!(
+                text.contains("Comment=Configure and run llama-server and its model profiles"),
+                "{text}"
+            );
+            assert!(!text.contains("model presets"), "{text}");
         }
     }
 
