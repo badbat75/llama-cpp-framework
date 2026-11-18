@@ -751,7 +751,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - Web UI: a new strings key must land in `fe/src/strings/en_US.json` with the EXACT text the tester
   pinned in the `EN` table of `fe/src/test/bff.ts` (App.test.tsx compares the two files). Never retype
   it: eval that object literal out of the test file (it is an `export const` starting at column 0) and
-  append only the keys missing from the JSON.
+  append only the keys missing from the JSON. Punctuation counts, so a trailing period the JSON adds and
+  the table has not is a red test: one such key reds every card test that asserts that toggle's text
+  (three periods on three `preset-fit-*` keys were 24 red tests in 9 files), so when a slice's tests go
+  red across files no feature touches, diff the JSON against the table before looking at the code.
 - Web UI: a card page's full-page tests read the card and field order from the shared list
   `fe/src/test/presetCards.ts`, so a new card goes where that list puts it (for the preset page, right
   after Assets), and a field's label is matched as a substring, so labels that contain each other
@@ -804,6 +807,15 @@ Lessons only: the rules are in `AGENTS.md`.
   nothing). `npm --prefix fe run typecheck` is `tsc -b`: it prints nothing when clean, so the exit
   status is the result. Format before the checks with `cd fe && npx prettier --write <files>`, since
   the npm scripts run in `fe/` (that is where `.prettierignore` lives).
+- Web UI, 176's "what the page sends, it checks": the save's check skips a row a rule locks ONLY while
+  its value equals the loaded one, because an untouched locked value is sent as it is; widen the gate to
+  `!ruleLocked(...) || row.key in changes` (`changes` is `changed()`'s per-key map, so the dirty test is
+  the same one the PUT uses). Carry the ROW in the failure list, not just the key: for a locked row the
+  focus must go to the control the rule follows, which is derivable from `enabledWhen` alone
+  (`unlockControl`: `checked` -> `<id>-control`, `unticked` -> `<id>-box`, `file` -> none, no per-key
+  switch), and the fallback is `focusField(key)`, which already skips disabled controls, so a
+  `file`-locked row leaves focus put. A row whose locked draft is VALID must still be sent: the pair
+  `ruleLocked` + `in changes` is what tells "checked, must block" from "sent as it is".
 - The Server form's two routes share their keys in `crates/bff/src/server.rs` `FIELDS`: a
   `Field { key, kind, read, write }` table (the INI key, the `Kind` of JSON type the read gives, a
   `fn(&ServerConfig) -> Value` and a `fn(&mut ServerConfig, Option<&Value>)`). The GET builds
@@ -1159,3 +1171,14 @@ Lessons only: the rules are in `AGENTS.md`.
   (`cli_import_e2e` in `cli.rs`, writing `user.join("models.ini")`) contradicts that: report it, the
   tester re-seeds it. The disabled-file header exists in TWO byte-identical copies (`app/presets.rs`
   and `bff/presets.rs`), kept equal by `the_disabled_header_is_the_configurators_one`: change both.
+- Renaming a word in the strings files' VALUES: the tests pin those VALUES as exact literals, and the
+  tester's red list misses some of them. `grep -rF "<the old sentence>" crates` is the list; every hit
+  that asserts the text a rename is meant to change is acceptance, so update the literal (an exact
+  equality stays exact: nothing weakened) and name each one in the report. Only
+  `crates/core/src/strings.rs` asserts values on purpose, the rest are module tests of the caller
+  (`gui/downloads.rs`'s `created_status` was one the red list missed). Run every crate whose module
+  tests show a shown text: core, app, cli, config, bff, manager.
+- `pai-app` has no `tests/` directory (`[lib]` only), so `cargo test -p pai-app --lib` IS the crate.
+- A rename in `cli.toml` changes the refusal texts the manager and the bff ANSWER (they read
+  `cli.toml`), so it reaches the browser even with no wire change: the fe's `api-<key>` mirrors go stale
+  (see the fe rule above). Say which keys in the report.

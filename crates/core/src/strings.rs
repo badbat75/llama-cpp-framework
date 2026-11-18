@@ -197,7 +197,8 @@ mod tests {
     fn the_import_offer_asks_for_administrator_rights_on_every_os() {
         let gui = parse(include_str!("../strings/en_US.toml"));
         let cli = parse(include_str!("../strings/cli.toml"));
-        let expected = "Your server settings and presets are in your own folder; the service \
+        let expected =
+            "Your server settings and model profiles are in your own folder; the service \
                         reads its own copy in {0}. Copy yours there? Files already there are \
                         kept. Copying needs administrator rights.";
         assert_eq!(gui["import-offer-body"], expected);

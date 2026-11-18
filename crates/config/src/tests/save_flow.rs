@@ -1254,7 +1254,7 @@ pub(super) fn run(app: &AppWindow) {
     assert_eq!(st.get_bench_selected_count(), 0);
     st.invoke_bench_run();
     assert!(
-        st.get_status_is_error() && st.get_status_text().contains("at least one preset"),
+        st.get_status_is_error() && st.get_status_text().contains("at least one model profile"),
         "an empty selection must be refused: {}",
         st.get_status_text()
     );
@@ -2397,7 +2397,9 @@ fn delete_with_files_phase(
         r[1].detail
     );
     assert_eq!(st.get_delete_files_ticked(), 0);
-    assert!(st.get_delete_files_summary().starts_with("Only the preset"));
+    assert!(st
+        .get_delete_files_summary()
+        .starts_with("Only the model profile"));
     // Cancel drops the ticks: a reopen starts cleared again.
     st.invoke_delete_file_toggle(0);
     assert_eq!(st.get_delete_files_ticked(), 1);

@@ -84,6 +84,13 @@ Lessons only: the rules are in `AGENTS.md`.
   `Dirty <own pkg>` line, which says the previous run's fingerprint matches the current sources. To prove a green
   `-D warnings` has teeth without touching the tree, add a restriction lint on the command line
   (`-- -D warnings -D clippy::expect_used`): exit 101 with diagnostics names the files, on both targets.
+- A clean rerun of the whole configurator side is cheap, so order it, do not reason about replays: `cargo
+  clean -p` of pai-core, pai-app, pai-config, pai-cli, pai-bff removes 5.2 GiB and the five `cargo test`
+  runs take 2 min total on 24 cores (core 7 s, app --lib 19 s, cli 4 s, config 61 s, bff 21 s). Run the
+  sequence as ONE background script that writes a log per command and appends `exit=$?` per command to one
+  exits file: a shell chain's exit hides which command failed. Each log's single `Compiling pai-<pkg>` is
+  the proof that crate compiled; a log with `Compiling pai-config` AND `Compiling pai-core` AND
+  `Compiling pai-app` is normal (the cleaned crates it links are rebuilt too).
 - A `cargo test` rerun always runs the test binary; only its compile can be a replay. `-v` (before
   `--`) shows `Fresh <pkg>` (fingerprint checked against the current sources) or `Dirty`/`Compiling`.
   For the independent check after a coder, `cargo clean -p <pkg>` and rerun when in doubt.
@@ -755,6 +762,27 @@ Lessons only: the rules are in `AGENTS.md`.
   `ini::detect_eol("")` answer CRLF, so the generated header lands CRLF in an LF render. Pin it as
   "an LF pool rendered with a CR" and state the assumption (the empty file takes the style of the file
   that has content).
+
+- A rename of a DISPLAYED word where the strings KEYS stay (the values are the coder's data): every test that
+  builds its expectation through `strings::t("<key>", ..)` / `fill("<key>", ..)` needs no edit and greens by
+  construction; only the tests that spell the value verbatim go red. Find them with a word n-gram scan
+  (2..=4 grams of each value, both strings files) against every `crates/**/*.rs`, then read each hit: a
+  substring inside a key name, a Rust id (`preset_no_model`), an INI token (`--models-preset`) or a fallback
+  id is not a text pin. Capitalise the expectation as the FILE has it (`Preset` -> `Model profile`).
+  The coupling of a command rename to the values: a new lint over both strings files forbidding the retired
+  command name (`pai preset`), in the crate that already lints them.
+- A CLI verb rename: clap builds each subcommand from a struct field list (`Command::new(name)`), so a help
+  read on `Cli::command()` cannot tell the verbs apart by text: the commands list lives in the binary's
+  `--help` test. Pin the retired verb as its own test (exit 2 + `unrecognized subcommand '<verb>'`); clap's
+  stderr names only that verb, and its usage line is `pai <COMMAND>` with no list, so never assert the list
+  there. The inline parse tests take the verb as an argv string: renaming those argv is the red, and an
+  expect prose naming the command is a second red per phase.
+- Where a brief redacts the words of a rename, the names table in `ARCHITECTURE.md` settles them; report the
+  line. If it renames the strings KEYS and the brief pins VALUES only, the brief governs: say so, and note
+  that the key-based expectations then follow the values on their own.
+- A test whose expectation is a filled string, and a doc comment naming the CLI command, are separate text
+  pins of the same rename: rustfmt reflows the longer value into a multi-line `assert!(..)` (format each
+  file, then `cargo fmt -p <crate> --check`).
 
 ## Data-root e2e and the configurator
 
@@ -1776,6 +1804,14 @@ Lessons only: the rules are in `AGENTS.md`.
   `panicked at ...: refused: succeeded` (the import finds no file and answers success), which reads like a
   broken fake, not a wrong name. Grep the seeds (`grep -rn 'join("models.ini' crates --include=*.rs`) to tell
   the manager/engine fixtures (`sys.join`, a temp dir) from a per-user seed.
+- The WORD and VERB rename of the same family (displayed texts, the CLI's command name) is pinned at three
+  levels, all in the crates, no fe/: the binary test asserts the retired verb is GONE, not an alias (`pai
+  preset` → exit 2 + stderr `unrecognized subcommand 'preset'`), the help test pins the command list as an
+  exact array (`["server", "model-profile", "control", "bench", "config", "help"]`), and a split-lint scans
+  BOTH strings files for the retired invocation (`line.contains("pai preset")`). The completeness check of
+  the text rename is a grep of the two strings files for the old word: the residue that stays is DATA, so
+  report it as such, not as a miss (`hf-preset-repo` names the file `preset.ini`, `spec-temp` names the
+  token a parser accepts, "a number or `preset`").
 
 ## Mutation runs (fe/, proving a test has teeth)
 

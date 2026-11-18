@@ -110,7 +110,14 @@ fn the_strings_name_pai_for_commands() {
     for file in ["cli.toml", "en_US.toml"] {
         let text = read(&format!("core/strings/{file}"));
         for (n, line) in text.lines().enumerate() {
-            for cmd in ["server", "preset", "control", "bench", "config"] {
+            for cmd in [
+                "server",
+                "model-profile",
+                "preset",
+                "control",
+                "bench",
+                "config",
+            ] {
                 if line.contains(&format!("pai-config {cmd}")) {
                     hits.push(format!("{file}:{}: {line}", n + 1));
                 }
@@ -120,6 +127,26 @@ fn the_strings_name_pai_for_commands() {
     assert!(
         hits.is_empty(),
         "say `pai <command>`:\n  {}",
+        hits.join("\n  ")
+    );
+}
+
+/// The command is `pai model-profile` now, the old `pai preset` is gone: no
+/// text of either strings file tells the user to run the retired name.
+#[test]
+fn the_strings_never_name_the_retired_command() {
+    let mut hits = Vec::new();
+    for file in ["cli.toml", "en_US.toml"] {
+        let text = read(&format!("core/strings/{file}"));
+        for (n, line) in text.lines().enumerate() {
+            if line.contains("pai preset") {
+                hits.push(format!("{file}:{}: {line}", n + 1));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "the command is `pai model-profile`:\n  {}",
         hits.join("\n  ")
     );
 }

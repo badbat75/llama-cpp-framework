@@ -2117,11 +2117,11 @@ mod tests {
         };
         assert_eq!(
             integration_status(false, 1, &missing_a),
-            "No llama-server provider in opencode.json. Save adds one listing the 1 enabled preset."
+            "No llama-server provider in opencode.json. Save adds one listing the 1 enabled model profile."
         );
         assert_eq!(
             integration_status(true, 2, &Drift::default()),
-            "llama-server provider active in opencode.json, listing the 2 enabled presets."
+            "llama-server provider active in opencode.json, listing the 2 enabled model profiles."
         );
         // Out of step names the ids, every way, so the reader knows what Save changes.
         let all = Drift {
@@ -2132,7 +2132,7 @@ mod tests {
         };
         assert_eq!(
             integration_status(true, 2, &all),
-            "opencode.json is out of step with the presets (enabled but not listed: new; \
+            "opencode.json is out of step with the model profiles (enabled but not listed: new; \
              listed but not enabled: off; changed: tuned; base URL or API key changed). \
              Save shows the changes before writing them."
         );

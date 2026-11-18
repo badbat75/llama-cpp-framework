@@ -12,7 +12,7 @@ use crate::{bench, presets, server_cfg, strings};
 #[command(
     name = "pai",
     version,
-    about = "Configure the Private AI Framework: llama-server and model presets."
+    about = "Configure the Private AI Framework: llama-server and model profiles."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -24,8 +24,8 @@ pub enum Command {
     /// Server-wide settings (server.ini).
     #[command(subcommand)]
     Server(ServerCmd),
-    /// Per-model presets (models.ini).
-    #[command(subcommand)]
+    /// Per-model profiles (models.ini).
+    #[command(name = "model-profile", subcommand)]
     Preset(PresetCmd),
     /// Control the llama-server process.
     #[command(subcommand)]
@@ -40,10 +40,10 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BenchCmd {
-    /// Benchmark one preset as it is, or once per value of ONE of its keys.
+    /// Benchmark one model profile as it is, or once per value of ONE of its keys.
     ///
     /// Measured by the same engine the Benchmark tab uses, each finished leg a
-    /// run of one bench.db campaign. Without --key the preset is measured as
+    /// run of one bench.db campaign. Without --key the model profile is measured as
     /// models.ini has it, and the file is not touched. With --key and
     /// --values each value is written to models.ini and the key is put back
     /// afterwards; a live sweep restarts llama-server per value, because the
@@ -107,7 +107,7 @@ pub struct BenchQuery {
     /// The run computed on a GPU named like TEXT (r9700, 4070).
     #[arg(long, global = true)]
     pub gpu: Option<String>,
-    /// The preset's device contains TEXT (ROCm0, Vulkan).
+    /// The model profile's device contains TEXT (ROCm0, Vulkan).
     #[arg(long, global = true)]
     pub device: Option<String>,
     /// llama.cpp tag (v0.7.0).
@@ -153,11 +153,11 @@ pub enum QueryWhat {
 
 #[derive(Args, Debug)]
 pub struct BenchRun {
-    /// Preset id to benchmark (as in `preset list`).
+    /// Model profile id to benchmark (as in `model-profile list`).
     #[arg(long)]
     pub preset: String,
     /// The models.ini key to vary, e.g. spec-draft-n-max. Omitted (with
-    /// --values) = the preset as it is, one leg.
+    /// --values) = the model profile as it is, one leg.
     #[arg(long, requires = "values")]
     pub key: Option<String>,
     /// Values to measure: `2,3,4`, the inclusive range `2..8`, or, when a value
@@ -165,14 +165,14 @@ pub struct BenchRun {
     /// `Vulkan1,CUDA0;CUDA0`. `unset` removes the key for that leg.
     #[arg(long, requires = "key")]
     pub values: Option<String>,
-    /// live = the running llama-server (real prompt, the preset's drafter);
+    /// live = the running llama-server (real prompt, the model profile's drafter);
     /// synthetic = llama-bench (no prompt, no sampler, llama-server must be down).
     #[arg(long, default_value = "live", value_parser = ["live", "synthetic"])]
     pub mode: String,
     /// Repetitions per value.
     #[arg(long)]
     pub reps: Option<i32>,
-    /// What the preset is left on when the sweep ends.
+    /// What the model profile is left on when the sweep ends.
     #[arg(long, default_value = "original", value_parser = ["original", "best", "last"])]
     pub apply: String,
     /// Treat this as the value the key had before the sweep, instead of reading
@@ -198,13 +198,13 @@ pub struct BenchRun {
     /// part in it is an image, fitted into `--image-size` when sent.
     #[arg(long)]
     pub prompt_file: Option<std::path::PathBuf>,
-    /// Live only: sampling temperature, or `preset` to leave the preset's alone.
+    /// Live only: sampling temperature, or `preset` to leave the model profile's alone.
     /// Defaults to 0, which is what makes two legs comparable.
     #[arg(long)]
     pub temp: Option<String>,
     /// Live only: output cap per repetition. Omitted (or 0) = no cap: the
     /// request carries no `max_tokens` and the model stops on its own (or at
-    /// the preset's `n-predict`), so the output length is part of the result.
+    /// the model profile's `n-predict`), so the output length is part of the result.
     #[arg(long)]
     pub max_tokens: Option<i32>,
     /// Live only: the box an image prompt's image is fitted into when sent,
@@ -218,20 +218,20 @@ pub struct BenchRun {
     #[arg(long)]
     pub image: Option<std::path::PathBuf>,
     /// Live only: requests per repetition. `single` (default) sends one;
-    /// the others send one per slot of the preset at once (N = `parallel`,
+    /// the others send one per slot of the model profile at once (N = `parallel`,
     /// absent = 4; N >= 2), each pinned with `id_slot`: `prefill` (all N
     /// prefill the whole prompt), `decode` (every slot primed with the prompt
     /// first, so all N only decode), `prefill+decode` (N-1 primed slots decode
     /// while the last one prefills). The leg's run label ends in
     /// `concurrency=<scenario>`. `all` = single, then every concurrent
-    /// scenario when the preset has two slots or more, one campaign.
+    /// scenario when the model profile has two slots or more, one campaign.
     #[arg(long, value_parser = ["single", "prefill", "decode", "prefill+decode", "all"])]
     pub concurrency: Option<String>,
     /// Live only: run a versioned benchmark spec: `standard` (the framework's
     /// newest published version), `standard-<X.Y>` (that version: every one
     /// stays installed, in share/benchmarks/specs, the repo's
     /// benchmarks/specs for a tree build) or an INI file of your own. Its prompts (pinned by sha256), passes (temperature,
-    /// repetitions, concurrency, preset keys overridden for the pass) and
+    /// repetitions, concurrency, model profile keys overridden for the pass) and
     /// output cap, all in one campaign. Every run records the spec's name,
     /// version and sha256; a sweep without it records `spec = custom`, and so
     /// does a file that is not a published version of standard (its runs carry
@@ -262,14 +262,14 @@ pub struct BenchRun {
     #[arg(long)]
     pub campaign: Option<String>,
     /// The question the sweep answers, stored with the campaign. Default: one
-    /// spelled from the key, the preset and the values.
+    /// spelled from the key, the model profile and the values.
     #[arg(long)]
     pub question: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum ConfigCmd {
-    /// Hand your per-user server.ini and presets to the manager service
+    /// Hand your per-user server.ini and model profiles to the manager service
     /// (files it already has are kept).
     Import,
 }
@@ -460,37 +460,37 @@ impl ServerSet {
 
 #[derive(Subcommand, Debug)]
 pub enum PresetCmd {
-    /// List preset ids and the resolved model path for each, switched-off ones
-    /// included (marked).
+    /// List model profile ids and the resolved model path for each, switched-off
+    /// ones included (marked).
     List,
-    /// Dump one preset as INI.
+    /// Dump one model profile as INI.
     Show { id: String },
-    /// Delete a preset section; with --delete-files, the model files it links
+    /// Delete a model profile section; with --delete-files, the model files it links
     /// too. Without that flag every file stays on disk.
     Delete {
         id: String,
-        /// Also delete these files the preset links, when they are on disk:
+        /// Also delete these files the model profile links, when they are on disk:
         /// `all`, or a comma-separated list of `model` (every shard of a split
         /// model), `mmproj` and `draft`. The folders a Hugging Face download
         /// leaves empty under ModelsDir's models / mmprojs / mtps / dflashs go
         /// too; nothing outside them, and never a folder with content. A file
-        /// another preset references (in models.ini or models.ini.disabled)
+        /// another model profile references (in models.ini or models.ini.disabled)
         /// is refused, before anything is deleted, unless --even-if-shared.
         #[arg(long, value_name = "WHICH", value_delimiter = ',')]
         delete_files: Vec<FileKind>,
-        /// Delete a picked file even when another preset references it (that
-        /// preset then points at a missing file).
+        /// Delete a picked file even when another model profile references it (that
+        /// profile then points at a missing file).
         #[arg(long, requires = "delete_files")]
         even_if_shared: bool,
     },
-    /// Switch a preset on: move it back into models.ini, so llama-server
+    /// Switch a model profile on: move it back into models.ini, so llama-server
     /// offers it again (after a restart).
     Enable { id: String },
-    /// Switch a preset off: park it in models.ini.disabled, unchanged, where
+    /// Switch a model profile off: park it in models.ini.disabled, unchanged, where
     /// llama-server no longer sees it.
     Disable { id: String },
     /// Download a GGUF from Hugging Face with llama.cpp's own downloader and
-    /// create a preset for it. Lists the repo's quantizations first; the files
+    /// create a model profile for it. Lists the repo's quantizations first; the files
     /// land in ModelsDir's models / mmprojs / mtps / dflashs subfolders.
     ///
     /// Given words instead of a repository (`"qwen3 8b"`), it SEARCHES: one
@@ -500,10 +500,10 @@ pub enum PresetCmd {
     Download(Box<PresetDownload>),
 }
 
-/// Which linked files `preset delete --delete-files` takes (`linked_files::Role`).
+/// Which linked files `model-profile delete --delete-files` takes (`linked_files::Role`).
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
-    /// Every file the preset links.
+    /// Every file the model profile links.
     All,
     /// The GGUF model, every shard of a split one.
     Model,
@@ -538,7 +538,7 @@ fn pick_files(
         .collect()
 }
 
-/// The refusal `preset delete` stops on when a picked file is in use, naming
+/// The refusal `model-profile delete` stops on when a picked file is in use, naming
 /// each such file and the presets holding it; `None` when nothing is shared.
 fn shared_refusal(chosen: &[crate::linked_files::LinkedFile]) -> Option<String> {
     let shared: Vec<String> = chosen
@@ -578,7 +578,7 @@ pub struct PresetDownload {
     /// Also fetch a speculative drafter: mtp, dflash or dspark.
     #[arg(long, value_name = "KIND")]
     pub draft: Option<String>,
-    /// The preset id. Default: derived from the model's file name.
+    /// The model profile id. Default: derived from the model's file name.
     #[arg(long)]
     pub id: Option<String>,
 }
@@ -1062,7 +1062,7 @@ fn run_preset(c: PresetCmd) -> Result<()> {
     }
 }
 
-/// `preset delete`: the section, then the linked files `which` names (none by
+/// `model-profile delete`: the section, then the linked files `which` names (none by
 /// default). Everything that can refuse is checked BEFORE the section goes: an
 /// unknown id, and a picked file another preset references (`shared_refusal`,
 /// lifted by `even_if_shared`). A file that then fails to delete does not undo
@@ -1133,7 +1133,7 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
     Ok(())
 }
 
-/// A `--id` for `preset download`, checked before anything is fetched: a
+/// A `--id` for `model-profile download`, checked before anything is fetched: a
 /// valid section name (`presets::valid_id`) that no preset holds in ANY case
 /// (`presets::id_taken`; headers match case-insensitively, so a namesake
 /// would be replaced wholesale).
@@ -1147,7 +1147,7 @@ fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `preset download`: words are a search (`search_report`, then exit);
+/// `model-profile download`: words are a search (`search_report`, then exit);
 /// a repository is listed, picked, downloaded (progress on stderr, one line
 /// rewritten in place), derive the preset, save it. Ctrl+C ends this process;
 /// the child, which has no console of its own (`CREATE_NO_WINDOW`), then reads
@@ -1390,7 +1390,7 @@ fn placement_line(p: &presets::Preset) -> Option<String> {
     ))
 }
 
-/// The listing as `preset download` prints it (pure): `repo @ commit`, then
+/// The listing as `model-profile download` prints it (pure): `repo @ commit`, then
 /// one row per quantization (`*` on llama.cpp's default: tag, size, path,
 /// sidecars). With `fit` (the `--list` estimate: the machine's budget, each
 /// row's shape, or why it is missing, and the extras each row counts, the
@@ -1488,7 +1488,7 @@ fn list_report(
     out
 }
 
-/// What `preset download <words>` prints (pure): a header, one aligned row
+/// What `model-profile download <words>` prints (pure): a header, one aligned row
 /// per repository (`org/repo`, downloads over the last 30 days, the model
 /// marker when the search knows it (`MoE 30.5B`, `dense 8.2B`), the quant
 /// tags, the sidecars, gated/private), and how to go on.
@@ -1919,7 +1919,7 @@ mod tests {
     #[test]
     fn preset_delete_parses_its_file_flags() {
         let parse = |args: &[&str]| {
-            let mut argv = vec!["pai", "preset", "delete", "p"];
+            let mut argv = vec!["pai", "model-profile", "delete", "p"];
             argv.extend_from_slice(args);
             Cli::try_parse_from(argv).map(|c| match c.command {
                 Command::Preset(PresetCmd::Delete {
@@ -1994,7 +1994,7 @@ mod tests {
     fn preset_download_parses_its_flags() {
         let cli = Cli::try_parse_from([
             "pai",
-            "preset",
+            "model-profile",
             "download",
             "unsloth/Qwen3-8B-GGUF:Q4_K_M",
             "--no-mmproj",
@@ -2014,11 +2014,11 @@ mod tests {
             (Some("mtp"), Some("q3"), None)
         );
         assert!(!a.search && a.limit == crate::hf::SEARCH_LIMIT);
-        assert!(Cli::try_parse_from(["pai", "preset", "download"]).is_err());
+        assert!(Cli::try_parse_from(["pai", "model-profile", "download"]).is_err());
         // Words search; --search forces it, --limit caps the rows.
         let cli = Cli::try_parse_from([
             "pai",
-            "preset",
+            "model-profile",
             "download",
             "unsloth/Qwen3",
             "--search",
@@ -2077,7 +2077,7 @@ mod tests {
             lines[3],
             format!("  {:<34}  {:>7}  no GGUF model file", "o/r", "5")
         );
-        assert!(lines[4].starts_with("Pick one: pai preset download <org/repo>"));
+        assert!(lines[4].starts_with("Pick one: pai model-profile download <org/repo>"));
         assert_eq!(
             search_report("zzz", &[]),
             ["No GGUF repository matches \"zzz\"."]
@@ -2977,14 +2977,14 @@ pub(crate) fn cli_config_e2e() {
         nothing_per_user("server set");
 
         log.lock().unwrap().clear();
-        run(cli(&["x", "preset", "disable", "Qwen3.8-27B"])).expect("preset disable");
+        run(cli(&["x", "model-profile", "disable", "Qwen3.8-27B"])).expect("model-profile disable");
         assert_eq!(
             fake::writes(&log),
             ["write_file models.ini.disabled", "write_file models.ini"]
         );
         assert!(!file("models.ini").contains("[Qwen3.8-27B]"));
         assert!(file("models.ini.disabled").contains("[Qwen3.8-27B]"));
-        nothing_per_user("preset disable");
+        nothing_per_user("model-profile disable");
     });
 
     // The key withheld from this caller: `server set` saves back a file
@@ -3047,7 +3047,7 @@ pub(crate) fn cli_config_e2e() {
     for e in [ClientError::Invalid(refusal), ClientError::NotAuthorized] {
         for args in [
             &["x", "server", "set", "--port", "8099"][..],
-            &["x", "preset", "enable", "Qwen3.8-Flash-Next"][..],
+            &["x", "model-profile", "enable", "Qwen3.8-Flash-Next"][..],
         ] {
             let mut c = seeded();
             c.fail_write = Some(e.clone());

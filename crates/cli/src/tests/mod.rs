@@ -23,7 +23,7 @@ fn data_root_e2e() {
     // ── The `control` commands on the manager backend (cli.rs) ───────────
     crate::cli::cli_control_e2e();
 
-    // ── `server set` and `preset enable` through the seam (cli.rs) ───────
+    // ── `server set` and `model-profile enable` through the seam (cli.rs) ─
     crate::cli::cli_config_e2e();
 
     // ── `server set` refuses what the Server tab refuses (cli.rs) ────────
@@ -32,15 +32,15 @@ fn data_root_e2e() {
     // ── The per-user config handed to the manager (cli.rs) ───────────────
     crate::cli::cli_import_e2e();
 
-    // ── `preset delete|disable|enable` on the default test backend ───────
+    // ── `model-profile delete|disable|enable` on the test backend ────────
     preset_commands_e2e();
 
-    // ── `preset delete --delete-files` on disk (cli.rs, linked_files.rs) ─
+    // ── `model-profile delete --delete-files` on disk (cli.rs, linked_files)
     preset_delete_files_e2e();
 }
 
-/// `preset delete <typo>` errors instead of a false "Removed", and `preset
-/// disable|enable` is the same move the Models tab's switch makes: a
+/// `model-profile delete <typo>` errors instead of a false "Removed", and
+/// `model-profile disable|enable` is the same move the Models tab's switch makes: a
 /// case-insensitive lookup acting on the STORED id, opencode.json untouched
 /// (only the Integrations tab's Save writes it). The default test backend keeps
 /// the preset files at the per-user paths, under the redirect.
@@ -67,7 +67,7 @@ fn preset_commands_e2e() {
     };
 
     assert!(
-        pai(&["preset", "delete", "no-such-preset"]).is_err(),
+        pai(&["model-profile", "delete", "no-such-preset"]).is_err(),
         "deleting a nonexistent preset must error, not report success"
     );
     assert!(
@@ -75,7 +75,7 @@ fn preset_commands_e2e() {
         "nothing deleted"
     );
 
-    pai(&["preset", "disable", "E2E"]).expect("preset disable");
+    pai(&["model-profile", "disable", "E2E"]).expect("model-profile disable");
     assert!(presets::load_all().iter().all(|p| p.id != "e2e"));
     assert!(presets::load_listed()
         .iter()
@@ -85,16 +85,16 @@ fn preset_commands_e2e() {
         opencode_text,
         "the CLI never touches opencode.json: only the Integrations tab's Save does"
     );
-    pai(&["preset", "disable", "e2e"]).expect("already off is not an error");
-    pai(&["preset", "enable", "e2e"]).expect("preset enable");
+    pai(&["model-profile", "disable", "e2e"]).expect("already off is not an error");
+    pai(&["model-profile", "enable", "e2e"]).expect("model-profile enable");
     assert!(presets::load_all().iter().any(|p| p.id == "e2e"));
     assert!(
-        pai(&["preset", "enable", "no-such-preset"]).is_err(),
+        pai(&["model-profile", "enable", "no-such-preset"]).is_err(),
         "an unknown id must error"
     );
 }
 
-/// `preset delete --delete-files` follows the Models tab's delete dialog: a
+/// `model-profile delete --delete-files` follows the Models tab's delete dialog: a
 /// file another preset links is refused before anything changes, unless
 /// `--even-if-shared`; the picked files go with the Hugging Face repo folders
 /// they leave empty under ModelsDir; without the flag every file stays.
@@ -142,15 +142,21 @@ fn preset_delete_files_e2e() {
     };
     let listed = |id: &str| presets::load_listed().iter().any(|l| l.preset.id == id);
 
-    let err = pai(&["preset", "delete", "cli-del", "--delete-files", "all"])
-        .expect_err("a shared drafter is refused");
+    let err = pai(&[
+        "model-profile",
+        "delete",
+        "cli-del",
+        "--delete-files",
+        "all",
+    ])
+    .expect_err("a shared drafter is refused");
     assert!(err.to_string().contains("[cli-other]"), "{err}");
     assert!(
         listed("cli-del") && cli_model.exists() && cli_draft.exists(),
         "a refusal changes nothing"
     );
     pai(&[
-        "preset",
+        "model-profile",
         "delete",
         "cli-del",
         "--delete-files",
@@ -161,6 +167,6 @@ fn preset_delete_files_e2e() {
     assert!(!listed("cli-del") && !cli_model.exists() && !cli_draft.exists());
     assert!(!repo("models", "Cli-GGUF").exists() && !repo("mtps", "Cli-GGUF").exists());
     // Without the flag, every file stays.
-    pai(&["preset", "delete", "cli-other"]).expect("plain delete");
+    pai(&["model-profile", "delete", "cli-other"]).expect("plain delete");
     assert!(!listed("cli-other") && other_model.exists());
 }

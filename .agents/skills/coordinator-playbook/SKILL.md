@@ -55,3 +55,6 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   trust boundary (2026-11-17: opening the bff's `Listen` to the LAN; the user: "there was no need to
   call the architect for this"). Read the code yourself, decide the minimal rule, and brief the tester.
   Keep the architect for a new component, protocol or permission model.
+- An OpenCode brief with backticks or `<...>` inside a double-quoted shell argument is run as command
+  substitution: the run dies before opencode starts (no log, exit 1, nothing changed). Write the brief
+  to a file with a quoted heredoc (`<<'EOF'`) and pass `"$(cat file)"`.

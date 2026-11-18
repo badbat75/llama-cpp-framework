@@ -1163,7 +1163,7 @@ pub(super) fn e2e() {
         "Cancel download",
         "org/Done-GGUF  ·  Q8_0",
         "Done",
-        "Show preset",
+        "Show model profile",
         "Dismiss",
         "Clear finished",
     ] {
@@ -1329,7 +1329,7 @@ mod tests {
         assert_eq!(
             created_status(&d, "m-Q4_K_M", false),
             "Downloaded m-Q4_K_M.gguf with mmproj and MTP from org/Repo-GGUF: created [m-Q4_K_M]. \
-             Show preset (Downloads) opens it."
+             Show model profile (Downloads) opens it."
         );
         assert!(
             created_status(&d, "m-Q4_K_M", true)
@@ -1386,7 +1386,7 @@ mod tests {
         assert!(j.transfer_ended(id, Ok(())));
         assert_eq!(state_of(&j, id), JobState::Configuring);
         let r = &j.rows()[0];
-        assert_eq!(r.state.as_str(), "Creating the preset…");
+        assert_eq!(r.state.as_str(), "Creating the model profile…");
         assert!(
             !r.show_progress && !r.can_cancel && !r.can_dismiss,
             "nothing to cancel while the preset is written"

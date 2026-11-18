@@ -1017,11 +1017,11 @@ const SHOWN_LITERALS: [(&str, &str); 5] = [
     ("{v} MiB", "a value of `server show`; a unit"),
     (
         "  [{}]{off}  model={}",
-        "`preset list` row: `model` is the INI key",
+        "`model profile list` row: `model` is the INI key",
     ),
     (
         "mmproj: {}",
-        "`preset download` row: `mmproj` is the INI key",
+        "`model profile download` row: `mmproj` is the INI key",
     ),
 ];
 

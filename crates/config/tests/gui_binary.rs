@@ -64,7 +64,7 @@ fn version_is_kept_for_xtask() {
 #[test]
 fn a_command_points_to_pai() {
     let dir = tempfile::tempdir().expect("tempdir");
-    for args in [&["preset", "list", "--help"][..], &["--help"]] {
+    for args in [&["model-profile", "list", "--help"][..], &["--help"]] {
         let r = pai_config(dir.path(), args);
         assert_eq!(
             r.code,

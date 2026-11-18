@@ -70,7 +70,14 @@ fn help_lists_the_commands_and_no_gui() {
         .collect();
     assert_eq!(
         commands,
-        ["server", "preset", "control", "bench", "config", "help"],
+        [
+            "server",
+            "model-profile",
+            "control",
+            "bench",
+            "config",
+            "help"
+        ],
         "{}",
         r.stdout
     );
@@ -103,6 +110,35 @@ fn the_gui_arguments_are_not_pai_commands() {
             r.stderr
                 .contains(&format!("unrecognized subcommand '{}'", args[0])),
             "pai {args:?}: {}",
+            r.stderr
+        );
+    }
+}
+
+/// `preset` was this command's old name, renamed to `model-profile`: the old
+/// name is gone, not a hidden alias, so it is clap's unknown-subcommand
+/// error and the usage exit code, 2.
+#[test]
+fn the_retired_preset_command_is_unknown() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for args in [
+        &["preset"][..],
+        &["preset", "list"],
+        &["preset", "enable", "Qwen3.8-27B"],
+    ] {
+        let r = pai(dir.path(), args);
+        assert_eq!(
+            r.code,
+            Some(2),
+            "pai {}: stdout {} stderr {}",
+            args.join(" "),
+            r.stdout,
+            r.stderr
+        );
+        assert!(
+            r.stderr.contains("unrecognized subcommand 'preset'"),
+            "pai {}: {}",
+            args.join(" "),
             r.stderr
         );
     }

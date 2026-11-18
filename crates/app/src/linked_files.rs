@@ -553,7 +553,7 @@ mod tests {
             used_by: used.iter().map(|u| u.to_string()).collect(),
         };
         let files = vec![lf("a.gguf", 2 << 30, &[]), lf("b.gguf", 1 << 30, &["x"])];
-        assert!(selection_summary(&files, &[false, false]).starts_with("Only the preset"));
+        assert!(selection_summary(&files, &[false, false]).starts_with("Only the model profile"));
         // An in-use entry never counts, even if a tick reached it.
         assert_eq!(
             selection_summary(&files, &[true, true]),

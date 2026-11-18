@@ -446,7 +446,7 @@ fn env_script(
     let (example_id, example_ctx) = match example {
         Some((id, ctx)) => (id, ctx.map(|c| (c.to_string(), compact_pct(c).to_string()))),
         None => (
-            "<preset-id>",
+            "<model-profile-id>",
             Some(("<context>".to_string(), "<percent>".to_string())),
         ),
     };

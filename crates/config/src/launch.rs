@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn everything_else_moved_to_pai() {
         for args in [
-            &["preset", "list"][..],
+            &["model-profile", "list"][..],
             &["control", "stop-and-close"],
             &["server"],
             &["bench", "run", "--preset", "p"],
