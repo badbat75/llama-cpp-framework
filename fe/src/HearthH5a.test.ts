@@ -297,23 +297,25 @@ test('H5a.6: inside the @media (max-width: 959.98px) block .banner takes padding
 
 // ── H5a.7: nothing else moves ───────────────────────────────────────────
 
-test('H5a.7: the nav rules are untouched (H5b takes them) and no strings key is added or changed', () => {
+test('H5a.7: the nav rules are those of H5b (07-hearth-h5-shell.md, section 2) and no strings key is added or changed', () => {
   const nav = topBy('.nav', 'the .nav rule')
   expect(
     prop(nav.body, 'background'),
-    'the nav keeps --surface: H5a is the banner only',
-  ).toBe('var(--surface)')
-  expect(prop(nav.body, 'padding'), 'and today padding').toBe('var(--space-4)')
-  expect(prop(nav.body, 'border-bottom'), 'and its divider').toBe(
-    '1px solid var(--control)',
+    'the nav sits on the paper: H5b.1 made it transparent',
+  ).toBe('transparent')
+  expect(prop(nav.body, 'padding'), 'the padding of H5b.1').toBe(
+    'var(--space-3) var(--space-4) var(--space-5)',
+  )
+  expect(prop(nav.body, 'border-bottom'), 'the decorative edge of H5b.1').toBe(
+    '1px solid var(--line)',
   )
   const link = topBy('.nava', 'the .nav a rule')
-  expect(prop(link.body, 'display'), 'a block link, not a pill').toBe('block')
-  expect(prop(link.body, 'padding'), 'today padding').toBe(
-    'var(--space-1) var(--space-3)',
+  expect(prop(link.body, 'display'), 'a pill row, H5b.2').toBe('flex')
+  expect(prop(link.body, 'padding'), 'the pill padding of H5b.2').toBe(
+    'var(--space-1) var(--space-4)',
   )
-  expect(prop(link.body, 'border-radius'), 'today --radius').toBe(
-    'var(--radius)',
+  expect(prop(link.body, 'border-radius'), 'the pill corner of H5b.2').toBe(
+    'var(--radius-pill)',
   )
   expect(prop(link.body, 'color'), 'the text colour').toBe('var(--text)')
   expect(prop(link.body, 'text-decoration'), 'no underline').toBe('none')
@@ -342,22 +344,23 @@ test('H5a.7: the nav rules are untouched (H5b takes them) and no strings key is 
   ])
   expect(
     prop(current.body, 'box-shadow'),
-    'the inset bar stays until H5b.3 replaces it with the --accent-soft pill',
-  ).toBe('inset 3px 0 0 var(--accent)')
-  expect(prop(current.body, 'background'), 'and no pill is added in H5a').toBe(
-    '',
-  )
+    'no inset bar: H5b.3 removed it',
+  ).toBe('')
+  expect(
+    prop(current.body, 'background'),
+    'the --accent-soft pill of H5b.3',
+  ).toBe('var(--accent-soft)')
   expect(prop(current.body, 'color'), 'the accent text').toBe('var(--accent)')
   expect(prop(current.body, 'font-weight'), 'and the weight').toBe('600')
   const label = topBy('.nav-label', 'the .nav-label rule')
-  expect(prop(label.body, 'font-size'), 'the label keeps --fs-sm').toBe(
-    'var(--fs-sm)',
+  expect(prop(label.body, 'font-size'), 'the label is --fs-xs (H5b.4)').toBe(
+    'var(--fs-xs)',
   )
-  expect(prop(label.body, 'margin'), 'and its margin').toBe(
-    'var(--space-3) 0 var(--space-1)',
+  expect(prop(label.body, 'margin'), 'the margin of H5b.4').toBe(
+    'var(--space-4) 0 var(--space-1)',
   )
-  expect(prop(label.body, 'padding'), 'and its padding').toBe(
-    '0 var(--space-3)',
+  expect(prop(label.body, 'padding'), 'the padding of H5b.4').toBe(
+    '0 var(--space-4)',
   )
   const wide = single(
     insideAll(atRanges('@media (min-width: 960px)')).filter(
@@ -367,12 +370,12 @@ test('H5a.7: the nav rules are untouched (H5b takes them) and no strings key is 
   )
   expect(
     prop(wide.body, 'border-bottom'),
-    'the wide nav keeps border-bottom: 0',
+    'the wide nav keeps border-bottom: 0 (H5b.1)',
   ).toBe('0')
   expect(
-    prop(wide.body, 'border-right'),
-    'and the column divider, which H5b.1 drops',
-  ).toBe('1px solid var(--control)')
+    ['', '0'].includes(prop(wide.body, 'border-right')),
+    'and no column divider: no border-right declaration, or border-right: 0 (H5b.1)',
+  ).toBe(true)
   // No key: H5a adds and changes no text (brief section 0), and the banner
   // names are the ones H4.2 pinned.
   expect(

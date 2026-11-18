@@ -123,6 +123,11 @@ the group is wider than what is left on the name's row, it takes a whole row and
 the left inside it (480 px signed in with the 32-character stub name: Menu at x 16, Sign out on a
 third row at x 16; 320 px with 200 % text). Section 0's "right-aligned at every width" needs this one
 declaration; DOM, Tab order (row by row, still the visual order, 1.3.2 / 2.4.3) unchanged.
+**Correction (H5b review, 2026-11-18):** that declaration is not enough. At 480 px signed in, Menu
+and the theme button end at x 464 (right-aligned), but `.session` (the name and Sign out) is itself a
+wrapping flex row wider than the line, so its items wrap to the left inside it: the name at x 16 on
+the third row, Sign out at x 16 on the fourth (Chromium, Firefox, WebKit alike). `.session` also
+declares `justify-content: flex-end`; the tester pins it beside `.banner-tools`'.
 
 **H5b.7 Nothing else moves.** No DOM, no key; `ProfilesNav.test.tsx` holds as is (it pins the
 `nav-label` class, the ids and the lists, not the look); the Menu's behaviour (Escape, close on a

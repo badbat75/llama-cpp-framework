@@ -105,6 +105,12 @@ Decided with the user on 2026-11-14.
   `aria-current="true"`: it leads elsewhere, but the page belongs to it
   ([WAI-ARIA 1.2, `aria-current`](https://www.w3.org/TR/wai-aria-1.2/#aria-current)). Such a page
   also starts with a link back to its list, before the `h1` (`fe/briefs/02-models.md` 61).
+- The current-page style (`fe/briefs/07-hearth-h5-shell.md` H5b.3): `--accent-soft` fill, `--accent`
+  text, weight 600 (drawn with the 700 face, the only bold one shipped), no inset bar. The fill is
+  decoration (1.09:1 light, 1.35:1 dark on `--page`); the non-colour cue is the weight
+  ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color); bold is a cue in
+  [G182](https://www.w3.org/WAI/WCAG22/Techniques/general/G182)), and it is the one left under
+  forced colours, where the fill becomes `Canvas`. Text on the fill 6.04:1 light, 6.93:1 dark.
 - On every route change: `document.title` becomes `<page> | Private AI Framework`
   ([2.4.2 Page Titled](https://www.w3.org/TR/WCAG22/#page-titled)), and focus moves to the page's
   `h1` (`tabindex="-1"`), so a screen reader announces the new page
@@ -179,6 +185,12 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   Below 480 px the theme button is icon-only (40 by 40, name still "Dark theme") and "Signed in as
   ..." is visually hidden (still read); the Sign in link is a pill at least 32 px high. Measured
   2026-11-18, signed in: 72 px (one row) at 1280, 112 px (two rows) at 479 and 320 px.
+  The nav (H5b) has no fill either and no rule on its right: at 960 px and up the column ends at
+  x 224 and the main region's content starts 40 px further, the gap is the only divider. Entries are
+  pills (`--radius-pill`, at least 32 px high, measured 34; a long id wraps inside, two lines 61 px
+  at 320, three 87 px in the 224 px column); group labels in `--fs-xs` `--muted` (5.65 / 7.52) and
+  each labelled list indented beside a decorative 2 px `--line` rule; below 960 px the open menu ends
+  with a 1 px `--line` rule.
   Landmarks: `header` (banner), `nav` with an accessible name, `main`. A "Skip to content" link is the
   first focusable element ([2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG22/#bypass-blocks)).
 - **Wide (min-width 960px)**: nav as a fixed column of 224px on the left; main content max 880px wide.

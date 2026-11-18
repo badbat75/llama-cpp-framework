@@ -414,7 +414,7 @@ test('section 0: the boxes lifted by a shadow alone carry the 1px transparent bo
 
 // ── H2b.6: nothing else moves ────────────────────────────────────────────
 
-test('H2b.6: the notice and the alert keep their border and --radius, the nav keeps --surface and the banner sits on the paper (H5a.2), only the four containers take --shadow, and no container gains a state rule', () => {
+test('H2b.6: the notice and the alert keep their border and --radius, the banner and the nav sit on the paper (H5a.2, H5b.1), only the four containers take --shadow, and no container gains a state rule', () => {
   for (const [sel, border] of [
     ['.notice', '1px solid var(--control)'],
     ['.alert', '1px solid var(--danger)'],
@@ -431,7 +431,7 @@ test('H2b.6: the notice and the alert keep their border and --radius, the nav ke
     expect(prop(rule.body, 'box-shadow'), `${sel} is not lifted`).toBe('')
   }
   // H5a.2 (07-hearth-h5-shell.md) restyled the banner: it sits on the paper,
-  // so --surface and the divider are gone. The nav keeps its look until H5b.
+  // so --surface and the divider are gone. H5b.1 gave the nav the same.
   const banner = topBy('.banner', 'the .banner rule')
   expect(
     prop(banner.body, 'background'),
@@ -445,12 +445,12 @@ test('H2b.6: the notice and the alert keep their border and --radius, the nav ke
   const nav = topBy('.nav', 'the .nav rule')
   expect(
     prop(nav.body, 'background'),
-    'the nav keeps --surface until H5b restyles it (section 0: H2 touches no .nav rule)',
-  ).toBe('var(--surface)')
+    'the nav is transparent too: the shell sits on the paper, the cards lift off it (H5b.1)',
+  ).toBe('transparent')
   expect(
     prop(nav.body, 'border-bottom'),
-    'the nav keeps its 1px solid --control rule (H1a.8)',
-  ).toBe('1px solid var(--control)')
+    'the nav bottom edge is the decorative --line, seen only below 960 px when the menu is open (H5b.1)',
+  ).toBe('1px solid var(--line)')
   expect(prop(nav.body, 'box-shadow'), '.nav is not lifted').toBe('')
   const lifted = RULES.filter(
     (r) => prop(r.body, 'box-shadow') === 'var(--shadow)',

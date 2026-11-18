@@ -393,11 +393,14 @@ button {
 
 /* The banner's tools group: Menu, the theme switch and the session, pushed to
    the end so they wrap as one group and stay right-aligned at every width
-   (H5a.3). A plain div, so nothing is added to the accessibility tree. */
+   (H5a.3). A plain div, so nothing is added to the accessibility tree. When
+   the group is wider than what is left on the name's row it takes a whole row,
+   so justify-content keeps its wrapped items at the right edge (H5b.0). */
 .banner-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin-left: auto;
 }
@@ -473,10 +476,13 @@ a.session {
   border-radius: var(--radius-pill);
 }
 
+/* The nav sits on the paper like the banner: no fill, and the bottom edge is
+   the decorative --line that ends the open menu below 960 px (H5b.1, brief 04
+   criterion 4: a decoration needs no contrast). */
 .nav {
-  padding: var(--space-4);
-  background: var(--surface);
-  border-bottom: 1px solid var(--control);
+  padding: var(--space-3) var(--space-4) var(--space-5);
+  background: transparent;
+  border-bottom: 1px solid var(--line);
 }
 
 .nav ul {
@@ -485,10 +491,23 @@ a.session {
   padding: 0;
 }
 
+/* The group of entries a label names: the indented list beside a decorative
+   rule (H5b.5). The Overview list has no label, so no rule reaches it. */
+.nav ul[aria-labelledby] {
+  margin-left: var(--space-3);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--line);
+}
+
+/* An entry is a pill, like the controls (H5b.2): a row centring its label,
+   tall enough to be a target (2.5.8), sized by min-height only so the pill
+   grows with the text the user enlarges (1.4.12). */
 .nav a {
-  display: block;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
   color: var(--text);
   text-decoration: none;
   overflow-wrap: anywhere;
@@ -500,20 +519,22 @@ a.session {
 
 /* The nav's current entry, and the entry of a page below it (a model
    profile's page under Model profiles): both spellings of the state,
-   one rule (DESIGN.md 2.3). */
+   one rule (DESIGN.md 2.3). The soft accent square and the bolder label
+   replace the inset bar (H5b.3); the weight is the cue that stays when
+   forced colours drop the fill (1.4.1). */
 .nav a[aria-current='page'],
 .nav a[aria-current='true'],
 a.session[aria-current='page'] {
+  background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .nav-label {
-  margin: var(--space-3) 0 var(--space-1);
-  padding: 0 var(--space-3);
+  margin: var(--space-4) 0 var(--space-1);
+  padding: 0 var(--space-4);
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -562,7 +583,8 @@ main > * {
   }
 }
 
-/* Wide: the nav is a fixed column; no Menu button. */
+/* Wide: the nav is a fixed column; no Menu button, and no divider between it
+   and the page: the shell carries none (H5b.1). */
 @media (min-width: 960px) {
   .menu-button {
     display: none;
@@ -576,7 +598,6 @@ main > * {
 
   .nav {
     border-bottom: 0;
-    border-right: 1px solid var(--control);
   }
 
   main {

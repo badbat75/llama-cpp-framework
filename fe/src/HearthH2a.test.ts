@@ -934,14 +934,52 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   // one of them is listed, matched WHOLE: a name found inside a selector
   // exempts a box nobody named (`.markdown` holds `.mark`, and a markdown box
   // holds text), so each text-free box writes its own selector, pseudo-element
-  // included.
+  // included. A clip box is exempt by its declarations, not by a name: 1px
+  // tall, clipped to nothing, overflow hidden, it shows no text, and a rule
+  // with only some of the three is not exempt (H5a.5: the theme switch label
+  // and the user name are hidden that way below 480 px, so they are not
+  // listed).
+  // The clip box, recognised by its declarations rather than by its name: a
+  // box 1px tall, clipped to nothing, overflow hidden. Such a box shows no
+  // text, so its height is not a 1.4.12 problem, and a rule that does not
+  // carry all three is not exempt whatever it is called.
+  const isClipBox = (body: string): boolean =>
+    prop(body, 'clip-path') === 'inset(50%)' &&
+    prop(body, 'height') === '1px' &&
+    prop(body, 'overflow') === 'hidden'
+  // The blocks a CSS text holds, at any nesting: the rules of the top level
+  // and those inside an at-rule. The at-rule itself is one of them, flagged
+  // by the `@` its selector starts with, and it holds no box of its own.
+  const blocksIn = (css: string): { selector: string; body: string }[] => {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, (m) =>
+      ' '.repeat(m.length),
+    )
+    const out: { selector: string; body: string }[] = []
+    const scan = (text: string): void => {
+      let i = 0
+      for (;;) {
+        const open = text.indexOf('{', i)
+        if (open < 0) return
+        let end = open + 1
+        let depth = 1
+        while (end < text.length && depth > 0) {
+          if (text[end] === '{') depth++
+          else if (text[end] === '}') depth--
+          if (depth > 0) end++
+        }
+        if (depth > 0) return
+        const selector = text.slice(i, open).trim()
+        const body = text.slice(open + 1, end)
+        out.push({ selector, body })
+        if (selector.startsWith('@')) scan(body)
+        i = end + 1
+      }
+    }
+    scan(stripped)
+    return out
+  }
   const TEXT_FREE = [
     '.visually-hidden',
-    // H5a.5 (07-hearth-h5-shell.md): below 480 px the theme switch label and
-    // the signed-in user name carry the .visually-hidden declarations in a
-    // media rule, so this 1px is that clip box, not a box of text.
-    '.theme-switch-label',
-    '.session > span',
     '.shape',
     '.shape-failed::before',
     '.shape-failed::after',
@@ -971,7 +1009,8 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   const fixed: string[] = []
   for (const r of RULES) {
     const height = prop(r.body, 'height')
-    if (height && !textFree(r.flat)) fixed.push(`${r.flat}: ${height}`)
+    if (height && !textFree(r.flat) && !isClipBox(r.body))
+      fixed.push(`${r.flat}: ${height}`)
   }
   expect(fixed, 'no fixed height outside the boxes that carry no text').toEqual(
     [],
@@ -986,4 +1025,65 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
       prop(body, 'height'),
       `${what}: a min-height, never a height, so the text it holds can grow (1.4.12)`,
     ).toBe('')
+
+  // The same check over any CSS text, so the check itself is testable: text
+  // written here, and the stylesheet with its @media blocks, which the rule
+  // list above never reads (those rules sit at depth 1).
+  const heightsInCss = (css: string): string[] => {
+    const out: string[] = []
+    for (const b of blocksIn(css)) {
+      const height = prop(b.body, 'height')
+      if (
+        height &&
+        !b.selector.startsWith('@') &&
+        !textFree(b.selector) &&
+        !isClipBox(b.body)
+      )
+        out.push(`${b.selector}: ${height}`)
+    }
+    return out
+  }
+  // The clip box the stylesheet ships below 480 px (H5a.5), and the same
+  // name with a height of its own. A box exempt by its NAME alone is the
+  // hole: the theme switch's label is text the user reads.
+  const CLIP = `@media (max-width: 479.98px) {
+  .theme-switch-label,
+  .session > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}`
+  expect(
+    heightsInCss('.theme-switch-label { height: 20px; padding: 4px }'),
+    'a label 20px tall: text at 200% is clipped, so this is the violation',
+  ).toEqual(['.theme-switch-label: 20px'])
+  expect(
+    heightsInCss('.theme-switch-label { min-height: 20px }'),
+    'a box that carries no height is not listed',
+  ).toEqual([])
+  expect(
+    heightsInCss(CLIP),
+    'a 1px box clipped to nothing shows no text: exempt by its declarations',
+  ).toEqual([])
+  expect(
+    heightsInCss('.theme-switch-label { height: 1px; overflow: hidden }'),
+    'a box one declaration short of a clip box is not exempt: the name alone is not',
+  ).toEqual(['.theme-switch-label: 1px'])
+  expect(
+    heightsInCss(
+      '@media (max-width: 480px) { .theme-switch-label { height: 20px } }',
+    ),
+    'a height inside a media rule is read, not skipped',
+  ).toEqual(['.theme-switch-label: 20px'])
+  expect(
+    heightsInCss(CSS),
+    'no fixed height on a box with text, the media rules included',
+  ).toEqual([])
 })

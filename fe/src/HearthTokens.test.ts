@@ -456,7 +456,7 @@ test('H1a.7: every font-size outside :root is a var(--fs-*) of the scale, no rem
   ).toEqual([])
 })
 
-test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecked box on --field, rows divide on --line, the open About on --accent-soft, the nav keeps --surface and the banner is transparent (H5a.2)', () => {
+test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecked box on --field, rows divide on --line, the open About on --accent-soft, the nav and the banner sit on the paper (H5b.1, H5a.2)', () => {
   expect(
     prop(
       single(
@@ -534,7 +534,7 @@ test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecke
     'the open About shows --accent-soft, visible on the --bg card',
   ).toBe('var(--accent-soft)')
   // H5a.2 (07-hearth-h5-shell.md) restyled the banner: transparent, no
-  // divider. The nav keeps its look until H5b.
+  // divider. H5b.1 gave the nav the same paper.
   const banner = single(
     TOP.filter((r) => r.compact === '.banner'),
     'the top-level .banner rule',
@@ -553,12 +553,12 @@ test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecke
   ).body
   expect(
     prop(nav, 'background'),
-    'the nav keeps --surface until H5b restyles it',
-  ).toBe('var(--surface)')
+    'the nav is transparent: the shell sits on the page with the banner (H5b.1)',
+  ).toBe('transparent')
   expect(
     prop(nav, 'border-bottom'),
-    'the nav keeps its 1px solid --control rule',
-  ).toBe('1px solid var(--control)')
+    'the nav bottom edge is the decorative 1px solid --line of the open menu (H5b.1)',
+  ).toBe('1px solid var(--line)')
 })
 
 test('H1a.11: no transition, transition-*, animation or animation-* declaration, so nothing moves and prefers-reduced-motion needs no rule', () => {
@@ -670,8 +670,10 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     'button: min-height: var(--control-h)',
     'button: min-width: 24px',
     // H5a.4: the Sign in pill is at least 32 px; H5a.5: the icon-only theme
-    // switch below 480 px keeps the --control-h square (2.5.8).
+    // switch below 480 px keeps the --control-h square (2.5.8); H5b.2: the
+    // nav pills are 32 px (2.5.8 asks 24).
     'a.session: min-height: 32px',
+    '.nav a: min-height: 32px',
     'main: min-width: 0',
     '.theme-switch: min-width: var(--control-h)',
     '.model-profiles-switch: min-height: 24px',

@@ -399,9 +399,13 @@ test("DESIGN.md 2.3: the rule that styles the nav's current entry covers aria-cu
     'the current-page look: --accent text',
   ).toBe('var(--accent)')
   expect(prop(current.body, 'font-weight'), 'and the bolder label').toBe('600')
-  expect(prop(current.body, 'box-shadow'), 'and the bar at its left').toBe(
-    'inset 3px 0 0 var(--accent)',
-  )
+  // H5b.3 (07-hearth-h5-shell.md): the current entry carries the soft accent
+  // square and no inset bar; the square is the mark of the current page.
+  expect(
+    prop(current.body, 'background'),
+    'the current-page look, H5b.3: --accent-soft background',
+  ).toBe('var(--accent-soft)')
+  expect(prop(current.body, 'box-shadow'), 'and no inset bar, H5b.3').toBe('')
 })
 
 // The jump list's landing (fe/briefs/02h-model-profile-save.md, 2h.196): a jump button moves
