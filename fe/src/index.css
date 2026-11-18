@@ -270,7 +270,7 @@ a {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--ring-w) solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -299,7 +299,7 @@ a {
 
 button {
   font: inherit;
-  min-height: 32px;
+  min-height: var(--control-h);
   min-width: 24px;
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius);
@@ -309,14 +309,18 @@ button {
 .primary {
   background: var(--accent);
   color: var(--on-accent);
-  border: 1px solid var(--accent);
+  border: var(--border-w) solid var(--accent);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-4);
   font-weight: 600;
 }
 
 .secondary {
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--control);
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-4);
 }
 
 .secondary[aria-pressed='true'] {
@@ -569,11 +573,11 @@ td {
   flex: 1;
   min-width: 0;
   font: inherit;
-  min-height: 32px;
+  min-height: var(--control-h);
   padding: var(--space-1) var(--space-2);
   color: var(--text);
   background: var(--field);
-  border: 1px solid var(--control);
+  border: var(--border-w) solid var(--control);
   border-radius: var(--radius);
 }
 
@@ -672,6 +676,12 @@ td {
   list-style: none;
 }
 
+/* The jump list keeps the small buttons until H9 redraws it as a text list:
+   ten 40 px pills would make the model profile page longer at 320 px. */
+.jump button {
+  min-height: 32px;
+}
+
 /* Room above the heading a jump lands on: the ring is drawn outside the box,
  * so the scroll stops short of the top edge and leaves the whole ring in view
  * (196). */
@@ -683,7 +693,7 @@ td {
  * the elements the page moves the focus to, so this one gives the ring back
  * here, where the user needs to see where the jump went. */
 .card h3:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--ring-w) solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -787,7 +797,7 @@ legend.field-label {
   .field-label {
     grid-column: 1;
     align-self: start;
-    min-height: 32px;
+    min-height: var(--control-h);
   }
 
   .field-control,
@@ -839,6 +849,7 @@ legend.field-label {
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--control);
+  border-radius: var(--radius-pill);
 }
 
 .about[aria-expanded='true'] {
@@ -849,11 +860,11 @@ input[type='text'],
 input[type='password'],
 select {
   font: inherit;
-  min-height: 32px;
+  min-height: var(--control-h);
   padding: var(--space-1) var(--space-2);
   color: var(--text);
   background: var(--field);
-  border: 1px solid var(--control);
+  border: var(--border-w) solid var(--control);
   border-radius: var(--radius);
   min-width: 0;
 }
@@ -880,7 +891,11 @@ input:disabled,
 select:disabled,
 textarea:disabled {
   background: var(--surface);
-  border: 1px dashed var(--control);
+  /* The hatch is written on one line: the test pins the spelling of H2a.8, and
+     Prettier would break the long gradient across lines. */
+  /* prettier-ignore */
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--hatch) 6px 8px);
+  border: var(--border-w) dashed var(--control);
   color: var(--muted);
   -webkit-text-fill-color: var(--muted);
   opacity: 1;
@@ -898,19 +913,19 @@ input[type='checkbox'] {
   display: inline-grid;
   place-content: center;
   flex: none;
-  width: 1rem;
-  height: 1rem;
+  width: 1.25rem;
+  height: 1.25rem;
   margin: 0;
   background: var(--field);
-  border: 1px solid var(--control);
-  border-radius: 3px;
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-check);
   cursor: pointer;
 }
 
 input[type='checkbox']::before {
   content: '';
-  width: 0.55rem;
-  height: 0.3rem;
+  width: 0.6rem;
+  height: 0.32rem;
   margin-top: -0.15rem;
   border-left: 2px solid var(--on-accent);
   border-bottom: 2px solid var(--on-accent);
@@ -930,13 +945,68 @@ input[type='checkbox']:checked::before {
 input[type='checkbox']:disabled,
 input[type='checkbox'][aria-disabled='true'] {
   background: var(--surface);
-  border: 1px dashed var(--control);
+  border: var(--border-w) dashed var(--control);
   cursor: not-allowed;
 }
 
 input[type='checkbox']:disabled::before,
 input[type='checkbox'][aria-disabled='true']::before {
   border-color: var(--muted);
+}
+
+/* The row switch (02-models.md 2c.39): the same element, drawn as a track with
+   a knob. The rule comes after the checkbox rules and has the same
+   specificity, so it wins there: the track takes the checkbox's fills, --field
+   off, --accent checked, --surface dashed when inactive, and declares no
+   background of its own (DESIGN.md 5.2: drawn and made inactive exactly as a
+   checkbox). The 44 by 24 px track and the knob are boxes without text. */
+input[role='switch'] {
+  width: 2.75rem;
+  height: 1.5rem;
+  place-content: center start;
+  padding: 0 2px;
+  border-radius: var(--radius-pill);
+}
+
+input[role='switch']::before {
+  visibility: visible;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  transform: none;
+  background: var(--control);
+}
+
+input[role='switch']:checked::before {
+  background: var(--on-accent);
+  translate: 1.2rem 0;
+}
+
+/* Written after the checked knob, so a switch that is on and inactive keeps the
+   --muted knob, as the disabled box does. The state is the word beside the
+   switch too, so colour is not the only cue (1.4.1). */
+input[role='switch']:disabled::before,
+input[role='switch'][aria-disabled='true']::before {
+  background: var(--muted);
+}
+
+/* The knob's background would be forced to the track's colour and vanish
+   (DESIGN.md 5.2: the cue that survives forced colours). The checked knob is
+   named beside the plain one: its rule outside this block is more specific, so
+   naming the plain one alone would leave --on-accent on the forced track. */
+@media (forced-colors: active) {
+  input[role='switch']::before,
+  input[role='switch']:checked::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  input[role='switch']:disabled::before,
+  input[role='switch'][aria-disabled='true']::before {
+    background: GrayText;
+  }
 }
 
 .check {
@@ -1120,7 +1190,9 @@ html:has(.save-bar) {
 .primary:disabled,
 .secondary:disabled {
   background: var(--surface);
-  border: 1px dashed var(--control);
+  /* prettier-ignore */
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--hatch) 6px 8px);
+  border: var(--border-w) dashed var(--control);
   color: var(--muted);
   cursor: not-allowed;
 }

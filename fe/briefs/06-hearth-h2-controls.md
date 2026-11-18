@@ -39,6 +39,13 @@ Buttons, Save bar); `fe/src/DisabledLook.test.ts`.
   [CSS Backgrounds 3, 4.6 Effect on Tables](https://www.w3.org/TR/css-backgrounds-3/#border-radius-tables):
   "When border-collapse is collapse, they have no effect"). The last
   row drops its divider so no straight line crosses the rounded corners.
+- **No hover look on controls** in H2 (as built and as the mockup: its only `:hover` rules are the
+  nav link and the tile id). Hover is no WCAG requirement; the pointer cursor and the 3 px focus ring
+  stay the feedback. A hover tint for buttons is a later, separate decision (a preference).
+- **`--border-w` 1.5px renders as 1 px at a device pixel ratio of 1** in Chromium, Firefox and
+  WebKit (measured, H2a review): a border width over one device pixel is rounded down to whole
+  device pixels ([CSS Values 4, snap a length as a border width](https://www.w3.org/TR/css-values-4/#lengths)).
+  The contrast figures of H2a.9 do not depend on the width.
 - **The hatch** goes on the disabled field and the disabled button, not on the checkbox or the switch
   (20 px boxes show no pattern; a preference). In forced colours a gradient `background-image`
   computes to `none` (same section): the dashed border stays the cue.
@@ -81,9 +88,15 @@ box). The state is also the word beside the switch, so position and colour are n
 ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
 
 **H2a.6 Switch in forced colours.** Inside `@media (forced-colors: active)`:
-`input[role='switch']::before { forced-color-adjust: none; background: CanvasText; }` and, for the
-disabled and aria-disabled knob, `background: GrayText`. Without it the knob's background would be
-forced to the track's colour and vanish. The existing GrayText border rules stay.
+`input[role='switch']::before, input[role='switch']:checked::before { forced-color-adjust: none;
+background: CanvasText; }` and, after it, for the disabled and aria-disabled knob, `background:
+GrayText`. Without it the knob's background would be forced to the track's colour and vanish. The
+checked selector is needed for specificity: `input[role='switch']:checked::before` (H2a.5, outside
+the media block) outweighs `input[role='switch']::before` and would keep the `--on-accent` knob on
+the forced `Canvas` track (correction after the H2a review, 2026-11-18: the knob of a switch that is
+on measured 1:1 against its track in Chromium's forced-colours emulation and in Firefox with
+`browser.display.document_color_use` 2). The disabled rule has the checked rule's specificity and
+comes after it, so it still wins. The existing GrayText border rules stay.
 
 **H2a.7 Focus ring.** `:focus-visible` and `.card h3:focus-visible`: `outline: var(--ring-w) solid
 var(--accent)`, `outline-offset: 2px`. `[tabindex='-1']:focus { outline: none }` stays. Ring

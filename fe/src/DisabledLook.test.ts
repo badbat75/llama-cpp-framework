@@ -58,10 +58,11 @@ const prop = (body: string, name: string): string => {
   return val
 }
 
-// The 1px dashed --control border, in the shorthand or split into a dashed
-// style and the colour (both spellings are 163a's).
+// The dashed --control border, at the --border-w width H2a.10 gives it, in the
+// shorthand or split into a dashed style and the colour (both spellings are
+// 163a's).
 const dashedControl = (body: string): boolean =>
-  prop(body, 'border') === '1px dashed var(--control)' ||
+  prop(body, 'border') === 'var(--border-w) dashed var(--control)' ||
   (prop(body, 'border-style') === 'dashed' &&
     prop(body, 'border-color') === 'var(--control)')
 
@@ -85,7 +86,7 @@ test('2h.163a: one rule for input, select and textarea :disabled draws the field
   expect(prop(rule.body, 'background'), 'on --surface').toBe('var(--surface)')
   expect(
     dashedControl(rule.body),
-    'a 1px dashed border in var(--control)',
+    'a dashed border in var(--control), at the --border-w width',
   ).toBe(true)
   expect(prop(rule.body, 'color'), 'the value text in --muted').toBe(
     'var(--muted)',
@@ -115,8 +116,8 @@ test('2h.163b and 2h.163f: the enabled field is on --field with a solid --contro
   ).toBe('var(--field)')
   expect(
     prop(enabled.body, 'border'),
-    'enabled keeps its solid --control border',
-  ).toBe('1px solid var(--control)')
+    'enabled keeps its solid --control border, at the --border-w width of H2a.10',
+  ).toBe('var(--border-w) solid var(--control)')
   const dimmed: string[] = []
   for (const r of RULES.filter((r) => r.compact.includes(':disabled')))
     for (const d of r.body.split(';')) {

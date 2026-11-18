@@ -478,8 +478,8 @@ test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecke
   ).toBe('var(--field)')
   expect(
     prop(enabled, 'border'),
-    'its border stays 1px solid --control until H2a',
-  ).toBe('1px solid var(--control)')
+    'the field border is the --border-w one of H2a, in --control',
+  ).toBe('var(--border-w) solid var(--control)')
   expect(
     prop(
       single(
@@ -563,8 +563,8 @@ test('H1a.12 guard: the focus rings keep today declarations, the accent ring who
   ).body
   expect(
     prop(ring, 'outline'),
-    'the ring is --accent, so pairs P11 to P15 guard it',
-  ).toBe('2px solid var(--accent)')
+    'the ring is the --ring-w accent one of H2a.7, whose contrast P11 to P15 pin',
+  ).toBe('var(--ring-w) solid var(--accent)')
   expect(prop(ring, 'outline-offset'), 'offset unchanged').toBe('2px')
   const moved = single(
     TOP.filter((r) => r.compact === "[tabindex='-1']:focus"),
@@ -579,12 +579,12 @@ test('H1a.12 guard: the focus rings keep today declarations, the accent ring who
   ).body
   expect(
     prop(heading, 'outline'),
-    'the jump landing keeps its accent ring',
-  ).toBe('2px solid var(--accent)')
+    'the jump landing keeps its accent ring, at the same --ring-w width',
+  ).toBe('var(--ring-w) solid var(--accent)')
   expect(prop(heading, 'outline-offset'), 'with its offset').toBe('2px')
 })
 
-test('H1a.12 guard: the three forced-colours blocks stay, with system colours only (the token colours are forced there)', () => {
+test('H1a.12 guard: the four forced-colours blocks stay, with system colours only (the token colours are forced there)', () => {
   const SYSTEM = [
     'GrayText',
     'CanvasText',
@@ -601,48 +601,73 @@ test('H1a.12 guard: the three forced-colours blocks stay, with system colours on
     blocks.push(CSS.slice(at, end + 1))
     from = end + 1
   }
-  expect(blocks.length, "today's three forced-colours blocks stay as is").toBe(
-    3,
-  )
+  expect(
+    blocks.length,
+    'the exact count, not a floor: the three blocks of H1a (the row switch aria-disabled box, the aria-disabled buttons, the checkbox row box) plus the one H2a.6 added for the switch knob, and no more: a fifth block says a new corner of the page needs forced colours, and a lost one that a cue went away',
+  ).toBe(4)
   const off: string[] = []
   for (const b of blocks)
     for (const m of b.matchAll(/([-a-zA-Z]+)\s*:\s*([^;{}]+);/g))
-      if (!SYSTEM.includes(m[2].trim())) off.push(`${m[1]}: ${m[2].trim()}`)
+      // forced-color-adjust is the one property that is not a colour: the
+      // switch knob needs it (H2a.6), and naming it keeps the scan honest.
+      if (m[1] !== 'forced-color-adjust' && !SYSTEM.includes(m[2].trim()))
+        off.push(`${m[1]}: ${m[2].trim()}`)
   expect(
     off,
     'inside a forced-colours block only the system colour keywords: the cues that survive are the border styles, the shapes and the text',
   ).toEqual([])
 })
 
-test('H1a.12 guard: no size moves in H1a: the 32px control heights stay and the shape tokens are declared but not used', () => {
-  const heights: string[] = []
-  for (const r of RULES) {
-    const v = prop(r.body, 'min-height')
-    if (v) heights.push(`${r.sel.replace(/\s+/g, ' ')}: ${v}`)
-  }
+test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with the shape tokens H1a declared', () => {
+  // Every min-height and min-width in the sheet, selector and value, in the
+  // order they are written: a set of the VALUES would let a control take
+  // another control's size (a 24 px row and a 40 px control are both in the
+  // set), the pairs pin which rule carries which.
+  const sizes: string[] = []
+  for (const r of RULES)
+    for (const n of ['min-height', 'min-width']) {
+      const v = prop(r.body, n)
+      if (v) sizes.push(`${r.sel.replace(/\s+/g, ' ')}: ${n}: ${v}`)
+    }
   expect(
-    heights,
-    'every min-height is the one of today: H2a is the slice that sizes controls',
+    sizes,
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink',
   ).toEqual([
-    '#root: 100vh',
-    'button: 32px',
-    '.model-profiles-switch: 24px',
-    '.model-profiles-switch-status: 1lh',
-    '.model-profiles-filter-row input: 32px',
-    '.model-profiles-filter-status: 1lh',
-    '.field-label: 32px',
-    '.about: 24px',
-    "input[type='text'], input[type='password'], select: 32px",
-    '.check: 24px',
+    '#root: min-height: 100vh',
+    'button: min-height: var(--control-h)',
+    'button: min-width: 24px',
+    'main: min-width: 0',
+    '.model-profiles-switch: min-height: 24px',
+    '.model-profiles-switch: min-width: 24px',
+    '.model-profiles-switch-status: min-height: 1lh',
+    '.model-profiles-filter-row input: min-height: var(--control-h)',
+    '.model-profiles-filter-row input: min-width: 0',
+    '.model-profiles-filter-status: min-height: 1lh',
+    '.jump button: min-height: 32px',
+    'fieldset: min-width: 0',
+    '.field-control: min-width: 0',
+    '.full-value: min-width: 0',
+    '.field-label: min-height: var(--control-h)',
+    '.assets dt: min-width: 0',
+    '.assets dd: min-width: 0',
+    '.about: min-height: 24px',
+    "input[type='text'], input[type='password'], select: min-height: var(--control-h)",
+    "input[type='text'], input[type='password'], select: min-width: 0",
+    '.check: min-height: 24px',
+    '.save-messages: min-width: 0',
   ])
-  const used: string[] = []
+  const used = new Set<string>()
   for (const r of RULES)
     if (r.compact !== ':root')
-      for (const t of ['--control-h', '--border-w', '--ring-w'])
-        if (r.body.includes(`var(${t})`))
-          used.push(`${r.sel.replace(/\s+/g, ' ')}: ${t}`)
+      for (const t of [
+        '--control-h',
+        '--border-w',
+        '--ring-w',
+        '--radius-check',
+      ])
+        if (r.body.includes(`var(${t})`)) used.add(t)
   expect(
-    used,
-    'the shape tokens are declared for H2a, no rule draws with them in H1a',
-  ).toEqual([])
+    [...used].sort(),
+    'H2a is the slice that draws with the shape tokens H1a declared: all four are in use',
+  ).toEqual(['--border-w', '--control-h', '--radius-check', '--ring-w'])
 })

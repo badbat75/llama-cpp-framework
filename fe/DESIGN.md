@@ -209,9 +209,12 @@ A text colour on a surface outside that table needs a new row first.
 | `--success` | `#2f6f3e` | `#7ccf8e` | Running, Saved | 5.30 / 8.13 (4.96 light on `--accent-soft`, unused until H6) |
 | `--warning` | `#8a5300` | `#e8b45a` | Starting, Stopping, "restart to apply" | 5.54 / 8.08 |
 
-Also declared, for later slices: `--hatch` and `--shadow` (redeclared in dark: an outline there),
-`--radius-check`, `--radius-card`, `--radius-pill`, `--control-h` 40px, `--border-w` 1.5px,
-`--ring-w` 3px, `--space-7` 64px (brief 06 section 1). In light `--bg` and `--field` are the same
+Shape tokens: `--control-h` 40px (buttons and fields, a `min-height`), `--border-w` 1.5px (control
+borders; at a device pixel ratio of 1 the browsers draw it 1 px, since border widths snap down to
+whole device pixels: [CSS Values 4](https://www.w3.org/TR/css-values-4/#lengths)), `--ring-w` 3px,
+`--hatch` (the disabled stripes), `--radius-check` (checkbox), `--radius-pill` (primary, secondary,
+About buttons, switch track), all in use since H2a; declared for later slices: `--shadow`
+(redeclared in dark: an outline there), `--radius-card`, `--space-7` 64px (brief 06 section 1). In light `--bg` and `--field` are the same
 colour; in dark an enabled field is darker than its card.
 
 - **Type**: Atkinson Hyperlegible Next (400 and 700) for text, Atkinson Hyperlegible Mono (400) for
@@ -226,13 +229,17 @@ colour; in dark an enabled field is darker than its card.
   0.9375rem, `--fs-body` 1.0625rem (17 px), `--fs-lg` 1.125rem (h3), `--fs-h2` 1.375rem, `--fs-h1`
   2rem (line height 1.2); body line height `--lh` 1.55. Bold is 600.
 - **Spacing**: 4, 8, 12, 16, 24, 40, 64 px (`--space-1` to `--space-7`). Radius `--radius` 10px
-  (controls, notices, alerts; cards keep it until H2b). Focus ring: 2px solid `--accent` (H2a: 3px,
-  `--ring-w`), offset 2px, on `:focus-visible`
+  (fields, notices, alerts; cards keep it until H2b); buttons are pills. Focus ring: 3px
+  (`--ring-w`) solid `--accent`, offset 2px, on `:focus-visible`
   ([2.4.7 Focus Visible](https://www.w3.org/TR/WCAG22/#focus-visible)); measured at least 6.04:1
   light and 6.93:1 dark against every colour beside it (the About toggle open, on `--accent-soft`;
-  H1a review).
+  H1a review; with the 3 px ring 6.58:1 light and 8.76:1 dark at the lowest, nothing clips it, H2a
+  review).
 - **Targets**: every button, checkbox and link at least 24 by 24 CSS px, including its padding
-  ([2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
+  ([2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)). Buttons and
+  fields are at least 40 px high (`--control-h`), the jump list's buttons 32 px, About 24 px; the
+  checkbox box is 20 px (1.25rem) inside a `.check` label of at least 24 px that activates it, with no
+  other target within the 24 px circle (2.5.8's spacing exception); the switch track 44 by 24 px.
 - **Motion**: none needed; a spinner, if any, stops under `prefers-reduced-motion: reduce`.
 
 ### 5.2 Components
@@ -316,10 +323,14 @@ Each is one React component, reused by every page.
   - **Disabled looks different from enabled** (2026-11-17, 02h 163a to 163g): every control with the
     native `disabled` attribute (`input`, `select`, `textarea`, a checkbox or switch, a button) is
     drawn **flat**: background `--surface` (slightly darker than the `--bg` card, so it reads as
-    part of the card's ground, not a box to type into), border **1px dashed** `--control` (the box
-    stays visible, at 3.48:1 light, 3.78:1 dark on `--surface`), text and check mark `--muted`,
-    `cursor: not-allowed`, never `opacity`. An enabled control keeps its solid `--control` border on
-    `--field`. The cue is the border's style, not a colour (`--surface` on `--bg` is only 1.13:1
+    part of the card's ground, not a box to type into), border **dashed** `--border-w` `--control`
+    (the box stays visible, at 3.48:1 light, 3.78:1 dark on `--surface`), text and check mark `--muted`,
+    `cursor: not-allowed`, never `opacity`. A disabled field or button also carries the **hatch**
+    (`repeating-linear-gradient(135deg, transparent 0 6px, var(--hatch) 6px 8px)` over `--surface`;
+    not on a checkbox or switch, too small to show it): on the darker stripe, as rendered, `--muted`
+    text is 4.85:1 light, 5.5:1 dark and the dashed border 3.04:1 light, 3.22:1 dark (H2a review).
+    Forced colours drop the gradient; the dashed border stays the cue. An enabled control keeps its
+    solid `--control` border on `--field`. The cue is the border's style, not a colour (`--surface` on `--bg` is only 1.13:1
     light, 1.09:1 dark), so it
     holds without colour ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)) and under forced
     colours, which replace border colours but not `border-style`
@@ -347,7 +358,12 @@ Each is one React component, reused by every page.
   read as the default (as the "(not available)" engine of section 2.2).
 - **Switch**: an on/off state written at once and named by a thing rather than a sentence (a
   model profile's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
-  `aria-checked`, drawn and made inactive exactly as a checkbox
+  `aria-checked`, made inactive exactly as a checkbox and drawn with the checkbox's fills as a 44 by
+  24 px pill track with a round knob: `--control` knob on the left when off, `--on-accent` knob on
+  the right of an `--accent` track when on, `--muted` knob on the dashed `--surface` track when
+  inactive; the knob jumps, no transition. Under forced colours the knob is `CanvasText` (`GrayText`
+  inactive) with `forced-color-adjust: none`, on and off alike (the on knob once H2a.6's correction is coded), so it never takes the track's colour.
+  The word beside it (On / Off) also carries the state
   ([APG Switch](https://www.w3.org/WAI/ARIA/apg/patterns/switch/),
   [ARIA in HTML](https://www.w3.org/TR/html-aria/)). A setting phrased as a statement ("start
   llama-server when the system starts") stays a checkbox.
@@ -393,8 +409,8 @@ Each is one React component, reused by every page.
   dialog has a visible button that does what Escape does (Keep editing, Cancel), so touch and
   pointer users can leave it too
   ([APG modal dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)).
-- **Buttons**: primary (filled `--accent`) for the one main action of a view; secondary (outlined
-  `--control`) otherwise; danger is not a style of its own **(preference)**: destructive actions ask in a
+- **Buttons**: pills, at least 40 px high; primary (filled `--accent`) for the one main action of a
+  view; secondary (outlined `--control`, `--border-w`) otherwise; no hover look (brief 06 section 0); danger is not a style of its own **(preference)**: destructive actions ask in a
   dialog instead.
   - **Inactive**: a button that can turn inactive while it has focus (the save bar's, the run
     controls) uses `aria-disabled="true"`, never `disabled`: it stays in the tab sequence, a click,
