@@ -362,7 +362,7 @@ Each is one React component, reused by every page.
   24 px pill track with a round knob: `--control` knob on the left when off, `--on-accent` knob on
   the right of an `--accent` track when on, `--muted` knob on the dashed `--surface` track when
   inactive; the knob jumps, no transition. Under forced colours the knob is `CanvasText` (`GrayText`
-  inactive) with `forced-color-adjust: none`, on and off alike (the on knob once H2a.6's correction is coded), so it never takes the track's colour.
+  inactive) with `forced-color-adjust: none`, on and off alike, so it never takes the track's colour.
   The word beside it (On / Off) also carries the state
   ([APG Switch](https://www.w3.org/WAI/ARIA/apg/patterns/switch/),
   [ARIA in HTML](https://www.w3.org/TR/html-aria/)). A setting phrased as a statement ("start
