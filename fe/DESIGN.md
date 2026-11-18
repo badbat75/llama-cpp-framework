@@ -155,7 +155,13 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 
 ## 4. Layout and responsive rules
 
-- **App shell**: a header (product name, then the user name and Sign out, or Sign in), a nav, and the main region.
+- **App shell**: a header (the mark and the product name as the home link, then the user name and Sign out, or Sign in), a nav, and the main region.
+  The mark (`fe/src/Mark.tsx`, `fe/briefs/07-hearth-h3-mark.md`): one `svg.mark`, 2rem, in
+  `--accent`, `aria-hidden`, so the link's name stays "Private AI Framework"; the same path is the
+  favicon, an inline SVG data URI whose fill follows the browser's scheme. Under forced colours an
+  SVG keeps its author `color` (the UA's `svg { forced-color-adjust: preserve-parent-color }`,
+  [CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)),
+  so `.mark` needs `color: inherit` there to take the link's system colour (H3.10).
   Landmarks: `header` (banner), `nav` with an accessible name, `main`. A "Skip to content" link is the
   first focusable element ([2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG22/#bypass-blocks)).
 - **Wide (min-width 960px)**: nav as a fixed column of 224px on the left; main content max 880px wide.

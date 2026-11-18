@@ -469,9 +469,11 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
 
 // ── The page's own file ─────────────────────────────────────────────────
 
-/** The inline icon of brief criterion 8a, exactly as the brief gives it. */
+/** The inline icon of brief criterion 8a, replaced by the hearth mark of
+ *  fe/briefs/07-hearth-h3-mark.md (H3.6): the outline path, the accent of the
+ *  light scheme and, in the dark block, the dark accent. */
 const ICON_HREF =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a5cc2'/%3E%3Cpath d='M4 12 8 4l4 8M5.5 9h5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 3 28 28'%3E%3Cstyle%3Epath{fill:%237b3a8f}@media (prefers-color-scheme:dark){path{fill:%23dcaaf0}}%3C/style%3E%3Cpath fill-rule='evenodd' d='M5 30V15a11 11 0 0 1 22 0v15zM17.79 18.12 18.8 24h-5.6l1.01-5.88a3.6 3.6 0 1 1 3.58 0z'/%3E%3C/svg%3E"
 
 test('1b.8a (2.7): index.html declares one inline SVG icon in the head, after the viewport meta', () => {
   const html = readFileSync(

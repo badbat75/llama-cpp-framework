@@ -18,6 +18,7 @@ import {
   type Instance,
   type InstancesStore,
 } from './Instances.tsx'
+import { Mark } from './Mark.tsx'
 import ModelProfiles from './ModelProfiles.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
@@ -270,6 +271,7 @@ export default function App() {
           href="#/"
           onClick={(e) => held(e, e.currentTarget)}
         >
+          <Mark />
           {t('app-name')}
         </a>
         <button

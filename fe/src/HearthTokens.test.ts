@@ -605,16 +605,24 @@ test('H1a.12 guard: the four forced-colours blocks stay, with system colours onl
     blocks.length,
     'the exact count, not a floor: the three blocks of H1a (the row switch aria-disabled box, the aria-disabled buttons, the checkbox row box) plus the one H2a.6 added for the switch knob, and no more: a fifth block says a new corner of the page needs forced colours, and a lost one that a cue went away',
   ).toBe(4)
+  // `inherit` is a CSS-wide keyword, not an author colour: H3.10 gives the
+  // .mark rule `color: inherit` in a forced block so the mark takes the home
+  // link's forced colour (the UA sheet pins an svg's colour to the author
+  // value, brief 07 section 0). Allowed as the WHOLE value, case-insensitive:
+  // a value glued to anything else (inherit-ish) is not the keyword. Nothing
+  // else joins the list: currentColor, unset, initial and a var() stay red.
+  const allowed = (v: string): boolean =>
+    SYSTEM.includes(v) || v.toLowerCase() === 'inherit'
   const off: string[] = []
   for (const b of blocks)
     for (const m of b.matchAll(/([-a-zA-Z]+)\s*:\s*([^;{}]+);/g))
       // forced-color-adjust is the one property that is not a colour: the
       // switch knob needs it (H2a.6), and naming it keeps the scan honest.
-      if (m[1] !== 'forced-color-adjust' && !SYSTEM.includes(m[2].trim()))
+      if (m[1] !== 'forced-color-adjust' && !allowed(m[2].trim()))
         off.push(`${m[1]}: ${m[2].trim()}`)
   expect(
     off,
-    'inside a forced-colours block only the system colour keywords: the cues that survive are the border styles, the shapes and the text',
+    'inside a forced-colours block only the system colour keywords and the CSS-wide keyword inherit: a var(), a hex, a named colour or any other keyword is an author colour the forced palette fights; the cues that survive are the border styles, the shapes and the text',
   ).toEqual([])
 })
 

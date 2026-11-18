@@ -356,11 +356,28 @@ button {
   border-bottom: 1px solid var(--control);
 }
 
+/* The mark and the product name on one line (07-hearth-h3-mark.md 3.4). */
 .app-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--text);
   font-weight: 600;
   text-decoration: none;
   padding: var(--space-1) 0;
+}
+
+/* The Hearth mark: its box is in rem so it grows with the text beside it, it
+   never shrinks under a long name, and its colour is the accent, which the
+   path takes through currentColor; no fill here (07-hearth-h3-mark.md 3.5).
+   The accent is a token, so the dark scheme switches it with no rule of its
+   own; forced colours do not, so the mark has one rule in the block below
+   (3.10). */
+.mark {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  color: var(--accent);
 }
 
 .session {
@@ -549,10 +566,19 @@ tr:last-child td {
   cursor: default;
 }
 
+/* The mark in forced colours (07-hearth-h3-mark.md 3.10): an svg keeps its
+   author colour there, the UA's preserve-parent-color, so one rule hands the
+   mark the system colour the home link's text takes. It joins the block beside
+   it, the one nearest the mark: the mark needs one declaration there, not a
+   block of its own. */
 @media (forced-colors: active) {
   .model-profiles-switch input[type='checkbox'][aria-disabled='true'],
   .model-profiles-switch input[type='checkbox'][aria-disabled='true']::before {
     border-color: GrayText;
+  }
+
+  .mark {
+    color: inherit;
   }
 }
 

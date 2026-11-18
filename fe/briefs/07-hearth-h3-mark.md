@@ -17,7 +17,14 @@ Labels: **measured** (computed here, with how), **read** (a source, with its URL
   is `currentColor` and the colour comes from CSS (`.mark { color: var(--accent) }`), so in forced
   colours the mark takes the system colour the link's text takes and needs no rule of its own
   (brief 04 criterion 10; [CSS Color Adjustment 1, 3.1](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties):
-  `color` is forced, and `currentColor` follows it). The keyhole is the circle `(16, 15) r 3.6` joined
+  `color` is forced, and `currentColor` follows it). **Corrected after the review (2026-11-18):**
+  not for an `svg`. The UA sheet gives it `forced-color-adjust: preserve-parent-color`, which keeps
+  an author `color` such as `var(--accent)` and only passes the parent's colour through an inherited
+  one ([CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)).
+  Measured in Chromium (forced colours emulated): the mark stayed `#7b3a8f` / `#dcaaf0` while the
+  link was LinkText; with `.mark { color: inherit }` in a forced-colours block it took the link's
+  colour (`rgb(0,0,159)` light, `rgb(255,255,0)` dark). Firefox's colour pref overrides it anyway.
+  Hence H3.10. The keyhole is the circle `(16, 15) r 3.6` joined
   to the trapezoid `14.4,17 17.6,17 18.8,24 13.2,24` of round 1, as one outline: the two meet at
   `(14.21, 18.12)` and `(17.79, 18.12)` (measured: the circle crossed with the trapezoid's sides,
   Python, 2026-11-18). Two overlapping sub-paths would cut the overlap back in under `evenodd`.
@@ -114,6 +121,11 @@ decoding `%23`) are the `--accent` of the light token block and of the dark toke
 **H3.9 Nothing else moves.** No strings key added or changed; no route, focus move, title or nav
 change; every other test passes unchanged.
 
+**H3.10 The mark in forced colours (added after the review).** `index.css` holds, inside an
+`@media (forced-colors: active)` block, a `.mark` rule with `color: inherit` (no other declaration),
+so the mark takes the home link's system colour (section 0, corrected). H3.5's "no fill" stands;
+its forced-colours sentence in section 0 is superseded by this one rule.
+
 ## 3. What the tester pins
 
 Component tests (Testing Library, in a new `fe/src/HearthMark.test.tsx` or beside 1a.1 in
@@ -133,6 +145,14 @@ banner fill shows through), mark and name on one line, centred; forced colours i
 px in a light and a dark browser theme (plum, then lilac), and in Firefox with the forced-colours
 pref (a favicon is not forced: it keeps its colours). The name still wraps at 320 px with a long
 user name beside it (46b's case).
+
+Measured in the review (2026-11-18, Playwright, all three engines): at 1280 px the banner stays 65
+px; at 320 px it grows from 173.7 to 221.7 px, because the link (173 to 213 px wide) no longer
+leaves room for Menu beside it, so Menu takes its own row. No sideways scroll. Accepted until H5a,
+which groups the tools and hides the user name below 480 px (brief 04 1.2: three rows at 320 px).
+The favicon's dark fill was seen in Chromium only: Playwright's Firefox and WebKit draw the light
+fill under a dark `colorScheme`, so the tab icon in a dark Firefox, and Safari's SVG favicon at all,
+stay unverified.
 
 ## 5. What must not change
 

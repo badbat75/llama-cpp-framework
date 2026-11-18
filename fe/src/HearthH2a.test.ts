@@ -929,20 +929,41 @@ test('section 1 (2.5.8): the targets keep 24 by 24 px: the button min-width, the
 test('section 4 (1.4.12): every fixed height is a box without text, and the controls that hold text are sized by min-height', () => {
   // A height on a box with text clips it when the user widens the text; the
   // drawn boxes (the box, the tick, the track, the knob, the badge shape) and
-  // the visually-hidden clip are the only ones with a height, and the rule
-  // below is a selector list, so the names are matched inside the selector.
+  // the visually-hidden clip are the only ones with a height. The height lands
+  // on EVERY selector of a rule's list, so a rule is exempt only when every
+  // one of them is listed, matched WHOLE: a name found inside a selector
+  // exempts a box nobody named (`.markdown` holds `.mark`, and a markdown box
+  // holds text), so each text-free box writes its own selector, pseudo-element
+  // included.
   const TEXT_FREE = [
     '.visually-hidden',
     '.shape',
-    '.shape-failed::before, .shape-failed::after',
+    '.shape-failed::before',
+    '.shape-failed::after',
+    '.mark',
     "input[type='checkbox']",
+    "input[type='checkbox']::before",
     "input[role='switch']",
+    "input[role='switch']::before",
   ]
+  const textFree = (flat: string): boolean =>
+    flat
+      .split(',')
+      .map((s) => s.trim())
+      .every((s) => TEXT_FREE.includes(s))
+  expect(textFree('.mark'), 'the listed box, matched whole').toBe(true)
+  expect(
+    textFree('.markdown'),
+    'a selector that only holds a listed name is not exempt',
+  ).toBe(false)
+  expect(
+    textFree('.markdown, .mark'),
+    'one listed selector does not exempt a list that also carries a text box',
+  ).toBe(false)
   const fixed: string[] = []
   for (const r of RULES) {
     const height = prop(r.body, 'height')
-    if (height && !TEXT_FREE.some((t) => r.flat.includes(t)))
-      fixed.push(`${r.flat}: ${height}`)
+    if (height && !textFree(r.flat)) fixed.push(`${r.flat}: ${height}`)
   }
   expect(fixed, 'no fixed height outside the boxes that carry no text').toEqual(
     [],
