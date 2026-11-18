@@ -290,11 +290,11 @@ export const EN: Record<string, string> = {
   'model-profile-load-failed': 'The model profile could not be read.',
   'model-profile-not-found': 'There is no model profile named {0}.',
   'model-profile-off':
-    'This model profile is switched off: it is kept, but its engine does not serve it. Switch it on in the model profiles list.',
+    'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
   'model-profile-settings-title': 'Model profile settings',
   'model-profile-engine': 'Engine',
   'model-profile-engine-hint':
-    'The engine whose model profile files hold this model profile. Every instance of that engine can serve it.',
+    'The engine this model profile belongs to. Every instance of that engine can serve it.',
   'model-profile-engine-unavailable':
     '{0} is not available on the server, so no instance can serve this model profile until it is installed again.',
   'model-profile-assets': 'Assets',
@@ -308,7 +308,7 @@ export const EN: Record<string, string> = {
   // Assets card intro, and the name of the section jump list.
   'model-profile-assets-read-only':
     'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.',
-  'model-profile-jump-label': 'Model profile sections.',
+  'model-profile-jump-label': 'Model profile sections',
   // Slice 2e.1 (fe/briefs/02e-model-profile-cards.md, criterion 95): the Resource /
   // context and Embeddings cards, and the pooling options the shared texts of
   // 1.3 lack. The hints are the GUI's tooltips (en_US.toml), unchanged except
@@ -503,7 +503,7 @@ export const EN: Record<string, string> = {
   'model-profile-fit-not-allowed':
     'needs Context size and GPU layers at default',
   'model-profile-fit-invalid':
-    'llama-server refuses this value, so this model profile does not start. Use on or off.',
+    'llama-server refuses this value, so it cannot run this model profile. Use on or off.',
   // The three lose the trailing period, to read as one family with
   // model-profile-fit-allowed and model-profile-fit-not-allowed (2h.8 review).
   'model-profile-fit-layers-only':

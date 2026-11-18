@@ -48,7 +48,7 @@ const ASSETS = TITLES[0]!
 const KV = en('model-profile-kv-cache')
 const SPEC = TITLES[TITLES.length - 1]!
 /** 198: the strings as the brief words them, as a literal. */
-const JUMP_LABEL = 'Model profile sections.'
+const JUMP_LABEL = 'Model profile sections'
 const ASSETS_INTRO =
   'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.'
 const REFUSED_AT = 'Not saved: {0}. The field is {1}, on the card {2}.'
