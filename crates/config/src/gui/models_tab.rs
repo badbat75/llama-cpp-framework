@@ -1350,7 +1350,7 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 /// sanitizes to the same id) would otherwise make `model_profiles::save`
 /// wholesale-replace the tuned section. Both New and Clone must route through
 /// this: first free `<id>`, `<id>-2`, …, compared ignoring case, with the
-/// `model profile` fallback for a name that sanitizes to nothing (an empty id would
+/// `model-profile` fallback for a name that sanitizes to nothing (an empty id would
 /// also be undeletable: on_delete_model_profile early-returns on one). The rule
 /// itself is `model_profiles::new_model_profile_id`, shared with the Hugging Face download.
 fn deconflicted_id(path_str: &str) -> String {

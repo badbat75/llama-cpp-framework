@@ -967,9 +967,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the Rust identifiers) and 4a4 (the `models.ini.disabled` header, two shorter refusal
     texts, the bff's doc comments) and 4a5 (strings keys, Slint names, module and test files) and 4a6 (the desktop
     entry's Comment, the `assignments.ini` header, the Slint comments) too; 4a7 (the CLI package's summary, the MSI's
-    uninstall text, the Rust comments) too; left in 4a8: the comments written into `models.ini` (`crates/app/src/model_profiles.rs`
-    ~1748, ~1770), the render's header (`crates/core/src/assign.rs:101`), the new profile's fallback id `preset`;
-    then the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `installer/TEST-PLAN.md`, `docs/`).
+    uninstall text, the Rust comments) and 4a8 (the comments written into `models.ini`, the render's header, the new profile's fallback
+    id `model-profile`) too: the code is done; left: the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `installer/TEST-PLAN.md`, `docs/`).
 13a. **Preset becomes profile** (user, 2026-11-17), now item 13's slice 4 (the revised list in
     ARCHITECTURE.md "Revision: profiles"; before `SetModelProfile`, so nothing is renamed twice):
     a model's settings are its **model profile**, an instance's server settings its **server profile**.

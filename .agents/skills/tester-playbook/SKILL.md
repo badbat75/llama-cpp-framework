@@ -2082,3 +2082,25 @@ Lessons only: the rules are in `AGENTS.md`.
 - `bench run` has ONE preset-named flag (the `BenchRun` struct; Query/Answer/Publish have none). The
   preset-named option VALUE is `--temp preset` (`cli.rs`, `eq_ignore_ascii_case("preset")`) and the
   spec's `Temp = preset`, and the spec line is inside the published version's digest.
+
+## The word in text a program writes (a text sweep, not keys)
+
+- The surface is more than `.rs` literals: also `crates/core/defaults/*.ini` (the starting files the
+  packages install into `/etc/llama.cpp/` and `%ProgramData%\llama.cpp\`: `models.ini` is EMPTY there,
+  `assignments.ini` carries two `;` lines), xtask's `.desktop` / polkit / unit literals
+  (`xtask/src/linux/system_files.rs`, `package.rs`), and `crates/core/strings/*.toml`. To split production
+  from test code, a python pass printing each hit beside the file's FIRST `#[cfg(test)]` / `mod tests`
+  line (a hit below it is test code); files under a `tests/` directory need no such check, they have no
+  `mod tests` and read as production to that pass.
+- A comment line the writer emits is often pinned nowhere (`git grep` of the exact sentence: one hit, the
+  writer itself): the red is a new byte-for-byte assert of each comment line. Prove the paired
+  `!render.contains("preset")` can go green by reading EVERY literal of the writer
+  (`sed -n '<from>,<to>p' <file> | grep -in preset`): its count is the number of flips the slice makes, so
+  a no-old-word assert over a full-fixture render is a guard, not an unpassable red. Order it AFTER the
+  byte-for-byte asserts: the red that stops the test is the wording one, and that is the red to report.
+- "A section an EARLIER version saved must still load" is GREEN at once (the INI parser strips `;` lines,
+  so the loader never reads a comment): report it as a guard, never as a red. Its fixture is the old header
+  verbatim, CRLF, written as a `\`-continued `const`; the loader seam in app's `model_profiles.rs` is the
+  `#[cfg(test)] pub(crate) read_model_profiles(&path)`.
+- `let lines: Vec<&str> = render_section(&p).lines().collect();` is E0716 (the String temporary dies at the
+  statement's end): bind it first (`let text = render_section(&p);`), the pattern the file's own tests use.

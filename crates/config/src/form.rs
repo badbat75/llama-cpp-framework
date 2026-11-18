@@ -441,7 +441,7 @@ pub fn form_to_model_profile(f: &ModelProfileForm) -> model_profiles::ModelProfi
             ini::parse_int_in(
                 f.ctx_size.as_str(),
                 &pai_core::checks::model_profile_int_range("ctx-size")
-                    .expect("a preset integer key"),
+                    .expect("a model profile integer key"),
             )
         },
         n_gpu_layers: if f.n_gpu_layers_auto {
@@ -612,7 +612,8 @@ fn int_fields(f: &ModelProfileForm) -> [(&'static str, bool, &str, RangeInclusiv
         default: bool,
         text: &'a str,
     ) -> (&'static str, bool, &'a str, RangeInclusive<i32>) {
-        let range = pai_core::checks::model_profile_int_range(key).expect("a preset integer key");
+        let range =
+            pai_core::checks::model_profile_int_range(key).expect("a model profile integer key");
         (key, default, text, range)
     }
     [

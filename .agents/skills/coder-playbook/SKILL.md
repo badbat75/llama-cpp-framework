@@ -1369,3 +1369,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - A WiX `Component Id` (e.g. `DefaultPresetsIni` in llama.cpp.wxs) is MSI identity, not prose: harvested
   components derive their GUID from Id+path, so renaming it re-GUIDs the component. Words in a `.wxs`
   comment are prose; a brief pinning "every other byte unchanged" keeps them as they are.
+- Nothing diffs the rendered `models@<id>.ini`: `service::render_all_locked` reads the pool and hands the
+  text straight to `write_served_file`, which always writes a temp file and renames over the target (new
+  inode, new mtime). It runs after every pool/assignment write and for every instance at the manager's
+  start, so a `assign::HEADER` change lands on disk at the next render with no compare and no refusal; a
+  running instance keeps the copy it read at launch until it restarts. The only byte compare in the write
+  path is `write_file_if`, over the CLIENT's file, never over a render.
+- `render_section`'s header comment is pinned LINE BY LINE (`lines[1..3]`) and
+  `the_load_on_startup_note_says_model_profile` asserts a full section holds no `preset` word at all: any
+  new comment in that writer naming the old word fails a test. `new_model_profile_id`'s fallback id is
+  plain text in code (a section id, not user text, so no strings file), and its `-2` de-conflict comes
+  from `unique_id`.

@@ -2851,7 +2851,7 @@ pub fn derive_model_profile(
 
 /// `derive_model_profile` over the downloaded files' own headers, with the id the
 /// Models tab's New would give the file (`model_profiles::new_model_profile_id`: the file
-/// name, `preset` when it sanitizes to nothing, made unique ignoring case
+/// name, `model-profile` when it sanitizes to nothing, made unique ignoring case
 /// against `existing_ids`; pass every listed model profile, the parked ones included).
 /// `budget` is the machine the dialog or `--list` estimated against
 /// (`hf_fit::budget`), `None` without a GPU: the placement is then left out,
