@@ -1,303 +1,436 @@
-# Brief 04: visual identity (three directions to choose from)
+# Brief 04: visual identity, direction B "Hearth" on the Profiles structure
 
-Status: **proposal, nothing chosen**. The user found the web UI "very basic" (2026-11-17) and asked
-for a more marked identity: a typeface of its own, a logo or illustrations, a cared-for sign-in page,
-on top of a typographic scale, spacing, an accent colour, icons, visual states and the Overview as a
-real status page; on the present hand-written CSS, no component library; built after the preset save
-(02h) is finished. `fe/DESIGN.md` changes only once a direction is chosen.
+Status: **direction chosen, round 2** (2026-11-18). The user chose (2026-11-17) direction B "Hearth"
+(Atkinson Hyperlegible Next, warm paper, rounded cards, instances as tiles, an illustrated sign-in, the
+arched-doorway mark), icons from a ready open set (**Lucide**) and a **light/dark switch**; building
+starts after the preset save (02h, closed in commit 84cd76e). Round 2 re-specifies B on the information
+architecture decided since round 1: `ARCHITECTURE.md`, "Nodes and instances", block "Revision: profiles"
+and its "User decisions, second round"; `fe/briefs/api-contract.md`, "Planned: profiles, nodes and
+instances"; `fe/briefs/05-profiles-rename.md` with its slices 05b to 05j. `fe/DESIGN.md` changes with the
+first slice built (H1), not before.
 
-The three directions are static pages, one file each, same five screens, same markup roles and names,
-light and dark (a toggle at the top, the system setting first), usable at 320 px:
+Mockups (static, git-ignored, nothing loaded from the network; fonts are system stand-ins, icons are the
+real Lucide paths):
 
-- `build/ux-review/visual/index.html` (links the three)
-- `build/ux-review/visual/a-instrument.html`
-- `build/ux-review/visual/b-hearth.html`
-- `build/ux-review/visual/c-signal.html`
-- their generator and checks: `build/ux-review/visual/src/` (`gen.py`, `base.css`, `a.css`, `b.css`,
-  `c.css`, `body.html`, `check.js`); screenshots in `src/shots/`.
+- `build/ux-review/visual/b2-overview.html`: the shell with the Profiles nav and the Overview tiles.
+- `build/ux-review/visual/b2-model-profile.html`: the model profile page top with the new section nav
+  (add `#open` to the address for the open state).
+- Generator and checks: `build/ux-review/visual/src/gen2.py`, `src/shots2.js`; screenshots
+  `src/shots/b2-*.png` (light and dark; Overview at 1280 and 320, 320 with the menu open; model profile
+  page at 320 closed and open, and at 1280).
+- Round 1's three directions stay beside them (`a-instrument.html`, `b-hearth.html`, `c-signal.html`) as
+  the record of what was compared.
 
-Fonts in the pages are system stand-ins for the typeface named below (nothing is loaded from the
-network); icons are hand-drawn stand-ins drawn in the named set's manner.
+Labels: **measured** (computed or run here, with how), **read** (in a source, with the URL), **assumed**
+(a guess or a preference).
 
-Labels used below: **measured** (computed or run here, with how), **read** (in a source, with the
-URL), **assumed** (a guess or a preference).
+**Measured on the two mockups** (Playwright Chromium 1255 from `fe/ux/node_modules`, `src/shots2.js`,
+2026-11-18): 0 sideways scroll, 0 network requests and 0 axe-core violations (WCAG 2.0 to 2.2 A and AA)
+in each of the 12 runs (light, dark; the six views above). The first editable control of the model
+profile page sits at **705 px** from the top at 320 px (today about 2900 px, the designer's 2h.10
+review), 483 px at 1280.
 
-## 0. What every direction keeps
+## 0. What every slice keeps
 
-These are tested or decided and hold in all three (`fe/DESIGN.md` 4, 5):
+- WCAG 2.2 AA is the floor; section 4 turns it into testable criteria for this palette.
+- DOM order, roles, accessible names and ids stay as they are unless a slice below says "DOM". Every
+  icon or the mark is an inline SVG with `aria-hidden="true"` and `focusable="false"`, inside an element
+  whose name comes from its text, so no accessible name changes
+  ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)).
+- State never by colour alone: the badge keeps its shape and its text
+  ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
+- "Not editable" stays the dashed border (Hearth adds a faint hatch on top); forced colours keep
+  `border-style` ([CSS Color Adjustment 1](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties)).
+- The sticky save bar, its `scroll-padding-bottom` rule and the short-viewport fallback stay
+  ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)); Hearth's 40 px controls make
+  the bar taller, so the UX check re-measures it.
+- Nothing loaded at run time: fonts are files in `fe/dist/assets/`, icons are paths in the JS bundle,
+  both embedded in `pai-bff` with the rest of the UI (section 3).
+- Every text is a key in `fe/src/strings/en_US.json`. Keys below that start with `model-profile` assume
+  the rename (05) has landed; a slice that lands before it does not add such keys.
 
-- WCAG 2.2 AA: text 4.5:1 ([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)); control
-  borders, focus ring and state shapes 3:1 ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast));
-  visible focus ring on `:focus-visible` ([2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible)).
-- State never by colour alone: the state badge keeps its shape and its text; tiles and rows add a
-  colour bar that is decorative on top of both ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
-- Disabled stays "not editable" without opacity: the dashed border remains the cue in all three
-  (B adds a faint hatch, C a 2 px dashed border), and it survives forced colours, which replace border
-  colours but not `border-style`
-  ([CSS Color Adjustment 1](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties)).
-- Forced colours: shapes, the drawn checkbox and the switch knob get system colours
-  (`CanvasText`, `Highlight`, `GrayText`); icons are drawn in `currentColor`, so they take the text's
-  system colour.
-- The sticky save bar, its `scroll-padding-bottom` rule and the short-viewport fallback
-  ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
-- 24 by 24 px targets at least ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)); reflow
-  at 320 px with no sideways scroll ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
-- DOM order, roles, accessible names and ids as today. Every icon or mark added is an inline SVG with
-  `aria-hidden="true"` and `focusable="false"`, inside an element whose name comes from its text, so
-  no accessible name changes ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). Where a
-  direction needs more than that, its section says so.
-- Nothing loaded at run time: the fonts and icons are bundled into `fe/dist` by Vite and embedded in
-  `pai-bff` like the rest of the UI.
+## 1. Direction B on the Profiles structure
 
-**Measured on the three pages** (Playwright Chromium 1255 from `fe/ux/node_modules`, script
-`src/check.js` and `src/over.js`, 2026-11-17): 0 sideways scroll at 1280 and 320 px, light and dark;
-0 network requests; axe-core WCAG 2.0 to 2.2 A and AA: 0 violations on each page in each of the four
-runs; no element wider than its screen frame at 320 px (both instance tabs). Forced colours were
-emulated in Chromium for a screenshot only; Chromium's emulation kept most author colours, so forced
-colours are **not** verified beyond the rules being present.
+### 1.1 Tokens, type, controls
 
-## 1. Direction A: Instrument
+**Palette** (measured: WCAG relative luminance, `/tmp/claude-designer/cr.py` in this session; ratio of
+the token as foreground against each background).
 
-**Idea.** A calm technical console. IBM Plex Sans and Mono, an ink banner, hairline panels, small
-uppercase card titles and tabular numbers. The identity comes from precision and a rack mark lit in
-indigo; the Overview stays a table, read as a status board.
+| Token | Light | Dark | Use | Light: page, bg, surface, field, accent-soft | Dark: same order |
+|---|---|---|---|---|---|
+| `--page` | `#f7f1e8` | `#1b1714` | warm paper behind everything (new) | | |
+| `--bg` | `#fffdf9` | `#231d19` | cards, tiles, save bar | | |
+| `--surface` | `#f5efe6` | `#2b241f` | disabled fill, badges, tags, notices | | |
+| `--field` | `#fffdf9` | `#1b1714` | enabled control fill (new) | | |
+| `--line` | `#e6dccf` | `#3a3029` | decorative dividers only; the dark card outline (new) | 1.33 on bg | 1.30 on bg |
+| `--text` | `#2a211c` | `#f1e9df` | body text | 14.0, 15.5, 13.8, 15.5, 12.9 | 14.8, 13.8, 12.7, 14.8, 11.0 |
+| `--muted` | `#6b5d52` | `#b5a698` | hints, disabled values, secondary text | 5.65, 6.24, 5.55, 6.24, 5.18 | 7.52, 7.03, 6.45, 7.52, 5.56 |
+| `--control` | `#8c7d70` | `#8a7c6f` | control borders, dashed disabled border, switch knob off | 3.54, 3.91, 3.48, 3.91, 3.25 | 4.40, 4.12, 3.78, 4.40, 3.26 |
+| `--accent` | `#7b3a8f` | `#dcaaf0` | links, primary, focus ring, current nav, checked | 6.58, 7.27, 6.46, 7.27, 6.04 | 9.37, 8.76, 8.04, 9.37, 6.93 |
+| `--on-accent` | `#ffffff` | `#1b1714` | text and knob on the accent | 7.38 on accent | 9.37 on accent |
+| `--accent-soft` | `#f1e4f6` | `#3a2a44` | current nav item, node panel, Running badge, pressed theme switch (new) | | |
+| `--danger` | `#b3261e` | `#ff9a8a` | errors, Failed | 5.82, 6.43, 5.72, 6.43, 5.34 | 8.68, 8.12, 7.45, 8.68, 6.42 |
+| `--success` | `#2f6f3e` | `#7ccf8e` | Running, Saved | 5.40, 5.97, 5.30, 5.97, 4.96 | 9.47, 8.86, 8.13, 9.47, 7.01 |
+| `--warning` | `#8a5300` | `#e8b45a` | Starting, Stopping, restart to apply | 5.64, 6.23, 5.54, 6.23, 5.17 | 9.42, 8.81, 8.08, 9.42, 6.97 |
 
-**Palette** (measured: WCAG relative luminance, script in this session, against each background).
+Also `--hatch` (`rgb(42 33 28 / 0.07)` light, `rgb(241 233 223 / 0.06)` dark, decorative), `--shadow`
+(two soft shadows in light; `0 0 0 1px var(--line)` in dark, where a shadow does not show: assumed), and
+the illustration's `--art-1`, `--art-2`, `--art-3` (round 1's `src/b.css`).
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--page` | `#f3f5f8` | `#0d1117` | page behind the cards (new token) |
-| `--bg` | `#ffffff` | `#11161e` | cards, save bar |
-| `--surface` | `#f3f5f8` | `#161b24` | nav, disabled fill |
-| `--field` | `#ffffff` | `#0d1117` | enabled control fill (new token) |
-| `--line` | `#dde2e8` | `#262d38` | decorative hairlines only (new token) |
-| `--text` | `#161b26` | `#e4e8ef` | 15.8 to 17.2 / 14.0 to 15.4 |
-| `--muted` | `#556070` | `#9aa4b2` | 5.8 to 6.4 / 6.8 to 7.5 |
-| `--control` | `#7c8797` | `#75808f` | 3.3 to 3.6 / 4.3 to 4.7 |
-| `--accent` | `#3451c6` | `#94aaff` | **6.1 (page, surface), 6.7 (bg, field) / 7.8 (surface) to 8.5 (page)** |
-| `--on-accent` | `#ffffff` | `#0d1117` | 6.7 / 8.5 on the accent |
-| `--accent-soft` | `#e6ebf7` | `#1d2433` | current nav item; accent on it 5.6 / 7.0 |
-| `--danger` | `#b42318` | `#ff8d80` | 6.0 to 6.6 / 7.7 to 8.4 |
-| `--success` | `#1a7f37` | `#5cc87a` | 4.7 to 5.1 / 8.2 to 9.0 |
-| `--warning` | `#8a5a00` | `#e0b040` | 5.4 to 5.9 / 8.6 to 9.4 |
-| `--ink`, `--on-ink` | `#141a24`, `#f2f4f7` | `#05070a`, `#e4e8ef` | banner; 15.8 / 16.4 |
-| `--ring-on-ink` | `#94aaff` | `#94aaff` | focus ring on the banner: 7.9 / 9.1 |
+- **Type**: Atkinson Hyperlegible Next 400 and 700; Atkinson Hyperlegible Mono 400 for paths, flags and
+  values (never bold: no Mono 700 file ships, so a bold mono would be synthesized). Stack:
+  `'Atkinson Hyperlegible Next', system-ui, sans-serif` and `'Atkinson Hyperlegible Mono', ui-monospace,
+  'Cascadia Mono', Menlo, monospace`. Body 1.0625 rem (17 px), line height 1.55; scale 0.8125, 0.875,
+  0.9375, 1.0625, 1.125 (card title), 1.375 (h2), 2 (h1). `font-display: swap`. The family is the
+  Braille Institute's, "crafted for low-vision readers" (read:
+  [brailleinstitute.org/freefont](https://www.brailleinstitute.org/freefont/)).
+- **Spacing**: 4, 8, 12, 16, 24, 40, 64 px (`--space-1` to `--space-7`; 5 and 6 change from 24/32 to
+  24/40). **Radius**: 10 px controls, 5 px checkbox, 16 px cards, 18 px tiles, 999 px pills (buttons,
+  tags, badges, the switch, nav items).
+- **Controls**: 40 px high (32 today), 1.5 px borders, 3 px focus ring offset 2 px; disabled = dashed
+  border plus the 135 degree hatch; the switch is a 44 by 24 px pill drawn on the same native checkbox.
+- **Mark**: the plum arched doorway with a keyhole (round 1's `src/gen.py` `MARK['b']`), 32 px in the
+  banner; the favicon becomes the same drawing (a data URI in `fe/index.html`, today a blue "A").
 
-The light accent on the ink banner is 2.6:1, below 3:1: the banner's focus ring uses
-`--ring-on-ink` instead (measured). The banner's button border `#7c8797` is 4.8 / 5.5 on ink.
+### 1.2 Shell: banner and nav
 
-- **Type**: IBM Plex Sans 400 and 600, IBM Plex Mono 400 (600 optional). Scale in rem: 0.75 (nav
-  and table labels, uppercase), 0.8125 (card titles, uppercase), 0.875, 1 (body), 1.125 (h2), 1.5 (h1).
-  `font-variant-numeric: tabular-nums` on the body.
-- **Spacing**: 4, 8, 12, 16, 24, 32, 48 (adds `--space-7`). **Radius** 4 px controls and cards, 2 px
-  checkbox. **Elevation**: none; hairline borders.
-- **Icons**: Lucide, **ISC License**, with the Feather-derived icons under the **MIT License**
-  (read: [LICENSE](https://github.com/lucide-icons/lucide/blob/main/LICENSE), "The following Lucide
-  icons are derived from the Feather project"; npm `lucide-static` 1.74.0 says ISC). About 15 icons,
-  copied as inline SVG paths (no runtime package needed); both licence texts ship.
-- **Mark**: an indigo rounded square holding three rack units, the top one lit (original).
-- **Sign-in**: centred panel with an accent top rule, the mark and name as a lockup above, the
-  node's name and version under it in mono.
-- **Overview**: the instances table kept, restyled as a status board: a 4 px state-coloured bar on
-  the first cell (decorative), uppercase column labels, the tags under the instance's link, the port
-  in mono with "Start at boot: on/off" under it. Three columns, so it fits 320 px.
-- **`index.css`**: tokens (new: `--page`, `--field`, `--line`, `--accent-soft`, `--ink`,
-  `--on-ink`, `--ring-on-ink`, `--space-7`, font tokens) and a few rules (banner band, card title
-  rule, nav current item, status-table bar). The field grid, save bar and disabled rules stay.
-- **Markup**: decorative `aria-hidden` additions only (mark, icons in the run buttons, notices, the
-  save alert, nav entries, the back link; a `span` wrapper around the filter input for its search
-  icon). The Overview's new columns are new data (below), not a restyle.
-- **Cost**: 5 small slices: (1) tokens and bundled fonts with their licences; (2) shell: banner,
-  mark, nav; (3) icon set and its placements; (4) cards, fields, switch, notices; (5) Overview status
-  board (with the nodes data).
-- **Risks**: the least marked of the three: it may still read as "basic". Plex has the Reserved Font
-  Name "Plex" (read: [IBM/plex LICENSE.txt](https://github.com/IBM/plex/blob/master/LICENSE.txt)), so
-  a subset made by us must not be called Plex: ship the unmodified files.
+**Banner** (one `header`, in this order): the mark and "Private AI Framework" as the home link (name
+unchanged: the SVG is `aria-hidden`); then, pushed to the end, Menu (below 960 px, as today), the theme
+switch (1.9), and the session part ("Signed in as alex" and Sign out, or Sign in). Below 480 px the
+theme switch shows its icon only (its text stays in the DOM, visually hidden, so the name is unchanged)
+and "Signed in as ..." is visually hidden the same way (restyle; a preference: Sign out already shows
+that a session is open; measured in the mockup, the banner still takes three rows at 320 px).
 
-## 2. Direction B: Hearth
+**Nav** (signed in; signed out it holds Overview only, as today):
 
-**Idea.** Warm and humane: the model stays at home. Atkinson Hyperlegible Next on warm paper, soft
-rounded cards, pill controls and a plum accent; an arched-doorway mark, an illustrated sign-in and the
-instances as friendly tiles.
+```
+Overview                      (house icon)
+garnet                        (server icon; the node's name, from GET /api/node: 05e)
+  Instances                   (sub-label)
+    ● default                 (state shape, as today)
+    ○ coder
+  Profiles                    (sub-label)
+    Server profiles           (sliders-horizontal icon; 05c adds it, 05f gives it a list)
+    Model profiles            (layers icon; 05b)
+```
 
-**Palette** (measured, as in A).
+- Each sub-list is a `ul` labelled by its sub-label; once the node's name is shown, by both:
+  `aria-labelledby="nav-node nav-instances"` and `"nav-node nav-profiles"`, so a screen reader hears
+  "garnet Instances, list" and the structure holds when a hub lists several nodes. Until 05e there is no
+  node line and the lists keep today's labels.
+- Look: items are pills; the current one `--accent-soft` fill, `--accent` text, bold; a 2 px `--line`
+  rule left of each sub-list (decorative). `aria-current="page"` on the page's own entry,
+  `aria-current="true"` on the list entry of a page below it (a profile's page), as `fe/DESIGN.md` 2.3.
+- Keys (fixed by 05b, 05c; proposed here so they agree): `nav-profiles` "Profiles",
+  `nav-server-profiles` "Server profiles", `nav-model-profiles` "Model profiles". The node line shows
+  data, no key.
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--page` | `#f7f1e8` | `#1b1714` | warm paper |
-| `--bg` | `#fffdf9` | `#231d19` | cards, tiles, save bar |
-| `--surface` | `#f5efe6` | `#2b241f` | disabled fill, badges, notices |
-| `--field` | `#fffdf9` | `#1b1714` | enabled control fill |
-| `--line` | `#e6dccf` | `#3a3029` | decorative dividers; the dark theme's card outline |
-| `--text` | `#2a211c` | `#f1e9df` | 13.8 to 15.5 / 12.7 to 14.8 |
-| `--muted` | `#6b5d52` | `#b5a698` | 5.5 to 6.2 / 6.5 to 7.5 |
-| `--control` | `#8c7d70` | `#8a7c6f` | 3.5 to 3.9 / 3.8 to 4.4 |
-| `--accent` | `#7b3a8f` | `#dcaaf0` | **6.5 (surface), 6.6 (page), 7.3 (bg, field) / 8.0 (surface) to 9.4 (page)** |
-| `--on-accent` | `#ffffff` | `#1b1714` | 7.4 / 9.4 on the accent |
-| `--accent-soft` | `#f1e4f6` | `#3a2a44` | current nav item, node header, Running badge; accent on it 6.0 / 6.9, text 12.9 / 11.0 |
-| `--danger` | `#b3261e` | `#ff9a8a` | 5.7 to 6.4 / 7.4 to 8.7 |
-| `--success` | `#2f6f3e` | `#7ccf8e` | 5.3 to 6.0 / 8.1 to 9.5 |
-| `--warning` | `#8a5300` | `#e8b45a` | 5.5 to 6.2 / 8.1 to 9.4 |
+### 1.3 Overview: node panel and tiles
 
-- **Type**: Atkinson Hyperlegible Next 400 and 700, Atkinson Hyperlegible Mono 400. Body 1.0625 rem
-  (17 px), line height 1.55; scale 0.8125, 0.875, 0.9375, 1.0625, 1.125 (card title), 1.375 (h2),
-  2 (h1). The family was drawn by the Braille Institute for low-vision legibility (assumed from
-  memory; not checked at the Braille Institute's page in this session).
-- **Spacing**: 4, 8, 12, 16, 24, 40, 64. **Radius**: 10 px controls, 16 px cards, 18 px tiles, pills
-  (999 px) for buttons, tabs, tags and the switch. **Elevation**: two soft shadows in light; in dark a
-  1 px `--line` outline instead (a shadow does not show on a dark page; assumed).
-- **Controls**: 40 px high (32 today), 1.5 px borders, 3 px focus ring; disabled adds a 135 degree
-  hatch (`--hatch`, decorative) to the dashed border; the switch is a 44 by 24 px pill drawn on the
-  same native checkbox.
-- **Icons**: Phosphor, **MIT License** (read:
-  [phosphor-icons/core LICENSE](https://github.com/phosphor-icons/core/blob/main/LICENSE); npm
-  `@phosphor-icons/core` 2.1.1 says MIT), the duotone weight; about 15 icons as inline SVG.
-- **Mark**: a plum arched doorway with a keyhole (original).
-- **Sign-in**: two columns from 840 px: an illustration (an arched room holding a server, a cable to
-  a laptop, a plant; inline SVG drawn in the theme's tokens, `aria-hidden`) beside the form in a
-  rounded card; stacked below 840 px.
-- **Overview**: a node header (accent-soft panel: "Node", host name, version, a one-line summary),
-  then one tile per instance: name as the link, the state badge as a pill, and Port, Tags, Start at
-  boot as a small description list.
-- **`index.css`**: tokens (as A plus `--hatch`, `--shadow`, control height, border width, ring width)
-  and structure: tiles, node header, sign-in two-column layout, pill shapes, switch drawing, larger
-  control height (affects every form row and the save bar's height).
-- **Markup**: the decorative additions of A, plus the sign-in illustration (`aria-hidden` SVG in a
-  `div`), plus **one real change**: the Overview's instances become a list (`ul` of `li`, each with a
-  link, the badge and a `dl`) instead of a `table`. `fe/src/Instances.test.tsx` (lines 44 to 48)
-  reads rows and cells, so those tests are rewritten in that slice.
-- **Cost**: 7 small slices: (1) tokens and fonts; (2) shell and mark; (3) icons; (4) controls (height,
-  pills, switch, hatch) and cards; (5) save bar and notices; (6) sign-in with the illustration;
-  (7) Overview tiles (with the nodes data).
-- **Risks**: taller controls and 17 px body make the preset page longer and the save bar taller at
-  320 px (the measured `scroll-padding-bottom` handles it; the 1b review measured 242 px at 375 px
-  with today's sizes, this will be more); the illustration is one more thing to keep in two themes;
-  the hatch may look busy on a page of disabled fields (the read-only cards).
+1. `h1` "Overview" (unchanged).
+2. **Node panel** (05e; `--accent-soft`, radius 20 px): eyebrow "Node" (server icon), the node's name
+   (1.5 rem bold, a `p`, not a heading: the `h1` stays the page title), the version line (today's
+   `Version`, moved inside). Before 05e the version line stays where it is.
+3. `h2` "Instances", then a **list of tiles** (`ul.tiles`, `li.tile`), grid
+   `repeat(auto-fill, minmax(min(100%, 15rem), 1fr))`. Each tile, in DOM order:
+   - the instance id as the link to its page (1.25 rem bold), and the state badge (pill with its
+     shape and text) on the same row, wrapping below at narrow widths;
+   - for Failed, today's hint line;
+   - when more than one engine exists, today's `instance-engine` line;
+   - a `dl` of facts, each row an icon, the term and the value: **Port** (mono; `(none)` when the
+     reply's port is 0), **Tags** (pills: the reply's `tags`, the profile's first, then the
+     instance's, as the bff sends them; `(none)` when empty), **Start at boot** (On / Off: only if the
+     user answers question 1 with "everyone"; with the recommended answer the row shows only when
+     signed in, read per tile from `GET /api/instances/{id}/boot`).
+   - Port and Tags arrive with 05e; before it the tile has no `dl`.
+4. Keys (new): `instances-port` "Port", `instances-tags` "Tags", `instances-none` "(none)",
+   `instances-boot` "Start at boot", `instances-boot-on` "On", `instances-boot-off` "Off",
+   `overview-node` "Node". Round 1's summary line ("4 instances: 1 running ...") is dropped: the tiles
+   say it, and its plurals need more than one string (a preference).
 
-## 3. Direction C: Signal
+### 1.4 Instance page (`#/instances/<id>`, after 05c)
 
-**Idea.** Bold and operational, made for the dark. Space Grotesk headings and UI, JetBrains Mono for
-labels and values, square 2 px frames and a cyan accent. A bracket mark, a measured grid behind the
-sign-in, and tiles with a state bar readable from across the room.
+The instance page only shows state and makes associations (`ARCHITECTURE.md`, second round (c)):
 
-**Palette** (measured, as in A).
+1. Header (no card): `h1` id; today's engine line; the state badge as a pill; Start, Stop, Restart as
+   pill buttons with icons (`play`, `square`, `rotate-cw`); the run status line; the start at boot
+   switch (`power` icon in its label) as today.
+2. Card **Server profile** (05c: the profile id as a link to `#/profiles/server/<id>` and its port in
+   mono; 05g adds the select described in `api-contract.md`).
+3. Card **Model profiles** (05h: the assignment table).
+4. Card **Tags** (the union shown as pills; editing the instance's own tags has no 05 slice yet:
+   `PUT /api/instances/{id}/tags` is platform slice 12, 05d covers only the server profile's tags. A
+   gap for the coordinator).
 
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--page`, `--bg`, `--field` | `#ffffff` | `#07090b` | page, cards, controls |
-| `--surface` | `#eef1f3` | `#11161a` | nav, disabled fill, notices |
-| `--line` | `#0a0d10` | `#3a454e` | 2 px frames (decorative in dark) |
-| `--text` | `#0a0d10` | `#edf2f5` | 17.2 to 19.5 / 16.1 to 17.7 |
-| `--muted` | `#4f5a63` | `#9aa8b2` | 6.2 to 7.1 / 7.5 to 8.2 |
-| `--control` | `#6e7a84` | `#64727d` | 3.9 to 4.4 / 3.7 to 4.0 |
-| `--accent` | `#006d79` | `#3dd6e8` | **5.3 (surface), 6.1 (bg) / 10.4 (surface), 11.4 (bg)** |
-| `--on-accent` | `#ffffff` | `#07090b` | 6.1 / 11.4 on the accent |
-| `--danger` | `#b0201a` | `#ff7a6e` | 6.0 to 6.8 / 7.2 to 7.8 |
-| `--success` | `#18753a` | `#4fdc84` | 5.1 to 5.8 / 10.3 to 11.3 |
-| `--warning` | `#855400` | `#ffc04d` | 5.7 to 6.4 / 11.2 to 12.3 |
+### 1.5 Server profile page (`#/profiles/server/<id>`, 05c)
 
-- **Type**: Space Grotesk 400, 600, 700; JetBrains Mono 400 and 700. Scale in rem: 0.75 (mono
-  uppercase labels), 0.8125, 0.875, 1 (body), 1.375 (h2), 2.25 (h1), 3 (the node's name on the
-  Overview). Uppercase only on short labels (card titles, nav and table labels, badges, tabs).
-- **Spacing**: 4, 8, 12, 16, 24, 40, 56. **Radius**: 2 px controls, 0 for the checkbox, switch and
-  tags. **Elevation**: none, flat 2 px borders; one hard offset shadow (8 px, accent in dark, ink in
-  light) on the sign-in card only.
-- **Controls**: 36 px high, 2 px borders (dashed when disabled), 3 px focus ring; square switch.
-- **Icons**: an original set drawn for the project (about 15 icons, 2.25 px square-capped strokes),
-  so no third-party licence; or Tabler Icons, **MIT License** (read:
-  [tabler-icons LICENSE](https://github.com/tabler/tabler-icons/blob/main/LICENSE); npm
-  `@tabler/icons` 3.52.0 says MIT) if the user prefers a maintained set.
-- **Mark**: two corner brackets holding a cyan square core (original).
-- **Sign-in**: the mark large on a 24 px grid backdrop (decorative gradient), the form in a square
-  card with the hard shadow.
-- **Overview**: a big node header (host name at 3 rem, version and summary in mono), then tiles with
-  an 8 px state-coloured top bar (dashed for the unknown state), the badge as an outlined uppercase
-  label with its shape, the port large in mono.
-- **`index.css`**: tokens and structure: 2 px borders everywhere change box sizes, uppercase mono
-  label rules, tiles, node header, sign-in grid.
-- **Markup**: as B (decorative additions plus the Overview list instead of the table, with the same
-  test rewrite).
-- **Cost**: 7 small slices, as B (the grid replaces the illustration).
-- **Risks**: uppercase mono labels read slower and must stay short (assumed); 2 px borders on every
-  control make each field taller and need a recheck of the save bar and focus-not-obscured checks;
-  the light theme is stark (near-black frames on white); JetBrains Mono is the heaviest font payload
-  of the three (below). Screen readers read the DOM text, not its CSS uppercase (assumed; not tested
-  here).
+1. Back link "All server profiles" (`chevron-left`) once the list exists (05f).
+2. `h1` the profile id; a summary line under it: "Engine llama.cpp, used by default" with the instance
+   as a link and its state shape, or "not used by any instance" (`server-profile-used-by` "Engine {0},
+   used by {1}", `server-profile-unused` "Engine {0}, not used by any instance"; 05c's brief fixes them).
+3. Today's Server form cards (the long form) restyled by H2, the sticky save bar, the post-save message
+   naming the running instance linked (second round (e)). Delete (`trash-2`, secondary, danger text)
+   only while unused (05f). No section nav in this round (a preference: the form has 5 cards).
 
-## 4. Typefaces: licence and weight
+### 1.6 Model profile page (`#/profiles/model/<id>`): the fix at 320 px
 
-All three families are under the **SIL Open Font License 1.1** (read: each upstream licence file:
-[IBM Plex](https://github.com/IBM/plex/blob/master/LICENSE.txt),
-[Atkinson Hyperlegible Next](https://github.com/googlefonts/atkinson-hyperlegible-next/blob/main/OFL.txt),
-[Atkinson Hyperlegible Mono](https://github.com/googlefonts/atkinson-hyperlegible-next-mono/blob/main/OFL.txt),
-[Space Grotesk](https://github.com/floriankarsten/space-grotesk/blob/main/OFL.txt),
-[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt); and the npm
-metadata of `@fontsource/<family>` 5.3.0, "OFL-1.1"). The installers must ship each OFL text with its
-copyright line.
+Today at 320 px: back link, `h1`, `h2`, the jump list (ten outlined secondary buttons, about six
+rows, no visible label: it reads as ten actions), the engine Notice, the Engine select (read-only, one
+option), the read-only Assets card (long paths), then the nine editable cards: the first editable
+control is about 2900 px down.
 
-Sizes: **measured** from the jsDelivr package listing of `@fontsource/<family>@5.3.0`
-(`https://data.jsdelivr.com/v1/packages/npm/@fontsource/<family>@5.3.0?structure=flat`), the Latin
-subset, WOFF2, upright only.
+Hearth layout (mockup `b2-model-profile.html`), in DOM order:
 
-| Direction | Files (weight: kB) | Total |
+1. Back link "All model profiles" (`chevron-left`).
+2. `h1` the profile id; under it a **summary line** (new, DOM): "Engine llama.cpp, model
+   Qwen3.8-27B-Q8_0.gguf", the file name (last path segment) in mono. Keys
+   `model-profile-summary` "Engine {0}, model {1}" and `model-profile-summary-no-model` "Engine {0}, no
+   model file".
+3. `h2` "Model profile settings".
+4. **Section nav** (`nav` labelled by a visible lead-in "On this page"):
+   - **Restyle (H9)**: the ten entries stay buttons (they move the focus, `fe/briefs/02h` 196) but drawn
+     as text links: no border, `--accent` text, underlined, 32 px rows, a 2 px `--line` rule on the
+     left; from **1280 px** the nav is a **sticky right-hand rail** beside the cards (CSS grid, `position:
+     sticky; top: 16px`), always open. Below 1280 px, H9 alone shows the same text list in place (lighter,
+     still about ten rows at 320 px).
+   - **DOM (H10)**: the visible lead-in `p#model-profile-jump-label` "On this page" (the key
+     `model-profile-jump-label`, today `preset-jump-label` "Preset sections.", changes its text and
+     becomes visible; the `nav` takes `aria-labelledby` instead of `aria-label`). Below 1280 px the
+     list is **collapsed** behind a disclosure button "On this page" (`chevron-down`, `aria-expanded`,
+     `aria-controls` the list; the APG disclosure pattern,
+     [WAI-ARIA APG](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/)), closed on each page load;
+     pressing a section button moves the focus as today and closes the list. From 1280 px the button is
+     not shown (CSS) and the list always is. The list is hidden by a class whose `display: none` applies
+     only below 1280 px, **not** by the `hidden` attribute (the base rule `[hidden] { display: none
+     !important }` would win in the rail; measured in the mockup).
+   - Not chosen: a sticky section nav at 320 px (with the sticky save bar it would leave about half a
+     320 by 568 viewport for content and risks [2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum));
+     a `select` that jumps on change ([3.2.2](https://www.w3.org/TR/WCAG22/#on-input) asks for no
+     change of context on a choice).
+5. The engine Notice (`model-profile-engine-unavailable`) when the engine is missing: unchanged.
+6. **Assets, collapsed (H11, DOM)**: the read-only card keeps its place and its dashed look; its `h3`
+   holds a disclosure button "Assets" (`aria-expanded="false"` on load); `model-profile-assets-read-only`
+   stays visible under the heading; the `dl` (files, Project URL, drafters) shows when expanded. The
+   **Engine** becomes the first row of that `dl` (`model-profile-engine` "Engine", value the engine id)
+   instead of a disabled one-option select; `model-profile-engine-hint` and the id
+   `model-profile-engine` go. A section button "Assets" expands the card, then moves the focus to its
+   heading as the others do. Question 4 asks whether the user wants this.
+7. The nine editable cards, then the save bar, unchanged in DOM.
+
+Result measured in the mockup: first editable control at 705 px at 320 px (H9 alone: about 1500 px,
+assumed from ten 32 px rows replacing six 40 px rows plus the Assets card still open).
+
+### 1.7 The two profile lists
+
+- **Model profiles** (`#/profiles/model`, 05b): today's filter (search icon inside the field, H8),
+  status line, table inside a card (radius 16, `--line` row dividers, muted column heads), the on/off
+  switch as the Hearth pill. No DOM change beyond 05b's.
+- **Server profiles** (`#/profiles/server`, 05f): the same table look; columns Server profile (link),
+  Port (mono), Tags (pills), Used by (instance link with its state shape, or "(none)"); a primary
+  "New server profile" (`plus`) above the table. 05f's brief fixes the texts.
+
+### 1.8 Sign-in
+
+Two columns from 840 px: the illustration (round 1's `ART_B`, inline SVG in theme tokens, in a
+`div` with `aria-hidden="true"`) beside the form in a rounded card; stacked, illustration first and
+smaller, below 840 px. Above the `h1` "Sign in", the node's name with the server icon once 05e serves
+it. Texts, fields, errors and focus unchanged.
+
+### 1.9 The light/dark switch
+
+As specified for the recommended answer to question 3:
+
+- One `button` in the banner, `type="button"`, text "Dark theme" (`theme-dark`), moon icon,
+  `aria-pressed="true"` while the dark theme is in effect, `false` otherwise. The name never changes
+  with the state ([WAI-ARIA APG, button](https://www.w3.org/WAI/ARIA/apg/patterns/button/): a toggle
+  button's label does not change when its state does).
+- On load: a stored choice wins; with none, the OS preference (`prefers-color-scheme`) decides, and the
+  page follows it live while nothing is stored.
+- Pressing it flips the theme. If the new theme equals the OS's, the stored choice is **removed**
+  (the page follows the OS again); otherwise `light` or `dark` is stored. So there is no third
+  "System" state to explain, and getting back to "follow my system" is one press.
+- Storage: `localStorage` key `pai-theme`, values `light` | `dark`, per browser and per origin (the
+  bff's address); every read and write in `try`/`catch`: when storage is refused the switch still works
+  for the page's life. No server state, no cookie.
+- Applied as `data-theme="light" | "dark"` on `<html>`, set in `main.tsx` before the first render (no
+  inline script; `fe/index.html` has none today). CSS: light tokens on `:root`; dark tokens under
+  `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) }` and under
+  `:root[data-theme='dark']`; `color-scheme` follows, so native controls and scrollbars match.
+- Out of scope: per-account themes, a high-contrast theme, following the OS's later change once a
+  choice is stored.
+
+## 2. Build order
+
+Each row is one test-first cycle (12 criteria at most, the playbook's limit). "Restyle" = CSS and tokens
+only: checked by the designer's UX pass (`fe/ux`) and the stylesheet-text tests (as
+`fe/src/DisabledLook.test.ts` reads `index.css`). "DOM" = markup or behaviour: the tester writes failing
+tests first. **Before 05** = can land before the rename without being redone.
+
+| # | Slice | What users see | Kind | Depends on | Before 05 |
+|---|---|---|---|---|---|
+| H1 | Tokens, type, fonts | warm paper, plum accent, Atkinson type, new scale and spacing, both themes | Restyle + the font files (section 3); stylesheet-text tests: every token in both theme blocks, the section 4 contrast pairs computed from the CSS text, `@font-face` URLs relative, no `http` URL in any CSS | 02h done | **yes** |
+| H2 | Controls and cards | pill buttons, 40 px fields, 1.5 px borders, 3 px ring, hatch on disabled, the pill switch, rounded cards, notices, badges, tables in a card | Restyle; selectors must not name `preset`/`presets` classes (use `input[role='switch']`, `table`), or wait for 05 | H1 | **yes** |
+| H3 | Mark and favicon | the doorway mark beside the name; the favicon | DOM (small): the home link's name stays "Private AI Framework", the SVG `aria-hidden`, `focusable="false"` | H1 | **yes** |
+| H4 | Light/dark switch | the switch in the banner (1.9) | DOM + behaviour: initial state from the OS mock, press flips `data-theme` and `aria-pressed`, store and remove rules, storage that throws, the constant name | H1 | **yes** |
+| H5 | Shell restyle | banner layout, nav pills, current item, sub-label rules, icon-only switch below 480 px | Restyle (generic selectors: `.nav a[aria-current]`, `.nav-label`), works on today's nav and on 05b/05c's | H2, H4 | **yes** |
+| H6 | Overview tiles | instances as tiles (state, failed hint, engine line) | DOM: `table` becomes `ul` of `li` with link, badge, `dl`; `fe/src/Instances.test.tsx` row and cell queries rewritten | H2 | **yes**; Port, Tags, node panel join with 05e; boot per question 1 |
+| H7 | Sign-in illustration | two columns with the illustration | DOM (decorative `div` + SVG `aria-hidden`) + layout; texts and focus unchanged | H2 | **yes**; node name with 05e |
+| H9 | Section nav restyle | the jump list as a light text list; sticky rail from 1280 px | Restyle (`.jump` only, a class 05 keeps) | H2 | **yes** |
+| H8 | Icons | the Lucide icons of section 3 in every placement | DOM (decorative); one test that every `svg` in the app is `aria-hidden` and `focusable="false"` and that names are unchanged | 05 (touches files 05 renames), 05b, 05c (nav entries) | no |
+| H10 | Section nav, DOM | "On this page" visible; collapsed below 1280 px | DOM + behaviour (1.6 item 4) | H9, 05 | no |
+| H11 | Summary line and collapsed Assets | the model file under the title; Assets closed; Engine as a row | DOM + behaviour (1.6 items 2 and 6) | 05; question 4 | no |
+
+Not separate visual slices: the nav's Profiles group (05b, 05c), the node line (05e), the instance page
+(05c, 05g, 05h), the server profile page and list (05c, 05f) are built **directly in Hearth** from
+section 1 by their own slices, so nothing built there is restyled twice. If H1 to H5 have not landed when
+those slices start, they use today's look and inherit Hearth from H1 to H5 later without change.
+
+## 3. Assets for the platform side
+
+Nothing is fetched at run time or at build time beyond what `npm ci` already does; the files are
+committed in `fe/` and land in `fe/dist/`, which `pai-bff` embeds (`crates/bff/build.rs`).
+
+**Fonts** (SIL Open Font License 1.1, no Reserved Font Name in either licence; read:
+[OFL.txt, Next](https://github.com/googlefonts/atkinson-hyperlegible-next/blob/main/OFL.txt) "Copyright
+2020-2024 The Atkinson Hyperlegible Next Project Authors";
+[OFL.txt, Mono](https://github.com/googlefonts/atkinson-hyperlegible-next-mono/blob/main/OFL.txt) "Copyright
+2020-2024 The Atkinson Hyperlegible Mono Project Authors"). Source: the unmodified WOFF2 files of
+`@fontsource/atkinson-hyperlegible-next@5.3.0` and `@fontsource/atkinson-hyperlegible-mono@5.3.0`
+(npm licence field "OFL-1.1"), copied into `fe/src/assets/fonts/` with a README naming package, version
+and licence (a preference over an npm dependency: three files, no package to update). Upright only, no
+italic (the UI uses none). Sizes measured from the jsDelivr listing
+(`https://data.jsdelivr.com/v1/packages/npm/@fontsource/<family>@5.3.0?structure=flat`), in bytes:
+
+| File | Latin | Latin Extended (question 2) |
 |---|---|---|
-| A | Plex Sans 400: 22.1, 600: 23.7; Plex Mono 400: 14.4 (600: 15.3 optional) | 60.2 kB (75.5 with Mono 600) |
-| B | Atkinson Hyperlegible Next 400: 11.8, 700: 12.4; Atkinson Hyperlegible Mono 400: 9.8 | 34.0 kB |
-| C | Space Grotesk 400: 13.1, 600: 13.0, 700: 12.5; JetBrains Mono 400: 20.7, 700: 21.4 | 80.7 kB |
+| `atkinson-hyperlegible-next-<subset>-400-normal.woff2` | 12,096 | 7,376 |
+| `atkinson-hyperlegible-next-<subset>-700-normal.woff2` | 12,732 | 7,556 |
+| `atkinson-hyperlegible-mono-<subset>-400-normal.woff2` | 10,056 | 6,528 |
+| Total | **34,884 (34.1 KiB)** | **+21,460 (+21.0 KiB), 56,344 in all** |
 
-Latin only covers English; a user name with other letters falls back to the system font in the same
-stack (assumed acceptable). Latin Extended adds about 7 kB per file for Atkinson (measured: 7.2 to
-7.4 kB); not measured for the others.
+The Latin subset's `unicode-range` is U+0000-00FF plus a few marks and U+2000-206F (so it covers
+English, the Western European accented letters and the ellipsis the strings use); Latin Extended is
+U+0100-02BA and more (Polish, Czech, Turkish, Romanian and more) (read: `@fontsource/...@5.3.0/400.css`).
+With one `@font-face` per subset and its `unicode-range`, a browser downloads the extended file only
+when the page shows such a character ([CSS Fonts 4, `unicode-range`](https://www.w3.org/TR/css-fonts-4/#unicode-range-desc)),
+so Latin Extended costs the binary and the packages 21 KiB, the page nothing until it is needed.
 
-## 5. What the pages show that is not a restyle
+Vite emits each WOFF2 as its own hashed file in `fe/dist/assets/`: they are above
+`build.assetsInlineLimit`, default 4096 bytes (read:
+[Vite build options](https://vite.dev/config/build-options#build-assetsinlinelimit)).
 
-So the user can tell the look from the features: these belong to their own slices, not to the
-identity work.
+**The bff's content type**: `crates/bff/build.rs` `content_type` answers `application/octet-stream`
+for every extension but html, js and css. Fonts still load under `X-Content-Type-Options: nosniff`,
+which blocks only script and style destinations (read:
+[Fetch, 3.6.1](https://fetch.spec.whatwg.org/#should-response-to-request-be-blocked-due-to-nosniff?)),
+but the right type is `font/woff2` (read: [IANA](https://www.iana.org/assignments/media-types/font/woff2),
+RFC 8081). Proposed for the platform side: map `woff2` to `font/woff2` in that function, with H1.
 
-- **The node's name** on top of the nav, on the Overview and on the sign-in page: step 10 item 13
-  (`ARCHITECTURE.md`, "Nodes and instances"; the bff answers `{"name": <host name>, ...}`).
-- **Port and tags** on the Overview: item 13 adds them to the instances call (`ARCHITECTURE.md`
-  1054 to 1059, `Instances() -> [{id, engine, port, tags}]`, unauthenticated).
-- **Start at boot** on the Overview: that call has no boot state; `BootEnabled` today is read for a
-  signed-in administrator. Shown on the session-free Overview, it needs the architect (question 5).
-- **The instance's Server and Presets tabs** and the Presets tab's per-instance override: item 13;
-  the mock's select ("Follow preset (on)", On, Off) is illustrative only.
-- **The Overview's summary line** and a state icon beside each instance in the nav: new; text keys
-  below are proposals for that slice.
-- A light/dark switch in the UI: the pages have one for the review only; the UI follows the system
-  today (`fe/DESIGN.md` 5.1, a preference; question 4).
+**Icons**: Lucide, from `lucide-static@1.74.0` (npm licence "ISC"), copied as path data into one
+component (`fe/src/Icon.tsx`, a map from name to the SVG children), drawn at 24 by 24 with
+`stroke="currentColor"`, `stroke-width="2"`; no runtime package, no SVG files. The 24 icons, by Lucide
+name, and where:
 
-Proposed keys for that later slice (illustrative; its brief fixes them): `overview-node` "Node",
-`nav-node-current` "This node", `overview-summary` "{0} instances: {1} running, {2} stopped, {3}
-failed, {4} in an unknown state.", `instances-port` "Port", `instances-tags` "Tags",
-`instances-boot` "Start at boot", `instances-boot-on` "On", `instances-boot-off` "Off"; an instance
-with no tags reuses the "(none)" text (`preset-value-none`).
+| Icon | Where |
+|---|---|
+| `house` | nav: Overview |
+| `server` | nav: the node line; Overview node panel; sign-in node line |
+| `sliders-horizontal` | nav: Server profiles |
+| `layers` | nav: Model profiles |
+| `menu` | banner: Menu |
+| `moon` | banner: the theme switch |
+| `log-in`, `log-out` | banner: Sign in, Sign out |
+| `play`, `square`, `rotate-cw` | instance: Start, Stop, Restart |
+| `power` | Start at boot (instance switch, tile row) |
+| `plug`, `tag` | tile rows Port, Tags |
+| `info`, `triangle-alert`, `lock-open` | notices: info, warning, the unencrypted sign-in notice |
+| `circle-alert`, `circle-check` | save and run alerts; Saved and run success status |
+| `search` | the model profiles filter |
+| `chevron-left` | back links |
+| `chevron-down` | the section nav and Assets disclosures |
+| `plus`, `trash-2` | New server profile, Delete (05f) |
 
-## 6. Recommendation
+Licence: Lucide's `LICENSE` is ISC, with the icons derived from Feather under MIT (Cole Bemis); of the
+24, `log-in`, `log-out`, `server`, `square`, `power`, `info`, `search`, `chevron-left`, `chevron-down`,
+`plus`, `trash-2`, `moon` and the old names of `circle-alert` and `triangle-alert` are on its Feather
+list (read: [lucide LICENSE](https://github.com/lucide-icons/lucide/blob/main/LICENSE)), so both texts
+ship.
 
-**B, Hearth** (a preference). It answers every point the user named: a typeface of its own with a
-legibility rationale that fits the accessibility floor, a mark and an illustration, a cared-for
-sign-in, tiles that already look like the collapsible instance cards item 13 asks for. It is also the
-lightest font payload (34 kB). Its cost (7 slices) is two more than A; its risk (longer pages) is
-handled by the existing save-bar mechanism and is checked by the UX run. If the user wants the
-strongest look for a server console, C is the alternative; A is the choice only if the change should
-stay small.
+**Licence texts**: in the framework package that carries `pai-bff`, beside its other licences
+(`share\licenses\` in the MSI, `/usr/share/private-ai/licenses/<package>/` on Linux; staged by
+`xtask/src/common/licenses.rs`, `docs/build-packaging.md` "Every package carries its licences"):
+`OFL-atkinson-hyperlegible-next.txt`, `OFL-atkinson-hyperlegible-mono.txt` (each the upstream file with
+its copyright line), `lucide.txt` (the whole upstream `LICENSE`: ISC and MIT), and a line each in that
+package's `README.txt`. The texts come from `installer/licenses/` with their source in its README, as for
+the other copied texts. macOS ships no `pai-bff`, so nothing there.
 
-Parts can be mixed: C's state bar on B's tiles, or A's status table with B's type and palette.
+## 4. Contrast and accessibility criteria (testable)
 
-## 7. Questions for the user
+Each holds in **both themes**. The first group is checkable from `index.css` text by a unit test
+(parse the two token blocks, compute the WCAG ratio); the rest by the UX check or a DOM test.
 
-1. **Which direction?** (a) B Hearth (recommended); (b) C Signal; (c) A Instrument; (d) a mix: name
-   the parts.
-2. **Overview instances as tiles or table?** (a) tiles, a list instead of the table, with its tests
-   rewritten (recommended, with B or C); (b) keep the table, restyled as a status board (as A).
-3. **Icons?** (a) the direction's named set (Lucide ISC plus MIT, Phosphor MIT, or Tabler MIT),
-   copied as inline SVG, its licence shipped (recommended); (b) an original set drawn for the project,
-   no third-party licence.
-4. **Light/dark switch in the UI?** (a) no, the system setting decides, as today (recommended);
-   (b) yes, a Theme control in the header (auto, light, dark), remembered per browser.
-5. **Start at boot on the session-free Overview?** (a) only when signed in (recommended: no new
-   unauthenticated call); (b) for everyone (the architect adds the boot state to the unauthenticated
-   instances call); (c) not on the Overview.
-6. **Font coverage?** (a) Latin only (recommended, smallest); (b) Latin and Latin Extended (about
-   +7 kB a file).
+1. Text ([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum), 4.5:1): `--text`, `--muted`,
+   `--accent`, `--danger`, `--success`, `--warning` each on `--page`, `--bg`, `--surface`, `--field` and
+   `--accent-soft`; `--on-accent` on `--accent`. Lowest today: success on accent-soft, 4.96 (light).
+2. Non-text ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast), 3:1): `--control` (borders,
+   dashed disabled border, the switch knob off) on `--page`, `--bg`, `--surface`, `--field`,
+   `--accent-soft` (lowest 3.25, dark); the state shapes (`--success`, `--warning`, `--danger`,
+   `--muted`) on `--bg` and `--accent-soft`; the checked checkbox and the switch on: `--accent` against
+   its surroundings and `--on-accent` mark on it.
+3. Focus ([2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible); the ring meets 1.4.11 too): a 3 px
+   `--accent` outline, offset 2 px, on `:focus-visible`, on every focusable element, including the
+   pressed theme switch and the current nav item (`--accent` on `--accent-soft`: 6.04 / 6.93). The
+   headings a section button lands on show the ring (today's rule).
+4. `--line` (1.3:1) carries no meaning: no control, state or boundary that the user needs is drawn only
+   with it (the tiles and cards are understood without their outline).
+5. Targets ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)): every button, link in the nav,
+   section button, disclosure, switch and checkbox at least 24 by 24 px; Hearth draws 32 to 40 px.
+6. Reflow ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)): no sideways scroll at 320 px in any page,
+   both themes, nav open and closed, section nav open and closed.
+7. Text spacing ([1.4.12](https://www.w3.org/TR/WCAG22/#text-spacing)): pills and tiles have no fixed
+   heights that clip text (min-height only).
+8. State not by colour ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)): each badge keeps its shape
+   and text in both themes and in forced colours.
+9. The theme switch: a `button` with `aria-pressed` ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value));
+   its accessible name is "Dark theme" in every state and at every width; pressing it moves no focus
+   and announces nothing beyond the pressed state (no live region); the choice survives a reload in the
+   same browser and does not exist in another; with storage throwing, the page renders and the switch
+   works.
+10. Forced colours: shapes, the drawn checkbox and the switch knob use system colours as today; icons
+    and the mark are `currentColor` or theme tokens with `forced-color-adjust` left on, so they take
+    system colours.
+11. Disclosures (H10, H11): `aria-expanded` matches what is shown; Enter and Space toggle (native
+    `button`); the controlled region follows the button in DOM order
+    ([1.3.2](https://www.w3.org/TR/WCAG22/#meaningful-sequence)).
+12. Motion: the chevron turn and the switch knob slide stop under `prefers-reduced-motion: reduce`.
+
+## 5. Not chosen (round 1 record)
+
+- **A, Instrument**: IBM Plex, an ink banner, hairline panels, the Overview kept as a status table.
+  The least marked; the user wanted a stronger identity.
+- **C, Signal**: Space Grotesk and JetBrains Mono, square 2 px frames, a cyan accent, uppercase mono
+  labels. The boldest, but the heaviest fonts (80.7 KiB) and the starkest light theme.
+- Phosphor icons (round 1's B set) were replaced by Lucide at the user's choice. Both directions'
+  pages and measurements stay in `build/ux-review/visual/` (round 1 text: this file at commit 16530de).
+
+## 6. Questions for the user
+
+1. **Start at boot on the signed-out Overview?** (a) only when signed in, read per tile (recommended:
+   no new unauthenticated data); (b) for everyone (the architect adds the boot state to the
+   unauthenticated `GET /api/instances`); (c) not on the Overview, only on the instance page.
+2. **Font coverage?** (a) Latin only, 34.1 KiB (recommended: the UI is English and Latin covers
+   Western European names; other letters fall back to the system font); (b) Latin and Latin Extended,
+   56.3 KiB in the packages, the extra file downloaded only when a page shows such a letter.
+3. **The theme switch's states?** (a) two states, Light and Dark, starting from the OS and back to
+   following the OS when switched to the OS's theme (recommended: matches "a light/dark switch", one
+   button); (b) three choices, System, Light, Dark, in a small menu in the banner.
+4. **Assets on the model profile page?** (a) collapsed by default, with the model file name under the
+   title and the Engine as a row of Assets (recommended: the first setting moves from about 2900 px to
+   about 700 px at 320 px); (b) open as today, moved after the editable cards; (c) as today.
+
+## 7. Notes for the coordinator
+
+- Instance tags: `PUT /api/instances/{id}/tags` (platform slice 12) has no fe slice in 05's list (05d
+  is the server profile's tags only); 1.4 item 4 needs one.
+- `crates/bff/build.rs`: `woff2` -> `font/woff2` (section 3), a platform change to schedule with H1.
+- `fe/DESIGN.md` 5.1 says "No theme switch (preference)"; H4 changes it, with the user's choice.
