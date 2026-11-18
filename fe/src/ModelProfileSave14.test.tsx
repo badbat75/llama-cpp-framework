@@ -36,7 +36,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const FIT = en('model-profile-fit-to-vram')
 const FIT_CTX = en('model-profile-fit-min-context')

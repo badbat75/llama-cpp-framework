@@ -31,7 +31,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const SERVER = '#/instances/default'
 const PUT = `/api/profiles/model/${ID}`
 const CTX = en('model-profile-context-size')

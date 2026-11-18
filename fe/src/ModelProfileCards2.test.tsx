@@ -36,7 +36,7 @@ import {
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const MODEL = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
 
 /** The criterion 99 stub: every key of 96, 97 and 98 set. */

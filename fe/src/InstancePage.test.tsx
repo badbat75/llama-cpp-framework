@@ -1124,7 +1124,7 @@ const TAB_PATH = [
   'default',
   'coder',
   // fe/briefs/02-models.md, 2a criterion 1.
-  en('nav-models'),
+  en('nav-model-profiles'),
   // The header's run buttons, inactive ones included, then Start at boot's
   // About toggle and its box (1c.45b, 46a: the box is enabled for every session).
   en('run-start'),

@@ -1,5 +1,5 @@
 // The model profile table's on/off switch, slice 2c (fe/briefs/02-models.md, section
-// 2c): an administrator switches a model profile at #/models with PUT
+// 2c): an administrator switches a model profile at #/profiles/model with PUT
 // /api/profiles/model/{id}/enabled (fe/briefs/api-contract.md); one status and one
 // alert for the whole table, a re-read of the row after a failure, and a
 // sign-in after a 401. The whole app renders against the fake bff (mocked
@@ -92,10 +92,10 @@ async function advance(ms: number) {
   await flush()
 }
 
-/** The app at #/models as an administrator, the table loaded. */
+/** The app at #/profiles/model as an administrator, the table loaded. */
 async function open(options: BffOptions = {}) {
   fakeClock()
-  startAt('#/models')
+  startAt('#/profiles/model')
   const bff = fakeBff({ modelProfiles: LIST, ...options })
   render(<App />)
   await flush()
@@ -217,7 +217,7 @@ function signIns(main: HTMLElement): HTMLButtonElement[] {
 function h1(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
 }
 
@@ -963,7 +963,7 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
   )
   navigate('#/')
   await flush()
-  navigate('#/models')
+  navigate('#/profiles/model')
   await flush()
   expect(switchStatus(main).textContent, 'cleared on leaving').toBe('')
   expect(alerts(main)).toEqual([])
@@ -982,7 +982,7 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-models'),
+    en('nav-model-profiles'),
     en('model-profiles-filter-label'),
   ]
   const rowsTwice = IDS.flatMap((id) => [id, id])

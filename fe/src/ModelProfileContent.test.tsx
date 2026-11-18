@@ -1,10 +1,10 @@
-// The CONTENT of the model profile page #/models/<id>, read-only (fe/briefs/02-models.md,
+// The CONTENT of the model profile page #/profiles/model/<id>, read-only (fe/briefs/02-models.md,
 // sections 2d.5 to 2d.9): the order below the h1, the line for a switched-off
 // model profile, the Engine select of D2.2, the Assets card as a description list, the
 // keyboard path and what a screen reader says, and the reply shape the fe checks.
 // The route, the back link, the h1, the read and its states are ModelProfilePage.test.tsx
-// (2d.1 to 2d.4), the list's tab path and table reading are Models.test.tsx and
-// ModelsSwitch.test.tsx (2a.20, 2c.53, 2c.54). The colours of 69, the wrapping of
+// (2d.1 to 2d.4), the list's tab path and table reading are ModelProfiles.test.tsx and
+// ModelProfilesSwitch.test.tsx (2a.20, 2c.53, 2c.54). The colours of 69, the wrapping of
 // 77 and the focus ring of 79 are checked in the designer's review, not in jsdom.
 import {
   act,
@@ -34,7 +34,7 @@ import {
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const STRATA = 'Strata'
 const MODEL =
   '/var/lib/private-ai/.llama.cpp/models/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'
@@ -533,7 +533,7 @@ test('2d.74: each value is the reply string unchanged, the server path in full w
   expect(card.querySelectorAll('a[href]').length).toBe(0)
 })
 
-test('2d.75: spec-type is split as presets.rs does: Drafter is the first entry that does not start with ngram-, N-gram drafters are the ngram- entries in the value order joined with a comma and a space, empty entries and none dropped', async () => {
+test('2d.75: spec-type is split as model_profiles.rs does: Drafter is the first entry that does not start with ngram-, N-gram drafters are the ngram- entries in the value order joined with a comma and a space, empty entries and none dropped', async () => {
   for (const [specType, drafter, ngrams] of [
     ['ngram-mod,draft-mtp', 'draft-mtp', 'ngram-mod'],
     ['draft-eagle3', 'draft-eagle3', NONE],
@@ -610,7 +610,7 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-models'),
+    en('nav-model-profiles'),
     ...pageStartTabStops(),
     `${en('field-about')} ${en('model-profile-engine')}`,
     en('model-profile-engine'),
@@ -668,7 +668,7 @@ test('2d.80, 2d.82: an id with a space and one with a % open on their content, r
     ['Qwen 27B', 'Qwen%2027B'],
     ['q%bar', 'q%25bar'],
   ] as const) {
-    startAt(`#/models/${encoded}`)
+    startAt(`#/profiles/model/${encoded}`)
     const { bff, main } = open()
     expect(await heading1(main, id), id).toBeTruthy()
     const h3 = await within(main).findByRole('heading', {

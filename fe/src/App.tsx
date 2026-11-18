@@ -18,22 +18,45 @@ import {
   type Instance,
   type InstancesStore,
 } from './Instances.tsx'
-import Models from './Models.tsx'
+import ModelProfiles from './ModelProfiles.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
 import ModelProfilePage from './ModelProfilePage.tsx'
-import { instanceHref, parseRoute, type Route } from './route.ts'
+import { instanceHref, legacyHref, parseRoute, type Route } from './route.ts'
 import { readSession, signOut, type Session } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { t } from './strings.ts'
 
+/**
+ * The old `#/models` bookmark of 05b (fe/briefs/05b-profiles-nav.md, 5b.8 and
+ * 5b.9): the address in the bar becomes what it stands for, `legacyHref`, by
+ * replaceState, which adds no history entry and fires no hashchange of its
+ * own, and keeps the path and the query. The hash to route on: the rewritten
+ * one, and `hash` for every address that is not an old one.
+ */
+function rewriteLegacy(hash: string): string {
+  const target = legacyHref(hash)
+  if (target === null) return hash
+  history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}${target}`,
+  )
+  return target
+}
+
 export default function App() {
-  const [hash, setHash] = useState(window.location.hash)
+  // The route reads the rewritten address, so an old bookmark opens its page
+  // with no flash of the not-found page; the effect below puts the same
+  // address in the bar.
+  const [hash, setHash] = useState(
+    () => legacyHref(window.location.hash) ?? window.location.hash,
+  )
   // undefined while the session is read, null when signed out.
   const [session, setSession] = useState<Session | null | undefined>(undefined)
-  // The Models list's filter text, kept for the tab's life by the owner who
-  // typed it, so it outlives the page (02-models.md, 62 and 62a).
+  // The Model profiles list's filter text, kept for the tab's life by the
+  // owner who typed it, so it outlives the page (02-models.md, 62 and 62a).
   const [filter, setFilter] = useState<{ owner: string; text: string } | null>(
     null,
   )
@@ -58,6 +81,12 @@ export default function App() {
   // The one read of /api/instances the nav and the pages share.
   const [store] = useState(instancesStore)
   const route = parseRoute(hash)
+
+  // The address in the bar when the app opens: an old bookmark is rewritten
+  // before any page reads (5b.8). The route already reads the rewritten one.
+  useEffect(() => {
+    rewriteLegacy(window.location.hash)
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -85,9 +114,23 @@ export default function App() {
 
   useEffect(() => {
     const onHash = () => {
-      const next = window.location.hash
+      // An old bookmark arrived (typed, or Back to one): the bar is rewritten
+      // first, and everything below reads the rewritten address, so the leave
+      // guard asks about the page the address stands for (5b.9).
+      const next = rewriteLegacy(window.location.hash)
+      if (next === hash) {
+        // The address already shown is no navigation (05b's 5b.13): the
+        // rewrite of the old bookmark is all that happens, clean or dirty
+        // alike. No focus move, no title, no read, the menu left as it is,
+        // the guard not asked, a "session ended" sign-in text kept: the user
+        // did not leave, and a focus move would take someone typing away
+        // from their place (2.4.3, 3.2.1, 3.2.2). A token for this address is
+        // spent here, so no later navigation to it passes the guard.
+        if (going.current === next) going.current = null
+        return
+      }
       if (going.current === next) going.current = null
-      else if (dirty && next !== hash) {
+      else if (dirty) {
         // The browser moved the address (Back, Forward, a hash typed in the
         // address bar) while the form has edits, and a hashchange cannot be
         // held back: the address goes back (replaceState fires none of its
@@ -271,25 +314,30 @@ export default function App() {
             <NavInstances key={session.user} route={route} store={store} />
           )}
           {session && (
-            <ul>
-              <li>
-                {/* The model profile page belongs to the list without being it,
-                    so the list is its current item, not its current page
-                    (02-models.md, 2d.64). */}
-                <a
-                  href="#/models"
-                  aria-current={
-                    route.page === 'models'
-                      ? 'page'
-                      : route.page === 'model-profile'
-                        ? 'true'
-                        : undefined
-                  }
-                >
-                  {t('nav-models')}
-                </a>
-              </li>
-            </ul>
+            <>
+              <p id="nav-profiles" className="nav-label">
+                {t('nav-profiles')}
+              </p>
+              <ul aria-labelledby="nav-profiles">
+                <li>
+                  {/* The model profile page belongs to the list without being it,
+                      so the list is its current item, not its current page
+                      (02-models.md, 2d.64). */}
+                  <a
+                    href="#/profiles/model"
+                    aria-current={
+                      route.page === 'model-profiles'
+                        ? 'page'
+                        : route.page === 'model-profile'
+                          ? 'true'
+                          : undefined
+                    }
+                  >
+                    {t('nav-model-profiles')}
+                  </a>
+                </li>
+              </ul>
+            </>
           )}
         </nav>
         <main id="main" tabIndex={-1}>
@@ -435,9 +483,9 @@ function Page({
   if (session === null) {
     return <SignIn required revoked={revoked} onSignedIn={onSignedIn} />
   }
-  if (route.page === 'models') {
+  if (route.page === 'model-profiles') {
     return (
-      <Models
+      <ModelProfiles
         filterText={filterText}
         onFilterText={onFilterText}
         onSignedOut={onSignedOut}

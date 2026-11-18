@@ -125,10 +125,10 @@ async function loaded(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main }
 }
 
-/** The model profiles list at #/models, on fake timers, with the table loaded. */
+/** The model profiles list at #/profiles/model, on fake timers, with the table loaded. */
 async function loadedModels(options: BffOptions = {}) {
   fakeClock()
-  startAt('#/models')
+  startAt('#/profiles/model')
   const bff = fakeBff({ modelProfiles: LIST, ...options })
   render(<App />)
   await flush()
@@ -550,9 +550,9 @@ test('S1.1: the guard keys on a read show that reads generic failure, in place o
   for (const [route, options, text] of rows) {
     const hash =
       route === 'GET /api/profiles/model'
-        ? '#/models'
+        ? '#/profiles/model'
         : route === 'GET /api/profiles/model/{id}'
-          ? '#/models/Qwen3-27B'
+          ? '#/profiles/model/Qwen3-27B'
           : '#/instances/default'
     openAt(hash, options)
     const main = screen.getByRole('main')
@@ -869,14 +869,14 @@ test('S1.9: a 403 session-not-administrator on the server read signs the app out
 
 test('S1.9: a 403 session-not-administrator on the model profiles read signs the app out with session-revoked in place of signin-required; after a sign-in the list reads again', async () => {
   let reads = 0
-  const { bff, main } = openAt('#/models', {
+  const { bff, main } = openAt('#/profiles/model', {
     modelProfiles: () =>
       ++reads === 1
         ? REVOKED()
         : reply(200, [modelProfile('after-sign-in', true)]),
   })
   const { username, password, submit } = await signInForm(main)
-  expect(window.location.hash, 'the route stays').toBe('#/models')
+  expect(window.location.hash, 'the route stays').toBe('#/profiles/model')
   const note = within(main).getByText(en('session-revoked'))
   expect(note.getAttribute('role'), 'the paragraph is an alert').toBe('alert')
   expect(before(note, username), 'above the sign-in fields').toBe(true)
@@ -888,7 +888,7 @@ test('S1.9: a 403 session-not-administrator on the model profiles read signs the
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
   ).toBeNull()
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-models') }),
+    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
   ).toBeNull()
   type(username, 'bob')
   type(password, 'hunter2')
@@ -904,12 +904,14 @@ test('S1.9: a 403 session-not-administrator on the model profiles read signs the
 
 test('S1.9: a 403 session-not-administrator on the model profile read signs the app out with session-revoked; after a sign-in the page reads again and focus goes to its h1', async () => {
   let reads = 0
-  const { bff, main } = openAt('#/models/Qwen3-27B', {
+  const { bff, main } = openAt('#/profiles/model/Qwen3-27B', {
     modelProfile: () =>
       ++reads === 1 ? REVOKED() : reply(200, modelProfileDoc()),
   })
   const { username, password, submit } = await signInForm(main)
-  expect(window.location.hash, 'the route stays').toBe('#/models/Qwen3-27B')
+  expect(window.location.hash, 'the route stays').toBe(
+    '#/profiles/model/Qwen3-27B',
+  )
   const note = within(main).getByText(en('session-revoked'))
   expect(note.getAttribute('role'), 'the paragraph is an alert').toBe('alert')
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
@@ -925,7 +927,7 @@ test('S1.9: a 403 session-not-administrator on the model profile read signs the 
     name: 'Qwen3-27B',
   })
   await waitFor(() => expect(document.activeElement).toBe(h1))
-  expect(window.location.hash).toBe('#/models/Qwen3-27B')
+  expect(window.location.hash).toBe('#/profiles/model/Qwen3-27B')
   expect(
     bff.calls.filter((c) => c.path === '/api/profiles/model/Qwen3-27B'),
   ).toHaveLength(2)

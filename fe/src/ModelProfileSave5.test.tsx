@@ -28,7 +28,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const GET = `/api/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const MODE = en('model-profile-embedding-mode')
@@ -389,7 +389,7 @@ test('2h.152: signing in as another user drops the edits, reads the model profil
     ),
   )
   // The alert stays until the page is left.
-  navigate(`#/models/${OTHER}`)
+  navigate(`#/profiles/model/${OTHER}`)
   await within(main).findByRole('heading', { level: 1, name: OTHER })
   expect(
     within(main).queryByText(en('server-edits-dropped')),

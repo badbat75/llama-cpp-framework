@@ -4,7 +4,7 @@
 export type Route =
   | { page: 'overview' }
   | { page: 'sign-in' }
-  | { page: 'models' }
+  | { page: 'model-profiles' }
   | { page: 'model-profile'; id: string }
   | { page: 'instance'; id: string }
   | { page: 'not-found' }
@@ -12,8 +12,8 @@ export type Route =
 export function parseRoute(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/') return { page: 'overview' }
   if (hash === '#/sign-in') return { page: 'sign-in' }
-  if (hash === '#/models') return { page: 'models' }
-  const modelProfile = /^#\/models\/([^/]+)$/.exec(hash)
+  if (hash === '#/profiles/model') return { page: 'model-profiles' }
+  const modelProfile = /^#\/profiles\/model\/([^/]+)$/.exec(hash)
   if (modelProfile) {
     try {
       return { page: 'model-profile', id: decodeURIComponent(modelProfile[1]!) }
@@ -32,6 +32,20 @@ export function parseRoute(hash: string): Route {
   return { page: 'not-found' }
 }
 
+/**
+ * The address an old `#/models` bookmark stands for, so the app rewrites it
+ * (fe/briefs/05b-profiles-nav.md, 5b.8 and 5b.9): `#/models` becomes
+ * `#/profiles/model` and `#/models/<rest>` becomes `#/profiles/model/<rest>`,
+ * with `<rest>` copied byte for byte, never decoded and re-encoded. The result
+ * is then read by the rules above, so `#/models/` lands on the not-found page
+ * the new address has. null for every other address: `#/modelsx` is not one.
+ */
+export function legacyHref(hash: string): string | null {
+  if (hash === '#/models') return '#/profiles/model'
+  const rest = /^#\/models\/(.*)$/.exec(hash)
+  return rest === null ? null : `#/profiles/model/${rest[1]}`
+}
+
 /** The link to an instance's page. */
 export function instanceHref(id: string): string {
   return `#/instances/${encodeURIComponent(id)}`
@@ -39,7 +53,7 @@ export function instanceHref(id: string): string {
 
 /** The link to a model profile's page. */
 export function modelProfileHref(id: string): string {
-  return `#/models/${encodeURIComponent(id)}`
+  return `#/profiles/model/${encodeURIComponent(id)}`
 }
 
 /**

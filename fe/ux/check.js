@@ -84,15 +84,18 @@ const STATES = [
     ],
   },
   {
-    name: 'models',
+    name: 'model-profiles',
     set: 'session=admin',
-    hash: '#/models',
-    expect: [{ selector: '#model-profiles-filter' }],
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      { selector: '#model-profiles-filter' },
+    ],
   },
   {
     name: 'model-profile',
     set: 'session=admin',
-    hash: `#/models/${MODEL_PROFILE_ID}`,
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'h3', text: S['model-profile-assets'] },
@@ -101,7 +104,7 @@ const STATES = [
   {
     name: 'model-profile-missing',
     set: 'session=admin',
-    hash: `#/models/${MISSING_ID}`,
+    hash: `#/profiles/model/${MISSING_ID}`,
     expect: [
       { selector: '#page-heading', text: MISSING_ID },
       {

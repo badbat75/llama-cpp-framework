@@ -140,6 +140,23 @@ the folder or llama-server's flag and stay. Key renames: `nav-models` -> `nav-mo
 `models-title` removed without successor. ([3.2.4 Consistent Identification](https://www.w3.org/TR/WCAG22/#consistent-identification):
 the nav entry, the `h1` and the document title all say "Model profiles".)
 
+**5b.13 The address already shown is no navigation** (decided after the review of 2026-11-18). When
+the address to route on, after the rewrite of 5b.8 and 5b.9, equals the one the app already shows
+(`#/models/X` arriving while on `#/profiles/model/X`), the app does nothing beyond the rewrite: no
+route change, no focus move, no title change, no read, the menu left as it is, the leave guard not
+asked, a "session ended" sign-in text kept; clean or dirty alike. One rule for every way to the page
+shown: a click on the current nav entry or on any link to the page shown already does this (the
+browser fires no `hashchange` for an unchanged fragment,
+[HTML Standard, "navigate to a fragment"](https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate-fragid),
+and measured 2026-11-18: the focus stays on the link in Chromium, Firefox and WebKit); only the click's
+own effect of closing the open menu stays (activating a link in the menu, 1a.6). Why: the user did
+not leave; moving the focus to the `h1` would take a user typing in a field away from their place
+([2.4.3 Focus Order](https://www.w3.org/TR/WCAG22/#focus-order),
+[3.2.1 On Focus](https://www.w3.org/TR/WCAG22/#on-focus) and
+[3.2.2 On Input](https://www.w3.org/TR/WCAG22/#on-input): no change of context the user did not ask
+for). This narrows 5b.10: "a rewritten old address arriving by `hashchange`" moves the focus only
+when it names another page.
+
 **5b.12 What must NOT change.** Every request (method, path, body), every reply read, every state,
 live region, dialog and focus move of the list (filter, switch, sign-in dialog), of the model profile
 page (cards, jump list, save bar, save, leave guard) and of the instance page (Server form, run verbs,
@@ -181,7 +198,15 @@ New (red first):
   `#/models/%E0%A4%A`; dirty page plus `hashchange` to its own old address (no dialog, edits kept) and
   to another old address (the dialog).
 - 5b.11: `en_US.json` has the table's keys and texts exactly, and neither `nav-models` nor
-  `models-title`; `api-no-model-profile-named` shown on a 404 of the switch and of the page's read.
+  `models-title`; the new `api-no-model-profile-named` text shown on a 404 `no-model-profile-named`
+  of the switch (the list's alert, `ModelProfiles.tsx` `failureText`, 2c.48) and of the save (the
+  save bar's alert, `ModelProfilePage.tsx` `modelProfileKey`, 146). A 404 of the page's READ is not
+  this text: it shows `model-profile-not-found` ("There is no model profile named {0}."), unchanged,
+  as do the ids `.` and `..` (59a).
+- 5b.13: on a clean and on a dirty model profile page, with the focus in a field and (below 960 px)
+  the menu open, a `hashchange` to the page's own old address: the address reads the new one, the
+  focus is still on the field, `aria-expanded` is still `"true"`, `document.title` unchanged, no
+  dialog, no new read, the draft kept.
 
 Changed (names only, same count): every existing test's hash, key (`nav-models`, `models-title`) and
 heading query (the `h2` queries become the `h1` or the table) by this brief; the three test files

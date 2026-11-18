@@ -33,7 +33,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const HEADING = en('model-profile-vision')
 const NEXT = en('model-profile-speculative-decoding')

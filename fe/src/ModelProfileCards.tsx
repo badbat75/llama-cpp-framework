@@ -1716,7 +1716,7 @@ function atDefault(
   return b === undefined ? held(values, key) === undefined : b.ticked
 }
 
-/** The `spec-type` entries, split as `presets.rs` does: on `,`, trimmed, the
+/** The `spec-type` entries, split as `model_profiles.rs` does: on `,`, trimmed, the
  * empty ones and `none` dropped (2-models' 75). The page's one split of the
  * list: the Assets card shows the Drafter and the N-gram drafters with it, and
  * the group rule of 190 and 191 enables a group of the Speculative decoding

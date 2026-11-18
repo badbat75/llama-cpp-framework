@@ -1,4 +1,4 @@
-// The model profile page #/models/<id>, slice 2d part 1 (fe/briefs/02-models.md,
+// The model profile page #/profiles/model/<id>, slice 2d part 1 (fe/briefs/02-models.md,
 // sections 2d.1 to 2d.4): the route and its address, coming from the list and
 // back, heading, title, nav, focus, and the states: loading, 401, 403, 503,
 // 404 no-model-profile-named, everything else, the 15 s read limit. The page reads
@@ -8,7 +8,7 @@
 // is checked only for what 56 to 67 say: the h1, the title, the back link, the
 // focus. The colours of 60 and the scroll position of 62 are checked in the
 // designer's review, not in jsdom, and 62a's reload of the tab has no
-// equivalent in jsdom (2b.34 in ModelsFilter.test.tsx pins that the text is in
+// equivalent in jsdom (2b.34 in ModelProfilesFilter.test.tsx pins that the text is in
 // no storage and not in the address).
 import {
   act,
@@ -37,9 +37,9 @@ import {
 import { cardHeadings, fieldLabels } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const OFF_ID = 'gemma-3-12b-it'
-const OFF_HASH = `#/models/${OFF_ID}`
+const OFF_HASH = `#/profiles/model/${OFF_ID}`
 const LIST_ID = 'Qwen3.6-35B-A3B-UD-Q4_K_XL'
 
 beforeEach(() => startAt(HASH))
@@ -53,7 +53,7 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** The app at #/models/Qwen3-27B; returns the fake bff and main. */
+/** The app at #/profiles/model/Qwen3-27B; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
   const bff = fakeBff(options)
   render(<App />)
@@ -71,7 +71,7 @@ async function heading1(main: HTMLElement, name: string): Promise<HTMLElement> {
 /**
  * The h1 on screen now, found synchronously: under fake timers `findByRole`
  * never polls (its timers are faked), so the fake-clock tests flush the queue
- * and then query (as Models.test.tsx's 2a.18 does).
+ * and then query (as ModelProfiles.test.tsx's 2a.18 does).
  */
 function shownH1(main: HTMLElement, name: string): HTMLElement {
   return within(main).getByRole('heading', { level: 1, name })
@@ -145,7 +145,7 @@ function filterStatus(main: HTMLElement): HTMLElement {
 async function openList(main: HTMLElement): Promise<HTMLElement> {
   navigate('#/')
   await heading1(main, en('overview-title'))
-  navigate('#/models')
+  navigate('#/profiles/model')
   return table(main)
 }
 
@@ -385,7 +385,7 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
   ).not.toBeNull()
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-models') }),
+    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
   ).toBeNull()
   fireEvent.change(username, { target: { value: 'alice' } })
   fireEvent.change(password, { target: { value: 'hunter2' } })
@@ -397,12 +397,12 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
   expect(window.location.hash).toBe(HASH)
   expect(modelProfileReads(bff)).toBe(2)
   expect(
-    await within(nav()).findByRole('link', { name: en('nav-models') }),
+    await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
   ).toBeTruthy()
 })
 
 test('2d.59: a 404 no-model-profile-named shows model-profile-not-found filled with the id from the address, a plain paragraph below the h1; the back link stays', async () => {
-  startAt('#/models/Qwen3-28B')
+  startAt('#/profiles/model/Qwen3-28B')
   const { main } = open({
     modelProfile: () =>
       reply(404, { key: 'no-model-profile-named', args: ['Qwen3-28B'] }),
@@ -414,16 +414,16 @@ test('2d.59: a 404 no-model-profile-named shows model-profile-not-found filled w
   expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
   const h1 = await heading1(main, 'Qwen3-28B')
   const b = backLink(main)
-  expect(b.getAttribute('href')).toBe('#/models')
+  expect(b.getAttribute('href')).toBe('#/profiles/model')
   expect(before(b, h1), 'back before the h1').toBe(true)
   expect(before(h1, shown), 'the sentence below the h1').toBe(true)
 })
 
 test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a dot segment): model-profile-not-found with the id, with no loading status in between; the back link and the h1 as in 59', async () => {
   for (const [hash, id] of [
-    ['#/models/.', '.'],
-    ['#/models/..', '..'],
-    ['#/models/%2E%2E', '..'],
+    ['#/profiles/model/.', '.'],
+    ['#/profiles/model/..', '..'],
+    ['#/profiles/model/%2E%2E', '..'],
   ] as const) {
     startAt(hash)
     fakeClock()
@@ -469,7 +469,7 @@ test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a do
     expect(h1.getAttribute('tabindex'), hash).toBe('-1')
     expect(document.title, hash).toBe(en('page-title', id))
     const b = backLink(main)
-    expect(b.getAttribute('href'), hash).toBe('#/models')
+    expect(b.getAttribute('href'), hash).toBe('#/profiles/model')
     expect(before(b, h1), `${hash}: back before the h1`).toBe(true)
     expect(before(h1, shown), `${hash}: the sentence below the h1`).toBe(true)
     // Nothing is sent, not once, not later: past the read limit the fake saw
@@ -497,7 +497,7 @@ test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a do
 
 test('2d.59a: only exactly . and .. are refused: ... and a.b read as usual, with the loading status and one read of the id', async () => {
   for (const id of ['...', 'a.b'] as const) {
-    startAt(`#/models/${id}`)
+    startAt(`#/profiles/model/${id}`)
     const { bff, main } = open()
     const status = await within(main).findByText(en('model-profile-loading'))
     expect(status.getAttribute('role'), id).toBe('status')
@@ -517,7 +517,7 @@ test('2d.59a: only exactly . and .. are refused: ... and a.b read as usual, with
   }
 })
 
-test('2d.58: signed out, #/models/<id> shows the sign-in form with signin-required, keeps the address and reads nothing', async () => {
+test('2d.58: signed out, #/profiles/model/<id> shows the sign-in form with signin-required, keeps the address and reads nothing', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   const username = await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -549,7 +549,7 @@ test('2d.56: the address reads GET /api/profiles/model/<id>, the id percent-enco
     ['a b', 'a%20b'],
     ['a%b', 'a%25b'],
   ] as const) {
-    startAt(`#/models/${encoded}`)
+    startAt(`#/profiles/model/${encoded}`)
     const { bff, main } = open()
     expect(await heading1(main, id), id).toBeTruthy()
     // The h1 is there from the address, before the read is sent: the call is
@@ -565,8 +565,12 @@ test('2d.56: the address reads GET /api/profiles/model/<id>, the id percent-enco
   }
 })
 
-test('2d.57: #/models/, #/models/a/b and a segment that does not decode show the not-found page; #/models stays the list', async () => {
-  for (const hash of ['#/models/', '#/models/a/b', '#/models/%E0%A4%A']) {
+test('2d.57: #/profiles/model/, #/profiles/model/a/b and a segment that does not decode show the not-found page; #/profiles/model stays the list', async () => {
+  for (const hash of [
+    '#/profiles/model/',
+    '#/profiles/model/a/b',
+    '#/profiles/model/%E0%A4%A',
+  ]) {
     startAt(hash)
     const { bff, main } = open()
     expect(
@@ -584,12 +588,12 @@ test('2d.57: #/models/, #/models/a/b and a segment that does not decode show the
     cleanup()
     vi.unstubAllGlobals()
   }
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { main } = open()
   expect(
     await within(main).findByRole('heading', {
       level: 1,
-      name: en('models-title'),
+      name: en('model-profiles-title'),
     }),
   ).toBeTruthy()
 })
@@ -597,7 +601,7 @@ test('2d.57: #/models/, #/models/a/b and a segment that does not decode show the
 // ── From the list and back (60, 61, 62) ─────────────────────────────────
 
 test('2d.60: in the list each row name is a link to the model profile page, its text the id, inside the element that names the row switch, in the switched-off row too; clicking it opens the page, focus on its h1', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { main } = open()
   const t = await table(main)
   const links = within(t).getAllByRole('link')
@@ -606,8 +610,8 @@ test('2d.60: in the list each row name is a link to the model profile page, its 
     OFF_ID,
   ])
   expect(links.map((a) => a.getAttribute('href'))).toEqual([
-    `#/models/${LIST_ID}`,
-    `#/models/${OFF_ID}`,
+    `#/profiles/model/${LIST_ID}`,
+    `#/profiles/model/${OFF_ID}`,
   ])
   for (const row of dataRows(t)) {
     const nameCell = row.querySelector('td, th') as HTMLElement
@@ -631,7 +635,7 @@ test('2d.60: in the list each row name is a link to the model profile page, its 
 })
 
 test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text, not a link, still inside the element that names its switch; the other rows stay links', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { main } = open({
     modelProfiles: [
       {
@@ -685,7 +689,7 @@ test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text,
   }
   for (const id of [LIST_ID, OFF_ID]) {
     const link = within(t).getByRole('link', { name: id })
-    expect(link.getAttribute('href'), id).toBe(`#/models/${id}`)
+    expect(link.getAttribute('href'), id).toBe(`#/profiles/model/${id}`)
     const row = link.closest('tr') as HTMLElement
     const input = row.querySelector('input')!
     const target = document.getElementById(
@@ -729,7 +733,7 @@ test('2d.61: the model-profile-back link is the first thing in main, before the 
     const h1 = await heading1(main, ID)
     const b = backLink(main)
     expect((b.textContent ?? '').trim(), what).toBe(en('model-profile-back'))
-    expect(b.getAttribute('href'), what).toBe('#/models')
+    expect(b.getAttribute('href'), what).toBe('#/profiles/model')
     expect(before(b, h1), `${what}: back before the h1`).toBe(true)
     expect(
       tabbable().find((el) => main.contains(el)),
@@ -741,7 +745,7 @@ test('2d.61: the model-profile-back link is the first thing in main, before the 
 })
 
 test('2d.62: back to the list keeps the filter: read again, the field holds the text last typed, the rows are filtered, Clear filter and the count are there, focus on the list h1', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { bff, main } = open()
   await table(main)
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
@@ -749,7 +753,7 @@ test('2d.62: back to the list keeps the filter: read again, the field holds the 
   await heading1(main, OFF_ID)
   expect(modelProfileReads(bff, OFF_ID)).toBe(1)
   await clickLink(backLink(main))
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   expect(
     bff.to('GET', '/api/profiles/model'),
     'the list is read again',
@@ -761,15 +765,15 @@ test('2d.62: back to the list keeps the filter: read again, the field holds the 
   expect(filterStatus(main).textContent).toBe(
     en('model-profiles-filter-count', '1', '2'),
   )
-  const h1 = await heading1(main, en('models-title'))
+  const h1 = await heading1(main, en('model-profiles-title'))
   expect(document.activeElement, 'focus is not in the field').not.toBe(
     filterField(main),
   )
   await waitFor(() => expect(document.activeElement).toBe(h1))
 })
 
-test('2d.62: the nav Models link opens the list with the kept text too; while the list loads the field is not shown, and the text is kept for when it does', async () => {
-  startAt('#/models')
+test('2d.62: the nav Model profiles link opens the list with the kept text too; while the list loads the field is not shown, and the text is kept for when it does', async () => {
+  startAt('#/profiles/model')
   const pending = deferred()
   let reads = 0
   const { main } = open({
@@ -780,7 +784,9 @@ test('2d.62: the nav Models link opens the list with the kept text too; while th
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
   navigate('#/')
   await heading1(main, en('overview-title'))
-  fireEvent.click(within(nav()).getByRole('link', { name: en('nav-models') }))
+  fireEvent.click(
+    within(nav()).getByRole('link', { name: en('nav-model-profiles') }),
+  )
   expect(
     within(main).queryByRole('searchbox'),
     'no field while the list loads',
@@ -794,7 +800,7 @@ test('2d.62: the nav Models link opens the list with the kept text too; while th
 })
 
 test('2d.62a: Sign out empties the kept filter', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { main } = open()
   await table(main)
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
@@ -806,14 +812,14 @@ test('2d.62a: Sign out empties the kept filter', async () => {
   await clickLink(screen.getByRole('link', { name: en('session-sign-in') }))
   await signInto(main)
   await heading1(main, en('overview-title'))
-  navigate('#/models')
+  navigate('#/profiles/model')
   const t = await table(main)
   expect(filterField(main).value, 'Sign out emptied it').toBe('')
   expect(shownIds(t), 'every row shows').toEqual([LIST_ID, OFF_ID])
 })
 
 test('2d.62a: a sign-in after a 401 keeps the filter for the same user', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   let reads = 0
   const { main } = open({
     modelProfiles: () =>
@@ -827,9 +833,9 @@ test('2d.62a: a sign-in after a 401 keeps the filter for the same user', async (
   expect(filterField(main).value, 'kept across a page change').toBe('gemma')
   navigate('#/')
   await heading1(main, en('overview-title'))
-  navigate('#/models')
+  navigate('#/profiles/model')
   await within(main).findByText(en('signin-required'))
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   await signInto(main, 'alice')
   const t = await table(main)
   expect(filterField(main).value, 'the same user keeps the text').toBe('gemma')
@@ -837,7 +843,7 @@ test('2d.62a: a sign-in after a 401 keeps the filter for the same user', async (
 })
 
 test('2d.62a: a sign-in as another user after a 401 empties the filter', async () => {
-  startAt('#/models')
+  startAt('#/profiles/model')
   let reads = 0
   const { main } = open({
     modelProfiles: () =>
@@ -852,7 +858,7 @@ test('2d.62a: a sign-in as another user after a 401 empties the filter', async (
   expect(filterField(main).value, 'kept across a page change').toBe('gemma')
   navigate('#/')
   await heading1(main, en('overview-title'))
-  navigate('#/models')
+  navigate('#/profiles/model')
   await within(main).findByText(en('signin-required'))
   await signInto(main, 'carol')
   const t = await table(main)
@@ -877,7 +883,7 @@ test('2d.63: on arrival from the address the h1 and the title are the id from th
 })
 
 test('2d.63: once read, the h1 and the title take the id of the reply, the file spelling', async () => {
-  startAt('#/models/qwen3-27b')
+  startAt('#/profiles/model/qwen3-27b')
   const pending = deferred()
   const { main } = open({ modelProfile: () => pending.promise })
   await heading1(main, 'qwen3-27b')
@@ -894,21 +900,21 @@ test('2d.63: focus goes to the h1 from the address bar, from Back and from Forwa
   // The page remounts on every arrival, which is what makes the model profile read
   // once per opening (67), so the h1 is a new element each time: what is pinned
   // is that the focused element is the page's h1, carrying the id (63).
-  startAt('#/models')
+  startAt('#/profiles/model')
   const { main } = open()
   await table(main)
   navigate(HASH)
   await focusOnH1(main, ID)
-  navigate('#/models')
-  await focusOnH1(main, en('models-title'))
+  navigate('#/profiles/model')
+  await focusOnH1(main, en('model-profiles-title'))
   navigate(HASH)
   await focusOnH1(main, ID)
 })
 
-test('2d.64: on the model profile page the nav Models link has aria-current="true"; on #/models it keeps "page"', async () => {
+test('2d.64: on the model profile page the nav Models link has aria-current="true"; on #/profiles/model it keeps "page"', async () => {
   open()
   const models = await within(nav()).findByRole('link', {
-    name: en('nav-models'),
+    name: en('nav-model-profiles'),
   })
   await waitFor(() => expect(models.getAttribute('aria-current')).toBe('true'))
   expect(
@@ -916,7 +922,7 @@ test('2d.64: on the model profile page the nav Models link has aria-current="tru
       .getByRole('link', { name: en('nav-overview') })
       .getAttribute('aria-current'),
   ).toBeNull()
-  navigate('#/models')
+  navigate('#/profiles/model')
   await waitFor(() => expect(models.getAttribute('aria-current')).toBe('page'))
 })
 

@@ -1,8 +1,9 @@
-// The Models page, slice 2a (fe/briefs/02-models.md, section 2): the nav's
-// Models link, the #/models route and its read-only model profile list. The whole
+// The Model profiles page, slice 2a (fe/briefs/02-models.md, section 2): the nav's
+// Model profiles link, the #/profiles/model route and its read-only model profile list. The whole
 // app renders against a fake bff (mocked fetch) answering GET /api/profiles/model
 // with [{"id", "engine", "engineAvailable", "enabled", "model"}] in the bff's
-// order (the model since slice 2b, whose filter is in ModelsFilter.test.tsx),
+// order (the model since slice 2b, whose filter is in
+// ModelProfilesFilter.test.tsx),
 // errors as {"key", "args"} (fe/briefs/api-contract.md). "2a.17" is the
 // brief's criterion 17 of section 2. Criterion 19 (reflow) and the muted
 // colour of 12 are checked in the designer's review, not in jsdom.
@@ -31,7 +32,7 @@ import {
   type ModelProfile,
 } from './test/bff.ts'
 
-beforeEach(() => startAt('#/models'))
+beforeEach(() => startAt('#/profiles/model'))
 
 afterEach(() => {
   cleanup()
@@ -52,7 +53,7 @@ function modelProfile(
   return { id, engine, engineAvailable, enabled, model }
 }
 
-/** The app at #/models; returns the fake bff and main. */
+/** The app at #/profiles/model; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
   const bff = fakeBff(options)
   render(<App />)
@@ -77,18 +78,11 @@ function modelProfilesReads(bff: ReturnType<typeof fakeBff>): number {
 async function heading1(main: HTMLElement): Promise<HTMLElement> {
   return within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
-  })
-}
-
-function heading2(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('heading', {
-    level: 2,
     name: en('model-profiles-title'),
   })
 }
 
-/** The model profiles table, found by its name (the h2). */
+/** The model profiles table, found by its name: the h1 labels it (5b.5). */
 async function table(main: HTMLElement): Promise<HTMLElement> {
   return within(main).findByRole('table', { name: en('model-profiles-title') })
 }
@@ -113,12 +107,15 @@ async function message(main: HTMLElement, text: string): Promise<HTMLElement> {
   return within(main).findByText(text)
 }
 
-/** The h2, the intro and the note are on the page, in that order around `content`. */
+/** The h1, the intro and the note are on the page, in that order around `content`. */
 function framed(main: HTMLElement, content: HTMLElement, what: string) {
-  const h2 = heading2(main)
+  const h1 = within(main).getByRole('heading', {
+    level: 1,
+    name: en('model-profiles-title'),
+  })
   const intro = within(main).getByText(en('model-profiles-intro'))
   const note = within(main).getByText(en('model-profiles-off-note'))
-  expect(before(h2, intro), `${what}: intro after the h2`).toBe(true)
+  expect(before(h1, intro), `${what}: intro after the h1`).toBe(true)
   expect(before(intro, content), `${what}: content after the intro`).toBe(true)
   expect(before(content, note), `${what}: note after the content`).toBe(true)
 }
@@ -435,12 +432,12 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
   const password = within(main).getByLabelText(en('signin-password'), {
     selector: 'input',
   }) as HTMLInputElement
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   expect(within(main).getByText(en('signin-required'))).toBeTruthy()
   expect(within(main).queryByRole('table')).toBeNull()
   expect(
     within(main).queryByRole('heading', {
-      level: 2,
+      level: 1,
       name: en('model-profiles-title'),
     }),
   ).toBeNull()
@@ -456,7 +453,7 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
     within(nav()).queryByRole('list', { name: en('nav-instances') }),
   ).toBeNull()
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-models') }),
+    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
   ).toBeNull()
   fireEvent.change(username, { target: { value: 'alice' } })
   fireEvent.change(password, { target: { value: 'hunter2' } })
@@ -467,29 +464,32 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
   expect(rows(t)).toEqual([
     ['after-sign-in', 'llama.cpp', en('model-profiles-status-on')],
   ])
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   expect(modelProfilesReads(bff)).toBe(2)
   expect(
-    await within(nav()).findByRole('link', { name: en('nav-models') }),
+    await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
   ).toBeTruthy()
 })
 
-test('2a.4: signed out, #/models shows the sign-in form with signin-required, keeps the route and reads no model profiles', async () => {
+test('2a.4: signed out, #/profiles/model shows the sign-in form with signin-required, keeps the route and reads no model profiles', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   const username = await within(main).findByRole('textbox', {
     name: en('signin-username'),
   })
   const required = within(main).getByText(en('signin-required'))
   expect(before(required, username)).toBe(true)
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   expect(
-    within(main).queryByRole('heading', { level: 1, name: en('models-title') }),
+    within(main).queryByRole('heading', {
+      level: 1,
+      name: en('model-profiles-title'),
+    }),
   ).toBeNull()
   expect(within(main).queryByRole('table')).toBeNull()
   expect(modelProfilesReads(bff)).toBe(0)
 })
 
-test('2a.4, 2a.18: after sign-in from #/models the Models page opens with focus on its h1 and reads the model profiles once', async () => {
+test('2a.4, 2a.18: after sign-in from #/profiles/model the Model profiles page opens with focus on its h1 and reads the model profiles once', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   const username = await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -504,7 +504,7 @@ test('2a.4, 2a.18: after sign-in from #/models the Models page opens with focus 
   )
   const h1 = await heading1(main)
   await waitFor(() => expect(document.activeElement).toBe(h1))
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
   await table(main)
   expect(modelProfilesReads(bff)).toBe(1)
 })
@@ -520,11 +520,11 @@ test('2a.1: while the session read is pending the nav holds only Overview, and n
     session.resolve(reply(200, { user: 'alice' }))
   })
   expect(
-    await within(nav()).findByRole('link', { name: en('nav-models') }),
+    await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
   ).toBeTruthy()
 })
 
-test('2a.1: signed out the nav has no Models link', async () => {
+test('2a.1: signed out the nav has no Model profiles link', async () => {
   startAt('#/')
   open({ session: 'signed-out' })
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
@@ -538,41 +538,41 @@ test('2a.1: signed out the nav has no Models link', async () => {
   expect(navLinks()).toEqual([en('nav-overview')])
 })
 
-test('2a.1: signed in, the nav holds Overview, the instance links, then Models to #/models, outside the Instances group', async () => {
+test('2a.1: signed in, the nav holds Overview, the instance links, then Model profiles to #/profiles/model, outside the Instances group', async () => {
   startAt('#/')
   open()
   const list = await within(nav()).findByRole('list', {
     name: en('nav-instances'),
   })
   const models = await within(nav()).findByRole('link', {
-    name: en('nav-models'),
+    name: en('nav-model-profiles'),
   })
-  expect(models.getAttribute('href')).toBe('#/models')
+  expect(models.getAttribute('href')).toBe('#/profiles/model')
   expect(navLinks()).toEqual([
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-models'),
+    en('nav-model-profiles'),
   ])
   expect(list.contains(models)).toBe(false)
   expect(before(list, models)).toBe(true)
 })
 
-test('2a.1: a failed instances read leaves out the Instances group, not Models', async () => {
+test('2a.1: a failed instances read leaves out the Instances group, not Model profiles', async () => {
   startAt('#/')
   open({ instances: () => reply(503, { key: 'client-unavailable', args: [] }) })
   await screen.findByText(en('instances-manager-unavailable'))
-  await within(nav()).findByRole('link', { name: en('nav-models') })
+  await within(nav()).findByRole('link', { name: en('nav-model-profiles') })
   expect(
     within(nav()).queryByRole('list', { name: en('nav-instances') }),
   ).toBeNull()
-  expect(navLinks()).toEqual([en('nav-overview'), en('nav-models')])
+  expect(navLinks()).toEqual([en('nav-overview'), en('nav-model-profiles')])
 })
 
-test('2a.2: on #/models the Models link has aria-current="page", and loses it on another route', async () => {
+test('2a.2: on #/profiles/model the Model profiles link has aria-current="page", and loses it on another route', async () => {
   open()
   const models = await within(nav()).findByRole('link', {
-    name: en('nav-models'),
+    name: en('nav-model-profiles'),
   })
   await waitFor(() => expect(models.getAttribute('aria-current')).toBe('page'))
   expect(
@@ -589,22 +589,26 @@ test('2a.2: on #/models the Models link has aria-current="page", and loses it on
   ).toBe('page')
 })
 
-test('2a.3: a route change to #/models sets the h1, the page title and the focus', async () => {
+test('2a.3: a route change to #/profiles/model sets the h1, the page title and the focus', async () => {
   startAt('#/')
   const { main } = open()
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  navigate('#/models')
+  navigate('#/profiles/model')
   const h1 = await heading1(main)
   await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(h1.getAttribute('tabindex')).toBe('-1')
-  expect(document.title).toBe(en('page-title', en('models-title')))
+  expect(document.title).toBe(en('page-title', en('model-profiles-title')))
 })
 
-test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found page; a real id is the model profile page, not the list', async () => {
+test('2a.5, 2d.56, 2d.57: only a malformed #/profiles/model address is the not-found page; a real id is the model profile page, not the list', async () => {
   // 2d replaces 2a.5: the id segment is the model profile page now (56), so what is
   // not-found is what 57 lists as malformed: an empty id, more than one
   // segment, a segment that does not decode.
-  for (const hash of ['#/models/', '#/models/a/b', '#/models/%E0%A4%A']) {
+  for (const hash of [
+    '#/profiles/model/',
+    '#/profiles/model/a/b',
+    '#/profiles/model/%E0%A4%A',
+  ]) {
     startAt(hash)
     const { main } = open()
     expect(
@@ -621,7 +625,7 @@ test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found pag
   // A real id is not the not-found page, and it is not the list: the list's
   // table is gone (the model profile page is the model profile page's own test, 2d.56).
   const id = 'Qwen3.6-35B-A3B-UD-Q4_K_XL'
-  startAt(`#/models/${id}`)
+  startAt(`#/profiles/model/${id}`)
   const { main } = open()
   expect(
     await within(main).findByRole('heading', { level: 1, name: id }),
@@ -642,9 +646,10 @@ test('2a.14: while the model profiles load, a status paragraph stands in for the
   expect(status.tagName).toBe('P')
   expect(status.getAttribute('role')).toBe('status')
   expect(within(main).queryByRole('table')).toBeNull()
-  expect(heading2(main)).toBeTruthy()
+  const h1 = await heading1(main)
+  expect(h1).toBeTruthy()
   expect(within(main).getByText(en('model-profiles-intro'))).toBeTruthy()
-  expect(before(heading2(main), status)).toBe(true)
+  expect(before(h1, status)).toBe(true)
   await act(async () => {
     pending.resolve(reply(200, [modelProfile('one')]))
   })
@@ -662,11 +667,10 @@ test('2a.15: an empty list shows model-profiles-empty as a plain paragraph, no t
   framed(main, empty, 'empty')
 })
 
-test('2a.6: below the h1 come the h2, the intro, the table, then the note', async () => {
+test('2a.6, 5b.5: below the h1 come the intro, the table, then the note, and there is no h2', async () => {
   const { main } = open()
   const t = await table(main)
-  const h1 = await heading1(main)
-  expect(before(h1, heading2(main))).toBe(true)
+  expect(within(main).queryByRole('heading', { level: 2 })).toBeNull()
   framed(main, t, 'table')
   expect(within(main).getByText(en('model-profiles-off-note')).tagName).toBe(
     'P',
@@ -675,12 +679,12 @@ test('2a.6: below the h1 come the h2, the intro, the table, then the note', asyn
 
 // ── The table (7, 8) ────────────────────────────────────────────────────
 
-test('2a.7: a native table named by the h2, with one header row of ModelProfile, Engine, Status as scope="col"', async () => {
+test('2a.7, 5b.5: a native table named by the h1, with one header row of ModelProfile, Engine, Status as scope="col"', async () => {
   const { main } = open()
   const t = await table(main)
   expect(t.tagName).toBe('TABLE')
   const labelledBy = t.getAttribute('aria-labelledby')
-  expect(labelledBy).toBe(heading2(main).id)
+  expect(labelledBy).toBe('page-heading')
   expect(labelledBy).not.toBe('')
   const headers = within(t).getAllByRole('columnheader')
   expect(headers.map((h) => (h.textContent ?? '').trim())).toEqual([
@@ -753,8 +757,11 @@ test('2a.10, 2a.12, 2d.60: each row is the id as a link to the model profile pag
       .getAllByRole('link')
       .map((a) => [(a.textContent ?? '').trim(), a.getAttribute('href')]),
   ).toEqual([
-    ['Qwen3.6-35B-A3B-UD-Q4_K_XL', '#/models/Qwen3.6-35B-A3B-UD-Q4_K_XL'],
-    ['gemma-3-12b-it', '#/models/gemma-3-12b-it'],
+    [
+      'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+      '#/profiles/model/Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    ],
+    ['gemma-3-12b-it', '#/profiles/model/gemma-3-12b-it'],
   ])
 })
 
@@ -821,14 +828,14 @@ test('2a.18: the model profiles are read once on open, with no polling', async (
   expect(modelProfilesReads(bff)).toBe(1)
 })
 
-test('2a.18: leaving #/models and coming back reads the model profiles again, once', async () => {
+test('2a.18: leaving #/profiles/model and coming back reads the model profiles again, once', async () => {
   const { bff, main } = open()
   await table(main)
   expect(modelProfilesReads(bff)).toBe(1)
   navigate('#/')
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
   expect(modelProfilesReads(bff)).toBe(1)
-  navigate('#/models')
+  navigate('#/profiles/model')
   await heading1(main)
   await table(main)
   expect(modelProfilesReads(bff)).toBe(2)
@@ -836,7 +843,7 @@ test('2a.18: leaving #/models and coming back reads the model profiles again, on
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Models), the filter field, then each row link and switch', async () => {
+test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, then each row link and switch', async () => {
   // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
   // 2d.60 puts each row's link before its switch.
   const { main } = open()
@@ -850,7 +857,7 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-models'),
+    en('nav-model-profiles'),
     en('model-profiles-filter-label'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',

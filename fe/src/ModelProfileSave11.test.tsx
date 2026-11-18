@@ -36,7 +36,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const JINJA = en('model-profile-chat-template')
 const JINJA_TOGGLE = en('model-profile-chat-template-toggle')

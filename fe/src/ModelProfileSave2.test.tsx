@@ -33,7 +33,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const MODE = en('model-profile-embedding-mode')
 const POOLING = en('model-profile-pooling')
@@ -289,13 +289,13 @@ function unloadBlocked(): boolean {
 
 /** The model profile page reached by a real navigation, so Back has an entry. */
 async function modelProfileAfterNavigation() {
-  startAt('#/models')
+  startAt('#/profiles/model')
   const bff = fakeBff()
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
   await typeHash(HASH)
   await within(main).findByRole('heading', { level: 1, name: ID })
@@ -620,16 +620,16 @@ test('2h.140: model-profile-back and a nav link while the model profile form is 
   expect(selectOf(main, MODE).value, 'the edit stays').toBe('false')
   expect(document.activeElement, 'focus back on the link').toBe(back)
   // A nav link asks the same; Discard changes goes on.
-  const link = navLink(en('nav-models'))
+  const link = navLink(en('nav-model-profiles'))
   link.focus()
   fireEvent.click(link)
   const d2 = await discardDialog()
   expect(window.location.hash, 'the link is not followed yet').toBe(HASH)
   fireEvent.click(confirmButton(d2))
-  await waitFor(() => expect(window.location.hash).toBe('#/models'))
+  await waitFor(() => expect(window.location.hash).toBe('#/profiles/model'))
   await within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
   // The dropped edits leave nothing behind: leaving cleared the dirty state.
   fireEvent.click(navLink(en('nav-overview')))
@@ -644,7 +644,7 @@ test('2h.140: a typed hash and Back while the model profile form is dirty are pu
   const { main } = await modelProfileAfterNavigation()
   const select = selectOf(main, MODE)
   makeDirty(main)
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   const d = await discardDialog()
   expect(
     window.location.hash,
@@ -668,7 +668,7 @@ test('2h.140: a typed hash and Back while the model profile form is dirty are pu
   // the browser stands on, so the entry behind it holds the model profile hash too
   // and a traversal to it fires no hashchange in jsdom (the tests of
   // LeaveGuard.test.tsx press Back on a page reached by a navigation, which
-  // leaves a Models entry behind, as here).
+  // leaves a Model profiles entry behind, as here).
   cleanup()
   vi.unstubAllGlobals()
   const second = await modelProfileAfterNavigation()
@@ -691,14 +691,14 @@ test('2h.140: a typed hash and Back while the model profile form is dirty are pu
   cleanup()
   vi.unstubAllGlobals()
   const third = await modelProfileAfterNavigation()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   expect(
     screen.queryByRole('dialog'),
     'clean: a typed hash asks nothing',
   ).toBeNull()
   await within(third.main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
   await pressBack()
   expect(screen.queryByRole('dialog'), 'clean: Back asks nothing').toBeNull()
@@ -780,13 +780,13 @@ test('2h.140: the product link while the model profile form is dirty asks, and D
 test('2h.140: the browser Forward while the model profile form is dirty is put back and asked, the edit kept; Keep editing keeps the page, a clean navigation leaves it', async () => {
   const { main } = await modelProfileAfterNavigation()
   // Forward needs an entry ahead of the model profile page, and the guard's put-back
-  // overwrites the entry the browser stands on (replaceState): so the Models
+  // overwrites the entry the browser stands on (replaceState): so the Model profiles
   // entry is pushed while the form is still clean, as in LeaveGuard.test.tsx,
   // then the page comes back by a traversal, and only then the edit.
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   await within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
   await pressBack()
   expect(screen.queryByRole('dialog'), 'clean: Back asks nothing').toBeNull()
@@ -811,14 +811,14 @@ test('2h.140: the browser Forward while the model profile form is dirty is put b
   // After Keep editing the page is left for good the ordinary way: Discard
   // cleans the form, and the hash typed then moves.
   fireEvent.click(discardButton(main))
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   expect(
     screen.queryByRole('dialog'),
     'clean: the navigation asks nothing',
   ).toBeNull()
   await within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
 })
 

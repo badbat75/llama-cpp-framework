@@ -1,5 +1,5 @@
-// The Models page's filter, slice 2b (fe/briefs/02-models.md, section 2b):
-// a search field over the model profile list at #/models, matching the id or the
+// The Model profiles page's filter, slice 2b (fe/briefs/02-models.md, section 2b):
+// a search field over the model profile list at #/profiles/model, matching the id or the
 // model path as the GUI does, with a status line, a Clear filter button and
 // Escape. The whole app renders against the fake bff (mocked fetch).
 // "2b.27" is the brief's criterion 27. The layout of 25, the look (hint and
@@ -29,7 +29,7 @@ import {
   type ModelProfile,
 } from './test/bff.ts'
 
-beforeEach(() => startAt('#/models'))
+beforeEach(() => startAt('#/profiles/model'))
 
 afterEach(() => {
   cleanup()
@@ -49,7 +49,7 @@ const EXAMPLE: ModelProfile[] = [
   modelProfile('Old-Coder', ''),
 ]
 
-/** The app at #/models; returns the fake bff and main. */
+/** The app at #/profiles/model; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
   const bff = fakeBff(options)
   render(<App />)
@@ -380,7 +380,7 @@ test('2b.29: each change updates the table at once; Enter does nothing; focus an
   expect(input.value).toBe('q')
   expect(shownIds(main)).toEqual(['Qwen3-27B'])
   expect(document.activeElement).toBe(input)
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
 })
 
 test('2b.30, 2c.50: the filter status paragraph, in the page before its text changes: empty, the count, or no-match with no table and the note kept', async () => {
@@ -472,7 +472,7 @@ test('2b.32: Escape in the field with text clears it as the button does, focus s
   expect(shownIds(main)).toEqual(['Qwen3-27B', 'Old-Coder'])
   expect(status(main).textContent).toBe('')
   expect(document.activeElement).toBe(input)
-  expect(window.location.hash).toBe('#/models')
+  expect(window.location.hash).toBe('#/profiles/model')
 })
 
 // ── Not kept (34) ───────────────────────────────────────────────────────
@@ -490,7 +490,7 @@ test('2b.34, 2d.62: the text is in no URL and no storage, and the page reopens w
   }
   navigate('#/')
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  navigate('#/models')
+  navigate('#/profiles/model')
   const again = (await within(main).findByRole('searchbox', {
     name: en('model-profiles-filter-label'),
   })) as HTMLInputElement
@@ -509,10 +509,10 @@ test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then 
   startAt('#/')
   const { main } = open({ modelProfiles: EXAMPLE })
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  navigate('#/models')
+  navigate('#/profiles/model')
   const h1 = await within(main).findByRole('heading', {
     level: 1,
-    name: en('models-title'),
+    name: en('model-profiles-title'),
   })
   const input = await field(main)
   await waitFor(() => expect(document.activeElement).toBe(h1))
@@ -520,7 +520,7 @@ test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then 
   // 2d.60: each shown row's name is a link; it precedes the row's switch.
   const order = tabbable().map(nameOf)
   expect(order.slice(-5)).toEqual([
-    en('nav-models'),
+    en('nav-model-profiles'),
     en('model-profiles-filter-label'),
     en('model-profiles-filter-clear'),
     'Qwen3-27B',

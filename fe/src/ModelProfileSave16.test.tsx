@@ -39,7 +39,7 @@ import {
 import { cardHeadings } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const ENGINE = en('model-profile-engine')
 /** 196: the cards in page order; the jump buttons take their titles. */

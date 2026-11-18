@@ -349,6 +349,38 @@ test('DESIGN.md 5.2: the save-bar scroll padding has a 7rem floor inside max(), 
   ).toBe(true)
 })
 
+// The nav's current entry (fe/DESIGN.md, 2.3): a page below a nav entry that
+// has no link of its own (a model profile's page under Model profiles) keeps
+// that entry in the current-page style with `aria-current="true"`, so the rule
+// that draws the style must cover both values, as one rule: the two spellings
+// of the same state are the same look. jsdom does no layout, so as 2h.135 and
+// the tests above do, this pins the CSS text.
+test("DESIGN.md 2.3: the rule that styles the nav's current entry covers aria-current='page' and aria-current='true' as one rule, with the same declarations", () => {
+  const current = one(
+    TOP.filter((r) => r.compact.includes(".nava[aria-current='page']")),
+    "the top-level rule that styles the nav's current entry (.nav a[aria-current='page'])",
+  )
+  expect(
+    current.compact.includes(".nava[aria-current='true']"),
+    "the same selector list holds .nav a[aria-current='true']: the entry of a page below it is drawn as the current one too",
+  ).toBe(true)
+  const stylesTrue = TOP.filter((r) =>
+    r.compact.includes("[aria-current='true']"),
+  ).map((r) => r.sel.replace(/\s+/g, ' '))
+  expect(
+    stylesTrue,
+    "one rule only names aria-current='true', so both values get the same declarations: not a second rule that draws true with others",
+  ).toHaveLength(1)
+  expect(
+    prop(current.body, 'color'),
+    'the current-page look: --accent text',
+  ).toBe('var(--accent)')
+  expect(prop(current.body, 'font-weight'), 'and the bolder label').toBe('600')
+  expect(prop(current.body, 'box-shadow'), 'and the bar at its left').toBe(
+    'inset 3px 0 0 var(--accent)',
+  )
+})
+
 // The jump list's landing (fe/briefs/02h-model-profile-save.md, 2h.196): a jump button moves
 // focus to the card's h3 and scrolls it into view. The heading lands at the viewport's
 // top edge, where the ring's top line, with its offset, was cut off (2026-11-18 review),

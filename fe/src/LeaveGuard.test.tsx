@@ -277,7 +277,7 @@ test('1b.38b: a hash typed while dirty is put back, the page and its edits stay,
   await within(main).findByText(en('save-invalid'))
   const h1 = pageH1(main, 'default')
   await navReady()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
 
   const d = await discardDialog()
   expect(window.location.hash, 'the address is the instance page again').toBe(
@@ -370,7 +370,7 @@ test('1b.38c: Keep editing keeps the address and the edits, puts the focus back 
   const port = box(main, 'Port')
   editPort(main)
   port.focus()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
 
   const d = await discardDialog()
   await keep(d)
@@ -392,7 +392,7 @@ test('1b.38c (38a): Escape in the guard dialog is Keep editing, focus back on th
   const port = box(main, 'Port')
   editPort(main)
   port.focus()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
 
   const d = await discardDialog()
   fireEvent.keyDown(keepButton(d), { key: 'Escape', code: 'Escape' })
@@ -411,7 +411,7 @@ test('1b.38c: Keep editing when the hashchange found nothing focused gives the f
   // when the user is typing in the browser's address bar.
   ;(document.activeElement as HTMLElement | null)?.blur()
   expect(document.activeElement, 'nothing focused').toBe(document.body)
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
 
   const d = await discardDialog()
   await keep(d)
@@ -436,7 +436,7 @@ test('1b.38c: a hashchange that arrives with document.activeElement null opens t
     get: () => null,
   })
   try {
-    await typeHash('#/models')
+    await typeHash('#/profiles/model')
   } finally {
     delete (document as unknown as { activeElement?: Element | null })
       .activeElement
@@ -496,12 +496,12 @@ test('1b.38d: Discard changes goes to the hash asked for, shows that page as a r
 
 test('1b.38e: a clean form: a typed hash, Back and Forward change the page and nothing is asked', async () => {
   const { main } = await loadedAfterNavigation()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   expect(screen.queryByRole('dialog'), 'a typed hash asks nothing').toBeNull()
   expect(
     await within(main).findByRole('heading', {
       level: 1,
-      name: en('models-title'),
+      name: en('model-profiles-title'),
     }),
   ).toBeTruthy()
 
@@ -514,7 +514,7 @@ test('1b.38e: a clean form: a typed hash, Back and Forward change the page and n
   expect(
     await within(main).findByRole('heading', {
       level: 1,
-      name: en('models-title'),
+      name: en('model-profiles-title'),
     }),
   ).toBeTruthy()
 })
@@ -562,7 +562,7 @@ test('1b.38e (33b): an edit made while the PUT runs leaves the form dirty, and a
   resolve(reply(200, { revision: 'r-2', running: false }))
   await within(main).findByText(en('save-unsaved'))
 
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   const d = await discardDialog()
   expect(window.location.hash).toBe('#/instances/default')
   expect(box(main, 'Port').value).toBe('8582')
@@ -582,7 +582,7 @@ test('1b.38f (36a): a typed hash while the session has ended asks the same, and 
   await within(main).findByText(en('session-ended'))
   port.focus()
 
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   const d = await discardDialog()
   expect(window.location.hash).toBe('#/instances/default')
   expect(port.value).toBe('8581')
@@ -599,7 +599,7 @@ test('1b.38f (36a): a typed hash while the session has ended asks the same, and 
 test('1b.38g: a second hash typed while the guard dialog is open keeps one dialog, and Discard goes to the latest hash', async () => {
   const { main } = await loaded()
   editPort(main)
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   const d = await discardDialog()
   const keepBtn = keepButton(d)
   expect(document.activeElement).toBe(keepBtn)
@@ -655,7 +655,7 @@ test('1b.38g: Keep editing after a second typed hash returns the focus to the fi
   const port = box(main, 'Port')
   editPort(main)
   port.focus()
-  await typeHash('#/models')
+  await typeHash('#/profiles/model')
   const d = await discardDialog()
   await typeHash('#/instances/coder')
   await keep(d)

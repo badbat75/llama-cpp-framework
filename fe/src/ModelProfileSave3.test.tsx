@@ -28,7 +28,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const MODE = en('model-profile-embedding-mode')
 const POOLING = en('model-profile-pooling')

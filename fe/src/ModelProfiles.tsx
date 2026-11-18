@@ -1,6 +1,7 @@
-// The Models page (#/models, fe/briefs/02-models.md, slice 2a): the model
-// profiles of every engine read from the bff's /api/profiles/model, with a
-// filter over them (slice 2b), and each row's on/off switch (slice 2c).
+// The Model profiles page (#/profiles/model, fe/briefs/02-models.md, slice 2a,
+// under the nav's Profiles group since 05b): the model profiles of every engine
+// read from the bff's /api/profiles/model, with a filter over them (slice 2b),
+// and each row's on/off switch (slice 2c).
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -139,7 +140,7 @@ function switchedText(p: ModelProfile, running: boolean): string {
     : t('model-profiles-switched-off', p.id, p.engine)
 }
 
-export default function Models({
+export default function ModelProfiles({
   filterText,
   onFilterText,
   onSignedOut,
@@ -175,9 +176,8 @@ export default function Models({
 
   return (
     <>
-      <PageHeading text={t('models-title')} />
+      <PageHeading text={t('model-profiles-title')} />
       <section>
-        <h2 id="model-profiles-title">{t('model-profiles-title')}</h2>
         <p className="intro">{t('model-profiles-intro')}</p>
         <Body
           answer={answer}
@@ -453,7 +453,7 @@ function Table({
   onChange: (i: number, enabled: boolean) => void
 }) {
   return (
-    <table className="model-profiles" aria-labelledby="model-profiles-title">
+    <table className="model-profiles" aria-labelledby="page-heading">
       <thead>
         <tr>
           <th scope="col">{t('model-profiles-column-name')}</th>

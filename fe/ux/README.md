@@ -5,7 +5,7 @@ that starts, at 1280 and 320 px, in light and dark, reads each page with
 [axe-core](https://github.com/dequelabs/axe-core) (the `wcag2a`, `wcag2aa`,
 `wcag21aa`, `wcag22aa` tags) and compares `scrollWidth` with the viewport. The
 states: Overview signed out, the sign-in page, Overview signed in, the instance
-page with the Server form, the Models list, a model profile page that is there, a
+page with the Server form, the Model profiles list, a model profile page that is there, a
 model profile page that is not. Each state names an `expect`: the selectors, with the
 text they carry, only that state shows. The page is waited for up to 5 s, so a
 blank page, a page still loading, an error banner or the wrong route is reported

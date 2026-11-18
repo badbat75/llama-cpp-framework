@@ -37,7 +37,7 @@ only an administrator can be (section 3).
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0 |
+| Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -96,9 +96,12 @@ Decided with the user on 2026-11-14.
 - Hash routes (`#/...`): the bff serves only `/` and `/assets/*`, so the fe routes on the fragment
   and the bff needs no fallback route.
 - The nav lists only pages that exist. Under "Instances" one link per instance, from
-  `GET /api/instances`, in the manager's order.
+  `GET /api/instances`, in the manager's order. Signed in, after it (or right after Overview when the
+  instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
+  labelled by it, today with the one link "Model profiles"; "Server profiles" joins it when its page
+  exists (05c). Each group label is text, not a link. Signed out, the nav holds Overview only.
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
-  link of its own (a model profile's page under Models), that entry keeps the current-page style with
+  link of its own (a model profile's page under Model profiles), that entry keeps the current-page style with
   `aria-current="true"`: it leads elsewhere, but the page belongs to it
   ([WAI-ARIA 1.2, `aria-current`](https://www.w3.org/TR/wai-aria-1.2/#aria-current)). Such a page
   also starts with a link back to its list, before the `h1` (`fe/briefs/02-models.md` 61).

@@ -1,7 +1,8 @@
-// A model profile's page (#/models/<id>, signed in): the way back to the list,
-// the id as the heading, and the model profile read once each time the page
-// opens from GET /api/profiles/model/<id>, or the message saying why it is not
-// there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
+// A model profile's page (#/profiles/model/<id>, signed in): the way back to
+// the list, the id as the heading, and the model profile read once each time
+// the page opens from GET /api/profiles/model/<id>, or the message saying why
+// it is not there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the
+// heading, the
 // Engine field, the Assets card as text and the cards of the settings
 // (fe/briefs/02e-model-profile-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
@@ -278,7 +279,7 @@ export default function ModelProfilePage({
   return (
     <>
       <p className="model-profile-back">
-        <a href="#/models">{t('model-profile-back')}</a>
+        <a href="#/profiles/model">{t('model-profile-back')}</a>
       </p>
       <PageHeading text={shown} />
       <Body

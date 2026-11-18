@@ -191,7 +191,7 @@ test('I3: insecure, nothing is disabled: filling both fields sends POST /api/ses
 
 test('I2, I3: insecure, the dialog of a save answered 401 holds the notice after its intro and before its form; its fields and Cancel work', async () => {
   secure(false)
-  startAt('#/models/Qwen3-27B')
+  startAt('#/profiles/model/Qwen3-27B')
   const bff = fakeBff({
     modelProfile: () =>
       reply(

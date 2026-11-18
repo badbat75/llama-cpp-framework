@@ -39,7 +39,7 @@ import {
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const STRATA = 'Strata'
 /** 2h.10's 194: the text of the Notice that left the page and the strings
  * file, kept as a literal so its absence can be pinned. */

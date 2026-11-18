@@ -176,7 +176,7 @@ export const EN: Record<string, string> = {
   'api-comment-markers':
     "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters",
   'api-load-on-startup-over-max':
-    '{0} enabled model profiles would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another model profile, or raise ModelsMax',
+    '{0} enabled model profiles would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another one, or raise ModelsMax',
   'api-load-on-startup-unlimited':
     '{0} enabled model profile(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off',
   'api-client-address-in-use':
@@ -209,7 +209,7 @@ export const EN: Record<string, string> = {
   'api-moe-cache-with-tensor-split':
     "moe-cache-mib with split-mode tensor: llama.cpp's MoE cache does not support tensor parallelism and the model would not load. Clear the MoE cache or pick another split mode",
   'api-model-profile-no-model':
-    'model profile `{0}` names no model: every model profile needs a `model` path',
+    '`{0}` names no model file: every model profile needs a `model` path',
   'api-override-no-pattern': 'tensor override {0} has an empty pattern',
   'api-override-no-device':
     'tensor override {0} (`{1}`) names no device: a rule is `<pattern>=<device>`, and llama.cpp splits it at the first `=`',
@@ -251,8 +251,12 @@ export const EN: Record<string, string> = {
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
   // Slice 2a (fe/briefs/02-models.md, section 2.7): the model profile list.
-  'nav-models': 'Models',
-  'models-title': 'Models',
+  // Slice 05b (fe/briefs/05b-profiles-nav.md, 5b.11): the nav's Profiles group.
+  // 'nav-models' and 'models-title' are gone: the nav entry, the h1 and the
+  // document title all say 'Model profiles'. 'Server profiles' has no key here,
+  // because 05b does not show it (5b.2); 05c adds it with its page.
+  'nav-profiles': 'Profiles',
+  'nav-model-profiles': 'Model profiles',
   'model-profiles-title': 'Model profiles',
   'model-profiles-intro':
     "Each model profile is one model with its settings. Every instance of the profile's engine can serve it.",
@@ -282,7 +286,7 @@ export const EN: Record<string, string> = {
   'model-profiles-switched-off-restart':
     'Switched {0} off: restart the running instances of {1} to apply.',
   'api-no-model-profile-named':
-    'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the model profiles as they are.',
+    'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the list of all model profiles again to see them as they are.',
   // Slice 2d (fe/briefs/02-models.md, section 2d.10): the model profile page, the
   // keys the criteria of 2d.1 to 2d.4 use, and those of the content (2d.5 to 2d.8).
   'model-profile-back': 'All model profiles',

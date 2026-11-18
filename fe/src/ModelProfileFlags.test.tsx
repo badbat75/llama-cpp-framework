@@ -43,7 +43,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 
 /** The option texts and values of the shared selects of 1.3. */
 const TRISTATE = [en('option-default'), en('option-on'), en('option-off')]

@@ -234,7 +234,11 @@ a.session {
   text-decoration: underline;
 }
 
+/* The nav's current entry, and the entry of a page below it (a model
+   profile's page under Model profiles): both spellings of the state,
+   one rule (DESIGN.md 2.3). */
 .nav a[aria-current='page'],
+.nav a[aria-current='true'],
 a.session[aria-current='page'] {
   color: var(--accent);
   font-weight: 600;

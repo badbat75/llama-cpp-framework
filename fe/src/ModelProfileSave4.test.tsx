@@ -33,7 +33,7 @@ import {
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
-const HASH = `#/models/${ID}`
+const HASH = `#/profiles/model/${ID}`
 const GET = `/api/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const MODE = en('model-profile-embedding-mode')
@@ -458,7 +458,7 @@ test('2h.145: a Reload whose read fails shows the message a first visit shows fo
 
 /** The model profile the page moves to after a Reload, as a hash change does. */
 const OTHER = 'gemma-3-27b'
-const OTHER_HASH = `#/models/${OTHER}`
+const OTHER_HASH = `#/profiles/model/${OTHER}`
 const OTHER_GET = `/api/profiles/model/${OTHER}`
 
 test('2h.145: a Reload confirmed on one model profile leaves nothing behind for the next: its 404 read shows model-profile-not-found with the new id as a first visit does, focus on the h1', async () => {

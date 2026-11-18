@@ -98,8 +98,8 @@ test('1a.4: a failed instances read leaves the list out of the nav, the Overview
   expect(
     within(nav).queryByRole('list', { name: en('nav-instances') }),
   ).toBeNull()
-  // Models stays (fe/briefs/02-models.md, 2a criterion 1).
-  expect(navLinks()).toEqual([en('nav-overview'), en('nav-models')])
+  // Model profiles stays (fe/briefs/02-models.md, 2a criterion 1).
+  expect(navLinks()).toEqual([en('nav-overview'), en('nav-model-profiles')])
 })
 
 // The bff's sign-in may not exist yet (404); a failure is signed out too.
@@ -279,7 +279,7 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
     'default',
     'big-model',
     // After the Instances group (fe/briefs/02-models.md, 2a criterion 1).
-    en('nav-models'),
+    en('nav-model-profiles'),
   ])
   const overview = within(nav).getByRole('link', { name: en('nav-overview') })
   expect(before(overview, list)).toBe(true)
