@@ -791,7 +791,82 @@ tr:last-child td {
   margin-bottom: var(--space-1);
 }
 
+/* The Overview's instances as tiles (08-hearth-h6-overview.md H6a.5): a list
+   of links, so the number of instances and the way in are read. A track never
+   asks for more width than the page has, so a narrow page gets one column and
+   no sideways scroll (1.4.10). */
+.tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+}
+
+/* The tile is the card's lifted box, kept as a column: the transparent border
+   is the edge that survives forced colours, where a shadow computes to none
+   (brief 06 section 0). Nothing fixes its height, only the content sizes it
+   (1.4.12). */
+.tile {
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The head row keeps the id and the badge at its two ends; on a tile narrower
+   than both, the badge moves under the id. */
+.tile-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* The id is the tile's title and its link. It breaks anywhere, so an id with
+   no break point stays inside its tile. A link that is not in a block of text,
+   so the accent alone marks it, and the pointer gets the underline. */
+.tile-id {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.tile-id:hover {
+  text-decoration: underline;
+}
+
+/* The engine, a quiet line: a tile shows it only when the engines tell the
+   instances apart. */
+.tile-engine {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+
 /* State badge: the shape beside the state's text. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid transparent;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .shape {
   display: inline-block;
   position: relative;
@@ -1274,10 +1349,11 @@ input[type='checkbox'][aria-invalid='true'] {
 /* ── Save bar (DESIGN.md 5.2) ─────────────────────────────────────────── */
 
 /* A field focused near the bottom is never hidden behind the sticky bar:
-   --save-bar-height is the bar's rendered height, kept by ServerForm. The
-   max() floor is the height a bar with a notice needs, so a focused field
-   clears the bar before the measured height lands: after a refused save the
-   bar grows with its alert, after the scroll of the marked field. */
+   --save-bar-height is the bar's rendered height, written by SaveBar's
+   useSaveBarPadding as the bar resizes. The max() floor is the height a bar
+   with a notice needs, so a focused field clears the bar before the height the
+   observer writes lands: after a refused save the bar grows with its alert,
+   after the scroll of the marked field. */
 html:has(.save-bar) {
   /* The declaration is pinned as written (DESIGN.md 5.2, 2h.135): Prettier
      would break this long calc across lines. */
@@ -1359,9 +1435,19 @@ html:has(.save-bar) {
   font-weight: 600;
 }
 
+/* The row of the bar's buttons (07-hearth-h5-shell.md H5c.7): it shrinks with
+   the bar and its buttons move to a second row when they no longer fit, so the
+   bar holds them at the largest browser text and the page keeps one column
+   (1.4.4, 1.4.10). The min-width is 0 and not auto: a flex row whose content
+   is wider than the bar never shrinks below that content. The wrapped rows
+   keep the buttons at the end of the bar, where the primary action is, and the
+   DOM and the Tab order stay as they are (1.3.2). */
 .save-actions {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin-left: auto;
 }

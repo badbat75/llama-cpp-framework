@@ -168,6 +168,28 @@ row is narrow; the shapes readable on `--surface`; forced colours: tile and badg
 transparent borders) show, the shapes keep their system colours, text stays. Targets: the id link at
 least 24 px high ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
 
+**Review of H6a (2026-11-19).** H6a.1 to H6a.9 met (`fe/src/Instances.tsx` `Body`, `fe/src/index.css`
+`.tiles` to `.badge`). Measured in Chromium, Firefox and WebKit, light and dark, signed in and out,
+1, 2, 5 and 12 instances: 3 columns at 1280, 2 at 960, 1 at 480 and 320; tiles of a row the same
+height (grid stretch); no sideways scroll; id link at least 31 px each way, the 40-character id
+breaks inside its tile; focus ring 3 px at offset 2 px, whole (no clipping ancestor); headings h1
+"Overview", h2 "Instances", nothing else; axe 0 at every width and theme. Badge contrast on
+`--surface`, lowest shape 5.30 light (Running) and 6.45 dark (Stopped), text 13.78 / 12.70. One
+point **not met**, older than H6a (the `.shape` rules are unchanged since the table): under forced
+colours (Chromium emulation, both schemes) the shapes collapse: Running's dot and Failed's cross are
+painted in `Canvas` and vanish, Starting and Stopping lose their half fill and look like Stopped.
+The text still names every state, so [1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color) holds; the
+section 4 expectation does not. Fix (measured injected, both schemes: five distinct shapes, Stopped
+and Unknown alike as intended), a follow-up of its own:
+
+**H6a.10 (follow-up) Shapes under forced colours.** One block `@media (forced-colors: active)`:
+`.shape { forced-color-adjust: none }`, `.shape-running { background: CanvasText }`,
+`.shape-stopped, .shape-changing { border-color: CanvasText }`,
+`.shape-changing { background: linear-gradient(90deg, CanvasText 50%, transparent 50%) }`,
+`.shape-failed::before, .shape-failed::after { background: CanvasText }`. System colours keep the
+user's palette ([CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)).
+Tester pins the block as stylesheet text.
+
 ## 5. What must not change
 
 The `h1` and its focus on arrival; `Version`; the `h2` `instances-title`; the messages of H6a.3; the

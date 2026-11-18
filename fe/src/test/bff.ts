@@ -49,7 +49,6 @@ export const EN: Record<string, string> = {
   'session-revoked':
     'You have been signed out: this account is no longer a member of the pai group. Ask whoever administers this computer to add it again; you can still see the overview without signing in.',
   'overview-title': 'Overview',
-  'instances-column-engine': 'Engine',
   'instance-engine': '{0} instance',
   'instance-state': 'State: {0}',
   'instance-not-found': 'There is no instance named {0}.',
@@ -125,8 +124,6 @@ export const EN: Record<string, string> = {
   'version-label': 'Version {0}',
   'version-unavailable': 'The version could not be read from the service.',
   'instances-title': 'Instances',
-  'instances-column-id': 'Instance',
-  'instances-column-state': 'State',
   'instances-empty': 'No instances are configured.',
   'instances-failed': 'The instances could not be read.',
   'instances-manager-unavailable':

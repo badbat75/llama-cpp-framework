@@ -228,6 +228,14 @@ end with its ring 5 px under the viewport's edge (1280 by 500, model profile pag
 border box is in view, so 2.4.11 is met); a positive `var(--space-3)` there would show the ring
 (preference).
 
+Review of H5c.7 (2026-11-19, built with the four declarations): **met**. Measured at 32 px text,
+320 by 568, Server page: Chromium bar 16 to 304, 324 px high, Save changes 37 to 288 on its own
+second row, Discard 141 to 288 above it; Firefox 325 px, Save changes 36 to 288; no sideways scroll
+in either (scrollWidth 320). 1280 by 720 at 32 px: one row, bar 148 px, no sideways scroll. At 16 px,
+320 by 568: bar 99 px, both buttons on one row, as before. The optional short-viewport item is still
+open, unchanged (1280 by 500, model profile page: Discard ends at 505 in a 500 px viewport, the three
+engines).
+
 **What the tester pins (H5c)**: H5c.6 as stylesheet text (the block by matched braces, the selector
 list, the three declarations); H5c.1 and H5c.2 as stylesheet text (the declaration, its order after
 `html:has(.save-bar)`, the media rule by matched braces). H5c.3 to H5c.5 are the designer's.

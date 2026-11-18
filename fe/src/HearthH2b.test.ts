@@ -459,8 +459,8 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
     .sort()
   expect(
     lifted,
-    'the boxes drawn with the shadow token are exactly the containers of H2b: .card, table, .save-bar, .dialog',
-  ).toEqual(['.card', '.dialog', '.save-bar', 'table'].sort())
+    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, table, .save-bar, .dialog) plus the tile H6a.6 lifts with the same token',
+  ).toEqual(['.card', '.dialog', '.save-bar', '.tile', 'table'].sort())
   // A container carries no state look: H2 adds no hover, active, focus,
   // disabled, checked or aria rule on the containers (section 0: no hover look
   // on controls, and H2b adds none on a box). A rule on a child (.card h3,
@@ -480,8 +480,8 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
   expect(stateful, 'no state rule on a container').toEqual([])
   expect(
     RULES.filter((r) => r.flat.includes(':hover')).map((r) => r.flat),
-    'the sheet keeps the one :hover rule of today, the nav link of 2h: H2b adds no hover look (section 0)',
-  ).toEqual(['.nav a:hover'])
+    'the sheet keeps the nav link of 2h and the id link H6a.7 underlines under the pointer, and nothing else: H2b adds no hover look (section 0)',
+  ).toEqual(['.nav a:hover', '.tile-id:hover'])
 })
 
 // ── Section 4: text spacing ──────────────────────────────────────────────

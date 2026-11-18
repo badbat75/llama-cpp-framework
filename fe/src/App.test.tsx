@@ -44,6 +44,21 @@ function navLinks(): string[] {
     .map((a) => a.textContent ?? '')
 }
 
+/**
+ * The Overview's instances, as the `list` of the Instances section (H6a.1 of
+ * fe/briefs/08-hearth-h6-overview.md replaced the table; the `main` holds no
+ * other list on the Overview).
+ */
+async function instanceTiles(main: HTMLElement): Promise<HTMLElement> {
+  const heading = within(main).getByRole('heading', {
+    level: 2,
+    name: en('instances-title'),
+  })
+  const section = heading.closest('section') as HTMLElement
+  expect(section).toBeTruthy()
+  return within(section).findByRole('list')
+}
+
 // ── Failure paths first ─────────────────────────────────────────────────
 
 test('1a.8: an unknown route shows not-found with a link to the overview', async () => {
@@ -128,9 +143,9 @@ test.each(SESSION_FAILURES)(
       await within(main).findByText(en('version-label', '2.99.0')),
       what,
     ).toBeTruthy()
-    const table = await within(main).findByRole('table')
+    const tiles = await instanceTiles(main)
     expect(
-      within(table).getByRole('link', { name: 'default' }),
+      within(tiles).getByRole('link', { name: 'default' }),
       what,
     ).toBeTruthy()
     const banner = screen.getByRole('banner')
@@ -436,8 +451,8 @@ test('1a.19: the Overview shows the version and the instances signed out too', a
   expect(
     await within(main).findByText(en('version-label', '2.99.0')),
   ).toBeTruthy()
-  const table = await within(main).findByRole('table')
-  expect(within(table).getByRole('link', { name: 'default' })).toBeTruthy()
+  const tiles = await instanceTiles(main)
+  expect(within(tiles).getByRole('link', { name: 'default' })).toBeTruthy()
 })
 
 // ── Strings ─────────────────────────────────────────────────────────────

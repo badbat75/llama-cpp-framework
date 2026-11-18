@@ -21,11 +21,24 @@ PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 
 # session: "admin" (a signed-in `pai` member), "reader" (signed in, no
 # configure), "out" (no session); inst: the instance's state; key: "withheld"
-# when the bff hides OpencodeApiKey from the reader.
-STATE = {"session": "admin", "inst": "active", "key": "withheld"}
+# when the bff hides OpencodeApiKey from the reader; list: "one" (today's single
+# instance) or "many" (the four tiles of 08-hearth-h6-overview.md section 3).
+STATE = {"session": "admin", "inst": "active", "key": "withheld", "list": "one"}
 
 # A long unbroken name: the banner has to hold it at 320 px.
 USER = "abcdefghijklmnopqrstuvwxyz012345"
+
+# GET /api/instances with list=many (08-hearth-h6-overview.md section 3): the
+# tiles' shapes. One tile per state shape, a second engine so the engine line
+# shows, and an id of 40 characters with no break point, which has to break
+# inside its tile.
+MANY_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123"
+INSTANCES_MANY = [
+    {"id": "default", "engine": "llama.cpp", "state": "active"},
+    {"id": "coder", "engine": "llama.cpp", "state": "inactive"},
+    {"id": "embed", "engine": "llama.cpp", "state": "failed"},
+    {"id": MANY_ID, "engine": "strata", "state": "activating"},
+]
 
 # GET /api/profiles/model: rows with every engine shape the list shows.
 MODEL_PROFILES = [
@@ -105,10 +118,16 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(401, {"key": "session-required", "args": []})
             return self.json(200, {"user": USER, "canConfigure": STATE["session"] == "admin"})
         if p == "/api/instances":
+            if STATE["list"] == "many":
+                return self.json(200, INSTANCES_MANY)
             return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"]}])
+        # The boot row of the tiles and the instance page's boot field
+        # (08-hearth-h6-overview.md section 3): on for default, off for every
+        # other instance.
+        parts = p.split("/")
+        if len(parts) == 5 and parts[1:3] == ["api", "instances"] and parts[4] == "boot":
+            return self.json(200, {"enabled": unquote(parts[3]) == "default"})
         # The instance page of the check is the instance "default".
-        if p == "/api/instances/default/boot":
-            return self.json(200, {"enabled": False})
         if p == "/api/instances/default/server":
             doc = dict(SERVER_DOC)
             if STATE["key"] == "withheld":

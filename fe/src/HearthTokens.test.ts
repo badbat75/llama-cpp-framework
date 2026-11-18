@@ -445,6 +445,9 @@ test('H1a.7: every font-size outside :root is a var(--fs-*) of the scale, no rem
       const i = d.indexOf(':')
       if (i < 0 || d.slice(0, i).trim() !== 'font-size') continue
       const val = d.slice(i + 1).trim()
+      // H6a.7 writes the id's size as the literal 1.25rem (08-hearth-h6):
+      // sanctioned for that rule, with that value, nowhere else.
+      if (r.compact === '.tile-id' && val === '1.25rem') continue
       const m = /^var\((--fs-[a-z0-9-]+)\)$/.exec(val)
       if (!m || !FS.includes(m[1]))
         literals.push(`${r.sel.replace(/\s+/g, ' ')}: font-size: ${val}`)
@@ -664,7 +667,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list and the Sign in pill 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list and the Sign in pill 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
@@ -682,6 +685,9 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.model-profiles-filter-row input: min-height: var(--control-h)',
     '.model-profiles-filter-row input: min-width: 0',
     '.model-profiles-filter-status: min-height: 1lh',
+    // H6a.7: the id shrinks inside its tile; H6a.8: the pill is 28 px.
+    '.tile-id: min-width: 0',
+    '.badge: min-height: 28px',
     '.jump button: min-height: 32px',
     'fieldset: min-width: 0',
     '.field-control: min-width: 0',
@@ -694,6 +700,8 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     "input[type='text'], input[type='password'], select: min-width: 0",
     '.check: min-height: 24px',
     '.save-messages: min-width: 0',
+    // H5c.7: the row of the bar's buttons shrinks with the bar.
+    '.save-actions: min-width: 0',
   ])
   const used = new Set<string>()
   for (const r of RULES)

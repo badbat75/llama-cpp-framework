@@ -126,7 +126,7 @@ function manyEngines(instances: Instance[]): boolean {
   return new Set(instances.map((i) => i.engine)).size > 1
 }
 
-/** The instances as a table, or the message in their place. */
+/** The instances as a list of tiles, or the message in their place. */
 function Body({ answer }: { answer: Answer | undefined }) {
   if (answer === undefined) {
     return null
@@ -139,28 +139,23 @@ function Body({ answer }: { answer: Answer | undefined }) {
   }
   const engines = manyEngines(answer)
   return (
-    <table>
-      <thead>
-        <tr>
-          <th scope="col">{t('instances-column-id')}</th>
-          {engines && <th scope="col">{t('instances-column-engine')}</th>}
-          <th scope="col">{t('instances-column-state')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {answer.map((i) => (
-          <tr key={i.id}>
-            <td>
-              <a href={instanceHref(i.id)}>{i.id}</a>
-            </td>
-            {engines && <td>{i.engine}</td>}
-            <td>
+    <ul className="tiles">
+      {answer.map((i) => (
+        <li key={i.id} className="tile">
+          <div className="tile-head">
+            <a className="tile-id" href={instanceHref(i.id)}>
+              {i.id}
+            </a>
+            <span className="badge">
               <StateShape state={i.state} />
               {stateLabel(i.state)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+            </span>
+          </div>
+          {engines && (
+            <p className="tile-engine">{t('instance-engine', i.engine)}</p>
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }

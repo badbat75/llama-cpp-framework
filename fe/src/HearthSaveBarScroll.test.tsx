@@ -15,6 +15,10 @@
 // join here: `.session` keeps its items at the right edge when the session part
 // wraps (the H5b.0 correction), and the current nav entry takes the system
 // highlight in forced colours, as the pressed theme button does.
+// H5c.7, the follow-up the H5c review asks for, is the four declarations of
+// `.save-actions` the brief gives ("Tester pins the four declarations"): its
+// optional short-viewport half is a preference the brief leaves open, so the
+// scroll-margin-bottom of the short block is not pinned here.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
@@ -177,7 +181,7 @@ test('H5c.1: the top-level .save-bar button rule cancels the page scroll padding
   const inner = pad.replace(/^calc\((.*)\)$/, '$1')
   expect(
     prop(btn.body, MARGIN),
-    'the padding of the rule above, negated: a control inside the sticky bar always lies in the padded strip, so the browser scrolls toward it when it takes the focus (measured: Chromium 422 to 451 px, WebKit 100 to 147 px). An equal negative margin moves the control out of that strip; CSS Scroll Snap 1 5.1 ties scroll-margin to the scroll-into-view operations, and the UX pass measures the focus move in all three engines',
+    'the padding of the rule above, negated: a control inside the sticky bar always lies in the padded strip, so the browser scrolls toward it when it takes the focus. An equal negative margin moves the control out of that strip; CSS Scroll Snap 1 5.1 ties scroll-margin to the scroll-into-view operations. The H5c review section of fe/briefs/07-hearth-h5-shell.md holds the measurements of the three engines, and the UX pass measures the focus move',
   ).toBe(`calc(-1 * (${inner}))`)
   expect(
     prop(btn.body, MARGIN),
@@ -232,7 +236,7 @@ test('H5b.0, as the H5b review corrects it: .session declares justify-content: f
   const session = topBy('.session', 'the .session rule')
   expect(
     prop(session.body, 'justify-content'),
-    'measured 2026-11-18 in Chromium, Firefox and WebKit: .session is itself a wrapping flex row wider than the line at 480 px signed in, so its items wrap to the LEFT inside it (the name at x 16 on the third row, Sign out at x 16 on the fourth). .banner-tools alone does not fix that: this one declaration keeps the name and Sign out at the right edge, the DOM and the Tab order unchanged',
+    'the H5b review of fe/briefs/07-hearth-h5-shell.md has the three-engine measurements: .session is itself a wrapping flex row wider than the line, signed in at a narrow width, so its items wrap to the LEFT inside it. .banner-tools alone does not fix that: this one declaration keeps the name and Sign out at the right edge, the DOM and the Tab order unchanged',
   ).toBe('flex-end')
 })
 
@@ -303,4 +307,26 @@ test('H5b.3 in forced colours: the current entry of the nav (the same three sele
       prop(pressed.body, p),
     ),
   )
+})
+
+// ── H5c.7: the bar's buttons wrap (the follow-up the H5c review asks for) ──
+
+test('H5c.7: .save-actions is a row that shrinks and wraps inside the bar, its buttons kept at the end, so the bar holds them at the largest browser text and the page keeps one column', () => {
+  const actions = topBy('.save-actions', 'the row of buttons of the save bar')
+  expect(
+    prop(actions.body, 'flex'),
+    'the row is allowed to shrink and to grow from its content: with flex: none it is as wide as its buttons, which is wider than the bar at the largest browser text, so the page grows and scrolls sideways (1.4.4, 1.4.10). The brief replaces flex: none with this',
+  ).toBe('0 1 auto')
+  expect(
+    prop(actions.body, 'min-width'),
+    '0, not auto: a flex row whose content is wider than the bar never shrinks below that content, so the buttons would still push the page open',
+  ).toBe('0')
+  expect(
+    prop(actions.body, 'flex-wrap'),
+    'the buttons move to a second row inside the bar instead of hanging outside it: the bar is what holds them (H5c.7, 1.4.4)',
+  ).toBe('wrap')
+  expect(
+    prop(actions.body, 'justify-content'),
+    'the wrapped rows keep the buttons at the end of the bar, where the primary action is: the measured fix puts Discard on the first row and Save changes on the second, both right-aligned, the DOM and the Tab order unchanged (1.3.2)',
+  ).toBe('flex-end')
 })

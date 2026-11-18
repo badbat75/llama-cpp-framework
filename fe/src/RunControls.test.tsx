@@ -122,6 +122,21 @@ function reads(bff: ReturnType<typeof fakeBff>): number {
   return bff.to('GET', '/api/instances').length
 }
 
+/**
+ * The Overview's instances, as the `list` of the Instances section (H6a.1 of
+ * fe/briefs/08-hearth-h6-overview.md replaced the table; the `main` holds no
+ * other list on the Overview).
+ */
+function instanceTiles(main: HTMLElement): HTMLElement {
+  const heading = within(main).getByRole('heading', {
+    level: 2,
+    name: en('instances-title'),
+  })
+  const section = heading.closest('section') as HTMLElement
+  expect(section).toBeTruthy()
+  return within(section).getByRole('list')
+}
+
 function posts(bff: ReturnType<typeof fakeBff>): string[] {
   return bff.calls
     .filter((c) => c.method === 'POST' && c.path.startsWith('/api/instances'))
@@ -617,8 +632,8 @@ test('1c.41: opening an instance page sends exactly one GET /api/instances befor
 })
 
 test('1c.41: opening the Overview signed in sends exactly one GET /api/instances', async () => {
-  const { bff } = await open({}, '#/')
-  expect(screen.getByRole('table')).toBeTruthy()
+  const { bff, main } = await open({}, '#/')
+  expect(instanceTiles(main)).toBeTruthy()
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   expect(within(nav).getByRole('link', { name: 'coder' })).toBeTruthy()
   expect(reads(bff)).toBe(1)

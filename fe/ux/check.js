@@ -78,6 +78,24 @@ const STATES = [
     ],
   },
   {
+    name: 'overview-tiles',
+    // The tiles of four instances (stub.py list=many): the 40-character id, the
+    // badge, and the engine line the second engine brings. The boot row of a
+    // signed-in session is the `dl.tile-facts` of H6b: its expect lands with it.
+    set: 'session=admin&list=many',
+    hash: '#/',
+    expect: [{ selector: 'li.tile', count: 4 }],
+  },
+  {
+    name: 'overview-tiles-signed-out',
+    // Signed out: the tiles, and no boot row. The expect only finds, so the
+    // absent dl.tile-facts is pinned by the unit test
+    // (fe/briefs/08-hearth-h6-overview.md, section 3).
+    set: 'session=out&list=many',
+    hash: '#/',
+    expect: [{ selector: 'li.tile' }],
+  },
+  {
     name: 'instance-server',
     // key=shown: with the API key withheld from the session the bff fails the
     // whole read, and the Server form never shows.
@@ -161,21 +179,26 @@ function stubPort(stub) {
   })
 }
 
-/** The state's own marker, on the page, or the reason it is not there. */
+/** The state's own marker, on the page, or the reason it is not there. A
+ *  marker with a `count` is proven rendered when its Nth element is there: the
+ *  list has N. */
 async function rendered(page, state) {
   for (const want of state.expect) {
     const loc =
       want.text === undefined
         ? page.locator(want.selector)
         : page.locator(want.selector).filter({ hasText: want.text })
+    const target =
+      want.count === undefined ? loc.first() : loc.nth(want.count - 1)
     try {
-      await loc.first().waitFor({ timeout: RENDER_MS })
+      await target.waitFor({ timeout: RENDER_MS })
     } catch {
       const what =
         want.text === undefined
           ? want.selector
           : `${want.selector} "${want.text}"`
-      return `not rendered: ${what}`
+      const times = want.count === undefined ? '' : ` x${want.count}`
+      return `not rendered: ${what}${times}`
     }
   }
   return null

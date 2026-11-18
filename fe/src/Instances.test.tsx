@@ -4,7 +4,8 @@
 // manager's order, and errors as {"key", "args"} (fe/briefs/api-contract.md):
 // 503 client-unavailable with no manager, 502 client-not-authorized when the
 // manager refuses the bff, anything else generic. Signed out here, so the nav
-// lists no instance and the only instance links are the table's.
+// lists no instance and the only instance links are the list's (H6a rewrote
+// the table of 1a.16 to 1a.18 as a list of tiles: fe/briefs/08-hearth-h6).
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
@@ -26,28 +27,24 @@ function list(instances: Instance[]) {
   return fakeBff({ session: 'signed-out', instances })
 }
 
-/** The instances table of main. */
-async function table(): Promise<HTMLElement> {
-  return within(screen.getByRole('main')).findByRole('table')
+/** The instances list of main (H6a.1: a `ul`, not a table). */
+async function tiles(): Promise<HTMLElement> {
+  return within(screen.getByRole('main')).findByRole('list')
 }
 
-/** The column headers of the table. */
-async function headers(): Promise<string[]> {
-  return within(await table())
-    .getAllByRole('columnheader')
-    .map((h) => h.textContent ?? '')
+/** The tiles of the instances list: the id link and the badge text of each. */
+async function tileTexts(): Promise<string[][]> {
+  return within(await tiles())
+    .getAllByRole('listitem')
+    .map((item) => [
+      within(item).getByRole('link').textContent ?? '',
+      item.querySelector('.badge')?.textContent ?? '',
+    ])
 }
 
-/** The data rows of the instances table: the cells' text per row. */
-async function rows(): Promise<string[][]> {
-  return within(await table())
-    .getAllByRole('row')
-    .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) =>
-      within(row)
-        .getAllByRole('cell')
-        .map((c) => c.textContent ?? ''),
-    )
+/** No instances list in main: what every state that is not the list shows. */
+function noList(what?: string): void {
+  expect(within(screen.getByRole('main')).queryByRole('list'), what).toBeNull()
 }
 
 // ── Failure paths first ─────────────────────────────────────────────────
@@ -56,7 +53,7 @@ test('1a.16: a service that cannot be reached shows the failure message', async 
   stubInstances(() => Promise.reject(new TypeError('Failed to fetch')))
   render(<App />)
   expect(await screen.findByText(en('instances-failed'))).toBeTruthy()
-  expect(screen.queryByRole('table')).toBeNull()
+  noList()
 })
 
 test('1a.16: client-unavailable shows the manager-unavailable message', async () => {
@@ -66,14 +63,14 @@ test('1a.16: client-unavailable shows the manager-unavailable message', async ()
     await screen.findByText(en('instances-manager-unavailable')),
   ).toBeTruthy()
   expect(document.body.textContent).not.toContain(en('instances-failed'))
-  expect(screen.queryByRole('table')).toBeNull()
+  noList()
 })
 
 test('1a.16: client-not-authorized shows the not-authorized message', async () => {
   stubInstances(() => reply(502, { key: 'client-not-authorized', args: [] }))
   render(<App />)
   expect(await screen.findByText(en('instances-not-authorized'))).toBeTruthy()
-  expect(screen.queryByRole('table')).toBeNull()
+  noList()
 })
 
 test('1a.16: the old {"error"} shape and any other error show the failure message, never the body', async () => {
@@ -92,7 +89,7 @@ test('1a.16: the old {"error"} shape and any other error show the failure messag
     expect(document.body.textContent, body).not.toContain(
       en('instances-manager-unavailable'),
     )
-    expect(screen.queryByRole('table'), body).toBeNull()
+    noList(body)
     cleanup()
   }
 })
@@ -112,7 +109,7 @@ test('1a.16: a body that is not a list of instances shows the failure message', 
     render(<App />)
     expect(await screen.findByText(en('instances-failed')), body).toBeTruthy()
     expect(document.body.textContent, body).not.toMatch(/undefined|NaN|\{0\}/)
-    expect(screen.queryByRole('table'), body).toBeNull()
+    noList(body)
     cleanup()
   }
 })
@@ -138,7 +135,7 @@ test('1a.16: the Overview has its h1, the version line and the instances section
   expect(
     version.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy()
-  await table()
+  await tiles()
   const init = bff.to('GET', '/api/instances')
   expect(init.length).toBeGreaterThan(0)
 })
@@ -147,11 +144,11 @@ test('1a.16: no instances shows the empty message, not a table', async () => {
   list([])
   render(<App />)
   expect(await screen.findByText(en('instances-empty'))).toBeTruthy()
-  expect(screen.queryByRole('table')).toBeNull()
+  noList()
   expect(document.body.textContent).not.toContain(en('instances-failed'))
 })
 
-test('1a.16: each instance is a row with its state, in the order received', async () => {
+test('1a.16: each instance is a tile with its state, in the order received', async () => {
   list([
     { id: 'default', engine: 'llama.cpp', state: 'active' },
     { id: 'coder', engine: 'llama.cpp', state: 'failed' },
@@ -160,7 +157,7 @@ test('1a.16: each instance is a row with its state, in the order received', asyn
     { id: 'z', engine: 'llama.cpp', state: 'deactivating' },
   ])
   render(<App />)
-  expect(await rows()).toEqual([
+  expect(await tileTexts()).toEqual([
     ['default', en('instance-state-active')],
     ['coder', en('instance-state-failed')],
     ['big-model', en('instance-state-inactive')],
@@ -173,59 +170,63 @@ test('1a.16: each instance is a row with its state, in the order received', asyn
 test('1a.16: a state the page does not know is shown by its name', async () => {
   list([{ id: 'odd', engine: 'llama.cpp', state: 'maintenance' }])
   render(<App />)
-  expect(await rows()).toEqual([
+  expect(await tileTexts()).toEqual([
     ['odd', en('instance-state-other', 'maintenance')],
   ])
   expect(document.body.textContent).not.toContain('{0}')
 })
 
-test('1a.17: each instance id in the table is a link to its page', async () => {
+test('1a.17: each instance id in the list is a link to its page', async () => {
   list([
     { id: 'default', engine: 'llama.cpp', state: 'active' },
     { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
   ])
   render(<App />)
-  const links = within(await table()).getAllByRole('link')
+  const links = within(await tiles()).getAllByRole('link')
   expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
     ['default', '#/instances/default'],
     ['coder', '#/instances/coder'],
   ])
-  // The link sits in the first cell of its row.
+  // The link is the first thing in the head row of its tile (H6a.2).
   for (const a of links) {
-    const cell = a.closest('td, th')!
-    expect(cell.parentElement!.firstElementChild).toBe(cell)
+    const head = a.closest('.tile-head')!
+    expect(head).toBeTruthy()
+    expect(head.firstElementChild).toBe(a)
   }
 })
 
-test('1a.18: one engine keeps the two columns of today, no Engine column', async () => {
+test('1a.18: one engine shows no engine line at all', async () => {
   list([
     { id: 'default', engine: 'llama.cpp', state: 'active' },
     { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
   ])
   render(<App />)
-  expect(await headers()).toEqual([
-    en('instances-column-id'),
-    en('instances-column-state'),
-  ])
+  expect(within(await tiles()).getAllByRole('listitem').length).toBe(2)
+  // The engine line is a `p` of the tile (H6a.2): with one engine, none.
+  expect(within(await tiles()).queryAllByRole('paragraph')).toEqual([])
   expect(document.body.textContent).not.toContain('llama.cpp')
 })
 
-test('1a.18: two or more engines add the Engine column, the engine name as data', async () => {
+test('1a.18: two or more engines add one engine line to each tile', async () => {
   list([
     { id: 'default', engine: 'llama.cpp', state: 'active' },
     { id: 'strata', engine: 'Strata', state: 'inactive' },
     { id: 'coder', engine: 'llama.cpp', state: 'failed' },
   ])
   render(<App />)
-  // Instance, Engine, State: the order of the instance page's header (2.6).
-  expect(await headers()).toEqual([
-    en('instances-column-id'),
-    en('instances-column-engine'),
-    en('instances-column-state'),
+  const items = within(await tiles()).getAllByRole('listitem')
+  expect(items.length).toBe(3)
+  expect(
+    items.map((item) => within(item).getByRole('paragraph').textContent),
+  ).toEqual([
+    en('instance-engine', 'llama.cpp'),
+    en('instance-engine', 'Strata'),
+    en('instance-engine', 'llama.cpp'),
   ])
-  expect(await rows()).toEqual([
-    ['default', 'llama.cpp', en('instance-state-active')],
-    ['strata', 'Strata', en('instance-state-inactive')],
-    ['coder', 'llama.cpp', en('instance-state-failed')],
+  // The state is still the tile's text, and so is the id.
+  expect(await tileTexts()).toEqual([
+    ['default', en('instance-state-active')],
+    ['strata', en('instance-state-inactive')],
+    ['coder', en('instance-state-failed')],
   ])
 })
