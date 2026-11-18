@@ -146,6 +146,9 @@ export const EN: Record<string, string> = {
   'save-saved-restart': 'Saved: restart llama-server to apply.',
   'save-invalid': 'Not saved: correct the marked fields.',
   'save-refused': 'Not saved: {0}',
+  // Sub-slice 2h.10 (fe/briefs/02h-preset-save.md, criterion 198a): the alert
+  // for a refusal on a field that cannot take focus.
+  'save-refused-at': 'Not saved: {0}. The field is {1}, on the card {2}.',
   'save-failed':
     'Not saved: the service did not answer as expected. Your changes are kept; try again.',
   'save-reload': 'Reload',
@@ -301,14 +304,17 @@ export const EN: Record<string, string> = {
   'preset-drafter': 'Drafter',
   'preset-ngram-drafters': 'N-gram drafters',
   'preset-value-none': '(none)',
+  // Sub-slice 2h.10 (fe/briefs/02h-preset-save.md, criteria 195, 196): the
+  // Assets card intro, and the name of the section jump list.
+  'preset-assets-read-only':
+    'The files, Project URL and drafters of a preset cannot be changed here yet. Change them in pai-config on the server machine.',
+  'preset-jump-label': 'Preset sections.',
   // Slice 2e.1 (fe/briefs/02e-preset-cards.md, criterion 95): the Resource /
   // context and Embeddings cards, and the pooling options the shared texts of
   // 1.3 lack. The hints are the GUI's tooltips (en_US.toml), unchanged except
   // preset-context-size-hint, whose web text criterion 92 gives.
-  // Slice 2h.1 (fe/briefs/02h-preset-save.md, criteria 130 and 141): the
-  // Notice that replaces preset-read-only, which 2h.1 removes.
-  'preset-partly-editable':
-    'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.',
+  // Slice 2h.1's Notice preset-partly-editable, and the read-only Notice
+  // preset-read-only it replaced, are both out (2h.10's 194).
   'preset-resource-context': 'Resource / context',
   'preset-context-size': 'Context size',
   'preset-context-size-hint':
@@ -571,9 +577,10 @@ export const EN: Record<string, string> = {
   'preset-min-hits-hint':
     "How many times an n-gram must have been seen before what follows it is proposed. Higher drafts less often but more reliably.\nDefault: 1 (llama.cpp's own).\nFlag: --spec-ngram-map-k4v-min-hits",
   // Sub-slice 2h.9 (fe/briefs/02h-preset-save.md, criterion 193): the two
-  // reason lines of the Speculative decoding card's groups.
+  // reason lines of the Speculative decoding card's groups. 2h.10's 198
+  // rewords the draft one: the Assets row it points to is "Draft model".
   'preset-draft-group-off':
-    'Used only with a draft: a Draft model file or a Drafter, and this preset has neither (Assets).',
+    'Used only with a draft: a Draft model or a Drafter, and this preset has neither (Assets).',
   'preset-ngram-off': 'Used only when N-gram drafters (Assets) includes {0}.',
 }
 

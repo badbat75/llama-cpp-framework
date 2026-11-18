@@ -113,6 +113,15 @@ function inputOf(main: HTMLElement, label: string): HTMLInputElement {
   ) as HTMLInputElement
 }
 
+/** A number field's default box, named by the box's own text inside the group
+ * of its label (87). */
+function boxOf(main: HTMLElement, label: string): HTMLInputElement {
+  const g = within(main).getByRole('group', { name: label })
+  return within(g).getByRole('checkbox', {
+    name: en('field-default'),
+  }) as HTMLInputElement
+}
+
 function saveButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-button') })
 }
@@ -271,13 +280,17 @@ test('2h.142: the field of the reply wins over the fallback table: it marks and 
 
 /** 150: one test per row (a row mounts the page once, so no test mounts ten):
  * the check key, the 422 body, the kind of its control, the control's label,
- * and whether that control is enabled (only an enabled one takes the focus). */
+ * whether that control is enabled (only an enabled one takes the focus), and
+ * for 2h.10's 198a the title of the card the field sits on: set where the
+ * field's control AND its default box are both disabled, so the focus has
+ * nowhere to go and the bar's alert must say where the field is. */
 const TABLE_150: [
   string,
   Record<string, unknown>,
   'select' | 'text',
   string,
   boolean,
+  string,
 ][] = [
   [
     'not-whole-number-in-range: args[0]',
@@ -290,6 +303,7 @@ const TABLE_150: [
     // 2h.7's 175 made GPU layers editable and the read has its key, so the
     // input is enabled and takes the focus (144).
     true,
+    '',
   ],
   [
     'comment-markers: args[0]',
@@ -297,13 +311,17 @@ const TABLE_150: [
     'text',
     en('preset-chat-kwargs'),
     true,
+    '',
   ],
   [
     'not-a-number: args[0]',
     { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
     'text',
     en('preset-moe-cpu-layers'),
+    // 178: MoE CPU layers is never editable in 2h, so its control and its
+    // default box are both disabled: 198a's where.
     false,
+    en('preset-hardware-config'),
   ],
   [
     'not-json-object: args[0]',
@@ -311,6 +329,7 @@ const TABLE_150: [
     'text',
     en('preset-chat-kwargs'),
     true,
+    '',
   ],
   [
     'min-above-max: args[0]',
@@ -324,6 +343,7 @@ const TABLE_150: [
     // unticked and 186 leaves the field enabled while Fit to VRAM reads
     // checked, so its input is enabled and takes the focus (144).
     true,
+    '',
   ],
   [
     'fit-target-format: fit-target',
@@ -334,13 +354,17 @@ const TABLE_150: [
     // Fit to VRAM reads checked, which it does with no `fit` in the read
     // (2h.127), so its input is enabled and takes the focus.
     true,
+    '',
   ],
   [
     'moe-cache-with-tensor-split: moe-cache-mib',
     { key: 'moe-cache-with-tensor-split', args: [] },
     'text',
     en('preset-moe-cache'),
+    // 178, as the row above, and 198a's own example: the manager refuses the
+    // whole file on it (Split mode is not on the page in 2h).
     false,
+    en('preset-hardware-config'),
   ],
   [
     'load-on-startup-over-max: load-on-startup',
@@ -348,6 +372,7 @@ const TABLE_150: [
     'select',
     en('preset-load-on-startup'),
     true,
+    '',
   ],
   [
     'load-on-startup-unlimited: load-on-startup',
@@ -355,6 +380,7 @@ const TABLE_150: [
     'select',
     en('preset-load-on-startup'),
     true,
+    '',
   ],
   [
     'not-one-of: pooling (the one enabled control)',
@@ -365,20 +391,36 @@ const TABLE_150: [
     'select',
     en('preset-pooling'),
     true,
+    '',
   ],
 ]
 
 it.each(TABLE_150)(
-  '2h.150: %s marks the field its row names with that row text, and only an enabled control takes the focus',
-  async (what, body, kind, label, enabled) => {
+  '2h.150 (2h.10 198a): %s marks the field its row names with that row text, and only an enabled control takes the focus; a field with nothing to focus is answered save-refused-at, naming its label and its card',
+  async (what, body, kind, label, enabled, card) => {
     const { bff, main } = await refused(body)
     saveButton(main).focus()
     await save(main, bff)
     const text = en(`api-${String(body.key)}`, ...(body.args as string[]))
-    await within(main).findByText(en('save-refused', text))
+    const alert = enabled
+      ? en('save-refused', text)
+      : en('save-refused-at', text, label, card)
+    await within(main).findByText(alert)
     const el = kind === 'select' ? selectOf(main, label) : inputOf(main, label)
     expectError(el, text, what)
-    expectAlert(main, en('save-refused', text), what)
+    expectAlert(main, alert, what)
+    if (!enabled) {
+      // 198a's scope: nothing in the field can take focus, so the alert names
+      // where it is, and never the plain 144 sentence.
+      expect(
+        boxOf(main, label).disabled,
+        `${what}: 198a, the default box is disabled as well`,
+      ).toBe(true)
+      expect(
+        within(main).queryByText(en('save-refused', text)),
+        `${what}: 198a, not the alert that names no place`,
+      ).toBeNull()
+    }
     expect(
       document.activeElement,
       `${what}: ${enabled ? 'focus on the enabled control' : 'focus stays on Save changes'}`,
@@ -473,7 +515,7 @@ test('2h.142 (139): a 422 with a key the fe does not know is api-other with the 
 
 // ── 144: the field's control is disabled ────────────────────────────────
 
-test('2h.144 (2h.6 170): not-one-of on Reasoning effort, an editable select, marks it and moves focus to it; on Unified KV, disabled by 155, the error goes on the control and the focus stays on Save changes', async () => {
+test('2h.144 (2h.6 170, 2h.10 198a): not-one-of on Reasoning effort, an editable select, marks it and moves focus to it and the bar keeps save-refused; on Unified KV, disabled by 155 with no box of its own, the error goes on the control, the focus stays on Save changes and the alert says on which card the field is', async () => {
   const ARGS = [
     'reasoning-effort',
     'ultra',
@@ -500,7 +542,8 @@ test('2h.144 (2h.6 170): not-one-of on Reasoning effort, an editable select, mar
   vi.unstubAllGlobals()
   // The other half of 144: a control of an editable card that this read
   // leaves disabled (155: Parallel slots at its default keeps Unified KV
-  // off), with no enabled control of its own to take the focus.
+  // off), with no enabled control of its own to take the focus. 2h.10's 198a:
+  // the field has no default box either, so the bar's alert says where it is.
   const second = await refused({
     key: 'not-one-of',
     args: ['kv-unified', 'ultra', 'auto, on, off'],
@@ -509,15 +552,21 @@ test('2h.144 (2h.6 170): not-one-of on Reasoning effort, an editable select, mar
   saveButton(second.main).focus()
   await save(second.main, second.bff)
   const text2 = en('api-not-one-of', 'kv-unified', 'ultra', 'auto, on, off')
-  await within(second.main).findByText(en('save-refused', text2))
+  const at2 = en(
+    'save-refused-at',
+    text2,
+    en('preset-unified-kv'),
+    en('preset-resource-context'),
+  )
+  await within(second.main).findByText(at2)
   const unified = selectOf(second.main, en('preset-unified-kv'))
   expect(unified.disabled, 'the Unified KV select is disabled').toBe(true)
   expectError(unified, text2, 'Unified KV (disabled)')
-  expectAlert(
-    second.main,
-    en('save-refused', text2),
-    'the disabled Unified KV field',
-  )
+  expectAlert(second.main, at2, 'the disabled Unified KV field (198a)')
+  expect(
+    within(second.main).queryByText(en('save-refused', text2)),
+    '198a: not the alert that names no place',
+  ).toBeNull()
   // No enabled control of that field (it has no default box), so 144 leaves
   // the focus where it was.
   expect(document.activeElement, 'focus stays on Save changes').toBe(

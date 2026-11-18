@@ -54,6 +54,7 @@ import {
   fitCheckedAtLoad,
   fitToggleKey,
   fitToggleText,
+  pageStartTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
 
@@ -1321,11 +1322,11 @@ test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the
   ).toBe(0)
 })
 
-test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
+test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
   const doc = docOf(SET)
   const { main } = await loaded({ preset: () => reply(200, doc) })
   expect(mainTabbable(main)).toEqual([
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...fieldTabStops(doc.values),

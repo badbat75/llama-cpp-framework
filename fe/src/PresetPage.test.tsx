@@ -34,7 +34,7 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import { fieldLabels } from './test/presetCards.ts'
+import { cardHeadings, fieldLabels } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -902,17 +902,19 @@ test('2d.67: the preset is read once on open and once on each route change to it
   const { bff, main } = open()
   await flush()
   expect(presetReads(bff)).toBe(1)
-  // Criterion 67: no refresh button. Criterion 70 and 88: the loaded page's
-  // buttons are exactly the Engine About toggle and one About toggle per 2e
-  // field, in DOM order (the list of test/presetCards.ts), and 2h.1's 135
-  // adds the save bar's two buttons at the end of the settings section: so no
-  // other button (a refresh) is in main.
+  // Criterion 67: no refresh button. 2h.10's 196: the page's buttons start
+  // with the ten section jump buttons, named by the card titles; criterion 70
+  // and 88: then the Engine About toggle and one About toggle per 2e field, in
+  // DOM order (the list of test/presetCards.ts), and 2h.1's 135 adds the save
+  // bar's two buttons at the end of the settings section: so no other button
+  // (a refresh) is in main.
   expect(
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the Engine About toggle, one About toggle per field, then the bar',
+    'main holds the ten jump buttons, the Engine About toggle, one About toggle per field, then the bar',
   ).toEqual([
+    ...cardHeadings(),
     ...[en('preset-engine'), ...fieldLabels()].map(
       (label) => `${en('field-about')} ${label}`,
     ),

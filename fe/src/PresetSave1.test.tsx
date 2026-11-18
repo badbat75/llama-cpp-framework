@@ -383,34 +383,29 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
   }
 })
 
-// The English of the Notice 2h.1's 130 removed: its key is out of the strings
-// file (pinned by App.test.tsx's 1a), so the test names the text itself.
+// The English of the two read-only sentences the page no longer shows: 2h.1's
+// 130 removed `preset-read-only` and 2h.10's 194 removed
+// `preset-partly-editable`. Both keys are out of the strings file (pinned by
+// App.test.tsx's 1a), so the test names the text itself.
 const READ_ONLY_ENGLISH =
   "Read-only for now: this page cannot change a preset's settings yet. Change them in pai-config on the server machine."
+const PARTLY_EDITABLE_ENGLISH =
+  'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.'
 
-test('2h.130: the Notice preset-partly-editable stands where preset-read-only was, and preset-read-only is gone', async () => {
+test('2h.130 (2h.10 194): no read-only Notice on the page: preset-read-only went in 2h.1 and preset-partly-editable follows it in 2h.10, so a page with an available engine shows no bordered Notice at all', async () => {
   const { main } = await page({})
-  const notices = [...main.querySelectorAll('.notice')]
-  expect(notices.length, 'one Notice: the engine is available').toBe(1)
-  const n = notices[0]!
-  expect(n.tagName, 'a paragraph, as 84 left it').toBe('P')
-  expect(n.getAttribute('role'), 'not a status, not an alert').toBeNull()
-  expect(text(n), 'the text of 130, not the read-only one').toBe(
-    en('preset-partly-editable'),
-  )
-  // The same place (84): right after the h2, before the Engine field.
-  const h2 = within(main).getByRole('heading', {
-    level: 2,
-    name: en('preset-settings-title'),
-  })
-  expect(before(h2, n), 'after the h2').toBe(true)
-  expect(before(n, selectOf(main, en('preset-engine'))), 'before Engine').toBe(
-    true,
-  )
+  expect(
+    main.querySelectorAll('.notice').length,
+    '194: no Notice, the engine is available',
+  ).toBe(0)
   expect(
     main.textContent,
-    'the read-only string is gone from the page',
+    '2h.1: the read-only string is gone from the page',
   ).not.toContain(READ_ONLY_ENGLISH)
+  expect(
+    main.textContent,
+    '194: the partly-editable string is gone from the page',
+  ).not.toContain(PARTLY_EDITABLE_ENGLISH)
 })
 
 // ── 131: the revision ───────────────────────────────────────────────────

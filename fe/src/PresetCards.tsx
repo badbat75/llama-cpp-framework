@@ -214,6 +214,10 @@ export type FieldRow = Exclude<Row, GroupRow>
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
 type CardFields = {
+  /** 2h.10's 196: the card's place in the page's jump list, as a slug. The
+   * heading's id (`cardHeadingId`) is what the jump button reaches the card by,
+   * so the jump list does not count the headings of the page. */
+  id: string
   title: string
   /** 2h.7's 176: the rule of the whole card, the same `file` rule of 176 one
    * level up: every control of the card is enabled only while the key is
@@ -310,6 +314,7 @@ const LOAD_MODES: Option[] = [
  * decoding, 112, after Vision, in the five groups of 90). */
 const CARDS: CardFields[] = [
   {
+    id: 'hardware',
     title: t('preset-hardware-config'),
     // 2h.7's 175: the seven rows the table enables always, and the draft pair
     // behind `model-draft` (177), all editable. The MoE pair stays disabled
@@ -468,6 +473,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'resource-context',
     title: t('preset-resource-context'),
     rows: [
       {
@@ -524,6 +530,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'embeddings',
     title: t('preset-embeddings'),
     rows: [
       {
@@ -557,6 +564,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'kv-cache',
     title: t('preset-kv-cache'),
     rows: [
       {
@@ -623,6 +631,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'chat-reasoning',
     title: t('preset-chat-reasoning'),
     rows: [
       {
@@ -720,6 +729,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'sampling-overrides',
     title: t('preset-sampling-overrides'),
     rows: [
       {
@@ -785,6 +795,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'advanced',
     title: t('preset-advanced'),
     rows: [
       {
@@ -807,6 +818,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'vision',
     title: t('preset-vision'),
     // 176: the card works only with an MMProj (the read's value: this page
     // does not edit `mmproj`). Every row carries the same rule; the card
@@ -867,6 +879,7 @@ const CARDS: CardFields[] = [
     ],
   },
   {
+    id: 'speculative-decoding',
     title: t('preset-speculative-decoding'),
     rows: [
       {
@@ -2098,6 +2111,49 @@ function PresetRow({
   )
 }
 
+/** 2h.10's 196: the id of a card's heading, the jump list's target for that
+ * card. The page's Assets card and the cards of this file share the shape. */
+export function cardHeadingId(id: string): string {
+  return `preset-card-${id}`
+}
+
+/** The jump list of 196, in card order: each card's heading id and the title
+ * its jump button is named by. */
+export function cardJumps(): { id: string; title: string }[] {
+  return CARDS.map((card) => ({
+    id: cardHeadingId(card.id),
+    title: card.title,
+  }))
+}
+
+/** Where a field of a card lives: the card's title, and the label of its row.
+ *  A note and a group carry no field, and a key the cards do not have (an
+ *  Assets key, or one the table does not know) is on no card: null. */
+export function fieldPlace(
+  key: string,
+): { card: string; label: string } | null {
+  for (const card of CARDS) {
+    for (const row of card.rows) {
+      if (row.key === key) {
+        // A note and a group carry no field: neither has a label to name.
+        return row.kind === 'note' || row.kind === 'group'
+          ? null
+          : { card: card.title, label: row.label }
+      }
+      if (row.kind === 'group') {
+        for (const inner of row.rows) {
+          if (inner.key === key) {
+            return inner.kind === 'note'
+              ? null
+              : { card: card.title, label: inner.label }
+          }
+        }
+      }
+    }
+  }
+  return null
+}
+
 /** The cards, in the order of the table, each with the fields of its rows. The
  * page's form (`values`, the draft it edits, and `loaded`, the read's values)
  * writes a change of an editable row into `onEdit`, and the box state of its
@@ -2127,6 +2183,9 @@ export default function PresetCards({
         <Card
           key={card.title}
           title={card.title}
+          // 196: the heading is this card's jump target, so it carries the id
+          // and the tabindex -1 of the rule.
+          headingId={cardHeadingId(card.id)}
           // 176, 181: while the card's file rule is not met, its note sits
           // right after the h3, before the first field: a plain paragraph in
           // reading order, not a live region, no control's description.

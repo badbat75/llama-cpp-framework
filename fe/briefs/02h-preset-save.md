@@ -658,47 +658,80 @@ sizes the layers. So the three cases differ.
      disabled with lines; `spec-draft-p-min` uses 165's decimal check; `spec-ngram-mod-n-min` `2000`
      blocks with `field-error-number` 0, 1024. **Strings (2 new)**: `preset-draft-group-off` | Used
      only with a draft: a Draft model file or a Drafter, and this preset has neither (Assets).
-     `preset-ngram-off` | Used only when N-gram drafters (Assets) includes {0}.
+     `preset-ngram-off` | Used only when N-gram drafters (Assets) includes {0}. (2h.10's 198
+     changes `preset-draft-group-off` to "a Draft model" to match the Assets row's label.)
 
 ## 2h.10. Finishing: the Notice, Assets, the jump list
 
-194. **The Notice goes**: `preset-partly-editable` is removed from the page and the strings file
-     (and `preset-read-only`, replaced in 2h.1). Every 2e card is now editable under its rules; the
-     only greyed-out controls are those of 176 to 178, 190 to 192 and the dependents, each with a
-     visible reason or an adjacent switch. ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions))
+194. **The Notice goes**: the paragraph `preset-partly-editable` is removed from the page and the
+     strings file (`preset-read-only` already went in 2h.1; the tests still check it is absent).
+     Every 2e card is now editable under its rules. The only greyed-out controls of the settings
+     cards are, each with a visible reason or the switch that unlocks it just above: Unified KV
+     (155, its hint, under Parallel slots' box); the four Vision controls while `mmproj` is absent
+     (176, `preset-vision-off`) and Vision GPU while Vision on GPU is unchecked (176, the switch);
+     Draft device and Draft GPU layers (177, `preset-draft-file-off`); MoE CPU layers and MoE cache
+     (178, `preset-moe-later`); Fit min context and Fit free VRAM while Fit to VRAM is unchecked
+     (186, the switch); the draft group and each n-gram group off by its rule (190, 191, their
+     lines); and a field's own input while its default box is ticked (the box). The Engine select
+     stays enabled with its one option, as built in 2e. Nothing in this sub-slice changes which
+     controls are enabled. ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions))
 195. **The Assets card says why it is text**: an intro paragraph `preset-assets-read-only` right
-     after its `h3` (D5.2 Card intro). Removed by 2i.
-196. **The section jump list.** The page is about 5000 px tall at 1280 px with about 180 tab stops,
-     so between the `h2` `preset-settings-title` and the engine Notice (or the Engine field), a
-     `<nav>` named `preset-jump-label` holds a list (`<ul>`) of buttons, one per card in page order
-     (Assets, Hardware, Resource / context, Embeddings, KV cache, Chat / reasoning, Sampling
-     overrides, Advanced, Vision, Speculative decoding), each named by its card's title (the same
-     string). Activating one moves focus to that card's `h3` (`tabindex="-1"`) and scrolls it into
-     view; the hash does not change. Buttons, not links: an in-page `#fragment` would be read by the
-     hash router as a route and, while dirty, ask the discard dialog. Laid out as a wrapping row of
-     secondary text buttons, 24 px targets at least (D5.1). **(preference: a list rather than
-     nothing; headings alone serve screen-reader users, not sighted keyboard users)**
+     after its `h3`, before the list (D5.2 Card intro). It covers every row of the card: the files,
+     the Project URL and the drafters (Drafter and N-gram drafters are not files), which the other
+     cards' reason lines point to with "(Assets)". Removed by 2i.
+196. **The section jump list.** The page is long (ten cards, every field a tab stop), so between
+     the `h2` `preset-settings-title` and the engine Notice (or the Engine field when there is no
+     Notice), a `<nav>` named `preset-jump-label` holds a list (`<ul>`) of buttons, one per card in
+     page order: Assets, Hardware config, Resource / context, Embeddings, KV cache, Chat /
+     reasoning, Sampling overrides, Advanced, Vision, Speculative decoding. Each button's text and
+     accessible name is its card's title string (`preset-assets`, `preset-hardware-config`,
+     `preset-resource-context`, `preset-embeddings`, `preset-kv-cache`, `preset-chat-reasoning`,
+     `preset-sampling-overrides`, `preset-advanced`, `preset-vision`,
+     `preset-speculative-decoding`), not a copy. Activating one (click, Enter or Space) moves focus
+     to that card's `h3` (`tabindex="-1"`) and scrolls it into view, with room above it for the
+     whole focus ring (2026-11-18 review: at the viewport's top edge the ring's top line, 4 px
+     with its offset, was cut off; a `scroll-margin-top` of `--space-3` on `.card h3`
+     restores it; [2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible)); `location.hash` does not
+     change and no dialog opens, dirty or not. Buttons, not links: an in-page `#fragment` would be
+     read by the hash router as a route and, while dirty, ask the discard dialog. Laid out as a
+     wrapping row of secondary text buttons, 24 px targets at least (D5.1). **(preference: a list
+     rather than nothing; headings alone serve screen-reader users, not sighted keyboard users)**
      ([2.4.1](https://www.w3.org/TR/WCAG22/#bypass-blocks), [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
      [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum))
-197. **Tab order**, final: skip link, banner, nav, `preset-back`, the jump buttons, the Engine
-     field, then every card's About toggles and enabled controls in DOM order, then Discard and
-     Save changes. Known limit: from a field of the first cards, Save is many stops away; the jump
-     list's last entries shorten it **(accepted)**.
-198. **Tests and strings.** No `preset-read-only` or `preset-partly-editable` on the page; the jump
-     nav has ten buttons in card order; a click on "KV cache" focuses its `h3` and leaves
-     `location.hash` unchanged. **Strings (2 new)**: `preset-jump-label` | Preset sections.
-     `preset-assets-read-only` | The files of a preset cannot be picked here yet. Change them in
-     pai-config on the server machine. Removed: `preset-read-only`, `preset-partly-editable`.
+197. **Tab order**, final: skip link, banner, nav, `preset-back`, the ten jump buttons in card
+     order, the Engine field, then every card's About toggles and enabled controls in DOM order,
+     then Discard and Save changes. The card `h3`s are not tab stops (`tabindex="-1"` takes focus
+     only from a jump button). Known limit: from a field of the first cards, Save is many stops
+     away; the jump list's last entries shorten it **(accepted)**.
+198. **Tests and strings.** No `preset-read-only` or `preset-partly-editable` text on the page; the
+     Assets card's first paragraph after its `h3` is `preset-assets-read-only`; the jump nav (found
+     by its name) has ten buttons named by the ten card titles in the order of 196; a click on
+     "KV cache" focuses the KV cache card's `h3` and leaves `location.hash` unchanged, while the
+     form is dirty too (no dialog). **Strings (2 new)**: `preset-jump-label` | Preset sections.
+     `preset-assets-read-only` | The files, Project URL and drafters of a preset cannot be changed
+     here yet. Change them in pai-config on the server machine. **Changed (1)**:
+     `preset-draft-group-off` (193) | Used only with a draft: a Draft model or a Drafter, and this
+     preset has neither (Assets). (It said "a Draft model file"; the Assets row it points to is
+     labelled `preset-draft-model`, "Draft model".) **Removed**: `preset-partly-editable`.
 198a. **A refusal on a field that cannot take focus says where it is** (from the 2h.2 review,
      2026-11-17). With 144, the alert names the field only by its INI key (`ctx-size = ...`), which
      the page never shows, and the marked field can be thousands of pixels from the bar at 320 px.
-     When the marked field's control and default box are both disabled (focus stays on Save
-     changes), the alert reads `save-refused-at` filled with the check text, the field's label and
-     its card's title; every other refusal keeps `save-refused`. No link and no scroll: the jump
-     list (196) reaches the card. Not a WCAG failure today (the field carries the error in text,
+     Scope: a 422 from the manager (142, 144) whose `field` is a field of a settings card (not 143:
+     an Assets key or a key the page shows nowhere keeps `save-refused` with nothing marked). When
+     that field's control and default box are both disabled, so focus stays on Save changes (144),
+     the alert reads `save-refused-at` filled with the check text, the field's label and its
+     card's title; every other refusal keeps `save-refused`. Focus is unchanged from 144: it does
+     not go to the switch that unlocks the field (that rule of 176 is for the page's own checks
+     at Save, which send nothing). Still reachable after 176's "what the page sends, it checks":
+     the manager checks the section whole, so it can refuse a locked field the page did not send
+     (its loaded value, or a cross-field check). No link and no scroll: the jump list (196)
+     reaches the card. Not a WCAG failure today (the field carries the error in text,
      [3.3.1](https://www.w3.org/TR/WCAG22/#error-identification); the check text says what is
      accepted, [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)); a usability aid **(preference)**.
-     Test: a 422 `moe-cache-with-tensor-split` with field `moe-cache-mib` (disabled by 178) reads
-     the field's label and the Hardware card's title; a 422 `not-one-of` on `pooling` still reads
-     `save-refused`. **String (1 new)**: `save-refused-at` | Not saved: {0}. The field is {1}, on
-     the card {2}.
+     Tests: a preset loaded with `moe-cache-mib` `512` and `split-mode` `tensor` (a file the
+     manager refuses whole, `checks::moe_cache_split`; Split mode is not on the page in 2h), any
+     enabled field changed, answered by a 422 `moe-cache-with-tensor-split` with field
+     `moe-cache-mib` (disabled by 178): the alert reads `save-refused-at` with the check text, the
+     label "MoE cache" and "Hardware config", focus on Save changes; a 422
+     `not-one-of` on `pooling` (enabled) still reads `save-refused`. **String (1 new)**:
+     `save-refused-at` | Not saved: {0}. The field is {1}, on the card {2}.

@@ -1,6 +1,6 @@
 // The shared rules of the preset page's plain cards and the first two cards
 // (fe/briefs/02e-preset-cards.md, criteria 83 to 95): the section that holds
-// the h2, the read-only Notice, every control natively disabled, how a number
+// the h2 and the jump list of 2h.10, every control natively disabled, how a number
 // and a select show the strings of the file, absent keys, empty keys, values a
 // mapping does not list, the hints, and units. The cards are Resource /
 // context (92) and Embeddings (93). The route, the read and its states are
@@ -17,6 +17,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
+import { t } from './strings.ts'
 import {
   before,
   en,
@@ -31,6 +32,7 @@ import {
   cardHeadings,
   cardHeadingKeys,
   fieldTabStops,
+  pageStartTabStops,
   saveBarTabStops,
   isEditableField,
   controlEnabled,
@@ -39,6 +41,10 @@ import {
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
 const STRATA = 'Strata'
+/** 2h.10's 194: the text of the Notice that left the page and the strings
+ * file, kept as a literal so its absence can be pinned. */
+const NOTICE =
+  'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.'
 const MODEL = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
 
 /** The criterion 94 stub: every key of 92 and 93 set. */
@@ -217,11 +223,18 @@ function settingsTitle(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The bordered Notice paragraph (D5.2: `p.notice`). */
-function notice(main: HTMLElement): HTMLElement {
-  const n = main.querySelector('.notice')
-  expect(n, 'the Notice paragraph').toBeTruthy()
-  return n as HTMLElement
+/** The bordered Notice paragraphs of the page (D5.2: `p.notice`), in DOM
+ * order. 2h.10's 194 took the read-only one away, so only the engine Notice
+ * of 72 is left. */
+function notices(main: HTMLElement): Element[] {
+  return [...main.querySelectorAll('.notice')]
+}
+
+/** The section jump list of 2h.10's 196, found by its name. */
+function navOf(main: HTMLElement): HTMLElement {
+  return within(main).getByRole('navigation', {
+    name: en('preset-jump-label'),
+  })
 }
 
 /** The Engine select of 2d, which 2e leaves as it is (criterion 70). */
@@ -353,7 +366,7 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice, the Engine field, then every card of 83 in the page order (the list of test/presetCards.ts), and the off line stays above the h2', async () => {
+test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, the Engine field, then every card of 83 in the page order (the list of test/presetCards.ts), and the off line stays above the h2', async () => {
   for (const [what, extra, off] of [
     ['a switched-on preset', {}, false],
     ['a switched-off preset', { enabled: false }, true],
@@ -374,7 +387,7 @@ test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice
       ).toBeNull()
     nodes.push(
       ['the h2', h2],
-      ['the read-only Notice', notice(main)],
+      ['the jump list', navOf(main)],
       ['the Engine field', await engineSelect(main)],
     )
     for (const title of cardHeadingKeys()) {
@@ -390,50 +403,54 @@ test('2e.83: the section of the h2 holds, in order, the h2, the read-only Notice
         before(nodes[i]![1], nodes[i + 1]![1]),
         `${what}: ${nodes[i]![0]} before ${nodes[i + 1]![0]}`,
       ).toBe(true)
+    expect(
+      notices(main).length,
+      `${what}: 2h.10's 194 took the read-only Notice away`,
+    ).toBe(0)
     cleanup()
     vi.unstubAllGlobals()
   }
-  // The engine Notice of 72 keeps its place between the h2's Notice and the
-  // Engine field (criterion 83).
+  // The engine Notice of 72 keeps its place: 2h.10's 196 puts the jump list
+  // between the h2 and the engine Notice, and the Notice stays before the
+  // Engine field.
   const { main } = await loaded({
     preset: () =>
       reply(200, docOf(SET, { engine: STRATA, engineAvailable: false })),
   })
-  const notices = main.querySelectorAll('.notice')
-  expect(notices.length, 'the read-only Notice and the engine Notice').toBe(2)
-  expect(text(notices[0]!), 'the read-only Notice comes first').toBe(
-    en('preset-partly-editable'),
+  const engine = notices(main)
+  expect(engine.length, '194: the engine Notice is the only Notice').toBe(1)
+  expect(text(engine[0]!), 'the engine Notice of 72').toBe(
+    en('preset-engine-unavailable', STRATA),
   )
-  expect(text(notices[1]!)).toBe(en('preset-engine-unavailable', STRATA))
   expect(
-    before(notices[1]!, await engineSelect(main)),
+    before(engine[0]!, await engineSelect(main)),
     'the engine Notice is before the Engine field',
+  ).toBe(true)
+  expect(
+    before(navOf(main), engine[0]!),
+    '196: the jump list sits between the h2 and the engine Notice',
   ).toBe(true)
 })
 
-test('2e.84: the Notice preset-partly-editable (2h.1 130) is a bordered paragraph right after the h2 and not a live region, and it shows for every loaded preset', async () => {
+test('2e.84 (2h.10 194, 198): the Notice preset-partly-editable is gone: no bordered paragraph and no word of its text on any loaded preset, and the key is out of the strings file', async () => {
   for (const [what, doc] of [
     ['the all-set stub', docOf(SET)],
     ['a values of {}', exactOf({})],
     ['a switched-off preset', docOf(SET, { enabled: false })],
   ] as [string, unknown][]) {
     const { main } = await loaded({ preset: () => reply(200, doc) })
-    const h2 = settingsTitle(main)
-    const n = notice(main)
-    expect(n.tagName, `${what}: a paragraph`).toBe('P')
-    expect(text(n), `${what}: the text of criterion 95`).toBe(
-      en('preset-partly-editable'),
-    )
     expect(
-      n.getAttribute('role'),
-      `${what}: not a status, not an alert`,
+      notices(main).length,
+      `${what}: 194, no bordered Notice paragraph`,
+    ).toBe(0)
+    expect(
+      within(main).queryByText(NOTICE),
+      `${what}: 198, no word of the removed string`,
     ).toBeNull()
-    expect(n.getAttribute('aria-live'), `${what}: no live region`).toBeNull()
-    expect(before(h2, n), `${what}: the Notice follows the h2`).toBe(true)
     expect(
-      before(n, await engineSelect(main)),
-      `${what}: the Notice is before the Engine field`,
-    ).toBe(true)
+      t('preset-partly-editable'),
+      `${what}: 198, the key shows as itself`,
+    ).toBe('preset-partly-editable')
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -740,10 +757,10 @@ test.each(FIELDS)(
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle in card and field order, and no control of a 2e card', async () => {
+test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle in card and field order, and no control of a 2e card', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...fieldTabStops(docOf(SET).values),
@@ -753,7 +770,7 @@ test('2e.91: Tab in main reaches the back link, the Engine About toggle and sele
 
 // ── The strings (95) ────────────────────────────────────────────────────
 
-test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts), the Notice, every label and every option show the English of the 22 new strings of 95', async () => {
+test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts), the Assets intro of 2h.10, every label and every option show the English of the 22 new strings of 95', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(
     within(main)
@@ -761,7 +778,19 @@ test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts
       .map((h) => text(h)),
     'the cards, in the order of 83',
   ).toEqual(cardHeadings())
-  expect(text(notice(main))).toBe(en('preset-partly-editable'))
+  // 2h.10's 194: the read-only Notice is off the page; its place among the
+  // strings of 95 is taken by the Assets intro of 195.
+  expect(notices(main).length, '194: no Notice on the page').toBe(0)
+  expect(
+    within(main).queryByText(NOTICE),
+    '198: no word of the removed string',
+  ).toBeNull()
+  expect(
+    within(cardOf(main, 'preset-assets')).getByText(
+      en('preset-assets-read-only'),
+    ),
+    '195: the Assets intro shows',
+  ).toBeTruthy()
   // Every label is the strings text of 95, and names its control.
   for (const f of FIELDS) {
     const label = en(f.label)

@@ -29,6 +29,7 @@ import {
 import {
   PRESET_CARDS,
   fieldTabStops,
+  pageStartTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
 
@@ -136,15 +137,15 @@ function settingsTitle(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The bordered Notice paragraph (D5.2: `p.notice`). */
-function notice(main: HTMLElement): HTMLElement {
-  const n = main.querySelector('.notice')
-  expect(n, 'the Notice paragraph').toBeTruthy()
-  return n as HTMLElement
+/** The section jump list of 2h.10's 196, found by its name. */
+function navOf(main: HTMLElement): HTMLElement {
+  return within(main).getByRole('navigation', {
+    name: en('preset-jump-label'),
+  })
 }
 
-/** The engine Notice of 72, found by its text: 2e.1 put the read-only Notice
- * of 84 first, so the first `.notice` is no longer it. */
+/** The engine Notice of 72, found by its text: 2h.10's 194 took the read-only
+ * Notice away, so it is the page's only one. */
 function engineNotice(main: HTMLElement): HTMLElement {
   const want = en('preset-engine-unavailable', STRATA)
   const found = [...main.querySelectorAll('.notice')].filter(
@@ -276,14 +277,14 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
   expect(within(main).queryByRole('heading', { level: 3 })).toBeNull()
 })
 
-test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the Engine About toggle and select, then each 2e field About toggle, the editable controls and the bar', async () => {
+test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the ten jump buttons of 2h.10, the Engine About toggle and select, then each 2e field About toggle, the editable controls and the bar', async () => {
   const { main } = await loaded({ preset: () => reply(200, fullDoc()) })
   await engineSelect(main)
   for (const name of [en('save-button'), en('save-discard')])
     expect(within(main).queryByRole('button', { name }), name).toBeTruthy()
   expect(main.querySelector('.save-bar'), 'the save bar').toBeTruthy()
   expect(mainTabbable(main)).toEqual([
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...CARD_TAB_STOPS,
@@ -292,7 +293,7 @@ test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes an
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
 
-test("2d.68: below the h1, in order: the off line (a switched-off preset), the h2 Preset settings, the read-only Notice, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
+test("2d.68: below the h1, in order: the off line (a switched-off preset), the h2 Preset settings, the jump list of 2h.10, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
   for (const [what, extra, off, unavailable] of [
     ['a switched-on preset', {}, false, false],
     ['a switched-off preset', { enabled: false }, true, false],
@@ -319,15 +320,8 @@ test("2d.68: below the h1, in order: the off line (a switched-off preset), the h
         within(main).queryByText(en('preset-off')),
         `${what}: no off line`,
       ).toBeNull()
-    nodes.push(
-      ['the h2', settingsTitle(main)],
-      ['the read-only Notice', notice(main)],
-    )
+    nodes.push(['the h2', settingsTitle(main)], ['the jump list', navOf(main)])
     if (unavailable) nodes.push(['the engine Notice', engineNotice(main)])
-    else
-      expect(noticeTexts(main), `${what}: no engine Notice`).not.toContain(
-        en('preset-engine-unavailable', STRATA),
-      )
     nodes.push(['the Engine field', await engineSelect(main)])
     nodes.push(['the Assets card', h3])
     for (let i = 0; i + 1 < nodes.length; i++)
@@ -335,6 +329,11 @@ test("2d.68: below the h1, in order: the off line (a switched-off preset), the h
         before(nodes[i]![1], nodes[i + 1]![1]),
         `${what}: ${nodes[i]![0]} before ${nodes[i + 1]![0]}`,
       ).toBe(true)
+    // 2h.10's 194: the read-only Notice is gone, so the engine Notice of 72 is
+    // the only Notice the page has.
+    expect(noticeTexts(main), `${what}: the Notices of the page`).toEqual(
+      unavailable ? [en('preset-engine-unavailable', STRATA)] : [],
+    )
     expect(
       within(main)
         .getAllByRole('heading')
@@ -589,7 +588,7 @@ test('2d.76: a key absent from values, an empty string, an empty projectUrl and 
 
 // ── Keyboard and screen reader (78, 79) ─────────────────────────────────
 
-test('2d.78: Tab on the preset page goes skip link, banner, nav, the back link, the Engine About toggle, the Engine select, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
+test('2d.78: Tab on the preset page goes skip link, banner, nav, the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle, the Engine select, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
   const { main } = await loaded({ preset: () => reply(200, fullDoc()) })
   await engineSelect(main)
   expect(tabbable().map(nameOf)).toEqual([
@@ -601,7 +600,7 @@ test('2d.78: Tab on the preset page goes skip link, banner, nav, the back link, 
     'default',
     'coder',
     en('nav-models'),
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...CARD_TAB_STOPS,

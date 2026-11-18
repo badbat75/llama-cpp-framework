@@ -11,7 +11,10 @@
 // (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5, 2h.7 and 2h.8,
 // criteria 130 to 149, 155 to 157, 164, 175 to 182 and 183 to 188, read by key in
 // save.ts as the Server page reads its own); every other control stays
-// disabled, and its settings are changed in pai-config.
+// disabled, and its settings are changed in pai-config. The jump list under the
+// h2 names the cards and moves the focus to one of them, and a save refusal
+// naming a field that takes no focus says what it is and which card it sits on
+// (fe/briefs/02h-preset-save.md, sub-slice 2h.10, criteria 194 to 198a).
 import {
   Fragment,
   useCallback,
@@ -28,6 +31,8 @@ import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
 import PresetCards, {
+  cardHeadingId,
+  cardJumps,
   checkRows,
   checkboxDirty,
   checkboxError,
@@ -39,6 +44,7 @@ import PresetCards, {
   deviceState,
   editableRows,
   fieldId,
+  fieldPlace,
   numberError,
   numberRows,
   numberSend,
@@ -482,6 +488,16 @@ function focusField(key: string) {
   }
 }
 
+/** Whether the field of a key can be worked on: its control is enabled, or the
+ *  box that ticks it on is. A field the page cannot edit has no control and no
+ *  box at all, so nothing to mark and nowhere to go. */
+function fieldTakesFocus(key: string): boolean {
+  const id = fieldId(key)
+  return [controlWithId(`${id}-control`), controlWithId(`${id}-box`)].some(
+    (control) => control !== null && !control.disabled,
+  )
+}
+
 /** The rows the save of its own check reads: the kind `checkRows` answers. */
 type CheckedRow = ReturnType<typeof checkRows>[number]
 
@@ -567,6 +583,16 @@ function Content({
   )
 
   const status = phase === 'saving' ? 'saving' : dirty ? 'unsaved' : phase
+
+  /** 196: a jump button goes to the card whose title it carries: the card's
+   * heading is the target, named by its id, so the page never moves the focus
+   * into a field the user has not asked for, and no hash is written. */
+  function jump(id: string) {
+    const h3 = document.getElementById(id)
+    if (h3 === null) return
+    h3.focus()
+    h3.scrollIntoView()
+  }
 
   /** One control picked: the value it now holds, in the draft. The pick ends
    * the message the last save left in the bar: what is on screen is what the
@@ -743,9 +769,17 @@ function Content({
           answer.field !== undefined && fieldControl(answer.field) !== null
             ? answer.field
             : undefined
+        // 198a: a field whose control and box are both disabled keeps
+        // the focus on Save changes (144) and its mark on the field: the alert
+        // names the field and the card it sits on, so the user knows where.
+        const place = field === undefined ? null : fieldPlace(field)
+        const at =
+          place === null || field === undefined || fieldTakesFocus(field)
+            ? null
+            : t('save-refused-at', answer.text, place.label, place.card)
         // Rendered first, so the focused control is announced with its error.
         flushSync(() => {
-          alerts.setAlert({ text: t('save-refused', answer.text) })
+          alerts.setAlert({ text: at ?? t('save-refused', answer.text) })
           if (field !== undefined) fields.set({ [field]: answer.text })
         })
         if (field !== undefined) focusField(field)
@@ -786,7 +820,29 @@ function Content({
             {t('server-edits-dropped')}
           </p>
         )}
-        <p className="notice">{t('preset-partly-editable')}</p>
+        {/* 196: the jump list is the page's TOC, between the heading and the
+            engine Notice (or the Engine field when there is none), a list of
+            buttons that move the focus. */}
+        <nav className="jump" aria-label={t('preset-jump-label')}>
+          <ul>
+            {[
+              { id: cardHeadingId('assets'), title: t('preset-assets') },
+              ...cardJumps(),
+            ].map(({ id, title }) => (
+              <li key={title}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => jump(id)}
+                >
+                  {title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        {/* 194: the Notice of 2h.1 is gone: the read-only fields say so where
+            they sit; only the engine Notice of 72 stays. */}
         {!doc.engineAvailable && (
           <p className="notice">{t('preset-engine-unavailable', doc.engine)}</p>
         )}
@@ -798,7 +854,11 @@ function Content({
           value={doc.engine}
           onChange={() => undefined}
         />
-        <Card title={t('preset-assets')}>
+        <Card
+          title={t('preset-assets')}
+          headingId={cardHeadingId('assets')}
+          intro={t('preset-assets-read-only')}
+        >
           <dl className="assets">
             {assetRows(doc).map((row) => (
               <Fragment key={row.label}>
@@ -810,6 +870,9 @@ function Content({
             ))}
           </dl>
         </Card>
+        {/* 196: the jump targets are the card headings: every card of the page
+            gives its heading the id a jump button reaches it by, and the
+            tabindex -1 that keeps it out of the Tab path. */}
         <PresetCards
           values={draft}
           loaded={loaded.values}

@@ -348,3 +348,19 @@ test('DESIGN.md 5.2: the save-bar scroll padding has a 7rem floor inside max(), 
     'the media rule comes after the top-level one, so it wins there',
   ).toBe(true)
 })
+
+// The jump list's landing (fe/briefs/02h-preset-save.md, 2h.196): a jump button moves
+// focus to the card's h3 and scrolls it into view. The heading lands at the viewport's
+// top edge, where the ring's top line, with its offset, was cut off (2026-11-18 review),
+// so the rule keeps room above it. jsdom does no layout, so as 2h.135, 2e.118 and the
+// scroll-padding test above do, this pins the CSS text.
+test('2h.196: .card h3 declares scroll-margin-top of var(--space-3), so a jump leaves room above the focus ring', () => {
+  const heading = one(
+    TOP.filter((r) => r.compact === '.cardh3'),
+    'the top-level .card h3 rule, the selector of the jump landing (not .card h3:focus-visible)',
+  )
+  expect(
+    prop(heading.body, 'scroll-margin-top'),
+    'room above the heading so the whole focus ring is visible',
+  ).toBe('var(--space-3)')
+})

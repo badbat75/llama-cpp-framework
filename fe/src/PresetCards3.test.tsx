@@ -34,6 +34,7 @@ import {
   cardHeadingKeys,
   expectedInputMode,
   fieldTabStops,
+  pageStartTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
 
@@ -766,68 +767,81 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
 
 // ── The checkbox field, the kind 2e.3 brings (87, 101, 102, 104) ───────
 
-test('2e.87, 2e.101, 2e.102, 2e.122, 2h.170: a checkbox field is a group named by its label holding one checkbox whose text is the table toggle, and it is checked per the table: absent checked, the falsey words unchecked, any other value checked (case-sensitive, 2e.3b), true and false read trimmed as ini.rs trims; its control is enabled on the editable card and disabled on the read-only one', async () => {
-  const boxes = FIELDS.filter((f) => f.kind === 'checkbox')
+/** The checkbox rows of the 101 and 102 tables: the three flags of 2e.3. */
+const CHECKBOXES = FIELDS.filter((f) => f.kind === 'checkbox')
+
+/** 2e.3b (criterion 122): a flag is off for exactly the falsey words, and on
+ * for every other value, "" included. The GUI's reading (form.rs 258, 296,
+ * 160: unwrap_or(true)) holds for a value that is not falsey. */
+const FLAG_READS = [
+  [undefined, true],
+  ['false', false],
+  [' true ', true],
+  [' false ', false],
+  ['true', true],
+  ['yes', true],
+  ['True', true],
+  ['False', true],
+  ['0', false],
+  [' ', true],
+] as [string | undefined, boolean][]
+
+/** One case per checkbox field and value to read: 2h.170 makes the Chat /
+ * reasoning boxes enabled and leaves the Vision one natively disabled (2e.85),
+ * so each case carries its own `editable`. One mount per case: the whole page
+ * is heavy, and a test that mounts it scores of times overruns the default
+ * timeout when the suite runs the files in parallel. */
+const CHECKBOX_CASES = CHECKBOXES.flatMap((f) =>
+  FLAG_READS.map(([value, checked]) => ({
+    key: f.key,
+    row: f,
+    value,
+    checked,
+    editable: EDITABLE_CARDS.includes(f.card),
+  })),
+)
+
+test('2e.87, 2e.101, 2e.102: the checkbox fields of the 101 and 102 tables are exactly these three', () => {
   expect(
-    boxes.map((f) => f.key),
+    CHECKBOXES.map((f) => f.key),
     'the checkbox fields of 101 and 102',
   ).toEqual(['jinja', 'prefill-assistant', 'mmproj-offload'])
-  for (const f of boxes) {
-    // 2h.170: the two boxes of the Chat / reasoning card are enabled, the
-    // Vision card's stays natively disabled (2e.85).
-    const editable = EDITABLE_CARDS.includes(f.card)
-    // 2e.3b (criterion 122): a flag is off for exactly the falsey words, and on
-    // for every other value, "" included. The GUI's reading (form.rs 258, 296,
-    // 160: unwrap_or(true)) holds for a value that is not falsey.
-    for (const [value, checked] of [
-      [undefined, true],
-      ['false', false],
-      [' true ', true],
-      [' false ', false],
-      ['true', true],
-      ['yes', true],
-      ['True', true],
-      ['False', true],
-      ['0', false],
-      [' ', true],
-    ] as [string | undefined, boolean][]) {
-      const { main } = await loaded({
-        preset: () =>
-          reply(200, exactOf(value === undefined ? {} : { [f.key]: value })),
-      })
-      const group = groupBox(main, f.label)
-      expect(
-        group.classList.contains('field'),
-        `${f.key}: the group is the Field`,
-      ).toBe(true)
-      expect(
-        group.querySelectorAll('input').length,
-        `${f.key}: one control in the group`,
-      ).toBe(1)
-      const box = checkBoxOf(main, f)
-      expect(text(box.closest('label')!), `${f.key}: the toggle text`).toBe(
-        en(f.toggle ?? ''),
-      )
-      expect(box.checked, `${f.key} ${JSON.stringify(value)}: checked`).toBe(
-        checked,
-      )
-      expect(
-        box.disabled,
-        `${f.key}: the checkbox ${editable ? 'enabled' : 'disabled'}`,
-      ).toBe(!editable)
-      expect(
-        box.getAttribute('aria-disabled'),
-        `${f.key}: never aria-disabled`,
-      ).toBeNull()
-      expect(
-        box.getAttribute('readonly'),
-        `${f.key}: never readonly`,
-      ).toBeNull()
-      cleanup()
-      vi.unstubAllGlobals()
-    }
-  }
 })
+
+test.each(CHECKBOX_CASES)(
+  '2e.87, 2e.101, 2e.102, 2e.122, 2h.170: $key is a group named by its label holding one checkbox whose text is the table toggle, $value is checked $checked, and its control is enabled on the editable card and natively disabled on the read-only one',
+  async ({ row: f, value, checked, editable }) => {
+    const { main } = await loaded({
+      preset: () =>
+        reply(200, exactOf(value === undefined ? {} : { [f.key]: value })),
+    })
+    const group = groupBox(main, f.label)
+    expect(
+      group.classList.contains('field'),
+      `${f.key}: the group is the Field`,
+    ).toBe(true)
+    expect(
+      group.querySelectorAll('input').length,
+      `${f.key}: one control in the group`,
+    ).toBe(1)
+    const box = checkBoxOf(main, f)
+    expect(text(box.closest('label')!), `${f.key}: the toggle text`).toBe(
+      en(f.toggle ?? ''),
+    )
+    expect(box.checked, `${f.key} ${JSON.stringify(value)}: checked`).toBe(
+      checked,
+    )
+    expect(
+      box.disabled,
+      `${f.key}: the checkbox ${editable ? 'enabled' : 'disabled'}`,
+    ).toBe(!editable)
+    expect(
+      box.getAttribute('aria-disabled'),
+      `${f.key}: never aria-disabled`,
+    ).toBeNull()
+    expect(box.getAttribute('readonly'), `${f.key}: never readonly`).toBeNull()
+  },
+)
 
 test('2e.104: the stub of 104 shows as the tables say: every key set, values {} with the checkboxes checked, jinja yes checked as the GUI reads it, reasoning maybe as one extra option', async () => {
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
@@ -1342,10 +1356,10 @@ test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, 
   ).toEqual(cardHeadings())
 })
 
-test("2e.91, 2h.170: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
+test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...fieldTabStops(docOf(SET).values),

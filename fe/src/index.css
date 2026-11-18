@@ -487,6 +487,32 @@ td {
   transform: rotate(-45deg);
 }
 
+/* The preset page's jump list (196, DESIGN.md D5.1): the page's TOC as buttons,
+ * in reading order. A row of small buttons, not a row of links. */
+.jump ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Room above the heading a jump lands on: the ring is drawn outside the box,
+ * so the scroll stops short of the top edge and leaves the whole ring in view
+ * (196). */
+.card h3 {
+  scroll-margin-top: var(--space-3);
+}
+
+/* The heading a jump lands on: the global rule of 130 keeps the focus ring off
+ * the elements the page moves the focus to, so this one gives the ring back
+ * here, where the user needs to see where the jump went. */
+.card h3:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ── Forms ────────────────────────────────────────────────────────────── */
 
 .card {

@@ -49,9 +49,11 @@ const MAP_K4V = 'ngram-map-k4v'
 const DRAFT_K = en('preset-draft-k-cache-type')
 const DRAFT_V = en('preset-draft-v-cache-type')
 const DEFAULT = en('field-default')
-/** 193: the two new strings, the brief's exact English as a literal. */
+/** 193: the two new strings, the brief's exact English as a literal. 198
+ * changed the draft one: the Assets row it names is `preset-draft-model`,
+ * "Draft model", not a file. */
 const OFF_DRAFT =
-  'Used only with a draft: a Draft model file or a Drafter, and this preset has neither (Assets).'
+  'Used only with a draft: a Draft model or a Drafter, and this preset has neither (Assets).'
 const offNgram = (group: string) =>
   `Used only when N-gram drafters (Assets) includes ${group}.`
 /** 157's rows the card's number fields sit in, and 165's decimal text. */

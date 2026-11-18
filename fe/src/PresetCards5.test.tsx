@@ -33,6 +33,7 @@ import {
   cardHeadingKeys,
   controlEnabled,
   fieldTabStops,
+  pageStartTabStops,
   saveBarTabStops,
   specGroupEnabled,
   type Field,
@@ -1513,18 +1514,20 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
       toggles.filter((n) => n.endsWith(en(key))).length,
       `About ${en(key)}: thrice`,
     ).toBe(3)
-  // The whole page: the card's toggles are the tail of the tab order of 91.
+  // The whole page: the card's toggles are the tail of the tab order of 91,
+  // which 2h.10's 197 starts with the back link and the ten jump buttons.
   const tabbed = mainTabbable(main)
-  expect(
-    tabbed.slice(0, 3),
-    'the back link, the Engine About toggle and the Engine select come first',
-  ).toEqual([
-    en('preset-back'),
+  const start = [
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
-  ])
+  ]
   expect(
-    tabbed.slice(3),
+    tabbed.slice(0, start.length),
+    'the back link, the ten jump buttons of 197 in card order, the Engine About toggle and the Engine select come first',
+  ).toEqual(start)
+  expect(
+    tabbed.slice(start.length),
     'the page tab order is the list of test/presetCards.ts',
   ).toEqual([...fieldTabStops(docOf(SET).values), ...saveBarTabStops()])
 })

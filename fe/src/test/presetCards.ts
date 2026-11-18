@@ -566,6 +566,14 @@ export function fieldTabStops(values: Record<string, string>): string[] {
   return stops
 }
 
+/** The tab stops at the start of the page's main, in the order of 2h.10's 197:
+ * the back link, then the section jump list's buttons, one per card of 83 in
+ * page order, each named by its card's title (196). The card h3s are not tab
+ * stops: only a jump button gives one the focus. */
+export function pageStartTabStops(): string[] {
+  return [en('preset-back'), ...cardHeadings()]
+}
+
 /** The save bar's two buttons, at the end of the page (2h.1's 141). */
 export function saveBarTabStops(): string[] {
   return [en('save-discard'), en('save-button')]

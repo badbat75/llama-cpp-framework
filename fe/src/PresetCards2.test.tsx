@@ -31,6 +31,7 @@ import {
   cardHeadingKeys,
   expectedInputMode,
   fieldTabStops,
+  pageStartTabStops,
   saveBarTabStops,
 } from './test/presetCards.ts'
 
@@ -978,10 +979,10 @@ test('2e.83, 2e.96, 2e.97, 2e.98: the three cards of 2e.2 are D5.2 Cards inside 
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), and no control of a 2e card', async () => {
+test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), and no control of a 2e card', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    en('preset-back'),
+    ...pageStartTabStops(),
     `${en('field-about')} ${en('preset-engine')}`,
     en('preset-engine'),
     ...fieldTabStops(docOf(SET).values),
