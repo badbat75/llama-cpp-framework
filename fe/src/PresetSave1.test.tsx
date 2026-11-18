@@ -32,7 +32,14 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import { controlEnabled, isEditableField } from './test/presetCards.ts'
+import {
+  PRESET_CARDS,
+  controlEnabled,
+  isEditableField,
+  specGroupEnabled,
+  type Field,
+  type Label,
+} from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -51,11 +58,13 @@ const LONG_TEXT = '{"enable_thinking":false,"keep_past":true}'
 
 /** The values of the read the 130 test uses: both Embeddings keys; the Vision
  * card's file keys (`mmproj` present and `mmproj-offload` checked, 176) and
- * `model-draft` (177), so those cards' rules leave their controls enabled; and
- * `n-gpu-layers`, so its default box is unticked and its input enabled (156).
- * No key of the Resource / context card besides these, so every box of that
- * card starts ticked (2h.156) and Unified KV sits disabled (2h.155: Parallel
- * slots at its default). */
+ * `model-draft` (177, and 2h.9's 190: the same key opens the Speculative
+ * decoding card's draft group), so those cards' rules leave their controls
+ * enabled; and `n-gpu-layers`, so its default box is unticked and its input
+ * enabled (156). No key of the Resource / context card besides these, so every
+ * box of that card starts ticked (2h.156) and Unified KV sits disabled
+ * (2h.155: Parallel slots at its default). No `spec-type`, so 191 leaves the
+ * four n-gram groups of the Speculative decoding card locked. */
 const VALUES = {
   embeddings: 'true',
   pooling: 'mean',
@@ -66,11 +75,55 @@ const VALUES = {
   'n-gpu-layers': '99',
 }
 
-/** The fields 2h.1's 130, 2h.4's 155 and 2h.5's 164 made editable, keyed by
- * the id of their field (`preset-<key>`: the box is `<id>-box`, the input
- * `<id>-control`), so a control's id finds the label key the shared table of
- * test/presetCards.ts gives the enable rules to. */
-const EDITABLE_BY_ID: Record<string, string> = {
+/** 2h.9's 189 to 191: the Speculative decoding card's fields, taken from the
+ * shared card table of test/presetCards.ts with their row key and their
+ * `boxed` flag, so `controlEnabled` answers with the group rule of 190 / 191
+ * on top of the default box of 156. A row's field is named by its key, not by
+ * its label (the n-gram labels repeat, 2e's 113), and its ids are
+ * `preset-<key>-box` and `preset-<key>-control`. */
+const SPEC_BY_ID: Record<string, Field> = Object.fromEntries(
+  PRESET_CARDS.find((c) => c.heading === 'preset-speculative-decoding')!
+    .fields.filter(
+      (f): f is { label: Label; key: string; boxed?: boolean } =>
+        typeof f !== 'string' && 'key' in f,
+    )
+    .map((f) => [`preset-${f.key}`, f]),
+)
+
+/** The 2h.9 group a key belongs to (2e's 112: the key's prefix), `undefined`
+ * for any other key: `draft` for the draft group, the literal name 191 lists
+ * for an n-gram group. `ngram-map-k4v` is read before `ngram-map-k`, whose
+ * prefix it starts. */
+function specGroupOf(key: string): string | undefined {
+  if (key.startsWith('spec-draft-')) return 'draft'
+  return (
+    ['ngram-mod', 'ngram-simple', 'ngram-map-k4v', 'ngram-map-k'].find((g) =>
+      key.startsWith(`spec-${g}-`),
+    ) ?? undefined
+  )
+}
+
+/** 155, 156, 190, 191: is a field's default box enabled? Every box of an
+ * editable card is, and a box of a 2h.9 group follows its group, the whole
+ * group enabled or locked together (191). The box's own input, which also
+ * needs the box unticked, is `controlEnabled`. */
+function boxEnabled(field: Field, values: Record<string, string>): boolean {
+  if (!isEditableField(field)) return false
+  const group =
+    typeof field === 'object' && 'key' in field
+      ? specGroupOf(field.key)
+      : undefined
+  return group === undefined || specGroupEnabled(group, values)
+}
+
+/** The fields 2h.1's 130, 2h.4's 155, 2h.5's 164, 2h.6's 170, 2h.7's 175 and
+ * 176, 2h.8's 183 and 186 and 2h.9's 189 made editable, keyed by the id of
+ * their field (`preset-<key>`: the box is `<id>-box`, the input
+ * `<id>-control`), so a control's id finds the field the shared table of
+ * test/presetCards.ts gives the enable rules to. Most entries are the label's
+ * strings key; the Speculative decoding card's are the keyed fields of
+ * `SPEC_BY_ID`. */
+const EDITABLE_BY_ID: Record<string, Field> = {
   'preset-ctx-size': 'preset-context-size',
   'preset-parallel': 'preset-parallel-slots',
   'preset-kv-unified': 'preset-unified-kv',
@@ -132,6 +185,9 @@ const EDITABLE_BY_ID: Record<string, string> = {
   'preset-fit-target': 'preset-fit-free-vram',
   'preset-device-draft': 'preset-draft-device',
   'preset-n-gpu-layers-draft': 'preset-draft-gpu-layers',
+  // 2h.9's 189 to 191: the Speculative decoding card's sixteen fields, by
+  // their row keys, each enabled by its group's rule.
+  ...SPEC_BY_ID,
 }
 
 beforeEach(() => {
@@ -290,7 +346,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card and the Hardware card, its Fit trio included and its two MoE rows excepted, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its two MoE rows excepted, and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -303,19 +359,22 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
     const id = el.getAttribute('id') ?? el.tagName
     // The 2h.4 card's fields by their ids: `preset-<key>`, its default box
     // `<id>-box`, its input `<id>-control`.
-    const label = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
-    // 155: a box is enabled in an editable card; 156: its input follows the
-    // box, which a key the file lacks leaves ticked. 130: the Embeddings
+    const field = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
+    // 155: a box is enabled in an editable card, a box of a 2h.9 group with
+    // its group; 156: the input follows the box, which a key the file lacks
+    // leaves ticked. 130: the Embeddings
     // selects are always enabled. 176: every Vision control while the read's
     // `mmproj` is there, Vision GPU also while Vision on GPU is checked. 177:
-    // the draft pair while `model-draft` is there. 70: the Engine select is
-    // untouched.
+    // the draft pair while `model-draft` is there. 190, 191: the Speculative
+    // decoding card's fields move with their group, the draft group opened by
+    // the same `model-draft`, each n-gram group by its entry of `spec-type`,
+    // which this read has none of. 70: the Engine select is untouched.
     const enabled =
       el === engine ||
-      (label !== undefined &&
+      (field !== undefined &&
         (id.endsWith('-box')
-          ? isEditableField(label)
-          : controlEnabled(label, VALUES)))
+          ? boxEnabled(field, VALUES)
+          : controlEnabled(field, VALUES)))
     expect((el as HTMLInputElement).disabled, `${id}: enabled`).toBe(!enabled)
     expect(
       el.getAttribute('aria-disabled'),
@@ -606,7 +665,7 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   ).toBe(false)
 })
 
-test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and a control a rule disables keeps its own', async () => {
+test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186, 2h.9 190): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and a control a rule disables keeps its own', async () => {
   const { main } = await page({
     pooling: EXTRA_POOL,
     'ctx-size': '172032000',
@@ -626,9 +685,9 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable con
     // 2h.8's 183 and 186 made the Fit trio editable, so its controls are
     // disabled by the rule and not by the card: with the Fit to VRAM box off,
     // 134 keeps the line under the number's input and the text input, as it
-    // keeps it under the Draft K-cache type select 175 disables. The
-    // Speculative decoding card is 2h.9's, so its draft number is a disabled
-    // input of a card that is not editable at all.
+    // keeps it under the Speculative decoding card's Draft K-cache type
+    // select: 189 made that card editable, but 190 disables its draft group
+    // on this read, which has no `model-draft` and no `spec-type`.
     fit: 'off',
     'fit-ctx': '172032000',
     'fit-target': LONG_TEXT,
@@ -654,9 +713,8 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable con
       fullOf(main, key),
       `${key}: no full-value line under an editable control`,
     ).toBeNull()
-  // A control that is disabled now, by 175, 186 or a card 2h.9 has not made
-  // editable, keeps the line of 118: a select, a number's input and a text
-  // input.
+  // A control that is disabled now, by 175, 186 or 190, keeps the line of
+  // 118: a select, a number's input and a text input.
   for (const key of [
     'spec-draft-type-k',
     'fit-ctx',
@@ -669,8 +727,8 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable con
     ).toBeTruthy()
   cleanup()
   // The same three fields with the Fit box checked: 186 enables the number's
-  // input and the text input, so 134 takes their two lines away and 175 leaves
-  // the select on its own.
+  // input and the text input, so 134 takes their two lines away and 190 leaves
+  // the draft group's select disabled on its own.
   const on = await page({
     fit: 'on',
     'fit-ctx': '172032000',
@@ -684,11 +742,11 @@ test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186): an editable con
     ).toBeNull()
   expect(
     fullOf(on.main, 'spec-draft-type-k'),
-    'the select 175 disables keeps its line',
+    'the select 190 disables keeps its line',
   ).toBeTruthy()
 })
 
-test("2h.134 (2h.6 170, 2h.7 175): a long value the disabled control cannot show keeps its line: the Speculative decoding card's Draft K-cache type select is the disabled half of the pair, Reasoning effort the enabled half (pinned above)", async () => {
+test("2h.134 (2h.6 170, 2h.9 190): a long value the disabled control cannot show keeps its line: the Speculative decoding card's Draft K-cache type select is the disabled half of the pair (190: this read has no draft), Reasoning effort the enabled half (pinned above)", async () => {
   const { main } = await page({
     'spec-draft-type-k': EXTRA_POOL,
     'reasoning-effort': EXTRA_POOL,

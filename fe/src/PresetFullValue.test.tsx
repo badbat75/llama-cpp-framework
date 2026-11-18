@@ -9,8 +9,8 @@
 // card is editable now. So every example here is of a control a rule disables,
 // one per kind: Fit free VRAM of the Hardware card as the text input and as
 // the number box, both disabled while the Fit to VRAM box is off (186), and
-// the Draft K-cache type of the Speculative decoding card, the select 2h.7's
-// 175 disables while the model carries no draft. The fields, their controls
+// the Draft K-cache type of the Speculative decoding card, the select 2h.9's
+// 190 disables while the preset names no drafter. The fields, their controls
 // and how a value is shown are PresetCards1.test.tsx and
 // PresetCards2.test.tsx; the route and the read are PresetPage.test.tsx. The
 // colour and the wrap at 320 px are the designer's review, not jsdom:
@@ -54,21 +54,28 @@ const SELECT_20 = 'mean-attention-pools'
 const SELECT_21 = 'Last-Attention-Pool-X'
 /** An unlisted select value past the limit, with spaces and capitals. The
  * select that carries it, the Draft K-cache type of the Speculative decoding
- * card, is of a card that is still
- * read-only; the brief's pooling stub has the same shape, but pooling sits
- * on the editable Embeddings card, which shows no line (134). */
+ * card, is disabled by `NO_DRAFTERS` below; the brief's pooling stub has the
+ * same shape, but pooling sits on the editable Embeddings card, which shows no
+ * line (134). */
 const SELECT_LONG = 'Last Attention Pool X  '
+
+/** 2h.9's 190 and 191: every group of the Speculative decoding card is locked
+ * when the read names no drafter, no `model-draft` and no `draft-` entry of
+ * `spec-type`, so 134 leaves the full-value line under its select. The stub's
+ * own `spec-type` (`ngram-mod,draft-mtp`) opens the draft group and the
+ * `ngram-mod` group, and the line goes. */
+const NO_DRAFTERS = { 'spec-type': 'none' }
 
 /** A number value a trim would change, past the number limit. */
 const NUM_PAD = ' 172032000 '
 
 const CTX = en('preset-context-size')
 const MOE = en('preset-moe-cache')
-/** The read-only card's text and select that carry the examples (134): Fit
- * free VRAM is the text `fit-target`, the Draft K-cache type the select
- * `spec-draft-type-k` (2h.7's 175: the Hardware card's Lazy tensors and Load
- * mode became editable, so 134 takes their line away; 2h.9 is the Speculative
- * decoding card's own slice). */
+/** The fields that carry the examples (134): Fit free VRAM is the text
+ * `fit-target`, the Draft K-cache type the select `spec-draft-type-k` (2h.7's
+ * 175 made the Hardware card's Lazy tensors and Load mode editable, so 134
+ * takes their line away; 2h.9's 189 made the Speculative decoding card
+ * editable, so its select keeps the line only under `NO_DRAFTERS`). */
 const FIT = en('preset-fit-free-vram')
 const MIN_CTX = en('preset-fit-min-context')
 const DRAFT_K = en('preset-draft-k-cache-type')
@@ -235,6 +242,8 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
     // disabled only while the Fit to VRAM box is off.
     fit: 'off',
     'spec-draft-type-k': SELECT_LONG,
+    // 2h.9's 190: no drafter, so the draft group and its select are disabled.
+    ...NO_DRAFTERS,
   })
   // Every one of these changes when trimmed or lower-cased, so a line built
   // from a trimmed or normalised copy reads red.
@@ -263,7 +272,10 @@ test('2e.118: the line holds the value exactly as written, for a number, a text 
 })
 
 test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({ 'spec-draft-type-k': SELECT_LONG })
+  const { main } = await page({
+    'spec-draft-type-k': SELECT_LONG,
+    ...NO_DRAFTERS,
+  })
   const select = selectOf(main, DRAFT_K)
   const line = lineOf(main, 'spec-draft-type-k')
   // The extra option of an unlisted value carries the value as its text, and
@@ -310,10 +322,13 @@ test('2e.118: the line sits under its own control, after its unit, before its hi
   }
 })
 
-test('2e.118, 2h.160, 2h.170, 2h.175: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
+test('2e.118, 2h.160, 2h.170, 2h.175, 2h.190: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
   const { main } = await page({
     'moe-cache-mib': NUM_9,
     'spec-draft-type-k': SELECT_LONG,
+    // 2h.9's 190: the preset names no drafter, so the draft group is locked
+    // and its select keeps the line.
+    ...NO_DRAFTERS,
     // The Resource / context card, every key past its limit: 160 says an
     // enabled control shows no line, so none of these has one. Parallel slots
     // is present, so its box is unticked and Unified KV is enabled too.
@@ -377,9 +392,9 @@ test('2e.118, 2h.160, 2h.170, 2h.175: one line per long field: each line is in i
   expect(owners.size, 'no field holds both lines').toBe(4)
   // The four owners, each of them a control disabled right now in this fixture,
   // which is what 134 asks for: MoE cache, disabled until 2g (178); the Draft
-  // K-cache type, of the Speculative decoding card, not editable before 2h.9's
-  // 189; and Fit min context and Fit free VRAM, locked by 186 while the Fit to
-  // VRAM box is off.
+  // K-cache type, its card editable since 189, locked by 190 with this read's
+  // `NO_DRAFTERS`; and Fit min context and Fit free VRAM, locked by 186 while
+  // the Fit to VRAM box is off.
   for (const [key, kind, label] of [
     ['moe-cache-mib', 'number', MOE],
     ['spec-draft-type-k', 'select', DRAFT_K],
@@ -511,10 +526,10 @@ test('2e.119: a text value shows no line at 20 characters and its line at 21', a
 test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
   expect(SELECT_20.length, 'the select stub is 20 characters').toBe(20)
   expect(SELECT_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ 'spec-draft-type-k': SELECT_20 })
+  const short = await page({ 'spec-draft-type-k': SELECT_20, ...NO_DRAFTERS })
   expectNoLine(short.main, 'spec-draft-type-k')
   cleanup()
-  const long = await page({ 'spec-draft-type-k': SELECT_21 })
+  const long = await page({ 'spec-draft-type-k': SELECT_21, ...NO_DRAFTERS })
   expect(
     lineOf(long.main, 'spec-draft-type-k').textContent,
     'the 21-character line',
@@ -536,6 +551,7 @@ test('2e.119: a short value shows no line: a 1-character number, a short text an
     fit: 'off',
     'kv-unified': 'auto',
     'spec-draft-type-k': 'auto',
+    ...NO_DRAFTERS,
   })
   expectNoLine(main, 'parallel')
   expectNoLine(main, 'fit-target')
@@ -553,6 +569,8 @@ const LONG = {
   'fit-ctx': NUM_9,
   'fit-target': TEXT_21,
   fit: 'off',
+  // The Draft K-cache type select, disabled by 190 on a read with no drafter.
+  ...NO_DRAFTERS,
   'spec-draft-type-k': SELECT_LONG,
 }
 const SHORT = {
@@ -560,6 +578,7 @@ const SHORT = {
   'fit-ctx': NUM_8,
   'fit-target': TEXT_20,
   fit: 'off',
+  ...NO_DRAFTERS,
   'spec-draft-type-k': SELECT_20,
 }
 const LONG_KEYS = [

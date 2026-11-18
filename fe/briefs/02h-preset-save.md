@@ -627,11 +627,12 @@ sizes the layers. So the three cases differ.
      `TRUE` blocks Save, one click sends `on`, two clicks send `off`, Discard brings the error back;
      unchecking the box disables both dependents; `fit-target` `2048,x` blocks with
      `field-error-fit-target`, `2048, 1024` passes.
-188. **Strings (4 new)**: `preset-fit-layers-only` | auto-fit the GPU layers only: Context size is
-     set (-fit on). `preset-fit-context-only` | auto-fit the context only: GPU layers is set, so
-     llama.cpp keeps your layers (-fit on). `preset-fit-nothing` | nothing to fit: Context size and
-     GPU layers are both set (-fit on). `field-error-fit-target` | Enter MiB as whole numbers: one
-     number, or one per device separated by commas, such as 2048,1024.
+188. **Strings (4 new)**, the first three with no final period (2h.8 review):
+     `preset-fit-layers-only` | auto-fit the GPU layers only: Context size is set (-fit on);
+     `preset-fit-context-only` | auto-fit the context only: GPU layers is set, so llama.cpp keeps
+     your layers (-fit on); `preset-fit-nothing` | nothing to fit: Context size and GPU layers are
+     both set (-fit on); `field-error-fit-target` | Enter MiB as whole numbers: one number, or one
+     per device separated by commas, such as 2048,1024.
 
 ## 2h.9. Speculative decoding
 
@@ -646,9 +647,10 @@ sizes the layers. So the three cases differ.
      model whose `spec-type` names no drafter has the group disabled here, enabled in the GUI.
 191. **Each n-gram group** is enabled while `spec-type` lists its name (`ngram-mod`, `ngram-simple`,
      `ngram-map-k`, `ngram-map-k4v`; MP 1233-1350), all its fields together.
-192. **One reason line per group**, right after its `h4`, inside the `role="group"` div, before the
-     first field (D5.2 Card note style), shown only while the group is disabled: the draft group
-     `preset-draft-group-off`; an n-gram group `preset-ngram-off` filled with its name (literal).
+192. **One reason line per group**: a `p.note`, the first child of the `role="group"` div, before
+     the first field (D5.2 Card note style); the `h4` stays outside the group, its previous sibling,
+     naming it through `aria-labelledby` (2e's 90a). Shown only while the group is disabled: the
+     draft group `preset-draft-group-off`; an n-gram group `preset-ngram-off` filled with its name (literal).
      Read in browse order (181). `spec-type` cannot change in 2h (Assets, 2i), so the rule is fixed
      for the page's life.
 193. **Tests and strings.** `spec-type` `ngram-mod,draft-mtp` with no `model-draft`: the draft group

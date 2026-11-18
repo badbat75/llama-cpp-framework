@@ -46,6 +46,7 @@ import PresetCards, {
   ruleLocked,
   selectSend,
   selectState,
+  specTypeEntries,
   textError,
   textRows,
   textSend,
@@ -100,15 +101,6 @@ function isPresetDoc(value: unknown): value is PresetDoc {
     isRecord(value.values) &&
     Object.values(value.values).every((v) => typeof v === 'string')
   )
-}
-
-/** The `spec-type` entries, split as `presets.rs` does: on `,`, trimmed, the
- * empty ones and `none` dropped. */
-function specTypeEntries(specType: string): string[] {
-  return specType
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '' && entry !== 'none')
 }
 
 /** The Drafter: the first entry that is not an n-gram one. */

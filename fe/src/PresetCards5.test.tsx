@@ -1,9 +1,13 @@
-// Slice 2e.5 (fe/briefs/02e-preset-cards.md, criteria 112 to 117): the last
-// card of the read-only preset page, Speculative decoding, in the five named
-// groups of 112. Everything is read-only, as in the cards of 2e.1 to 2e.4:
-// every control carries the native disabled attribute (85) and the About
-// toggles are the only tab stops (91). The card adds no flag of its own (the
-// brief, 2e.4 and 2e.5), so 2e.3b's flag readings reach no field here.
+// Slices 2e.5 (fe/briefs/02e-preset-cards.md, criteria 112 to 117) and 2h.9
+// (fe/briefs/02h-preset-save.md, criteria 189 to 193): the last card of the
+// preset page, Speculative decoding, in the five named groups of 112. 2h.9's
+// 189 made the card editable: a group's controls are enabled exactly while its
+// rule of 190 (the draft group) or 191 (an n-gram group) holds for the read,
+// and a group the rule leaves off says why in the one line of 192, right after
+// its h4. A control the rule locks keeps 2e.85's native disabled attribute,
+// never aria-disabled, never readonly, and takes no tab stop (91). The card
+// adds no flag of its own (the brief, 2e.4 and 2e.5), so 2e.3b's flag readings
+// reach no field here.
 import {
   cleanup,
   fireEvent,
@@ -27,13 +31,21 @@ import {
 import {
   cardHeadings,
   cardHeadingKeys,
+  controlEnabled,
   fieldTabStops,
   saveBarTabStops,
+  specGroupEnabled,
+  type Field,
 } from './test/presetCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
 const MODEL = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
+/** A draft model file: 190's `model-draft`, the first half of its rule. */
+const DRAFT_MODEL =
+  '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0-draft-tinyllama.gguf'
+/** The four n-gram groups, by name (191). */
+const NGRAMS = ['ngram-mod', 'ngram-simple', 'ngram-map-k', 'ngram-map-k4v']
 
 /** The stub of criterion 115: every key of 112 set, each n-gram key a
  * distinct number, so the value a group shows names the group's own key. */
@@ -131,6 +143,9 @@ type Row = {
   group: string
   /** The label as the page shows it. */
   label: string
+  /** The strings key of the label: the identity the shared list of
+   * test/presetCards.ts lists the field under (189). */
+  labelKey: string
   /** The strings key of the field's hint (88). */
   hint: string
   kind: 'number' | 'select'
@@ -160,6 +175,7 @@ function num(
     key,
     group,
     label: en(labelKey),
+    labelKey,
     hint: hintKey,
     kind: 'number',
     integer: true,
@@ -174,6 +190,7 @@ function flt(key: string, group: string, labelKey: string, set: string): Row {
     key,
     group,
     label: en(labelKey),
+    labelKey,
     hint: `${labelKey}-hint`,
     kind: 'number',
     set,
@@ -187,6 +204,7 @@ function cacheType(key: string, labelKey: string): Row {
     key,
     group: DRAFT,
     label: en(labelKey),
+    labelKey,
     hint: `${labelKey}-hint`,
     kind: 'select',
     options: CACHE_TYPES,
@@ -296,6 +314,71 @@ const FIELDS: Row[] = [
 
 const row = (key: string): Row => FIELDS.find((f) => f.key === key)!
 
+// ── The group rules of 2h.9 (190, 191) ──────────────────────────────────
+
+/** The rule of a group as the shared list of test/presetCards.ts names it:
+ * `draft` for the draft group (190), the literal speculator name for an n-gram
+ * group (191). */
+const specGroupOf = (heading: string): string =>
+  heading === DRAFT ? 'draft' : heading
+
+/** The field as the shared list of test/presetCards.ts lists it (189): the
+ * card's expectations and the page-wide ones come from one source. */
+const sharedField = (f: Row): Field => ({
+  label: f.labelKey,
+  key: f.key,
+  ...(f.kind === 'number' ? { boxed: true } : {}),
+})
+
+/** True while 190 / 191 enables the field's group on a read holding `values`. */
+const groupOn = (f: Row, values: Record<string, string>): boolean =>
+  specGroupEnabled(specGroupOf(f.group), values)
+
+/** True while the field's control is enabled: its group's rule, and for a
+ * boxed number a box the user left unticked, which is a key the read holds
+ * (2h.156). Cross-checked against the shared list, which must say the same. */
+function controlOn(f: Row, values: Record<string, string>): boolean {
+  const on = groupOn(f, values) && (f.kind !== 'number' || f.key in values)
+  expect(
+    controlEnabled(sharedField(f), values),
+    `${f.key}: the shared list of test/presetCards.ts agrees (189)`,
+  ).toBe(on)
+  return on
+}
+
+/** The controls of a row: for a number its default box then its input, for a
+ * select the select (85). */
+function controlsOf(
+  main: HTMLElement,
+  f: Row,
+): (HTMLInputElement | HTMLSelectElement)[] {
+  const group = rowGroup(main, f)
+  if (f.kind === 'number') {
+    const boxed = fieldGroupIn(group, f.label)
+    return [boxOf(boxed), inputOf(boxed, f.label)]
+  }
+  return [selectIn(group, f.label)]
+}
+
+/** The tab stops of the card on a read holding `values` (91 with 190, 191):
+ * every field's About toggle, then the controls its group rule leaves enabled:
+ * the box of a boxed number, then its input while the box is unticked, and a
+ * select named by its label. The page-wide path is the list of
+ * test/presetCards.ts, which the whole-page test of 91 reads. */
+function cardTabStops(values: Record<string, string>): string[] {
+  const stops: string[] = []
+  for (const f of FIELDS) {
+    stops.push(`${en('field-about')} ${f.label}`)
+    if (!groupOn(f, values)) continue
+    if (f.kind === 'select') stops.push(f.label)
+    else {
+      stops.push(en('field-default'))
+      if (f.key in values) stops.push(f.label)
+    }
+  }
+  return stops
+}
+
 /** The 31 new strings of 116. */
 const NEW_STRINGS = [
   'preset-speculative-decoding',
@@ -329,7 +412,14 @@ const NEW_STRINGS = [
   'preset-ngram-map-draft-hint',
   'preset-ngram-map-values-lookup-hint',
   'preset-ngram-map-values-draft-hint',
+  // The two new strings of 2h.9's 193: the reason line of the draft group, and
+  // the one of an n-gram group, filled with the group's name.
+  'preset-draft-group-off',
+  'preset-ngram-off',
 ]
+
+/** The strings of 116, and the two of 2h.9's 193. */
+const STRING_COUNT = NEW_STRINGS.length
 
 beforeEach(() => startAt(HASH))
 
@@ -585,11 +675,15 @@ function unitsOf(main: HTMLElement, f: Row): string[] {
 // ── One test per field (85, 86, 87, 88, 112, 115) ──────────────────────
 
 test.each(FIELDS)(
-  '2e.112, 2e.115, 2e.87, 2e.85: $key is a $kind of the $group group named by $label, shows the set value $set as the reply holds it, and every control is natively disabled',
+  '2e.112, 2e.115, 2e.87, 2h.190, 2h.191: $key is a $kind of the $group group named by $label, shows the set value $set as the reply holds it, and its controls are natively enabled while the rule of its group holds for the read (this read lists ngram-mod and a draft-mtp drafter)',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const doc = docOf(SET)
+    const { main } = await loaded({ preset: () => reply(200, doc) })
     const group = rowGroup(main, f)
     const field = fieldIn(group, f.label)
+    // 190 / 191: the group's rule on this read, and what it leaves the control.
+    const on = groupOn(f, doc.values)
+    const live = controlOn(f, doc.values)
     expect(
       card(main).contains(field),
       `${f.key}: its field is inside the ${en(CARD)} card`,
@@ -604,8 +698,14 @@ test.each(FIELDS)(
         f.shown,
       )
       expect(box.checked, `${f.key}: the default box unticked`).toBe(false)
-      expect(box.disabled, `${f.key}: the box disabled`).toBe(true)
-      expect(input.disabled, `${f.key}: the input disabled`).toBe(true)
+      expect(
+        box.disabled,
+        `${f.key}: the box of the ${f.group} group ${on ? 'on' : 'off'}`,
+      ).toBe(!on)
+      expect(
+        input.disabled,
+        `${f.key}: the input of the ${f.group} group ${live ? 'on' : 'off'}`,
+      ).toBe(!live)
       // 87: an integer key takes the numeric form, the float key not.
       expect(
         input.getAttribute('inputmode'),
@@ -619,19 +719,14 @@ test.each(FIELDS)(
       expect(selectedText(select), `${f.key}: the mapping selects`).toBe(
         f.shown,
       )
-      expect(select.disabled, `${f.key}: the select disabled`).toBe(true)
-    }
-    // 85: the native disabled attribute, never aria-disabled, never readonly.
-    for (const el of [
-      controlOf(main, f),
-      ...(f.kind === 'number'
-        ? [fieldGroupIn(group, f.label).querySelector('input') as Element]
-        : []),
-    ]) {
       expect(
-        (el as HTMLInputElement).disabled,
-        `${f.key}: ${el.tagName} disabled`,
-      ).toBe(true)
+        select.disabled,
+        `${f.key}: the select of the ${f.group} group ${on ? 'on' : 'off'}`,
+      ).toBe(!on)
+    }
+    // 85, as 2h.9 leaves it: a control carries the native disabled attribute,
+    // never aria-disabled, never readonly, enabled or locked.
+    for (const el of controlsOf(main, f)) {
       expect(
         el.getAttribute('aria-disabled'),
         `${f.key}: never aria-disabled`,
@@ -689,6 +784,98 @@ test.each(FIELDS)(
     expect(isHidden(hint), `${f.key}: the hint is hidden again`).toBe(true)
   },
 )
+
+// ── The group rules of 2h.9 (190, 191), read on the fixtures of 193 ─────
+
+/** A read of the card and the groups 190 / 191 enable on it: the values that
+ * carry the rule, merged into the 115 stub so every key of 112 is present and
+ * every box unticked, and the group names it leaves enabled (`draft`, and the
+ * four speculator names of 191). */
+const CASES: [string, Record<string, string>, string[]][] = [
+  // 193: the brief's fixture: a drafter named, no model-draft.
+  [
+    'spec-type ngram-mod,draft-mtp and no model-draft',
+    { 'spec-type': 'ngram-mod,draft-mtp' },
+    ['draft', 'ngram-mod'],
+  ],
+  // 190: the model-draft half alone.
+  [
+    'model-draft set and spec-type none',
+    { 'model-draft': DRAFT_MODEL, 'spec-type': 'none' },
+    ['draft'],
+  ],
+  // 190: the spec-type half alone, an empty model-draft reading as absent (86).
+  [
+    'model-draft empty and a draft- drafter named',
+    { 'model-draft': '', 'spec-type': 'draft-mtp' },
+    ['draft'],
+  ],
+  // 191: no draft at all, one n-gram listed.
+  [
+    'no draft, spec-type ngram-simple',
+    { 'model-draft': '', 'spec-type': 'ngram-simple' },
+    ['ngram-simple'],
+  ],
+  // 191: the name is exact, so ngram-map-k4v does not enable ngram-map-k,
+  // whose name it starts.
+  [
+    'spec-type ngram-map-k4v alone',
+    { 'spec-type': 'ngram-map-k4v' },
+    ['ngram-map-k4v'],
+  ],
+  // 191 with 2-models' 75 split: entries trimmed, so a space is no obstacle.
+  [
+    'every group listed, entries with spaces',
+    {
+      'model-draft': DRAFT_MODEL,
+      'spec-type':
+        'ngram-mod, ngram-simple, ngram-map-k, ngram-map-k4v, draft-mtp',
+    },
+    ['draft', ...NGRAMS],
+  ],
+  // 193: a read with no rule key leaves every group off.
+  [
+    'spec-type empty and no model-draft',
+    { 'model-draft': '', 'spec-type': '' },
+    [],
+  ],
+]
+
+test("2h.190, 2h.191, 2h.91: on each fixture a group's controls are enabled exactly while its rule holds, and only its About toggles are tab stops while it is off", async () => {
+  for (const [what, values, enabled] of CASES) {
+    const doc = docOf({ ...SET, ...values })
+    const { main } = await loaded({ preset: () => reply(200, doc) })
+    for (const f of FIELDS) {
+      const want = enabled.includes(specGroupOf(f.group))
+      expect(
+        groupOn(f, doc.values),
+        `${f.key} (${what}): the rule of the ${specGroupOf(f.group)} group`,
+      ).toBe(want)
+      // 156: the box follows the group rule, the input follows the box, which
+      // this read leaves unticked (it holds the key).
+      const states =
+        f.kind === 'number' ? [want, controlOn(f, doc.values)] : [want]
+      controlsOf(main, f).forEach((el, i) =>
+        expect(
+          el.disabled,
+          `${f.key} (${what}): ${el.tagName} ${states[i] ? 'enabled' : 'disabled'}`,
+        ).toBe(!states[i]),
+      )
+    }
+    const stops = cardTabStops(doc.values)
+    expect(
+      mainTabbable(card(main)),
+      `${en(CARD)} (${what}): the tab stops of the card`,
+    ).toEqual(stops)
+    if (enabled.length === 0)
+      expect(
+        stops,
+        `${en(CARD)} (${what}): a read that enables no group leaves only the About toggles`,
+      ).toEqual(FIELDS.map((f) => `${en('field-about')} ${f.label}`))
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
 
 // ── The five groups of 112 and 114, and the note of 90 ─────────────────
 
@@ -849,11 +1036,28 @@ test('2e.112, 2e.90: every field of 112 sits in the group its row names, in the 
     ).toBeTruthy()
 })
 
-test('2e.112, 2e.90: preset-draft-cache-note is the one note of the card, a muted paragraph of the Draft model group after Draft n-ubatch and before Draft K-cache type, and it is no field', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are preset-draft-cache-note of the Draft model group, a muted paragraph after Draft n-ubatch and before Draft K-cache type, and one reason line per group the rule of 190 / 191 leaves off: this read lists ngram-mod and a draft-mtp drafter, so preset-ngram-off for ngram-simple, ngram-map-k and ngram-map-k4v, each right after its h4', async () => {
+  const doc = docOf(SET)
+  const { main } = await loaded({ preset: () => reply(200, doc) })
   const el = card(main)
+  // 190 / 191 on this read: the draft group (a draft-mtp drafter) and
+  // ngram-mod are on, the three other n-gram groups are off.
+  const off = GROUPS.filter(
+    (g) => !specGroupEnabled(specGroupOf(g.heading), doc.values),
+  ).map((g) => g.heading)
+  expect(off, `${en(CARD)}: the groups this read leaves off (193)`).toEqual([
+    'ngram-simple',
+    'ngram-map-k',
+    'ngram-map-k4v',
+  ])
   const notes = notesOf(el)
-  expect(notes.length, `${en(CARD)}: one note between the fields`).toBe(1)
+  expect(
+    notes.map((p) => text(p)),
+    `${en(CARD)}: the notes of the card, in browse order (181, 192)`,
+  ).toEqual([
+    en('preset-draft-cache-note'),
+    ...off.map((g) => en('preset-ngram-off', g)),
+  ])
   const note = notes[0]!
   expect(note.tagName, `${en(CARD)}: the note is a paragraph`).toBe('P')
   expect(text(note), 'preset-draft-cache-note: the text of toml 377').toBe(
@@ -886,6 +1090,98 @@ test('2e.112, 2e.90: preset-draft-cache-note is the one note of the card, a mute
     }),
     'preset-draft-cache-note: no About toggle for a note',
   ).toBeNull()
+  // 192: each reason line sits inside the role=group division of its group,
+  // right after its h4 and before the group's first field, in the Card note
+  // style of D5.2, and carries no About toggle.
+  for (const heading of off) {
+    const div = groupOf(el, heading)
+    const h4 = within(el).getByRole('heading', { level: 4, name: heading })
+    const line = notes.find((p) => text(p) === en('preset-ngram-off', heading))!
+    expect(line, `${heading}: its reason line of 192 is shown`).toBeTruthy()
+    expect(line.tagName, `${heading}: the reason line is a paragraph`).toBe('P')
+    expect(line.className, `${heading}: the Card note style of 192`).toContain(
+      'note',
+    )
+    expect(
+      line.closest('.field'),
+      `${heading}: the reason line is no field`,
+    ).toBeNull()
+    expect(
+      div.contains(line),
+      `${heading}: the reason line is inside its role=group division`,
+    ).toBe(true)
+    expect(before(h4, line), `${heading}: right after its h4 (192)`).toBe(true)
+    expect(
+      before(line, div.querySelector('.field')!),
+      `${heading}: before the group's first field (192)`,
+    ).toBe(true)
+    expect(
+      within(el).queryByRole('button', {
+        name: `${en('field-about')} ${en('preset-ngram-off', heading)}`,
+      }),
+      `${heading}: no About toggle for a reason line`,
+    ).toBeNull()
+  }
+})
+
+test('2h.192, 2h.193: a group the rule enables shows no reason line and one it leaves off shows its own: preset-draft-group-off for the draft group, preset-ngram-off filled with the group name for each n-gram group, the five of them in browse order on a read of values {} and none of them on a read that names every group', async () => {
+  // 193: values {} (no key of the section), so every rule fails.
+  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+  const notes = notesOf(card(main))
+  expect(
+    notes.map((p) => text(p)),
+    `${en(CARD)}: a read with no rule key shows the five lines of 192, and the card's own note`,
+  ).toEqual([
+    en('preset-draft-group-off'),
+    en('preset-draft-cache-note'),
+    ...NGRAMS.map((g) => en('preset-ngram-off', g)),
+  ])
+  for (const g of NGRAMS) {
+    const line = en('preset-ngram-off', g)
+    expect(line, `${g}: the line names its own group (192)`).toContain(g)
+    // The names are prefixes of one another (ngram-map-k of ngram-map-k4v), so
+    // the four lines are told apart by equality, not by a substring test.
+    expect(
+      new Set(NGRAMS.map((name) => en('preset-ngram-off', name))).size,
+      `${g}: one line per group name (192)`,
+    ).toBe(4)
+    const div = groupOf(card(main), g)
+    expect(
+      div.textContent ?? '',
+      `${g}: the line is inside the group it speaks of`,
+    ).toContain(line)
+  }
+  const draft = groupOf(card(main), DRAFT)
+  expect(
+    draft.textContent ?? '',
+    'the draft group: preset-draft-group-off',
+  ).toContain(en('preset-draft-group-off'))
+  cleanup()
+  vi.unstubAllGlobals()
+  // Every group named: the draft group by its model-draft, the four n-gram
+  // groups by their exact name. No line of 192 shows, only the card's note.
+  const { main: on } = await loaded({
+    preset: () =>
+      reply(
+        200,
+        docOf({
+          ...SET,
+          'model-draft': DRAFT_MODEL,
+          'spec-type': 'ngram-mod,ngram-simple,ngram-map-k,ngram-map-k4v',
+        }),
+      ),
+  })
+  expect(
+    notesOf(card(on)).map((p) => text(p)),
+    `${en(CARD)}: every group enabled leaves no reason line`,
+  ).toEqual([en('preset-draft-cache-note')])
+  for (const g of GROUPS)
+    expect(
+      FIELDS.filter((f) => f.group === g.heading)
+        .flatMap((f) => controlsOf(on, f))
+        .every((el) => !el.disabled),
+      `${g.heading}: every control of an enabled group`,
+    ).toBe(true)
 })
 
 // ── The same label in several groups (113) ──────────────────────────────
@@ -1192,12 +1488,24 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Speculati
 
 // ── Keyboard (91) and the strings (116) ────────────────────────────────
 
-test('2e.91, 2e.113: Tab in the card reaches only the 16 About toggles of 112 in the table order, About Lookup n-gram and About Draft m-gram three times each, and no control of the card', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 in the table order, About Lookup n-gram and About Draft m-gram three times each, each followed by the controls the rule of its group leaves enabled (this read lists ngram-mod and a draft-mtp drafter, so the draft group and ngram-mod), and the page tab order is the list of test/presetCards.ts', async () => {
+  const doc = docOf(SET)
+  const { main } = await loaded({ preset: () => reply(200, doc) })
   const el = card(main)
-  const toggles = FIELDS.map((f) => `${en('field-about')} ${f.label}`)
+  const stops = cardTabStops(doc.values)
   expect(
     mainTabbable(el),
+    `${en(CARD)}: the tab stops of the card, in card and field order (91, 190, 191)`,
+  ).toEqual(stops)
+  // The two groups this read enables add their seven boxes, seven inputs and
+  // two selects; the three groups the rule leaves off add no stop (91).
+  expect(
+    stops.length,
+    `${en(CARD)}: 16 toggles and the controls of the two enabled groups`,
+  ).toBe(FIELDS.length + 16)
+  const toggles = FIELDS.map((f) => `${en('field-about')} ${f.label}`)
+  expect(
+    stops.filter((n) => n.startsWith(`${en('field-about')} `)),
     `${en(CARD)}: the About toggles in card and field order`,
   ).toEqual(toggles)
   for (const key of SAME_LABELS)
@@ -1221,9 +1529,12 @@ test('2e.91, 2e.113: Tab in the card reaches only the 16 About toggles of 112 in
   ).toEqual([...fieldTabStops(docOf(SET).values), ...saveBarTabStops()])
 })
 
-test('2e.116: the card, its five group headings, every label, hint and the note show the English of the 31 new strings of 116', async () => {
-  expect(NEW_STRINGS.length, 'the strings of 116').toBe(31)
-  expect(new Set(NEW_STRINGS).size, 'each of them named once').toBe(31)
+test('2e.116, 2h.193: the card, its five group headings, every label, hint and note show the English of the 31 strings of 116 and the 2 new strings of 193', async () => {
+  expect(NEW_STRINGS.length, 'the strings of 116 and of 193').toBe(STRING_COUNT)
+  expect(STRING_COUNT, 'the 31 of 116 and the 2 new of 193').toBe(33)
+  expect(new Set(NEW_STRINGS).size, 'each of them named once').toBe(
+    STRING_COUNT,
+  )
   for (const key of NEW_STRINGS)
     expect(
       en(key).length,
@@ -1261,6 +1572,11 @@ test('2e.116: the card, its five group headings, every label, hint and the note 
   }
   expect(
     notesOf(el).map((p) => text(p)),
-    'the note shows the English of toml 377',
-  ).toEqual([en('preset-draft-cache-note')])
+    'the notes show the English of the card note and of the three groups this read leaves off (192, 193)',
+  ).toEqual([
+    en('preset-draft-cache-note'),
+    en('preset-ngram-off', 'ngram-simple'),
+    en('preset-ngram-off', 'ngram-map-k'),
+    en('preset-ngram-off', 'ngram-map-k4v'),
+  ])
 })

@@ -570,6 +570,11 @@ export const EN: Record<string, string> = {
   'preset-min-hits': 'Min hits',
   'preset-min-hits-hint':
     "How many times an n-gram must have been seen before what follows it is proposed. Higher drafts less often but more reliably.\nDefault: 1 (llama.cpp's own).\nFlag: --spec-ngram-map-k4v-min-hits",
+  // Sub-slice 2h.9 (fe/briefs/02h-preset-save.md, criterion 193): the two
+  // reason lines of the Speculative decoding card's groups.
+  'preset-draft-group-off':
+    'Used only with a draft: a Draft model file or a Drafter, and this preset has neither (Assets).',
+  'preset-ngram-off': 'Used only when N-gram drafters (Assets) includes {0}.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */

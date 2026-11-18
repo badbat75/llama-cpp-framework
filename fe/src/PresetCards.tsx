@@ -19,6 +19,10 @@
 // 2h.5 gives the KV cache card the same (164: every field of the card enabled,
 // always), and 132 decides what each of them sends (the state the control
 // shows is the state the page is dirty against, an absent key included).
+// 2h.9 gives the Speculative decoding card the same, and with it the group rule
+// of 190 and 191: a group's fields move together, enabled by the read's
+// `model-draft` and `spec-type`, two keys this page reads and never sends. A
+// group the rule leaves off says why in the line of 192, its own `offNote`.
 // Each field is the same Field the Server page uses, so the page looks the same
 // before and after the save lands.
 //
@@ -170,6 +174,12 @@ type NoteRow = {
   shownWithout?: string
 }
 
+/** The drafter that switches a group of the Speculative decoding card on (2h.9's
+ * 190, 191): `draft` for the group of a draft model file or of a drafter built
+ * into the model, and the four n-gram entries of the `spec-type` list. */
+type SpecGroup =
+  'draft' | 'ngram-mod' | 'ngram-simple' | 'ngram-map-k' | 'ngram-map-k4v'
+
 /** A group of a card (criterion 90): the GUI's bold sub-heading as an `h4`, and
  * the rows under it in a `role="group"` division named by that heading, so the
  * fields that share a label across groups (the Lookup n-gram and the Draft
@@ -182,6 +192,17 @@ type GroupRow = {
    * names of 114). */
   title: string
   rows: FieldRow[]
+  /** 2h.9's 190 and 191: the drafter that enables the group's fields, all of
+   * them together, read from the values the read gave (`model-draft` and
+   * `spec-type`, two keys this page reads and never sends). An entry is matched
+   * whole, on the split of 2-models' 75 that the Assets card shows
+   * (`specTypeEntries`), so `ngram-map-k` is not `ngram-map-k4v`. Absent: the
+   * card alone enables the group. */
+  enabledBy?: SpecGroup
+  /** 192: the line the group shows while its rule leaves it off, the text the
+   * strings file gives (an n-gram group's names the group, a literal). Set
+   * where `enabledBy` is. */
+  offNote?: string
 }
 
 type Row =
@@ -852,6 +873,10 @@ const CARDS: CardFields[] = [
         kind: 'group',
         key: 'draft-model',
         title: t('preset-draft-model-group'),
+        // 190: the group of a draft model file or of a drafter built into the
+        // model, enabled while the preset has one.
+        enabledBy: 'draft',
+        offNote: t('preset-draft-group-off'),
         rows: [
           {
             kind: 'number',
@@ -859,6 +884,7 @@ const CARDS: CardFields[] = [
             key: 'spec-draft-n-max',
             label: t('preset-draft-n-max'),
             hint: t('preset-draft-n-max-hint'),
+            editable: true,
           },
           {
             // The card's only float row (table 112).
@@ -867,6 +893,7 @@ const CARDS: CardFields[] = [
             key: 'spec-draft-p-min',
             label: t('preset-draft-p-min'),
             hint: t('preset-draft-p-min-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -874,6 +901,7 @@ const CARDS: CardFields[] = [
             key: 'spec-draft-n-min',
             label: t('preset-draft-n-min'),
             hint: t('preset-draft-n-min-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -881,6 +909,7 @@ const CARDS: CardFields[] = [
             key: 'spec-draft-n-ubatch',
             label: t('preset-draft-n-ubatch'),
             hint: t('preset-draft-n-ubatch-hint'),
+            editable: true,
           },
           {
             // The note of 90, at the GUI's place: before the two cache types
@@ -896,6 +925,7 @@ const CARDS: CardFields[] = [
             absent: 'default',
             label: t('preset-draft-k-cache-type'),
             hint: t('preset-draft-k-cache-type-hint'),
+            editable: true,
           },
           {
             kind: 'select',
@@ -904,16 +934,21 @@ const CARDS: CardFields[] = [
             absent: 'default',
             label: t('preset-draft-v-cache-type'),
             hint: t('preset-draft-v-cache-type-hint'),
+            editable: true,
           },
         ],
       },
       {
         // The four groups are the speculator names the file writes, so they are
         // literals and not strings (114, D7). Each group's rows share their
-        // labels with another group's: the group tells them apart (113).
+        // labels with another group's: the group tells them apart (113). 191:
+        // each group is enabled while `spec-type` lists its name, and while it
+        // does not the group says why (192).
         kind: 'group',
         key: 'ngram-mod',
         title: 'ngram-mod',
+        enabledBy: 'ngram-mod',
+        offNote: t('preset-ngram-off', 'ngram-mod'),
         rows: [
           {
             kind: 'number',
@@ -921,6 +956,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-mod-n-match',
             label: t('preset-match-length'),
             hint: t('preset-match-length-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -928,6 +964,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-mod-n-min',
             label: t('preset-min-draft'),
             hint: t('preset-min-draft-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -935,6 +972,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-mod-n-max',
             label: t('preset-max-draft'),
             hint: t('preset-max-draft-hint'),
+            editable: true,
           },
         ],
       },
@@ -942,6 +980,8 @@ const CARDS: CardFields[] = [
         kind: 'group',
         key: 'ngram-simple',
         title: 'ngram-simple',
+        enabledBy: 'ngram-simple',
+        offNote: t('preset-ngram-off', 'ngram-simple'),
         rows: [
           {
             kind: 'number',
@@ -949,6 +989,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-simple-size-n',
             label: t('preset-lookup-n-gram'),
             hint: t('preset-ngram-simple-lookup-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -956,6 +997,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-simple-size-m',
             label: t('preset-draft-m-gram'),
             hint: t('preset-ngram-simple-draft-hint'),
+            editable: true,
           },
         ],
       },
@@ -963,6 +1005,8 @@ const CARDS: CardFields[] = [
         kind: 'group',
         key: 'ngram-map-k',
         title: 'ngram-map-k',
+        enabledBy: 'ngram-map-k',
+        offNote: t('preset-ngram-off', 'ngram-map-k'),
         rows: [
           {
             kind: 'number',
@@ -970,6 +1014,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-map-k-size-n',
             label: t('preset-lookup-n-gram'),
             hint: t('preset-ngram-map-lookup-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -977,6 +1022,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-map-k-size-m',
             label: t('preset-draft-m-gram'),
             hint: t('preset-ngram-map-draft-hint'),
+            editable: true,
           },
         ],
       },
@@ -984,6 +1030,8 @@ const CARDS: CardFields[] = [
         kind: 'group',
         key: 'ngram-map-k4v',
         title: 'ngram-map-k4v',
+        enabledBy: 'ngram-map-k4v',
+        offNote: t('preset-ngram-off', 'ngram-map-k4v'),
         rows: [
           {
             kind: 'number',
@@ -991,6 +1039,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-map-k4v-size-n',
             label: t('preset-lookup-n-gram'),
             hint: t('preset-ngram-map-values-lookup-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -998,6 +1047,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-map-k4v-size-m',
             label: t('preset-draft-m-gram'),
             hint: t('preset-ngram-map-values-draft-hint'),
+            editable: true,
           },
           {
             kind: 'number',
@@ -1005,6 +1055,7 @@ const CARDS: CardFields[] = [
             key: 'spec-ngram-map-k4v-min-hits',
             label: t('preset-min-hits'),
             hint: t('preset-min-hits-hint'),
+            editable: true,
           },
         ],
       },
@@ -1379,6 +1430,7 @@ const FLOAT_KEYS: string[] = [
   'min-p',
   'repeat-penalty',
   'presence-penalty',
+  'spec-draft-p-min',
 ]
 
 /** The text of a float field (165), read on the text trimmed and with every `,`
@@ -1648,10 +1700,59 @@ function atDefault(
   return b === undefined ? held(values, key) === undefined : b.ticked
 }
 
-/** 2h.7's 176: is the row's control disabled by a rule of its `enabledWhen`?
- * The `unticked` rules read the box state of the number fields (155), the
- * `checked` rule the draft, live from the box the user sees, and the `file`
- * rules the values the read gave (the key is not editable on this page). A
+/** The `spec-type` entries, split as `presets.rs` does: on `,`, trimmed, the
+ * empty ones and `none` dropped (2-models' 75). The page's one split of the
+ * list: the Assets card shows the Drafter and the N-gram drafters with it, and
+ * the group rule of 190 and 191 enables a group of the Speculative decoding
+ * card with it, so the page and the list never part ways. */
+export function specTypeEntries(specType: string): string[] {
+  return specType
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '' && entry !== 'none')
+}
+
+/** 2h.9's 190 and 191: does the read switch this group on? Only the values the
+ * read gave are read, never the draft: `spec-type` cannot change on this page
+ * (192, the Assets card is 2i), so a group's state is the file's for the page's
+ * life. `draft` is enabled by a draft model file, or by a drafter of the list,
+ * an entry that starts with `draft-`: the GUI's half of the rule, "the model
+ * embeds MTP heads", is a GGUF fact the page reads only from 2g, so a drafter
+ * named in `spec-type` stands in for it (the GUI's save drops a `draft-mtp` the
+ * model cannot use, so a file it saved names one only for a model with the
+ * heads). A deliberate difference: an MTP model whose `spec-type` names no
+ * drafter has the group off here, on in the GUI. Each n-gram group is enabled
+ * by its own entry, matched whole on the split of 75. */
+function specGroupOn(group: SpecGroup, loaded: Record<string, string>) {
+  const entries = specTypeEntries(held(loaded, 'spec-type') ?? '')
+  if (group === 'draft')
+    return (
+      held(loaded, 'model-draft') !== undefined ||
+      entries.some((entry) => entry.startsWith('draft-'))
+    )
+  return entries.includes(group)
+}
+
+/** The rule of the group a row sits in, when that group has one of 190 or 191:
+ * `ruleLocked` reads it, so a group's fields move together and the page's gate
+ * needs no knowledge of the card. */
+function specGroupRule(key: string): SpecGroup | undefined {
+  for (const card of CARDS)
+    for (const row of card.rows)
+      if (
+        row.kind === 'group' &&
+        row.enabledBy !== undefined &&
+        row.rows.some((nested) => nested.kind !== 'note' && nested.key === key)
+      )
+        return row.enabledBy
+  return undefined
+}
+
+/** 2h.7's 176: is the row's control disabled by a rule of its `enabledWhen`, or
+ * by the rule of the group it sits in (190, 191)? The `unticked` rules read the
+ * box state of the number fields (155), the `checked` rule the draft, live from
+ * the box the user sees, and the `file` rules and the group rule the values the
+ * read gave (their keys are not editable on this page). A
  * locked control keeps the state it holds: its draft stays, and a change
  * made while it was enabled is sent as for any other editable row. The page's
  * Save applies the same gate to its check of 157 and 166: what the page sends,
@@ -1664,6 +1765,8 @@ export function ruleLocked(
   loaded: Record<string, string>,
   boxed: Record<string, Boxed>,
 ): boolean {
+  const group = specGroupRule(row.key)
+  if (group !== undefined) return !specGroupOn(group, loaded)
   return (row.enabledWhen ?? []).some((one) => {
     if (one.rule === 'unticked') return boxed[one.key]?.ticked === true
     if (one.rule === 'file') return held(loaded, one.key) === undefined
@@ -1951,10 +2054,19 @@ function PresetRow({
 }) {
   if (row.kind === 'group') {
     const heading = `preset-group-${row.key}`
+    // 192: a group the rule of 190 or 191 leaves off says why, in a plain
+    // paragraph before its first field, inside the division the heading names.
+    // Shown only while the group is off, never a live region and never the
+    // description of anything (181).
+    const off =
+      row.enabledBy !== undefined && !specGroupOn(row.enabledBy, loaded)
     return (
       <div className="subgroup">
         <h4 id={heading}>{row.title}</h4>
         <div role="group" aria-labelledby={heading}>
+          {off && row.offNote !== undefined && (
+            <p className="note">{row.offNote}</p>
+          )}
           {row.rows.map((nested) => (
             <PresetRow
               key={nested.key}
