@@ -786,7 +786,7 @@ mod tests {
             (ManagerError::Io(ErrorKind::PermissionDenied), "Io"),
             (
                 ManagerError::Invalid(pai_core::checks::Refusal {
-                    key: "invalid-preset-id",
+                    key: "invalid-model-profile-id",
                     values: vec!["Qwen 3 (v2) é".into()],
                 }),
                 "Invalid",

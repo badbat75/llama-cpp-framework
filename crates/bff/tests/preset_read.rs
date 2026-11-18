@@ -1,11 +1,11 @@
-//! `GET /api/presets/{id}`: one preset section of the engine's `models.ini`
+//! `GET /api/profiles/model/{id}`: one preset section of the engine's `models.ini`
 //! / `models.ini.disabled`, read through the manager as the signed-in user,
 //! through `pai_bff::router_with_session` with a fake manager client and a
 //! fake authenticator (never the real bus, pipe, PAM or LogonUser). Each
 //! request runs under a deadline, so a bff that waits on the manager fails
 //! instead of hanging.
 //!
-//! The answer (`fe/briefs/api-contract.md`, `GET /api/presets/{id}`, and the
+//! The answer (`fe/briefs/api-contract.md`, `GET /api/profiles/model/{id}`, and the
 //! section revision of ARCHITECTURE.md "Saving a preset from the web"): 200
 //! and
 //! `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl",
@@ -39,10 +39,10 @@
 //!   the file the section sits in. It does not move when another section of
 //!   the file changes, and it is another for another file and for another key.
 //! - llama-server's global `[*]` section is not a preset, and an id that is
-//!   no section is nothing to read: 404 `no-preset-named`, the id echoed as
+//!   no section is nothing to read: 404 `no-model-profile-named`, the id echoed as
 //!   the only arg when it is a name a preset can carry at all, as the list's
 //!   404 answers it.
-//! - A path with a segment below the section, `/api/presets/alpha/*` (a raw
+//! - A path with a segment below the section, `/api/profiles/model/alpha/*` (a raw
 //!   `*` or its percent form), is not this read: it is no path of this API, so
 //!   the router answers its own 404, with no body, and no manager is asked.
 //! - The bff's own error answers, as its served siblings (`tests/server.rs`,
@@ -663,10 +663,10 @@ impl App {
         }
     }
 
-    /// Signed in as `alice`, `GET /api/presets/{id}` for the id `id`.
+    /// Signed in as `alice`, `GET /api/profiles/model/{id}` for the id `id`.
     async fn read(&self, id: &str) -> Reply {
         let cookie = self.sign_in_as(USER).await;
-        self.get(&format!("/api/presets/{id}"), Some(&cookie), &[])
+        self.get(&format!("/api/profiles/model/{id}"), Some(&cookie), &[])
             .await
     }
 }
@@ -778,7 +778,7 @@ impl Reply {
 #[tokio::test]
 async fn without_a_session_the_manager_is_not_asked() {
     let app = app_holding(FILE_ALPHA, "");
-    let reply = app.get("/api/presets/alpha", None, &[]).await;
+    let reply = app.get("/api/profiles/model/alpha", None, &[]).await;
     reply.assert_error(StatusCode::UNAUTHORIZED, "session-required");
     reply.assert_no_manager_detail();
     assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
@@ -957,7 +957,7 @@ async fn the_project_url_comes_from_the_url_comment() {
 // ── The section is not there ────────────────────────────────────────────
 
 /// llama-server's global `[*]` section is not a preset: the read of `*`, of
-/// its percent form and of the whole bracketed form is 404 `no-preset-named`,
+/// its percent form and of the whole bracketed form is 404 `no-model-profile-named`,
 /// with nothing echoed: `*` is not a name a preset can carry. A path with a
 /// segment below the section is a different path, pinned in
 /// `a_path_below_the_section_is_the_routers_own_not_found`.
@@ -969,7 +969,7 @@ async fn the_global_section_is_not_a_preset() {
     );
     for form in ["*", "%2A", "%5B%2A%5D"] {
         let reply = app.read(form).await;
-        let args = reply.assert_key(StatusCode::NOT_FOUND, "no-preset-named");
+        let args = reply.assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");
         assert_eq!(args, Vec::<Value>::new(), "not a preset name: {form}");
     }
     // The files are read as they are for any other id: the answer comes from
@@ -983,7 +983,7 @@ async fn the_global_section_is_not_a_preset() {
 
 /// A path with a segment below the section is not this read: the only path of
 /// this API with a segment below a preset is the switch,
-/// `PUT /api/presets/{id}/enabled`, so the router answers its own 404, with no
+/// `PUT /api/profiles/model/{id}/enabled`, so the router answers its own 404, with no
 /// body and no JSON, and the read never starts. A percent-encoded `*` is the
 /// same path: the router matches the raw path, so the id `alpha/*` is never
 /// handed to a section name.
@@ -1005,13 +1005,13 @@ async fn a_path_below_the_section_is_the_routers_own_not_found() {
     assert!(app.calls().is_empty(), "{:?}", app.calls());
 }
 
-/// An id that is no section is 404 `no-preset-named`, with the id echoed as
+/// An id that is no section is 404 `no-model-profile-named`, with the id echoed as
 /// the only arg so the page can say which preset it could not find.
 #[tokio::test]
 async fn an_unknown_id_is_not_found() {
     let app = app_holding(FILE_ALPHA, "");
     let reply = app.read("Zeta").await;
-    let args = reply.assert_key(StatusCode::NOT_FOUND, "no-preset-named");
+    let args = reply.assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");
     assert_eq!(args, vec![json!("Zeta")], "the id echoed");
     reply.assert_no_manager_detail();
     assert_eq!(
@@ -1028,7 +1028,7 @@ async fn ids_of_dots_are_not_found() {
     let app = app_holding(FILE_ALPHA, "");
     for form in [".", "..", "%2E%2E"] {
         let reply = app.read(form).await;
-        let args = reply.assert_key(StatusCode::NOT_FOUND, "no-preset-named");
+        let args = reply.assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");
         assert_eq!(args, Vec::<Value>::new(), "not a preset name: {form}");
     }
 }
@@ -1038,7 +1038,7 @@ async fn ids_of_dots_are_not_found() {
 async fn no_preset_file_answers_not_found() {
     let app = app_no_files();
     let reply = app.read("alpha").await;
-    let args = reply.assert_key(StatusCode::NOT_FOUND, "no-preset-named");
+    let args = reply.assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");
     assert_eq!(args, vec![json!("alpha")]);
 }
 
@@ -1054,7 +1054,9 @@ async fn a_refused_user_is_answered_403_and_signed_out() {
     let app = app_refusing(&[USER], FILE_ALPHA, "");
     let cookie = app.sign_in_as(USER).await;
     let other = app.sign_in_as("root").await;
-    let reply = app.get("/api/presets/alpha", Some(&cookie), &[]).await;
+    let reply = app
+        .get("/api/profiles/model/alpha", Some(&cookie), &[])
+        .await;
     reply.assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     reply.assert_no_manager_detail();
     app.get("/api/session", Some(&cookie), &[])
@@ -1088,7 +1090,9 @@ async fn a_manager_gone_during_the_read_is_unavailable() {
     let app = app_holding(FILE_ALPHA, "");
     let cookie = app.sign_in_as(USER).await;
     app.set_read_failure(Failure::Unavailable);
-    let reply = app.get("/api/presets/alpha", Some(&cookie), &[]).await;
+    let reply = app
+        .get("/api/profiles/model/alpha", Some(&cookie), &[])
+        .await;
     reply.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     reply.assert_no_manager_detail();
 }
@@ -1102,7 +1106,7 @@ async fn a_manager_too_slow_is_unavailable() {
     app.set_read_pause_ms(2000);
     let cookie = app.sign_in_as(USER).await;
     let started = Instant::now();
-    app.get("/api/presets/alpha", Some(&cookie), &[])
+    app.get("/api/profiles/model/alpha", Some(&cookie), &[])
         .await
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     let took = started.elapsed();
@@ -1121,13 +1125,15 @@ async fn any_other_failure_is_client_other_and_keeps_the_session() {
     let app = app_holding(FILE_ALPHA, "");
     app.set_read_failure(Failure::Other("the read failed".into()));
     let cookie = app.sign_in_as(USER).await;
-    let reply = app.get("/api/presets/alpha", Some(&cookie), &[]).await;
+    let reply = app
+        .get("/api/profiles/model/alpha", Some(&cookie), &[])
+        .await;
     reply.assert_error(StatusCode::BAD_GATEWAY, "client-other");
     reply.assert_no_manager_detail();
     app.get("/api/session", Some(&cookie), &[])
         .await
         .assert_signed_in_as(USER);
-    app.get("/api/presets/alpha", Some(&cookie), &[])
+    app.get("/api/profiles/model/alpha", Some(&cookie), &[])
         .await
         .assert_error(StatusCode::BAD_GATEWAY, "client-other");
 }
@@ -1142,7 +1148,7 @@ async fn the_read_connects_as_the_signed_in_user() {
         let app = app_holding(FILE_ALPHA, "");
         let cookie = app.sign_in_as(user).await;
         assert_eq!(
-            app.get("/api/presets/alpha", Some(&cookie), &[])
+            app.get("/api/profiles/model/alpha", Some(&cookie), &[])
                 .await
                 .document()["id"],
             "alpha",
@@ -1170,7 +1176,7 @@ async fn a_name_in_the_request_is_never_the_principal() {
     let cookie = app.sign_in_as(USER).await;
     let doc = app
         .get(
-            "/api/presets/alpha?user=root",
+            "/api/profiles/model/alpha?user=root",
             Some(&cookie),
             &[("x-user", "root"), ("x-principal", "root")],
         )
@@ -1195,7 +1201,7 @@ async fn post_and_delete_on_the_section_path_are_not_served() {
     for method in [Method::POST, Method::DELETE] {
         let request = Request::builder()
             .method(method.clone())
-            .uri("/api/presets/alpha")
+            .uri("/api/profiles/model/alpha")
             .header(header::COOKIE, cookie.clone())
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(json!({ "values": {} }).to_string()))
@@ -1204,7 +1210,7 @@ async fn post_and_delete_on_the_section_path_are_not_served() {
         assert_eq!(
             reply.status,
             StatusCode::METHOD_NOT_ALLOWED,
-            "{method} /api/presets/alpha: {}",
+            "{method} /api/profiles/model/alpha: {}",
             reply.body
         );
     }

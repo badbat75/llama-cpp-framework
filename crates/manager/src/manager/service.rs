@@ -3632,14 +3632,14 @@ pub(crate) fn manager_checks_e2e() {
         let namesake = format!("{enabled}[parked]\nmodel = /models/other.gguf\n");
         assert_eq!(
             m.write_file(&alice, "models.ini", &namesake, false),
-            invalid("preset-name-taken", &["parked"])
+            invalid("model-profile-name-taken", &["parked"])
         );
         assert_eq!(read("models.ini").as_deref(), Some(enabled), "old kept");
         // A new parked preset named like an enabled one.
         let namesake = format!("{parked}[NEW]\nmodel = /models/other.gguf\n");
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &namesake, false),
-            invalid("preset-name-taken", &["NEW"])
+            invalid("model-profile-name-taken", &["NEW"])
         );
         assert_eq!(read("models.ini.disabled").as_deref(), Some(parked));
         // Switching the parked one on writes models.ini first: a move.
@@ -3850,7 +3850,7 @@ pub(crate) fn manager_assignments_e2e() {
     assert!(
         matches!(
             m.write_file(&alice, "models.ini", &on_disk, false),
-            Err(ManagerError::Invalid(r)) if r.key == "invalid-preset-id" && r.values == ["*"]
+            Err(ManagerError::Invalid(r)) if r.key == "invalid-model-profile-id" && r.values == ["*"]
         ),
         "the client cannot write the global section"
     );

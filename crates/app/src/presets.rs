@@ -1365,7 +1365,7 @@ fn move_between(
         }
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            strings::fill("no-preset-named", &[&id]),
+            strings::fill("no-model-profile-named", &[&id]),
         ));
     };
     let dest = match (dest, new_file_header) {
@@ -1639,7 +1639,7 @@ fn rename_with(files: &impl PresetFiles, old_id: &str, new: &str) -> io::Result<
     if !new.eq_ignore_ascii_case(old_id) && has_section_in(files, other, new) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            strings::fill("preset-name-taken", &[&new]),
+            strings::fill("model-profile-name-taken", &[&new]),
         ));
     }
     // A missing file is a missing section: `rename_section`'s NotFound.
@@ -2204,7 +2204,7 @@ pub(crate) fn preset_checks_every_backend_e2e() {
             let err = save(&no_model).expect_err("no model");
             assert_eq!(
                 err.to_string(),
-                text("preset-no-model", &["Qwen3.8-27B"]),
+                text("model-profile-no-model", &["Qwen3.8-27B"]),
                 "{name}"
             );
             let err = save(&negative_ctx).expect_err("ctx-size -1");
@@ -3480,7 +3480,7 @@ mod tests {
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{model:?}");
             assert_eq!(
                 err.to_string(),
-                refusal_text("preset-no-model", &["Qwen3.8-27B"]),
+                refusal_text("model-profile-no-model", &["Qwen3.8-27B"]),
                 "{model:?}"
             );
         }

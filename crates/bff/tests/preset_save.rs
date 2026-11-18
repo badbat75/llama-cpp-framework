@@ -1,4 +1,4 @@
-//! `PUT /api/presets/{id}`: the save of one preset's page (ARCHITECTURE.md
+//! `PUT /api/profiles/model/{id}`: the save of one preset's page (ARCHITECTURE.md
 //! "Saving a preset from the web", slice 4; `fe/briefs/api-contract.md`),
 //! through `pai_bff::router_with_session_and_write_timeout` with a fake manager
 //! client and a fake authenticator (never the real bus, pipe, PAM or LogonUser).
@@ -19,7 +19,7 @@
 //! pinned:
 //! - the session: none, or an unknown one, is 401 `session-required`, the
 //!   manager is not connected to and nothing is written;
-//! - the body: 400 `presets-malformed` for a body that is not
+//! - the body: 400 `model-profiles-malformed` for a body that is not
 //!   `{revision: string, values: object}`, a body whose `Content-Type` is not
 //!   JSON (the header absent, or a type of another essence: the essence counts,
 //!   so `application/json; charset=utf-8` is served, as every other route's
@@ -32,10 +32,10 @@
 //!   `payload-too-large`, also with no manager call;
 //! - the section: `models.ini` read as the signed-in user, and the section
 //!   matched in any letter case; else `models.ini.disabled`; else 404
-//!   `no-preset-named`, the id echoed only when it is a name a preset can carry.
+//!   `no-model-profile-named`, the id echoed only when it is a name a preset can carry.
 //!   llama-server's global `[*]` is not a preset: the same 404 with no args;
 //! - the section revision: the digest of `<file name> LF <section text>` under
-//!   the bff's key. A body carrying another one is 409 `preset-changed-elsewhere`
+//!   the bff's key. A body carrying another one is 409 `model-profile-changed-elsewhere`
 //!   with no write, and that includes the revision of the same section in the
 //!   OTHER file and the one another bff computed;
 //! - the edits, applied in key order (the map of `values` carries no order of
@@ -49,7 +49,7 @@
 //!   409; its check of the edited section is 422 `{key, args, field}` with
 //!   `field` by the design's table, one rule per key, and nothing is written;
 //! - then `running`, and the 200 is exactly `{"revision", "running"}`: the
-//!   revision of the section as written (the one `GET /api/presets/{id}`
+//!   revision of the section as written (the one `GET /api/profiles/model/{id}`
 //!   returns for the new text), and true when the section went to `models.ini`
 //!   and any instance is `active` or `activating` (the instances listed, then
 //!   the states asked until one is up), true when a state read fails after a
@@ -988,7 +988,7 @@ impl Reply {
     }
 
     /// A 422 refusal that names no field: `{"key", "args"}`, with no `field`
-    /// member (`invalid-preset-id`, `preset-name-taken`).
+    /// member (`invalid-model-profile-id`, `model-profile-name-taken`).
     fn assert_refused_without_field(&self, key: &str, args: &[&str]) {
         assert_eq!(
             self.status,
@@ -1030,7 +1030,7 @@ impl Reply {
     }
 }
 
-/// The document of `GET /api/presets/{id}`: its values, and its revision.
+/// The document of `GET /api/profiles/model/{id}`: its values, and its revision.
 impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
@@ -1213,7 +1213,7 @@ impl App {
             .await
     }
 
-    /// `PUT /api/presets/{id}` with the body the web sends.
+    /// `PUT /api/profiles/model/{id}` with the body the web sends.
     async fn save(&self, id: &str, body: &Value, cookie: Option<&str>) -> Reply {
         self.save_raw(id, &body.to_string(), cookie, &[]).await
     }
@@ -1230,7 +1230,7 @@ impl App {
     ) -> Reply {
         let mut builder = Request::builder()
             .method(Method::PUT)
-            .uri(format!("/api/presets/{id}"))
+            .uri(format!("/api/profiles/model/{id}"))
             .header(header::CONTENT_TYPE, "application/json");
         if let Some(c) = cookie {
             builder = builder.header(header::COOKIE, c);
@@ -1254,7 +1254,7 @@ impl App {
     ) -> Reply {
         let mut builder = Request::builder()
             .method(Method::PUT)
-            .uri(format!("/api/presets/{id}"));
+            .uri(format!("/api/profiles/model/{id}"));
         if let Some(content_type) = content_type {
             builder = builder.header(header::CONTENT_TYPE, content_type);
         }
@@ -1279,10 +1279,11 @@ impl App {
             .await
     }
 
-    /// Signed in as `alice`, `GET /api/presets/{id}`.
+    /// Signed in as `alice`, `GET /api/profiles/model/{id}`.
     async fn read(&self, id: &str) -> Reply {
         let cookie = self.sign_in().await;
-        self.get(&format!("/api/presets/{id}"), Some(&cookie)).await
+        self.get(&format!("/api/profiles/model/{id}"), Some(&cookie))
+            .await
     }
 
     /// One request through the router, under the deadline every request runs
@@ -1404,7 +1405,7 @@ async fn save_with_a_foreign_origin_is_refused_before_the_manager_is_read() {
 // ---------------------------------------------------------------------------
 
 /// The bodies, each built from the well-typed one with one thing broken, that
-/// are no preset save at all: 400 `presets-malformed`, and no manager call of
+/// are no preset save at all: 400 `model-profiles-malformed`, and no manager call of
 /// any kind. The design answers the body before it reads a file.
 #[tokio::test]
 async fn save_body_that_is_no_preset_save_is_400_and_reaches_no_manager() {
@@ -1440,7 +1441,7 @@ async fn save_body_that_is_no_preset_save_is_400_and_reaches_no_manager() {
         ("no values", no_values.to_string()),
     ] {
         let rep = app.save_raw(ALPHA, &body, Some(&cookie), &[]).await;
-        rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+        rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
         assert!(
             app.calls().is_empty(),
             "{case}: the body is answered before the read: {:?}",
@@ -1454,7 +1455,7 @@ async fn save_body_that_is_no_preset_save_is_400_and_reaches_no_manager() {
 /// The content type the body must carry: the route reads the raw bytes, so the
 /// type is its only sign of what the bytes are meant to be. A signed-in request
 /// with the contract's body and a type of another essence, and one with no
-/// `Content-Type` at all, are the same 400 `presets-malformed` as a body that
+/// `Content-Type` at all, are the same 400 `model-profiles-malformed` as a body that
 /// is no save: the manager is not connected to, nothing is written, the file is
 /// as it was.
 #[tokio::test]
@@ -1473,7 +1474,7 @@ async fn save_a_body_whose_content_type_is_not_json_is_400_and_reaches_no_manage
         let rep = app
             .save_content_type(ALPHA, &good, Some(&cookie), content_type)
             .await;
-        rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+        rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
         assert_eq!(
             app.connects.load(Ordering::SeqCst),
             0,
@@ -1525,7 +1526,7 @@ async fn save_key_outside_the_web_list_is_400_and_reaches_no_manager() {
         "ctx-size-draft", // a real key, not this one
     ] {
         let rep = app.save_on(ALPHA, json!({ key: "8192" })).await;
-        rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+        rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
     }
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
@@ -1550,7 +1551,7 @@ async fn save_value_that_is_no_one_line_text_is_400_and_reaches_no_manager() {
         ("a DEL", json!("8192\x7f99")),
     ] {
         let rep = app.save_on(ALPHA, json!({ "ctx-size": value })).await;
-        rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+        rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
         assert!(
             app.calls().is_empty(),
             "{case}: the body is answered before the read: {:?}",
@@ -1616,7 +1617,7 @@ async fn save_is_the_only_write_method_the_preset_path_serves() {
         let cookie = app.sign_in().await;
         let builder = Request::builder()
             .method(method.clone())
-            .uri(format!("/api/presets/{ALPHA}"))
+            .uri(format!("/api/profiles/model/{ALPHA}"))
             .header(header::COOKIE, &cookie)
             .header(header::CONTENT_TYPE, "application/json");
         let request = builder.body(Body::empty()).expect("request");
@@ -1659,7 +1660,7 @@ async fn save_of_a_path_below_the_section_is_the_routers_own_answer() {
 // ---------------------------------------------------------------------------
 
 /// The contract's answer for a name no preset has, in either file: 404
-/// `no-preset-named` with the id as its only arg, and nothing written.
+/// `no-model-profile-named` with the id as its only arg, and nothing written.
 #[tokio::test]
 async fn save_unknown_id_is_404_with_the_id_and_writes_nothing() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -1667,7 +1668,7 @@ async fn save_unknown_id_is_404_with_the_id_and_writes_nothing() {
     let rep = app
         .save_on_revision("nope", &revision, json!({ "ctx-size": "8192" }))
         .await;
-    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &["nope"]);
+    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &["nope"]);
     assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
     assert_eq!(app.file_text(DISABLED).as_deref(), Some(FILE_OFF));
     assert!(app.no_write_asked(), "nothing written");
@@ -1686,7 +1687,7 @@ async fn save_with_no_preset_file_is_404_and_creates_nothing() {
     let rep = app
         .save_on_revision(ALPHA, "0000000000000000", json!({ "ctx-size": "8192" }))
         .await;
-    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[ALPHA]);
+    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[ALPHA]);
     assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
@@ -1715,7 +1716,7 @@ model = /models/alpha.gguf\r\n\
         let rep = app
             .save_on_revision(id, "0000000000000000", json!({ "n-gpu-layers": "1" }))
             .await;
-        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[]);
+        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
     }
     assert_eq!(
         app.file_text(PRESETS).as_deref(),
@@ -1744,7 +1745,7 @@ async fn save_a_name_no_preset_can_carry_is_404_with_no_args() {
         let rep = app
             .save_on_revision(id, "0000000000000000", json!({ "ctx-size": "8192" }))
             .await;
-        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[]);
+        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
         assert!(app.no_write_asked(), "{id}: {:?}", app.calls());
         assert_eq!(app.file_text(PRESETS), None, "{id}: no file created");
         assert_eq!(app.file_text(DISABLED), None, "{id}: no file created");
@@ -1884,7 +1885,7 @@ async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_r
     assert_eq!(
         doc["revision"].as_str(),
         Some(written.as_str()),
-        "the 200's revision is the one GET /api/presets/alpha returns"
+        "the 200's revision is the one GET /api/profiles/model/alpha returns"
     );
     assert_eq!(
         doc["values"]["ctx-size"],
@@ -1977,7 +1978,7 @@ async fn save_no_changes_is_200_with_the_same_revision_and_no_write() {
     assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
 }
 
-/// A stale revision is 409 `preset-changed-elsewhere` with nothing written, the
+/// A stale revision is 409 `model-profile-changed-elsewhere` with nothing written, the
 /// session kept, and the file as it was. A body that changes nothing is
 /// answered the same way: the revision is compared before the text is compared.
 #[tokio::test]
@@ -1990,7 +1991,7 @@ async fn save_a_stale_revision_is_409_with_no_write() {
         let rep = app
             .save(ALPHA, &save_body(&stale, values.clone()), Some(&cookie))
             .await;
-        rep.assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+        rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
         assert!(
             app.no_write_asked(),
             "the revision is compared before the write: {:?}",
@@ -2018,7 +2019,7 @@ async fn save_a_revision_taken_from_the_other_file_is_409() {
     let rep = app
         .save_on_revision(ALPHA, &other, json!({ "ctx-size": "8192" }))
         .await;
-    rep.assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+    rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
     assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
     assert_eq!(app.file_text(DISABLED).as_deref(), Some(FILE_OFF));
@@ -2033,13 +2034,13 @@ async fn save_a_revision_of_another_router_is_409() {
     let rep = app
         .save_on_revision(ALPHA, &from_a, json!({ "ctx-size": "8192" }))
         .await;
-    rep.assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+    rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
     assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
 }
 
 /// The compare and swap found its file changed after the read: 409
-/// `preset-changed-elsewhere`, the write was asked, nothing landed, the session
+/// `model-profile-changed-elsewhere`, the write was asked, nothing landed, the session
 /// kept.
 #[tokio::test]
 async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
@@ -2053,7 +2054,7 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
             Some(&cookie),
         )
         .await;
-    rep.assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+    rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert_eq!(
         app.writes().len(),
         1,
@@ -2079,7 +2080,7 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
 /// 422 still marks the field the design's table gives for that rule, verbatim
 /// with the manager's own `args`. `field` is `args[0]` for the rules that name
 /// their key; `fit-target-format`, the MoE cache pair, the load-on-startup pair,
-/// `preset-no-model` and the `override-no-*` pair name a position, a count or
+/// `model-profile-no-model` and the `override-no-*` pair name a position, a count or
 /// nothing, so each maps to the key of its control; the pair about the preset's
 /// name marks no field at all (the next test). The section is never written, and
 /// a 422 is the manager's news about the values, not a refusal of the user: the
@@ -2115,7 +2116,7 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
         ("moe-cache-with-tensor-split", &[], "moe-cache-mib"),
         ("load-on-startup-over-max", &["4", "2"], "load-on-startup"),
         ("load-on-startup-unlimited", &["3"], "load-on-startup"),
-        ("preset-no-model", &[ALPHA], "model"),
+        ("model-profile-no-model", &[ALPHA], "model"),
         ("override-no-pattern", &["1"], "override-tensor"),
         (
             "override-no-device",
@@ -2161,7 +2162,7 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
 /// the section beside them, so the answer carries no `field` member at all.
 #[tokio::test]
 async fn save_a_refusal_about_the_name_carries_no_field() {
-    for key in ["invalid-preset-id", "preset-name-taken"] {
+    for key in ["invalid-model-profile-id", "model-profile-name-taken"] {
         let app = app_holding(FILE_ON, FILE_OFF);
         app.set_write_outcome(Outcome::Invalid {
             key,

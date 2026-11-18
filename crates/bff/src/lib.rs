@@ -265,12 +265,15 @@ fn router_with_policy(
             "/api/instances/{id}/server",
             axum::routing::get(read).put(save),
         )
-        .route("/api/presets", axum::routing::get(presets))
+        .route("/api/profiles/model", axum::routing::get(presets))
         .route(
-            "/api/presets/{id}",
+            "/api/profiles/model/{id}",
             axum::routing::get(read_preset).put(save_preset),
         )
-        .route("/api/presets/{id}/enabled", axum::routing::put(set_enabled))
+        .route(
+            "/api/profiles/model/{id}/enabled",
+            axum::routing::put(set_enabled),
+        )
         .merge(control::routes(connect, timeout, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))

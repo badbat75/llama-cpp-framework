@@ -1700,6 +1700,42 @@ Lessons only: the rules are in `AGENTS.md`.
   those in the report as the reds the coder's change greens, and never edit them in the red step. A
   checkbox's tab stop is named by its TOGGLE text (`<key>-toggle`), not by the field's label, so the
   table needs a label to toggle mapping; a boxed number adds a stop for its `field-default` box as well.
+  A field that needs a row KEY (the n-gram labels repeat: `Lookup n-gram` stands for three keys) joins
+  as `{ label, key, boxed? }`, and the union test is `'key' in field`, NEVER `typeof field === 'object'`:
+  `shown(...)` is an object with no `key`, so `fieldLabel` returns undefined and `labelText` dies
+  `Cannot read properties of undefined (reading 'shown')` in every test that calls `fieldLabels()`
+  (`PresetPage.test.tsx` 2d.67's button list). That red is a helper crash, not a behaviour gap.
+  Prove a table rule for a newly editable card by the DELTA of the tab list: the shared `presetDoc` read
+  holds `spec-type = ngram-mod,draft-mtp`, so the Speculative card adds exactly 9 stops (one
+  `field-default` per boxed field of an ENABLED group, one control stop per control whose key is in the
+  read: a boxed field whose key is ABSENT is ticked, so its box is tabbable and its input is not). Seven
+  tab-path reds by the same 9 is the proof; a delta that differs per fixture means the rule is not read
+  from the fixture.
+  Older tests that pin the newly editable card READ-ONLY stay green in the red step and red after the
+  coder, so list them: grep `src/*.test.tsx` for the card's key prefixes. For 2h.9: `PresetCards5`'s
+  2e.85 `test.each` of 16 "every control is natively disabled" cases and its 2e.91/113 local list of the
+  16 About toggles; `PresetFullValue`'s six tests that use `spec-draft-type-k` as their example of a
+  read-only select with a full-value line; `PresetFlags` 944, `PresetSave1` 635-686, `PresetSave7`
+  256/296. Retargeted in the green step, never in the red step.
+  A control a later slice inserts between the back link and the Engine field (2h.10's jump `<nav>`) is
+  retargeted ONCE, in the shared helper: `pageStartTabStops()` is the stops every whole-page tab test
+  expects before the Engine field, so the five cards files and PresetContent follow without each being
+  edited. Once a jump button carries a card title that title is no longer unique, so "no card `h3` is a tab
+  stop" compares tabbable ELEMENTS (`expect(tabbableElements(main)).not.toContain(h3)`, the h3 from a
+  `queryAllByRole('heading')`), never NAMES: a name list holds the ten titles twice (h3 and button) and a
+  name comparison is true whatever the code does. Per-row 422 alert shapes belong in the fixture table as an
+  expected-alert column (`''` = the plain `save-refused`, else `save-refused-at` + check text + field label +
+  card title), so both shapes stay in one TABLE of one file. A string the brief REMOVES is pinned by its
+  English literal (`expect(within(main).queryByText('Part of these settings ...')).toBeNull()`): `en()`
+  throws for a key the test EN table no longer carries, so the red reads as a helper typo. Pin it ABSENT plus
+  what replaces it where it sits, and scope the query `within(theCard)`: two cards carry the same paragraph
+  (`getMultipleElementsFoundError`), which is a fixture shape, not a code defect.
+- Typing into a control of a card that is not editable yet is a SILENT no-op: `fireEvent.change` on a
+  `disabled` input leaves the value, the form stays clean and the save bar inert, so a refusal test reds
+  at `findByText(en('save-invalid'))` after ~1 s and reads like a missing check. One debug print of
+  `.disabled` / `.value` / the box's `checked` tells it apart in a single run (the box is `<key>-box`,
+  the input `<key>-control`); report the red as "the field is not editable", not as "the check is
+  missing".
 - What a text field renders depends on `editable`: read-only is a `<label>` + input (`div.field`, NO
   `role="group"`), an editable field with a default box is a `<fieldset>` (`role="group"` named by the
   label). So a "no group named by the label, the textbox carries the name" pin is GREEN on a read-only
@@ -1713,6 +1749,18 @@ Lessons only: the rules are in `AGENTS.md`.
   `test('<criterion>: ...')` titles into several lines, and a run before that reformats looks like a
   changed test set. Prettier, ESLint and `tsc -b` stay silent on a pass, so quote the command line, not
   an output line.
+- To give every red its own reason in one file of 30, run
+  `npx vitest run <file> --reporter=json --outputFile=/tmp/opencode/x.json` and read
+  `testResults[0].assertionResults[].failureMessages[0]` with `node -e`: it prints title and first
+  message per test. `--reporter=basic` does not exist in this vitest (it dies at startup
+  "Failed to load custom Reporter from basic"), and the default reporter's `FAIL` lines are wrapped
+  with spacing, so `grep "FAIL src"` finds nothing.
+- A `fe/src/PresetSaveN.test.tsx` is self-contained: it imports only `./test/bff.ts` and
+  `./strings.ts` and repeats the helpers of the earlier files ("a test file imports no other test
+  file"). A context summary recites helpers from `fe/src/test/presetCards.ts` (`specGroupEnabled`,
+  `select`, `EDITABLE_FIELDS`) that the file does not have: grep the file's own `function` lines, and
+  read the group table (`GROUPS: { name, fields }`) for the keys, since the card's own keys
+  (`spec-type`, `spec-draft-type-k`) are not all in it.
 
 ## Windows service glue (the manager, cfg(windows) entry)
 
@@ -1826,7 +1874,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - Re-read the source for every patch anchor just before the run: a context summary recites functions
   the file does not have (a summary named `flagsOf`, `isEditable`, `hasText`, `buildSaveRows`; today
   the same rules live in the `CARDS` table's `editable` flag, `ruleLocked`, `shown`, `selectState`,
-  `selectSend`, `editableWritten`). A driver that reports "anchor not unique" caught all four.
+  `selectSend`, `editableWritten`). A driver that reports "anchor not unique" caught all four. The same holds for a quoted acceptance criterion: re-read it in
+   `fe/briefs/<slice>.md` before retargeting, and grep the bare number (a criterion is a numbered list item
+   ` 196.`, so `/^- \*\*196\*\*/` matches nothing and reads as "the brief has no 196").
 - A mutant is a survivor only after a FULL-suite run: of 19, three were killed by files outside the
   slice's own (the 176 lock rule is pinned in `PresetCards4.test.tsx`, the sends in `PresetSave12`).
 - The surviving mutants of 2h.7 were the readings no control reaches: a tri-state select's option
@@ -1837,3 +1887,33 @@ Lessons only: the rules are in `AGENTS.md`.
 - A patch that only changes a value nothing reads is no test at all: making a checkbox row
   `editable: true` adds no save row while the page's `boxed` map holds no entry for it. Design the
   mutant where a real decision is reached, and say in the report which ones cannot be reached.
+
+## Wire renames (routes, error keys, strings keys)
+
+- Before flipping a key, check it exists today (`grep -c '^<key> = ' crates/core/strings/*.toml`, and
+  `grep -rn '"<key>"' crates`): a design's rename list names keys of the whole target state, and four of
+  the ten do not exist yet (`preset-over-memory`, `preset-model-missing`, `client-no-presets`,
+  `preset-engine-mismatch`). Renaming a key that is not there invents a red no coder can pass.
+- A wire rename touches assertions that live in PRODUCTION files (core's `checks.rs` `mod tests`, the
+  manager's `dbus.rs` / `pipe.rs` / `service.rs`, app's `presets.rs`): flip with a LINE-RANGE sed from the
+  file's first test marker (`sed -i '802,$ {s/"old"/"new"/g}'`, the marker line from
+  `grep -n 'cfg(test)'`), never the whole file, and never a whole file where `#[cfg(test)]` sits on
+  single items (app's `presets.rs`: ten of them from line 66, so address the exact lines). Prove the split
+  after: the old spelling must remain ONLY on production lines.
+- A strings-key rename is pinned on both sides in `crates/core/src/checks.rs` (it reads both files with
+  `include_str!`): the new key resolves in `cli.toml` AND `en_US.toml` with today's text byte for byte
+  (the texts were already reworded, so equality is the pin), and `!table.contains_key("<old>")` for each
+  old name. `KEYS.contains` in the existing `every_refusal_key_is_known_and_in_both_strings_files` is what
+  makes the core list part of the rename.
+- The bff's own keys (`model-profiles-malformed`, `model-profile-changed-elsewhere`) are in NO strings
+  file: pin them in `crates/bff/tests` only. The four the manager and core emit are in both files.
+- A route move: pin the OLD path as the router's bare 404 in one new test (status + `content_type == ""`
+  + body `""` + zero connects + the session survives): it is red today (the old route answers 200) and
+  greens when the route is gone. Do not rename the GUI's display keys (`deleted-preset`,
+  `preset-id-charset` in `GUI_ONLY_KEYS`, `by_label(&app, "preset-ctx-size")`): the wire slice renames
+  only the keys the wire emits, and those keys drag every `.slint` and the GUI tabs in.
+- In `data_root_e2e` crates (core, manager, app) a key rename reds at the FIRST phase that asserts it, so
+  the later phases' pins of the same key (the manager's `pipe_client` / `dbus_client` phase asserts) cannot
+  go red on their own today: report them as blocked, and name the phases that DO prove the mechanism
+  (core's `a_refusal_round_trips_through_its_wire_form` for the wire encode, the manager's
+  `every_error_has_its_name_and_reads_back` for the D-Bus name).

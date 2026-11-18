@@ -1,4 +1,4 @@
-//! `PUT /api/presets/{id}/enabled`: the preset on/off switch of the Models
+//! `PUT /api/profiles/model/{id}/enabled`: the preset on/off switch of the Models
 //! page (PLAN.md step 10, item 11b; ARCHITECTURE.md "The switch on and off
 //! (item 11b)"; `fe/briefs/api-contract.md`), through
 //! `pai_bff::router_with_session` with a fake manager client and a fake
@@ -20,17 +20,17 @@
 //!
 //! The rule (the design's slice 5):
 //! - the body is `{"enabled": true|false}`; anything else is 400
-//!   `presets-malformed`, with the manager not asked;
+//!   `model-profiles-malformed`, with the manager not asked;
 //! - a session is needed: none, or an unknown one, is 401 `session-required`
 //!   and the manager is not connected to, so nothing is written. The switch
 //!   acts for the signed-in user: `Connect` is asked once, with that user as
 //!   the principal; a request naming a user is never believed.
 //! - the id is a section name, matched in any letter case, never a path: the
 //!   two file names are fixed, so nothing comes from the URL. An id neither
-//!   file holds is 404 `no-preset-named` with `args: [id]`.
+//!   file holds is 404 `no-model-profile-named` with `args: [id]`.
 //! - llama-server's global `[*]` section is not a preset: it is the defaults
 //!   every preset starts from, it is never a row of the list, and a switch
-//!   naming it is 404 `no-preset-named` (the id check refuses `*`, so with
+//!   naming it is 404 `no-model-profile-named` (the id check refuses `*`, so with
 //!   `args: []`) with the files untouched. Moved to the disabled file it would
 //!   silently stop applying to every model, and no list row would be left to
 //!   switch it back.
@@ -45,13 +45,13 @@
 //!   swap refuses a missing file with `Changed`, so it cannot create it.
 //! - an id that is already where it is asked for answers 200 and writes
 //!   nothing.
-//! - 409 `preset-changed-elsewhere` (args: none) when a compare and swap
+//! - 409 `model-profile-changed-elsewhere` (args: none) when a compare and swap
 //!   found its file changed. When it answers the SECOND write the preset is
 //!   in both files: it reads enabled, and the next switch of that preset
 //!   mends it.
 //! - 422 `{"key", "args", "field"}` for the manager's refusal of the moved
 //!   section, `field` by the design's table (`load-on-startup` for both
-//!   `load-on-startup-*`, no `field` for `invalid-preset-id`), and nothing is
+//!   `load-on-startup-*`, no `field` for `invalid-model-profile-id`), and nothing is
 //!   written.
 //! - 403 `session-not-administrator` (the served sibling rule: the sign-in's
 //!   key for the same fact, and the session ends) when the manager refuses
@@ -872,7 +872,7 @@ impl Reply {
     }
 
     /// A 422 refusal that names no field: `{"key", "args"}`, with no `field`
-    /// member (`invalid-preset-id`, `preset-name-taken`).
+    /// member (`invalid-model-profile-id`, `model-profile-name-taken`).
     fn assert_refused_without_field(&self, key: &str, args: &[&str]) {
         assert_eq!(
             self.status,
@@ -1160,7 +1160,7 @@ impl App {
             .await
     }
 
-    /// `PUT /api/presets/{id}/enabled` with the body the web sends.
+    /// `PUT /api/profiles/model/{id}/enabled` with the body the web sends.
     async fn switch(&self, id: &str, body: &Value, cookie: Option<&str>) -> Reply {
         self.switch_raw(id, &body.to_string(), cookie, &[]).await
     }
@@ -1176,7 +1176,7 @@ impl App {
     ) -> Reply {
         let mut builder = Request::builder()
             .method(Method::PUT)
-            .uri(format!("/api/presets/{id}/enabled"))
+            .uri(format!("/api/profiles/model/{id}/enabled"))
             .header(header::CONTENT_TYPE, "application/json");
         if let Some(c) = cookie {
             builder = builder.header(header::COOKIE, c);
@@ -1201,10 +1201,10 @@ impl App {
         self.switch(id, body, Some(&cookie)).await
     }
 
-    /// Signed in as `alice`, `GET /api/presets`.
+    /// Signed in as `alice`, `GET /api/profiles/model`.
     async fn list(&self) -> Reply {
         let cookie = self.sign_in().await;
-        self.get("/api/presets", Some(&cookie)).await
+        self.get("/api/profiles/model", Some(&cookie)).await
     }
 
     /// One request through the router, under the deadline every request runs
@@ -1315,7 +1315,7 @@ async fn switch_with_a_foreign_origin_is_refused_before_the_manager_is_read() {
 async fn switch_body_not_an_object_is_400() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on_body(QWEN, &json!("off")).await;
-    rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+    rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
 }
@@ -1326,7 +1326,7 @@ async fn switch_body_not_an_object_is_400() {
 async fn switch_body_enabled_a_number_is_400_nothing_is_read() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on_body(QWEN, &json!({ "enabled": 0 })).await;
-    rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+    rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
 }
@@ -1336,7 +1336,7 @@ async fn switch_body_enabled_a_number_is_400_nothing_is_read() {
 async fn switch_body_missing_enabled_is_400() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on_body(QWEN, &json!({})).await;
-    rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+    rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
 }
@@ -1350,19 +1350,19 @@ async fn switch_body_that_is_no_json_is_400() {
     let cookie = app.sign_in().await;
     for body in ["{", "", "not json at all", "[\"enabled\"]"] {
         let rep = app.switch_raw(QWEN, body, Some(&cookie), &[]).await;
-        rep.assert_error(StatusCode::BAD_REQUEST, "presets-malformed");
+        rep.assert_error(StatusCode::BAD_REQUEST, "model-profiles-malformed");
     }
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
 }
 
 /// The contract's answer for a name no preset has, in either file: 404
-/// `no-preset-named` with the id as its only arg, and no write.
+/// `no-model-profile-named` with the id as its only arg, and no write.
 #[tokio::test]
 async fn switch_unknown_name_is_404_no_file_is_written() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on("nope", false).await;
-    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &["nope"]);
+    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &["nope"]);
     assert_eq!(
         app.file_text(PRESETS).as_deref(),
         Some(FILE_ON),
@@ -1382,7 +1382,7 @@ async fn switch_unknown_name_is_404_no_file_is_written() {
 async fn switch_with_no_preset_file_is_404_and_creates_nothing() {
     let app = app_no_files();
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[QWEN]);
+    rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[QWEN]);
     assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
@@ -1410,7 +1410,7 @@ model = /models/alpha.gguf\r\n\
     let app = app_holding(on, FILE_OFF);
     for id in ["*", "%2A", "%5B%2A%5D"] {
         let rep = app.switch_on(id, false).await;
-        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-preset-named", &[]);
+        rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
     }
     assert_eq!(
         app.file_text(PRESETS).as_deref(),
@@ -1748,7 +1748,7 @@ async fn switch_is_the_only_method_the_switch_path_serves() {
         let cookie = app.sign_in().await;
         let mut builder = Request::builder()
             .method(method.clone())
-            .uri(format!("/api/presets/{QWEN}/enabled"));
+            .uri(format!("/api/profiles/model/{QWEN}/enabled"));
         if method == Method::POST {
             builder = builder.header(header::CONTENT_TYPE, "application/json");
         }
@@ -1859,7 +1859,7 @@ async fn switch_a_name_that_cannot_be_a_section_is_404_and_creates_no_file() {
                 &[],
             )
             .await;
-        rep.assert_error(StatusCode::NOT_FOUND, "no-preset-named");
+        rep.assert_error(StatusCode::NOT_FOUND, "no-model-profile-named");
         assert!(app.no_write_asked(), "{id}: {:?}", app.calls());
         assert_eq!(
             app.file_text(PRESETS),
@@ -1879,7 +1879,7 @@ async fn switch_a_name_that_cannot_be_a_section_is_404_and_creates_no_file() {
 // ---------------------------------------------------------------------------
 
 /// The compare and swap of the destination found its file changed after the
-/// read: 409 `preset-changed-elsewhere`, nothing moved, the session kept. The
+/// read: 409 `model-profile-changed-elsewhere`, nothing moved, the session kept. The
 /// web UI reloads the list.
 #[tokio::test]
 async fn switch_changed_on_the_first_write_is_409_and_moves_nothing() {
@@ -1891,7 +1891,7 @@ async fn switch_changed_on_the_first_write_is_409_and_moves_nothing() {
         .switch(QWEN, &json!({ "enabled": false }), Some(&cookie))
         .await;
 
-    rep.assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+    rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert_eq!(
         app.writes().len(),
         1,
@@ -1924,7 +1924,7 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
 
     app.switch_on(QWEN, false)
         .await
-        .assert_error(StatusCode::CONFLICT, "preset-changed-elsewhere");
+        .assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert_eq!(
         app.writes().len(),
         2,
@@ -2022,13 +2022,13 @@ async fn switch_refused_for_a_key_of_the_moved_section_is_422_on_that_field() {
 async fn switch_refused_without_a_key_to_mark_is_422_with_no_field() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.set_write_outcome(Outcome::Invalid {
-        key: "invalid-preset-id",
+        key: "invalid-model-profile-id",
         values: vec![QWEN.into()],
     });
 
     app.switch_on(QWEN, false)
         .await
-        .assert_refused_without_field("invalid-preset-id", &[QWEN]);
+        .assert_refused_without_field("invalid-model-profile-id", &[QWEN]);
     assert_eq!(
         app.file_text(PRESETS).as_deref(),
         Some(FILE_ON),

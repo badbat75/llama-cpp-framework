@@ -1,4 +1,4 @@
-//! The body of `PUT /api/presets/{id}` on its own: the new text of the preset
+//! The body of `PUT /api/profiles/model/{id}` on its own: the new text of the preset
 //! file, a 400, or a 422, out of the request body, the text of the file and the
 //! preset's id. No manager, no session, no route and no write: those belong to
 //! the rest of "Saving a preset from the web" in `ARCHITECTURE.md`. The web page
@@ -141,12 +141,12 @@ fn refused_of(body: &str, file_text: &str, id: &str) -> (String, Vec<String>, St
     }
 }
 
-/// A body that must be refused with 400 `presets-malformed`.
+/// A body that must be refused with 400 `model-profiles-malformed`.
 fn assert_malformed(body: &str, file_text: &str, id: &str) {
     let answer = body_to_text(body.as_bytes(), file_text, id);
     assert!(
         matches!(answer, PresetBodyAnswer::Malformed),
-        "expected 400 presets-malformed, got {answer:?} for body {body:?}"
+        "expected 400 model-profiles-malformed, got {answer:?} for body {body:?}"
     );
 }
 

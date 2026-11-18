@@ -1255,7 +1255,7 @@ pub(crate) fn manager_dbus_checks_e2e() {
     assert_eq!(name, invalid);
     assert_eq!(
         Refusal::decode(&message),
-        Some(refusal("invalid-preset-id", &["Qwen 3 (v2) é"])),
+        Some(refusal("invalid-model-profile-id", &["Qwen 3 (v2) é"])),
         "{message:?}"
     );
     let (name, message) = write(

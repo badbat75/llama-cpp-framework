@@ -245,10 +245,10 @@ pub(crate) async fn set_enabled(
     };
     let body = match body {
         Ok(body) => body,
-        Err(rejection) => return body_refusal(&rejection, "presets-malformed"),
+        Err(rejection) => return body_refusal(&rejection, "model-profiles-malformed"),
     };
     let Some(enabled) = flag(&headers, &body) else {
-        return error(StatusCode::BAD_REQUEST, "presets-malformed", &[]);
+        return error(StatusCode::BAD_REQUEST, "model-profiles-malformed", &[]);
     };
     let user = identity.user;
     // The writes' state, shared with the task. From the moment the task sends
@@ -414,7 +414,7 @@ fn switch_failure(
     write_asked: bool,
 ) -> Response {
     match failure {
-        ClientError::Changed => error(StatusCode::CONFLICT, "preset-changed-elsewhere", &[]),
+        ClientError::Changed => error(StatusCode::CONFLICT, "model-profile-changed-elsewhere", &[]),
         ClientError::Invalid(refusal) => refused(
             refusal.key,
             &refusal.values,
@@ -451,11 +451,11 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         "load-on-startup-over-max" | "load-on-startup-unlimited" => {
             Some("load-on-startup".to_string())
         }
-        "preset-no-model" => Some("model".to_string()),
+        "model-profile-no-model" => Some("model".to_string()),
         "fit-target-format" => Some("fit-target".to_string()),
         "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
-        "invalid-preset-id" | "preset-name-taken" => None,
+        "invalid-model-profile-id" | "model-profile-name-taken" => None,
         _ => args.first().cloned(),
     }
 }
@@ -480,7 +480,7 @@ fn not_found(id: &str) -> Response {
     let args: Vec<&str> = if echo { vec![id] } else { Vec::new() };
     (
         StatusCode::NOT_FOUND,
-        axum::Json(json!({ "key": "no-preset-named", "args": args })),
+        axum::Json(json!({ "key": "no-model-profile-named", "args": args })),
     )
         .into_response()
 }
@@ -700,15 +700,15 @@ pub(crate) async fn save(
     };
     let body = match body {
         Ok(body) => body,
-        Err(rejection) => return body_refusal(&rejection, "presets-malformed"),
+        Err(rejection) => return body_refusal(&rejection, "model-profiles-malformed"),
     };
     let Some(body) = json_body(&headers, &body) else {
-        return error(StatusCode::BAD_REQUEST, "presets-malformed", &[]);
+        return error(StatusCode::BAD_REQUEST, "model-profiles-malformed", &[]);
     };
     let (sent, edits) = match parse_body(&body) {
         Ok(pair) => pair,
         Err(BodyError::Malformed) => {
-            return error(StatusCode::BAD_REQUEST, "presets-malformed", &[])
+            return error(StatusCode::BAD_REQUEST, "model-profiles-malformed", &[])
         }
         Err(BodyError::Refused { key, args, field }) => return refused(&key, &args, Some(&field)),
     };
@@ -726,7 +726,7 @@ pub(crate) async fn save(
         return not_found(&id);
     };
     if section_revision(&file, &text, &id, &key) != sent {
-        return error(StatusCode::CONFLICT, "preset-changed-elsewhere", &[]);
+        return error(StatusCode::CONFLICT, "model-profile-changed-elsewhere", &[]);
     }
     let new_text = apply(&edits, &text, &id);
     let written = section_revision(&file, &new_text, &id, &key);

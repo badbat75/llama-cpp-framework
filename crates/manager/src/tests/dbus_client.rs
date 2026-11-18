@@ -435,7 +435,7 @@ pub(crate) fn manager_dbus_client_e2e() {
                 false
             ),
             Err(ClientError::Invalid(Refusal {
-                key: "invalid-preset-id",
+                key: "invalid-model-profile-id",
                 values: vec!["Qwen 3 (v2) é".into()],
             }))
         );

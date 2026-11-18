@@ -961,8 +961,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     is agreed with the web UI session first. Left from the web UI session's UX pass: hashed assets with
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
-13a. Sub-slices 4a1 (the files: `models.ini`, `models.ini.disabled`, `models@<id>.ini`) and 4a2 (`pai
-    model-profile`, the word in displayed texts) done 2026-11-18; left in 4a: Rust names and comments (with
+13a. Sub-slices 4a1 (the files: `models.ini`, `models.ini.disabled`, `models@<id>.ini`), 4a2 (`pai
+    model-profile`, the word in displayed texts) and 4b (the bff's `/api/profiles/model` routes and the six
+    renamed error keys; the web UI renames next) done 2026-11-18; `pai bench run --preset` becomes
+    `--model-profile` (user, 2026-11-18), in 4a3; left in 4a: Rust names and comments (with
     the stale `pai preset` comments, `binding_lint.rs` ~1020 `model profile list` without the hyphen, the
     desktop entry's Comment in `migration.rs` ~201), whether `bench run --preset` is renamed; 4b the wire names with the web UI;
     then the docs (the READMEs, `crates/config/AGENTS.md`, `installer/AGENTS.md`, `docs/`).

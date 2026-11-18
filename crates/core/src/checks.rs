@@ -23,9 +23,9 @@ pub const KEYS: &[&str] = &[
     "comment-markers",
     "load-on-startup-over-max",
     "load-on-startup-unlimited",
-    "invalid-preset-id",
-    "preset-no-model",
-    "preset-name-taken",
+    "invalid-model-profile-id",
+    "model-profile-no-model",
+    "model-profile-name-taken",
     "fit-target-format",
     "override-no-pattern",
     "override-no-device",
@@ -87,9 +87,9 @@ impl Refusal {
                 strings::fill("load-on-startup-over-max", &[&v(0), &v(1)])
             }
             "load-on-startup-unlimited" => strings::fill("load-on-startup-unlimited", &[&v(0)]),
-            "invalid-preset-id" => strings::fill("invalid-preset-id", &[&v(0)]),
-            "preset-no-model" => strings::fill("preset-no-model", &[&v(0)]),
-            "preset-name-taken" => strings::fill("preset-name-taken", &[&v(0)]),
+            "invalid-model-profile-id" => strings::fill("invalid-model-profile-id", &[&v(0)]),
+            "model-profile-no-model" => strings::fill("model-profile-no-model", &[&v(0)]),
+            "model-profile-name-taken" => strings::fill("model-profile-name-taken", &[&v(0)]),
             "fit-target-format" => strings::fill("fit-target-format", &[&v(0), &v(1)]),
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
@@ -404,7 +404,7 @@ pub fn valid_preset_id(id: &str) -> bool {
 /// A preset id that can be a section name, not empty.
 pub fn preset_id(id: &str) -> Result<(), Refusal> {
     if id.is_empty() || !valid_preset_id(id) {
-        Err(Refusal::new("invalid-preset-id", &[&id]))
+        Err(Refusal::new("invalid-model-profile-id", &[&id]))
     } else {
         Ok(())
     }
@@ -413,7 +413,7 @@ pub fn preset_id(id: &str) -> Result<(), Refusal> {
 /// A preset names a model file: `model`, the value as read, not blank.
 pub fn preset_model(id: &str, model: &str) -> Result<(), Refusal> {
     if model.trim().is_empty() {
-        Err(Refusal::new("preset-no-model", &[&id]))
+        Err(Refusal::new("model-profile-no-model", &[&id]))
     } else {
         Ok(())
     }
@@ -696,7 +696,7 @@ fn preset_sections(
         }
         let earlier = new[..j].iter().find(|o| o.id.eq_ignore_ascii_case(&s.id));
         if earlier.is_some_and(|o| mine || changed(o)) {
-            return Err(Refusal::new("preset-name-taken", &[&s.id]));
+            return Err(Refusal::new("model-profile-name-taken", &[&s.id]));
         }
     }
     Ok(flagged)
@@ -792,7 +792,7 @@ pub fn preset_ids_free(new: &str, old: &str, other: &str) -> Result<(), Refusal>
         let id_in =
             |sections: &[RawSection]| sections.iter().any(|o| o.id.eq_ignore_ascii_case(&s.id));
         if !id_in(&old) && id_in(&other) && !unchanged_in(&s, &other) {
-            return Err(Refusal::new("preset-name-taken", &[&s.id]));
+            return Err(Refusal::new("model-profile-name-taken", &[&s.id]));
         }
     }
     Ok(())
@@ -810,9 +810,9 @@ mod tests {
         "comment-markers",
         "load-on-startup-over-max",
         "load-on-startup-unlimited",
-        "invalid-preset-id",
-        "preset-no-model",
-        "preset-name-taken",
+        "invalid-model-profile-id",
+        "model-profile-no-model",
+        "model-profile-name-taken",
         "fit-target-format",
         "override-no-pattern",
         "override-no-device",
@@ -912,6 +912,48 @@ top-p = 0.95\r\n";
         }
     }
 
+    /// The wire names (`ARCHITECTURE.md`, "Renamed error keys", `PLAN.md`
+    /// step 10 item 13a sub-slice 4b): the key of a refusal is on the wire, so
+    /// the renamed key resolves in BOTH strings files, carries the text it has
+    /// today, and the old name is gone.
+    #[test]
+    fn the_renamed_keys_resolve_with_their_text() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        for (key, text) in [
+            (
+                "invalid-model-profile-id",
+                "invalid model profile id `{0}`: use letters, digits, '.', '-', '_'",
+            ),
+            (
+                "model-profile-no-model",
+                "model profile `{0}` names no model: every model profile needs a `model` path",
+            ),
+            (
+                "model-profile-name-taken",
+                "a model profile named `{0}` already exists",
+            ),
+            ("no-model-profile-named", "no model profile named `{0}`"),
+        ] {
+            for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                assert_eq!(
+                    table.get(key).map(String::as_str),
+                    Some(text),
+                    "{key}: {name}"
+                );
+            }
+        }
+        for old in [
+            "invalid-preset-id",
+            "preset-no-model",
+            "preset-name-taken",
+            "no-preset-named",
+        ] {
+            assert!(!cli.contains_key(old), "{old} still in cli.toml");
+            assert!(!gui.contains_key(old), "{old} still in en_US.toml");
+        }
+    }
+
     #[test]
     fn the_new_number_key_takes_the_key_the_text_and_the_bounds() {
         for file in [
@@ -923,9 +965,13 @@ top-p = 0.95\r\n";
                 .get("not-whole-number-in-range")
                 .expect("not-whole-number-in-range");
             assert_eq!(placeholders(text), 4, "{text:?}");
-            let named = table.get("preset-no-model").expect("preset-no-model");
+            let named = table
+                .get("model-profile-no-model")
+                .expect("model-profile-no-model");
             assert_eq!(placeholders(named), 1, "{named:?}");
-            let taken = table.get("preset-name-taken").expect("preset-name-taken");
+            let taken = table
+                .get("model-profile-name-taken")
+                .expect("model-profile-name-taken");
             assert_eq!(placeholders(taken), 1, "{taken:?}");
         }
     }
@@ -955,7 +1001,7 @@ top-p = 0.95\r\n";
             not_int("Port", "", &(1..=65535)),
             refusal("fit-target-format", &["2048 MiB, x", "MiB"]),
             refusal("override-no-device", &["1", r"blk\.0\.ffn_up_exps = x"]),
-            refusal("invalid-preset-id", &["Qwen 3 (v2) é"]),
+            refusal("invalid-model-profile-id", &["Qwen 3 (v2) é"]),
         ] {
             let wire = r.encode();
             assert!(wire.starts_with(r.key), "key first: {wire:?}");
@@ -1252,7 +1298,7 @@ top-p = 0.95\r\n";
         for bad in ["", "has space", "a;b", "sec]tion"] {
             assert_eq!(
                 presets(&section(bad, "")),
-                Err(refusal("invalid-preset-id", &[bad])),
+                Err(refusal("invalid-model-profile-id", &[bad])),
                 "[{bad}]"
             );
         }
@@ -1265,11 +1311,11 @@ top-p = 0.95\r\n";
     fn a_preset_must_name_its_model() {
         assert_eq!(
             presets("[m]\nctx-size = 8192\n"),
-            Err(refusal("preset-no-model", &["m"]))
+            Err(refusal("model-profile-no-model", &["m"]))
         );
         assert_eq!(
             presets("[m]\nmodel =\nctx-size = 8192\n"),
-            Err(refusal("preset-no-model", &["m"]))
+            Err(refusal("model-profile-no-model", &["m"]))
         );
     }
 
@@ -1278,7 +1324,7 @@ top-p = 0.95\r\n";
         let text = format!("{}{}", section("Qwen3-8B", ""), section("qwen3-8b", ""));
         assert_eq!(
             presets(&text),
-            Err(refusal("preset-name-taken", &["qwen3-8b"]))
+            Err(refusal("model-profile-name-taken", &["qwen3-8b"]))
         );
     }
 
@@ -1723,7 +1769,7 @@ top-p = 0.95\r\n";
         let key_case = "[a]\nMODEL = a.gguf ; Q8\nctx-size = 8192\n";
         assert_eq!(
             presets_file(key_case, COMMENTED, "", None),
-            Err(refusal("preset-no-model", &["a"]))
+            Err(refusal("model-profile-no-model", &["a"]))
         );
     }
 
@@ -1757,18 +1803,18 @@ top-p = 0.95\r\n";
         let enabled = section("Qwen3.8-27B", "ctx-size = 16384\n");
         assert_eq!(
             preset_ids_free(&enabled, "", &parked),
-            Err(refusal("preset-name-taken", &["Qwen3.8-27B"]))
+            Err(refusal("model-profile-name-taken", &["Qwen3.8-27B"]))
         );
         let other_case = section("qwen3.8-27b", "ctx-size = 16384\n");
         assert_eq!(
             preset_ids_free(&other_case, "", &parked),
-            Err(refusal("preset-name-taken", &["qwen3.8-27b"]))
+            Err(refusal("model-profile-name-taken", &["qwen3.8-27b"]))
         );
         // Beside the presets already in the file.
         let kept = section("Qwen3.8-Flash-Next", "");
         assert_eq!(
             preset_ids_free(&format!("{kept}{enabled}"), &kept, &parked),
-            Err(refusal("preset-name-taken", &["Qwen3.8-27B"]))
+            Err(refusal("model-profile-name-taken", &["Qwen3.8-27B"]))
         );
     }
 
@@ -1781,7 +1827,7 @@ top-p = 0.95\r\n";
         let other = section("B", "ctx-size = 8192\n");
         assert_eq!(
             preset_ids_free(&renamed, &old, &other),
-            Err(refusal("preset-name-taken", &["b"]))
+            Err(refusal("model-profile-name-taken", &["b"]))
         );
     }
 

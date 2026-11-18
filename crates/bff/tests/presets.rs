@@ -1,10 +1,10 @@
-//! `GET /api/presets`: the preset list of the Models page, read through the
+//! `GET /api/profiles/model`: the preset list of the Models page, read through the
 //! manager as the signed-in user, through `pai_bff::router_with_session` with
 //! a fake manager client and a fake authenticator (never the real bus, pipe,
 //! PAM or LogonUser). Each request runs under a deadline, so a bff that waits
 //! on the manager fails instead of hanging.
 //!
-//! The answer (fe/briefs/api-contract.md, `GET /api/presets`): 200 and
+//! The answer (fe/briefs/api-contract.md, `GET /api/profiles/model`): 200 and
 //! `[{"id", "engine", "engineAvailable", "enabled", "model"}]`, one entry per
 //! section of the engine's `models.ini` (enabled true) and
 //! `models.ini.disabled` (enabled false), read as the session's user:
@@ -478,16 +478,16 @@ impl App {
         }
     }
 
-    /// Signed in as `alice`, `GET /api/presets`.
+    /// Signed in as `alice`, `GET /api/profiles/model`.
     async fn list(&self) -> Reply {
         let cookie = self.sign_in().await;
-        self.get("/api/presets", Some(&cookie)).await
+        self.get("/api/profiles/model", Some(&cookie)).await
     }
 
-    /// Signed in as `user`, `GET /api/presets`.
+    /// Signed in as `user`, `GET /api/profiles/model`.
     async fn list_as(&self, user: &str) -> Reply {
         let cookie = self.sign_in_as(user).await;
-        self.get("/api/presets", Some(&cookie)).await
+        self.get("/api/profiles/model", Some(&cookie)).await
     }
 }
 
@@ -548,7 +548,7 @@ impl Reply {
 #[tokio::test]
 async fn without_a_session_it_is_session_required_and_the_manager_is_not_asked() {
     let app = app_holding(FILE_ON, FILE_OFF);
-    let r = app.get("/api/presets", None).await;
+    let r = app.get("/api/profiles/model", None).await;
     r.assert_error(StatusCode::UNAUTHORIZED, "session-required");
     assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
@@ -566,7 +566,7 @@ async fn an_unknown_session_is_session_required() {
     let _real = app.sign_in().await;
     let r = app
         .get(
-            "/api/presets",
+            "/api/profiles/model",
             Some(&format!("pai_session={}", "ab".repeat(32))),
         )
         .await;
@@ -618,7 +618,7 @@ async fn a_name_in_the_request_is_never_the_principal() {
     let cookie = app.sign_in_as("alice").await;
     let rows = app
         .get_with(
-            "/api/presets?user=root",
+            "/api/profiles/model?user=root",
             Some(&cookie),
             &[("x-user", "root"), ("x-principal", "root")],
         )
@@ -653,7 +653,7 @@ async fn the_read_asks_only_the_two_preset_files() {
 async fn a_refused_user_is_answered_403_and_signed_out() {
     let app = app_refusing(&["alice"], FILE_ON, FILE_OFF);
     let cookie = app.sign_in().await;
-    app.get("/api/presets", Some(&cookie))
+    app.get("/api/profiles/model", Some(&cookie))
         .await
         .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&cookie))
@@ -679,13 +679,13 @@ async fn a_refusal_ends_that_session_and_no_other() {
     let app = app_refusing(&["root"], FILE_ON, FILE_OFF);
     let alice = app.sign_in_as("alice").await;
     let root = app.sign_in_as("root").await;
-    app.get("/api/presets", Some(&root))
+    app.get("/api/profiles/model", Some(&root))
         .await
         .assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     app.get("/api/session", Some(&root))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
-    let rows = app.get("/api/presets", Some(&alice)).await.rows();
+    let rows = app.get("/api/profiles/model", Some(&alice)).await.rows();
     assert_eq!(rows.len(), 5, "alice is answered: {rows:?}");
     app.get("/api/session", Some(&alice))
         .await
@@ -721,7 +721,7 @@ async fn a_manager_too_slow_is_unavailable() {
     app.set_read_pause_ms(2000);
     let cookie = app.sign_in().await;
     let started = Instant::now();
-    app.get("/api/presets", Some(&cookie))
+    app.get("/api/profiles/model", Some(&cookie))
         .await
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     let took = started.elapsed();
@@ -761,7 +761,7 @@ async fn a_failure_that_is_not_a_refusal_keeps_the_session() {
     ] {
         let app = app_read_failing(failure);
         let cookie = app.sign_in().await;
-        app.get("/api/presets", Some(&cookie))
+        app.get("/api/profiles/model", Some(&cookie))
             .await
             .assert_error(status, key);
         app.get("/api/session", Some(&cookie))
@@ -779,7 +779,7 @@ async fn presets_refuse_another_method_without_asking_the_manager() {
         let cookie = app.sign_in().await;
         let request = Request::builder()
             .method(method.clone())
-            .uri("/api/presets")
+            .uri("/api/profiles/model")
             .header(header::COOKIE, cookie)
             .body(Body::empty())
             .expect("request");
@@ -787,7 +787,7 @@ async fn presets_refuse_another_method_without_asking_the_manager() {
         assert_eq!(
             r.status,
             StatusCode::METHOD_NOT_ALLOWED,
-            "{method} /api/presets: {}",
+            "{method} /api/profiles/model: {}",
             r.body
         );
         assert_eq!(
@@ -797,6 +797,39 @@ async fn presets_refuse_another_method_without_asking_the_manager() {
         );
         assert!(app.calls().is_empty(), "{method}: {:?}", app.calls());
     }
+}
+
+/// The routes moved to `/api/profiles/model...`, so the preset paths are paths
+/// the router does not route: its own 404, with no body, no content type and no
+/// manager call, signed in like anywhere else. A reply of the app (`{"key",
+/// "args"}`) here would mean a preset route is still served.
+#[tokio::test]
+async fn the_old_preset_paths_are_the_routers_404_with_no_body() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    let cookie = app.sign_in().await;
+    for (method, uri) in [
+        (Method::GET, "/api/presets"),
+        (Method::GET, "/api/presets/alpha"),
+        (Method::PUT, "/api/presets/alpha"),
+        (Method::PUT, "/api/presets/alpha/enabled"),
+    ] {
+        let request = Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("request");
+        let r = app.send(request).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{method} {uri}");
+        assert_eq!(r.content_type, "", "{method} {uri}: content type");
+        assert_eq!(r.body, "", "{method} {uri}: body");
+    }
+    assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
+    assert!(app.calls().is_empty(), "{:?}", app.calls());
+    // The session is untouched: an unknown path is not a refusal.
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
 }
 
 // ── What it answers ─────────────────────────────────────────────────────

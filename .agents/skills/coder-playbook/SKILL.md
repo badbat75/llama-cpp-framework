@@ -897,9 +897,31 @@ Lessons only: the rules are in `AGENTS.md`.
   literal `const DISABLED_FILE_HEADER: &str = "` in THAT file, so "move the const to `pai-core`" turns a
   green test red; the same test keeps the two copies equal.
 - The bff's refusal keys are literals in the code, not `strings::t` calls, and no lint pins the set:
-  `server-malformed` and `boot-malformed` have no `en_US.toml` entry, so `presets-malformed`,
-  `preset-changed-elsewhere` and `client-timeout` need none (the fe carries the text). `no-preset-named`
-  is a check key already in `en_US.toml`, with `{0}` the id.
+  `server-malformed` and `boot-malformed` have no `en_US.toml` entry, so `model-profiles-malformed`,
+  `model-profile-changed-elsewhere` and `client-timeout` need none (the fe carries the text).
+  `no-model-profile-named` is a check key already in `en_US.toml`, with `{0}` the id.
+- Renaming a REFUSAL KEY (the wire `key`, not a strings value): the literal sits in FIVE places and a
+  miss in one is a red suite in a crate you did not run, with no compile error. The producers
+  (`checks::Refusal::new(..)` in `crates/core/src/checks.rs`, the bff's `error(..)` /
+  `body_refusal(..)` / `field_of(..)` / `not_found(..)` literals in `crates/bff/src/presets.rs`),
+  core's allow-list `checks::KEYS` (`Refusal::decode` answers None for a key outside it, so a
+  one-sided rename turns a refusal into an opaque client error: checks.rs), the `Refusal::text()` match
+  arms in the same file (one arm per key, each passing its own `{N}`), the entries of BOTH
+  `crates/core/strings/*.toml`, and the inline test regions of the production files that quote the key
+  (app's `presets.rs`, manager's `dbus.rs` / `pipe.rs` / `service.rs`: the cut-at-`#[cfg(test)]` rule).
+  binding_lint's `strings_t_keys_and_the_language_file_match` (in `crates/config/src/tests/`) is what
+  ties the call-site keys to the two tables: a key renamed in code and not in a table is
+  "used .. not in en_US.toml", the other way "in en_US.toml but used nowhere", so code and tables move
+  in ONE step, and `cargo test -p pai-config` is where that shows. `is_key` there refuses a key with a
+  digit (only lowercase words joined by `-`), so a name like `preset-name-duplicate2` is refused.
+  Rename the strings entries IN PLACE, keeping each one's line: the files are not sorted, no test reads
+  the order, and a sorted reflow buries a 4-key change in 500 lines.
+- rustfmt joins a call onto ONE line only when its argument list has NO trailing comma (and its
+  args fit `fn_call_width` 75): write every `set(..)` / `register(..)` call you want kept
+  one-argument-per-line with a trailing comma and `cargo fmt -p <crate> --check` accepts it.
+  A CHAIN item wider than `chain_width` 60 (there is no `rustfmt.toml`) is broken argument-per-line
+  whatever the commas: renaming an axum route path can push `.route("<path>", routing::<m>(<fn>))`
+  over it, so let `cargo fmt --check` decide the layout, a hand-packed line fails it.
 - Two manager limits, both `pub` in `bff/src/lib.rs`: `MANAGER_TIMEOUT` bounds a read, `WRITE_TIMEOUT`
   (longer) a write, because a save's read-back and status ride the task of a write that already asked,
   and a write that lands after the answer is the write's outcome, not a lost one. The seam that pins
@@ -1182,3 +1204,65 @@ Lessons only: the rules are in `AGENTS.md`.
 - A rename in `cli.toml` changes the refusal texts the manager and the bff ANSWER (they read
   `cli.toml`), so it reaches the browser even with no wire change: the fe's `api-<key>` mirrors go stale
   (see the fe rule above). Say which keys in the report.
+- Web UI: a rule that spans a whole group goes as data on the `GroupRow` (2h.192:
+  `enabledBy?: SpecGroup`, the reason text resolved in the data by a literal `t('key')` beside it), and it
+  rides the field's existing lock path, not a new one: `PresetCards.tsx`'s `specGroupRule(key)` (built
+  once beside the rows, so a new row is covered by data alone) + `specGroupOn(group, loaded)`, called from
+  `ruleLocked`, which the renderer (`locked={!editable || ruleLocked}`, `reason`) and `PresetPage`'s
+  "what the page sends, it checks" gate (`!ruleLocked || key in changes`) already share, so the page
+  needs no change. Such a rule reads `loaded`, never the draft: a group that opens from a draft edit
+  (type `default` + a draft file typed) leaves every field editable while `spec-type` stays off the wire,
+  so a draft-based lock marks a row editable that the gate then refuses to send, and a group that closes
+  on a draft edit blocks a row the user just typed.
+- Web UI: a value split two pages read (the `spec-type` list of 2-models 75) lives in ONE exported
+  function in `PresetCards.tsx` (`specTypeEntries`: trim, drop empties, dedup, keep the file order),
+  imported by `PresetPage.tsx` (Assets) and by the group rule. Match n-gram items with
+  `entries.includes(name)`: a substring test makes `ngram-map-k4v` answer `ngram-map-k`, so that group
+  opens for a type list that does not name it.
+- Web UI: a note that must sit "right after the group heading" cannot satisfy a test pinning
+  `heading.nextElementSibling === line`: 2e.90a nests the `h4` INSIDE the `div role="group"`, as its
+  first child, so the line is the group's second child and the h4's sibling is the group. The DOM order
+  is already right, the assertion is the test's slip (2e.90 and 90a contradict each other).
+- Web UI: `npx prettier --write` prints EVERY file it processes, changed or not: `git status
+  --porcelain` after it, to prove no test file moved. The fe's red list for this slice: 3 of the new
+  file's 34 tests are unsatisfiable as written (`spec-pooling` for the key `pooling`; a
+  `preset-spec-type-control` select, which 2h.192 says 2h has not; focus on `#main` after a save, while
+  2h.138 pins focus stays on Save), and the older read-only pins go red by design (PresetCards5 13,
+  PresetFullValue 6, PresetSave1 1, all listed in the shared-list rule above).
+- Web UI: "enabled" is not a DOM property of an input, select or textarea, so `el.enabled` is
+  `undefined` and a guard built on it is always true: the fe's own tests read `.disabled`
+  (`PresetSave16`'s `fieldTakesFocus` mirror does too). A parameter named only in a type annotation is
+  undefined at run time, not a compile error, when the caller does not pass it, so a new prop needs the
+  argument at each call site (`noUnusedParameters` does not catch a missing argument).
+- Web UI: an `id` of the form `<key>-box` / `<key>-control` (the rows in `PresetCards.tsx`) is not
+  always in the DOM. A row whose `group` is `null` renders a plain labelled input, `spec-type` renders
+  as a `select`, and a field locked by an unticked box has its control in the tree but disabled: key
+  every per-field text off `CARDS` data and check the control's `disabled`, never assume a box.
+- Web UI: to reach every card heading from one page effect, put the ref on a wrapper that CONTAINS the
+  Assets `Card` (it is rendered by the page, not inside `PresetCards.tsx`'s output). A
+  `querySelectorAll('h3')` in an effect over that wrapper, with the effect declared after the
+  children's own ref effects, is the only place the page can style and index them, and it needs
+  `.card h3:focus-visible { outline: 2px solid var(--accent) }`: the global
+  `[tabindex='-1']:focus { outline: none }` strips the ring the tests call "marked visibly".
+- Web UI: two tests in one new file can be unsatisfiable together, 2h.196 ("no card h3 is a tab stop",
+  `expect(tabbed).not.toContain(title)`) and 2h.197 (the same `tabbed` starts with the ten titles,
+  which is what the jump list's ten buttons are). Its `tabindex === -1` half passes; report the pair.
+  To see a full jsdom dump of a failing `getByRole`/`getAllByRole` assertion use
+  `DEBUG_PRINT_LIMIT=200000 npx vitest run src/<File>.test.tsx`.
+- Proof of a baseline red list, no stash, no work of your own at risk: `git worktree add --detach
+  /tmp/<x> HEAD`, copy in ONLY the tester's untracked files (`fe/src/test/bff.ts` and the new
+  `*.test.tsx`), symlink `fe/node_modules` from the repo, run
+  `npx vitest run --root /tmp/<x>/fe src`, then `git worktree remove --force`. It shows the count the
+  tree had before the slice, which is what tells a red you caused from a red you inherited.
+- Web UI: a card heading that is a jump target is named by a slug carried in the card's own data, not by
+  its position: `CardFields.id` + `cardHeadingId(slug)` + `cardJumps()` (order, titles, ids from one
+  table), and the `tabIndex={-1}` is a prop of the shared `Card` (`headingId?`, absent means no id and no
+  tabindex, so a page with no jump list keeps its DOM). The page then needs no ref, no effect and no
+  index: `document.getElementById(id)`. The Assets card takes the same helper, which is why the page and
+  `PresetCards.tsx` share it.
+- The shared tree moved mid-run: one `edit` landed, a later write from another agent restored an older
+  copy of the same file, and the next test run reported 803 failures with
+  `ReferenceError: settings is not defined` at a JSX prop line, plus `expected 1 preset card, found 0`
+  in App. A failure that quotes an identifier your own edit removed is the tree moving, not a logic bug:
+  re-read the whole file, apply what is left in one scripted pass (python, exact old text, print the
+  result), then rerun the suite.
