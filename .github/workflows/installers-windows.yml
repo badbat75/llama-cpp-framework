@@ -138,7 +138,7 @@ jobs:
             if ($path -ne $want) { throw "$svc PathName '$($s.PathName)', expected $want" }
             if ($s.StartName -ne $e.Account) { throw "$svc StartName '$($s.StartName)', expected $($e.Account)" }
           }
-          foreach ($file in 'server@default.ini', 'models.ini', 'assignments.ini') {
+          foreach ($file in 'server@default.ini', 'models.ini', 'assignments.ini', 'instances.ini') {
             if (-not (Test-Path "$env:ProgramData\llama.cpp\config\$file")) { throw "no $file in ProgramData\llama.cpp\config" }
           }
           $version = $null
@@ -175,6 +175,7 @@ jobs:
           $marker = '; ci-repair-marker'
           Remove-Item -LiteralPath "$config\models.ini"
           Remove-Item -LiteralPath "$config\assignments.ini"
+          Remove-Item -LiteralPath "$config\instances.ini"
           Add-Content -LiteralPath "$config\server@default.ini" -Value $marker
           $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/fecmus `"$ll`" /qn /norestart /l*v `"$PWD\build\windows\ci-repair-llama.cpp.log`""
           if ($p.ExitCode -ne 0) { throw "the repair of llama.cpp exited $($p.ExitCode)" }
@@ -185,6 +186,7 @@ jobs:
           }
           if (-not (Test-Path "$config\models.ini")) { throw 'the repair did not restore the deleted models.ini' }
           if (-not (Test-Path "$config\assignments.ini")) { throw 'the repair did not restore the deleted assignments.ini' }
+          if (-not (Test-Path "$config\instances.ini")) { throw 'the repair did not restore the deleted instances.ini' }
           if (-not (Select-String -LiteralPath "$config\server@default.ini" -SimpleMatch $marker -Quiet)) { throw 'the repair overwrote the changed server@default.ini' }
           if (Test-Path "$env:ProgramData\llama.cpp\instances.running") { throw 'the repair left ProgramData\llama.cpp\instances.running' }
           # The repairs leave the local group pai and the runner's membership in it.

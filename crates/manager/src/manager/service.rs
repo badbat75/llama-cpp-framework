@@ -297,8 +297,8 @@ impl ActionLog for NoActionLog {
 /// A file of the system config directory the manager serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigFile {
-    /// `server@<id>.ini`, the id valid.
-    Instance(String),
+    /// `server@<profile>.ini`, the profile name valid.
+    ServerProfile(String),
     /// `models.ini`.
     Models,
     /// `models.ini.disabled`.
@@ -313,7 +313,7 @@ pub fn config_file(name: &str) -> Option<ConfigFile> {
         "models.ini.disabled" => Some(ConfigFile::ModelsDisabled),
         _ => {
             let id = name.strip_prefix("server@")?.strip_suffix(".ini")?;
-            crate::paths::valid_instance_id(id).then(|| ConfigFile::Instance(id.to_string()))
+            crate::paths::valid_instance_id(id).then(|| ConfigFile::ServerProfile(id.to_string()))
         }
     }
 }
@@ -321,6 +321,11 @@ pub fn config_file(name: &str) -> Option<ConfigFile> {
 /// `assignments.ini`: which model profiles each instance is given. The manager owns
 /// it, so a client reads it and never writes it.
 pub const ASSIGNMENTS_FILE: &str = "assignments.ini";
+
+/// `instances.ini`: what an instance is, one section per instance with its
+/// `ServerProfile`. The manager owns it, so a client reads it and never
+/// writes it.
+pub const INSTANCES_FILE: &str = "instances.ini";
 
 /// The `models_max` of the pool checks: the `load-on-startup` count is judged
 /// per instance, against that instance's own `ModelsMax` and its own render,
@@ -336,7 +341,7 @@ pub const INSTANCE_GROUP: &str = "private-ai";
 /// file (it can hold `OpencodeApiKey`), 0644 for the model profile files.
 pub fn file_mode(file: &ConfigFile) -> u32 {
     match file {
-        ConfigFile::Instance(_) => 0o640,
+        ConfigFile::ServerProfile(_) => 0o640,
         ConfigFile::Models | ConfigFile::ModelsDisabled => 0o644,
     }
 }
@@ -399,7 +404,7 @@ pub fn write_served_file(
             // left over keeps its own: set it whole.
             out.set_permissions(std::fs::Permissions::from_mode(file_mode(file)))?;
             write_synced(out, contents)?;
-            if let ConfigFile::Instance(_) = file {
+            if let ConfigFile::ServerProfile(_) = file {
                 group.set_group(&tmp, INSTANCE_GROUP)?;
             }
         }
@@ -606,7 +611,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// The contents of file `name`, None when it does not exist. An instance
     /// file needs the control authorization: no requester (a transport with
     /// no identity for the call) or a refused one is NotAuthorized, nothing
-    /// read; the model profile files and [`ASSIGNMENTS_FILE`] need none, and their
+    /// read; the model profile files, [`ASSIGNMENTS_FILE`] and [`INSTANCES_FILE`]
+    /// need none, and their
     /// text is read whole. A reader of an instance file who
     /// may not configure (asked without a prompt) gets `OpencodeApiKey`
     /// blanked ([`withhold_api_key`]). A request naming a principal is gated
@@ -624,14 +630,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if let Some(who) = &who {
                 self.gate_principal(who)?;
             }
-            // [`ASSIGNMENTS_FILE`] is served for reading only: it is not a
-            // `ConfigFile`, so the gate below never sees it and the write
-            // gate refuses it by name.
-            if config_file(name).is_none() && name != ASSIGNMENTS_FILE {
+            // [`ASSIGNMENTS_FILE`] and [`INSTANCES_FILE`] are served for
+            // reading only: neither is a `ConfigFile`, so the gate below never
+            // sees it and the write gate refuses it by name.
+            if config_file(name).is_none() && !read_only_file(name) {
                 return Err(ManagerError::BadFileName);
             }
             let mut may_configure = true;
-            if let Some(ConfigFile::Instance(_)) = config_file(name) {
+            if let Some(ConfigFile::ServerProfile(_)) = config_file(name) {
                 match &who {
                     // Gated above: polkit is asked for neither action, and a
                     // member of `pai` may configure, so nothing is withheld.
@@ -675,7 +681,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         self.write_guarded(who, name, "write_file", |file| {
             let kept;
             let contents = match file {
-                ConfigFile::Instance(_) if keep_api_key => {
+                ConfigFile::ServerProfile(_) if keep_api_key => {
                     // An unreadable file says nothing about the key: refused,
                     // since writing the text as sent could erase it.
                     let held = match std::fs::read_to_string(file_path(name)?) {
@@ -771,7 +777,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         contents: &str,
     ) -> Result<(), ManagerError> {
         check_contents(file, contents).map_err(ManagerError::Invalid)?;
-        if let ConfigFile::Instance(id) = file {
+        if let ConfigFile::ServerProfile(id) = file {
             self.check_address(id, contents)?;
         }
         let dir = crate::paths::engine_config_dir();
@@ -787,7 +793,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
-    /// like `status`; a valid id with no `server@<id>.ini` is NoInstance.
+    /// like `status`; a valid id that is not a section of the record
+    /// (`instances.ini`) is NoInstance.
     pub fn boot_enabled(&self, id: &str) -> Result<bool, ManagerError> {
         existing_id(id)?;
         self.service.boot_enabled(id).map_err(ManagerError::Service)
@@ -841,6 +848,25 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 error_kind(err)
             ));
         }
+    }
+
+    /// One record for a start that planned no services, in either of two
+    /// cases: the instance record ([`INSTANCES_FILE`]) could not be read, or
+    /// it read whole and named no instance (an empty one, one cut
+    /// mid-header, one of comments). Both plan nothing, so nothing was
+    /// synced: a sync against an empty list deletes the service of every
+    /// instance, which a read that failed must never do, and a record that
+    /// names none is treated like it. The action is `sync`, the target the
+    /// record's name, the outcome the io kind the caller passes (a listing
+    /// that read whole passes `InvalidData`, as no read failed); caller and
+    /// principal are the bare `-` (the manager acting for itself at its
+    /// start), as with a render failure. A log, like the action records: the
+    /// manager's own words, not user text.
+    pub fn sync_report(&self, why: &std::io::Error) {
+        self.action_log.record(&format!(
+            "action=\"sync\" target={INSTANCES_FILE:?} caller=- principal=- outcome={:?}",
+            why.kind()
+        ));
     }
 
     /// The render of every instance, taken under the `writing` lock by
@@ -1031,7 +1057,7 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
         _ => on_disk("models.ini.disabled"),
     };
     match file {
-        ConfigFile::Instance(id) => {
+        ConfigFile::ServerProfile(id) => {
             // The Server rules alone: no pool caps them any more, the
             // instance's render does, against the `ModelsMax` of this text.
             checks::server_file(contents, "")?;
@@ -1106,10 +1132,16 @@ fn valid_id(id: &str) -> Result<(), ManagerError> {
     }
 }
 
-/// `id` if it is a valid id with its `server@<id>.ini`.
+/// `id` if it is a valid id and a section of the record (`paths::instance_ids`).
+/// The record is the instance, not a file named after the id: a section naming
+/// a server profile whose `server@<profile>.ini` is missing IS an instance,
+/// because the profile is read by the launch when the unit starts (its refusal
+/// is `launch::instance_command`'s `NoConfig`); and a `server@<id>.ini` no
+/// section names is no instance. An id that is not a valid instance id is
+/// InvalidId, answered first.
 fn existing_id(id: &str) -> Result<(), ManagerError> {
-    let path = crate::paths::instance_ini(id).ok_or(ManagerError::InvalidId)?;
-    if path.is_file() {
+    valid_id(id)?;
+    if crate::paths::instance_ids().iter().any(|name| name == id) {
         Ok(())
     } else {
         Err(ManagerError::NoInstance)
@@ -1124,10 +1156,20 @@ fn principal_name_is_well_formed(name: &str) -> bool {
     !name.is_empty() && name.len() <= MAX_PRINCIPAL_BYTES && !name.chars().any(char::is_control)
 }
 
+/// The files of the machine's config a manager client may READ, and never
+/// write: `assignments.ini` and `instances.ini` are both the manager's own
+/// records, written only by the manager; each comes with the engine's
+/// package where it is missing, and the manager is the one that keeps it
+/// afterwards. A client reads either; a write of one is refused as a bad
+/// name.
+fn read_only_file(name: &str) -> bool {
+    name == ASSIGNMENTS_FILE || name == INSTANCES_FILE
+}
+
 /// The path of served file `name` in the engine's config directory: a
-/// `ConfigFile` and [`ASSIGNMENTS_FILE`], nothing else.
+/// `ConfigFile` and [`read_only_file`], nothing else.
 fn file_path(name: &str) -> Result<std::path::PathBuf, ManagerError> {
-    if config_file(name).is_none() && name != ASSIGNMENTS_FILE {
+    if config_file(name).is_none() && !read_only_file(name) {
         return Err(ManagerError::BadFileName);
     }
     Ok(crate::paths::engine_config_dir().join(name))
@@ -1695,6 +1737,26 @@ pub(crate) fn on_thread<T: Send + 'static>(
     rx
 }
 
+/// The record of the instances, written by a fixture: `instances.ini` in the
+/// engine's config directory, one section per id (`paths::instance_ids` reads
+/// the sections), each naming the server profile of the same name, the key the
+/// launch reads (`launch::instance_command`). The manager adds a section when
+/// it creates an instance, and that is a later slice, so a fixture that wants
+/// an instance hands it the record. The whole file is rewritten: a section is
+/// dropped with the instance it stands for.
+#[cfg(test)]
+fn write_record(dir: &std::path::Path, ids: &[&str]) {
+    std::fs::create_dir_all(dir).expect("engine config dir");
+    std::fs::write(
+        dir.join(INSTANCES_FILE),
+        ids.iter()
+            .map(|id| format!("[{id}]\nServerProfile = {id}\n"))
+            .collect::<Vec<String>>()
+            .join("\n"),
+    )
+    .expect(INSTANCES_FILE);
+}
+
 /// E2E phase for the manager core, for this crate's e2e test to call: it sets
 /// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
 /// Nothing here touches D-Bus, systemd, polkit or the GPUs: both seams are
@@ -1719,6 +1781,9 @@ pub(crate) fn manager_e2e() {
     };
     let set =
         |names: &[&str]| -> BTreeSet<String> { names.iter().map(|s| s.to_string()).collect() };
+    // An instance is a section of the record, not a file in the directory: the
+    // fixture hands the manager the record it reads (`write_record`).
+    let record = |ids: &[&str]| write_record(&sys, ids);
     let bad_names = |sys: &std::path::Path| -> Vec<String> {
         vec![
             "../x".into(),
@@ -1846,6 +1911,9 @@ pub(crate) fn manager_e2e() {
             FakeResolver::lan(),
         )
         .with_group(crate::manager::service::fakes::FakeGroup::new());
+        // The instance the writes belong to: its section of the record, which
+        // is what the manager's render pass writes a render for.
+        record(&["default"]);
         assert_eq!(
             m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
@@ -1870,6 +1938,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(
             files_in(&sys),
             set(&[
+                "instances.ini",
                 "server@default.ini",
                 "models.ini",
                 "models.ini.disabled",
@@ -1877,7 +1946,7 @@ pub(crate) fn manager_e2e() {
             ]),
             "exactly the files written, no temp file left"
         );
-        // A new instance file is how an instance is added.
+        // The record's section is what makes the instance: the listing reads it.
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
@@ -1901,6 +1970,53 @@ pub(crate) fn manager_e2e() {
             ],
             "writes ask for configure, the instance file's read for control, \
              the preset file's read for nothing"
+        );
+
+        // The render of every instance is checked against that instance's own
+        // ModelsMax: two model profiles load on startup, default's max is 1,
+        // so the pool is refused, the refusal naming the instance. The
+        // assignments say the render holds the pool; the manager writes that
+        // file in a later step, so the fixture writes it by hand.
+        std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n")
+            .expect("assignments.ini");
+        std::fs::write(
+            sys.join("server@default.ini"),
+            format!("{default_ini}ModelsMax = 1\n"),
+        )
+        .expect("ModelsMax fixture");
+        let two_loading = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                           [b]\nmodel = /m/b.gguf\nload-on-startup = true\n";
+        assert_eq!(
+            m.write_file(&alice, "models.ini", two_loading, false),
+            Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                key: "load-on-startup-over-max",
+                values: vec!["2".into(), "1".into(), "default".into()],
+            })),
+            "the render of default, not the pool, is over default's max"
+        );
+        assert_eq!(
+            m.read_file(Some(&alice), "models.ini"),
+            Ok(Some(plain(model_profiles))),
+            "the refused pool wrote nothing"
+        );
+        // The same pool is accepted once that instance's own max holds it.
+        std::fs::write(
+            sys.join("server@default.ini"),
+            format!("{default_ini}ModelsMax = 2\n"),
+        )
+        .expect("ModelsMax fixture");
+        assert_eq!(
+            m.write_file(&alice, "models.ini", two_loading, false),
+            Ok(())
+        );
+        // The pool and the instance file the blocks that follow expect.
+        assert_eq!(
+            m.write_file(&alice, "server@default.ini", default_ini, false),
+            Ok(())
+        );
+        assert_eq!(
+            m.write_file(&alice, "models.ini", model_profiles, false),
+            Ok(())
         );
 
         // Any other name is refused, and nothing is created or read.
@@ -2066,6 +2182,7 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "server@lan-2.ini", lan2, false),
             Ok(())
         );
+        record(&["default", "lan-2"]);
         // Host names are resolved: localhost is default's 127.0.0.1.
         assert_eq!(
             m.write_file(
@@ -2145,6 +2262,7 @@ pub(crate) fn manager_e2e() {
             ),
             Ok(())
         );
+        record(&["default", "lan-2", "wild"]);
         // Then a specific host on that port collides with the wildcard.
         assert_eq!(
             m.write_file(
@@ -2181,6 +2299,7 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "server@bare.ini", "[Server]\n", false),
             Ok(())
         );
+        record(&["default", "lan-2", "wild", "bare"]);
         assert_eq!(
             m.write_file(&alice, "server@bare-2.ini", "[Server]\n", false),
             Err(ManagerError::AddressInUse("bare".into()))
@@ -2200,6 +2319,7 @@ pub(crate) fn manager_e2e() {
             "[Server]\nPort = 8083\nHostname = gone.example\n",
         )
         .expect("stale fixture");
+        record(&["default", "lan-2", "wild", "bare", "stale"]);
         assert_eq!(
             m.write_file(
                 &alice,
@@ -2212,6 +2332,8 @@ pub(crate) fn manager_e2e() {
         );
         std::fs::remove_file(sys.join("server@stale.ini")).expect("drop stale");
         std::fs::remove_file(sys.join("server@fresh.ini")).expect("drop fresh");
+        // Its section goes with it: the record is the listing.
+        record(&["default", "lan-2", "wild", "bare"]);
         // models.ini has no address: never checked.
         assert_eq!(
             m.write_file(&alice, "models.ini", model_profiles, false),
@@ -2959,6 +3081,7 @@ pub(crate) fn manager_engine_dir_e2e() {
         m.write_file(&alice, "models.ini.disabled", disabled, false),
         Ok(())
     );
+    write_record(&engine, &["default"]);
     for (name, text) in [
         ("server@default.ini", ini),
         ("models.ini", model_profiles),
@@ -3020,6 +3143,7 @@ pub(crate) fn manager_engine_dir_e2e() {
         ),
         Ok(())
     );
+    write_record(&engine, &["default", "lan-2"]);
     assert_eq!(m.list_instances(), ["default", "lan-2"]);
     assert!(
         !engine.join("server@stray.ini").exists(),
@@ -3071,6 +3195,7 @@ pub(crate) fn manager_waits_e2e() {
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
         std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+        write_record(&sys, &["default"]);
 
         let gate = Gate::new();
         let m = Arc::new(
@@ -3179,6 +3304,9 @@ pub(crate) fn manager_waits_e2e() {
         let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
+        // bob's start needs the record: a `server@default.ini` no section
+        // names is no instance.
+        write_record(&sys, &["default"]);
 
         let gate = Gate::new();
         let m = Arc::new(
@@ -3233,6 +3361,10 @@ pub(crate) fn manager_waits_e2e() {
             "[Server]\nPort = 9000\nHostname = slow-box\n",
         )
         .expect("write slow");
+        // Both candidates of the race are in the record, so whichever write
+        // lands second sees the other's file: a section whose file is missing
+        // reads as the default binding, and 8081 on gpu-box is not that.
+        write_record(&sys, &["lan-a", "lan-b", "slow"]);
 
         let gate = Gate::new();
         let resolver = GateResolver::new(
@@ -3409,6 +3541,9 @@ pub(crate) fn manager_checks_e2e() {
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n";
     {
         let m = manager(true);
+        // default is an instance: its section of the record, before the writes
+        // that make its render.
+        write_record(&sys, &["default"]);
         assert_eq!(
             m.write_file(&alice, "server@default.ini", default_ini, false),
             Ok(())
@@ -3455,7 +3590,12 @@ pub(crate) fn manager_checks_e2e() {
         );
         assert_eq!(
             listing(),
-            ["models.ini", "models@default.ini", "server@default.ini"],
+            [
+                "instances.ini",
+                "models.ini",
+                "models@default.ini",
+                "server@default.ini"
+            ],
             "no temp file left"
         );
         assert!(
@@ -3474,7 +3614,8 @@ pub(crate) fn manager_checks_e2e() {
         let a_lan = "[default]\n* = inherit\n\n[lan-2]\na = inherit\n";
         let a_split = "[default]\nb = inherit\n\n[lan-2]\n* = inherit\n";
         std::fs::write(sys.join("assignments.ini"), a_none).expect("assignments.ini");
-        // default's ModelsMax is 2.
+        // default's ModelsMax is 2, and default is an instance of the record.
+        write_record(&sys, &["default"]);
         assert_eq!(
             m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
             invalid("load-on-startup-over-max", &["3", "2", "default"]),
@@ -3529,6 +3670,7 @@ pub(crate) fn manager_checks_e2e() {
             ),
             Ok(())
         );
+        write_record(&sys, &["default", "lan-2"]);
         assert_eq!(
             m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
             Ok(()),
@@ -3556,6 +3698,7 @@ pub(crate) fn manager_checks_e2e() {
             listing(),
             [
                 "assignments.ini",
+                "instances.ini",
                 "models.ini",
                 "models@default.ini",
                 "models@lan-2.ini",
@@ -3804,6 +3947,7 @@ pub(crate) fn manager_assignments_e2e() {
     // ── The render of an instance is its section of the assignments ──────
     // The pool stands first, so the renders of the created instances hold
     // model profiles: default is told `a`, lan-2 is told `b`.
+    write_record(&sys, &["default", "lan-2", "lan-3"]);
     assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
     assert_eq!(
         m.write_file(&alice, "server@default.ini", default_ini, false),
@@ -3857,6 +4001,7 @@ pub(crate) fn manager_assignments_e2e() {
         listing(),
         [
             "assignments.ini",
+            "instances.ini",
             "models.ini",
             "models@default.ini",
             "models@lan-2.ini",
@@ -3940,6 +4085,7 @@ pub(crate) fn manager_assignments_e2e() {
         listing(),
         [
             "assignments.ini",
+            "instances.ini",
             "models.ini",
             "models.ini.disabled",
             "models@default.ini",
@@ -3961,6 +4107,323 @@ pub(crate) fn manager_assignments_e2e() {
         read("models@default.ini"),
         Some(render(&added, off, Some(section("default").as_str()))),
         "the start render agrees with the last write"
+    );
+}
+
+/// The instance record: `instances.ini`, one section per instance. The list
+/// comes from its sections: a `server@<profile>.ini` no section names is no
+/// instance, and a section whose profile file is missing is an instance. A
+/// client reads the file like `assignments.ini` and can never write it: every
+/// write is refused as a bad name and the file stays byte for byte.
+#[cfg(test)]
+pub(crate) fn manager_instances_file_e2e() {
+    use fakes::{FakeActionLog, FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let alice = Caller(":1.42".into());
+    let log = FakeActionLog::new();
+    let lines = log.lines.clone();
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_log(log);
+    // The path is joined here, not through `file_path`: that resolves a
+    // served name, and `instances.ini` is served by the read today, so a
+    // phase that asked it would stop at its first line.
+    let instances = sys.join(INSTANCES_FILE);
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+
+    // The record: default on profile default, lan-2 on profile big. big is a
+    // profile no instance names, so it serves nothing.
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+    std::fs::write(sys.join("server@default.ini"), ini).expect("server profile");
+    std::fs::write(sys.join("server@big.ini"), ini).expect("spare profile");
+    std::fs::write(sys.join("models.ini"), "[M1]\nmodel = /models/m1.gguf\n").expect("models.ini");
+    let record = "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = big\n";
+    std::fs::write(&instances, record).expect("instances.ini");
+
+    // The list is the sections: lan-2 is an instance with no server@lan-2.ini,
+    // the profiles default and big alone list nothing beside it.
+    assert_eq!(
+        m.list_instances(),
+        vec!["default".to_string(), "lan-2".to_string()],
+        "the sections of instances.ini are the instances"
+    );
+
+    // A client reads it like assignments.ini: the text as it stands, with and
+    // without an identity. It is no `ConfigFile`, so the gates a server
+    // profile read runs never see it.
+    assert_eq!(
+        m.read_file(None::<&Caller>, INSTANCES_FILE),
+        Ok(Some(plain(record))),
+        "the file, to a caller-less client, as assignments.ini"
+    );
+    assert_eq!(
+        m.read_file(Some(&alice), INSTANCES_FILE),
+        Ok(Some(plain(record))),
+        "the file, to a caller"
+    );
+    assert_eq!(
+        config_file(INSTANCES_FILE),
+        None,
+        "the file is served by the read, not as a config file"
+    );
+
+    // A client never writes it: refused as a bad name, through the plain and
+    // the compare-and-swap write, forced or not, the file untouched.
+    let swapped = "[default]\nServerProfile = big\n";
+    let base = lines.lock().unwrap().len();
+    assert_eq!(
+        m.write_file(&alice, INSTANCES_FILE, swapped, false),
+        Err(ManagerError::BadFileName)
+    );
+    assert_eq!(
+        m.write_file_if(&alice, INSTANCES_FILE, swapped, record),
+        Err(ManagerError::BadFileName),
+        "not through the compare and swap write either"
+    );
+    for force in [false, true] {
+        assert_eq!(
+            m.write_file(&alice, INSTANCES_FILE, swapped, force),
+            Err(ManagerError::BadFileName),
+            "keep_api_key {force}"
+        );
+    }
+    let recorded: Vec<String> = lines.lock().unwrap()[base..].to_vec();
+    assert_eq!(
+        recorded.len(),
+        4,
+        "each refused write records one line: {recorded:?}"
+    );
+    for line in recorded.iter() {
+        assert!(
+            line.starts_with("action=\"write_file\"")
+                || line.starts_with("action=\"write_file_if\""),
+            "a write record: {line}"
+        );
+        assert!(
+            line.contains("target=\"instances.ini\""),
+            "the refused write names the record: {line}"
+        );
+        assert!(
+            line.contains("outcome=\"BadFileName\""),
+            "refused as a bad name: {line}"
+        );
+    }
+    assert_eq!(
+        read(INSTANCES_FILE).as_deref(),
+        Some(record),
+        "a refused write leaves the record"
+    );
+
+    // The record gone: the profiles alone are no instances, and the read of a
+    // missing record is no content, as for assignments.ini.
+    std::fs::remove_file(&instances).expect("remove the record");
+    assert_eq!(
+        m.list_instances(),
+        Vec::<String>::new(),
+        "the sections are the instances: none without the file"
+    );
+    assert_eq!(
+        m.read_file(Some(&alice), INSTANCES_FILE),
+        Ok(None),
+        "the file missing: no content"
+    );
+}
+
+/// The verbs that act on an instance ask whether the instance exists: that is
+/// its section of `instances.ini`, not a `server@<id>.ini` named after the id.
+/// So a section naming another profile is an instance whose settings file is
+/// `server@<profile>.ini`; an id with no section is no instance even when a
+/// file named after it stands in the directory; and a section naming a profile
+/// whose file is missing IS an instance for the manager, because the file is
+/// the launch's check, made when the unit starts (its refusal is
+/// `launch::instance_command`'s own `NoConfig`, pinned in `launch.rs`).
+#[cfg(test)]
+pub(crate) fn manager_existing_id_e2e() {
+    use fakes::{Call, FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let alice = Caller(":1.42".into());
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new());
+    // The recorded service calls, so a pin can say which verb reached the
+    // service manager and under which name. Nothing real is started.
+    let taken = || -> Vec<Call> { m.service().calls.lock().unwrap().clone() };
+    // The four verbs that ask whether the instance exists (stop and status
+    // ask only for a valid id, pinned by `manager_e2e`).
+    type VerbAnswers = (
+        Result<(), ManagerError>,
+        Result<(), ManagerError>,
+        Result<bool, ManagerError>,
+        Result<(), ManagerError>,
+    );
+    let verbs = |id: &str| {
+        (
+            m.start(&alice, id),
+            m.restart(&alice, id),
+            m.boot_enabled(id),
+            m.set_boot_enabled(&alice, id, true),
+        )
+    };
+    let no_instance = || -> VerbAnswers {
+        (
+            Err(ManagerError::NoInstance),
+            Err(ManagerError::NoInstance),
+            Err(ManagerError::NoInstance),
+            Err(ManagerError::NoInstance),
+        )
+    };
+    let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
+    let record = |text: &str| {
+        std::fs::write(sys.join(INSTANCES_FILE), text).expect(INSTANCES_FILE);
+    };
+
+    // The record names `default` on the profile `big`, and only
+    // `server@big.ini` is on disk: default is an instance, and its unit is
+    // the one named by the id.
+    std::fs::write(sys.join("server@big.ini"), ini).expect("server@big.ini");
+    record("[default]\nServerProfile = big\n");
+    assert_eq!(
+        m.list_instances(),
+        ["default"],
+        "the section is the instance"
+    );
+    assert_eq!(
+        m.boot_enabled("default"),
+        Ok(false),
+        "a section naming a profile with no server@<id>.ini: not NoInstance"
+    );
+    assert_eq!(
+        m.set_boot_enabled(&alice, "default", true),
+        Ok(()),
+        "the start at boot of that instance"
+    );
+    assert_eq!(m.boot_enabled("default"), Ok(true), "and it reads back");
+    assert_eq!(
+        m.start(&alice, "default"),
+        Ok(()),
+        "start of default, whose section names `big`: not NoInstance"
+    );
+    assert_eq!(
+        m.restart(&alice, "default"),
+        Ok(()),
+        "restart of default: not NoInstance"
+    );
+    assert_eq!(
+        taken(),
+        vec![
+            Call::BootEnabled("default".into()),
+            Call::SetBootEnabled("default".into(), true),
+            Call::BootEnabled("default".into()),
+            Call::Start("default".into()),
+            Call::Restart("default".into()),
+        ],
+        "the verbs reach the service under the instance id: the profile never names a unit"
+    );
+
+    // An id with no section is no instance, even with a `server@<id>.ini` in
+    // the directory: the record is the fact, the file names nothing.
+    std::fs::write(sys.join("server@orphan.ini"), ini).expect("server@orphan.ini");
+    let asked = taken().len();
+    assert_eq!(
+        m.list_instances(),
+        ["default"],
+        "a profile file no section names is no instance"
+    );
+    assert_eq!(
+        verbs("orphan"),
+        no_instance(),
+        "start, restart, boot_enabled and set_boot_enabled of an id with no section"
+    );
+    assert_eq!(
+        taken().len(),
+        asked,
+        "a refused verb reaches no service call"
+    );
+
+    // A section naming a profile whose file is missing: the manager has the
+    // instance, so the verbs reach the service. The missing file is refused by
+    // the launch, when the unit starts and reads the profile (`launch.rs`:
+    // `NoConfig` naming `server@huge.ini`).
+    record("[default]\nServerProfile = huge\n");
+    assert!(
+        !sys.join("server@huge.ini").exists(),
+        "fixture sanity: the profile has no file"
+    );
+    assert_eq!(
+        m.start(&alice, "default"),
+        Ok(()),
+        "a section naming a profile with no file passes the existence check"
+    );
+    assert_eq!(
+        &taken()[asked..],
+        &[Call::Start("default".into())][..],
+        "the start reaches the service manager: nothing is refused here"
+    );
+    // A section with no `ServerProfile` key is an instance the same way (the
+    // listing reads sections, and the launch is the one that refuses a section
+    // naming no profile, pinned in `launch.rs`).
+    record("[default]\n");
+    assert_eq!(
+        m.start(&alice, "default"),
+        Ok(()),
+        "a section naming no profile is an instance for the manager"
+    );
+
+    // A name that is no instance id stays InvalidId, whatever the record holds
+    // and whatever file stands in the directory: the id is checked first.
+    record(
+        "[Big]\nServerProfile = big\n\n[a/b]\nServerProfile = big\n\n[../x]\nServerProfile = big\n",
+    );
+    std::fs::write(sys.join("server@Big.ini"), ini).expect("server@Big.ini");
+    for bad in ["Big", "a/b", "../x", ""] {
+        assert_eq!(
+            m.start(&alice, bad),
+            Err(ManagerError::InvalidId),
+            "start {bad:?}"
+        );
+        assert_eq!(
+            m.restart(&alice, bad),
+            Err(ManagerError::InvalidId),
+            "restart {bad:?}"
+        );
+        assert_eq!(
+            m.boot_enabled(bad),
+            Err(ManagerError::InvalidId),
+            "boot_enabled {bad:?}"
+        );
+        assert_eq!(
+            m.set_boot_enabled(&alice, bad, false),
+            Err(ManagerError::InvalidId),
+            "set_boot_enabled {bad:?}"
+        );
+    }
+
+    // The record gone: every id is no instance, and a file named after one
+    // stands in for nothing.
+    std::fs::remove_file(sys.join(INSTANCES_FILE)).expect("remove the record");
+    assert!(
+        sys.join("server@orphan.ini").is_file(),
+        "fixture sanity: the file is still there"
+    );
+    assert_eq!(
+        verbs("orphan"),
+        no_instance(),
+        "no record: the file named after the id names no instance"
     );
 }
 
@@ -4016,6 +4479,7 @@ pub(crate) fn manager_render_failure_e2e() {
     let written = format!("{hand}\n[e]\nmodel = /models/e.gguf\n");
 
     std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
+    write_record(&sys, &["default", "lan-2", "lan-3"]);
     assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
     for (id, port) in [("default", 8081u16), ("lan-2", 8082), ("lan-3", 8083)] {
         let ini = format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n");
@@ -4169,6 +4633,7 @@ pub(crate) fn manager_principal_e2e() {
     let third = "[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n";
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
+    write_record(&sys, &["default"]);
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // The bff's account (a bus name here, the service SID on Windows) and its
@@ -4543,6 +5008,7 @@ pub(crate) fn manager_action_log_e2e() {
     let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
+    write_record(&sys, &["default"]);
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     let bff = Caller(":1.9".into());
@@ -5195,6 +5661,7 @@ pub(crate) fn manager_write_file_if_e2e() {
             ("models.ini", model_profiles),
             ("server@default.ini", default_ini),
         ]);
+        write_record(&sys, &["default"]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
@@ -5219,9 +5686,14 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["models.ini", "models@default.ini", "server@default.ini"],
-            "exactly the files written (the server write renders the instance's \
-             presets file), no temp file left"
+            [
+                "instances.ini",
+                "models.ini",
+                "models@default.ini",
+                "server@default.ini"
+            ],
+            "exactly the files written (the record of the instance, the pool, and \
+             the server write's render of the instance's presets file), no temp file left"
         );
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -5537,6 +6009,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         let moved = "[Server]\nPort = 9002\nHostname = slow-box\n";
         let late = "[Server]\nPort = 9003\nHostname = slow-box\n";
         let (_dir, sys) = root(&[("server@slow.ini", held)]);
+        write_record(&sys, &["slow"]);
         let gate = Gate::new();
         let resolver = GateResolver::new(
             FakeResolver::new(&[("slow-box", &["10.0.0.7"])]),
@@ -5585,7 +6058,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["models@slow.ini", "server@slow.ini"],
+            ["instances.ini", "models@slow.ini", "server@slow.ini"],
             "no temp file left; the landed write renders the instance's presets file"
         );
     }
@@ -5652,11 +6125,11 @@ mod tests {
     fn config_file_accepts_the_served_files() {
         assert_eq!(
             config_file("server@default.ini"),
-            Some(ConfigFile::Instance("default".into()))
+            Some(ConfigFile::ServerProfile("default".into()))
         );
         assert_eq!(
             config_file("server@lan-2.ini"),
-            Some(ConfigFile::Instance("lan-2".into()))
+            Some(ConfigFile::ServerProfile("lan-2".into()))
         );
         assert_eq!(config_file("models.ini"), Some(ConfigFile::Models));
         assert_eq!(
@@ -5891,14 +6364,43 @@ mod tests {
         }
     }
 
+    /// The rename of the release: `server@<id>.ini` is a server profile, so
+    /// the served file is `ConfigFile::ServerProfile`, and the instance
+    /// record is the `instances.ini` constant, not a name typed at each use.
+    #[test]
+    fn the_served_server_file_is_a_server_profile() {
+        let code = std::include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/manager/service.rs"
+        ))
+        .split("\n#[cfg(test)]\n")
+        .next()
+        .unwrap_or_default();
+        assert!(
+            code.contains("ConfigFile::ServerProfile"),
+            "the served file is named for the profile"
+        );
+        assert!(
+            !code.contains("ConfigFile::Instance"),
+            "the instance is the section of instances.ini, not a file"
+        );
+        assert!(
+            code.contains("INSTANCES_FILE"),
+            "the record is named by one constant"
+        );
+    }
+
     // ── Instance files: mode 0640, group private-ai ─────────────────────
 
     /// The instance file can hold a secret: 0640, read by root and the
     /// instances' group. The model profile files hold none: 0644, as before.
     #[test]
     fn file_mode_is_0640_for_instance_files_and_0644_for_the_model_profiles() {
-        assert_eq!(file_mode(&ConfigFile::Instance("default".into())), 0o640);
-        assert_eq!(file_mode(&ConfigFile::Instance("lan-2".into())), 0o640);
+        assert_eq!(
+            file_mode(&ConfigFile::ServerProfile("default".into())),
+            0o640
+        );
+        assert_eq!(file_mode(&ConfigFile::ServerProfile("lan-2".into())), 0o640);
         assert_eq!(file_mode(&ConfigFile::Models), 0o644);
         assert_eq!(file_mode(&ConfigFile::ModelsDisabled), 0o644);
     }
@@ -5946,7 +6448,7 @@ mod tests {
             let dir = tempfile::tempdir().expect("tempdir");
             let path = dir.path().join("server@default.ini");
             let g = FakeGroup::new();
-            write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+            write_served_file(&path, &ConfigFile::ServerProfile("default".into()), INI, &g)
                 .expect("write");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), INI);
             assert_eq!(mode(&path), 0o640);
@@ -5982,7 +6484,7 @@ mod tests {
             std::fs::write(&path, "[Server]\nPort = 8081\n").unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             let g = FakeGroup::new();
-            write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+            write_served_file(&path, &ConfigFile::ServerProfile("default".into()), INI, &g)
                 .expect("write");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), INI);
             assert_eq!(mode(&path), 0o640);
@@ -6027,7 +6529,7 @@ mod tests {
             let old = "[Server]\nPort = 8081\n";
             std::fs::write(&path, old).unwrap();
             let g = FakeGroup::failing(ErrorKind::NotFound);
-            let e = write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g)
+            let e = write_served_file(&path, &ConfigFile::ServerProfile("default".into()), INI, &g)
                 .expect_err("a missing group refuses the write");
             assert_eq!(e.kind(), ErrorKind::NotFound);
             assert_eq!(
@@ -6043,7 +6545,7 @@ mod tests {
 
             // A new instance: nothing created at all.
             let new = dir.path().join("server@lan-2.ini");
-            let e = write_served_file(&new, &ConfigFile::Instance("lan-2".into()), INI, &g)
+            let e = write_served_file(&new, &ConfigFile::ServerProfile("lan-2".into()), INI, &g)
                 .expect_err("refused");
             assert_eq!(e.kind(), ErrorKind::NotFound);
             assert!(!new.exists());
@@ -6064,7 +6566,8 @@ mod tests {
             std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
             let probe = std::fs::write(dir.path().join("probe"), "x");
             let g = FakeGroup::new();
-            let result = write_served_file(&path, &ConfigFile::Instance("default".into()), INI, &g);
+            let result =
+                write_served_file(&path, &ConfigFile::ServerProfile("default".into()), INI, &g);
             std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
             if probe.is_ok() {
                 eprintln!("skipped: the directory's mode does not stop this user (root)");

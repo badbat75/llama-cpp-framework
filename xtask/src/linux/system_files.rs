@@ -100,6 +100,10 @@ pub fn files() -> Vec<(&'static str, String)> {
             "usr/share/private-ai/llama.cpp/assignments.ini",
             include_str!("../../../crates/core/defaults/assignments.ini").to_string(),
         ),
+        (
+            "usr/share/private-ai/llama.cpp/instances.ini",
+            include_str!("../../../crates/core/defaults/instances.ini").to_string(),
+        ),
         ("usr/lib/tmpfiles.d/llama.cpp.conf", engine_tmpfiles()),
     ]
 }
@@ -535,14 +539,15 @@ fn start_recorded_instances(indent: &str) -> String {
 /// Copies each shipped default into [`ENGINE_ETC`] when it is missing, never
 /// over an existing file: the server file 0640 with the group private-ai
 /// once that group exists (the core package creates it), else 0644 root:root
-/// until the manager's first write; the model profiles and the assignment 0644, as
-/// neither holds a secret. With `chroot` (the
+/// until the manager's first write; the model profiles, the assignment and
+/// the instance record 0644, as none of them holds a secret. With `chroot` (the
 /// `.deb`), every path is under `$DPKG_ROOT` and a chroot install asks the
 /// host for no group: the server file is copied 0644 there.
 fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
     let server = "server@default.ini";
     let model_profiles = "models.ini";
     let assignments = "assignments.ini";
+    let instances = "instances.ini";
     let (root, host) = if chroot {
         ("$DPKG_ROOT", r#"[ -z "$DPKG_ROOT" ] && "#)
     } else {
@@ -564,6 +569,9 @@ fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
          {indent}fi\n\
          {indent}if [ ! -e {etc}/{assignments} ]; then\n\
          {indent}\tinstall -m 0644 {share}/{assignments} {etc}/{assignments}\n\
+         {indent}fi\n\
+         {indent}if [ ! -e {etc}/{instances} ]; then\n\
+         {indent}\tinstall -m 0644 {share}/{instances} {etc}/{instances}\n\
          {indent}fi\n"
     )
 }
@@ -801,6 +809,7 @@ mod tests {
     const DEFAULT_SERVER: &str = "usr/share/private-ai/llama.cpp/server@default.ini";
     const DEFAULT_MODELS: &str = "usr/share/private-ai/llama.cpp/models.ini";
     const DEFAULT_ASSIGNMENTS: &str = "usr/share/private-ai/llama.cpp/assignments.ini";
+    const DEFAULT_INSTANCES: &str = "usr/share/private-ai/llama.cpp/instances.ini";
 
     /// The text of the generated file at `path`, from [`files`].
     fn file(path: &str) -> String {
@@ -880,6 +889,7 @@ mod tests {
                 DEFAULT_SERVER,
                 DEFAULT_MODELS,
                 DEFAULT_ASSIGNMENTS,
+                DEFAULT_INSTANCES,
                 TMPFILES
             ]
         );
@@ -887,7 +897,7 @@ mod tests {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
                 INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS
-                | TMPFILES => Component::Llama,
+                | DEFAULT_INSTANCES | TMPFILES => Component::Llama,
                 _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
@@ -898,9 +908,8 @@ mod tests {
                 POLKIT_POLICY => polkit_policy(),
                 POLKIT_RULES => polkit_rules(),
                 BFF_UNIT => bff_unit(),
-                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS | TMPFILES => {
-                    text.clone()
-                }
+                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS
+                | DEFAULT_INSTANCES | TMPFILES => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -2411,6 +2420,7 @@ mod tests {
                     DEFAULT_SERVER,
                     DEFAULT_MODELS,
                     DEFAULT_ASSIGNMENTS,
+                    DEFAULT_INSTANCES,
                     TMPFILES,
                 ]
                 .contains(p)
@@ -2511,6 +2521,9 @@ mod tests {
     /// The sandbox's stand-in for the shipped default assignment (the real
     /// text is pinned by `the_engine_ships_the_default_assignment`).
     const SHIPPED_ASSIGNMENTS: &str = "[default]\n* = inherit\n";
+    /// The sandbox's stand-in for the shipped instance record (the real text
+    /// is pinned by `the_engine_ships_the_instance_record`).
+    const SHIPPED_INSTANCES: &str = "[default]\nServerProfile = default\n";
 
     /// What `systemctl list-units --plain --no-legend --state=active
     /// 'llama.cpp@*.service'` printed on a machine with an instance running
@@ -2623,6 +2636,7 @@ exit 0
             std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
             std::fs::write(share.join("models.ini"), "").unwrap();
             std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
+            std::fs::write(share.join("instances.ini"), SHIPPED_INSTANCES).unwrap();
             Sandbox { dir }
         }
 
@@ -3188,6 +3202,49 @@ exit 0
         assert_eq!(components::of(DEFAULT_ASSIGNMENTS), Component::Llama);
     }
 
+    /// The engine ships the instance record beside them: `instances.ini`, one
+    /// section for the instance `default` with the key
+    /// `ServerProfile = default`, so a fresh install and an upgrade have an
+    /// instance `default` running the server profile `default`, with nothing
+    /// to write by hand. Checked in as `crates/core/defaults/instances.ini`,
+    /// beside the other shipped defaults: the manager owns the file, it lists
+    /// the instances from it and the launch reads the `ServerProfile` of the
+    /// section (`pai-core`'s `paths::instance_ids` pins what the file means).
+    #[test]
+    fn the_engine_ships_the_instance_record() {
+        let checked_in = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/core/defaults/instances.ini");
+        let want = std::fs::read_to_string(&checked_in)
+            .unwrap_or_else(|e| panic!("{}: {e}", checked_in.display()));
+        let text = file(DEFAULT_INSTANCES);
+        assert_eq!(text, want);
+        // The header says what the file is and who owns it, in the words of
+        // the file beside it: the copy in /etc/llama.cpp is the
+        // administrator's and the manager's, never overwritten.
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines.first().copied().unwrap_or_default(),
+            "; What each llama.cpp instance is, one section per instance: the server profile it runs.",
+            "{text}"
+        );
+        assert_eq!(
+            lines.get(1).copied().unwrap_or_default(),
+            "; pai-manager owns this file: it lists the instances from it, the launch reads ServerProfile.",
+            "{text}"
+        );
+        let keys: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with(';') && !l.starts_with('#'))
+            .collect();
+        assert_eq!(keys, ["[default]", "ServerProfile = default"], "{text}");
+        assert!(!text.contains("preset"), "an old name: {text}");
+        assert!(!text.contains('\u{2014}'), "no em-dash:\n{text}");
+        assert!(!text.contains('\r'), "LF, as its siblings: {text:?}");
+        assert!(text.is_ascii(), "{text}");
+        assert_eq!(components::of(DEFAULT_INSTANCES), Component::Llama);
+    }
+
     /// The modes of a file and of a directory.
     fn mode(p: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
@@ -3258,6 +3315,14 @@ exit 0
                 "{args:?}: {log:?}"
             );
             assert_eq!(mode(&etc.join("assignments.ini")), 0o644, "{args:?}");
+            assert_eq!(
+                std::fs::read_to_string(etc.join("instances.ini"))
+                    .ok()
+                    .as_deref(),
+                Some(SHIPPED_INSTANCES),
+                "the instance record is copied: {args:?}: {log:?}"
+            );
+            assert_eq!(mode(&etc.join("instances.ini")), 0o644, "{args:?}");
             let start = call(&log, &["start", "llama.cpp@default.service"])
                 .unwrap_or_else(|| panic!("{args:?}: {log:?}"));
             assert!(
@@ -3269,7 +3334,19 @@ exit 0
             });
             assert!(
                 copied < start,
-                "the default assignment is copied after the instances start: {log:?}"
+                "the default assignment is copied before the instances start: {log:?}"
+            );
+            // The record is read by the manager when it lists the instances,
+            // which systemd asks for as they start, so it is in place first.
+            assert!(
+                !grouped(&log, "instances.ini"),
+                "the record is not a secret: {log:?}"
+            );
+            let copied = installs(&log, "instances.ini")
+                .unwrap_or_else(|| panic!("the instance record is not copied: {args:?}: {log:?}"));
+            assert!(
+                copied < start,
+                "the instance record is copied before the instances start: {log:?}"
             );
         }
     }
@@ -3304,6 +3381,16 @@ exit 0
         );
         assert_eq!(mode(&assign), 0o644, "{log:?}");
         assert!(!grouped(&log, "assignments.ini"), "{log:?}");
+        // The record is not a secret either: 0644 with or without the group,
+        // and the instances' user reads it through the directory.
+        let record = sb.etc().join("instances.ini");
+        assert_eq!(
+            std::fs::read_to_string(&record).ok().as_deref(),
+            Some(SHIPPED_INSTANCES),
+            "{log:?}"
+        );
+        assert_eq!(mode(&record), 0o644, "{log:?}");
+        assert!(!grouped(&log, "instances.ini"), "{log:?}");
     }
 
     /// What the administrator or the manager wrote is never touched: an
@@ -3348,8 +3435,17 @@ exit 0
             Some(""),
             "the missing one is copied: {log:?}"
         );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("instances.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_INSTANCES),
+            "the missing record is copied: {log:?}"
+        );
         // A second run copies nothing over what is now there.
         std::fs::write(etc.join("models.ini"), "[Qwen3.8-27B]\nmodel = /m/q.gguf\n").unwrap();
+        let record = "[default]\nServerProfile = big\n[gpu1]\nServerProfile = default\n";
+        std::fs::write(etc.join("instances.ini"), record).unwrap();
         let log = sb.run(&postinst, &["configure", "1:1.0.0+pai1"], true, None);
         assert_eq!(
             std::fs::read_to_string(etc.join("models.ini")).unwrap(),
@@ -3359,6 +3455,11 @@ exit 0
         assert_eq!(
             std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
             mine
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("instances.ini")).unwrap(),
+            record,
+            "the record the manager wrote is never overwritten: {log:?}"
         );
         for text in deb_scripts(Component::Llama)
             .into_iter()
@@ -3383,6 +3484,7 @@ exit 0
             "models.ini",
             "models.ini.disabled",
             "assignments.ini",
+            "instances.ini",
         ];
         let fill = |sb: &Sandbox| {
             std::fs::create_dir_all(sb.etc()).unwrap();
@@ -3441,6 +3543,15 @@ exit 0
             "{log:?}"
         );
         assert_eq!(mode(&etc.join("assignments.ini")), 0o644, "{log:?}");
+        assert_eq!(
+            std::fs::read_to_string(etc.join("instances.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_INSTANCES),
+            "the instance record is copied: {log:?}"
+        );
+        assert_eq!(mode(&etc.join("instances.ini")), 0o644, "{log:?}");
+        assert!(!grouped(&log, "instances.ini"), "{log:?}");
         let start = call(&log, &["start", "llama.cpp@default.service"])
             .unwrap_or_else(|| panic!("{log:?}"));
         assert!(log[start].contains("has-default=yes"), "{log:?}");
@@ -3450,9 +3561,20 @@ exit 0
             copied < start,
             "the default assignment is copied before the instances start: {log:?}"
         );
+        let copied = installs(&log, "instances.ini")
+            .unwrap_or_else(|| panic!("the instance record is not copied: {log:?}"));
+        assert!(
+            copied < start,
+            "the instance record is copied before the instances start: {log:?}"
+        );
 
         std::fs::write(etc.join("server@default.ini"), "[Server]\nPort = 8080\n").unwrap();
         std::fs::write(etc.join("assignments.ini"), "[default]\n* = on\n").unwrap();
+        std::fs::write(
+            etc.join("instances.ini"),
+            "[default]\nServerProfile = big\n",
+        )
+        .unwrap();
         sb.run(&posttrans, &[], true, None);
         assert_eq!(
             std::fs::read_to_string(etc.join("server@default.ini")).unwrap(),
@@ -3463,6 +3585,11 @@ exit 0
             std::fs::read_to_string(etc.join("assignments.ini")).unwrap(),
             "[default]\n* = on\n",
             "the assignment is never overwritten"
+        );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = big\n",
+            "the record is never overwritten"
         );
 
         for name in ["%preun", "%postun"] {
@@ -3489,6 +3616,7 @@ exit 0
         std::fs::write(share.join("server@default.ini"), SHIPPED_SERVER).unwrap();
         std::fs::write(share.join("models.ini"), "").unwrap();
         std::fs::write(share.join("assignments.ini"), SHIPPED_ASSIGNMENTS).unwrap();
+        std::fs::write(share.join("instances.ini"), SHIPPED_INSTANCES).unwrap();
         let etc = root.join(ENGINE_ETC.trim_start_matches('/'));
 
         let log = sb.run_chroot(&deb(Component::Llama, "postinst"), &["configure"], &root);
@@ -3513,6 +3641,13 @@ exit 0
             Some(SHIPPED_ASSIGNMENTS),
             "the default assignment is copied inside the root: {log:?}"
         );
+        assert_eq!(
+            std::fs::read_to_string(etc.join("instances.ini"))
+                .ok()
+                .as_deref(),
+            Some(SHIPPED_INSTANCES),
+            "the instance record is copied inside the root: {log:?}"
+        );
         assert_eq!(mode(&etc), 0o755);
         assert!(!sb.etc().exists(), "nothing outside the root: {log:?}");
 
@@ -3520,6 +3655,10 @@ exit 0
         assert!(!etc.exists(), "the chroot's /etc/llama.cpp purged: {log:?}");
         assert!(share.join("server@default.ini").is_file(), "{log:?}");
         assert!(share.join("assignments.ini").is_file(), "{log:?}");
+        assert!(
+            share.join("instances.ini").is_file(),
+            "the purge keeps the read-only copy: {log:?}"
+        );
     }
 
     /// Whether any call disables a unit.

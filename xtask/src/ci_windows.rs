@@ -275,6 +275,7 @@ fn installers_windows_checks_the_installed_products() {
         "server@default.ini",
         "models.ini",
         "assignments.ini",
+        "instances.ini",
         "127.0.0.1:8590/api/version",
     ] {
         assert!(
@@ -304,8 +305,9 @@ fn installers_windows_repairs_before_uninstalling() {
 
 /// Test plan step 7: the engine's defaults are copied back only when missing.
 /// The files exist before the repair, so seeing them after it proves nothing:
-/// `models.ini` and `assignments.ini` are deleted before the repair (they
-/// must come back) and `server@default.ini` changed (the change must stay).
+/// `models.ini`, `assignments.ini` and `instances.ini` are deleted before the
+/// repair (they must come back) and `server@default.ini` changed (the change
+/// must stay).
 #[test]
 fn installers_windows_repair_restores_a_deleted_default_and_keeps_a_changed_one() {
     let text = workflow();
@@ -315,7 +317,7 @@ fn installers_windows_repair_restores_a_deleted_default_and_keeps_a_changed_one(
         .expect("no msiexec /f repair after the install");
     let step_start = text[..repair].rfind("\n      - ").unwrap_or(install);
     let before_repair = &text[step_start..repair];
-    for name in ["models.ini", "assignments.ini"] {
+    for name in ["models.ini", "assignments.ini", "instances.ini"] {
         assert!(
             before_repair.contains("Remove-Item") && before_repair.contains(name),
             "{name} is not deleted before the repair"

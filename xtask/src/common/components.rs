@@ -266,18 +266,26 @@ pub fn of_product(product: Option<Product>) -> Vec<Component> {
 /// raised when anything but llama.cpp's code changes on the same release
 /// (the patches, the build options, the package's scripts or files), back
 /// to 1 at every new llama.cpp release.
-pub const LLAMA_CPP_REVISION: u32 = 1;
+pub const LLAMA_CPP_REVISION: u32 = 2;
 
 /// The version of the llama.cpp package built from release `llama_build`
-/// (`v1.0.0`): `1:1.0.0+pai<LLAMA_CPP_REVISION>`.
+/// (`v1.0.0`): `1:1.0.0+pai<LLAMA_CPP_REVISION>`. The package we ship is at
+/// our own build revision, so its version is the minimum we accept.
 pub fn llama_cpp_version(llama_build: &str) -> String {
-    format!("{}+pai{LLAMA_CPP_REVISION}", llama_cpp_min(llama_build))
+    llama_cpp_min(llama_build)
 }
 
 /// The lowest llama.cpp package version a framework package built against
-/// release `llama_build` (`v1.0.0`) accepts: `1:1.0.0`.
+/// release `llama_build` (`v1.0.0`) accepts: `1:1.0.0+pai<LLAMA_CPP_REVISION>`,
+/// the release with the epoch (Ubuntu 26.04 ships its own `llama.cpp` at
+/// `8681+dfsg-1`, which ranks above `1.0.0` without an epoch, Debian Policy
+/// 5.6.12) and our build revision (an engine of an earlier revision of the
+/// same release lacks what this framework was built against).
 pub fn llama_cpp_min(llama_build: &str) -> String {
-    format!("1:{}", llama_build.trim_start_matches('v'))
+    format!(
+        "1:{}+pai{LLAMA_CPP_REVISION}",
+        llama_build.trim_start_matches('v')
+    )
 }
 
 /// A package file's name without architecture and extension. A framework
@@ -493,6 +501,7 @@ mod tests {
             "usr/share/private-ai/llama.cpp/server@default.ini",
             "usr/share/private-ai/llama.cpp/models.ini",
             "usr/share/private-ai/llama.cpp/assignments.ini",
+            "usr/share/private-ai/llama.cpp/instances.ini",
         ] {
             assert_eq!(of(rel), Component::Llama, "{rel}");
         }
@@ -541,18 +550,51 @@ mod tests {
 
     /// The engine's version is `1:<release>+pai<N>`: the llama.cpp release
     /// without its `v`, `+pai<N>` our build revision ([`LLAMA_CPP_REVISION`],
-    /// checked in, starting at 1), and the epoch `1:` because Ubuntu 26.04
-    /// ships its own `llama.cpp` at `8681+dfsg-1`, which would rank above
-    /// `1.0.0` without it (Debian Policy 5.6.12: the epoch is compared
-    /// first). The framework requires at least `1:<release>`, so any build
-    /// revision of that release, or a later release, satisfies it.
+    /// checked in, raised when our packaging of a release changes), and the
+    /// epoch `1:` because Ubuntu 26.04 ships its own `llama.cpp` at
+    /// `8681+dfsg-1`, which would rank above `1.0.0` without it (Debian
+    /// Policy 5.6.12: the epoch is compared first). The framework requires
+    /// at least `1:<release>+pai<N>` at its own revision: an engine of an
+    /// earlier build revision of the same release lacks what this framework
+    /// was built against, and `1:<release>` alone (any revision of it) is
+    /// not a version the framework ever ships.
     #[test]
     fn the_engine_version_carries_the_epoch_and_the_build_revision() {
-        assert_eq!(LLAMA_CPP_REVISION, 1);
-        assert_eq!(llama_cpp_version("v1.0.0"), "1:1.0.0+pai1");
-        assert_eq!(llama_cpp_version("v1.2.10"), "1:1.2.10+pai1");
-        assert_eq!(llama_cpp_min("v1.0.0"), "1:1.0.0");
-        assert_eq!(llama_cpp_min("v1.2.10"), "1:1.2.10");
+        assert_eq!(LLAMA_CPP_REVISION, 2);
+        assert_eq!(llama_cpp_version("v1.0.0"), "1:1.0.0+pai2");
+        assert_eq!(llama_cpp_version("v1.2.10"), "1:1.2.10+pai2");
+        assert_eq!(llama_cpp_min("v1.0.0"), "1:1.0.0+pai2");
+        assert_eq!(llama_cpp_min("v1.2.10"), "1:1.2.10+pai2");
+    }
+
+    /// The minimum ranks as the package managers rank versions (the epoch
+    /// first, then the release and the build revision, the order
+    /// `util::version_gt` gives, the one `install.rs` compares installed
+    /// packages with): a framework built against `+pai2` refuses the engine
+    /// of `+pai1` of the same release, takes its own, and takes a later
+    /// release at its own revision.
+    #[test]
+    fn a_framework_of_revision_two_refuses_the_engine_of_revision_one() {
+        let min = llama_cpp_min("v1.0.0");
+        assert_eq!(min, "1:1.0.0+pai2");
+        // `>= min` is satisfied by `v` when `min` is not newer than `v`.
+        let satisfies = |v: &str| !crate::common::util::version_gt(&min, v);
+        assert!(
+            !satisfies("1:1.0.0+pai1"),
+            "the engine of an earlier build revision must not satisfy the minimum"
+        );
+        assert!(
+            !satisfies("1:1.0.0"),
+            "the bare release, which carries no build revision, must not satisfy it"
+        );
+        assert!(
+            satisfies("1:1.0.0+pai2"),
+            "the engine this framework was built with satisfies it"
+        );
+        assert!(
+            satisfies("1:1.0.1+pai2"),
+            "a later release at this revision satisfies it"
+        );
     }
 
     /// File names: a framework package names the framework version alone
@@ -933,6 +975,34 @@ mod tests {
                 !text.contains("Component::Bff"),
                 "{name} names Component::Bff"
             );
+        }
+    }
+
+    /// macOS ships no instance record. There is no manager and no instance
+    /// there (the configurator runs llama-server itself), so the engine's
+    /// read-only defaults, the record among them, belong to the Linux and the
+    /// Windows packages only: the macOS package and install phases name no
+    /// `.ini` default, neither the folder the Linux package ships them in nor
+    /// the module that ships it, and the `.pkg` items of `macos_pkg.rs` put
+    /// their files in the two `bin/` trees and the Vulkan runtime, never a
+    /// configuration file.
+    #[test]
+    fn no_macos_package_ships_the_instance_record() {
+        for (name, text) in [
+            ("macos/package.rs", include_str!("../macos/package.rs")),
+            ("macos/install.rs", include_str!("../macos/install.rs")),
+            ("common/macos_pkg.rs", include_str!("macos_pkg.rs")),
+        ] {
+            for needle in [
+                "instances.ini",
+                "assignments.ini",
+                "models.ini",
+                "server@default.ini",
+                "usr/share/private-ai/llama.cpp",
+                "system_files::",
+            ] {
+                assert!(!text.contains(needle), "{name} names {needle}");
+            }
         }
     }
 

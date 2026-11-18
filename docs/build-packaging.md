@@ -37,7 +37,7 @@ and per user on macOS.
 | Linux | Its runtimes, `llama.cpp-rocm`, `-cuda`, `-vulkan` | `llama.cpp-<sdk>-v<sdk version>-amd64.deb`, `-x86_64.rpm` (the same on ARM) |
 | macOS | The engine `llama.cpp` and `llama.cpp-vulkan`; the framework's `config`, `cli`, `core` | `llama.cpp-v<release>-arm64.pkg`, `llama.cpp-vulkan-v<sdk version>-arm64.pkg`, `private-ai-framework-<package>-v<framework>-arm64.pkg`: [the macOS page](build-macos.md) |
 
-For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai1-amd64.deb`,
+For example, `private-ai-framework-core-v2.99.1-amd64.deb`, `llama.cpp-v1.0.0+pai2-amd64.deb`,
 `llama.cpp-rocm-v10.1.0-amd64.deb`, `private-ai-framework-v2.99.1-x64.msi`, `llama.cpp-v1.0.0-x64.msi`. Release 2.4 and
 earlier named them `llama-cpp-framework-*`: the new packages upgrade those in place (below, per format).
 A [minimal build](build-compiling.md#the-minimal-build) (Windows and macOS, CI only) names the engine's
@@ -171,16 +171,22 @@ licence, and, in llama.cpp's, NVIDIA's terms in full. A silent or basic-UI insta
 
 **The framework's MSI refuses to install without llama.cpp at the release it was built against or
 newer.** Windows Installer conditions compare no versions, so it finds the engine by llama.cpp's
-UpgradeCode with a minimum version and fails a launch condition without it. Each MSI upgrades on its
-own (`MajorUpgrade`, same-version repackages allowed, downgrades refused): a newer llama.cpp needs no
-framework rebuild.
+UpgradeCode with a minimum version and fails a launch condition without it. The minimum is the
+release alone (`LlamaCppMin`, `msi::product_version`): Windows Installer's version has no build
+revision, so an engine of that release built before the instance record (`+pai1` and earlier) passes
+the check; the Linux packages do pin the revision, the `.deb` and `.rpm` lines below. Each MSI
+upgrades on its own (`MajorUpgrade`, same-version repackages allowed, downgrades refused): a newer
+llama.cpp needs no framework rebuild.
 
 **llama.cpp's MSI ships its defaults and copies them into `%ProgramData%\llama.cpp\config\` only
 when missing**, never over a file, on install, repair and upgrade alike, and leaves them on uninstall
 (`NeverOverwrite`, `Permanent`). They are `crates/core/defaults/windows/`: a `server@default.ini`
-holding only `[Server]` `Port = 9931` and `Hostname = localhost`, and an empty `models.ini`. As on
-Linux the manager reads the server file with pai's defaults for every other key and rewrites it in
-pai's template at its first write. The instance `default` therefore exists from the engine's install.
+holding only `[Server]` `Port = 9931` and `Hostname = localhost`, an empty `models.ini`, an
+`assignments.ini` giving the instance `default` every model profile, and `instances.ini`, the
+instance record: one `[default]` section with `ServerProfile = default`, the settings it runs,
+`server@default.ini`. As on Linux the manager reads the server file with pai's defaults for every
+other key and rewrites it in pai's template at its first write. The instance `default` therefore
+exists from the engine's install.
 
 **The framework's MSI installs the `private-ai-manager` service.** It is `pai-manager.exe serve` as
 LocalSystem, started at boot and restarted after a failure; it runs each instance as its own
@@ -273,7 +279,7 @@ RUNPATH described below.
 | `private-ai-framework-cli` | `pai` (the command line), the benchmark method; no graphics library | `<framework>` | not measured |
 | `private-ai-framework-bff` | `pai-bff` (the web service), `private-ai-bff.service` and the sysusers entry of its user | `<framework>` | not measured |
 | `private-ai-framework-core` | `pai-manager`, `private-ai-manager.service`, the D-Bus and polkit policies, the polkit rule, the sysusers entry of `private-ai` and the group `pai`, the PAM service `/etc/pam.d/private-ai`, `cli.toml`, the manager's maintainer scripts | `<framework>` | not measured |
-| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, the instance unit `llama.cpp@.service` and the scripts that stop and restart the instances; nothing else of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai1` | not measured |
+| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, the instance unit `llama.cpp@.service` and the scripts that stop and restart the instances; nothing else of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai2` | not measured |
 | `llama.cpp-rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
 | `llama.cpp-cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
 | `llama.cpp-vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
@@ -285,9 +291,14 @@ up to the MiB: they hold the same files as then. The framework's packages and `l
 **The engine carries its own version, the framework packages only the framework's.** `llama.cpp` is
 `1:<release>+pai<N>`: the epoch `1:` because Ubuntu 26.04 ships its own `llama.cpp` at `8681+dfsg-1`,
 which apt would otherwise rank above `1.0.0` (the epoch is compared first), and `+pai<N>` our build
-revision. The `.rpm` spells it Epoch `1`, Version `<release>`, Release `pai<N>`; every other `.rpm` has
-Release `1` and no epoch. A newer llama.cpp therefore installs without a framework rebuild.
-`xtask install` compares the epochs and reads an rpm's version with `%{EVR}`.
+revision (`components::LLAMA_CPP_REVISION`, raised when anything but llama.cpp's code changes on the
+same release, back to 1 at every new release). The `.rpm` spells it Epoch `1`, Version `<release>`,
+Release `pai<N>`; every other `.rpm` has Release `1` and no epoch. The engine's version is at the
+same time the minimum the framework packages accept (`components::llama_cpp_version` is
+`llama_cpp_min`), so the framework pins its build revision: a newer llama.cpp release installs
+without a framework rebuild, an engine of an earlier revision of the same release is refused, it
+lacks what the framework was built against. `xtask install` compares the epochs and reads an rpm's
+version with `%{EVR}`.
 
 **A runtime package holds only the external SDK's libraries, so it changes only with the SDK.** A new
 llama.cpp on the same SDKs leaves the three as they are. Each is optional: a backend whose runtime is
@@ -298,7 +309,7 @@ missing is skipped at start, with only a log line.
 | Relation | `.deb` | `.rpm` |
 | --- | --- | --- |
 | `config` needs `cli` and `core`; `cli` and `bff` need `core`; each at exactly its version | `Depends` `(= <version>)` | `Requires` `= <version>` |
-| `config`, `cli` and `core` need the engine at least at the release they were built against; `bff` does not run it | `Depends: llama.cpp (>= 1:<release>)` | `Requires: llama.cpp >= 1:<release>` |
+| `config`, `cli` and `core` need the engine at least at the release they were built against, at our build revision; `bff` does not run it | `Depends: llama.cpp (>= 1:<release>+pai<N>)` | `Requires: llama.cpp >= 1:<release>-pai<N>` (rpm reads a relation's value as an epoch-version-release, so a `+` never appears in one) |
 | `llama.cpp` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
 | `llama.cpp` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
 | `llama.cpp` keeps out the distribution's package of the same commands | `Conflicts: llama.cpp-tools` (Ubuntu) | `Conflicts: llama-cpp` (Fedora) |
@@ -343,7 +354,7 @@ been run for real.
 | `/usr/lib/private-ai/.kpack/` | `llama.cpp-rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
 | `/usr/share/private-ai/benchmarks/` | `cli` | The benchmark method |
 | `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
-| `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini` and an empty `models.ini`, copied into `/etc/llama.cpp/` when missing |
+| `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini`, an empty `models.ini`, `assignments.ini` and the instance record `instances.ini`, copied into `/etc/llama.cpp/` when missing |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
 | `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
@@ -407,18 +418,23 @@ still wins over RUNPATH. That no file is opened under the dists or the build tre
 RUNPATH; it has not been repeated with the absolute one.
 
 **The one config file shipped is `core`'s PAM service (below); `llama.cpp` ships its defaults.** The server and model profile files
-(`server@<id>.ini`, `models.ini`, `models.ini.disabled`) are the engine's, in `/etc/llama.cpp/`
+(`server@<id>.ini`, `models.ini`, `models.ini.disabled`) and the instance records (`assignments.ini`,
+which profiles each instance is given, and `instances.ini`, which server profile it runs) are the
+engine's, in `/etc/llama.cpp/`
 (`paths::engine_config_dir`), which only the manager writes; the framework's own (`bff.ini`) are in
 `/etc/private-ai/`. systemd creates both at the manager's start (`ConfigurationDirectory=`).
-`llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini` and an
-empty `models.ini`. The server file holds starting values only, a `[Server]` section with `Port`,
+`llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini`, an
+empty `models.ini`, `assignments.ini` giving the instance `default` every model profile, and
+`instances.ini` with one `[default]` section naming `ServerProfile = default`. The server file
+holds starting values only, a `[Server]` section with `Port`,
 `Hostname`, `ModelsDir` and `StateDir` (the service user's paths under `/var/lib/private-ai`): the
 format belongs to the framework, so a change of pai's template does not touch the engine package.
 The manager reads it with pai's defaults for every other key and rewrites it in pai's full template
 at its first write (`server_cfg.rs` tests, which also check that the manager accepts it). Its scripts copy each into `/etc/llama.cpp/` only
 when it is missing, never over a file, so an upgrade leaves what the user or the manager wrote and
 dpkg asks nothing: `server@default.ini` 0640 `root:private-ai` when that group exists, else 0644,
-`models.ini` 0644. The instance `default` therefore exists from the first install. No file is moved
+`models.ini`, `assignments.ini` and `instances.ini` 0644, none of them holding a secret. The
+instance `default` therefore exists from the first install, named by the record. No file is moved
 from `/etc/private-ai/`: there is no migration between the pre-release layouts. `pai-config` keeps `settings.ini` per
 user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and moves release 2.4's
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start

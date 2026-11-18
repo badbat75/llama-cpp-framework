@@ -600,9 +600,15 @@ pub(crate) fn manager_dbus_e2e() {
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
     let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    // An instance is a section of the record, not a file: the fixture hands
+    // the manager the `instances.ini` it reads. lan-2 starts as a section with
+    // no `server@lan-2.ini`, the instance the accepted write below gives its
+    // file.
+    let record = "[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n\n[lan-2]\nServerProfile = lan-2\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("instances.ini"), record).expect("write instances");
 
     // Serve `core` on one end of a socket pair, the server built on its own
     // thread (both ends handshake at once); the client on the other end,
@@ -699,7 +705,11 @@ pub(crate) fn manager_dbus_e2e() {
 
         // Reads need no caller.
         let r = call(&client, "ListInstances", &()).expect("ListInstances");
-        assert_eq!(body::<Vec<String>>(&r), vec!["broken", "default"]);
+        assert_eq!(
+            body::<Vec<String>>(&r),
+            vec!["broken", "default", "lan-2"],
+            "the sections of instances.ini are the instances: lan-2 has no profile file of its own"
+        );
         let r = call(&client, "Status", &("default",)).expect("Status");
         assert_eq!(body::<String>(&r), "active");
         let r = call(&client, "ReadFile", &("models.ini",)).expect("ReadFile");
@@ -797,16 +807,19 @@ pub(crate) fn manager_dbus_e2e() {
             "only the changes ask, for configure"
         );
         for method in ["BootEnabled", "SetBootEnabled"] {
+            // A valid id no section of `instances.ini` names: an instance is a
+            // section of the record, so `nope` is no instance (lan-2 IS one,
+            // the record has its section).
             let e = if method == "BootEnabled" {
-                call(&client, method, &("lan-2",))
+                call(&client, method, &("nope",))
             } else {
-                call(&client, method, &("lan-2", true))
+                call(&client, method, &("nope", true))
             }
             .expect_err(method);
             assert_eq!(
                 e.0,
                 err_name("NoInstance"),
-                "{method} of a missing instance"
+                "{method} of an id the record has no section for"
             );
             let e = if method == "BootEnabled" {
                 call(&client, method, &("../x",))
@@ -833,11 +846,11 @@ pub(crate) fn manager_dbus_e2e() {
             }
         }
         for method in ["Start", "Restart"] {
-            let e = call(&client, method, &("lan-2",)).expect_err(method);
+            let e = call(&client, method, &("nope",)).expect_err(method);
             assert_eq!(
                 e.0,
                 err_name("NoInstance"),
-                "{method} of a missing instance"
+                "{method} of an id the record has no section for"
             );
         }
         let e = call(&client, "Start", &("broken",)).expect_err("Start broken");
@@ -1058,6 +1071,13 @@ pub(crate) fn manager_dbus_waits_e2e() {
     )
     .expect("write default");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    // An instance is a section of the record, not a file: the Start this phase
+    // waits at polkit for is an instance only once `instances.ini` has it.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n",
+    )
+    .expect("write instances");
 
     let alice = Caller(":1.42".into());
     let gate = Gate::new();
@@ -1316,6 +1336,13 @@ pub(crate) fn manager_dbus_principal_e2e() {
     let more = format!("{model_profiles}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n");
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
+    // An instance is a section of the record: the `As` verbs of this phase
+    // reach the service manager only for an id `instances.ini` names.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n",
+    )
+    .expect("instances.ini");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // `core` served on one end of a socket pair (the server built on its own

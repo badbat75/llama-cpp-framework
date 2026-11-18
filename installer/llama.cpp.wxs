@@ -212,6 +212,9 @@
     <Component Id="DefaultAssignmentsIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
       <File Id="DefaultAssignmentsIni" Source="$(var.StagingDir)\share\defaults\assignments.ini" KeyPath="yes" />
     </Component>
+    <Component Id="DefaultInstancesIni" Directory="ENGINECONFIGFOLDER" NeverOverwrite="yes" Permanent="yes">
+      <File Id="DefaultInstancesIni" Source="$(var.StagingDir)\share\defaults\instances.ini" KeyPath="yes" />
+    </Component>
 
     <Feature Id="Main" Title="llama.cpp (required)"
              Description="llama.cpp's programs, the ggml backends and the bundled AMD ROCm and NVIDIA CUDA runtime libraries."
@@ -226,6 +229,7 @@
       <ComponentRef Id="DefaultServerIni" />
       <ComponentRef Id="DefaultPresetsIni" />
       <ComponentRef Id="DefaultAssignmentsIni" />
+      <ComponentRef Id="DefaultInstancesIni" />
     </Feature>
 
     <!-- ── Custom actions ── -->

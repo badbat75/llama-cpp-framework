@@ -278,6 +278,16 @@ Lessons only: the rules are in `AGENTS.md`.
 - The engine's package version carries an epoch (`1:1.0.0+pai1`): `util::version_gt` compares it
   first, rpm reads versions with `%{EVR}`, and the `.rpm` spells it as `Epoch`/`Version`/`Release`
   (`package::rpm_evr`); a file name drops the epoch (`components::file_stem`).
+- A relation's value is a different spelling: rpm reads `Requires:`/`Provides:` values as an
+  epoch-version-release, so the engine's minimum goes out as `1:1.0.0-pai2` (`package::evr` splits
+  `evr_text` shares with `rpm_evr`), while the `.deb` `Depends` keeps Debian's `1:1.0.0+pai2` and
+  `components::llama_cpp_min` keeps that value. A one-argument lifetime on such a splitter is
+  `clippy::needless_lifetimes` under `-D warnings`: write `fn evr(version: &str) -> (Option<&str>, &str, &str)`.
+- The manager's Windows entry is pinned from its text by a phase of `data_root_e2e`
+  (`tests/windows_sync.rs`): `cargo test -p pai-manager -- windows_sync` filters everything out, run
+  `-- data_root_e2e`. Its `arms()` helper reads only `Ok(`/`Err(` lines at indentation exactly 8, so
+  the arms of `run_manager`'s match stay at 8 with their bodies at 12; `sync_report(` never contains
+  the needle `sync(`, so the "one sync only" count survives a reporting arm.
 - `components::of` routes by first match: a file of the bff under a directory the core claims by
   prefix (`usr/lib/systemd/`, `usr/lib/sysusers.d/`) needs its exact path in the bff branch, which
   comes before the core's prefixes. A service that calls the system bus cannot use `DynamicUser=`
@@ -1411,3 +1421,64 @@ Lessons only: the rules are in `AGENTS.md`.
    write `*c == Component::Bff` and `product == Product::Framework` inside the call, not a local.
    Each MSI's licence page is `stage.with_extension("license.rtf")` so it is per product, and both
    `.wxs` harvest `share\**`: a staged licence text needs no `.wxs` entry.
+- `pai_core::ini`: `read_all` answers `Vec<Section>` (fields `id`, `keys` a `BTreeMap`, values trimmed
+  with the inline comment cut), `read_section(path, name)` matches the section ignoring case and the
+  key exactly, and neither creates a directory. `read_section(p, id).get("Key")` borrows a temporary
+  (E0716) over a chained `ok_or_else`: bind the section to a `let` first. A sorted, unique list of
+  names is a `BTreeSet` collected from the sections.
+- `paths::instance_ids()` is the instance list of the WHOLE manager: the render of the model profile
+  pool (`render_all_locked`, on every pool write) loops over it, so `models@<id>.ini` lands only for a
+  section of `instances.ini`. A committed manager fixture that "adds an instance" by writing
+  `server@<id>.ini` alone then lists nothing: the render assertion (`files_in` of the config dir, e.g.
+  `service.rs:1884`) and the `list_instances()` beside it go red together. That is a fixture with no
+  record, report it; no production change fixes it (a manager that wrote the record would add
+  `instances.ini` to the same expected file set).
+- `cargo test -p pai-core` runs the lib target ONLY (core's e2e phases are inside `mod tests` of each
+  module), and one `data_root_e2e` per crate stops at its first failing assertion: so a green crate
+  means every phase passed, and one red line says nothing about the phases behind it.
+- The tree moves mid-task in a way that erases PRODUCTION edits too (the tester rewrote
+  `paths.rs`, `launch.rs`, `service.rs` while I edited them, my three edits gone, the tests still
+  quoting them). Verify the whole set with `git diff <paths>` right before the test run, not only the
+  file you are in, and re-apply from a fresh read when a test quotes code you already replaced.
+- An instance IS the section of `instances.ini` (`paths::instance_ids()`): `launch::instance_command`
+  reads the profile it launches from that section's `ServerProfile` key (a section naming no profile,
+  or a name that builds no path, is `NoConfig` naming the RECORD, not a file), and
+  `service::existing_id` = `valid_id` then "is a section" (`NoInstance` for the rest, InvalidId first).
+  So `boot_enabled`/`set_boot_enabled`/`start`/`restart` pass for a section whose `server@<profile>.ini`
+  is missing: the launch is the one that refuses. The record is the manager's to write only when it
+  creates an instance (a later slice), so a test fixture that wants an instance writes the record:
+  `service::write_record` is module-private (`fn`, not `pub`), the dbus and pipe phases write
+  `instances.ini` inline.
+- One red `data_root_e2e` hides the phases behind it. To enumerate every test site a production rule
+  breaks, copy the tree (`rsync -a --exclude build --exclude .git --exclude dist --exclude
+  node_modules`, ~23 MB) to /tmp with `CARGO_TARGET_DIR` set to a fresh dir, patch the TESTS there,
+  and rerun `cargo test -p <crate> --lib` after each patch: the failures come out one at a time and the
+  green copy shows the complete list. Never patch the repo's tests. A manager fixture with a
+  `server@<id>.ini` and no record answers `NoInstance` where the test wants `Ok`.
+- fe CSS: when a test pins a declaration's EXACT text (the tests' `prop()` trims only the ends, inner
+  newlines stay), write it on ONE line with `/* prettier-ignore */` above it: Prettier (printWidth 80)
+  breaks a long value such as `background-image: repeating-linear-gradient(135deg, transparent 0 6px,
+  var(--hatch) 6px 8px)` across lines, and the pin goes red on the whitespace. `npx prettier --write
+  <file>` answering "unchanged" proves the hand-written line is what the formatter keeps.
+- fe CSS cascade: `input[role='switch']` and `input[type='checkbox']` tie at (0,1,1), so the rule written
+  LATER wins per property: a switch track placed after the checkbox rules inherits its fills and
+  overrides only the geometry, and the brief's "no background of its own" is what lets `:checked` and
+  `:disabled` reach it. A `background` shorthand resets `background-image`, which is why a hatch declared
+  only on the field and button rules cannot leak into the box or the track.
+- config's `names_lint` scans manager and core `src/` test modules and refuses the bare
+  `private-ai-manager`: a tester's fixture list of SCM service names naming it reds
+  `cargo test -p pai-config --lib` (`no_code_names_the_old_project`) while the manager's own suite is
+  green. A service-plan fixture only needs a name that does not start with `llama.cpp_`: `Dnscache`.
+- `clippy::err_expect` fires on a tester's `.err().expect(msg)` in test code under
+  `--all-targets -- -D warnings`. `.expect_err(msg)` is the identical assertion (the owned error,
+  `.kind()` still reads), so it is the mechanical fix to apply and name in the report; a fix that
+  changes what the test asserts stays the tester's.
+- One shipped engine default file is six places: `crates/core/defaults/<file>.ini` and
+  `defaults/windows/<file>.ini`, `linux/system_files.rs` `files()` and `copy_missing_defaults`
+  (0644, copied only when missing: covers the `.deb` and the `.rpm`), `msi::engine_defaults()` and
+  the `.wxs` Component + ComponentRef, and the CI install and repair checks in
+  `.github/workflows/installers-windows.yml` pinned again by `xtask/src/ci_windows.rs`.
+- The engine's build revision is `components::LLAMA_CPP_REVISION`: `llama_cpp_version` and
+  `llama_cpp_min` derive `1:<release>+paiN`, so a bump moves the `.deb` Depends and `.rpm` Requires
+  and the `paiN` fixtures of `xtask/src/linux/package.rs`. The MSI's `LlamaCppMin` is
+  `msi::product_version(&llama_build)`, the release alone, so `windows/package.rs` does not follow.

@@ -13,6 +13,9 @@ mod dbus_client;
 // protocol), joined by a Unix socket pair.
 #[cfg(unix)]
 mod pipe_client;
+// The Windows service plan against the instance record. It runs on every OS:
+// the plan is one of windows.rs' OS-neutral decisions.
+mod windows_sync;
 
 #[test]
 fn data_root_e2e() {
@@ -40,6 +43,12 @@ fn data_root_e2e() {
 
     // ── Manager core: the per-instance model profiles renders and assignments.ini ─
     crate::manager::service::manager_assignments_e2e();
+
+    // ── Manager core: instances.ini, the instance record, read-only ──────
+    crate::manager::service::manager_instances_file_e2e();
+
+    // ── Manager core: a verb's existence check reads the record ──────────
+    crate::manager::service::manager_existing_id_e2e();
 
     // ── Manager core: a render that cannot be written, and its report ─────
     crate::manager::service::manager_render_failure_e2e();
@@ -84,4 +93,7 @@ fn data_root_e2e() {
 
     // ── Manager core: a write that swaps only on the text it expected ────
     crate::manager::service::manager_write_file_if_e2e();
+
+    // ── Windows: the SCM's services follow instances.ini ─────────────────
+    crate::tests::windows_sync::manager_windows_sync_e2e();
 }

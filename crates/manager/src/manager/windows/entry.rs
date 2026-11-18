@@ -91,7 +91,10 @@ fn foreground(cmd: Result<Command, String>, launch_failed: &LaunchFailed) -> Res
 }
 
 /// Set up the instances' services, then serve the pipe: the SCM starts the
-/// ones whose start type is automatic.
+/// ones whose start type is automatic. The record of the instances
+/// (`instances.ini`) is what plans them, read fallibly: a record that cannot
+/// be read plans nothing, so no service is created and none is deleted, and
+/// the manager serves the pipe all the same.
 fn run_manager(report: Report) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
     // The service has no console, so its records go to the file under the
@@ -107,8 +110,21 @@ fn run_manager(report: Report) -> std::io::Result<()> {
         )
         .with_log(log),
     );
-    for failure in manager.service().sync(&manager.list_instances()) {
-        report(&failure);
+    // The listing that swallows a read failure answers "no instances", and a
+    // sync against no instances deletes the service of every one: the entry
+    // acts on the read only when it landed.
+    match crate::paths::try_instance_ids() {
+        Ok(instances) if !instances.is_empty() => {
+            for failure in manager.service().sync(&instances) {
+                report(&failure);
+            }
+        }
+        // A record that READS and names no section (an empty one, one cut
+        // mid-header, one of comments) lands here too, and a sync against an
+        // empty list deletes the service of every instance: plan nothing, the
+        // way a read that failed does, and report it.
+        Ok(_) => manager.sync_report(&std::io::ErrorKind::InvalidData.into()),
+        Err(e) => manager.sync_report(&e),
     }
     // The instances read `models@<id>.ini`: render the pool on disk before
     // the SCM starts an instance. A render that fails leaves the files as

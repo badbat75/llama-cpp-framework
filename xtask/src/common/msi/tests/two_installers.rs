@@ -16,7 +16,12 @@ const ENGINE_WXS: &str = "installer/llama.cpp.wxs";
 const REMOVE_INSTANCES_PS1: &str = "installer/msi-remove-instances.ps1";
 /// The framework's identity across versions, 2.4 included (installer/AGENTS.md).
 const FRAMEWORK_UPGRADE_CODE: &str = "F21D044C-04F5-478D-8F0A-A9B940DB23C3";
-const DEFAULTS: [&str; 3] = ["server@default.ini", "models.ini", "assignments.ini"];
+const DEFAULTS: [&str; 4] = [
+    "server@default.ini",
+    "models.ini",
+    "assignments.ini",
+    "instances.ini",
+];
 
 pub(super) fn engine_text() -> String {
     read(ENGINE_WXS)
@@ -252,6 +257,53 @@ fn the_engine_ships_the_default_assignment_on_windows() {
         .collect();
     assert_eq!(keys, ["[default]", "* = inherit"], "{text}");
     assert!(text.is_ascii(), "{text}");
+}
+
+/// The engine's Windows defaults carry the instance record as well:
+/// `instances.ini`, one section for the instance `default` with the key
+/// `ServerProfile = default`, so a fresh install and an upgrade have an
+/// instance `default` running the server profile `default`, with nothing to
+/// write by hand. Checked in as
+/// `crates/core/defaults/windows/instances.ini`, beside the other Windows
+/// defaults, with the same text as the Linux file: the manager owns the
+/// record, the installer only copies it.
+#[test]
+fn the_engine_ships_the_default_instance_record_on_windows() {
+    let want = read("crates/core/defaults/windows/instances.ini");
+    let text = engine_defaults()
+        .into_iter()
+        .find(|(n, _)| *n == "instances.ini")
+        .expect("instances.ini among the engine's defaults")
+        .1;
+    assert_eq!(text, want);
+    // The header says what the file is and who owns it, in the words of the
+    // file beside it.
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.first().copied().unwrap_or_default(),
+        "; What each llama.cpp instance is, one section per instance: the server profile it runs.",
+        "{text}"
+    );
+    assert_eq!(
+        lines.get(1).copied().unwrap_or_default(),
+        "; pai-manager owns this file: it lists the instances from it, the launch reads ServerProfile.",
+        "{text}"
+    );
+    let keys: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with(';') && !l.starts_with('#'))
+        .collect();
+    assert_eq!(keys, ["[default]", "ServerProfile = default"], "{text}");
+    assert!(!text.contains("preset"), "an old name: {text}");
+    assert!(!text.contains('\u{2014}'), "no em-dash:\n{text}");
+    assert!(text.is_ascii(), "{text}");
+    assert!(!text.contains('\r'), "as its siblings: {text:?}");
+    assert_eq!(
+        text,
+        read("crates/core/defaults/instances.ini"),
+        "the record is one text on both systems"
+    );
 }
 
 /// The Windows package phase uses the functions above: one MSI per product,

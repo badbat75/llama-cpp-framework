@@ -21,6 +21,23 @@ Lessons only: the rules are in `AGENTS.md`.
   phase's red, copy `tests/mod.rs` to the scratchpad, rewrite the body to call only that phase, run
   `cargo test -p <crate> -- tests::data_root_e2e`, then `cp` the copy back (never `git checkout`) and
   `grep -n` the registration to confirm the restore. A phase that redirects the data root runs alone.
+- The same trick proves the pins a first red blocks inside ONE phase of a `src/` file (a phase like
+  `manager_*_e2e` lives in the module, so a `tests/zz_probe.rs` copy cannot reach its `pub(crate) fakes`):
+  append a twin `pub(crate) fn <phase>_probe_e2e()` built by a python transform of the real body (early
+  `assert_eq!(`/`assert!(` → `let _ = (`), register the twin LAST in the scratch `tests/mod.rs` and comment
+  out the real phase there, then neutralize in waves (one wave = the asserts before the next block). Two
+  artefacts of the transform red as `E0282` in a neutralized tuple: a bare `Ok(())`/`Ok(false)` argument
+  needs `Ok::<(), ManagerError>(())`, and an `Err`-only helper closure needs a return-type annotation (a
+  `type VerbAnswers = (Result<(), ManagerError>, ..)` alias, written by rustfmt one element per line).
+  Restore with `cp` + `cmp` and check the registration with `grep -n`; a `grep -c probe` on the file counts
+  its own pre-existing `probe` fixtures, so read those lines rather than trusting the count.
+- Inside ONE phase the asserts are a sequence too, so the first red blocks every later pin of the SAME
+  coder branch: say they go green together, and prove the fixtures with a standalone `rustc --edition 2021`
+  probe of the reader's predicates (`ini::parse_sections` trims both sides, so `Key =` and `Key =   ` are
+  both the empty string, and a section with no key is the same answer).
+- A refusal whose PATH the design leaves open: pin only `is_err()` and say so in the comment. Once the
+  coordinator closes the rule, replace the loose assert with the exact value: `is_err()` greens on a refusal
+  that names the wrong path (the id built into `server@<id>.ini` where the record is wanted).
 - A stub inserted with `edit` lands wherever the anchor matches: the same stub inserted twice (two anchors
   both matching) is `E0592: duplicate definitions with name`. After inserting a stub, `grep -n "fn <name>"`
   and read the count; a `pub fn` stub in a lib crate raises no dead-code red, so the compile is the only
@@ -171,6 +188,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `grep -E '^    [a-z_][a-z0-9_:]*$'` (the failure list is 4-space test paths; the `---- name stdout ----`
   lines carry `----` and filter out), restore with `cp` and prove it with `cmp`. Per-mutant `cargo test` of
   xtask is ~10 s (deps cached), so nine mutants in one script beat reasoning.
+- A battery script that builds package names as `pai-$crate` fakes reds on `xtask` (its package is plain
+  `xtask`): a cargo spec error exits 101 like a test red, so read a `test result` line in each mutant log
+  before counting a red. A subset rerun of the same script truncates the shared exits file (`: > "$X"`):
+  give every run its own exits file.
 - Never `git stash` or `git checkout --` to compare: other sessions edit the same tree. Run one test on
   its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
   the real tree.
@@ -183,6 +204,10 @@ Lessons only: the rules are in `AGENTS.md`.
   compile error as the red); `count >= n + 1` (`int_plus_one`: write `count > n`); a `///` on a `let`
   (a closure helper inside an e2e fn) is `unused_doc_comments`, use `//`; `out.push_str(*line)` over a
   `&[&str]` (`explicit_auto_deref`: write `out.push_str(line)`, the argument coerces on its own).
+- A shared tree runs a slice's suite with OTHER slices' in-progress reds already in it: account for every
+  failing test by name, quote each red's panic text, and show it names the missing production piece of the
+  other slice (e.g. a shipped file "No such file or directory"), not your fixture. Say the counts: mine N,
+  theirs M, and where the files overlap (a test in a file you edited) read its assert to prove the link.
 - A cargo filter is a SUBSTRING, so a new test name can drag in an old one: `-- remove_key set_key`
   also ran `preset_keys_with_no_check_today_pass` (`preset_keys` holds `set_key`). Account for every
   non-red line by name, and name new tests so they cannot collide with an existing name.
@@ -235,7 +260,14 @@ Lessons only: the rules are in `AGENTS.md`.
   `Checking <pkg>`).
 - `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
 - A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
-  `include_str!` would stop the crate compiling.
+  `include_str!` would stop the crate compiling. The same when the PRODUCTION table reads with
+  `include_str!` (xtask's `system_files::files()` for the shipped defaults): the test that pins a new
+  shipped file reads it at runtime, and its red stacks: the missing file first, then `file(<path>)`
+  panics "is not among the system files" until the coder adds the entry. Report both as the coder's.
+- A test file that `include_str!`s a `cfg(windows)` module (the pin of glue that never runs on Linux) is
+  compiled on every target, so the cross check (`cargo check -p <crate> --all-targets --target
+  x86_64-pc-windows-gnu`) is the only sign a path there is wrong; it is relative to the file doing the
+  include, and rustc's help names the directory the file IS in.
 - A staleness or "not written again" rule is tested with `File::set_modified(UNIX_EPOCH + secs)`: no
   sleeps, both orders. Expected text can come from the code itself on a sibling temp path (`startup.rs`
   `fresh_entry`), keeping the test free of the machine's binaries.
@@ -861,6 +893,34 @@ Lessons only: the rules are in `AGENTS.md`.
   leave it and write the assert against what the code WRITES, so the red is independent of what the coder
   does with the fixture.
 
+- A phase that reads the repo's source at run time (`include_str!`/`std::fs::read_to_string` of a file under
+  the repo, the pattern of the manager's Windows pins) is patched in the REAL file, not in a scratch copy:
+  save the file to the scratchpad, mute one multi-line assert with `sed -i '<a>,<b>s|^|// |'` (the exact
+  range of `assert!(` to its `);`), run, repeat one wave per new pin, then `cp` the copy back and `diff` it
+  (empty). NEVER `set -e` in that script: a test red exits 101, the script dies mid-way and leaves the tree
+  patched. The LAST wave, with every new-rule pin muted, going GREEN is the proof that every other pin in
+  the file holds today, so report those as guards.
+- The reduced `tests/mod.rs` scratch (one phase) drops the unit tests that live in the OTHER `tests/*.rs`
+  files: the same crate's run counts 252 where the full run counts 259. Quote both counts, never one.
+- A green guard placed AFTER an assert that is red today never runs, so it proves nothing in that run: give
+  a green guard its own `#[test]`. Before writing one, grep the module for the string it pins (my `.deb`
+  `llama.cpp (>= 1:1.0.0+pai2)` pin duplicated one already at the deb-relations test of the same file);
+  a duplicate pin of a rule the brief asked "if nothing does" is a defect the reviewer will flag.
+- rpm version comparisons (`rpm-dependencies(7)`, `rpm-vercmp(7)`) order `1:1.0.0-pai2` BELOW
+  `1:1.0.0+pai2`: rpm reads `+` as a tilde-like separator of the Debian spelling, so a `Requires:` built
+  from the deb's `version+paiN` can never be satisfied by the engine's own EVR (epoch, version,
+  `release`). Prove it read-only, no install, in `/tmp`:
+  `rpm --eval '%{lua:print(rpm.vercmp("1:1.0.0-pai2", "1:1.0.0+pai2"))}'` is `-1`, the same pair with
+  `pai1` is `1`, and `dpkg --compare-versions 1:1.0.0+pai2 ge 1:1.0.0+pai1; echo $?` is `0` (the deb side is
+  right). So pin both spellings, one per format, and pin them DERIVED: the expected EVR once as a constant,
+  the spec's `Epoch`/`Version`/`Release` parsed and asserted equal to it, the engine's `Provides` asserted
+  equal to it, and the framework's `Requires` asserted equal to it.
+- An arm of a `cfg(windows)` `match` is source-lint only on Linux, so pair the structural pins with
+  behaviour pins of the OS-neutral function it calls: for `sync(&[])` that means the empty record reads
+  `Ok(empty)` through the real reader (the empty file, the truncated header, the comments-only file) and a
+  sync of the empty list plans the removal of every service of ours (a list-driven sync deletes, so an empty
+  list is not a no-op: that is why the entry must guard it).
+
 ## Data-root e2e and the configurator
 
 - A test that needs `PRIVATE_AI_DATA_ROOT` (anything reading `paths::`) is a phase fn, not a `#[test]`:
@@ -1007,6 +1067,19 @@ Lessons only: the rules are in `AGENTS.md`.
   Arm both with `todo!("..: slice N")` naming the faces' slice that owns the mapping; do NOT add the
   variant to `every_error()` in the core-method slice: the round-trip needs the client's variant, a
   later slice's, and the error tests stay green on the untouched list.
+- The manager's instance record: `existing_id` asks the SECTIONS of `instances.ini`
+  (`paths::instance_ids`), not a `server@<id>.ini` on disk. So a fixture that wanted an instance by writing
+  its profile file is red (`Err(NoInstance)` on `start`/`restart`/`boot_enabled`/`set_boot_enabled`); it needs
+  the record too: `[id]\nServerProfile = id\n` (the shape `service::write_record` writes, and what
+  `launch::instance_command` reads). `status` and `stop` stay on `valid_id`, so a phase that only probes them
+  needs no record, and a `tests/*.rs`-style fixture that lists the engine config dir grows by one file.
+  A `NoInstance` pin on an id the record now names goes red at `expect_err` (the call answers `Ok`): keep the
+  pin, move it to an id NO section names (a valid id, e.g. `nope`), the message naming the record.
+- The two D-Bus phases have DIFFERENT `call` helpers: `manager_dbus_e2e`'s is a nested
+  `fn call<B>(conn, method, &B) -> Result<Message, (String, String)>` (body by reference, one generic, the
+  reply decoded outside by `body::<T>`), `manager_dbus_waits_e2e`'s is `call<T, B>` running on a thread and
+  handing back a `Receiver<Result<T, String>>`. A neutralized probe block written for one is E0107 in the
+  other (`call::<bool, _>` supplied 2 generics where 1 belong).
 - A phase can give every block its own data root: a local `fn root(files)` that calls
   `paths::redirect_for_tests` on a fresh tempdir and seeds the served dir; no coupling between blocks,
   and the "the directory is not there" case gets a root that never saw a `create_dir_all`.
@@ -1208,10 +1281,49 @@ Lessons only: the rules are in `AGENTS.md`.
   the red then shows the missing `[d]`, not a one-trailing-newline diff. Pin the start's wiring with the
   house source lint (`include_str!("dbus.rs")` + `split("#[cfg(test)]")` over the production half): require
   the report's name and forbid the discarding line (`let _ = core.render_all()`) as a second needle.
+- The manager's seams are NOT symmetric: `read_file(Option<&W>, ..)` answers `Result<Option<ManagerFile>, _>`
+  (compare with the `plain(text)` / `withheld(text)` helpers, never `Ok(Some(text.to_string()))`), while
+  `write_file(&W, ..)` / `write_file_if(&W, ..)` take a reference and have NO caller-less form
+  (`AsRequester` is implemented for `Caller` and `Requester` only), so a "refused with no identity" pin
+  belongs in the D-Bus / pipe phase, not in the service phase.
+- An action-log line is `action="write_file" target="instances.ini" caller=":1.42" principal=- outcome="BadFileName"`:
+  the outcome is `{:?}` of a `&'static str`, so the name is QUOTED (`contains("outcome=BadFileName")` never
+  matches). Pin a refused write's record as a slice of the log from a baseline taken before the calls
+  (`lines.lock().unwrap()[base..]`), and account for every call that records: a read records one line too.
+- `file_path(name)` refuses a name the manager does not serve YET, so a phase pinning "this name becomes
+  readable" must join its path itself (`sys.join(NAME)`) and not `file_path(..).expect(..)`: the expect
+  panics at the phase's first line and hides every assertion red. E2E phases never restore the redirect
+  (there is no `restore_redirect`), they just call `paths::redirect_for_tests`.
+- Adding an instance to a client phase's fixture has side effects: `check_address` loops over
+  `instance_ids()` and reads `server@<id>.ini`, so an instance with NO file is judged as the DEFAULT
+  binding (port 8080, 127.0.0.1) and collides with any wildcard write on 8080. Sorted ids save the expected
+  `AddressInUse("default")` when `default` sorts first, check it by hand. And a write refused by NAME still
+  asks polkit (the gate runs before the name check), so an exact `asked(&c) == vec![(alice, Configure); N]`
+  in the SAME block as your added writes counts them: find that assert before adding a call.
 - A probe that comments out the earlier asserts of a phase must KEEP every `let` the later asserts read
   (`let before`, `let reported`): commenting a binding makes the probe's red E0425, not an assertion. And
   re-take the `.bak` in the right order: the probe writes the real file FROM the bak, so an `edit` applied
   to the real file after a probe lands in the probe's copy (restore, then re-apply the edit).
+- An instance IS a section of `instances.ini` (`paths::instance_ids`), so a fixture that wants an instance
+  writes the record, not only the file: `service.rs`'s `write_record(&dir, &[ids])` helper (one
+  `[id]` + `ServerProfile = id` section per id), the client phases write it inline. The rules that follow:
+  `list_instances()` answers the SECTIONS, so a section with no `server@<id>.ini` is listed (the coder's
+  fixture shape: `[lan-2] ServerProfile = lan-2`, its file arrives with the accepted write) while
+  `existing_id` asks the FILE, so the same id is `NoInstance` for start/stop/boot (one id, two answers,
+  both pinned); `render_all_locked` runs after every accepted write over the sections, so a `models@<id>.ini`
+  render pin needs the record written BEFORE that write; and an exhaustive directory listing after an
+  accepted write gains `instances.ini` (it sorts FIRST, before `models.ini`) plus one render per section.
+  A record whose section's file is missing reads as the default binding (localhost:8080) in the address
+  check, which is what makes a wildcard-on-8080 write collide with it.
+- The startup-count render rule (`checks::startup_loads`): `load-on-startup` counts only the value `true`
+  (`ini::parse_bool` accepts `true`/`false`, never `1`), `ModelsMax` is read from THAT instance's
+  `server@<id>.ini` (not from the pool), and the refusal is `load-on-startup-over-max` with
+  `[count, max, id]`. So a pin of it sets `ModelsMax = 1` in the instance file and puts two
+  `load-on-startup = true` profiles in the pool, with an `assignments.ini` that assigns them to that id.
+- The e2e phases are one `#[test]`: to probe a phase past a red one, comment its CALL in `tests/mod.rs`
+  with a marker (`// DIAG:`) and keep the `#[cfg(..)]` line beside it, then restore from a scratchpad
+  `.bak` with `cp` and `diff` (never `git checkout`); a phase call is one line, so the restore is a diff
+  of seven lines.
 
 ## Packaging, installers, CI (xtask)
 
@@ -1875,6 +1987,76 @@ Lessons only: the rules are in `AGENTS.md`.
   `select`, `EDITABLE_FIELDS`) that the file does not have: grep the file's own `function` lines, and
   read the group table (`GROUPS: { name, fields }`) for the keys, since the card's own keys
   (`spec-type`, `spec-draft-type-k`) are not all in it.
+- A CSS token contract is testable the day the brief fixes the values: parse `index.css` (comments
+  stripped, rules from `/([^{}]+)\{([^{}]*)\}/g`, nesting = the brace balance before the selector, the
+  way `DisabledLook.test.ts` does it), then pin the token NAME set (sorted, no duplicate: the pair
+  count of `/--[a-z0-9-]+\s*:/g` over the block pins a repeat), the values with a `test.each` over the
+  brief's table, and the contrast floors by computing WCAG in the test (`(L1+0.05)/(L2+0.05)` of
+  sRGB-relative luminance) from the PARSED hexes, never from ratio constants copied from the brief.
+  The brief's own stated ratios go in as the unit-check of that function (21, and two brief figures
+  at `toFixed(2)`): a node probe first, to see the formula reproduces them exactly (it did, 14.03 /
+  4.96 / 3.25), else the unit-check is a red the coder cannot pass.
+- The selector group of that parse is the whole text before the `{`, at-rule prefix included: the dark
+  `:root` reads `@media (prefers-color-scheme: dark) { :root`. So the light block is
+  `!compact.includes('@media')` on the whitespace-stripped selector, the dark block is
+  `includes(':root')` and is split at `indexOf('@media')`, and a `@media (max-width: 47.99rem)` block
+  is located by its matched braces and matched as a WINDOW (a declaration pinned there is green when
+  any nested rule of the window carries it: `font-size: 0.75rem` on `.field-label` satisfies the
+  whole-window regex). Pin "the media block" claims on the window, "the control" claims on the rules.
+- `rem`/`px` literal bans need `(?<![0-9a-zA-Z-])` before `rem`: a bare `rem\s*;` matches inside
+  `0.5rem;`. A colour-function ban written `(^|[^\w-])(rgba?\(|...)` matches the PROPERTY
+  `border-color(`, so the lookbehind must exclude `-` (`[0-9a-z]` + `-`), and the exemptions of a
+  no-literal rule are positions, not selectors: the two `:root` blocks and the backdrop of
+  `src/index.css:556` (the scrim whose alpha today is written in the channel values).
+- A slice that promises "nothing else changes" (the brief's must-not-change list) is a text guard set:
+  the focus-visible declarations verbatim, every forced-colours block scanned for declarations whose
+  value is not a system colour keyword, every `min-height` collected into one sorted list, and the new
+  shape tokens (`--control-h`, `--border-w`, `--ring-w`) declared in `:root` with NO `var()` use
+  outside it (that last assert is the red that forces the coder to declare the tokens the H1a.1 set
+  test demands). They are green today and they are the net: report them as guards.
+- A guard that is red in a two-file run and green in three solo runs of the same test, with no file
+  touched between (the `min-height` list of the Hearth slice), has no explanation in the tree: rerun
+  the test alone before reporting it, and report the green, not the earlier red.
+- A brief prose count that contradicts the brief's own table (H1a.7 "eight `--fs-` tokens" over a
+  table of seven) is pinned from the table, and reported: the table is what the coder will write.
+- A locator that matches a selector EXACTLY is a rename bomb: H1a.2/3 read the dark block as
+  `sel === ":root"` inside the media block, so a later slice that rewrites that selector reds 55
+  tests (54 `HearthTokens` + 1 `HearthFonts`). That is fine when the brief orders the move (its
+  section 5), but then update the locators in the same step and keep every EXEMPT/WLIST locator in
+  the same file tolerant of both shapes: a prefix match (`indexOf(':root', media)` finds
+  `:root[data-theme='dark']` too) only works AFTER the media split, and an exemption computed over
+  the current text is the green guard the coder's CSS must not break.
+- `compact(sel)` of that parse strips ALL whitespace, so a descendant selector is matched
+  space-free: pin `.theme-switch svg` as `compact: '.theme-switchsvg'`. And a `text:` match is a
+  substring: `text: 'light'` hits the value `light dark` too, so pin a declaration value with an
+  anchored regex (`/^light$/`).
+- The harness's `matchMedia` stub DOES support change events: jsdom 28's `MediaQueryList` extends
+  `EventTarget`, and the stub in `vitest.config.ts`'s inline setup registers listeners natively, so
+  `const mql = matchMedia('(prefers-color-scheme: dark)'); mql.matches = true;
+  mql.dispatchEvent(new Event('change'))` reaches the app's listener, and `removeEventListener`
+  drops it. Prove a harness stub with a throwaway test (write, run, delete) before writing a red
+  that leans on it, and keep the listener bookkeeping in the test file.
+- A new strings key reds two existing pins, report both: `App.test.tsx` "the English the brief
+  gives" lists every `EN` key `src/strings/en_US.json` lacks (that is the coder's key pin), and the
+  same file's reverse lint "every value is used by the code" scans the source, so the key goes in
+  `EN` ONLY in the red step: adding it to `en_US.json` is a red no tester may fix (the production
+  `t('key')` call is the coder's).
+- A new focusable control in the banner goes red in EVERY document-wide tab-order list. Grep the
+  suite for the lists that start at the skip link (`App.test.tsx`, `HearthH2a`, `HearthH2b`,
+  `InstancePage.test.tsx`, `ModelProfileContent`, `ModelProfiles`, `ModelProfilesSwitch`) and insert
+  the new stop in each; a banner-scoped list (`within(nav())` / `within(banner())`) needs nothing.
+  Expect 10-15 such reds and list the files.
+- A button named by `aria-label` is pinned without a labelling helper: `computeAccessibleName` is
+  NOT exported by this `@testing-library/dom` (10.4.2) and jsdom computes no accessible name, so
+  pair `getByRole('button', { name })` (it does honour `aria-label`) with
+  `expect(btn).not.toHaveAttribute('aria-label')`. The visible label of the same button is a span
+  with a class, NOT an `aria-labelledby` target: `getByRole` is the only query that can reach it.
+- jsdom fires no click from Enter or Space on a button, so a "toggles with Enter and Space"
+  criterion has no harness: pin the closest proxy (a native `button` of `type="button"`, no key
+  handler) and report the criterion OPEN.
+- `act` comes from `@testing-library/react`, not from `vitest` (importing it from vitest dies
+  "act is not a function"). Import it in any file that dispatches an event the app's own listener
+  installs outside React's tree.
 
 ## Windows service glue (the manager, cfg(windows) entry)
 

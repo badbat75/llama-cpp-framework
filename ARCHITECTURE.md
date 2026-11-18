@@ -1268,8 +1268,10 @@ code), and never collide.
 An instance is its section in its engine's `instances.ini`: id (the section), engine (the directory),
 server profile (`ServerProfile`), model profiles (its section of `assignments.ini`). `paths::instance_ids`
 reads `instances.ini` (valid ids only) instead of listing `server@*.ini`; the Windows `scm.rs` `sync`
-follows it. Ids stay unique across engines (the manager reads every engine's file; one today). Clients
-read `instances.ini` with `ReadFile` (as `assignments.ini`) and never write it (`BadFileName`).
+follows it, and only from a record that reads and names at least one instance: `sync` deletes services,
+so a missing, unreadable or empty `instances.ini` skips it and is logged, never read as "no instances"
+(fails closed; `default` is never removed, so a healthy record always names one). Ids stay unique across
+engines (the manager reads every engine's file; one today). Clients read `instances.ini` with `ReadFile` (as `assignments.ini`) and never write it (`BadFileName`).
 
 *The server-profile pool.* Options: **one file per profile, `server@<profile>.ini`** (today's file,
 format, `render_for`, whole-file revision, server checks and the bff's server document, unchanged: the
@@ -1279,9 +1281,11 @@ profiles, for nothing gained). **Chosen: one file per profile.** Unused profiles
 nothing.
 
 *The launch* reads the instance's section, then `server@<ServerProfile>.ini` directly (no render: the
-manager owns no copy that could drift), and `models@<id>.ini`. Unset `StateDir` is
-`instance_state_dir()/<id>` (by instance, (e)); `LaunchError::NoConfig` names the missing profile file.
-A profile changed or switched while the instance runs applies at its next start (`running` in replies).
+manager owns no copy that could drift), and `models@<id>.ini`. Unset `StateDir` becomes
+`instance_state_dir()/<id>` (by instance, (e)) in slice 11, together with what names the old folder;
+until then it stays `instance_state_dir()`. `LaunchError::NoConfig` names the missing profile file, or
+`instances.ini` when the instance cannot name a valid profile (no file, section or key, an empty or
+invalid value): the launch never falls back to `server@<id>.ini`. A profile changed or switched while the instance runs applies at its next start (`running` in replies).
 
 *(b') The checks* (each refusal writes nothing):
 
@@ -1411,7 +1415,13 @@ was `presets.ini`), `server@default.ini` (now the server profile `default`, same
 `presets.ini.disabled` by hand and deletes `presets@*.ini`; `instances.ini` arrives with the package and
 `server@default.ini` already is the profile. Windows: the same files in `%ProgramData%\llama.cpp\config\`,
 read by the instances through that folder's ACL (all services read, `S-1-5-80-0`); `sync` from
-`instances.ini`; type-checked only. macOS (`Direct`): the per-user `presets.ini` pair becomes
+`instances.ini`; type-checked only. The `.deb` and `.rpm` of the framework require the engine's build
+revision that ships the record; the framework MSI's `LlamaCppMin` can name only the release, because
+Windows Installer compares three version fields
+([ProductVersion](https://learn.microsoft.com/en-us/windows/win32/msi/productversion)). An engine MSI of
+the same release without the record therefore installs beside it: the manager keeps the services, lists
+no instance, logs it, and the launch refuses naming `instances.ini`, until the engine MSI is installed
+again (same-version upgrades are allowed) or the next llama.cpp release raises the minimum. macOS (`Direct`): the per-user `presets.ini` pair becomes
 `models.ini` likewise; `server.ini` stays; no instances.
 
 *(g') GUI and CLI.* They keep acting on `default` only: its server profile is the one `instances.ini`
@@ -1431,9 +1441,13 @@ profile waits until asked.
    read-only `instances.ini`, the shipped file, Windows `sync`. Done when: an instance whose section names
    `big` launches with `big`'s port; a `server@x.ini` no section names lists no instance; a client
    write of `instances.ini` is `BadFileName`; xtask's package tests name it.
-6. **Checks on profiles in use** ((b') 1 to 3). Done when: two unused profiles with one port save; a
-   profile in use colliding with another instance's is refused naming it; `ModelsMax` lowered on a
-   profile in use is refused naming the instance, on an unused one accepted.
+6. **Checks on profiles in use** ((b') 1 to 3). `check_address`, `check_renders` and `check_contents`
+   stop reading `server@<instance id>.ini`: each goes instance, then the profile its section names; an
+   instance whose profile cannot be read is skipped, never judged on the defaults of a missing file.
+   Until this slice and 13, `default`'s profile must be named `default`. Done when: two unused profiles
+   with one port save; a profile in use colliding with another instance's is refused naming it; a
+   section whose profile file is missing refuses no save; `ModelsMax` lowered on a profile in use is
+   refused naming the instance, on an unused one accepted.
 7. **`SetModelProfile`** (old 4; protocol 3, D-Bus and pipe). Done when: each value re-renders, an
    unknown model profile or instance is refused, a non-`configure` caller writes nothing.
 8. **`SetServerProfile`**. Done when: each refusal of (d') writes nothing; a success rewrites the section
@@ -1443,7 +1457,9 @@ profile waits until asked.
     section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused
     by the rule of (c); `Instances()` returns both lists; the shown `tags` are the union, profile first,
     deduplicated.
-13. **`Instances()`**, `GET /api/instances` and `GET /api/node` (old 9).
+13. **`Instances()`**, `GET /api/instances` and `GET /api/node` (old 9); the GUI, the CLI and the bff's
+    server document stop assuming `default`'s profile is named `default` and read it through
+    `Instances()` ((g')), before slice 15 gives clients a way to switch it.
 14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
     instance, the pool rows' `assignments`, `restart`, resource refusals (old 10).

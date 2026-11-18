@@ -189,6 +189,19 @@ mod tests {
         );
     }
 
+    /// `run-instance` refused because the record of the instances names no
+    /// section for the id: the text names the id first and points at the
+    /// record through `{0}`; the manager fills the record's path into `{0}`
+    /// and the id into `{1}` (pinned in the manager's tests).
+    #[test]
+    fn the_no_configuration_refusal_points_at_the_record() {
+        let cli = parse(include_str!("../strings/cli.toml"));
+        assert_eq!(
+            cli["manager-no-config"],
+            "instance `{1}` has no configuration: check {0}"
+        );
+    }
+
     /// Copying the per-user files to the manager is a `configure` call: on
     /// Linux polkit asks an administrator's password (`auth_admin_keep`), on
     /// Windows the caller must be an Administrators member and nothing is

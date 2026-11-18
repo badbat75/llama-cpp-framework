@@ -202,7 +202,9 @@ pub fn launch_command(
 pub enum LaunchError {
     /// The id is not a valid instance id (`paths::valid_instance_id`).
     InvalidId,
-    /// No `server@<id>.ini` at this path.
+    /// The record of the instances (`instances.ini`) has no section for the
+    /// instance, or its section names no server profile; the path is the
+    /// record.
     NoConfig(std::path::PathBuf),
     /// The instance's `models@<id>.ini` has no model profile section
     /// (`start()`'s `has_model_profiles`).
@@ -212,15 +214,39 @@ pub enum LaunchError {
     StateDir(std::path::PathBuf, std::io::ErrorKind),
 }
 
-/// The llama-server launch of instance `id`: `exe` with `server_args()` of
-/// `server@<id>.ini` and the model profiles render `models@<id>.ini`, the cwd and
-/// env `start()` sets. No log, no rotation: the service manager captures the
-/// output.
+/// The llama-server launch of instance `id`: the section `id` of
+/// `paths::instances_ini()` names the server profile in its `ServerProfile`
+/// key, and `exe` is launched with `server_args()` of that profile's file
+/// `server@<profile>.ini`; the model profiles stay the render of the instance
+/// id, `models@<id>.ini`, with the cwd and env `start()` sets. No log, no
+/// rotation: the service manager captures the output.
 pub fn instance_command(
     id: &str,
     exe: &std::path::Path,
 ) -> Result<std::process::Command, LaunchError> {
-    let ini = crate::paths::instance_ini(id).ok_or(LaunchError::InvalidId)?;
+    if !crate::paths::valid_instance_id(id) {
+        return Err(LaunchError::InvalidId);
+    }
+    // The record of the instances, and the server profile its section names.
+    // The section is the one named by `id` exactly, as the listing counts
+    // sections: a header that differs in case names no instance. A record
+    // with no section, a section with no key, a key with an empty value: no
+    // profile to read, and the refusal names the record.
+    let record = crate::paths::instances_ini();
+    let section = crate::ini::read_all(&record)
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
+    let profile = section
+        .keys
+        .get("ServerProfile")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
+    // The profile's file. A name that builds no path names no file either, so
+    // the refusal is the record.
+    let ini = crate::paths::instance_ini(&profile)
+        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
     if !ini.is_file() {
         return Err(LaunchError::NoConfig(ini));
     }
@@ -333,11 +359,13 @@ pub(crate) fn instance_launch_e2e() {
             "id {bad:?}"
         );
     }
-    // A valid id with no file: no system directory at all yet.
+    // A valid id with no file anywhere: no system directory at all, so no
+    // `instances.ini` to name the instance's server profile. A launch that
+    // cannot name its profile is refused, and the refusal names the record.
     assert_eq!(
         instance_command("default", &exe).err(),
-        Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
-        "no system config directory"
+        Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+        "no instances.ini at all: the refusal names the record"
     );
     assert!(
         !sys.exists(),
@@ -345,6 +373,43 @@ pub(crate) fn instance_launch_e2e() {
     );
     // The directory exists and holds another instance, not this one.
     std::fs::create_dir_all(&sys).expect("system config dir");
+    // The record exists and has a section for `lan-2`, none for `default`: no
+    // section names no profile, so the refusal is the record, not a
+    // `server@default.ini` built from the id.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("instances.ini");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+        "the record has no section for the instance"
+    );
+    // A section of this instance that names no profile: no `ServerProfile` key,
+    // a key beside other keys, a key with an empty value, a key with a value of
+    // spaces only. The launch reads `server@<ServerProfile>.ini` and has no
+    // profile to read, so every one of them is the record.
+    for record in [
+        "[default]\n",
+        "[default]\nPort = 8080\n",
+        "[default]\nServerProfile = \n",
+        "[default]\nServerProfile =   \n",
+    ] {
+        std::fs::write(sys.join("instances.ini"), record).expect("instances.ini");
+        assert_eq!(
+            instance_command("default", &exe).err(),
+            Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+            "section {record:?} names no profile"
+        );
+    }
+    // An instance is the section of `instances.ini`; its `ServerProfile` is the
+    // file the launch reads.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("instances.ini");
     std::fs::write(sys.join("server@lan-2.ini"), "[Server]\nPort = 8090\n").expect("lan-2");
     assert_eq!(
         instance_command("default", &exe).err(),
@@ -360,7 +425,8 @@ pub(crate) fn instance_launch_e2e() {
         Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
         "server.ini is not server@default.ini"
     );
-    // Nor does one left in the framework's directory: nothing reads it there.
+    // Nor does one left in the framework's directory: nothing reads it there,
+    // and the framework's `instances.ini` is not the file the launch reads.
     std::fs::create_dir_all(&framework).expect("framework config dir");
     std::fs::write(
         framework.join("server@default.ini"),
@@ -372,10 +438,20 @@ pub(crate) fn instance_launch_e2e() {
         "[stray]\nmodel = /m/stray.gguf\n",
     )
     .expect("stray models.ini");
+    std::fs::write(
+        framework.join("instances.ini"),
+        "[default]\nServerProfile = stray\n",
+    )
+    .expect("stray instances.ini");
+    std::fs::write(
+        framework.join("server@stray.ini"),
+        "[Server]\nPort = 8084\n",
+    )
+    .expect("stray server@stray.ini");
     assert_eq!(
         instance_command("default", &exe).err(),
         Some(LaunchError::NoConfig(sys.join("server@default.ini"))),
-        "the framework's directory holds no instance file"
+        "the framework's directory holds no instance file and no record"
     );
 
     // ── Refused for want of model profiles, as start() refuses (`has_model_profiles`) ──
@@ -551,7 +627,130 @@ pub(crate) fn instance_launch_e2e() {
         "lan-2 reads its own render: {lan_args:?}"
     );
 
-    // ── An unset ModelsDir is the instance's default ─────────────────────
+    // ── The section names the server profile the launch reads ─────────────
+    // default's section names `big`: the settings come from `server@big.ini`,
+    // while the model profiles stay the render of the instance id.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = big\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("instances.ini");
+    std::fs::write(
+        sys.join("server@big.ini"),
+        format!(
+            "[Server]\nPort = 8100\nHostname = 127.0.0.1\nModelsDir = {}\n",
+            dir.path().join("big-models").display()
+        ),
+    )
+    .expect("server@big.ini");
+    std::fs::write(
+        sys.join("models@big.ini"),
+        "[*]\ntemp = 0.7\n\n[big-model]\nmodel = /m/big.gguf\n",
+    )
+    .expect("models@big.ini");
+    let cmd =
+        instance_command("default", &exe).expect("launch through the profile the section names");
+    assert_eq!(
+        port_of(&cmd).as_deref(),
+        Some("8100"),
+        "the port of the profile the section names, not the one named after the id"
+    );
+    let big_args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let own_render = sys
+        .join("models@default.ini")
+        .to_string_lossy()
+        .into_owned();
+    let profile_render = sys.join("models@big.ini").to_string_lossy().into_owned();
+    assert!(
+        big_args
+            .windows(2)
+            .any(|w| w == ["--models-preset", own_render.as_str()]),
+        "the render of the instance id, whatever the profile: {big_args:?}"
+    );
+    assert!(
+        !big_args
+            .windows(2)
+            .any(|w| w == ["--models-preset", profile_render.as_str()]),
+        "never a render named after the profile: {big_args:?}"
+    );
+    // A section naming a profile whose file is missing: the refusal names that
+    // profile's file, and `server@default.ini` (which is there) stands in for
+    // nothing.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = huge\n",
+    )
+    .expect("instances.ini");
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("server@huge.ini"))),
+        "NoConfig names the profile the section names"
+    );
+    // The same record with a blank profile, while the file named after the id
+    // IS there: the id never stands in for a profile the section does not name,
+    // so the refusal is the record, not that file.
+    std::fs::write(sys.join("instances.ini"), "[default]\nServerProfile = \n")
+        .expect("instances.ini");
+    assert!(
+        sys.join("server@default.ini").is_file(),
+        "fixture sanity: the file named after the id is there"
+    );
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+        "a blank ServerProfile names no profile"
+    );
+    // A profile name that builds no path (not a valid instance id: a parent
+    // directory, an uppercase letter, a slash) names no file either, so the
+    // refusal is the record as well, never a path built out of the name and
+    // never the file named after the id (which is there).
+    for profile in ["../x", "Big", "a/b"] {
+        std::fs::write(
+            sys.join("instances.ini"),
+            format!("[default]\nServerProfile = {profile}\n"),
+        )
+        .expect("instances.ini");
+        assert_eq!(
+            instance_command("default", &exe).err(),
+            Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+            "ServerProfile = {profile:?} names no profile file"
+        );
+    }
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("instances.ini");
+
+    // The section header names the instance id exactly: a record whose only
+    // section is `[Default]` has no section for `default`, so the launch has
+    // no profile, and the refusal is the record even with a valid
+    // ServerProfile and that profile's file on disk. An instance is the
+    // section the caller named, not a header that differs in case.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[Default]\nServerProfile = default\n",
+    )
+    .expect("instances.ini");
+    assert!(
+        sys.join("server@default.ini").is_file()
+            && has_model_profiles_in(&sys.join("models@default.ini")),
+        "fixture sanity: the named profile's file and the instance's render are both there"
+    );
+    assert_eq!(
+        instance_command("default", &exe).err(),
+        Some(LaunchError::NoConfig(sys.join("instances.ini"))),
+        "a section header of `[Default]` is not a section for `default`"
+    );
+    // The exact-name record back, for the blocks below.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("instances.ini");
     // Under the manager (Linux and Windows) a ModelsDir left unset or blank
     // in server@<id>.ini is the engine's `paths::instance_models_dir()`: the
     // folder the configurator scans and names in its hint when a save leaves

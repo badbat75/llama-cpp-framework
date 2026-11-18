@@ -1170,22 +1170,38 @@ fn old_package(c: Component) -> Option<String> {
         .then(|| format!("{MONOLITH}-{}", c.suffix()))
 }
 
-/// A package's version as rpm spells it: (Epoch, Version, Release). The
-/// engine's `1:1.0.0+pai1` is epoch 1, version 1.0.0 and our build revision
-/// `pai1` as the release; every other package has no epoch and Release
+/// A version as rpm spells it: (Epoch, Version, Release). The engine's
+/// `1:1.0.0+pai2` is epoch 1, version 1.0.0 and our build revision `pai2` as
+/// the release; a version with no epoch and no `+` build revision has Release
 /// [`RPM_RELEASE`].
-fn rpm_evr<'a>(f: &Fields<'a>) -> (Option<&'a str>, &'a str, &'a str) {
-    if f.component != Component::Llama {
-        return (None, f.version, RPM_RELEASE);
-    }
-    let (epoch, rest) = match f.version.split_once(':') {
+fn evr(version: &str) -> (Option<&str>, &str, &str) {
+    let (epoch, rest) = match version.split_once(':') {
         Some((e, rest)) => (Some(e), rest),
-        None => (None, f.version),
+        None => (None, version),
     };
     match rest.split_once('+') {
         Some((version, release)) => (epoch, version, release),
         None => (epoch, rest, RPM_RELEASE),
     }
+}
+
+/// The three parts as rpm writes one version: `1:1.0.0-pai2`. rpm reads a
+/// relation's value as an epoch-version-release, so a `+` never appears in one.
+fn evr_text((epoch, version, release): (Option<&str>, &str, &str)) -> String {
+    format!(
+        "{}{version}-{release}",
+        epoch.map(|e| format!("{e}:")).unwrap_or_default()
+    )
+}
+
+/// A package's version as rpm spells it: (Epoch, Version, Release). Only the
+/// engine carries an epoch and a build revision; every other package has no
+/// epoch and Release [`RPM_RELEASE`].
+fn rpm_evr<'a>(f: &Fields<'a>) -> (Option<&'a str>, &'a str, &'a str) {
+    if f.component != Component::Llama {
+        return (None, f.version, RPM_RELEASE);
+    }
+    evr(f.version)
 }
 
 /// The `.rpm` relations, one tag per line.
@@ -1201,19 +1217,16 @@ fn rpm_relations(f: &Fields) -> String {
         } else {
             lines.push(format!("Obsoletes:      {old} < {OLD_SPLIT_BEFORE}"));
         }
-        let (epoch, version, release) = rpm_evr(f);
-        let epoch = epoch.map(|e| format!("{e}:")).unwrap_or_default();
-        lines.push(format!(
-            "Provides:       {old} = {epoch}{version}-{release}"
-        ));
+        lines.push(format!("Provides:       {old} = {}", evr_text(rpm_evr(f))));
     }
     for c in exact_requires(f) {
         lines.push(format!("Requires:       {} = {}", c.package(), f.version));
     }
     if let Some(min) = f.depends_on_llama {
         lines.push(format!(
-            "Requires:       {} >= {min}",
-            Component::Llama.package()
+            "Requires:       {} >= {}",
+            Component::Llama.package(),
+            evr_text(evr(min))
         ));
     }
     for (c, v) in f.runtimes {
@@ -1669,9 +1682,69 @@ mod tests {
 
     /// The engine's version and the lowest one the framework accepts, as
     /// `components::llama_cpp_version` and `llama_cpp_min` give them for
-    /// llama.cpp v1.0.0.
-    const ENGINE: &str = "1:1.0.0+pai1";
-    const ENGINE_MIN: &str = "1:1.0.0";
+    /// llama.cpp v1.0.0 (pinned equal by
+    /// `the_engine_version_fixtures_are_the_derived_ones`).
+    const ENGINE: &str = "1:1.0.0+pai2";
+    const ENGINE_MIN: &str = "1:1.0.0+pai2";
+
+    /// The engine's version as rpm spells its epoch-version-release: epoch 1,
+    /// version 1.0.0, the build revision as the release (`1:1.0.0-pai2`). The
+    /// engine's own spec carries exactly this in `Epoch:`/`Version:`/`Release:`
+    /// and in its `Provides`, and every framework `Requires: llama.cpp >=`
+    /// line names it: rpm reads that value as an EVR, and the engine package
+    /// is `1:1.0.0-pai2`, not the deb spelling. The one literal stands for
+    /// the EVR of the engine's spec, pinned equal to it by
+    /// `the_rpm_spec_carries_the_engine_epoch_and_build_revision`. rpm orders
+    /// the deb spelling above the EVR, so a Requires that copies it names a
+    /// release no engine provides and the framework never installs: measured
+    /// once with `rpm --eval '%{lua:print(rpm.vercmp("1:1.0.0-pai2",
+    /// "1:1.0.0+pai2"))}'`, which is -1, and
+    /// `rpm --eval '%{lua:print(rpm.vercmp("1:1.0.0-pai2", "1:1.0.0-pai1"))}'`,
+    /// which is 1, so the EVR form does order the build revisions.
+    const ENGINE_EVR: &str = "1:1.0.0-pai2";
+
+    /// A spec's epoch-version-release as rpm joins the header's tags:
+    /// `Version:` and `Release:`, with `Epoch:` in front when it is there.
+    fn spec_evr(spec: &str) -> String {
+        let field = |tag: &str| {
+            spec.lines()
+                .find(|l| l.starts_with(tag))
+                .map(|l| l[tag.len()..].trim().to_string())
+                .unwrap_or_else(|| panic!("no {tag} line in:\n{spec}"))
+        };
+        let evr = format!("{}-{}", field("Version:"), field("Release:"));
+        match spec.lines().any(|l| l.starts_with("Epoch:")) {
+            true => format!("{}:{}", field("Epoch:"), evr),
+            false => evr,
+        }
+    }
+
+    /// The version a `Requires:` line asks of `package` with `>=` (the tag is
+    /// padded to a column, so the value is read after the operator).
+    fn requires_at_least(relations: &str, package: &str) -> String {
+        relations
+            .lines()
+            .find(|l| l.starts_with("Requires:") && l.contains(&format!("{package} >= ")))
+            .unwrap_or_else(|| panic!("no Requires of {package} in:\n{relations}"))
+            .rsplit(">= ")
+            .next()
+            .expect("a version after >=")
+            .trim()
+            .to_string()
+    }
+
+    /// The version the `Provides:` line of `name` names.
+    fn provides_evr(relations: &str, name: &str) -> String {
+        relations
+            .lines()
+            .find(|l| l.starts_with("Provides:") && l.contains(&format!("{name} = ")))
+            .unwrap_or_else(|| panic!("no Provides of {name} in:\n{relations}"))
+            .rsplit("= ")
+            .next()
+            .expect("a version after =")
+            .trim()
+            .to_string()
+    }
 
     fn fields_v<'a>(
         component: Component,
@@ -1728,8 +1801,10 @@ mod tests {
     /// version (the framework's packages move together), and llama.cpp at
     /// least at the release it was built against (`1:1.0.0`, any build
     /// revision of it or a later release): a newer llama.cpp installs
-    /// without a framework rebuild. rpm's `>= 1:1.0.0` names no release, so
-    /// every `1:1.0.0-pai<N>` matches (rpm-version(7)).
+    /// without a framework rebuild. The value of a `Requires:` is an
+    /// epoch-version-release, so the line spells the engine as the engine's
+    /// own spec spells itself: epoch, version and build revision joined with
+    /// `-` (rpm-version(7)).
     #[test]
     fn the_configurator_requires_cli_and_core_exactly_and_llama_cpp_at_least() {
         let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
@@ -1737,7 +1812,7 @@ mod tests {
         for want in [
             format!("Requires:       private-ai-framework-cli = {FW}"),
             format!("Requires:       private-ai-framework-core = {FW}"),
-            format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
+            format!("Requires:       llama.cpp >= {ENGINE_EVR}"),
         ] {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
         }
@@ -1866,12 +1941,12 @@ mod tests {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
         }
         // The engine's Provides spells its EVR as rpm does: epoch, version,
-        // release (`1:1.0.0-pai1`).
+        // release (`1:1.0.0-pai2`).
         let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
         let rpm = rpm_relations(&f);
         for want in [
             format!("Obsoletes:      {OLD}-llama < 2.4.1"),
-            format!("Provides:       {OLD}-llama = 1:1.0.0-pai1"),
+            format!("Provides:       {OLD}-llama = 1:1.0.0-pai2"),
             "Conflicts:      llama-cpp".to_string(),
         ] {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
@@ -2023,7 +2098,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
+                format!("Requires:       llama.cpp >= {ENGINE_EVR}"),
                 format!("Requires:       private-ai-framework-core = {FW}"),
             ]
         );
@@ -2196,7 +2271,7 @@ mod tests {
             format!("Version:        {FW}"),
             "Release:        1".to_string(),
             format!("Requires:       private-ai-framework-core = {FW}"),
-            format!("Requires:       llama.cpp >= {ENGINE_MIN}"),
+            format!("Requires:       llama.cpp >= {ENGINE_EVR}"),
         ] {
             assert!(lines.contains(&want.as_str()), "{want} missing:\n{spec}");
         }
@@ -2378,7 +2453,8 @@ mod tests {
             [
                 "usr/share/private-ai/llama.cpp/server@default.ini",
                 "usr/share/private-ai/llama.cpp/models.ini",
-                "usr/share/private-ai/llama.cpp/assignments.ini"
+                "usr/share/private-ai/llama.cpp/assignments.ini",
+                "usr/share/private-ai/llama.cpp/instances.ini"
             ]
         );
         for (rel, text) in &defaults {
@@ -2522,7 +2598,7 @@ mod tests {
             "Name:           llama.cpp",
             "Epoch:          1",
             "Version:        1.0.0",
-            "Release:        pai1",
+            "Release:        pai2",
             "License:        MIT",
             "Conflicts:      llama-cpp",
         ] {
@@ -3043,6 +3119,17 @@ mod tests {
         );
     }
 
+    /// The engine's version fixtures are the versions `components` derives
+    /// for llama.cpp v1.0.0 at the checked-in build revision: the minimum
+    /// carries `+pai<N>` like the version, so a Depends or Requires line
+    /// never names a bare release an engine of any build revision would
+    /// satisfy.
+    #[test]
+    fn the_engine_version_fixtures_are_the_derived_ones() {
+        assert_eq!(ENGINE, components::llama_cpp_version("v1.0.0"));
+        assert_eq!(ENGINE_MIN, components::llama_cpp_min("v1.0.0"));
+    }
+
     // ── The framework's core and the engine ─────────────────────────────
 
     /// The core requires llama.cpp at least at the release it was built
@@ -3061,7 +3148,7 @@ mod tests {
             .collect();
         lines.sort();
         let mut want = vec![
-            format!("Requires: llama.cpp >= {ENGINE_MIN}"),
+            format!("Requires: llama.cpp >= {ENGINE_EVR}"),
             "Requires(pre): systemd".to_string(),
             "Requires(post): systemd".to_string(),
             "Requires(preun): systemd".to_string(),
@@ -3107,8 +3194,8 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         for want in [
             "Package: llama.cpp".to_string(),
-            "Version: 1:1.0.0+pai1".to_string(),
-            format!("Provides: {OLD}-llama (= 1:1.0.0+pai1)"),
+            "Version: 1:1.0.0+pai2".to_string(),
+            format!("Provides: {OLD}-llama (= 1:1.0.0+pai2)"),
             format!("Replaces: {OLD}, {OLD}-llama"),
             format!("Conflicts: {OLD}, {OLD}-llama, llama.cpp-tools"),
         ] {
@@ -3122,8 +3209,11 @@ mod tests {
     /// the release as `Version`, and our build revision as `Release`
     /// (rpm-spec(5): Release is "the downstream packaging revision of a
     /// software version", which `+pai<N>` is; rpm-version(7): a release may
-    /// hold letters, and `-` is the separator, so `pai1` and not `+pai1`).
-    /// A framework package keeps no epoch and Release 1.
+    /// hold letters, and `-` is the separator, so `pai2` and not `+pai2`).
+    /// A framework package keeps no epoch and Release 1, and its
+    /// `Requires: llama.cpp >=` names that same epoch-version-release of the
+    /// engine's spec; the `.deb` Depends of the same fields keeps Debian's
+    /// version, with `+pai<N>`.
     #[test]
     fn the_rpm_spec_carries_the_engine_epoch_and_build_revision() {
         let dir = scratch("rpm-spec-evr");
@@ -3154,7 +3244,7 @@ mod tests {
                 "Name:           llama.cpp",
                 "Epoch:          1",
                 "Version:        1.0.0",
-                "Release:        pai1",
+                "Release:        pai2",
             ],
             "{spec}"
         );
@@ -3167,6 +3257,33 @@ mod tests {
             ],
             "{core_spec}"
         );
+        // The EVR of the engine's own spec is what a framework Requires
+        // names: rpm reads the value of `Requires: llama.cpp >=` as an
+        // epoch-version-release, and the engine package is the EVR of this
+        // header, spelled the same in its `Provides`.
+        let evr = spec_evr(&spec);
+        assert_eq!(evr, ENGINE_EVR, "the engine spec spells its EVR: {spec}");
+        assert_eq!(
+            provides_evr(&spec, &format!("{OLD}-llama")),
+            evr,
+            "the engine's Provides names the EVR of its own header:\n{spec}"
+        );
+        assert_eq!(
+            requires_at_least(&core_spec, "llama.cpp"),
+            evr,
+            "the framework's Requires names the engine spec's EVR:\n{core_spec}"
+        );
+        let core_lines: Vec<&str> = core_spec.lines().collect();
+        assert!(
+            core_lines.contains(&"Requires:       llama.cpp >= 1:1.0.0-pai2"),
+            "{core_spec}"
+        );
+        for l in core_spec.lines().filter(|l| l.starts_with("Requires:")) {
+            assert!(
+                !l.contains('+'),
+                "no Debian revision in an rpm Requires: {l}"
+            );
+        }
     }
 
     /// The core's description names pai-manager and the services; the

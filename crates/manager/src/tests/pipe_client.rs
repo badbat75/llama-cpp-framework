@@ -86,9 +86,11 @@ pub(crate) fn manager_pipe_client_e2e() {
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
     let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let record = "[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n\n[lan-2]\nServerProfile = big\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("instances.ini"), record).expect("write instances");
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
     let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
@@ -128,12 +130,22 @@ pub(crate) fn manager_pipe_client_e2e() {
         // The model profile files, list and status need no caller.
         assert_eq!(
             client.list_instances(),
-            Ok(vec!["broken".to_string(), "default".to_string()])
+            Ok(vec![
+                "broken".to_string(),
+                "default".to_string(),
+                "lan-2".to_string()
+            ]),
+            "the sections of instances.ini are the instances: lan-2 has no profile file of its own"
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
         assert_eq!(
             client.read_file("models.ini"),
             Ok(Some(plain(model_profiles)))
+        );
+        assert_eq!(
+            client.read_file("instances.ini"),
+            Ok(Some(plain(record))),
+            "the instance record, read with no identity, as assignments.ini"
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
@@ -329,6 +341,29 @@ pub(crate) fn manager_pipe_client_e2e() {
             ])
         );
         assert_eq!(client.read_file("server@lan-2.ini"), Ok(Some(plain(lan2))));
+
+        // The instance record: a client reads it and never writes it.
+        let swapped = "[default]\nServerProfile = big\n";
+        assert_eq!(
+            client.read_file("instances.ini"),
+            Ok(Some(plain(record))),
+            "an authorized client reads the record"
+        );
+        assert_eq!(
+            client.write_file("instances.ini", swapped, false),
+            Err(ClientError::BadFileName),
+            "the record is not writable"
+        );
+        assert_eq!(
+            client.write_file_if("instances.ini", swapped, ""),
+            Err(ClientError::BadFileName),
+            "not through the compare and swap write either"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("read instances"),
+            record,
+            "a refused write leaves the record"
+        );
 
         // Every refusal of the manager, as its own error, as over D-Bus.
         for bad in ["", "../x", "Default", "a_b"] {

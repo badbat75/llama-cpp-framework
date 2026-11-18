@@ -263,24 +263,37 @@ pub fn instance_models(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| engine_config_dir().join(format!("models@{id}.ini")))
 }
 
-/// The ids of the regular files `server@<valid id>.ini` in
-/// `engine_config_dir()`, sorted; empty when the directory is missing, which
-/// this never creates.
+/// The record of the instances: `instances.ini`, in the engine's config
+/// directory beside the server profiles it names. Every manager client reads
+/// it; the manager is the only writer.
+pub fn instances_ini() -> PathBuf {
+    engine_config_dir().join("instances.ini")
+}
+
+/// The ids of the sections of `instances_ini()`, sorted: an instance is a
+/// section of the record, not a file in the directory. A section whose name
+/// is not a valid instance id is skipped; a section that carries no
+/// `ServerProfile` key is an instance all the same, the listing reads sections
+/// and the launch is the one that refuses a section naming no profile. Empty
+/// when the file is missing, which this never creates: [`try_instance_ids`]
+/// is the sibling that reports it.
 pub fn instance_ids() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(engine_config_dir()) else {
-        return Vec::new();
-    };
-    let mut ids: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let id = name.strip_prefix("server@")?.strip_suffix(".ini")?;
-            valid_instance_id(id).then(|| id.to_string())
-        })
+    try_instance_ids().unwrap_or_default()
+}
+
+/// The fallible sibling of [`instance_ids`]: a record that is missing or
+/// cannot be read is an `Err` naming why, not an empty list, so a caller
+/// can tell "no instances" from "the record could not be read" and refuse
+/// to act on the second. A readable file answers exactly what
+/// [`instance_ids`] answers.
+pub fn try_instance_ids() -> std::io::Result<Vec<String>> {
+    let text = std::fs::read_to_string(instances_ini())?;
+    let ids: std::collections::BTreeSet<String> = crate::ini::parse_sections(&text)
+        .into_iter()
+        .map(|s| s.id)
+        .filter(|name| valid_instance_id(name))
         .collect();
-    ids.sort();
-    ids
+    Ok(ids.into_iter().collect())
 }
 
 pub fn server_ini() -> PathBuf {
@@ -815,19 +828,26 @@ pub(crate) fn instance_paths_e2e() {
         "one render per instance"
     );
 
-    // An instance file left in the framework's directory is no instance:
+    // A file left in the framework's directory is no instance, of either kind:
     // nothing moves or reads files from there.
     std::fs::create_dir_all(&sys).expect("system config dir");
     std::fs::write(sys.join("server@old.ini"), "[Server]\n").expect("stray file");
     std::fs::write(sys.join("bff.ini"), "[Bff]\n").expect("bff.ini");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[stray]\nServerProfile = stray\n",
+    )
+    .expect("stray instances.ini");
     assert_eq!(
         instance_ids(),
         Vec::<String>::new(),
-        "the framework's files"
+        "the framework's files, instances.ini included"
     );
     assert!(!engine.exists(), "nothing created or moved");
 
-    // Only `server@<valid id>.ini` FILES are instances, sorted.
+    // The profile files, on their own, list nothing: an instance is a section
+    // of the engine's `instances.ini`, and a `server@<id>.ini` that no section
+    // names is a server profile that serves no instance.
     let sys = engine;
     std::fs::create_dir_all(&sys).expect("engine config dir");
     for name in [
@@ -848,7 +868,117 @@ pub(crate) fn instance_paths_e2e() {
         std::fs::write(sys.join(name), "[Server]\n").expect("fixture file");
     }
     std::fs::create_dir(sys.join("server@dir.ini")).expect("fixture directory");
-    assert_eq!(instance_ids(), ["8080", "default", "lan-2"]);
+    assert_eq!(
+        instance_ids(),
+        Vec::<String>::new(),
+        "the files of the directory name no instance"
+    );
+
+    // The sections of the engine's `instances.ini` are the instances, sorted:
+    // an id that is not a valid instance id is skipped, and a section whose
+    // profile file is missing is an instance (the listing reads sections, and
+    // a section is an instance whether or not it carries its key).
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[lan-2]\nServerProfile = big\n\n\
+         [default]\nServerProfile = default\n\n\
+         [8080]\nServerProfile = default\n\n\
+         [no-file]\nServerProfile = big\n\n\
+         [no-key]\n\
+         [Upper]\nServerProfile = big\n\n\
+         [a_b]\nServerProfile = big\n\n\
+         [-lead]\nServerProfile = big\n\n\
+         [a.b]\nServerProfile = big\n\n\
+         [a@b]\nServerProfile = big\n\n\
+         [a-long-id-over-the-limit-for-an-instance-id]\nServerProfile = big\n",
+    )
+    .expect("instances.ini");
+    assert_eq!(
+        instance_ids(),
+        ["8080", "default", "lan-2", "no-file", "no-key"]
+    );
+
+    // A missing `instances.ini` lists none, and so does one with no section:
+    // keys above the first section header belong to nothing.
+    std::fs::remove_file(sys.join("instances.ini")).expect("remove instances.ini");
+    assert_eq!(instance_ids(), Vec::<String>::new(), "no instances.ini");
+    std::fs::write(sys.join("instances.ini"), "").expect("empty instances.ini");
+    assert_eq!(
+        instance_ids(),
+        Vec::<String>::new(),
+        "an empty instances.ini"
+    );
+    std::fs::write(sys.join("instances.ini"), "Port = 8080\n").expect("keys, no section");
+    assert_eq!(
+        instance_ids(),
+        Vec::<String>::new(),
+        "keys under no section name no instance"
+    );
+
+    // The fallible sibling answers a readable file the same way, and reports
+    // what `instance_ids` swallows: a missing record and an unreadable one
+    // are errors, not empty lists, so a caller never deletes the services
+    // of an instance because the record could not be read.
+    assert_eq!(
+        try_instance_ids().expect("a readable file with no section is not an error"),
+        Vec::<String>::new(),
+        "the keys-under-no-section file above reads as an empty list"
+    );
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[Zeta]\nServerProfile = big\n",
+    )
+    .expect("instances.ini");
+    assert_eq!(
+        try_instance_ids().expect("a readable record"),
+        ["default"],
+        "the readable record answers what instance_ids answers, sorted, invalid ids skipped"
+    );
+    // The record missing: an error naming its reason, not the empty list of
+    // "no instances" (the record not existing is the install's first state
+    // too: the caller decides what that means, the reader does not).
+    std::fs::remove_file(sys.join("instances.ini")).expect("remove instances.ini");
+    let missing =
+        try_instance_ids().expect_err("a missing instances.ini is an error, not an empty list");
+    assert_eq!(
+        missing.kind(),
+        std::io::ErrorKind::NotFound,
+        "the missing record names its reason"
+    );
+    // The record unreadable: an error too. The mode binds the read only for
+    // a non-root account: probe that, and skip the case when it does not.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let rec = sys.join("instances.ini");
+        std::fs::write(&rec, "[default]\nServerProfile = default\n").expect("instances.ini");
+        let mode = std::fs::metadata(&rec)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+        let probe = std::fs::read_to_string(&rec);
+        std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(mode))
+            .expect("restore mode");
+        if probe.is_ok() {
+            eprintln!(
+                "this account ignores file modes (root): \
+                 the unreadable instances.ini case is skipped"
+            );
+        } else {
+            std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(0o000))
+                .expect("chmod 000");
+            let unreadable = try_instance_ids()
+                .expect_err("an unreadable instances.ini is an error, not an empty list");
+            std::fs::set_permissions(&rec, std::fs::Permissions::from_mode(mode))
+                .expect("restore mode");
+            assert_eq!(
+                unreadable.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "the unreadable record names its reason"
+            );
+        }
+    }
 }
 
 /// E2E phase for the instances' log files (the service's output on Windows),

@@ -58,3 +58,7 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
 - An OpenCode brief with backticks or `<...>` inside a double-quoted shell argument is run as command
   substitution: the run dies before opencode starts (no log, exit 1, nothing changed). Write the brief
   to a file with a quoted heredoc (`<<'EOF'`) and pass `"$(cat file)"`.
+
+## An OpenCode run can end without a report
+
+Exit code 0 does not mean the agent finished. Now and then (3 of 185 logs on 2026-11-18) the local model writes a tool call as plain text (`<tool_call><function=bash>...`): OpenCode takes it for the final answer and ends the run, leaving the work half done in the tree. Read the end of the log before trusting a run; if it ends in a raw tool call, rerun the same brief, telling the agent to read the uncommitted diff first and finish it.
