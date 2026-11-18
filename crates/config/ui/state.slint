@@ -11,7 +11,7 @@
 // The tray (`AppTray` in app.slint) is a separate root and does NOT use this
 // global; it keeps its own pushed-in state.
 
-import { PresetSummary, PresetForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, OpencodeChangeRow, BenchPresetRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
+import { ModelProfileSummary, ModelProfileForm, ServerForm, GpuRow, TensorOverrideRow, TensorPickRow, DeleteFileRow, OpencodeChangeRow, BenchModelProfileRow, BenchPromptRow, BenchResultRow, BindRow } from "types.slint";
 import { Options } from "components.slint";
 import { Strings } from "strings.slint";
 
@@ -105,7 +105,7 @@ export global AppState {
     // The split-mode combo model of the PRESET table (gpu_split::MODE_LABELS /
     // MODE_VALUES, pushed once per row refresh); the index is two-way: Rust
     // recomputes it from the form value on every refresh, a pick reports back
-    // through preset_split_mode_picked.
+    // through model_profile_split_mode_picked.
     in-out property <[string]> split_mode_labels;
     in-out property <[string]> split_mode_values;
 
@@ -118,36 +118,36 @@ export global AppState {
     in-out property <string> rocm_warning: "";
 
     // ── Models tab state ─────────────────────────────────────────────
-    in-out property <[PresetSummary]> presets;
-    in-out property <int> selected_preset_index: -1;
-    in-out property <PresetForm> form;
+    in-out property <[ModelProfileSummary]> model_profiles;
+    in-out property <int> selected_model_profile_index: -1;
+    in-out property <ModelProfileForm> form;
     // Baseline snapshot of the loaded preset (set by Rust whenever the form is
     // (re)loaded or saved). Struct inequality drives Save/Revert enabled.
-    in-out property <PresetForm> form_base;
+    in-out property <ModelProfileForm> form_base;
     // The Fit checkbox is live only with Context and GPU layers both at
     // default, the two things the fit sizes (form::fit_allowed, the same rule
     // on save, which writes `fit = off` otherwise).
     out property <bool> fit_allowed: form.ctx_size_default && form.n_gpu_layers_auto;
-    out property <bool> preset_dirty: form != form_base;
+    out property <bool> model_profile_dirty: form != form_base;
     // Save gating shared by the Models tab's Save button and the Ctrl+S
     // shortcut (app.slint): single source so the two can't drift.
-    out property <bool> can_save_preset: selected_preset_index >= 0 && form.id != "" && preset_dirty;
-    in-out property <string> presets_path: "";
-    in-out property <string> presets_filter: "";
+    out property <bool> can_save_model_profile: selected_model_profile_index >= 0 && form.id != "" && model_profile_dirty;
+    in-out property <string> model_profiles_path: "";
+    in-out property <string> model_profiles_filter: "";
 
     // Per-preset GPU distribution table, over `form.device` / `form.tensor_split`.
     // The distribution is per preset only: server.ini has none, since the
     // router's own CLI args would override every preset's.
-    in-out property <[GpuRow]> preset_gpu_rows;
-    in-out property <int> preset_split_mode_index: 0;
-    in-out property <string> preset_gpu_mode: "layer";
-    in-out property <int> preset_gpu_selected: 0;
-    in-out property <int> preset_gpu_total: 0;
+    in-out property <[GpuRow]> model_profile_gpu_rows;
+    in-out property <int> model_profile_split_mode_index: 0;
+    in-out property <string> model_profile_gpu_mode: "layer";
+    in-out property <int> model_profile_gpu_selected: 0;
+    in-out property <int> model_profile_gpu_total: 0;
     // Positions this model's split is cut over: its block count plus one for the
     // output layer, minus whatever stays on the CPU (gpu_split::Layout). It is
     // what lets the table edit BLOCKS instead of ratios; 0 = no model read, so the
     // table falls back to raw weights.
-    in-out property <int> preset_split_positions: 0;
+    in-out property <int> model_profile_split_positions: 0;
     // The preconditions of split mode `tensor` this form can see, each a LOAD
     // failure llama.cpp reports only in its log: the arch must be one upstream's
     // tensor parallelism implements (`model_info_tensor_arch_warning`, read from
@@ -159,19 +159,19 @@ export global AppState {
     // id only in the other modes). Last, a split mixing CUDA and ROCm devices,
     // which aborts at load under every AllReduce but `none` (server_cfg.rs
     // `cuda_allreduce`). First wins: each one alone spoils the launch.
-    out property <string> preset_split_mode_warning: preset_gpu_mode != "tensor" ? ""
+    out property <string> model_profile_split_mode_warning: model_profile_gpu_mode != "tensor" ? ""
         : model_info_tensor_arch_warning != "" ? model_info_tensor_arch_warning
         : form.flash_attn == "off"
         ? Strings.t("split-tensor-needs-flash-attention")
         : form.device == ""
         ? Strings.t("split-tensor-no-gpu")
-        : (preset_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
+        : (model_profile_mixes_cuda_rocm && server_form.cuda_allreduce != "none")
         ? Strings.t("split-tensor-mixed-backends")
         : "";
     // Whether this preset's device list names both a CUDA and a ROCm device:
     // gpu_split::mixes_cuda_and_rocm, pushed by refresh_gpu_rows. Slint has no
     // substring test to derive it here.
-    in-out property <bool> preset_mixes_cuda_rocm;
+    in-out property <bool> model_profile_mixes_cuda_rocm;
 
     // Per-preset tensor-placement table (TensorOverrideTable), over the single
     // `form.override_tensor` string. Rows and BOTH dropdown models are built in
@@ -179,20 +179,20 @@ export global AppState {
     // whole-string rewrite. Rules are addressed by ROW INDEX, not by an id: the
     // same pattern may legitimately appear twice (two devices, two halves of a
     // model), unlike the GPU table's unique device ids.
-    in-out property <[TensorOverrideRow]> preset_tensor_rows;
-    in-out property <string> preset_tensor_summary;
+    in-out property <[TensorOverrideRow]> model_profile_tensor_rows;
+    in-out property <string> model_profile_tensor_summary;
     // Non-empty when the value is one llama.cpp would refuse (a rule with no
     // device). Only a hand-edited models.ini reaches it (the table sanitizes
     // everything it writes), but that value would fail the model's LOAD, so it
     // is worth saying out loud rather than at the next launch.
-    in-out property <string> preset_tensor_warning;
+    in-out property <string> model_profile_tensor_warning;
     // Per rule, what it places on the selected model ("12 tensors, 1.21 GiB"),
     // counting first-match-wins; empty strings when the model's tensors are
     // unknown. Its own model, not a row field, so a regex keystroke updates it
     // without recreating the field being typed into.
-    in-out property <[string]> preset_tensor_coverage;
+    in-out property <[string]> model_profile_tensor_coverage;
     // The model's tensor list is known, so the rows' "Choose…" can open.
-    in-out property <bool> preset_tensor_can_pick;
+    in-out property <bool> model_profile_tensor_can_pick;
 
     // The tensor picker modal (app.slint), over one rule: built in Rust
     // (src/tensor_picker.rs) and read-only here.
@@ -209,7 +209,7 @@ export global AppState {
     // attention off). Computed in Rust (src/kv_cache.rs) because it needs the
     // device list parsed and the probe; recomputed on `kv_cache_inputs_changed`
     // and whenever the GPU rows are rebuilt.
-    in-out property <string> preset_kv_cache_warning;
+    in-out property <string> model_profile_kv_cache_warning;
     // The option models behind every row's two dropdowns. The KIND list is shared
     // by both tables (canned patterns; last entry = "Custom regex…", the only one
     // that reveals the pattern's text field). The DEVICE list is NOT: it is the
@@ -219,8 +219,8 @@ export global AppState {
     // model, or the two would alias each other's row indices (see gui.rs).
     in-out property <[string]> tensor_kind_labels;
     in-out property <[string]> tensor_kind_values;
-    in-out property <[string]> preset_tensor_dev_labels;
-    in-out property <[string]> preset_tensor_dev_values;
+    in-out property <[string]> model_profile_tensor_dev_labels;
+    in-out property <[string]> model_profile_tensor_dev_values;
 
     // Draft-model GPU-device dropdown triple, fed from the same
     // `devices::probed()` cache as the tables above. Still a dropdown, not a
@@ -229,12 +229,12 @@ export global AppState {
     // Its own list because the encoder is placed separately: unset, llama.cpp
     // follows the first entry of --device (v0.4.1) or grabs the first GPU
     // backend it finds; --mmproj-device overrides both.
-    in-out property <[string]> preset_mmproj_dev_labels;
-    in-out property <[string]> preset_mmproj_dev_values;
-    in-out property <int> preset_mmproj_dev_index: 0;
-    in-out property <[string]> preset_draft_dev_labels;
-    in-out property <[string]> preset_draft_dev_values;
-    in-out property <int> preset_draft_dev_index: 0;
+    in-out property <[string]> model_profile_mmproj_dev_labels;
+    in-out property <[string]> model_profile_mmproj_dev_values;
+    in-out property <int> model_profile_mmproj_dev_index: 0;
+    in-out property <[string]> model_profile_draft_dev_labels;
+    in-out property <[string]> model_profile_draft_dev_values;
+    in-out property <int> model_profile_draft_dev_index: 0;
 
     // File-field dropdowns for model and mmproj
     in-out property <[string]> model_labels;
@@ -268,11 +268,11 @@ export global AppState {
     // The int is `model_info_serial`: the model's tensors live in Rust, where
     // Slint's dependency tracking cannot see them, so the binding passes the
     // serial to be re-evaluated when they change.
-    pure callback moe_cache_floor_hint(PresetForm, int) -> string;
+    pure callback moe_cache_floor_hint(ModelProfileForm, int) -> string;
     // `form.spec_type` is a comma-separated --spec-type list: at most one
     // draft-* entry (the "Drafter" combo) plus any ngram-* entries (one
     // checkbox each). These read and rewrite ONE entry of it, keeping the
-    // rest; the list itself stays the only state (presets.rs `spec_type_*`).
+    // rest; the list itself stays the only state (model_profiles.rs `spec_type_*`).
     pure callback spec_type_drafter(string) -> string;
     pure callback spec_type_has(string, string) -> bool;
     pure callback spec_type_with_drafter(string, string) -> string;
@@ -296,7 +296,7 @@ export global AppState {
     // Non-empty when llama.cpp's tensor parallelism does not implement this
     // model's architecture (`gguf::arch_supports_sm_tensor`, a mirror of
     // upstream's deny-list): under split mode `tensor` the load throws, so
-    // `preset_split_mode_warning` shows it the moment that mode is effective.
+    // `model_profile_split_mode_warning` shows it the moment that mode is effective.
     // Empty for an unreadable GGUF (same rule as the embd warning).
     in-out property <string> model_info_tensor_arch_warning;
     in-out property <string> model_info_layers_ctx;
@@ -499,7 +499,7 @@ export global AppState {
     // The selectable presets, built in Rust: the checkbox reports through
     // `bench_toggle_preset` and the whole model is rebuilt, so the row bindings
     // stay one-way like the GPU table's.
-    in-out property <[BenchPresetRow]> bench_presets;
+    in-out property <[BenchModelProfileRow]> bench_model_profiles;
     in-out property <int> bench_selected_count: 0;
     // The first selected preset, i.e. the denominator of the ratio column.
     in-out property <string> bench_baseline: "";
@@ -674,22 +674,22 @@ export global AppState {
     // `preset_gpu_move(id, delta)` is the drag handle: move a checked device `delta`
     // places within the split (negative = towards the head). Position 0 is
     // llama.cpp's main_gpu, so this is the only way to choose which GPU leads.
-    // `preset_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
+    // `model_profile_split_mode_picked(value)`: the mode combo's pick, as a MODE_VALUES
     // spelling ("default"/"none"/"tensor"/"row"). Rust writes it into the form
     // and rebuilds the rows: the mode decides what the columns mean, so a
     // pick is a full re-projection, not a scalar update.
-    callback preset_split_mode_picked(string);
-    callback preset_gpu_toggle(string);
-    callback preset_gpu_move(string, int);
-    callback preset_gpu_weight(string, int);
+    callback model_profile_split_mode_picked(string);
+    callback model_profile_gpu_toggle(string);
+    callback model_profile_gpu_move(string, int);
+    callback model_profile_gpu_weight(string, int);
     // The same edit as `preset_gpu_weight` in blocks (see gpu_split::set_blocks).
     // It is COMMIT-based, not per-keystroke, because a block count is constrained
     // (giving one device more takes it from another), so unlike a weight it
     // cannot be applied without rewriting the other rows, and rewriting them on
     // every keystroke would recreate the very LineEdit being typed into.
-    callback preset_gpu_blocks(string, int);
-    callback preset_gpu_auto();
-    callback preset_gpu_even();
+    callback model_profile_gpu_blocks(string, int);
+    callback model_profile_gpu_auto();
+    callback model_profile_gpu_even();
 
     // Tensor-placement table. Same shape as the GPU table's: each one rewrites
     // the preset's `override_tensor`
@@ -698,15 +698,15 @@ export global AppState {
     // recreate the LineEdit being typed into and drop the caret), so it refreshes
     // only the derived strings. The int is the ROW INDEX; the string is the picked
     // kind id / device id / regex.
-    callback preset_tensor_add();
-    callback preset_tensor_remove(int);
-    callback preset_tensor_kind(int, string);
-    callback preset_tensor_device(int, string);
-    callback preset_tensor_pattern(int, string);
-    callback preset_tensor_layers(int, string);
+    callback model_profile_tensor_add();
+    callback model_profile_tensor_remove(int);
+    callback model_profile_tensor_kind(int, string);
+    callback model_profile_tensor_device(int, string);
+    callback model_profile_tensor_pattern(int, string);
+    callback model_profile_tensor_layers(int, string);
     // The tensor picker: open on a rule; tick / fold one list line; tick or
     // clear everything; fold or unfold everything; write it back; close.
-    callback preset_tensor_pick(int);
+    callback model_profile_tensor_pick(int);
     callback tensor_picker_toggle(int);
     callback tensor_picker_expand(int);
     callback tensor_picker_all(bool);
@@ -714,25 +714,25 @@ export global AppState {
     callback tensor_picker_apply();
     callback tensor_picker_close();
 
-    callback select_preset(int);
+    callback select_model_profile(int);
     // A row's on/off switch: (id, the state it was switched TO). Moves the
     // preset between models.ini and models.ini.disabled; the form is left
-    // alone (see gui::refresh_preset_list).
-    callback toggle_preset_enabled(string, bool);
-    callback save_preset();
-    callback revert_preset();
+    // alone (see gui::refresh_model_profile_list).
+    callback toggle_model_profile_enabled(string, bool);
+    callback save_model_profile();
+    callback revert_model_profile();
     // The Delete dialog (its state block above): open it on the selected
     // preset; tick or untick one file row; dismiss it (Cancel, Esc, the
     // backdrop), which drops the ticks; and confirm, `delete_preset(id)`.
     callback request_delete();
     callback delete_file_toggle(int);
     callback delete_cancel();
-    callback delete_preset(string);
-    callback new_preset();
-    callback clone_preset();
+    callback delete_model_profile(string);
+    callback new_model_profile();
+    callback clone_model_profile();
     callback pick_new_empty();
     callback pick_new_clone();
-    callback rename_preset(string, string);
+    callback rename_model_profile(string, string);
     // Rename… button entry point. Routed through Rust (not opened Slint-side)
     // so a dirty form gets the same discard-confirm guard as the other
     // form-replacing navigations; committing a rename reloads from disk.
@@ -741,7 +741,7 @@ export global AppState {
     // the stashed pending action, cancel drops it.
     callback confirm_discard();
     callback cancel_discard();
-    callback filter_presets(string);
+    callback filter_model_profiles(string);
     callback filter_dialog_models(string);
     // The Hugging Face dialog (src/gui/hf_dialog.rs). `hf_open` comes from the
     // New preset dialog's "From Hugging Face" button (so it inherits New…'s
@@ -808,7 +808,7 @@ export global AppState {
     // builds the real command. `bench_run` validates and starts; `bench_cancel`
     // stops at the next repetition or test boundary.
     callback bench_mode_picked(string);
-    callback bench_toggle_preset(string);
+    callback bench_toggle_model_profile(string);
     callback bench_changed();
     callback bench_run();
     callback bench_cancel();

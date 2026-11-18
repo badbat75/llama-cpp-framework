@@ -5,16 +5,16 @@
 pub use pai_core::strings;
 use pai_core::{ini, net_ifaces, paths};
 
-// The GUI-free modules, under the names the sources use (`crate::presets`, ...).
+// The GUI-free modules, under the names the sources use (`crate::model_profiles`, ...).
 #[cfg(any(target_os = "linux", windows))]
 use pai_app::hwmon;
 pub use pai_app::migration;
 #[cfg(test)]
 use pai_app::sha256;
 use pai_app::{
-    bench, devices, gguf, hf, hf_fit, integrations, kv_cache, linked_files, model_scan, moe_cache,
-    presets, runstate, server_cfg, server_control, server_version, settings, slot_state, startup,
-    tensor_picker,
+    bench, devices, gguf, hf, hf_fit, integrations, kv_cache, linked_files, model_profiles,
+    model_scan, moe_cache, runstate, server_cfg, server_control, server_version, settings,
+    slot_state, startup, tensor_picker,
 };
 
 mod form;

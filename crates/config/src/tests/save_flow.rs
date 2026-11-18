@@ -60,7 +60,7 @@ pub(super) fn run(app: &AppWindow) {
     let st = app.global::<AppState>();
 
     // ── Guard rails: a save with no id (or no model) errors, writes nothing ──
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(st.get_status_is_error(), "empty-id save must set an error");
     assert!(
         !crate::paths::models_ini().exists(),
@@ -75,15 +75,16 @@ pub(super) fn run(app: &AppWindow) {
     //
     // From a NEW model profile's form, not the blank editor's: the blank struct has every
     // "default" box unticked over empty text, which the numeric refusal (tested
-    // below) would reject before `presets::save` is ever reached.
-    let mut form = crate::form::model_profile_to_form(&crate::presets::ModelProfile::default());
+    // below) would reject before `model_profiles::save` is ever reached.
+    let mut form =
+        crate::form::model_profile_to_form(&crate::model_profiles::ModelProfile::default());
     form.id = "hostile".into();
     form.model = r"C:\Models #1\m.gguf".into();
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(
         st.get_status_is_error() && !st.get_status_text().contains("Not saved:"),
-        "a `#` model path must be rejected by presets::save: {}",
+        "a `#` model path must be rejected by model_profiles::save: {}",
         st.get_status_text()
     );
     assert!(
@@ -105,11 +106,12 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Save: reload + reselect + re-baseline ────────────────────────────
     let model_path = dir.path().join("models").join("e2e.gguf");
-    let mut form = crate::form::model_profile_to_form(&crate::presets::ModelProfile::default());
+    let mut form =
+        crate::form::model_profile_to_form(&crate::model_profiles::ModelProfile::default());
     form.id = "e2e".into();
     form.model = model_path.to_string_lossy().as_ref().into();
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(
         !st.get_status_is_error(),
         "save failed: {}",
@@ -118,19 +120,19 @@ pub(super) fn run(app: &AppWindow) {
     let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini written");
     assert!(ini.contains("[e2e]"), "saved section missing:\n{ini}");
     assert_eq!(
-        st.get_selected_preset_index(),
+        st.get_selected_model_profile_index(),
         0,
         "save must reselect the saved preset"
     );
     assert_eq!(st.get_form().id.as_str(), "e2e");
     assert!(
-        !st.get_preset_dirty(),
+        !st.get_model_profile_dirty(),
         "save must re-baseline the form (Save/Revert disabled)"
     );
 
     // ── An n-gram speculator survives the save without a draft ──
     // The save prunes the speculative keys a model cannot act on
-    // (`presets::prune_inactive_draft_keys`). `ngram-mod` drafts from the
+    // (`model_profiles::prune_inactive_draft_keys`). `ngram-mod` drafts from the
     // context, so on a model with no draft file and no MTP heads it must reach
     // the INI, while the draft-model key beside it (`spec-draft-n-max`) and a
     // `draft-mtp` that would fail the load are still dropped.
@@ -145,7 +147,7 @@ pub(super) fn run(app: &AppWindow) {
     form.spec_ngram_simple_size_n = "8".into();
     form.spec_ngram_simple_size_n_default = false;
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let saved = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
@@ -171,7 +173,7 @@ pub(super) fn run(app: &AppWindow) {
     let mut form = st.get_form();
     form.spec_type = "draft-mtp".into();
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let saved = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
@@ -193,7 +195,7 @@ pub(super) fn run(app: &AppWindow) {
     form.ctx_size = "196608245760".into();
     form.ctx_size_default = false;
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(
         st.get_status_is_error() && st.get_status_text().contains("ctx-size = `196608245760`"),
         "an overflowing ctx-size must be refused by name: {}",
@@ -205,30 +207,33 @@ pub(super) fn run(app: &AppWindow) {
         "a refused save must leave models.ini untouched"
     );
     assert!(
-        st.get_preset_dirty(),
+        st.get_model_profile_dirty(),
         "the edit stays in the form to be corrected"
     );
-    st.invoke_revert_preset();
+    st.invoke_revert_model_profile();
 
     // ── Edit → Revert restores the on-disk value ─────────────────────────
     let mut form = st.get_form();
     form.device = "CUDA0".into();
     st.set_form(form);
-    assert!(st.get_preset_dirty(), "an edit must mark the form dirty");
-    st.invoke_revert_preset();
+    assert!(
+        st.get_model_profile_dirty(),
+        "an edit must mark the form dirty"
+    );
+    st.invoke_revert_model_profile();
     assert_eq!(
         st.get_form().device.as_str(),
         "",
         "revert must restore the saved value"
     );
-    assert!(!st.get_preset_dirty());
+    assert!(!st.get_model_profile_dirty());
 
     // ── Delete clears the file, the selection, and the editor ────────────
-    st.invoke_delete_preset("e2e".into());
+    st.invoke_delete_model_profile("e2e".into());
     let ini = std::fs::read_to_string(crate::paths::models_ini()).unwrap_or_default();
     assert!(!ini.contains("[e2e]"), "deleted section still on disk");
     assert_eq!(
-        st.get_selected_preset_index(),
+        st.get_selected_model_profile_index(),
         -1,
         "delete must clear the selection"
     );
@@ -250,7 +255,7 @@ pub(super) fn run(app: &AppWindow) {
     cfg.models_dir = Some(dir.path().to_string_lossy().into_owned());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     for _ in 0..2 {
-        st.invoke_new_preset();
+        st.invoke_new_model_profile();
         assert!(
             st.get_dialog_model_labels().row_count() >= 1,
             "New… dialog must list the scanned model"
@@ -270,7 +275,7 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // ── Rename: funnel = rename + reselect + re-baseline ─────────────────
-    st.invoke_rename_preset("e2e".into(), "e2e-renamed".into());
+    st.invoke_rename_model_profile("e2e".into(), "e2e-renamed".into());
     assert!(
         !st.get_status_is_error(),
         "rename failed: {}",
@@ -290,7 +295,10 @@ pub(super) fn run(app: &AppWindow) {
         "e2e-renamed",
         "rename must reselect the renamed preset"
     );
-    assert!(!st.get_preset_dirty(), "rename must re-baseline the form");
+    assert!(
+        !st.get_model_profile_dirty(),
+        "rename must re-baseline the form"
+    );
 
     // ── Clone: copies the source's parameters onto the picked model ──────
     // Give the source a distinguishing parameter first, then clone it onto
@@ -299,9 +307,9 @@ pub(super) fn run(app: &AppWindow) {
     let mut form = st.get_form();
     form.device = "CUDA1".into();
     st.set_form(form);
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error());
-    st.invoke_clone_preset();
+    st.invoke_clone_model_profile();
     assert!(st.get_show_new_kind_picker(), "Clone… must open the picker");
     assert_eq!(
         st.get_new_dialog_source_id().as_str(),
@@ -336,7 +344,7 @@ pub(super) fn run(app: &AppWindow) {
     // probe doesn't know, which must still show as a checked row (a save that
     // silently dropped it would rewrite the user's config).
     let row_ids = || -> Vec<String> {
-        let rows = st.get_preset_gpu_rows();
+        let rows = st.get_model_profile_gpu_rows();
         (0..rows.row_count())
             .map(|i| rows.row_data(i).expect("row").id.to_string())
             .collect()
@@ -349,7 +357,7 @@ pub(super) fn run(app: &AppWindow) {
         ["CUDA1", "CUDA0", "ROCm1"],
         "the checked device leads, then the probe"
     );
-    let rows = st.get_preset_gpu_rows();
+    let rows = st.get_model_profile_gpu_rows();
     let unknown = rows.row_data(0).expect("row 0");
     assert!(
         unknown.enabled && !unknown.detected,
@@ -384,24 +392,28 @@ pub(super) fn run(app: &AppWindow) {
         ["ROCm1", "CUDA0"],
         "the rows follow the split order"
     );
-    assert_eq!(st.get_preset_gpu_selected(), 2);
+    assert_eq!(st.get_model_profile_gpu_selected(), 2);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "",
         "two devices start in Auto: llama.cpp splits by free VRAM"
     );
-    assert_eq!(st.get_preset_gpu_total(), 0, "Auto ⇒ no weight denominator");
+    assert_eq!(
+        st.get_model_profile_gpu_total(),
+        0,
+        "Auto ⇒ no weight denominator"
+    );
 
-    st.invoke_preset_gpu_even();
+    st.invoke_model_profile_gpu_even();
     assert_eq!(st.get_form().tensor_split.as_str(), "1,1");
-    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+    st.invoke_model_profile_gpu_weight("ROCm1".into(), 3);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "3,1",
         "the weight follows its device's position in the list"
     );
     assert_eq!(
-        st.get_preset_gpu_total(),
+        st.get_model_profile_gpu_total(),
         4,
         "the Share column's denominator"
     );
@@ -410,35 +422,35 @@ pub(super) fn run(app: &AppWindow) {
     // mode bends the columns: under `none` the vector is dead, so the head row
     // reads 100% and the other CHECKED row says "unused" out loud (a "—" would
     // read as merely unchecked).
-    st.invoke_preset_split_mode_picked("none".into());
+    st.invoke_model_profile_split_mode_picked("none".into());
     assert_eq!(st.get_form().split_mode.as_str(), "none");
-    assert_eq!(st.get_preset_gpu_mode().as_str(), "none");
-    assert_eq!(st.get_preset_split_mode_index(), 1);
+    assert_eq!(st.get_model_profile_gpu_mode().as_str(), "none");
+    assert_eq!(st.get_model_profile_split_mode_index(), 1);
     {
-        let rows = st.get_preset_gpu_rows();
+        let rows = st.get_model_profile_gpu_rows();
         assert_eq!(rows.row_data(0).expect("row 0").share.as_str(), "100%");
         assert_eq!(rows.row_data(1).expect("row 1").share.as_str(), "unused");
     }
     // Back to the merged "layer (default)" entry: index and effective mode
     // follow, and the ratio the mode never touched is still there.
-    st.invoke_preset_split_mode_picked("default".into());
+    st.invoke_model_profile_split_mode_picked("default".into());
     assert_eq!(st.get_form().split_mode.as_str(), "default");
-    assert_eq!(st.get_preset_split_mode_index(), 0);
-    assert_eq!(st.get_preset_gpu_mode().as_str(), "layer");
+    assert_eq!(st.get_model_profile_split_mode_index(), 0);
+    assert_eq!(st.get_model_profile_gpu_mode().as_str(), "layer");
     assert_eq!(st.get_form().tensor_split.as_str(), "3,1");
-    st.invoke_preset_gpu_auto();
+    st.invoke_model_profile_gpu_auto();
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "",
         "Auto clears the vector; it is NOT the same launch as Even"
     );
-    st.invoke_preset_gpu_even();
-    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+    st.invoke_model_profile_gpu_even();
+    st.invoke_model_profile_gpu_weight("ROCm1".into(), 3);
 
     // The drag handle: promote CUDA0 to the head of the split. Position 0 is
     // llama.cpp's main_gpu, and a checkbox can only append, so this is the only
     // way to get there. The weight must ride along with its device.
-    st.invoke_preset_gpu_move("CUDA0".into(), -1);
+    st.invoke_model_profile_gpu_move("CUDA0".into(), -1);
     assert_eq!(st.get_form().device.as_str(), "CUDA0,ROCm1");
     assert_eq!(
         st.get_form().tensor_split.as_str(),
@@ -450,7 +462,7 @@ pub(super) fn run(app: &AppWindow) {
         ["CUDA0", "ROCm1"],
         "the rows follow the new order"
     );
-    st.invoke_preset_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
+    st.invoke_model_profile_gpu_move("CUDA0".into(), 1); // back, so the INI below is 3,1
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
 
     // The same table in BLOCKS: the unit the split is actually cut in. It only
@@ -459,14 +471,14 @@ pub(super) fn run(app: &AppWindow) {
     // stand one in: 33 blocks is Ornith-1.0-9B (32 trunk + 1 nextn), i.e. 34
     // positions once the output layer is counted.
     st.set_model_info_n_layer(33);
-    st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
+    st.invoke_model_profile_gpu_blocks("ROCm1".into(), 29);
     assert_eq!(
         st.get_form().tensor_split.as_str(),
         "29,5",
         "the counts ARE the weights: 3,1 projected to 26/8, and 29 takes 3 off the back"
     );
-    assert_eq!(st.get_preset_split_positions(), 34);
-    let rows = st.get_preset_gpu_rows();
+    assert_eq!(st.get_model_profile_split_positions(), 34);
+    let rows = st.get_model_profile_gpu_rows();
     assert_eq!(
         (
             rows.row_data(0).expect("row 0").blocks,
@@ -498,14 +510,14 @@ pub(super) fn run(app: &AppWindow) {
     );
     // Re-committing the same count (which leaving the field after Enter does) must
     // not churn the vector.
-    st.invoke_preset_gpu_blocks("ROCm1".into(), 29);
+    st.invoke_model_profile_gpu_blocks("ROCm1".into(), 29);
     assert_eq!(st.get_form().tensor_split.as_str(), "29,5");
     // `row` bends the same table off blocks: the bytes follow row fractions
     // there, so the projection must retire even while the model is known, and
     // come straight back when the mode does.
-    st.invoke_preset_split_mode_picked("row".into());
+    st.invoke_model_profile_split_mode_picked("row".into());
     assert_eq!(
-        st.get_preset_split_positions(),
+        st.get_model_profile_split_positions(),
         0,
         "row mode has no block cut"
     );
@@ -513,12 +525,12 @@ pub(super) fn run(app: &AppWindow) {
     // the same vector), so the block cut retires there as well, the combo
     // lands on its own entry rather than collapsing onto layer as it did while
     // the mode was not offered.
-    st.invoke_preset_split_mode_picked("tensor".into());
+    st.invoke_model_profile_split_mode_picked("tensor".into());
     assert_eq!(st.get_form().split_mode.as_str(), "tensor");
-    assert_eq!(st.get_preset_gpu_mode().as_str(), "tensor");
-    assert_eq!(st.get_preset_split_mode_index(), 2);
+    assert_eq!(st.get_model_profile_gpu_mode().as_str(), "tensor");
+    assert_eq!(st.get_model_profile_split_mode_index(), 2);
     assert_eq!(
-        st.get_preset_split_positions(),
+        st.get_model_profile_split_positions(),
         0,
         "tensor mode has no block cut"
     );
@@ -527,7 +539,7 @@ pub(super) fn run(app: &AppWindow) {
     // Server tab's SDK tuning knob is on `none`, and with that set, flash
     // attention untouched and a supported arch it stays quiet.
     assert!(
-        st.get_preset_split_mode_warning()
+        st.get_model_profile_split_mode_warning()
             .as_str()
             .contains("Tensor-split AllReduce"),
         "tensor across CUDA + ROCm must point at the AllReduce knob"
@@ -537,7 +549,7 @@ pub(super) fn run(app: &AppWindow) {
         f.cuda_allreduce = "none".into();
         st.set_server_form(f);
     }
-    assert_eq!(st.get_preset_split_mode_warning().as_str(), "");
+    assert_eq!(st.get_model_profile_split_mode_warning().as_str(), "");
     // ...and speaks up on the one precondition the form itself can break:
     // flash attention off is a load failure under tensor mode. Computed in
     // .slint straight off the form, so no Rust refresh sits between the edit
@@ -547,7 +559,7 @@ pub(super) fn run(app: &AppWindow) {
         f.flash_attn = "off".into();
         st.set_form(f);
         assert!(
-            st.get_preset_split_mode_warning()
+            st.get_model_profile_split_mode_warning()
                 .as_str()
                 .contains("flash attention"),
             "tensor + flash-attn off must warn"
@@ -555,11 +567,11 @@ pub(super) fn run(app: &AppWindow) {
         let mut f = st.get_form();
         f.flash_attn = "default".into();
         st.set_form(f);
-        assert_eq!(st.get_preset_split_mode_warning().as_str(), "");
+        assert_eq!(st.get_model_profile_split_mode_warning().as_str(), "");
     }
-    st.invoke_preset_split_mode_picked("default".into());
+    st.invoke_model_profile_split_mode_picked("default".into());
     assert_eq!(
-        st.get_preset_split_mode_warning().as_str(),
+        st.get_model_profile_split_mode_warning().as_str(),
         "",
         "the strip is about tensor mode only"
     );
@@ -577,24 +589,24 @@ pub(super) fn run(app: &AppWindow) {
         st.set_form(f);
         itest::mock_elapsed_time(std::time::Duration::from_millis(16));
         assert!(
-            st.get_preset_kv_cache_warning()
+            st.get_model_profile_kv_cache_warning()
                 .as_str()
                 .contains("on the CPU"),
             "iq4_nl on CUDA/ROCm must warn, got {:?}",
-            st.get_preset_kv_cache_warning()
+            st.get_model_profile_kv_cache_warning()
         );
         st.set_form(original);
         itest::mock_elapsed_time(std::time::Duration::from_millis(16));
-        assert_eq!(st.get_preset_kv_cache_warning().as_str(), "");
+        assert_eq!(st.get_model_profile_kv_cache_warning().as_str(), "");
     }
     assert_eq!(
-        st.get_preset_split_positions(),
+        st.get_model_profile_split_positions(),
         34,
         "layer gets the blocks back"
     );
     // Back to a plain ratio for the INI assertions below.
-    st.invoke_preset_gpu_even();
-    st.invoke_preset_gpu_weight("ROCm1".into(), 3);
+    st.invoke_model_profile_gpu_even();
+    st.invoke_model_profile_gpu_weight("ROCm1".into(), 3);
     assert_eq!(st.get_form().tensor_split.as_str(), "3,1");
     // A model change has to re-project the table, not just the Model-info box:
     // the block column counts against THIS model's block_count, so leaving it on
@@ -603,12 +615,15 @@ pub(super) fn run(app: &AppWindow) {
     // the column falls back to ratios: the same path a real switch takes.
     st.invoke_model_changed();
     assert_eq!(
-        st.get_preset_split_positions(),
+        st.get_model_profile_split_positions(),
         0,
         "an unreadable model takes the block column back out"
     );
     assert_eq!(
-        st.get_preset_gpu_rows().row_data(0).expect("row 0").blocks,
+        st.get_model_profile_gpu_rows()
+            .row_data(0)
+            .expect("row 0")
+            .blocks,
         0
     );
     assert_eq!(
@@ -617,7 +632,7 @@ pub(super) fn run(app: &AppWindow) {
         "…without touching the ratio it is projecting"
     );
 
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
@@ -632,7 +647,7 @@ pub(super) fn run(app: &AppWindow) {
     // "optimization" in refresh_gpu_rows would leave it stale and lying.
     gpu_checkbox("CUDA0").invoke_accessible_default_action(); // uncheck → dirty
     assert_eq!(st.get_form().device.as_str(), "ROCm1");
-    st.invoke_revert_preset();
+    st.invoke_revert_model_profile();
     assert_eq!(st.get_form().device.as_str(), "ROCm1,CUDA0");
     assert_eq!(
         gpu_checkbox("CUDA0").accessible_checked(),
@@ -646,19 +661,20 @@ pub(super) fn run(app: &AppWindow) {
     // BEFORE parsing, so a rule that survives that without a device is a throw at
     // load. This drives the real callbacks and asserts the string that reaches the
     // INI, comma and equals signs included.
-    let ot_rows = || st.get_preset_tensor_rows();
+    let ot_rows = || st.get_model_profile_tensor_rows();
     assert_eq!(
         ot_rows().row_count(),
         0,
         "a preset starts with no overrides"
     );
     assert!(
-        st.get_preset_tensor_summary().starts_with("(no overrides"),
+        st.get_model_profile_tensor_summary()
+            .starts_with("(no overrides"),
         "summary: {}",
-        st.get_preset_tensor_summary()
+        st.get_model_profile_tensor_summary()
     );
 
-    st.invoke_preset_tensor_add();
+    st.invoke_model_profile_tensor_add();
     let row = ot_rows().row_data(0).expect("row 0");
     assert_eq!(row.kind_index, 0, "Add seeds the Embedding table…");
     assert_eq!(row.device.as_str(), "CUDA0", "…on the first probed GPU");
@@ -669,12 +685,12 @@ pub(super) fn run(app: &AppWindow) {
         r"^token_embd\.weight=CUDA0",
         "the one rule that pays for this table: the embedding table off pinned host RAM"
     );
-    assert!(st.get_preset_tensor_warning().is_empty());
+    assert!(st.get_model_profile_tensor_warning().is_empty());
 
     // The CPU is a first-class target here, and the contrast with the GPU table
     // above (which filters it out, since --device won't take it) is the point.
     let dev_values: Vec<String> = {
-        let v = st.get_preset_tensor_dev_values();
+        let v = st.get_model_profile_tensor_dev_values();
         (0..v.row_count())
             .map(|i| v.row_data(i).expect("value").to_string())
             .collect()
@@ -686,9 +702,9 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // A second rule: the experts regex, sent to the CPU (i.e. exactly --cpu-moe).
-    st.invoke_preset_tensor_add();
-    st.invoke_preset_tensor_kind(1, "exps".into());
-    st.invoke_preset_tensor_device(1, "CPU".into());
+    st.invoke_model_profile_tensor_add();
+    st.invoke_model_profile_tensor_kind(1, "exps".into());
+    st.invoke_model_profile_tensor_device(1, "CPU".into());
     assert_eq!(
         st.get_form().override_tensor.as_str(),
         r"^token_embd\.weight=CUDA0,\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU",
@@ -699,18 +715,18 @@ pub(super) fn run(app: &AppWindow) {
     // DERIVED from its pattern, so it could not both stay `\.ffn_…_exps` and read
     // as Custom). The regex it then takes is SANITIZED: a `{1,2}` quantifier would
     // tear its own rule in half at llama.cpp's comma split.
-    st.invoke_preset_tensor_kind(1, "custom".into());
+    st.invoke_model_profile_tensor_kind(1, "custom".into());
     let row = ot_rows().row_data(1).expect("row 1");
     assert!(row.custom, "Custom must reveal the regex field");
     assert_eq!(row.device.as_str(), "CPU", "…while the device stays put");
-    st.invoke_preset_tensor_pattern(1, r"blk\.{1,2}\.attn=x".into());
+    st.invoke_model_profile_tensor_pattern(1, r"blk\.{1,2}\.attn=x".into());
     assert_eq!(
         st.get_form().override_tensor.as_str(),
         r"^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
         "the two separators are stripped, so the value is still TWO rules"
     );
 
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
@@ -738,7 +754,7 @@ pub(super) fn run(app: &AppWindow) {
         r"^token_embd\.weight=CUDA0,attn_norm=CPU",
         "a keystroke in the regex field must reach the form"
     );
-    st.invoke_revert_preset();
+    st.invoke_revert_model_profile();
     assert_eq!(
         ot_pattern().accessible_value().unwrap_or_default(),
         r"blk\.{12}\.attnx",
@@ -756,27 +772,27 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert_ne!(hand_edited, ini, "the line to hand-edit must be there");
     std::fs::write(crate::paths::models_ini(), &hand_edited).expect("hand-edit models.ini");
-    st.invoke_revert_preset(); // reloads from disk → rebuilds the table
+    st.invoke_revert_model_profile(); // reloads from disk → rebuilds the table
     assert!(
-        st.get_preset_tensor_warning().contains("token_embd"),
+        st.get_model_profile_tensor_warning().contains("token_embd"),
         "warning: {}",
-        st.get_preset_tensor_warning()
+        st.get_model_profile_tensor_warning()
     );
     assert_eq!(
         ot_rows().row_data(0).expect("row 0").problem.as_str(),
         "pick a device"
     );
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(
         st.get_status_is_error(),
-        "a rule with no device must be refused by presets::save"
+        "a rule with no device must be refused by model_profiles::save"
     );
 
     // Repair it through the table (which is the cure the warning implies) and
     // leave the model profile saved and clean for the phases below.
-    st.invoke_preset_tensor_device(0, "CUDA0".into());
-    assert!(st.get_preset_tensor_warning().is_empty());
-    st.invoke_save_preset();
+    st.invoke_model_profile_tensor_device(0, "CUDA0".into());
+    assert!(st.get_model_profile_tensor_warning().is_empty());
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
 
     // ── Bind to: one checkbox per address, `server_form.hostname` IS the list ──
@@ -824,8 +840,8 @@ pub(super) fn run(app: &AppWindow) {
     let mut form = st.get_form();
     form.ctx_size = "12345".into();
     st.set_form(form);
-    assert!(st.get_preset_dirty());
-    st.invoke_new_preset();
+    assert!(st.get_model_profile_dirty());
+    st.invoke_new_model_profile();
     assert!(
         st.get_show_discard_dialog(),
         "New… on a dirty form must raise the discard dialog"
@@ -841,7 +857,7 @@ pub(super) fn run(app: &AppWindow) {
         "12345",
         "cancel must keep the unsaved edits"
     );
-    st.invoke_new_preset();
+    st.invoke_new_model_profile();
     st.invoke_confirm_discard();
     assert!(
         st.get_show_new_kind_picker(),
@@ -851,7 +867,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Rename… gets the same dirty guard (it reloads from disk on commit) ──
     assert!(
-        st.get_preset_dirty(),
+        st.get_model_profile_dirty(),
         "form still dirty from the phase above"
     );
     st.invoke_request_rename();
@@ -889,7 +905,7 @@ pub(super) fn run(app: &AppWindow) {
             .unwrap_or_else(|| panic!("no on/off switch for {id}"))
     };
     let listed_enabled = |id: &str| {
-        st.get_presets()
+        st.get_model_profiles()
             .iter()
             .find(|p| p.id.as_str() == id)
             .unwrap_or_else(|| panic!("{id} is not listed"))
@@ -905,7 +921,7 @@ pub(super) fn run(app: &AppWindow) {
     form.ctx_size_default = false;
     st.set_form(form);
     let dirty_form = st.get_form();
-    assert!(st.get_preset_dirty());
+    assert!(st.get_model_profile_dirty());
     assert_eq!(
         switch("e2e").accessible_checked(),
         Some(true),
@@ -938,10 +954,10 @@ pub(super) fn run(app: &AppWindow) {
         dirty_form,
         "the unsaved edit survives the switch"
     );
-    assert!(st.get_preset_dirty());
-    let sel = st.get_selected_preset_index();
+    assert!(st.get_model_profile_dirty());
+    let sel = st.get_selected_model_profile_index();
     assert_eq!(
-        st.get_presets()
+        st.get_model_profiles()
             .iter()
             .find(|p| p.orig_index == sel)
             .map(|p| p.id.to_string()),
@@ -949,14 +965,14 @@ pub(super) fn run(app: &AppWindow) {
         "the selection follows the preset to its new place in the list"
     );
     assert!(
-        st.get_bench_presets()
+        st.get_bench_model_profiles()
             .iter()
             .all(|r| r.id.as_str() != "e2e"),
         "a preset llama-server does not offer cannot be benchmarked"
     );
 
     // Saving a switched-off model profile edits it where it is parked.
-    st.invoke_save_preset();
+    st.invoke_save_model_profile();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(
         read(&parked_ini).contains("ctx-size = 65536") && !read(&models_ini).contains("[e2e]"),
@@ -972,10 +988,10 @@ pub(super) fn run(app: &AppWindow) {
     cfg.models_dir = Some(dir.path().to_string_lossy().into_owned());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     assert!(
-        !st.get_preset_dirty(),
+        !st.get_model_profile_dirty(),
         "the save above re-baselined the form"
     );
-    st.invoke_new_preset();
+    st.invoke_new_model_profile();
     st.set_dialog_model_index(0);
     st.invoke_pick_new_empty();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
@@ -984,13 +1000,13 @@ pub(super) fn run(app: &AppWindow) {
         "e2e-3",
         "e2e (off) and e2e-2 are taken"
     );
-    st.invoke_rename_preset("e2e-3".into(), "e2e".into());
+    st.invoke_rename_model_profile("e2e-3".into(), "e2e".into());
     assert!(
         st.get_status_is_error() && st.get_status_text().contains("already exists"),
         "a rename onto a switched-off preset must be refused: {}",
         st.get_status_text()
     );
-    st.invoke_delete_preset("e2e-3".into());
+    st.invoke_delete_model_profile("e2e-3".into());
 
     // And back on: the section returns to models.ini, edit included.
     switch("e2e").invoke_accessible_default_action();
@@ -1000,20 +1016,20 @@ pub(super) fn run(app: &AppWindow) {
     assert!(!read(&parked_ini).contains("[e2e]"));
     assert!(listed_enabled("e2e"));
     assert!(st
-        .get_bench_presets()
+        .get_bench_model_profiles()
         .iter()
         .any(|r| r.id.as_str() == "e2e"));
     // The rebuild half of the switch's one-way binding: that click broke its
     // delegate's binding for good, so a change made ELSEWHERE (the CLI's path,
     // then a reload) reaches the widget only if the row is recreated.
-    crate::presets::set_enabled("e2e", false).expect("switch off behind the UI");
+    crate::model_profiles::set_enabled("e2e", false).expect("switch off behind the UI");
     st.invoke_reload_all();
     assert_eq!(
         switch("e2e").accessible_checked(),
         Some(false),
         "a rebuild must reach the clicked switch"
     );
-    crate::presets::set_enabled("e2e", true).expect("and back on");
+    crate::model_profiles::set_enabled("e2e", true).expect("and back on");
     st.invoke_reload_all();
     assert_eq!(switch("e2e").accessible_checked(), Some(true));
 
@@ -1035,7 +1051,7 @@ pub(super) fn run(app: &AppWindow) {
         st.get_integration_status()
     );
     let enabled_ids = || {
-        let mut v: Vec<String> = crate::presets::load_all()
+        let mut v: Vec<String> = crate::model_profiles::load_all()
             .into_iter()
             .map(|p| p.id)
             .collect();
@@ -1190,7 +1206,7 @@ pub(super) fn run(app: &AppWindow) {
     // builds the real command: a preview that stopped tracking the mode would
     // show a llama-bench line for a run that sends HTTP, or the reverse.
     for id in ["bench-a", "bench-b"] {
-        crate::presets::save(&crate::presets::ModelProfile {
+        crate::model_profiles::save(&crate::model_profiles::ModelProfile {
             id: id.into(),
             model: format!(r"E:\models\{id}.gguf"),
             ..Default::default()
@@ -1199,15 +1215,15 @@ pub(super) fn run(app: &AppWindow) {
     }
     st.invoke_reload_all(); // the seam's cut-down F5: re-read models.ini
     let bench_row = |id: &str| {
-        st.get_bench_presets()
+        st.get_bench_model_profiles()
             .iter()
             .find(|r| r.id.as_str() == id)
             .unwrap_or_else(|| panic!("no benchmark row for {id}"))
     };
     assert_eq!(bench_row("bench-a").order, 0, "nothing is selected yet");
 
-    st.invoke_bench_toggle_preset("bench-b".into());
-    st.invoke_bench_toggle_preset("bench-a".into());
+    st.invoke_bench_toggle_model_profile("bench-b".into());
+    st.invoke_bench_toggle_model_profile("bench-a".into());
     assert_eq!(
         (bench_row("bench-b").order, bench_row("bench-a").order),
         (1, 2),
@@ -1221,7 +1237,7 @@ pub(super) fn run(app: &AppWindow) {
         st.get_bench_preview()
     );
 
-    st.invoke_bench_toggle_preset("bench-b".into());
+    st.invoke_bench_toggle_model_profile("bench-b".into());
     assert_eq!(
         (bench_row("bench-b").order, bench_row("bench-a").order),
         (0, 1),
@@ -1250,7 +1266,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // A run with nothing selected is refused by the shared validator rather
     // than spawning a worker that would find out on its own.
-    st.invoke_bench_toggle_preset("bench-a".into());
+    st.invoke_bench_toggle_model_profile("bench-a".into());
     assert_eq!(st.get_bench_selected_count(), 0);
     st.invoke_bench_run();
     assert!(
@@ -1307,7 +1323,7 @@ pub(super) fn run(app: &AppWindow) {
         edited_info.contains(&crate::sha256::short(b"Explain flash attention.\n")),
         "the digest is of the text as SENT, BOM stripped and CRLF folded: {edited_info}"
     );
-    st.invoke_bench_toggle_preset("bench-a".into()); // the preview needs one
+    st.invoke_bench_toggle_model_profile("bench-a".into()); // the preview needs one
     assert!(
         st.get_bench_preview().contains("Explain flash attention."),
         "the request preview follows the file too: {}",
@@ -1347,7 +1363,7 @@ pub(super) fn run(app: &AppWindow) {
         st.get_status_text()
     );
     assert!(!st.get_bench_running(), "and must not arm the tab");
-    st.invoke_bench_toggle_preset("bench-a".into());
+    st.invoke_bench_toggle_model_profile("bench-a".into());
     std::fs::write(&prompt_path, "Summarize the release notes.\n")
         .expect("restore the prompt file");
     st.invoke_reload_all();
@@ -1863,24 +1879,27 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert!(!crate::gui::quit_called_for_tests());
     // A dirty editor first.
-    let first = st.get_presets().row_data(0).expect("a preset is listed");
-    st.invoke_select_preset(first.orig_index);
+    let first = st
+        .get_model_profiles()
+        .row_data(0)
+        .expect("a preset is listed");
+    st.invoke_select_model_profile(first.orig_index);
     let edited_id = st.get_form().id.to_string();
     let mut form = st.get_form();
     form.ctx_size = "8192".into();
     form.ctx_size_default = false;
     st.set_form(form);
-    assert!(st.get_preset_dirty());
+    assert!(st.get_model_profile_dirty());
     let editor_kept = |why: &str| {
         assert_eq!(
             st.get_form().id.as_str(),
             edited_id,
             "{why}: the editor keeps its preset"
         );
-        assert!(st.get_preset_dirty(), "{why}: and its unsaved edit");
-        let sel = st.get_selected_preset_index();
+        assert!(st.get_model_profile_dirty(), "{why}: and its unsaved edit");
+        let sel = st.get_selected_model_profile_index();
         let row = st
-            .get_presets()
+            .get_model_profiles()
             .iter()
             .find(|p| p.orig_index == sel)
             .expect("the selection is listed");
@@ -2131,7 +2150,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     editor_kept("a created preset");
     assert!(
-        st.get_presets()
+        st.get_model_profiles()
             .iter()
             .any(|p| p.id.as_str() == "hfmodel-Q4_K_M"),
         "the new preset is listed"
@@ -2162,12 +2181,12 @@ pub(super) fn run(app: &AppWindow) {
     // Show model profile: refused (with a note) while a dialog is open in the main
     // window; else on the Models tab, through the discard guard.
     st.invoke_hf_open();
-    win.invoke_show_preset(hf_job);
+    win.invoke_show_model_profile(hf_job);
     assert!(rows()[0].note.contains("close it"), "{}", rows()[0].note);
     editor_kept("a Show under a modal");
     st.invoke_hf_dismiss();
     st.set_current_tab(0);
-    win.invoke_show_preset(hf_job);
+    win.invoke_show_model_profile(hf_job);
     assert_eq!(st.get_current_tab(), 1, "Show goes to the Models tab");
     assert!(
         rows()[0].note.is_empty(),
@@ -2179,7 +2198,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     st.invoke_cancel_discard();
     editor_kept("a Show whose discard was cancelled");
-    win.invoke_show_preset(hf_job);
+    win.invoke_show_model_profile(hf_job);
     st.invoke_confirm_discard();
     assert_eq!(
         st.get_form().id.as_str(),
@@ -2204,10 +2223,10 @@ pub(super) fn run(app: &AppWindow) {
         ("ROCm1,CUDA0", "3,2", 1, false)
     );
     assert!(
-        !st.get_preset_dirty(),
+        !st.get_model_profile_dirty(),
         "the derived preset loads clean: the form round-trips it"
     );
-    win.invoke_show_preset(hf_job);
+    win.invoke_show_model_profile(hf_job);
     assert!(
         !st.get_show_discard_dialog(),
         "already in the editor: nothing to ask"
@@ -2251,37 +2270,37 @@ pub(super) fn run(app: &AppWindow) {
 /// reads: Save, the on switch, and a server.ini save lowering the cap. Runs
 /// under the same redirected data root; leaves both files as it found them.
 fn load_on_startup_phase() {
-    use crate::{presets, server_cfg};
+    use crate::{model_profiles, server_cfg};
     let saved_cfg = server_cfg::load();
     let mut cfg = saved_cfg.clone();
     cfg.models_max = Some(1);
     server_cfg::save(&cfg).expect("ModelsMax = 1");
-    let p = |id: &str| presets::ModelProfile {
+    let p = |id: &str| model_profiles::ModelProfile {
         load_on_startup: true,
-        ..presets::ModelProfile::new_default(id.into(), "m.gguf".into())
+        ..model_profiles::ModelProfile::new_default(id.into(), "m.gguf".into())
     };
-    presets::save(&p("los-a")).expect("one fits ModelsMax = 1");
-    presets::save(&p("los-a")).expect("re-saving the same preset still counts once");
-    let err = presets::save(&p("los-b")).expect_err("a second one does not fit");
+    model_profiles::save(&p("los-a")).expect("one fits ModelsMax = 1");
+    model_profiles::save(&p("los-a")).expect("re-saving the same preset still counts once");
+    let err = model_profiles::save(&p("los-b")).expect_err("a second one does not fit");
     assert!(err.to_string().contains("ModelsMax"), "{err}");
     assert!(
-        presets::load_all().iter().all(|q| q.id != "los-b"),
+        model_profiles::load_all().iter().all(|q| q.id != "los-b"),
         "nothing written"
     );
 
     // Parked, then switched on: the switch is refused, the section stays parked.
-    presets::save(&presets::ModelProfile {
+    model_profiles::save(&model_profiles::ModelProfile {
         load_on_startup: false,
         ..p("los-b")
     })
     .expect("off fits");
-    presets::set_enabled("los-b", false).expect("park it");
-    presets::save(&p("los-b")).expect("a parked preset does not count");
+    model_profiles::set_enabled("los-b", false).expect("park it");
+    model_profiles::save(&p("los-b")).expect("a parked preset does not count");
     assert!(
-        presets::set_enabled("los-b", true).is_err(),
+        model_profiles::set_enabled("los-b", true).is_err(),
         "switching it on would make two"
     );
-    assert!(presets::load_listed()
+    assert!(model_profiles::load_listed()
         .iter()
         .any(|l| l.model_profile.id == "los-b" && !l.enabled));
 
@@ -2299,8 +2318,8 @@ fn load_on_startup_phase() {
     cfg.models_max = None;
     server_cfg::save(&cfg).expect("llama.cpp's default cap holds one");
 
-    presets::delete("los-a").expect("cleanup");
-    presets::delete("los-b").expect("cleanup");
+    model_profiles::delete("los-a").expect("cleanup");
+    model_profiles::delete("los-b").expect("cleanup");
     server_cfg::save(&saved_cfg).expect("restore server.ini");
 }
 
@@ -2317,7 +2336,7 @@ fn delete_with_files_phase(
     models_dir: &std::path::Path,
     hf_model: &std::path::Path,
 ) {
-    use crate::presets::ModelProfile;
+    use crate::model_profiles::ModelProfile;
     let st = app.global::<AppState>();
     let mut cfg = crate::server_cfg::load();
     cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
@@ -2335,7 +2354,7 @@ fn delete_with_files_phase(
     for (f, n) in [(&shard1, 3), (&shard2, 4), (&mmproj, 2), (&drafter, 1)] {
         touch(f, n);
     }
-    crate::presets::save(&ModelProfile {
+    crate::model_profiles::save(&ModelProfile {
         id: "split".into(),
         model: path(&shard1),
         mmproj: path(&mmproj),
@@ -2345,22 +2364,22 @@ fn delete_with_files_phase(
     })
     .expect("save split");
     // Shares the mmproj, and is switched OFF: the in-use check reads both files.
-    crate::presets::save(&ModelProfile {
+    crate::model_profiles::save(&ModelProfile {
         id: "sharer".into(),
         model: path(hf_model),
         mmproj: path(&mmproj),
         ..ModelProfile::default()
     })
     .expect("save sharer");
-    crate::presets::set_enabled("sharer", false).expect("park sharer");
+    crate::model_profiles::set_enabled("sharer", false).expect("park sharer");
     st.invoke_reload_all();
     let select = |id: &str| {
         let row = st
-            .get_presets()
+            .get_model_profiles()
             .iter()
             .find(|p| p.id.as_str() == id)
             .unwrap_or_else(|| panic!("{id} is not listed"));
-        st.invoke_select_preset(row.orig_index);
+        st.invoke_select_model_profile(row.orig_index);
         assert_eq!(st.get_form().id.as_str(), id);
     };
     select("split");
@@ -2431,7 +2450,7 @@ fn delete_with_files_phase(
     );
 
     // Confirm: the section, then the files, then the emptied repo folders.
-    st.invoke_delete_preset("split".into());
+    st.invoke_delete_model_profile("split".into());
     assert!(!st.get_show_delete_dialog());
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     let status = st.get_status_text();
@@ -2440,7 +2459,7 @@ fn delete_with_files_phase(
             && status.contains("empty folders removed"),
         "{status}"
     );
-    assert!(crate::presets::load_listed()
+    assert!(crate::model_profiles::load_listed()
         .iter()
         .all(|l| l.model_profile.id != "split"));
     assert!(!shard1.exists() && !shard2.exists() && !drafter.exists());
@@ -2461,7 +2480,7 @@ fn delete_with_files_phase(
         "the pickers were rescanned"
     );
     assert_eq!(
-        st.get_selected_preset_index(),
+        st.get_selected_model_profile_index(),
         -1,
         "delete still clears the selection"
     );
@@ -2483,14 +2502,14 @@ fn delete_with_files_phase(
     st.invoke_delete_file_toggle(1);
     std::fs::remove_file(&mmproj).expect("remove the mmproj");
     std::fs::create_dir(&mmproj).expect("a folder in its place");
-    st.invoke_delete_preset("sharer".into());
+    st.invoke_delete_model_profile("sharer".into());
     assert!(
         st.get_status_is_error() && st.get_status_text().contains("could not delete"),
         "{}",
         st.get_status_text()
     );
     assert!(st.get_status_text().starts_with("Deleted [sharer]"));
-    assert!(crate::presets::load_listed()
+    assert!(crate::model_profiles::load_listed()
         .iter()
         .all(|l| l.model_profile.id != "sharer"));
     assert!(hf_model.exists(), "the in-use model was never offered");

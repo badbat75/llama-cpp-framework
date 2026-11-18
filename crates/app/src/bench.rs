@@ -103,7 +103,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::ini;
-use crate::presets::ModelProfile;
+use crate::model_profiles::ModelProfile;
 use crate::server_cfg::ServerConfig;
 
 pub mod db;
@@ -524,7 +524,7 @@ pub fn render_int_list(v: &[i32]) -> String {
 /// bad workload fails in the UI rather than as an unreadable llama-bench error.
 pub fn validate(plan: &Plan) -> Option<String> {
     if plan.model_profiles.is_empty() {
-        return Some(strings::t("select-a-preset"));
+        return Some(strings::t("select-a-model-profile"));
     }
     if plan.reps < 1 {
         return Some(strings::t("reps-at-least-one"));

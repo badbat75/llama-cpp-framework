@@ -58,7 +58,7 @@ use std::time::{Duration, Instant};
 use super::exec::Event;
 use super::{Concurrency, Mode, Plan, Point};
 use crate::server_control::ConfigFile;
-use crate::{http, ini, presets, server_cfg, server_control};
+use crate::{http, ini, model_profiles, server_cfg, server_control};
 
 /// The value that means "the key is absent from the section". Spelled rather
 /// than left blank so it survives a round trip through a comma-separated list
@@ -99,7 +99,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ── What may be swept ────────────────────────────────────────────────────
 
-type Setter = fn(&mut presets::ModelProfile, &str) -> Result<(), String>;
+type Setter = fn(&mut model_profiles::ModelProfile, &str) -> Result<(), String>;
 
 /// The model profile keys a sweep may vary, each with the typed field it writes.
 ///
@@ -108,7 +108,7 @@ type Setter = fn(&mut presets::ModelProfile, &str) -> Result<(), String>;
 /// only warns), and the leg would then measure the unchanged configuration and
 /// report it as a data point. And going through the typed field means the value
 /// is parsed HERE, before the sweep spends an hour of GPU time, and the section
-/// is rewritten by `presets::save`, so the file keeps the comments the GUI
+/// is rewritten by `model_profiles::save`, so the file keeps the comments the GUI
 /// writes rather than growing a bare key.
 ///
 /// The list is the launch-affecting knobs: things a benchmark can actually
@@ -299,7 +299,7 @@ pub const SWEEPABLE: &[(&str, Setter)] = &[
     }),
     ("fit-target", |p, v| {
         p.fit_target = text(v)?;
-        crate::presets::validate_fit_target(&p.fit_target)
+        crate::model_profiles::validate_fit_target(&p.fit_target)
     }),
     ("cache-type-k", |p, v| {
         p.cache_type_k = text(v)?;
@@ -343,7 +343,7 @@ pub fn check_values(model_profile: &str, key: &str, values: &[String]) -> Result
     for v in values {
         let mut probe = base.clone();
         set(&mut probe, v).map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
-        crate::presets::validate_for_save(&probe)
+        crate::model_profiles::validate_for_save(&probe)
             .map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
     }
     Ok(())
@@ -393,7 +393,7 @@ fn text(v: &str) -> Result<String, String> {
     if v.eq_ignore_ascii_case(UNSET) {
         return Ok(String::new());
     }
-    // The same gate `presets::save` applies, run here so a bad value fails
+    // The same gate `model_profiles::save` applies, run here so a bad value fails
     // before the sweep starts rather than on the leg that writes it.
     ini::reject_comment_markers("value", v).map_err(|e| e.to_string())?;
     Ok(v.to_string())
@@ -853,7 +853,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         for v in &opts.values {
             let mut probe = base.clone();
             set(&mut probe, v).map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
-            crate::presets::validate_for_save(&probe)
+            crate::model_profiles::validate_for_save(&probe)
                 .map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
         }
     }
@@ -933,14 +933,14 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         println!(
             "{}",
             strings::fill(
-                "presets-being-edited",
+                "model-profiles-being-edited",
                 &[&key, &original, &marker.display()]
             )
         );
     } else {
         println!(
             "{}",
-            strings::fill("measuring-preset", &[&opts.model_profile, &reps])
+            strings::fill("measuring-model-profile", &[&opts.model_profile, &reps])
         );
     }
     // An interrupted sweep left the key on one of ITS leg values, so the value
@@ -1156,19 +1156,22 @@ fn scenarios_for(parallel: i32) -> Vec<Concurrency> {
     }
 }
 
-fn load_one(id: &str) -> Result<presets::ModelProfile, String> {
-    let all = presets::load_all();
+fn load_one(id: &str) -> Result<model_profiles::ModelProfile, String> {
+    let all = model_profiles::load_all();
     all.iter().find(|p| p.id == id).cloned().ok_or_else(|| {
         // A switched-off model profile is still listed everywhere else, so say why
         // this one cannot be swept rather than pretend it does not exist.
-        if presets::load_listed()
+        if model_profiles::load_listed()
             .iter()
             .any(|l| !l.enabled && l.model_profile.id == id)
         {
-            return strings::fill("preset-off-cannot-run", &[&id]);
+            return strings::fill("model-profile-off-cannot-run", &[&id]);
         }
         let known: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
-        strings::fill("unknown-preset", &[&id, &"models.ini", &known.join(", ")])
+        strings::fill(
+            "unknown-model-profile",
+            &[&id, &"models.ini", &known.join(", ")],
+        )
     })
 }
 
@@ -1193,7 +1196,7 @@ fn write_unlocked(model_profile: &str, set: Setter, value: &str) -> Result<(), S
     // and the rest of the section belongs to whoever edited it last.
     let mut p = load_one(model_profile)?;
     set(&mut p, value)?;
-    presets::save(&p).map_err(|e| format!("cannot write models.ini: {e}"))
+    model_profiles::save(&p).map_err(|e| format!("cannot write models.ini: {e}"))
 }
 
 /// Put llama-server into the state this engine needs: up (and freshly started,
@@ -1621,7 +1624,7 @@ mod tests {
     #[test]
     fn every_sweepable_key_reaches_the_ini() {
         for (key, set) in SWEEPABLE {
-            let mut p = presets::ModelProfile {
+            let mut p = model_profiles::ModelProfile {
                 id: "T".into(),
                 model: "C:\\m.gguf".into(),
                 ..Default::default()
@@ -1645,14 +1648,14 @@ mod tests {
                 _ => "7",
             };
             set(&mut p, value).unwrap_or_else(|e| panic!("{key}: {e}"));
-            let ini = presets::render_section(&p);
+            let ini = model_profiles::render_section(&p);
             assert!(emits(&ini, key), "{key} never reaches models.ini");
         }
     }
 
     #[test]
     fn unset_clears_a_key() {
-        let mut p = presets::ModelProfile {
+        let mut p = model_profiles::ModelProfile {
             id: "T".into(),
             model: "C:\\m.gguf".into(),
             spec_draft_n_max: Some(6),
@@ -1663,24 +1666,28 @@ mod tests {
         setter("flash-attn").unwrap()(&mut p, "UNSET").unwrap();
         assert_eq!(p.spec_draft_n_max, None);
         assert_eq!(p.flash_attn, None);
-        let ini = presets::render_section(&p);
+        let ini = model_profiles::render_section(&p);
         assert!(!emits(&ini, "spec-draft-n-max"));
         assert!(!emits(&ini, "flash-attn"));
     }
 
     #[test]
     fn bad_values_fail_before_the_gpu_time() {
-        assert!(
-            setter("spec-draft-n-max").unwrap()(&mut presets::ModelProfile::default(), "six")
-                .is_err()
-        );
-        assert!(
-            setter("flash-attn").unwrap()(&mut presets::ModelProfile::default(), "maybe").is_err()
-        );
+        assert!(setter("spec-draft-n-max").unwrap()(
+            &mut model_profiles::ModelProfile::default(),
+            "six"
+        )
+        .is_err());
+        assert!(setter("flash-attn").unwrap()(
+            &mut model_profiles::ModelProfile::default(),
+            "maybe"
+        )
+        .is_err());
         // A `;` or `#` in a text value reloads truncated, so it is refused here
-        // exactly as `presets::save` refuses it.
+        // exactly as `model_profiles::save` refuses it.
         assert!(
-            setter("device").unwrap()(&mut presets::ModelProfile::default(), "CUDA0;x").is_err()
+            setter("device").unwrap()(&mut model_profiles::ModelProfile::default(), "CUDA0;x")
+                .is_err()
         );
     }
 

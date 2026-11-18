@@ -61,9 +61,9 @@ const MODELS_DISABLED: &str = "models.ini.disabled";
 
 /// The header a `models.ini.disabled` the configurator never wrote is created
 /// with, so a file the switch off makes reads like one it wrote. The text is
-/// the configurator's, in `crates/app/src/presets.rs`, which the bff does not
+/// the configurator's, in `crates/app/src/model_profiles.rs`, which the bff does not
 /// link: `the_disabled_header_is_the_configurators_one` in
-/// `tests/presets_switch.rs` reads that file and keeps the two copies equal.
+/// `tests/model_profiles_switch.rs` reads that file and keeps the two copies equal.
 const DISABLED_FILE_HEADER: &str = "\
 ; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
 ; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
@@ -806,7 +806,7 @@ type Edits = Vec<(String, Option<String>)>;
 /// new text of the file and the revision the body carried, or one of
 /// [`BodyError`]'s refusals. The route answers through [`parse_body`] and
 /// [`apply`], with the file read between the two; this is the shape the body's
-/// own tests in `src/tests/preset_body.rs` read.
+/// own tests in `src/tests/model_profile_body.rs` read.
 #[cfg(test)]
 #[derive(Debug)]
 pub(crate) enum ModelProfileBodyAnswer {
@@ -836,7 +836,7 @@ pub(crate) enum ModelProfileBodyAnswer {
 /// so a body nothing can be made of is answered before a model profile file is read.
 /// This is the whole of it, the tests' entry to it: it is built only under
 /// `cfg(test)`, because no route calls it, only the body's own tests in
-/// `src/tests/preset_body.rs` do.
+/// `src/tests/model_profile_body.rs` do.
 #[cfg(test)]
 pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> ModelProfileBodyAnswer {
     let Ok(body) = serde_json::from_slice::<Value>(body) else {
@@ -859,7 +859,7 @@ pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> ModelProfi
 /// ([`Edits`]) whatever the order the body's `values` map came in.
 ///
 /// Every key of `values` must be in `checks::WEB_PRESET_KEYS` (the list lives in
-/// `pai-core`, pinned against `pai-app` `presets::render_section`; this crate
+/// `pai-core`, pinned against `pai-app` `model_profiles::render_section`; this crate
 /// keeps no copy of it), matched in the exact spelling of the list: a key in
 /// another letter case is as unknown as a name no reader knows, because
 /// llama-server knows a key only in its own case. Every set value is a string

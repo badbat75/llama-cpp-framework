@@ -1,5 +1,5 @@
-//! Conversion between the Slint edit form (`PresetForm`) and the `model profiles::Model profile`
-//! schema. Kept out of `gui.rs` (which only shuttles the whole `PresetForm` around,
+//! Conversion between the Slint edit form (`ModelProfileForm`) and the `model profiles::Model profile`
+//! schema. Kept out of `gui.rs` (which only shuttles the whole `ModelProfileForm` around,
 //! never per-field) so adding a model profile field touches small files. This is step 7
 //! (both directions below) of the 7-step fan-out; the full checklist (including
 //! the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget)
@@ -9,10 +9,10 @@ use std::ops::RangeInclusive;
 
 use slint::SharedString;
 
-use crate::gui::PresetForm;
-use crate::{ini, presets, server_cfg};
+use crate::gui::ModelProfileForm;
+use crate::{ini, model_profiles, server_cfg};
 // The two rules the CLI and pai-app's modules share with the form.
-pub(crate) use crate::presets::{fit_allowed, tri_bool};
+pub(crate) use crate::model_profiles::{fit_allowed, tri_bool};
 use pai_core::checks::{NGRAM_DRAFT, NGRAM_HITS, NGRAM_SIZE};
 
 /// The model profile's string value, or the schema default when it's empty, so the
@@ -143,14 +143,14 @@ const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
 const HINT_REASONING_BUDGET: i32 = -1;
 const HINT_N_PREDICT: i32 = -1;
 
-pub fn model_profile_to_form(p: &presets::ModelProfile) -> PresetForm {
+pub fn model_profile_to_form(p: &model_profiles::ModelProfile) -> ModelProfileForm {
     // String/bool domain defaults are pulled from `ModelProfile::default()` so the form
     // and the INI can't drift apart. The literals that remain are UI-only choices
     // with no counterpart in `ModelProfile`: slider fallback positions while a flag is
     // "auto"/"default" (ALL_LAYERS / 0 / the HINT_* values above), and
     // empty→sentinel labels ("none" / "default").
-    let d = presets::ModelProfile::default();
-    PresetForm {
+    let d = model_profiles::ModelProfile::default();
+    ModelProfileForm {
         id: p.id.clone().into(),
         model: p.model.clone().into(),
         project_url: p.project_url.clone().into(),
@@ -313,8 +313,8 @@ pub fn model_profile_to_form(p: &presets::ModelProfile) -> PresetForm {
     }
 }
 
-pub fn form_to_model_profile(f: &PresetForm) -> presets::ModelProfile {
-    presets::ModelProfile {
+pub fn form_to_model_profile(f: &ModelProfileForm) -> model_profiles::ModelProfile {
+    model_profiles::ModelProfile {
         id: f.id.to_string(),
         model: f.model.to_string(),
         project_url: f.project_url.trim().to_string(),
@@ -602,9 +602,9 @@ pub fn form_to_model_profile(f: &PresetForm) -> presets::ModelProfile {
 /// its text, the values it takes). The range is the one `form_to_model_profile` reads
 /// the same field with: `invalid_numbers_match_what_the_conversion_drops` holds
 /// the two together, and `every_integer_field_is_checked` holds this list to the
-/// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
+/// `ModelProfileForm` struct in ui/types.slint, so a new integer field that skips it
 /// fails a test instead of saving a mistyped number as an absent key.
-fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
+fn int_fields(f: &ModelProfileForm) -> [(&'static str, bool, &str, RangeInclusive<i32>); 29] {
     // The range of each key is `pai_core::checks::PRESET_INT_KEYS`'s, the one
     // the manager checks models.ini with.
     fn int<'a>(
@@ -733,7 +733,7 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
 /// saved. The Save button refuses on any, because `form_to_model_profile` would write
 /// each of them as an ABSENT key, and absent is an instruction of its own
 /// (`ctx-size` absent = the model's trained context; see `ini::int_problem`).
-pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
+pub fn invalid_numbers(f: &ModelProfileForm) -> Vec<String> {
     int_fields(f)
         .into_iter()
         .filter(|(_, default, ..)| !default)
@@ -741,7 +741,7 @@ pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
         .collect()
 }
 
-/// `presets::prune_inactive_draft_keys` applied to the live FORM, returning the
+/// `model_profiles::prune_inactive_draft_keys` applied to the live FORM, returning the
 /// same list of dropped INI keys. Called when the Model-info box learns what the
 /// selected model is (`update_model_info`), so the greyed-out speculative fields
 /// cannot keep a value the model can't use; see the policy's own doc comment
@@ -752,9 +752,12 @@ pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
 /// draft fields are lifted back out, deliberately: writing the whole converted
 /// form back would also normalize whatever half-typed text sits in the OTHER
 /// numeric fields, and this runs while the user is editing.
-pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<&'static str> {
+pub fn prune_inactive_draft_fields(
+    f: &mut ModelProfileForm,
+    embeds_mtp: bool,
+) -> Vec<&'static str> {
     let mut p = form_to_model_profile(f);
-    let dropped = presets::prune_inactive_draft_keys(&mut p, embeds_mtp);
+    let dropped = model_profiles::prune_inactive_draft_keys(&mut p, embeds_mtp);
     if !dropped.is_empty() {
         let pruned = model_profile_to_form(&p);
         f.spec_type = pruned.spec_type;
@@ -780,7 +783,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::presets::ModelProfile;
+    use crate::model_profiles::ModelProfile;
 
     fn round_trip(p: &ModelProfile) -> ModelProfile {
         form_to_model_profile(&model_profile_to_form(p))
@@ -867,7 +870,7 @@ mod tests {
     }
 
     /// Put `text` in every integer field and untick every "default" box.
-    fn set_all_int_texts(f: &mut PresetForm, text: &str) {
+    fn set_all_int_texts(f: &mut ModelProfileForm, text: &str) {
         for (field, default) in [
             (&mut f.image_min_tokens, &mut f.image_min_tokens_default),
             (&mut f.image_max_tokens, &mut f.image_max_tokens_default),
@@ -962,7 +965,7 @@ mod tests {
                 .filter(|(key, _, t, range)| ini::int_problem(key, t, range).is_some())
                 .map(|(key, ..)| key)
                 .collect();
-            let section = presets::render_section(&form_to_model_profile(&f));
+            let section = model_profiles::render_section(&form_to_model_profile(&f));
             let dropped: BTreeSet<&str> = int_fields(&f)
                 .into_iter()
                 .map(|(key, ..)| key)
@@ -979,17 +982,17 @@ mod tests {
         assert!(invalid_numbers(&f).is_empty());
     }
 
-    // `int_fields` has to list every integer field `PresetForm` has, read off
+    // `int_fields` has to list every integer field `ModelProfileForm` has, read off
     // ui/types.slint: each numeric text field there carries a `<name>_default`
     // companion, and the five floats are the only ones that are not integers.
     #[test]
     fn every_integer_field_is_checked() {
         let types = include_str!("../ui/types.slint");
         let body = types
-            .split("export struct PresetForm {")
+            .split("export struct ModelProfileForm {")
             .nth(1)
             .and_then(|rest| rest.split("\n}").next())
-            .expect("PresetForm in ui/types.slint");
+            .expect("ModelProfileForm in ui/types.slint");
         let floats = [
             "spec_draft_p_min",
             "temp",
@@ -1004,7 +1007,7 @@ mod tests {
             .filter(|name| !floats.contains(name))
             .map(str::to_string)
             .collect();
-        let checked: BTreeSet<String> = int_fields(&PresetForm::default())
+        let checked: BTreeSet<String> = int_fields(&ModelProfileForm::default())
             .into_iter()
             .map(|(key, ..)| key.replace('-', "_"))
             .collect();

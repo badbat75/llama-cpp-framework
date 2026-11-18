@@ -39,7 +39,7 @@
 //! back refusing the stale edit; and the checks of one value are not pinned in
 //! their order, so a value that two checks would refuse is not tested.
 
-use crate::presets::{body_to_text, ModelProfileBodyAnswer};
+use crate::model_profiles::{body_to_text, ModelProfileBodyAnswer};
 use pai_core::checks::{MODEL_PROFILE_KEYS_NOT_ON_WEB, WEB_MODEL_PROFILE_KEYS};
 
 /// The revision every test body carries. A real revision is a keyed hash the

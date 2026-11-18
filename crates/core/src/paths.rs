@@ -292,7 +292,7 @@ pub fn models_ini() -> PathBuf {
 }
 
 /// The model profiles switched OFF: same INI format as `models_ini()`, sections moved
-/// here verbatim by `presets::set_enabled`. A different EXTENSION on purpose:
+/// here verbatim by `model_profiles::set_enabled`. A different EXTENSION on purpose:
 /// llama-server only ever reads the file `--models-preset` names, so a model profile
 /// parked here is simply not offered, while a `*.ini` glob (the user's own, or a
 /// backup tool's) cannot mistake it for a live config.

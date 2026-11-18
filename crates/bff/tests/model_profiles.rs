@@ -18,7 +18,7 @@
 //!   true for every row while llama.cpp is the only engine: there is no
 //!   engines route to check it against, so the row simply says the engine
 //!   that owns the model profile file is installed.
-//! - The order is the GUI's (`presets::load_listed`): the switched-on
+//! - The order is the GUI's (`model_profiles::load_listed`): the switched-on
 //!   model profiles, then the switched-off ones, each group in file order; an id in
 //!   both files is listed once, as on (the id matched without case, the row
 //!   the copy from `models.ini`). The web UI does not sort.

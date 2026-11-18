@@ -470,7 +470,10 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
     // A model profile can be renamed or deleted under us; a selection naming one that
     // is gone would fail the run's preflight, so prune it here instead.
-    let known: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+    let known: Vec<String> = model_profiles::load_all()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
     state
         .borrow_mut()
         .bench_selection
@@ -487,11 +490,11 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
 fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     let selection = state.borrow().bench_selection.clone();
-    let rows: Vec<BenchPresetRow> = presets::load_all()
+    let rows: Vec<BenchModelProfileRow> = model_profiles::load_all()
         .into_iter()
         .map(|p| {
             let pos = selection.iter().position(|id| id == &p.id);
-            BenchPresetRow {
+            BenchModelProfileRow {
                 id: SharedString::from(p.id),
                 // The file's BASE NAME: the full path would elide to nothing,
                 // and what matters here is whether two rows are the same file.
@@ -501,7 +504,7 @@ fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
             }
         })
         .collect();
-    s.set_bench_presets(model(rows));
+    s.set_bench_model_profiles(model(rows));
     s.set_bench_selected_count(selection.len() as i32);
     s.set_bench_baseline(SharedString::from(
         selection.first().cloned().unwrap_or_default(),
@@ -539,14 +542,16 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
     }
 
     let cfg = server_cfg::load();
-    let all = presets::load_all();
-    let chosen: Vec<presets::ModelProfile> = plan
+    let all = model_profiles::load_all();
+    let chosen: Vec<model_profiles::ModelProfile> = plan
         .model_profiles
         .iter()
         .filter_map(|id| all.iter().find(|p| &p.id == id).cloned())
         .collect();
     if chosen.is_empty() {
-        s.set_bench_preview(SharedString::from(strings::t("select-presets-to-preview")));
+        s.set_bench_preview(SharedString::from(strings::t(
+            "select-model-profiles-to-preview",
+        )));
         return;
     }
 
@@ -1087,7 +1092,7 @@ fn job_from_ui(
     };
     if let Some(spec) = chosen_spec(s) {
         if plan.model_profiles.is_empty() {
-            return Err(strings::t("select-presets"));
+            return Err(strings::t("select-model-profiles"));
         }
         let spec = spec?;
         let derive = derive_from_ui(s, state, &plan, &prompts);
@@ -1282,7 +1287,7 @@ fn runs_preview(
                             .iter()
                             .map(|(k, v)| format!("{k} = {v}"))
                             .collect();
-                        strings::fill("pass-presets-set", &[&o.join(", ")])
+                        strings::fill("pass-model-profiles-set", &[&o.join(", ")])
                     };
                     lines.push(strings::fill(
                         "pass-preview",
@@ -1322,7 +1327,7 @@ fn apply_points(app: &AppWindow, points: &[bench::Point], order: &[String]) {
         .into_iter()
         .map(|r| BenchResultRow {
             test: SharedString::from(r.test),
-            preset: SharedString::from(r.model_profile),
+            model_profile: SharedString::from(r.model_profile),
             mean: SharedString::from(r.mean),
             sd: SharedString::from(r.sd),
             samples: r.samples,
@@ -1435,26 +1440,27 @@ pub(super) fn wire(
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_bench_toggle_preset(move |id| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            {
-                let mut st = state.borrow_mut();
-                let id = id.to_string();
-                match st.bench_selection.iter().position(|x| x == &id) {
-                    // Unchecking closes the gap, so the remaining rows keep a
-                    // contiguous 1..n order and the baseline stays the top one.
-                    Some(i) => {
-                        st.bench_selection.remove(i);
+        app.global::<AppState>()
+            .on_bench_toggle_model_profile(move |id| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                {
+                    let mut st = state.borrow_mut();
+                    let id = id.to_string();
+                    match st.bench_selection.iter().position(|x| x == &id) {
+                        // Unchecking closes the gap, so the remaining rows keep a
+                        // contiguous 1..n order and the baseline stays the top one.
+                        Some(i) => {
+                            st.bench_selection.remove(i);
+                        }
+                        // Checking APPENDS: the order is the run order, and the
+                        // first is the baseline.
+                        None => st.bench_selection.push(id),
                     }
-                    // Checking APPENDS: the order is the run order, and the
-                    // first is the baseline.
-                    None => st.bench_selection.push(id),
                 }
-            }
-            refresh_rows(&app, &state);
-        });
+                refresh_rows(&app, &state);
+            });
     }
     {
         let app_weak = app.as_weak();

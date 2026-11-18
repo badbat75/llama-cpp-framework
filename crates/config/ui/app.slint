@@ -161,7 +161,7 @@ export component AppWindow inherits Window {
                 // runs, the other applies on click), so Ctrl+S is intentionally
                 // inert there.
                 if (AppState.current_tab == 0 && AppState.can_save_server) { AppState.save_server(); }
-                else if (AppState.current_tab == 1 && AppState.can_save_preset) { AppState.save_preset(); }
+                else if (AppState.current_tab == 1 && AppState.can_save_model_profile) { AppState.save_model_profile(); }
                 else if (AppState.current_tab == 3) { AppState.save_integrations(); }
             }
         }
@@ -175,7 +175,7 @@ export component AppWindow inherits Window {
         KeyBinding { keys: @keys(F5); activated => { if (!AppState.modal_open) { AppState.reload_all(); } } }
         // Ctrl+N works from any tab: jump to Models first, or the preset
         // would be created (and selected) on a hidden page.
-        KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; AppState.new_preset(); } } }
+        KeyBinding { keys: @keys(Control + N); activated => { if (!AppState.modal_open) { AppState.current_tab = 1; AppState.new_model_profile(); } } }
 
     VerticalLayout {
         width: 100%;
@@ -410,10 +410,10 @@ export component AppWindow inherits Window {
     // compressed the overlay instead, the backdrop would no longer cover the
     // footer, leaving UI clickable under an "open" modal.
     if AppState.show_new_kind_picker: ModalOverlay {
-        title: AppState.new_dialog_source_id == "" ? Strings.t("new-preset") : Strings.t("clone-preset");
+        title: AppState.new_dialog_source_id == "" ? Strings.t("new-model-profile") : Strings.t("clone-model-profile");
         description: AppState.new_dialog_source_id == ""
-            ? Strings.t("new-preset-description")
-            : Strings.t1("clone-preset-description", AppState.new_dialog_source_id);
+            ? Strings.t("new-model-profile-description")
+            : Strings.t1("clone-model-profile-description", AppState.new_dialog_source_id);
         card_width: 520px;
         card_height: 480px;
         dismissed => { AppState.show_new_kind_picker = false; }
@@ -839,8 +839,8 @@ export component AppWindow inherits Window {
     // is drawn selected and the line under the list names what will go.
     if AppState.show_delete_dialog: ModalOverlay {
         property <bool> has_files: AppState.delete_file_rows.length > 0;
-        title: Strings.t("delete-preset");
-        description: Strings.t2("delete-preset-description", AppState.delete_target_id, AppState.delete_target_file)
+        title: Strings.t("delete-model-profile");
+        description: Strings.t2("delete-model-profile-description", AppState.delete_target_id, AppState.delete_target_file)
             + (has_files
                 ? Strings.t("delete-files-description")
                 : Strings.t("delete-no-files-description"));
@@ -892,9 +892,9 @@ export component AppWindow inherits Window {
                 clicked => { AppState.delete_cancel(); }
             }
             Button {
-                text: AppState.delete_files_ticked > 0 ? Strings.t("delete-preset-and-files") : Strings.t("delete-preset");
+                text: AppState.delete_files_ticked > 0 ? Strings.t("delete-model-profile-and-files") : Strings.t("delete-model-profile");
                 primary: true;
-                clicked => { AppState.delete_preset(AppState.delete_target_id); }
+                clicked => { AppState.delete_model_profile(AppState.delete_target_id); }
             }
         }
     }
@@ -959,8 +959,8 @@ export component AppWindow inherits Window {
     }
 
     if AppState.show_rename_dialog: ModalOverlay {
-        title: Strings.t("rename-preset");
-        description: Strings.t1("rename-preset-description", AppState.rename_old_id);
+        title: Strings.t("rename-model-profile");
+        description: Strings.t1("rename-model-profile-description", AppState.rename_old_id);
         dismissed => { AppState.show_rename_dialog = false; }
 
         // ONE home for the submit action AND its gate (the Rename button's
@@ -969,7 +969,7 @@ export component AppWindow inherits Window {
         function submit-rename() {
             if (rename-btn.enabled) {
                 AppState.show_rename_dialog = false;
-                AppState.rename_preset(AppState.rename_old_id, AppState.rename_new_id);
+                AppState.rename_model_profile(AppState.rename_old_id, AppState.rename_new_id);
             }
         }
 

@@ -1325,3 +1325,16 @@ Lessons only: the rules are in `AGENTS.md`.
   (`strings::the_two_model_profile_refusals_are_the_same_words_in_both_files` and
   `checks::the_renamed_keys_resolve_with_their_text`), and `the_new_number_key_takes_the_key_the_text_and_the_bounds`
   pins its `{N}` count, so one text change is one line in `en_US.toml` and one in `cli.toml`, placeholders kept.
+- A module rename leaves the IMPORT side untouched when the map guards `use`/`mod` LINES: a multi-item
+  `use crate::{http, paths, presets, proc, ..};` (and the multi-line `use pai_app::{..}` of `cli/src/lib.rs`)
+  binds the OLD name, so the bodies that say `model_profiles::x` fail as E0433 while the import fails E0432.
+  That mix (a few E0432 + many E0433 naming the NEW name) is the signature: rename the item inside the list,
+  in its alphabetical place. The lists here are sorted, and no lint pins the order. Grep for the item as a
+  list member (`[,{][[:space:]]*presets(,|[[:space:]]*\})`), not only for `use` at the line head.
+- rustfmt sorts consecutive `mod` declarations (`reorder_modules`, default on): a new
+  `mod model_profiles;` inserted after `mod origin;` fails `cargo fmt --check` in bff's `lib.rs`.
+- The comment pointers to a renamed identifier or file go in the same slice (a stale pointer is a defect the
+  rename introduced), and only those: replace EXACT old tokens (old→new pairs, longest first, word-bounded)
+  in the text AFTER the `//` of each line, never prose, with a KEEP list for names that stay
+  (`read_presets`, `presets.ini`, `Presets.ini`) and a printed list of every rewritten line. 32 pointers in
+  8 files moved; the prose ("the preset list") is the docs pass.

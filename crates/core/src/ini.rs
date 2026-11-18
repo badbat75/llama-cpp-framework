@@ -49,7 +49,7 @@ pub struct Section {
     pub keys: BTreeMap<String, String>,
     /// The section's whole-line comments, trimmed, marker included, in file
     /// order. They carry data llama-server must never see as a key (it refuses
-    /// a model profile holding an unknown one): `presets::project_url_of` reads one.
+    /// a model profile holding an unknown one): `model_profiles::project_url_of` reads one.
     pub comments: Vec<String>,
 }
 
@@ -123,7 +123,7 @@ fn value_of_line(line: &str) -> Option<&str> {
 /// so a value containing `;` or `#` (legal in Windows paths, e.g.
 /// `C:\Models #1`) would write fine and silently reload truncated, by this
 /// parser and by llama-server's own model profile reader alike. Callers that persist
-/// path-valued fields (`server_cfg::save`, `presets::save`) reject such values
+/// path-valued fields (`server_cfg::save`, `model_profiles::save`) reject such values
 /// here instead, so the user gets an error naming the field rather than a
 /// config that quietly points somewhere else.
 pub fn reject_comment_markers(field: &str, value: &str) -> std::io::Result<()> {
@@ -181,7 +181,7 @@ pub fn section_text(path: &Path, section_name: &str) -> Option<String> {
 
 /// The value of the first `url` comment among a section's comments, or empty.
 /// The configurator's reader, so the web and the GUI read one URL the same way
-/// (`crates/bff/tests/preset_read.rs`).
+/// (`crates/bff/tests/model_profile_read.rs`).
 pub fn project_url_of(comments: &[String]) -> String {
     comment_value(comments, "url")
 }
@@ -190,7 +190,7 @@ pub fn project_url_of(comments: &[String]) -> String {
 /// or empty. Read leniently (`;` or `#`, any spacing around `=`), so a
 /// hand-written line counts; `word` must be the whole word, so `; urls ...` is
 /// prose. What a configurator stores in a comment of `server.ini` or
-/// `models.ini` (`crates/app/src/presets.rs` writes them).
+/// `models.ini` (`crates/app/src/model_profiles.rs` writes them).
 pub fn comment_value(comments: &[String], word: &str) -> String {
     comments
         .iter()
@@ -321,7 +321,7 @@ pub mod text {
     }
 
     /// `content` with an entire named section replaced (or appended). The
-    /// body arrives CRLF from the renderers (`presets::render_section`,
+    /// body arrives CRLF from the renderers (`model_profiles::render_section`,
     /// `ServerConfig::render`) and is converted to the file's own line-ending
     /// style, so a hand-maintained LF-only file doesn't gain mixed endings on
     /// every save.
@@ -1060,10 +1060,10 @@ mod tests {
     }
 
     /// The `; url = ` reader, with the cases the configurator has always
-    /// pinned (`crates/app/src/presets.rs`): the value of the first url
+    /// pinned (`crates/app/src/model_profiles.rs`): the value of the first url
     /// comment, and empty for anything else. The web's section read answers
     /// this same value, so the reader is in `pai-core` and both callers call
-    /// it (`crates/bff/tests/preset_read.rs`).
+    /// it (`crates/bff/tests/model_profile_read.rs`).
     #[test]
     fn project_url_of_reads_the_url_comment() {
         assert_eq!(

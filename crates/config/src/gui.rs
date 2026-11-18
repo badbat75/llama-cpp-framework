@@ -26,7 +26,7 @@
 //! - `*_options`         : build a dropdown's (labels, values, index) model
 //!   triple the caller hands to the matching `set_*` accessors (`device_options`,
 //!   `scanned_options`).
-//! - `apply_form`        : push a whole `PresetForm` + its baseline into `AppState`.
+//! - `apply_form`        : push a whole `ModelProfileForm` + its baseline into `AppState`.
 //! - `populate_*`        : rebuild a row model in place (`populate_bind_options`,
 //!   the Server tab's bind-address checkboxes).
 //! - `start_server_async` / `stop_server_async` : the canonical run-control paths
@@ -75,8 +75,8 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::form::{form_to_model_profile, model_profile_to_form, prune_inactive_draft_fields};
 use crate::{
-    devices, gguf, gpu_split, integrations, kv_cache, model_scan, net_ifaces, paths, presets,
-    runstate, server_cfg, server_form, server_version, settings, startup, tensor_override,
+    devices, gguf, gpu_split, integrations, kv_cache, model_profiles, model_scan, net_ifaces,
+    paths, runstate, server_cfg, server_form, server_version, settings, startup, tensor_override,
     tensor_picker,
 };
 
@@ -109,9 +109,9 @@ mod tray;
 #[derive(Default)]
 struct State {
     // Every model profile the Models tab lists, BOTH files: the enabled ones, then the
-    // switched-off ones (`presets::load_listed`). `PresetSummary.orig_index`
+    // switched-off ones (`model_profiles::load_listed`). `ModelProfileSummary.orig_index`
     // points in here.
-    model_profiles: Vec<presets::Listed>,
+    model_profiles: Vec<model_profiles::Listed>,
     // Full (unfiltered) model scan backing the new-model-profile dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
@@ -332,7 +332,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
 
     reload_all_from_disk(&app, &state, tray.as_weak());
 
-    s.set_presets_path(SharedString::from(
+    s.set_model_profiles_path(SharedString::from(
         crate::server_control::backend()
             .config_path(crate::server_control::ConfigFile::Models)
             .to_string_lossy()
@@ -350,7 +350,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
             let s = app.global::<AppState>();
             // Reloading replaces BOTH forms from disk, so unsaved edits on
             // either tab need the discard confirmation.
-            let dirty = s.get_preset_dirty() || s.get_server_dirty();
+            let dirty = s.get_model_profile_dirty() || s.get_server_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let tray_weak = tray_weak.clone();
@@ -906,7 +906,7 @@ fn wire_import(app: &AppWindow) {
 // ── Model profile helpers ───────────────────────────────────────────────────
 
 /// `true` if the model profile matches the (case-insensitive) filter on id or model.
-fn model_profile_matches(p: &presets::ModelProfile, filter: &str) -> bool {
+fn model_profile_matches(p: &model_profiles::ModelProfile, filter: &str) -> bool {
     if filter.is_empty() {
         return true;
     }
@@ -914,16 +914,19 @@ fn model_profile_matches(p: &presets::ModelProfile, filter: &str) -> bool {
     p.id.to_lowercase().contains(&q) || p.model.to_lowercase().contains(&q)
 }
 
-/// Build the `[PresetSummary]` list model, dropping rows that don't match the
+/// Build the `[ModelProfileSummary]` list model, dropping rows that don't match the
 /// filter. Each surviving row carries its `orig_index` into `state.model profiles` so
-/// `select_preset()` and the selection highlight stay correct under a filter
+/// `select_model_profile()` and the selection highlight stay correct under a filter
 /// (the list `for` index is NOT stable once rows are removed).
-fn model_profile_summaries(model_profiles: &[presets::Listed], filter: &str) -> Vec<PresetSummary> {
+fn model_profile_summaries(
+    model_profiles: &[model_profiles::Listed],
+    filter: &str,
+) -> Vec<ModelProfileSummary> {
     model_profiles
         .iter()
         .enumerate()
         .filter(|(_, l)| model_profile_matches(&l.model_profile, filter))
-        .map(|(i, l)| PresetSummary {
+        .map(|(i, l)| ModelProfileSummary {
             id: l.model_profile.id.clone().into(),
             orig_index: i as i32,
             enabled: l.enabled,
@@ -969,11 +972,11 @@ fn reload_all_from_disk(
 /// do so themselves afterward; this only owns the model profile list + selection.
 fn reload_model_profiles(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     let s = app.global::<AppState>();
-    let all = presets::load_listed();
-    let summaries = model_profile_summaries(&all, s.get_presets_filter().as_str());
-    s.set_presets(model(summaries));
+    let all = model_profiles::load_listed();
+    let summaries = model_profile_summaries(&all, s.get_model_profiles_filter().as_str());
+    s.set_model_profiles(model(summaries));
 
-    let prev_sel = s.get_selected_preset_index();
+    let prev_sel = s.get_selected_model_profile_index();
     let cur_id = s.get_form().id;
     let idx = match want {
         Some(id) => all
@@ -989,7 +992,7 @@ fn reload_model_profiles(app: &AppWindow, state: &Rc<RefCell<State>>, want: Opti
     .unwrap_or(if all.is_empty() { -1 } else { 0 });
 
     state.borrow_mut().model_profiles = all;
-    s.set_selected_preset_index(idx);
+    s.set_selected_model_profile_index(idx);
 
     let st = state.borrow();
     match usize::try_from(idx)
@@ -997,7 +1000,7 @@ fn reload_model_profiles(app: &AppWindow, state: &Rc<RefCell<State>>, want: Opti
         .and_then(|i| st.model_profiles.get(i))
     {
         Some(l) => apply_form(app, model_profile_to_form(&l.model_profile)),
-        None => apply_form(app, PresetForm::default()),
+        None => apply_form(app, ModelProfileForm::default()),
     }
 }
 
@@ -1010,10 +1013,10 @@ fn reload_model_profiles(app: &AppWindow, state: &Rc<RefCell<State>>, want: Opti
 /// what gives every row's switch a fresh binding (see models_page.slint).
 fn refresh_model_profile_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
-    let all = presets::load_listed();
-    s.set_presets(model(model_profile_summaries(
+    let all = model_profiles::load_listed();
+    s.set_model_profiles(model(model_profile_summaries(
         &all,
-        s.get_presets_filter().as_str(),
+        s.get_model_profiles_filter().as_str(),
     )));
     let cur_id = s.get_form().id;
     let idx = all
@@ -1021,7 +1024,7 @@ fn refresh_model_profile_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
         .position(|l| !cur_id.is_empty() && l.model_profile.id == cur_id.as_str())
         .map_or(-1, |i| i as i32);
     state.borrow_mut().model_profiles = all;
-    s.set_selected_preset_index(idx);
+    s.set_selected_model_profile_index(idx);
 }
 
 /// Rebuild every file-backed dropdown (model / mmproj / the unified draft
@@ -1095,8 +1098,8 @@ fn refresh_kv_cache_warning(app: &AppWindow) {
             form.spec_draft_type_v.as_str(),
         )),
     });
-    if s.get_preset_kv_cache_warning().as_str() != warning {
-        s.set_preset_kv_cache_warning(SharedString::from(warning));
+    if s.get_model_profile_kv_cache_warning().as_str() != warning {
+        s.set_model_profile_kv_cache_warning(SharedString::from(warning));
     }
 }
 
@@ -1123,18 +1126,18 @@ fn refresh_device_options(app: &AppWindow) {
         form.mmproj_device.as_str(),
         &strings::t("device-follows-model"),
     );
-    s.set_preset_mmproj_dev_labels(lbl);
-    s.set_preset_mmproj_dev_values(val);
-    s.set_preset_mmproj_dev_index(idx);
+    s.set_model_profile_mmproj_dev_labels(lbl);
+    s.set_model_profile_mmproj_dev_values(val);
+    s.set_model_profile_mmproj_dev_index(idx);
 
     let (lbl, val, idx) = device_options(
         &devs,
         form.device_draft.as_str(),
         &strings::t("device-same-as-model"),
     );
-    s.set_preset_draft_dev_labels(lbl);
-    s.set_preset_draft_dev_values(val);
-    s.set_preset_draft_dev_index(idx);
+    s.set_model_profile_draft_dev_labels(lbl);
+    s.set_model_profile_draft_dev_values(val);
+    s.set_model_profile_draft_dev_index(idx);
 
     refresh_gpu_rows(app);
 }
@@ -1168,7 +1171,7 @@ fn refresh_gpu_rows(app: &AppWindow) {
     s.set_split_mode_values(string_model(
         gpu_split::MODE_VALUES.iter().map(|v| (*v).into()).collect(),
     ));
-    s.set_preset_gpu_rows(model(gpu_split::build_rows(
+    s.set_model_profile_gpu_rows(model(gpu_split::build_rows(
         &devs,
         &model_profile_selection(app),
         model_profile_split_layout(app),
@@ -1176,7 +1179,9 @@ fn refresh_gpu_rows(app: &AppWindow) {
     )));
     // Feeds the mode strip under split mode `tensor` (state.slint
     // `model_profile_split_mode_warning`).
-    s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(s.get_form().device.as_str()));
+    s.set_model_profile_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(
+        s.get_form().device.as_str(),
+    ));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
 }
@@ -1224,8 +1229,8 @@ fn refresh_tensor_rows(app: &AppWindow) {
     // doesn't know, so its length, and hence every row's `device_index`, depends
     // on this model profile's rules.
     let (labels, values) = tensor_override::device_options(&devs, &model_profile);
-    s.set_preset_tensor_dev_labels(string_model(labels));
-    s.set_preset_tensor_dev_values(string_model(values));
+    s.set_model_profile_tensor_dev_labels(string_model(labels));
+    s.set_model_profile_tensor_dev_values(string_model(values));
 
     s.set_tensor_kind_labels(string_model(
         tensor_override::KINDS
@@ -1237,8 +1242,8 @@ fn refresh_tensor_rows(app: &AppWindow) {
         tensor_override::KINDS.iter().map(|k| k.id.into()).collect(),
     ));
 
-    s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &model_profile)));
-    s.set_preset_tensor_can_pick(MODEL_TENSORS.with(|t| !t.borrow().is_empty()));
+    s.set_model_profile_tensor_rows(model(tensor_override::build_rows(&devs, &model_profile)));
+    s.set_model_profile_tensor_can_pick(MODEL_TENSORS.with(|t| !t.borrow().is_empty()));
     refresh_tensor_scalars(app);
 }
 
@@ -1269,7 +1274,7 @@ fn set_model_experts(expert_count: u32, expert_used: u32, n_layer: u32) {
 
 /// The `--moe-cache-mib` floor of `p` on the selected model
 /// (`moe_cache::floor`), `None` when it has no experts or was not read.
-fn model_profile_moe_floor(p: &presets::ModelProfile) -> Option<crate::moe_cache::Floor> {
+fn model_profile_moe_floor(p: &model_profiles::ModelProfile) -> Option<crate::moe_cache::Floor> {
     let (expert_count, expert_used, n_layer) = MODEL_EXPERTS.with(|e| e.get());
     MODEL_TENSORS.with(|t| {
         crate::moe_cache::floor(
@@ -1339,11 +1344,11 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
 
     let model_profile = model_profile_overrides(app);
-    s.set_preset_tensor_summary(tensor_override::summary(&model_profile).into());
+    s.set_model_profile_tensor_summary(tensor_override::summary(&model_profile).into());
     // Per rule, what it places on this model. A separate model from the rows,
     // so a regex keystroke refreshes it without recreating the field.
     let coverage = MODEL_TENSORS.with(|t| tensor_picker::coverage(&model_profile, &t.borrow()));
-    s.set_preset_tensor_coverage(string_model(coverage));
+    s.set_model_profile_tensor_coverage(string_model(coverage));
     // Two warnings share this strip, and the order is deliberate. `validate`'s is
     // a value llama-server would REFUSE (no device after the `=`), so it outranks
     // the model-dependent one, which is a rule llama.cpp accepts and then executes
@@ -1365,7 +1370,7 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     } else {
         String::new()
     };
-    s.set_preset_tensor_warning(warning.into());
+    s.set_model_profile_tensor_warning(warning.into());
 }
 
 /// The derived numbers the table renders off: how many devices are checked, the
@@ -1377,16 +1382,16 @@ fn refresh_gpu_scalars(app: &AppWindow) {
     let model_profile_mode = model_profile_mode(app);
 
     let model_profile = model_profile_selection(app);
-    s.set_preset_gpu_selected(gpu_count(&model_profile));
-    s.set_preset_gpu_total(gpu_weight_total(&model_profile));
-    s.set_preset_gpu_mode(model_profile_mode.as_str().into());
-    s.set_preset_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
+    s.set_model_profile_gpu_selected(gpu_count(&model_profile));
+    s.set_model_profile_gpu_total(gpu_weight_total(&model_profile));
+    s.set_model_profile_gpu_mode(model_profile_mode.as_str().into());
+    s.set_model_profile_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
     // 0 = "no model to project onto", which is what switches the table's editable
     // column back from blocks to raw weights, and any mode but layer counts as
     // that too: under `row` the bytes follow row fractions, under `tensor` a
     // tensor-axis cut, under `none` the vector is dead, so a block cut would
     // misreport all three.
-    s.set_preset_split_positions(if model_profile_mode == gpu_split::SplitMode::Layer {
+    s.set_model_profile_split_positions(if model_profile_mode == gpu_split::SplitMode::Layer {
         model_profile_split_layout(app).map_or(0, |l| l.count)
     } else {
         0
@@ -1662,7 +1667,7 @@ fn start_server_async(app_weak: slint::Weak<AppWindow>, tray_weak: slint::Weak<A
         if let Some(cfg) =
             launched_cfg.filter(server_cfg::ServerConfig::save_state_on_shutdown_or_default)
         {
-            let known: Vec<String> = crate::presets::load_all()
+            let known: Vec<String> = crate::model_profiles::load_all()
                 .into_iter()
                 .map(|p| p.id)
                 .collect();
@@ -1935,7 +1940,7 @@ fn push_tray_status(
 /// Set the editable form AND its baseline together, so the UI's `model_profile_dirty`
 /// (`form != form_base`) reads false right after a (re)load or save and only
 /// turns true once the user actually edits a field.
-fn apply_form(app: &AppWindow, form: PresetForm) {
+fn apply_form(app: &AppWindow, form: ModelProfileForm) {
     let s = app.global::<AppState>();
     s.set_form_base(form.clone());
     s.set_form(form);
@@ -1973,7 +1978,7 @@ pub(super) fn refresh_integrations(app: &AppWindow) {
     let base_url = cfg.opencode_base_url_or_default();
     let api_key = opencode_api_key(&cfg);
 
-    let enabled = presets::load_all();
+    let enabled = model_profiles::load_all();
     let example = integrations::claude_code_example(&enabled);
     let claude_env = integrations::claude_code_env_script(&base_url, api_key, example);
     s.set_integration_claude_env(SharedString::from(claude_env));
@@ -2031,8 +2036,8 @@ fn integration_status(active: bool, enabled: usize, drift: &Drift) -> String {
         provider,
     } = drift;
     let set = match enabled {
-        1 => strings::t("enabled-presets-one"),
-        n => strings::fill("enabled-presets-many", &[&n]),
+        1 => strings::t("enabled-model-profiles-one"),
+        n => strings::fill("enabled-model-profiles-many", &[&n]),
     };
     if !active {
         return strings::fill("opencode-no-provider", &[&set]);
@@ -2065,15 +2070,15 @@ fn integration_status(active: bool, enabled: usize, drift: &Drift) -> String {
     strings::fill("opencode-out-of-step", &[&parts.join("; ")])
 }
 
-// Pure-struct tests (PresetSummary is a plain generated struct, no Slint
+// Pure-struct tests (ModelProfileSummary is a plain generated struct, no Slint
 // backend needed, same class as models_tab's apply_draft_pick tests).
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn p(id: &str, model: &str) -> presets::Listed {
-        presets::Listed {
-            model_profile: presets::ModelProfile {
+    fn p(id: &str, model: &str) -> model_profiles::Listed {
+        model_profiles::Listed {
+            model_profile: model_profiles::ModelProfile {
                 id: id.into(),
                 model: model.into(),
                 ..Default::default()
@@ -2082,7 +2087,7 @@ mod tests {
         }
     }
 
-    // The invariant select_preset() depends on: a filtered row's `orig_index`
+    // The invariant select_model_profile() depends on: a filtered row's `orig_index`
     // points into the UNFILTERED model profiles vector (the list `for` index is not a
     // stable handle once rows are dropped).
     #[test]

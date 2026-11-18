@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use super::db::{self, Sample};
 use super::{Mode, Plan, Point};
 use crate::server_control::{self, ConfigFile};
-use crate::{gguf, presets, runstate, server_cfg};
+use crate::{gguf, model_profiles, runstate, server_cfg};
 
 /// Which campaign a run lands in, and under which label. `None` in the plan
 /// means "a campaign of its own", named after the run's stamp.
@@ -90,7 +90,7 @@ impl Recorder {
     /// NOW, not at commit: a sweep rewrites the model profile between legs.
     pub fn start(
         &mut self,
-        model_profile: &presets::ModelProfile,
+        model_profile: &model_profiles::ModelProfile,
         cfg: &server_cfg::ServerConfig,
         devices: &[(String, String)],
         started_utc: &str,

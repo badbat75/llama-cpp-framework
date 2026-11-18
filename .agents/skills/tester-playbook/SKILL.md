@@ -1885,6 +1885,17 @@ Lessons only: the rules are in `AGENTS.md`.
   (`#[test]\n...fn <name>` in HEAD vs worktree) normalized over the rename vocabulary (`model[_-]?profile`,
   `preset`, `profile`, `model` → `@`, non-alphanumerics stripped): the verdict is "N lost, M new", and the
   `^\+.*#\[test\]` grep counts alone cannot tell a rename from a deletion.
+  Normalize the vocabulary on BOTH sides: HEAD may already carry the new word in places an earlier
+  sub-slice renamed (4a5's audit red-flagged 8 fn names as "lost" because only the new side was mapped:
+  HEAD and worktree both had `a_model_profile_...`, and mapping the new side to the old vocabulary made
+  the same name appear in both diffs). Symmetric mapping gave 7/7 OK, counts 55/0/24/32/47/24/49 equal.
+- Same audit for the STRINGS files: compare as key->value maps after normalizing the KEY paths
+  (tomllib, flatten tables to leaves, compare reprs byte-exact): en_US 1095 keys, cli 369, all equal and
+  1:1, values byte-identical. For the Slint files extract `"..."` literals and compare COUNTERS twice:
+  raw (shows the renamed i18n keys: 25 pairs, `delete-preset` -> `delete-model-profile`) and
+  vocabulary-normalized on both sides (the verdict: equal multisets, every raw delta a rename, zero
+  unexplained). `grep -c "FAILED\|panicked"` on a cargo log counts passing test NAMES
+  (`...not_panicked ... ok`): count failures by the `test result: FAILED` lines only.
 - Auditing the same slice for a WEAKENED assertion: extract each assert statement from the diff's removed
   lines by a balanced-paren scan, per file, normalize with the same vocabulary plus ALL whitespace, and
   require it as a substring of that file's added blob. Two artifacts to read by hand, never to "fix":
@@ -1999,6 +2010,18 @@ Lessons only: the rules are in `AGENTS.md`.
   go red on their own today: report them as blocked, and name the phases that DO prove the mechanism
   (core's `a_refusal_round_trips_through_its_wire_form` for the wire encode, the manager's
   `every_error_has_its_name_and_reads_back` for the D-Bus name).
+- fe route rename slice: the whole fe suite is the rename surface, so retarget EVERY test file that types
+  the old hash, with a counted node script per group of files (it prints the replacements per file: those
+  totals are the report). Prove the collateral reds are route-driven and not a broken harness: from `fe/`,
+  `npx vitest run --reporter=json --outputFile=<f>`, then with node group the `failureMessages` by message
+  text and check that no `testResults` entry has `status === "failed"` with zero failed assertions (a
+  compile or import error shows up ONLY there, as a file-level failure).
+- A fe helper that wraps an async finder (`findByRole`) is async: `within(findTable(main))` is TS2345
+  (`Promise<HTMLElement>` is not `HTMLElement`) while Vitest runs it happily, so `await` inside the helper
+  and at every call site; `npm --prefix fe run typecheck` names them all in one pass.
+- A rename that DROPS a heading (a list's `h2` folded into the page `h1`): retarget the helpers AND pin the
+  new labelling (`aria-labelledby` is the `h1`'s id, `queryAllByRole('heading', { level: 2 })` empty), so
+  the test pins the rename instead of just following it.
 
 ## CLI flag renames (`pai`)
 

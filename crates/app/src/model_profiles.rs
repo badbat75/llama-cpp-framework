@@ -7,7 +7,7 @@
 //!   2. `impl Default for ModelProfile`          : below
 //!   3. `ModelProfile::from_keys`                : INI read, below
 //!   4. `render_section` + `emit_*` (+ `;` comment) : INI write, below
-//!   5. `PresetForm` struct                : ui/types.slint (a NUMERIC field rides
+//!   5. `ModelProfileForm` struct                : ui/types.slint (a NUMERIC field rides
 //!      as a `string`, integers included, plus a paired `<field>_default: bool`,
 //!      the "omit the flag" checkbox)
 //!   6. the input widget                   : ui/models_page.slint, bind two-way
@@ -73,7 +73,7 @@ use crate::ini;
 use crate::server_cfg;
 use crate::server_control::{self, ConfigFile, Os};
 // The project URL is the web service's to answer too, so its reader is the
-// core's: both read one rule (`crates/bff/tests/preset_read.rs`).
+// core's: both read one rule (`crates/bff/tests/model_profile_read.rs`).
 use pai_core::checks;
 use pai_core::ini::project_url_of;
 // The startup-count tests read llama.cpp's default `ModelsMax` from here.
@@ -589,7 +589,7 @@ pub struct ModelProfile {
     /// the model (`params_base.fit_params`, `server-context.cpp`).
     ///
     /// The form allows it only with `ctx_size` and `n_gpu_layers` unset
-    /// (`presets::fit_allowed`): those are what it sizes.
+    /// (`model_profiles::fit_allowed`): those are what it sizes.
     pub fit: bool,
     /// The fit's two bounds, read only with `fit` on (the form disables them
     /// otherwise). `fit_ctx` (--fit-ctx): the smallest context the fit may cut
@@ -1600,13 +1600,13 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
     if new.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            strings::t("new-preset-id-empty"),
+            strings::t("new-model-profile-id-empty"),
         ));
     }
     if new == old_id {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            strings::t("new-preset-id-unchanged"),
+            strings::t("new-model-profile-id-unchanged"),
         ));
     }
     // The rename dialog is one free-text way into a section header (the save
@@ -1616,7 +1616,7 @@ pub fn rename(old_id: &str, new_id: &str) -> io::Result<()> {
     if !valid_id(new) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            strings::t("preset-id-charset"),
+            strings::t("model-profile-id-charset"),
         ));
     }
     rename_with(server_control::backend(), old_id, new)
@@ -2285,7 +2285,7 @@ mod tests {
     /// The disabled file's header, byte for byte: these four `;` lines, each
     /// ending CRLF. The bff keeps a copy of the same bytes and
     /// `the_disabled_header_is_the_configurators_one` in
-    /// `crates/bff/tests/presets_switch.rs` keeps the two copies equal, so the
+    /// `crates/bff/tests/model_profiles_switch.rs` keeps the two copies equal, so the
     /// text is pinned here, where it is written.
     #[test]
     fn the_disabled_header_is_these_four_lines() {
@@ -3102,7 +3102,7 @@ mod tests {
     // module, must call the core's reader and must not keep its own copy of it.
     #[test]
     fn the_app_reads_the_project_url_through_the_core() {
-        let src = include_str!("presets.rs");
+        let src = include_str!("model_profiles.rs");
         let production = &src[..src.find("mod tests {").expect("the test module")];
 
         assert!(

@@ -261,7 +261,7 @@ use serde_json::Value;
 
 use crate::gguf;
 use crate::hf_fit;
-use crate::presets::{self, ModelProfile};
+use crate::model_profiles::{self, ModelProfile};
 
 /// `CMD_CHILD_TO_ROUTER_STATE` in llama.cpp's `tools/server/server-models.cpp`:
 /// the prefix of every protocol line a router child prints. Re-check on a bump.
@@ -2770,7 +2770,7 @@ where
 /// | `model_draft` + `spec_type` | the drafter's path; its HEADER's verdict, else the sidecar's prefix | the user asked for it; the header tells DSpark from DFlash, which a name cannot (`gguf::draft_spec_type`) |
 /// | `temp`, `top_k`, `top_p`, `min_p`, `repeat_penalty` | `general.sampling.*` | llama-server already applies these from the file (`common_init_sampler_from_model`); written, they show in the form as the values in force instead of "default" |
 /// | `jinja` | `off` for an embedded NON-Jinja template, else `on` | `--jinja` is upstream's default, and with it a legacy template string would be rendered as Jinja text; only the legacy route reads it |
-/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned model profile load: context and GPU layers stay unset (`presets::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
+/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned model profile load: context and GPU layers stay unset (`model_profiles::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
 /// | `device`, `tensor_split`, `n_cpu_moe`, `n_gpu_layers`, `ctx_size`, `device_draft`, `mmproj_device`, `mmproj_offload`, `placement_note` | `placement`: `hf_fit::placement` of the downloaded files' estimate on this machine, the mmproj and the drafter fetched counted (`local_extras`), `None` without a GPU estimate | the split per card, or the CPU part, the dialog showed for this quantization with these extras (the table in `hf_fit`'s header says which keys in which case); `fit` turns off with `ctx_size` set, as the form would make it, so the cut is not resized against the TOTAL memory (`common/fit.cpp`); the mmproj keys only with an mmproj, `device_draft` only with a drafter |
 ///
 /// And what the header could justify but is left alone, on purpose:
@@ -2832,7 +2832,7 @@ pub fn derive_model_profile(
         }
         p.placement_note = pl.note.clone();
     }
-    p.fit = crate::presets::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none());
+    p.fit = crate::model_profiles::fit_allowed(p.ctx_size.is_none(), p.n_gpu_layers.is_none());
     if let Some(m) = model {
         let sm = &m.sampling;
         p.temp = sm.temp;
@@ -2843,14 +2843,14 @@ pub fn derive_model_profile(
         if m.chat_template_is_jinja() == Some(false) {
             p.jinja = Some(false);
         }
-        presets::prune_inactive_draft_keys(&mut p, m.nextn_predict_layers > 0);
-        presets::prune_inactive_moe_cache(&mut p, m.is_moe);
+        model_profiles::prune_inactive_draft_keys(&mut p, m.nextn_predict_layers > 0);
+        model_profiles::prune_inactive_moe_cache(&mut p, m.is_moe);
     }
     p
 }
 
 /// `derive_model_profile` over the downloaded files' own headers, with the id the
-/// Models tab's New would give the file (`presets::new_model_profile_id`: the file
+/// Models tab's New would give the file (`model_profiles::new_model_profile_id`: the file
 /// name, `preset` when it sanitizes to nothing, made unique ignoring case
 /// against `existing_ids`; pass every listed model profile, the parked ones included).
 /// `budget` is the machine the dialog or `--list` estimated against
@@ -2861,7 +2861,7 @@ pub fn model_profile_from_download(
     existing_ids: &[String],
     budget: Option<&hf_fit::Budget>,
 ) -> ModelProfile {
-    let id = presets::new_model_profile_id(&d.model.to_string_lossy(), existing_ids);
+    let id = model_profiles::new_model_profile_id(&d.model.to_string_lossy(), existing_ids);
     let info = gguf::read_model_info(&d.model);
     let spec = d.draft.as_ref().and_then(|(_, p)| gguf::draft_spec_type(p));
     let placement = budget.and_then(|b| {
@@ -2887,7 +2887,7 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
 }
 
 /// Save a derived model profile, first pinning server.ini's ModelsDir to the one the
-/// files were placed under when it is unset. `presets::save` would otherwise
+/// files were placed under when it is unset. `model_profiles::save` would otherwise
 /// seed it from the model path (`infer_models_dir`), and the per-repo folder
 /// (`models\<org>\<repo>\`) makes that guess a folder below the real root, which
 /// the pickers would then scan for a `models` subfolder that is not there. The
@@ -2895,13 +2895,13 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
 /// in server.ini either. Touches `paths::`, so it has no unit test (README,
 /// Tests); `derive_model_profile` is the tested part.
 pub fn save_model_profile(p: &ModelProfile, models_dir: &Path) -> std::io::Result<()> {
-    presets::validate_for_save(p)?;
+    model_profiles::validate_for_save(p)?;
     let cfg = crate::server_cfg::load();
     let kind = crate::server_control::backend().kind();
     if crate::server_cfg::seeds_models_dir(&cfg, kind, crate::server_control::Os::current()) {
-        presets::set_server_key("ModelsDir", &models_dir.to_string_lossy())?;
+        model_profiles::set_server_key("ModelsDir", &models_dir.to_string_lossy())?;
     }
-    presets::save(p)
+    model_profiles::save(p)
 }
 
 /// `4.68 GiB` / `812.0 MiB`: a size for a candidate list or a progress line.
@@ -4567,7 +4567,7 @@ mod tests {
         );
         assert_eq!(p.jinja, Some(true));
         assert!(p.fit);
-        assert!(crate::presets::fit_allowed(
+        assert!(crate::model_profiles::fit_allowed(
             p.ctx_size.is_none(),
             p.n_gpu_layers.is_none()
         ));
@@ -4603,8 +4603,8 @@ mod tests {
         assert_eq!(silent.spec_type, "draft-dflash");
         // The prunes leave a drafter-backed model profile alone (they are idempotent here).
         let mut again = silent.clone();
-        assert!(presets::prune_inactive_draft_keys(&mut again, false).is_empty());
-        assert!(!presets::prune_inactive_moe_cache(&mut again, true));
+        assert!(model_profiles::prune_inactive_draft_keys(&mut again, false).is_empty());
+        assert!(!model_profiles::prune_inactive_moe_cache(&mut again, true));
         assert_eq!(again, silent);
     }
 
@@ -4715,7 +4715,7 @@ mod tests {
         );
         assert!(
             !p.fit,
-            "the context is set, so the fit is off (presets::fit_allowed)"
+            "the context is set, so the fit is off (model_profiles::fit_allowed)"
         );
         assert_eq!(
             p.device_draft, "CUDA0",
@@ -4738,11 +4738,11 @@ mod tests {
             "{}",
             p.placement_note
         );
-        presets::validate_for_save(&p).unwrap();
+        model_profiles::validate_for_save(&p).unwrap();
 
         // Through the INI: the note is a comment, never a key, and reads back.
         let path = dir.path().join("models.ini");
-        std::fs::write(&path, presets::render_section(&p)).unwrap();
+        std::fs::write(&path, model_profiles::render_section(&p)).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
             text.contains(&format!("\r\n; placement = {}\r\n", p.placement_note)),
@@ -4753,7 +4753,7 @@ mod tests {
                 && text.contains("\r\ndevice-draft = CUDA0\r\n"),
             "{text}"
         );
-        let back = presets::read_model_profiles(&path);
+        let back = model_profiles::read_model_profiles(&path);
         assert_eq!(back, std::slice::from_ref(&p));
         // The form half of this round trip is pai-config's (the form is a
         // Slint struct): `form::tests::rich_model_profile_round_trips`.

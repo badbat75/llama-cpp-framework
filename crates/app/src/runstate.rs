@@ -169,10 +169,10 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     if !has_model_profiles() {
         // Two different cures: the switched-off model profiles are still there, in the
         // file llama-server does not read.
-        let msg = if crate::presets::load_listed().is_empty() {
-            strings::t("presets-none-configured")
+        let msg = if crate::model_profiles::load_listed().is_empty() {
+            strings::t("model-profiles-none-configured")
         } else {
-            strings::t("all-presets-off")
+            strings::t("all-model-profiles-off")
         };
         return Err(io::Error::new(io::ErrorKind::NotFound, msg));
     }

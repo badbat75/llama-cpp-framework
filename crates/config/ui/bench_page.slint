@@ -64,17 +64,17 @@ export component BenchPage inherits ScrollView {
         }
 
         SectionCard {
-            heading: Strings.t("presets");
+            heading: Strings.t("model-profiles");
             content_padding: 8px;
 
-            if AppState.bench_presets.length == 0 : Text {
-                text: Strings.t("no-presets");
+            if AppState.bench_model_profiles.length == 0 : Text {
+                text: Strings.t("no-model-profiles");
                 font-size: 12px;
                 color: Palette.foreground.transparentize(Tokens.muted);
                 wrap: word-wrap;
             }
 
-            for item[i] in AppState.bench_presets : Rectangle {
+            for item[i] in AppState.bench_model_profiles : Rectangle {
                 height: 40px;
                 // Tint with the WINDOW background: these rows sit on a
                 // SectionCard, whose surface IS alternate-background.
@@ -93,7 +93,7 @@ export component BenchPage inherits ScrollView {
                         accessible-label: "bench-" + item.id;
                         enabled: !AppState.bench_running;
                         checked: item.selected;
-                        toggled => { AppState.bench_toggle_preset(item.id); }
+                        toggled => { AppState.bench_toggle_model_profile(item.id); }
                     }
                     Text {
                         // The run order, and position 1 is not decoration: it is
@@ -488,7 +488,7 @@ export component BenchPage inherits ScrollView {
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 Text {
-                    text: Strings.t("preset");
+                    text: Strings.t("model-profile");
                     horizontal-stretch: 1;
                     font-size: 12px;
                     color: Palette.foreground.transparentize(Tokens.muted);
@@ -543,7 +543,7 @@ export component BenchPage inherits ScrollView {
                             overflow: elide;
                         }
                         Text {
-                            text: row.preset;
+                            text: row.model_profile;
                             horizontal-stretch: 1;
                             font-size: 12px;
                             color: Palette.foreground;

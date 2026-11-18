@@ -1,20 +1,20 @@
 // Shared Slint structs used across the configurator UI.
 
-export struct PresetSummary {
+export struct ModelProfileSummary {
     id: string,
     // Index into the full (unfiltered) presets vector on the Rust side. The list
     // model only holds rows that pass the filter, so the `for` index is NOT a
-    // stable handle; `orig_index` is what select_preset()/highlighting use.
+    // stable handle; `orig_index` is what select_model_profile()/highlighting use.
     orig_index: int,
     // Switched on (its section is in models.ini, so llama-server offers it) or
-    // off (parked in models.ini.disabled). See src/presets.rs's module header.
+    // off (parked in models.ini.disabled). See src/model_profiles.rs's module header.
     enabled: bool,
 }
 
 // Adding a field? This struct is step 5 of the 7-step fan-out documented at the
-// top of src/presets.rs (struct + Default + from_keys + render_section here in
-// Rust, PresetForm + widget in Slint, both form.rs conversions).
-export struct PresetForm {
+// top of src/model_profiles.rs (struct + Default + from_keys + render_section here in
+// Rust, ModelProfileForm + widget in Slint, both form.rs conversions).
+export struct ModelProfileForm {
     id: string,
     model: string,
     // The model's project page, "" = none: a `; url =` comment in the INI, the
@@ -60,12 +60,12 @@ export struct PresetForm {
     // EnumComboBox over Options.cache_types with the same empty↔"default"
     // spelling as cache_type_k/-v below, but "default" here means f16, NOT
     // "whatever the model uses": llama.cpp overwrites the inherited value with
-    // the draft's own default. See the field docs in src/presets.rs.
+    // the draft's own default. See the field docs in src/model_profiles.rs.
     spec_draft_type_k: string,
     spec_draft_type_v: string,
     // --spec-ngram-<type>-<param>: each n-gram speculator's tuning, text +
     // "default" box like the other integer fields. Shown only for the selected
-    // spec type (models_page.slint); presets.rs field docs.
+    // spec type (models_page.slint); model_profiles.rs field docs.
     spec_ngram_mod_n_match: string,
     spec_ngram_mod_n_match_default: bool,
     spec_ngram_mod_n_min: string,
@@ -241,7 +241,7 @@ export struct PresetForm {
     chat_template_kwargs: string,
 }
 
-// The server tab's edit form, the server-side mirror of PresetForm: all of
+// The server tab's edit form, the server-side mirror of ModelProfileForm: all of
 // server.ini's editable fields in one struct so the Server page binds two-way to
 // `AppState.server_form.<field>`, dirty-tracking is a single struct compare
 // (`server_form != server_form_base`). Adding a server field follows the
@@ -249,9 +249,9 @@ export struct PresetForm {
 // server_cfg.rs + both conversions in src/server_form.rs + 3 spots in cli.rs +
 // runstate::server_args), never the GUI wiring. Numerics ride as `string` paired
 // with a `*_default` bool (a DefaultLineEdit: checkbox omits the flag), for the
-// same reason PresetForm's do: their old SpinBox edited itself on a stray scroll.
+// same reason ModelProfileForm's do: their old SpinBox edited itself on a stray scroll.
 // The CPU-thread counts instead ride as slider `int`s paired with an `_auto` flag
-// (auto = omit the flag, let llama.cpp pick), the same shape as PresetForm's
+// (auto = omit the flag, let llama.cpp pick), the same shape as ModelProfileForm's
 // layer sliders; a Slider has no scroll handler, so it keeps its int.
 export struct ServerForm {
     port: string,
@@ -269,7 +269,7 @@ export struct ServerForm {
     // The placeholder of the models folder field (server_form::config_to_form_for).
     models_dir_placeholder: string,
     // ROCBLAS_USE_HIPBLASLT (the SDK tuning card's ROCm half), a TRI-state
-    // carried as a string exactly like PresetForm's `flash_attn`: "default"
+    // carried as a string exactly like ModelProfileForm's `flash_attn`: "default"
     // (never export the variable: rocBLAS routes as it sees fit), "on" (=1,
     // force hipBLASLt), "off" (=0, force Tensile). Not a bool: "default" and
     // "on" are different instructions, and only "off" cures the gfx1201 16-bit
@@ -339,7 +339,7 @@ export struct BenchPromptRow {
     shipped: bool,
 }
 
-export struct BenchPresetRow {
+export struct BenchModelProfileRow {
     id: string,
     model: string,
     selected: bool,
@@ -351,7 +351,7 @@ export struct BenchPresetRow {
 // One "Bind to" checkbox on the Server tab (src/net_ifaces.rs `BindRow`). Built
 // in Rust and read-only to Slint: the checkbox reports through a callback that
 // rewrites `server_form.hostname` and rebuilds the model, the same contract as
-// BenchPresetRow. `enabled` is false for every row but 0.0.0.0 while 0.0.0.0 is
+// BenchModelProfileRow. `enabled` is false for every row but 0.0.0.0 while 0.0.0.0 is
 // checked: it already covers them, and llama.cpp calls overlapping binds
 // undefined behavior.
 export struct BindRow {
@@ -367,7 +367,7 @@ export struct BenchResultRow {
     // "pp2048" / "tg128 @ d8192" for the synthetic mode, "prefill" / "decode"
     // for the live one.
     test: string,
-    preset: string,
+    model_profile: string,
     mean: string,
     sd: string,
     samples: int,

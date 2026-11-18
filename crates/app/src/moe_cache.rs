@@ -64,7 +64,7 @@ use regex::Regex;
 
 use crate::gguf::TensorInfo;
 use crate::gpu_split::{self, Layout};
-use crate::presets::ModelProfile;
+use crate::model_profiles::ModelProfile;
 use crate::tensor_override;
 
 /// A group's key: its device index and its expert layout (each tensor's kind

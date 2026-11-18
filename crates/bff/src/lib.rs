@@ -4,8 +4,8 @@
 pub mod bff;
 mod control;
 pub mod listen;
+mod model_profiles;
 mod origin;
-mod presets;
 pub mod serve;
 mod server;
 pub mod session;
@@ -218,7 +218,7 @@ fn router_with_policy(
     let model_profiles = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |headers: axum::http::HeaderMap| {
-            presets::list(connect.clone(), timeout, sessions.clone(), headers)
+            model_profiles::list(connect.clone(), timeout, sessions.clone(), headers)
         }
     };
     let set_enabled = {
@@ -226,7 +226,7 @@ fn router_with_policy(
         move |Path(id): Path<String>,
               headers: axum::http::HeaderMap,
               body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
-            presets::set_enabled(
+            model_profiles::set_enabled(
                 connect.clone(),
                 write_timeout,
                 sessions.clone(),
@@ -239,7 +239,7 @@ fn router_with_policy(
     let read_model_profile = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
-            presets::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
+            model_profiles::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
         }
     };
     let save_model_profile = {
@@ -247,7 +247,7 @@ fn router_with_policy(
         move |Path(id): Path<String>,
               headers: axum::http::HeaderMap,
               body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
-            presets::save(
+            model_profiles::save(
                 connect.clone(),
                 timeout,
                 write_timeout,

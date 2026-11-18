@@ -215,7 +215,7 @@ pub const MODEL_PROFILE_MIN_MAX_KEYS: [(&str, &str); 3] = [
 ];
 
 /// The model profile keys the web may write, the table of "Saving a model profile from the
-/// web" in `ARCHITECTURE.md`: every key `pai-app` `presets::render_section` can
+/// web" in `ARCHITECTURE.md`: every key `pai-app` `model_profiles::render_section` can
 /// write that a control the model profile page enables sends. The bff's
 /// `PUT /api/profiles/model/{id}` accepts a body key only when it is one of these, in
 /// this exact spelling: llama-server knows a key only in its own case, so an
@@ -302,7 +302,7 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
     "spec-ngram-map-k4v-min-hits",
 ];
 
-/// The model profile keys `pai-app` `presets::render_section` writes that no control of
+/// The model profile keys `pai-app` `model_profiles::render_section` writes that no control of
 /// the model profile page enables yet, each with the slice that enables it in the
 /// design's table: the Assets card's file picks, the MoE keys that need the
 /// model's facts, the GPU distribution and the tensor placement. A body key
@@ -1637,7 +1637,7 @@ top-p = 0.95\r\n";
             models_disabled_file(&section("m", "parallel = 0\n"), "", ""),
             Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
-        let header = "; Presets switched OFF in pai-config.\r\n";
+        let header = "; Model profiles switched OFF in pai-config.\r\n";
         assert_eq!(
             models_disabled_file(&format!("{header}{REAL_SECTION}"), "", ""),
             Ok(())

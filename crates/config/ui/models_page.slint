@@ -67,24 +67,24 @@ export component ModelsPage inherits HorizontalLayout {
         spacing: 10px;
 
         Text {
-            text: Strings.t("presets");
+            text: Strings.t("model-profiles");
             font-size: 14px;
             font-weight: 600;
             color: Palette.foreground;
         }
 
         LineEdit {
-            placeholder-text: Strings.t("filter-presets");
+            placeholder-text: Strings.t("filter-model-profiles");
             input-type: search;
-            text <=> AppState.presets_filter;
-            edited(t) => { AppState.filter_presets(t); }
+            text <=> AppState.model_profiles_filter;
+            edited(t) => { AppState.filter_model_profiles(t); }
         }
 
         ListPanel {
-            is_empty: AppState.presets.length == 0;
-            empty_text: AppState.presets_filter == ""
-                ? Strings.t("no-presets-yet")
-                : Strings.t("no-presets-match");
+            is_empty: AppState.model_profiles.length == 0;
+            empty_text: AppState.model_profiles_filter == ""
+                ? Strings.t("no-model-profiles-yet")
+                : Strings.t("no-model-profiles-match");
             // Keep the floor modest so the Models tab still fits a
             // small screen; vertical-stretch grows it on big ones.
             min-height: 160px;
@@ -94,24 +94,24 @@ export component ModelsPage inherits HorizontalLayout {
                 // delegate is a fixed 36px tall; a data-dependent height confuses
                 // ListView's running-sum layout and the rows render on top of each
                 // other. `p.orig_index` maps back to the full presets vector.
-                for p in AppState.presets : SelectableRow {
+                for p in AppState.model_profiles : SelectableRow {
                     height: 36px;
                     label: p.id;
                     muted: !p.enabled;
-                    selected: p.orig_index == AppState.selected_preset_index;
-                    clicked => { AppState.select_preset(p.orig_index); }
+                    selected: p.orig_index == AppState.selected_model_profile_index;
+                    clicked => { AppState.select_model_profile(p.orig_index); }
                     // On = the section sits in models.ini, so llama-server (and
                     // OpenCode) offer it; off = parked in models.ini.disabled.
                     // Sanctioned one-way binding, the GPU table's contract: a
                     // click self-assigns `checked`, breaking THIS delegate's
                     // binding, and the handler always replaces the whole list
-                    // model (gui::refresh_preset_list), failure included, so the
+                    // model (gui::refresh_model_profile_list), failure included, so the
                     // delegates that show it are fresh ones.
                     Switch {
                         // Findable handle for the e2e flow (src/tests/save_flow.rs).
                         accessible-label: "enabled-" + p.id;
                         checked: p.enabled;
-                        toggled => { AppState.toggle_preset_enabled(p.id, self.checked); }
+                        toggled => { AppState.toggle_model_profile_enabled(p.id, self.checked); }
                     }
                 }
             }
@@ -123,28 +123,28 @@ export component ModelsPage inherits HorizontalLayout {
                 spacing: 6px;
                 Button {
                     text: Strings.t("new-dialog");
-                    clicked => { AppState.new_preset(); }
+                    clicked => { AppState.new_model_profile(); }
                 }
                 Button {
                     text: Strings.t("clone-dialog");
-                    enabled: AppState.selected_preset_index >= 0;
-                    clicked => { AppState.clone_preset(); }
+                    enabled: AppState.selected_model_profile_index >= 0;
+                    clicked => { AppState.clone_model_profile(); }
                 }
             }
             HorizontalLayout {
                 spacing: 6px;
                 Button {
                     text: Strings.t("rename-dialog");
-                    enabled: AppState.selected_preset_index >= 0;
+                    enabled: AppState.selected_model_profile_index >= 0;
                     // Routes through Rust like New…/Clone… so a dirty form gets
                     // the discard-confirm guard before the dialog opens; the
                     // actual rename then fires from the dialog in app.slint
-                    // (AppState.rename_preset).
+                    // (AppState.rename_model_profile).
                     clicked => { AppState.request_rename(); }
                 }
                 Button {
                     text: Strings.t("delete");
-                    enabled: AppState.selected_preset_index >= 0;
+                    enabled: AppState.selected_model_profile_index >= 0;
                     // Confirmation modal (app.slint), opened by Rust because
                     // it lists the model files the preset links, which the
                     // user may delete with it (gui/models_tab.rs). The
@@ -155,14 +155,14 @@ export component ModelsPage inherits HorizontalLayout {
         }
 
         Text {
-            text: Strings.t("preset-off-note");
+            text: Strings.t("model-profile-off-note");
             font-size: 10px;
             color: Palette.foreground.transparentize(Tokens.faint);
             wrap: word-wrap;
         }
 
         Text {
-            text: AppState.presets_path;
+            text: AppState.model_profiles_path;
             font-size: 10px;
             color: Palette.foreground.transparentize(Tokens.faint);
             wrap: word-wrap;
@@ -178,9 +178,9 @@ export component ModelsPage inherits HorizontalLayout {
             spacing: 16px;
 
             Text {
-                text: AppState.selected_preset_index >= 0
-                    ? Strings.t1("preset-id-heading", AppState.form.id)
-                    : Strings.t("no-preset-selected");
+                text: AppState.selected_model_profile_index >= 0
+                    ? Strings.t1("model-profile-id-heading", AppState.form.id)
+                    : Strings.t("no-model-profile-selected");
                 font-size: 14px;
                 font-weight: 600;
                 color: Palette.foreground;
@@ -417,27 +417,27 @@ export component ModelsPage inherits HorizontalLayout {
                 }
                 GpuSplitTable {
                     label_width <=> LabelColumn.models;
-                    rows: AppState.preset_gpu_rows;
-                    selected: AppState.preset_gpu_selected;
-                    weight_total: AppState.preset_gpu_total;
+                    rows: AppState.model_profile_gpu_rows;
+                    selected: AppState.model_profile_gpu_selected;
+                    weight_total: AppState.model_profile_gpu_total;
                     // Non-zero once the model's header is read AND the effective
                     // mode is layer: the table then edits BLOCKS instead of
-                    positions: AppState.preset_split_positions;
+                    positions: AppState.model_profile_split_positions;
                     // Split mode tensor's load-time refusals, against this
                     // preset's mode and this model's header (state.slint).
-                    mode_warning: AppState.preset_split_mode_warning;
+                    mode_warning: AppState.model_profile_split_mode_warning;
                     mode_labels: AppState.split_mode_labels;
                     mode_values: AppState.split_mode_values;
-                    mode_index <=> AppState.preset_split_mode_index;
-                    effective_mode: AppState.preset_gpu_mode;
-                    mode_picked(v) => { AppState.preset_split_mode_picked(v); }
+                    mode_index <=> AppState.model_profile_split_mode_index;
+                    effective_mode: AppState.model_profile_gpu_mode;
+                    mode_picked(v) => { AppState.model_profile_split_mode_picked(v); }
                     split_mode_hint: Strings.t("split-mode-hint");
-                    toggled(id) => { AppState.preset_gpu_toggle(id); }
-                    reordered(id, delta) => { AppState.preset_gpu_move(id, delta); }
-                    weight_edited(id, w) => { AppState.preset_gpu_weight(id, w); }
-                    blocks_edited(id, n) => { AppState.preset_gpu_blocks(id, n); }
-                    auto_split() => { AppState.preset_gpu_auto(); }
-                    even_split() => { AppState.preset_gpu_even(); }
+                    toggled(id) => { AppState.model_profile_gpu_toggle(id); }
+                    reordered(id, delta) => { AppState.model_profile_gpu_move(id, delta); }
+                    weight_edited(id, w) => { AppState.model_profile_gpu_weight(id, w); }
+                    blocks_edited(id, n) => { AppState.model_profile_gpu_blocks(id, n); }
+                    auto_split() => { AppState.model_profile_gpu_auto(); }
+                    even_split() => { AppState.model_profile_gpu_even(); }
                 }
             }
 
@@ -450,22 +450,22 @@ export component ModelsPage inherits HorizontalLayout {
                     color: Palette.foreground.transparentize(Tokens.muted);
                 }
                 TensorOverrideTable {
-                    rows: AppState.preset_tensor_rows;
-                    summary: AppState.preset_tensor_summary;
-                    warning: AppState.preset_tensor_warning;
+                    rows: AppState.model_profile_tensor_rows;
+                    summary: AppState.model_profile_tensor_summary;
+                    warning: AppState.model_profile_tensor_warning;
                     kind_labels: AppState.tensor_kind_labels;
                     kind_values: AppState.tensor_kind_values;
-                    dev_labels: AppState.preset_tensor_dev_labels;
-                    dev_values: AppState.preset_tensor_dev_values;
-                    added() => { AppState.preset_tensor_add(); }
-                    removed(i) => { AppState.preset_tensor_remove(i); }
-                    kind_picked(i, kind) => { AppState.preset_tensor_kind(i, kind); }
-                    device_picked(i, dev) => { AppState.preset_tensor_device(i, dev); }
-                    pattern_edited(i, p) => { AppState.preset_tensor_pattern(i, p); }
-                    layers_edited(i, l) => { AppState.preset_tensor_layers(i, l); }
-                    coverage: AppState.preset_tensor_coverage;
-                    can_pick: AppState.preset_tensor_can_pick;
-                    pick(i) => { AppState.preset_tensor_pick(i); }
+                    dev_labels: AppState.model_profile_tensor_dev_labels;
+                    dev_values: AppState.model_profile_tensor_dev_values;
+                    added() => { AppState.model_profile_tensor_add(); }
+                    removed(i) => { AppState.model_profile_tensor_remove(i); }
+                    kind_picked(i, kind) => { AppState.model_profile_tensor_kind(i, kind); }
+                    device_picked(i, dev) => { AppState.model_profile_tensor_device(i, dev); }
+                    pattern_edited(i, p) => { AppState.model_profile_tensor_pattern(i, p); }
+                    layers_edited(i, l) => { AppState.model_profile_tensor_layers(i, l); }
+                    coverage: AppState.model_profile_tensor_coverage;
+                    can_pick: AppState.model_profile_tensor_can_pick;
+                    pick(i) => { AppState.model_profile_tensor_pick(i); }
                 }
             }
 
@@ -630,9 +630,9 @@ export component ModelsPage inherits HorizontalLayout {
                     MappedComboBox {
                         // Needs a draft FILE; llama.cpp ignores it otherwise.
                         enabled: AppState.draft_file_active;
-                        labels: AppState.preset_draft_dev_labels;
-                        values: AppState.preset_draft_dev_values;
-                        index <=> AppState.preset_draft_dev_index;
+                        labels: AppState.model_profile_draft_dev_labels;
+                        values: AppState.model_profile_draft_dev_values;
+                        index <=> AppState.model_profile_draft_dev_index;
                         picked(v) => { AppState.form.device_draft = v; }
                     }
                 }
@@ -678,7 +678,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: Strings.t("context-size");
                     hint: Strings.t("context-size-hint");
                     DefaultLineEdit {
-                        edit_label: "preset-ctx-size";
+                        edit_label: "model-profile-ctx-size";
                         input_type: InputType.number;
                         default <=> AppState.form.ctx_size_default;
                         value <=> AppState.form.ctx_size;
@@ -770,8 +770,8 @@ export component ModelsPage inherits HorizontalLayout {
 
             SectionCard {
                 heading: Strings.t("kv-cache");
-                if AppState.preset_kv_cache_warning != "" : WrapText {
-                    text: AppState.preset_kv_cache_warning;
+                if AppState.model_profile_kv_cache_warning != "" : WrapText {
+                    text: AppState.model_profile_kv_cache_warning;
                     font_size: 12px;
                     color: Tokens.err;
                 }
@@ -941,7 +941,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: Strings.t("thinking-budget");
                     hint: Strings.t("thinking-budget-hint");
                     DefaultLineEdit {
-                        edit_label: "preset-reasoning-budget";
+                        edit_label: "model-profile-reasoning-budget";
                         // decimal, not number: -1 needs a typeable leading sign.
                         input_type: InputType.decimal;
                         default <=> AppState.form.reasoning_budget_default;
@@ -976,7 +976,7 @@ export component ModelsPage inherits HorizontalLayout {
                     label: Strings.t("temperature");
                     hint: Strings.t("sampling-temperature-hint");
                     DefaultLineEdit {
-                        edit_label: "preset-temp";
+                        edit_label: "model-profile-temp";
                         default <=> AppState.form.temp_default;
                         value <=> AppState.form.temp;
                         placeholder: "e.g. 0.7";
@@ -1090,9 +1090,9 @@ export component ModelsPage inherits HorizontalLayout {
                     hint: Strings.t("vision-gpu-hint");
                     MappedComboBox {
                         enabled: AppState.form.mmproj != "" && AppState.form.mmproj_offload;
-                        labels: AppState.preset_mmproj_dev_labels;
-                        values: AppState.preset_mmproj_dev_values;
-                        index <=> AppState.preset_mmproj_dev_index;
+                        labels: AppState.model_profile_mmproj_dev_labels;
+                        values: AppState.model_profile_mmproj_dev_values;
+                        index <=> AppState.model_profile_mmproj_dev_index;
                         picked(v) => { AppState.form.mmproj_device = v; }
                     }
                 }
@@ -1356,12 +1356,12 @@ export component ModelsPage inherits HorizontalLayout {
             }
 
             FormActions {
-                save_text: Strings.t("save-preset");
+                save_text: Strings.t("save-model-profile");
                 // Shared with the Ctrl+S shortcut; the gate lives in state.slint.
-                save_enabled: AppState.can_save_preset;
-                revert_enabled: AppState.selected_preset_index >= 0 && AppState.preset_dirty;
-                save => { AppState.save_preset(); }
-                revert => { AppState.revert_preset(); }
+                save_enabled: AppState.can_save_model_profile;
+                revert_enabled: AppState.selected_model_profile_index >= 0 && AppState.model_profile_dirty;
+                save => { AppState.save_model_profile(); }
+                revert => { AppState.revert_model_profile(); }
             }
         }
     }

@@ -1,7 +1,7 @@
 //! server.ini's read and write through the seam (`server_control`): `load()`
 //! and `save()`, beside the schema and the rest of the IO in the core
 //! (`pai_core::server_cfg`), which it re-exports. `save` stays here because it
-//! checks the model profiles (`presets::check_startup_count`).
+//! checks the model profiles (`model_profiles::check_startup_count`).
 
 use std::fs;
 use std::io;
@@ -31,12 +31,12 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     check(cfg, cpus).map_err(|r| io::Error::other(r.text()))?;
     validate_for_save(cfg)?;
     // A lower ModelsMax can strand the model profiles already set to load on startup:
-    // the router would refuse to start (`presets::check_startup_count`).
-    let startup = crate::presets::load_all()
+    // the router would refuse to start (`model_profiles::check_startup_count`).
+    let startup = crate::model_profiles::load_all()
         .iter()
         .filter(|p| p.load_on_startup)
         .count();
-    crate::presets::check_startup_count(startup, cfg.models_max)?;
+    crate::model_profiles::check_startup_count(startup, cfg.models_max)?;
     let models_dir = cfg.models_dir_or_default();
     let backend = server_control::backend();
     let leave_dirs_unset = server_control::dirs_left_unset(backend.kind(), Os::current());
@@ -357,8 +357,8 @@ mod tests {
                 fn_body(include_str!("hf.rs"), "save_model_profile"),
             ),
             (
-                "presets.rs save",
-                fn_body(include_str!("presets.rs"), "save"),
+                "model_profiles.rs save",
+                fn_body(include_str!("model_profiles.rs"), "save"),
             ),
         ] {
             for want in ["seeds_models_dir(", "Os::current()"] {

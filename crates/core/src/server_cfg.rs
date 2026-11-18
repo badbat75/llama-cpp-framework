@@ -6,7 +6,7 @@
 //! optional fields are emitted as commented `; Key = example  ; help` hint
 //! lines (never omitted) so the file self-documents every available knob.
 //!
-//! ADD A SERVER FIELD, the mirror of the model profile recipe (top of presets.rs): a
+//! ADD A SERVER FIELD, the mirror of the model profile recipe (top of model_profiles.rs): a
 //! smaller schema, but a LARGER per-field fan-out; it also reaches the CLI (the
 //! server has a per-field `set`) and the launch path (steps 7-8 below). Trace an
 //! existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
@@ -515,7 +515,7 @@ pub fn normalize_base_url(url: &str) -> Option<String> {
 // ── Save & render (INI write) ────────────────────────────────────────────
 
 /// Save-boundary validation, pure so the unit test never touches `paths::`,
-/// the mirror of `presets::validate_for_save`. The INI format can't escape
+/// the mirror of `model_profiles::validate_for_save`. The INI format can't escape
 /// `;`/`#`, so a ModelsDir containing one would silently reload truncated
 /// (see `ini::reject_comment_markers`).
 pub fn validate_for_save(cfg: &ServerConfig) -> io::Result<()> {
@@ -583,7 +583,7 @@ pub fn check(cfg: &ServerConfig, cpus: usize) -> Result<(), checks::Refusal> {
 
 /// Render the whole server.ini body. Pure (no IO): the file-writing wrapper is
 /// `save()`; the round-trip test drives this directly, mirroring
-/// `presets::render_section`.
+/// `model_profiles::render_section`.
 pub fn render(cfg: &ServerConfig) -> String {
     render_for(cfg, false)
 }

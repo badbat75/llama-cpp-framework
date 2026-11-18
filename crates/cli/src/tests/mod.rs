@@ -45,7 +45,7 @@ fn data_root_e2e() {
 /// (only the Integrations tab's Save writes it). The default test backend keeps
 /// the model profile files at the per-user paths, under the redirect.
 fn model_profile_commands_e2e() {
-    use pai_app::presets;
+    use pai_app::model_profiles;
     let dir = tempfile::tempdir().expect("tempdir");
     paths::redirect_for_tests(dir.path());
     let ini = paths::models_ini();
@@ -71,13 +71,13 @@ fn model_profile_commands_e2e() {
         "deleting a nonexistent preset must error, not report success"
     );
     assert!(
-        presets::load_all().iter().any(|p| p.id == "e2e"),
+        model_profiles::load_all().iter().any(|p| p.id == "e2e"),
         "nothing deleted"
     );
 
     pai(&["model-profile", "disable", "E2E"]).expect("model-profile disable");
-    assert!(presets::load_all().iter().all(|p| p.id != "e2e"));
-    assert!(presets::load_listed()
+    assert!(model_profiles::load_all().iter().all(|p| p.id != "e2e"));
+    assert!(model_profiles::load_listed()
         .iter()
         .any(|l| l.model_profile.id == "e2e" && !l.enabled));
     assert_eq!(
@@ -87,7 +87,7 @@ fn model_profile_commands_e2e() {
     );
     pai(&["model-profile", "disable", "e2e"]).expect("already off is not an error");
     pai(&["model-profile", "enable", "e2e"]).expect("model-profile enable");
-    assert!(presets::load_all().iter().any(|p| p.id == "e2e"));
+    assert!(model_profiles::load_all().iter().any(|p| p.id == "e2e"));
     assert!(
         pai(&["model-profile", "enable", "no-such-preset"]).is_err(),
         "an unknown id must error"
@@ -99,7 +99,7 @@ fn model_profile_commands_e2e() {
 /// `--even-if-shared`; the picked files go with the Hugging Face repo folders
 /// they leave empty under ModelsDir; without the flag every file stays.
 fn model_profile_delete_files_e2e() {
-    use pai_app::presets::{self, ModelProfile};
+    use pai_app::model_profiles::{self, ModelProfile};
     let dir = tempfile::tempdir().expect("tempdir");
     paths::redirect_for_tests(dir.path());
     let models_dir = dir.path().join("models-root");
@@ -119,14 +119,14 @@ fn model_profile_delete_files_e2e() {
     touch(&cli_model, 2);
     touch(&cli_draft, 1);
     touch(&other_model, 3);
-    presets::save(&ModelProfile {
+    model_profiles::save(&ModelProfile {
         id: "cli-del".into(),
         model: path(&cli_model),
         model_draft: path(&cli_draft),
         ..ModelProfile::default()
     })
     .expect("save cli-del");
-    presets::save(&ModelProfile {
+    model_profiles::save(&ModelProfile {
         id: "cli-other".into(),
         model: path(&other_model),
         model_draft: path(&cli_draft),
@@ -141,7 +141,7 @@ fn model_profile_delete_files_e2e() {
         crate::cli::run(cli)
     };
     let listed = |id: &str| {
-        presets::load_listed()
+        model_profiles::load_listed()
             .iter()
             .any(|l| l.model_profile.id == id)
     };

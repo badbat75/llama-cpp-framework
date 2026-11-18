@@ -347,7 +347,7 @@ export component AutoSlider inherits HorizontalLayout {
 // Slider): the checkbox carries the "unset" state, the input carries the value.
 //
 // When `default` is checked the field is disabled but still shows `value`, so
-// preset_to_form seeds it with a display hint (form.rs's HINT_*); the user sees
+// model_profile_to_form seeds it with a display hint (form.rs's HINT_*); the user sees
 // what they would get on unticking, and can edit straight away.
 //
 // THE INTEGERS RODE A SpinBox UNTIL v1.5.0, and the reason they no longer do is
@@ -812,7 +812,7 @@ export component GpuSplitTable inherits VerticalLayout {
     in property <int> positions: 0;
     // A strip right under the mode combo: what the mode will make the launch do
     // that no row can show (the Models tab passes
-    // AppState.preset_split_mode_warning: split mode tensor's load-time
+    // AppState.model_profile_split_mode_warning: split mode tensor's load-time
     // refusals).
     in property <string> mode_warning;
     in property <string> split_mode_hint;

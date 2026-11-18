@@ -5,8 +5,8 @@
 //! Every request runs under a deadline, so a bff that waits on the manager
 //! fails instead of hanging.
 //!
-//! The file is a file of its own beside `tests/presets_switch.rs` (the switch)
-//! and `tests/preset_read.rs` (the read), because the save asks the manager for
+//! The file is a file of its own beside `tests/model_profiles_switch.rs` (the switch)
+//! and `tests/model_profile_read.rs` (the read), because the save asks the manager for
 //! a compare-and-swap write of the file that HOLDS the section, and answers the
 //! revision of the section as written. The fake here keeps the two model profile files
 //! live: a compare and swap lands only when `expected` is the text the fake

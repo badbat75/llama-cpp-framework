@@ -36,7 +36,7 @@
 use i_slint_backend_testing::{self as itest, ElementHandle};
 use slint::{ComponentHandle, Model};
 
-use crate::gui::{AppState, AppWindow, PresetForm, ServerForm};
+use crate::gui::{AppState, AppWindow, ModelProfileForm, ServerForm};
 
 /// Build the window on the headless testing backend and realize its item tree so
 /// the default page's widgets are materialized and findable. `init_no_event_loop`
@@ -219,7 +219,7 @@ fn value_of(e: &ElementHandle) -> String {
 
 /// `form` is a single struct-typed property, so a field is changed by reading the
 /// whole struct, mutating, and setting it back (there is no per-field setter).
-fn set_form(st: &AppState, mutate: impl FnOnce(&mut PresetForm)) {
+fn set_form(st: &AppState, mutate: impl FnOnce(&mut ModelProfileForm)) {
     let mut form = st.get_form();
     mutate(&mut form);
     st.set_form(form);
@@ -583,7 +583,7 @@ fn editable_widgets_track_model_after_edit() {
     // LineEdit: `text <=> AppState.form.ctx_size` (an INTEGER field: since v1.5.0
     // they are all text, see the note on the port above).
     assert_reload_reaches_widget(
-        &by_label(&app, "preset-ctx-size"),
+        &by_label(&app, "model-profile-ctx-size"),
         "LineEdit ctx_size",
         value_of,
         |e| e.set_accessible_value("500"),
@@ -595,7 +595,7 @@ fn editable_widgets_track_model_after_edit() {
     // LineEdit: `text <=> AppState.form.temp` (the field the v1.1.1 bug report
     // named, alongside top-k).
     assert_reload_reaches_widget(
-        &by_label(&app, "preset-temp"),
+        &by_label(&app, "model-profile-temp"),
         "LineEdit form.temp",
         value_of,
         |e| e.set_accessible_value("9.9"),

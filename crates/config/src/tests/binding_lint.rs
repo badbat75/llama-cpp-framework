@@ -584,7 +584,7 @@ fn gui_only_source(path: &Path) -> bool {
 /// Keys of a source a CLI command does reach, written where it does not:
 /// `linked_files.rs` shows its rows and its deletion report to the GUI alone,
 /// `integrations::claude_code_env_script` is the Integrations tab's snippet,
-/// `bench::sweep::check_values` is the tab's A/B check, `presets::rename` and the
+/// `bench::sweep::check_values` is the tab's A/B check, `model_profiles::rename` and the
 /// `ini::rename_section` under it are the rename dialog's, `startup::set_enabled`
 /// is the Settings tab's, `server_control::log_rotate_note_key` names the Settings
 /// tab's note on log rotation, `server_control::toggle_boot` is its start at boot
@@ -602,8 +602,8 @@ const GUI_ONLY_KEYS: [&str; 31] = [
     "gpus-in-use",
     "could-not-delete",
     "delete-also-files",
-    "delete-preset-only",
-    "deleted-preset",
+    "delete-model-profile-only",
+    "deleted-model-profile",
     "empty-folder-many",
     "empty-folder-one",
     "gui-launch-error",
@@ -613,9 +613,9 @@ const GUI_ONLY_KEYS: [&str; 31] = [
     "log-rotate-journald",
     "log-rotate-service",
     "login-start-unavailable",
-    "new-preset-id-empty",
-    "new-preset-id-unchanged",
-    "preset-id-charset",
+    "new-model-profile-id-empty",
+    "new-model-profile-id-unchanged",
+    "model-profile-id-charset",
     "removed-file-many",
     "removed-file-one",
     "section-exists",

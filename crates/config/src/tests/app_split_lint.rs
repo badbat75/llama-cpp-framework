@@ -20,7 +20,7 @@ const MOVED: [&str; 23] = [
     "migration.rs",
     "model_scan.rs",
     "moe_cache.rs",
-    "presets.rs",
+    "model_profiles.rs",
     "runstate.rs",
     "server_cfg.rs",
     "server_control.rs",

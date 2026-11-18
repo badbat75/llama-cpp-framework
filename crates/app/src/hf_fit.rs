@@ -193,7 +193,7 @@
 //!
 //! `ctx-size` is the context the estimate reserved the KV cache for
 //! (`Shape::ctx`: `REF_CTX`, or the model's own when shorter), since the cut
-//! was sized for it. Writing it turns `fit` off (`presets::fit_allowed`), which
+//! was sized for it. Writing it turns `fit` off (`model_profiles::fit_allowed`), which
 //! is also what the placement needs: `common/fit.cpp` shrinks an unset
 //! context against the TOTAL free memory before giving up on a
 //! `tensor-split` or a tensor override set by hand, so with the context left

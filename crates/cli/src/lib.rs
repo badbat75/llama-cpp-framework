@@ -2,9 +2,9 @@
 //! shares with the GUI (`pai-app`) and the shared core (`pai-core`).
 
 // The core and pai-app modules, under the names the sources use
-// (`crate::paths`, `crate::presets`, ...).
+// (`crate::paths`, `crate::model_profiles`, ...).
 use pai_app::{
-    bench, devices, hf, hf_fit, linked_files, presets, runstate, server_cfg, server_control,
+    bench, devices, hf, hf_fit, linked_files, model_profiles, runstate, server_cfg, server_control,
     settings, slot_state,
 };
 pub use pai_app::{migration, strings};

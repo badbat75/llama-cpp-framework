@@ -243,7 +243,7 @@ impl JobState {
         strings::t(match self {
             JobState::Downloading => strings::key("downloading"),
             JobState::Cancelling => strings::key("cancelling"),
-            JobState::Configuring => strings::key("creating-preset"),
+            JobState::Configuring => strings::key("creating-model-profile"),
             JobState::Done { .. } => strings::key("job-done"),
             JobState::Failed(_) => strings::key("job-failed"),
             JobState::Cancelled => strings::key("job-cancelled"),
@@ -495,13 +495,16 @@ fn row(j: &Job) -> DownloadRow {
             model_profile,
             placed: true,
         } => (
-            strings::fill("created-preset-placed", &[&model_profile]),
+            strings::fill("created-model-profile-placed", &[&model_profile]),
             false,
         ),
         JobState::Done {
             model_profile,
             placed: false,
-        } => (strings::fill("created-preset", &[&model_profile]), false),
+        } => (
+            strings::fill("created-model-profile", &[&model_profile]),
+            false,
+        ),
         JobState::Failed(e) => (e.clone(), true),
         JobState::Cancelled => (strings::t("download-cancelled-kept"), false),
         _ => (String::new(), false),
@@ -788,7 +791,7 @@ fn configured(
     state: &Rc<RefCell<State>>,
     id: u64,
     d: hf::Downloaded,
-    mut p: presets::ModelProfile,
+    mut p: model_profiles::ModelProfile,
 ) {
     let Some(models_dir) = state
         .borrow()
@@ -800,11 +803,11 @@ fn configured(
         return;
     };
     // Another model profile may have taken the id while the headers were read.
-    let ids: Vec<String> = presets::load_listed()
+    let ids: Vec<String> = model_profiles::load_listed()
         .into_iter()
         .map(|l| l.model_profile.id)
         .collect();
-    p.id = presets::new_model_profile_id(&d.model.to_string_lossy(), &ids);
+    p.id = model_profiles::new_model_profile_id(&d.model.to_string_lossy(), &ids);
     let placed = !p.placement_note.is_empty();
     match hf::save_model_profile(&p, &models_dir) {
         Ok(()) => {
@@ -819,12 +822,15 @@ fn configured(
             models_tab::model_profiles_moved(app, state);
         }
         Err(e) => {
-            state
-                .borrow_mut()
-                .downloads
-                .jobs
-                .configured(id, Err(strings::fill("files-kept-preset-not-saved", &[&e])));
-            set_status(app, strings::fill("hf-preset-not-saved", &[&e]), true);
+            state.borrow_mut().downloads.jobs.configured(
+                id,
+                Err(strings::fill("files-kept-model-profile-not-saved", &[&e])),
+            );
+            set_status(
+                app,
+                strings::fill("hf-model-profile-not-saved", &[&e]),
+                true,
+            );
         }
     }
     push(app, state);
@@ -881,7 +887,7 @@ fn show_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     };
     let note = match (note.is_empty(), position(state)) {
         (false, _) => note,
-        (true, None) => strings::fill("preset-no-longer-listed", &[&target]),
+        (true, None) => strings::fill("model-profile-no-longer-listed", &[&target]),
         (true, Some(_)) => String::new(),
     };
     state.borrow_mut().downloads.jobs.set_note(id, &note);
@@ -895,13 +901,15 @@ fn show_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
         .model_profiles
         .iter()
         .find(|l| l.model_profile.id == target)
-        .is_some_and(|l| !model_profile_matches(&l.model_profile, s.get_presets_filter().as_str()));
+        .is_some_and(|l| {
+            !model_profile_matches(&l.model_profile, s.get_model_profiles_filter().as_str())
+        });
     if hidden {
-        s.set_presets_filter(SharedString::default());
+        s.set_model_profiles_filter(SharedString::default());
         refresh_model_profile_list(app, state);
     }
     if let Some(index) = position(state) {
-        s.invoke_select_preset(i32::try_from(index).unwrap_or(-1));
+        s.invoke_select_model_profile(i32::try_from(index).unwrap_or(-1));
     }
 }
 
@@ -1065,7 +1073,7 @@ pub(super) fn wire(
     }
     win.on_cancel(by_id(app, state, cancel));
     win.on_resume(by_id(app, state, resume));
-    win.on_show_preset(by_id(app, state, show_model_profile));
+    win.on_show_model_profile(by_id(app, state, show_model_profile));
     win.on_dismiss(by_id(app, state, dismiss));
     win.on_clear_finished(plain(app, state, clear_finished));
     win.on_confirm_quit(plain(app, state, confirm_quit));

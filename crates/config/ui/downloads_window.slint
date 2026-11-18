@@ -44,7 +44,7 @@ export component DownloadsWindow inherits Window {
 
     callback cancel(int);
     callback resume(int);
-    callback show_preset(int);
+    callback show_model_profile(int);
     callback dismiss(int);
     callback clear_finished();
     callback confirm_quit();
@@ -174,9 +174,9 @@ export component DownloadsWindow inherits Window {
                             clicked => { root.cancel(row.id); }
                         }
                         if row.can_show : Button {
-                            text: Strings.t("show-preset");
+                            text: Strings.t("show-model-profile");
                             primary: true;
-                            clicked => { root.show_preset(row.id); }
+                            clicked => { root.show_model_profile(row.id); }
                         }
                     }
                 }

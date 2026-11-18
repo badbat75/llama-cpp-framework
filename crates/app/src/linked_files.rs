@@ -10,7 +10,7 @@
 //!   files: every tick starts cleared, the CLI needs the flag.
 //! - **A file another model profile references is never deleted**, whichever INI file
 //!   that model profile sits in (`models.ini` or `models.ini.disabled`: callers pass
-//!   `presets::load_listed`, both files). `users` names those model profiles, the
+//!   `model_profiles::load_listed`, both files). `users` names those model profiles, the
 //!   dialog shows the file as in use and cannot tick it, and `delete` skips it
 //!   unless the CLI's `--even-if-shared` asks otherwise. Paths are compared the
 //!   way the pickers match them (`model_scan::paths_eq`: separators and ASCII
@@ -40,8 +40,8 @@ use crate::strings;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::model_profiles::ModelProfile;
 use crate::model_scan::{self, Category};
-use crate::presets::ModelProfile;
 
 /// Which key of the model profile links the file.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -247,7 +247,7 @@ pub fn selection_summary(files: &[LinkedFile], ticked: &[bool]) -> String {
         .map(|(f, _)| f)
         .collect();
     if chosen.is_empty() {
-        return strings::t("delete-preset-only");
+        return strings::t("delete-model-profile-only");
     }
     let bytes: u64 = chosen.iter().map(|f| f.size).sum();
     let names: Vec<String> = chosen.iter().map(|f| f.name()).collect();
@@ -389,7 +389,7 @@ fn component_eq(a: &str, b: &str) -> bool {
 /// file could not be removed; a file kept because another model profile uses it is
 /// the rule working, not a failure.
 pub fn report(id: &str, out: &Outcome) -> (String, bool) {
-    let mut parts = vec![strings::fill("deleted-preset", &[&id])];
+    let mut parts = vec![strings::fill("deleted-model-profile", &[&id])];
     if !out.removed.is_empty() {
         let bytes: u64 = out.removed.iter().map(|(_, s)| s).sum();
         let names: Vec<String> = out.removed.iter().map(|(f, _)| file_name(f)).collect();

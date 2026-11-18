@@ -13,7 +13,7 @@
 //! - `id` as the file spells it: the id in the path is matched without case.
 //! - `engine` is the engine whose model profile file holds the section (llama.cpp,
 //!   the only engine) and `engineAvailable` is true for it: the same two
-//!   fields as the list's row (`tests/presets.rs`), so the page shows one
+//!   fields as the list's row (`tests/model_profiles.rs`), so the page shows one
 //!   engine cell in both.
 //! - `enabled`: true for a section of `models.ini`, false for one that is
 //!   only in `models.ini.disabled`. A section in both files is the enabled
@@ -46,7 +46,7 @@
 //!   `*` or its percent form), is not this read: it is no path of this API, so
 //!   the router answers its own 404, with no body, and no manager is asked.
 //! - The bff's own error answers, as its served siblings (`tests/server.rs`,
-//!   `tests/presets.rs`), `{"key", "args"}` and never the manager's detail:
+//!   `tests/model_profiles.rs`), `{"key", "args"}` and never the manager's detail:
 //!   401 `session-required` with the manager not connected to, 403
 //!   `session-not-administrator` when the manager refuses the read for the
 //!   signed-in user (which ends that session), 503 `client-unavailable` when

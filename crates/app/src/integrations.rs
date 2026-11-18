@@ -6,7 +6,7 @@
 //! Claude Code card instead (copy-paste only, never written to disk).
 //!
 //! The model list is not a selection of its own: it is every ENABLED model profile
-//! (`presets::load_all`, i.e. models.ini), the same set llama-server serves,
+//! (`model_profiles::load_all`, i.e. models.ini), the same set llama-server serves,
 //! so switching a model profile off in the Models tab is also how it leaves OpenCode.
 //! It used to be a second checkbox list here, which could offer OpenCode a model
 //! llama-server had no model profile for, or hide one it did.
@@ -66,8 +66,8 @@ use serde_json::{json, Value};
 
 use crate::gguf;
 use crate::ini;
+use crate::model_profiles;
 use crate::paths;
-use crate::presets;
 use crate::server_control::{self, ConfigFile};
 use crate::strings;
 
@@ -264,7 +264,7 @@ pub fn save_opencode_models(base_url: &str, api_key: ApiKey, keep: &[String]) ->
 /// The entries Save writes, one per ENABLED model profile, in models.ini order.
 fn desired_models() -> Vec<(String, Value)> {
     let sections = server_control::read_sections(ConfigFile::Models);
-    presets::load_all()
+    model_profiles::load_all()
         .into_iter()
         .map(|p| {
             let context = advertised(&p, fit_on(&sections, &p.id), trained_ctx(&p));
@@ -503,7 +503,9 @@ fn env_script(
 /// advertised context, so the snippet can show the context and compaction lines,
 /// else the first model profile, without a context (see `claude_code_env_script`).
 /// Reads models.ini (the raw `fit` key, `fit_on`) and the GGUF headers.
-pub fn claude_code_example(enabled: &[presets::ModelProfile]) -> Option<(&str, Option<i64>)> {
+pub fn claude_code_example(
+    enabled: &[model_profiles::ModelProfile],
+) -> Option<(&str, Option<i64>)> {
     let sections = server_control::read_sections(ConfigFile::Models);
     let mut first = None;
     for p in enabled {
@@ -602,7 +604,10 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: ApiKey) -> Re
 /// One opencode model entry. `context` is `advertised`'s: `None` (the fit sizes
 /// the context at load time) leaves the `limit` object out entirely (module
 /// header: opencode then compacts on llama-server's rejection).
-fn model_profile_to_opencode_model(p: &presets::ModelProfile, context: Option<i64>) -> Value {
+fn model_profile_to_opencode_model(
+    p: &model_profiles::ModelProfile,
+    context: Option<i64>,
+) -> Value {
     let name = friendly_model_name(&p.id, &p.model);
     let mut entry = json!({ "name": name });
 
@@ -649,7 +654,7 @@ fn compact_pct(context: i64) -> i64 {
 /// `ctx-size` will actually load (see `effective_ctx`). A header read, so it costs
 /// nothing next to the file it describes; `None` when the GGUF (or ggml-base.dll)
 /// can't be read, and then the fallback bites.
-fn trained_ctx(p: &presets::ModelProfile) -> Option<u32> {
+fn trained_ctx(p: &model_profiles::ModelProfile) -> Option<u32> {
     gguf::read_model_info(Path::new(&p.model))
         .map(|i| i.n_ctx_train)
         .filter(|c| *c > 0)
@@ -660,7 +665,11 @@ fn trained_ctx(p: &presets::ModelProfile) -> Option<u32> {
 /// both derive it from: `effective_ctx`, unless the fit may cut it at load time
 /// (`fit_may_cut_ctx`), in which case `None`, no number to publish. `fit_on` is
 /// the raw key's verdict (`fit_on`), `n_ctx_train` the GGUF header's.
-fn advertised(p: &presets::ModelProfile, fit_on: bool, n_ctx_train: Option<u32>) -> Option<i64> {
+fn advertised(
+    p: &model_profiles::ModelProfile,
+    fit_on: bool,
+    n_ctx_train: Option<u32>,
+) -> Option<i64> {
     if fit_may_cut_ctx(p, fit_on, n_ctx_train) {
         None
     } else {
@@ -699,7 +708,7 @@ fn fit_on(sections: &[ini::Section], id: &str) -> bool {
 /// first spelling (`common_preset::to_args`, `common_arg::operator<`), so `-c`
 /// is parsed before `-fitc`, which overwrites the sentinel. The int32 is read as
 /// `uint32_t` upstream, hence the wrapping cast (`fit-ctx = -1` is the sentinel).
-fn fit_min_ctx(p: &presets::ModelProfile) -> u32 {
+fn fit_min_ctx(p: &model_profiles::ModelProfile) -> u32 {
     match p.fit_ctx {
         Some(n) => n as u32,
         None if p.ctx_size == Some(0) => u32::MAX,
@@ -734,7 +743,11 @@ fn fit_min_ctx(p: &presets::ModelProfile) -> u32 {
 /// when everything fits), which no static reading can know, hence "may".
 /// `n-gpu-layers` set by hand does not exclude it: step 2 runs before step 3's
 /// "n_gpu_layers already set by user, abort", and its context cut stays.
-fn fit_may_cut_ctx(p: &presets::ModelProfile, fit_on: bool, n_ctx_train: Option<u32>) -> bool {
+fn fit_may_cut_ctx(
+    p: &model_profiles::ModelProfile,
+    fit_on: bool,
+    n_ctx_train: Option<u32>,
+) -> bool {
     if !fit_on || p.split_mode.trim().eq_ignore_ascii_case("tensor") {
         return false;
     }
@@ -755,7 +768,7 @@ fn fit_may_cut_ctx(p: &presets::ModelProfile, fit_on: bool, n_ctx_train: Option<
 /// tools/server/server.cpp sizes the KV pool to `n_parallel * kv-unified-per-slot`
 /// (`ctx_pool_auto_sized`: a cap above 0, `n_ctx == 0` and `fit_params_min_ctx
 /// != UINT32_MAX`; independent of whether the fit itself runs).
-fn pool_sized_per_slot(p: &presets::ModelProfile) -> bool {
+fn pool_sized_per_slot(p: &model_profiles::ModelProfile) -> bool {
     p.kv_unified_per_slot.is_some_and(|n| n > 0)
         && p.ctx_size.unwrap_or(0) == 0
         && fit_min_ctx(p) != u32::MAX
@@ -807,7 +820,7 @@ fn pool_sized_per_slot(p: &presets::ModelProfile) -> bool {
 /// to `n_ctx_orig_yarn / freq_scale` at context creation (#28030), which raises
 /// the cap this function reads from the header. Add the field first, then the
 /// rule, in that order.
-fn effective_ctx(p: &presets::ModelProfile, n_ctx_train: Option<u32>) -> i64 {
+fn effective_ctx(p: &model_profiles::ModelProfile, n_ctx_train: Option<u32>) -> i64 {
     let trained = n_ctx_train.map(i64::from);
     let pinned = p.parallel.filter(|n| *n > 0).map(i64::from);
     // Auto parallel is 4 slots (tools/server/server.cpp).
@@ -1040,7 +1053,7 @@ mod tests {
 
     #[test]
     fn opencode_model_reasoning_emitted_only_when_not_auto() {
-        let mut p = presets::ModelProfile {
+        let mut p = model_profiles::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
@@ -1063,14 +1076,14 @@ mod tests {
 
     #[test]
     fn opencode_model_limit_math() {
-        let mut p = presets::ModelProfile {
+        let mut p = model_profiles::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             parallel: Some(1),
             ..Default::default()
         };
         // An explicit ctx-size: the fit cannot cut it, so a number is advertised.
-        let entry = |p: &presets::ModelProfile| {
+        let entry = |p: &model_profiles::ModelProfile| {
             model_profile_to_opencode_model(p, advertised(p, true, None))
         };
         // Output is a quarter of the advertised context…
@@ -1098,7 +1111,7 @@ mod tests {
     /// one an earlier write left, while the rest of the file stays.
     #[test]
     fn autofit_model_has_no_limit_and_a_rewrite_drops_the_stale_one() {
-        let p = presets::ModelProfile {
+        let p = model_profiles::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             reasoning: "on".into(),
@@ -1140,65 +1153,67 @@ mod tests {
     #[test]
     fn fit_may_cut_ctx_follows_upstream() {
         const TRAINED: Option<u32> = Some(262_144);
-        let base = presets::ModelProfile::default();
-        let cut = |p: &presets::ModelProfile, fit: bool, t: Option<u32>| fit_may_cut_ctx(p, fit, t);
+        let base = model_profiles::ModelProfile::default();
+        let cut = |p: &model_profiles::ModelProfile, fit: bool, t: Option<u32>| {
+            fit_may_cut_ctx(p, fit, t)
+        };
 
         // The plain autofit model profile: fit on, no ctx-size.
         assert!(cut(&base, true, TRAINED));
         // 1. Fit off: the context is exactly what effective_ctx derives.
         assert!(!cut(&base, false, TRAINED));
         // 2. split-mode tensor: the fit throws before doing anything.
-        let tensor = presets::ModelProfile {
+        let tensor = model_profiles::ModelProfile {
             split_mode: "tensor".into(),
             ..Default::default()
         };
         assert!(!cut(&tensor, true, TRAINED));
-        let layer = presets::ModelProfile {
+        let layer = model_profiles::ModelProfile {
             split_mode: "layer".into(),
             ..Default::default()
         };
         assert!(cut(&layer, true, TRAINED));
         // 3. An explicit ctx-size is "set by user -> no change".
-        let explicit = presets::ModelProfile {
+        let explicit = model_profiles::ModelProfile {
             ctx_size: Some(65_536),
             ..Default::default()
         };
         assert!(!cut(&explicit, true, TRAINED));
         // 3/5. ctx-size = 0 is automatic but sets the full-context sentinel...
-        let zero = presets::ModelProfile {
+        let zero = model_profiles::ModelProfile {
             ctx_size: Some(0),
             ..Default::default()
         };
         assert!(!cut(&zero, true, TRAINED));
         assert!(!cut(&zero, true, None));
         // ...which a fit-ctx overwrites (`-fitc` is parsed after `-c`).
-        let zero_floor = presets::ModelProfile {
+        let zero_floor = model_profiles::ModelProfile {
             ctx_size: Some(0),
             fit_ctx: Some(8192),
             ..Default::default()
         };
         assert!(cut(&zero_floor, true, TRAINED));
         // fit-ctx = -1 is the sentinel itself.
-        let sentinel = presets::ModelProfile {
+        let sentinel = model_profiles::ModelProfile {
             fit_ctx: Some(-1),
             ..Default::default()
         };
         assert!(!cut(&sentinel, true, TRAINED));
         // 4. kv-unified-per-slot with ctx-size absent sizes the pool first.
-        let per_slot = presets::ModelProfile {
+        let per_slot = model_profiles::ModelProfile {
             kv_unified_per_slot: Some(32_768),
             ..Default::default()
         };
         assert!(!cut(&per_slot, true, TRAINED));
         // Under ctx-size = 0 the pool is not sized, but the sentinel stops the cut.
-        let per_slot_zero = presets::ModelProfile {
+        let per_slot_zero = model_profiles::ModelProfile {
             ctx_size: Some(0),
             kv_unified_per_slot: Some(32_768),
             ..Default::default()
         };
         assert!(!cut(&per_slot_zero, true, TRAINED));
         // ...and with a fit-ctx beside ctx-size = 0 the pool is sized again.
-        let per_slot_floor = presets::ModelProfile {
+        let per_slot_floor = model_profiles::ModelProfile {
             ctx_size: Some(0),
             fit_ctx: Some(8192),
             kv_unified_per_slot: Some(32_768),
@@ -1208,7 +1223,7 @@ mod tests {
         // 5. A trained context at or below the floor leaves nothing to cut.
         assert!(!cut(&base, true, Some(4096)));
         assert!(cut(&base, true, Some(4097)));
-        let floor = presets::ModelProfile {
+        let floor = model_profiles::ModelProfile {
             fit_ctx: Some(300_000),
             ..Default::default()
         };
@@ -1216,7 +1231,7 @@ mod tests {
         // An unreadable header counts as above the floor.
         assert!(cut(&base, true, None));
         // n-gpu-layers by hand does not stop the context cut (step 2 runs first).
-        let ngl = presets::ModelProfile {
+        let ngl = model_profiles::ModelProfile {
             n_gpu_layers: Some(99),
             ..Default::default()
         };
@@ -1226,7 +1241,7 @@ mod tests {
     /// The pool sizing follows the same sentinel the fit reads.
     #[test]
     fn per_slot_pool_sizing_honours_a_fit_ctx_beside_ctx_size_zero() {
-        let p = presets::ModelProfile {
+        let p = model_profiles::ModelProfile {
             ctx_size: Some(0),
             parallel: Some(2),
             fit_ctx: Some(8192),
@@ -1301,7 +1316,7 @@ mod tests {
         const NONE: Option<u32> = None;
         let effective_ctx = |ctx_size, parallel, trained| {
             effective_ctx(
-                &presets::ModelProfile {
+                &model_profiles::ModelProfile {
                     ctx_size,
                     parallel,
                     ..Default::default()
@@ -1338,7 +1353,7 @@ mod tests {
         const TRAINED: Option<u32> = Some(262_144);
         let ctx = |ctx_size, parallel, kv_unified, per_slot| {
             effective_ctx(
-                &presets::ModelProfile {
+                &model_profiles::ModelProfile {
                     ctx_size,
                     parallel,
                     kv_unified,

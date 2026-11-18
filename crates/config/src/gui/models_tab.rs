@@ -37,49 +37,54 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_select_preset(move |index| {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            // Switching model profiles replaces the form; unsaved edits need the
-            // discard confirmation first.
-            let dirty = app.global::<AppState>().get_preset_dirty();
-            // The action may run later (after the discard dialog), and the
-            // list can be re-read meanwhile (a background download creating
-            // its model profile, gui/downloads.rs): park the model profile's ID, not its
-            // index, and resolve it when the action runs.
-            let Some(id) = usize::try_from(index).ok().and_then(|i| {
-                Some(
-                    state
-                        .borrow()
-                        .model_profiles
-                        .get(i)?
-                        .model_profile
-                        .id
-                        .clone(),
-                )
-            }) else {
-                return;
-            };
-            let action: Box<dyn Fn()> = {
-                let app_weak = app_weak.clone();
-                let state = state.clone();
-                Box::new(move || {
-                    let Some(app) = app_weak.upgrade() else {
-                        return;
-                    };
-                    let index = state
-                        .borrow()
-                        .model_profiles
-                        .iter()
-                        .position(|l| l.model_profile.id == id);
-                    if let Some(index) = index {
-                        do_select_model_profile(&app, &state, i32::try_from(index).unwrap_or(-1));
-                    }
-                })
-            };
-            confirm_discard_then(&app, &state, dirty, action);
-        });
+        app.global::<AppState>()
+            .on_select_model_profile(move |index| {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                // Switching model profiles replaces the form; unsaved edits need the
+                // discard confirmation first.
+                let dirty = app.global::<AppState>().get_model_profile_dirty();
+                // The action may run later (after the discard dialog), and the
+                // list can be re-read meanwhile (a background download creating
+                // its model profile, gui/downloads.rs): park the model profile's ID, not its
+                // index, and resolve it when the action runs.
+                let Some(id) = usize::try_from(index).ok().and_then(|i| {
+                    Some(
+                        state
+                            .borrow()
+                            .model_profiles
+                            .get(i)?
+                            .model_profile
+                            .id
+                            .clone(),
+                    )
+                }) else {
+                    return;
+                };
+                let action: Box<dyn Fn()> = {
+                    let app_weak = app_weak.clone();
+                    let state = state.clone();
+                    Box::new(move || {
+                        let Some(app) = app_weak.upgrade() else {
+                            return;
+                        };
+                        let index = state
+                            .borrow()
+                            .model_profiles
+                            .iter()
+                            .position(|l| l.model_profile.id == id);
+                        if let Some(index) = index {
+                            do_select_model_profile(
+                                &app,
+                                &state,
+                                i32::try_from(index).unwrap_or(-1),
+                            );
+                        }
+                    })
+                };
+                confirm_discard_then(&app, &state, dirty, action);
+            });
     }
     // The MoE cache hint's floors, recomputed by Slint whenever the form (or
     // `model_info_serial`) changes; see `moe_cache_floor_hint` in state.slint.
@@ -94,20 +99,22 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // over `form.spec_type` so Slint re-reads them on every change of it.
     {
         let s = app.global::<AppState>();
-        s.on_spec_type_drafter(|t| match presets::spec_type_drafter(&t) {
+        s.on_spec_type_drafter(|t| match model_profiles::spec_type_drafter(&t) {
             "" => "none".into(),
             d => d.into(),
         });
-        s.on_spec_type_has(|t, entry| presets::spec_type_has(&t, &entry));
-        s.on_spec_type_with_drafter(|t, d| form_spec_type(presets::spec_type_with_drafter(&t, &d)));
+        s.on_spec_type_has(|t, entry| model_profiles::spec_type_has(&t, &entry));
+        s.on_spec_type_with_drafter(|t, d| {
+            form_spec_type(model_profiles::spec_type_with_drafter(&t, &d))
+        });
         s.on_spec_type_with_ngram(|t, entry, on| {
-            form_spec_type(presets::spec_type_with_ngram(&t, &entry, on))
+            form_spec_type(model_profiles::spec_type_with_ngram(&t, &entry, on))
         });
     }
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_save_preset(move || {
+        app.global::<AppState>().on_save_model_profile(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -119,8 +126,8 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // Gated on `model_info_ready`: false means the GGUF could not be
             // read, where "no MTP metadata" is not evidence of no MTP.
             if s.get_model_info_ready() {
-                presets::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
-                presets::prune_inactive_moe_cache(&mut p, s.get_model_info_has_moe());
+                model_profiles::prune_inactive_draft_keys(&mut p, s.get_model_info_embeds_mtp());
+                model_profiles::prune_inactive_moe_cache(&mut p, s.get_model_info_has_moe());
                 // The cache's one model-dependent refusal: below one token's
                 // experts in every layer group the context throws and the model
                 // never loads. The LOAD floor is a true lower bound
@@ -139,9 +146,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             }
             // The form shows only the selected n-gram type's tuning, so the other
             // types' keys would sit hidden in the INI (needs no GGUF).
-            presets::prune_unused_ngram_keys(&mut p);
+            model_profiles::prune_unused_ngram_keys(&mut p);
             if p.id.is_empty() {
-                set_status(&app, strings::t("preset-id-empty"), true);
+                set_status(&app, strings::t("model-profile-id-empty"), true);
                 return;
             }
             if p.model.is_empty() {
@@ -159,9 +166,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 );
                 return;
             }
-            match presets::save(&p) {
+            match model_profiles::save(&p) {
                 Ok(()) => {
-                    set_status(&app, strings::fill("preset-saved", &[&p.id]), false);
+                    set_status(&app, strings::fill("model-profile-saved", &[&p.id]), false);
                     // Rebuild + re-select the just-saved model profile (re-baselining the
                     // form so Save/Revert go disabled) and refresh the dependents.
                     model_profile_written(&app, &state, Some(&p.id));
@@ -173,7 +180,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_revert_preset(move || {
+        app.global::<AppState>().on_revert_model_profile(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -182,7 +189,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             reload_model_profiles(&app, &state, None);
             refresh_file_options(&app, &state);
             let label = app.global::<AppState>().get_form().id;
-            set_status(&app, strings::fill("preset-reloaded", &[&label]), false);
+            set_status(
+                &app,
+                strings::fill("model-profile-reloaded", &[&label]),
+                false,
+            );
         });
     }
     {
@@ -220,7 +231,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_delete_preset(move |id| {
+        app.global::<AppState>().on_delete_model_profile(move |id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -232,7 +243,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             }
             // The section first: a model profile that cannot be removed keeps its
             // files too (they would be the files it still loads).
-            if let Err(e) = presets::delete(id.as_str()) {
+            if let Err(e) = model_profiles::delete(id.as_str()) {
                 set_status(&app, strings::fill("delete-failed", &[&e]), true);
                 return;
             }
@@ -245,8 +256,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             // reload_model_profiles would otherwise select. refresh_file_options is
             // also the rescan that drops deleted files from the pickers.
             reload_model_profiles(&app, &state, None);
-            app.global::<AppState>().set_selected_preset_index(-1);
-            apply_form(&app, PresetForm::default());
+            app.global::<AppState>()
+                .set_selected_model_profile_index(-1);
+            apply_form(&app, ModelProfileForm::default());
             refresh_file_options(&app, &state);
             model_profiles_moved(&app, &state);
         });
@@ -255,20 +267,20 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // Holds the model profile a Clone is based on, between opening the picker and the
     // user confirming a target model. `new_dialog_source_id == ""` means the
     // picker is in plain "New" (empty-model-profile) mode; non-empty means Clone.
-    let pending_clone_base: Rc<RefCell<Option<presets::ModelProfile>>> =
+    let pending_clone_base: Rc<RefCell<Option<model_profiles::ModelProfile>>> =
         Rc::new(RefCell::new(None));
     {
         let app_weak = app.as_weak();
         let state = state.clone();
         let pending_clone_base = pending_clone_base.clone();
-        app.global::<AppState>().on_new_preset(move || {
+        app.global::<AppState>().on_new_model_profile(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             // Committing the new model profile will replace the form (model_profile_written
             // reloads + reselects), so guard dirty edits at the entry point:
             // a discard dialog can't stack on the picker modal later.
-            let dirty = app.global::<AppState>().get_preset_dirty();
+            let dirty = app.global::<AppState>().get_model_profile_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let state = state.clone();
@@ -287,13 +299,13 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
         let app_weak = app.as_weak();
         let state = state.clone();
         let pending_clone_base = pending_clone_base.clone();
-        app.global::<AppState>().on_clone_preset(move || {
+        app.global::<AppState>().on_clone_model_profile(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             // Same entry-point guard as New… (the clone's commit also replaces
             // the form).
-            let dirty = app.global::<AppState>().get_preset_dirty();
+            let dirty = app.global::<AppState>().get_model_profile_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 let state = state.clone();
@@ -351,7 +363,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             };
             // Same entry-point guard as New…/Clone…: committing the rename
             // reloads the form from disk (model_profile_written), discarding edits.
-            let dirty = app.global::<AppState>().get_preset_dirty();
+            let dirty = app.global::<AppState>().get_model_profile_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
                 Box::new(move || {
@@ -372,15 +384,15 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
         let app_weak = app.as_weak();
         let state = state.clone();
         app.global::<AppState>()
-            .on_rename_preset(move |old_id, new_id| {
+            .on_rename_model_profile(move |old_id, new_id| {
                 let Some(app) = app_weak.upgrade() else {
                     return;
                 };
-                match presets::rename(old_id.as_str(), new_id.as_str()) {
+                match model_profiles::rename(old_id.as_str(), new_id.as_str()) {
                     Ok(()) => {
                         set_status(
                             &app,
-                            strings::fill("preset-renamed", &[&old_id, &new_id]),
+                            strings::fill("model-profile-renamed", &[&old_id, &new_id]),
                             false,
                         );
                         model_profile_written(&app, &state, Some(new_id.as_str()));
@@ -393,7 +405,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
         let app_weak = app.as_weak();
         let state = state.clone();
         app.global::<AppState>()
-            .on_toggle_preset_enabled(move |id, enabled| {
+            .on_toggle_model_profile_enabled(move |id, enabled| {
                 let Some(app) = app_weak.upgrade() else {
                     return;
                 };
@@ -401,20 +413,20 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // moves the section between the two files without changing a
                 // word of it, so an unsaved edit stays in the form and its Save
                 // follows the model profile into whichever file now holds it.
-                match presets::set_enabled(id.as_str(), enabled) {
+                match model_profiles::set_enabled(id.as_str(), enabled) {
                     Ok(()) => {
                         // The router reads models.ini once, at launch.
                         let key = match (app.global::<AppState>().get_server_running(), enabled) {
-                            (true, true) => strings::key("preset-enabled-restart"),
-                            (true, false) => strings::key("preset-disabled-restart"),
-                            (false, true) => strings::key("preset-enabled"),
-                            (false, false) => strings::key("preset-disabled"),
+                            (true, true) => strings::key("model-profile-enabled-restart"),
+                            (true, false) => strings::key("model-profile-disabled-restart"),
+                            (false, true) => strings::key("model-profile-enabled"),
+                            (false, false) => strings::key("model-profile-disabled"),
                         };
                         set_status(&app, strings::fill(key, &[&id]), false);
                     }
                     Err(e) => set_status(
                         &app,
-                        strings::fill("preset-switch-failed", &[&id, &e]),
+                        strings::fill("model-profile-switch-failed", &[&id, &e]),
                         true,
                     ),
                 }
@@ -428,13 +440,14 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     {
         let app_weak = app.as_weak();
         let state = state.clone();
-        app.global::<AppState>().on_filter_presets(move |q| {
+        app.global::<AppState>().on_filter_model_profiles(move |q| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let st = state.borrow();
             let summaries = model_profile_summaries(&st.model_profiles, q.as_str());
-            app.global::<AppState>().set_presets(model(summaries));
+            app.global::<AppState>()
+                .set_model_profiles(model(summaries));
         });
     }
     {
@@ -521,7 +534,7 @@ fn wire_tensor_table(app: &AppWindow) {
     let s = app.global::<AppState>();
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_add(move || {
+        s.on_model_profile_tensor_add(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -532,7 +545,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_remove(move |index| {
+        s.on_model_profile_tensor_remove(move |index| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -543,7 +556,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_kind(move |index, kind| {
+        s.on_model_profile_tensor_kind(move |index, kind| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -558,7 +571,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_device(move |index, device| {
+        s.on_model_profile_tensor_device(move |index, device| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -573,7 +586,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_pattern(move |index, pattern| {
+        s.on_model_profile_tensor_pattern(move |index, pattern| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -588,7 +601,7 @@ fn wire_tensor_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_layers(move |index, layers| {
+        s.on_model_profile_tensor_layers(move |index, layers| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -612,7 +625,7 @@ fn wire_tensor_picker(app: &AppWindow) {
     let s = app.global::<AppState>();
     {
         let app_weak = app.as_weak();
-        s.on_preset_tensor_pick(move |index| {
+        s.on_model_profile_tensor_pick(move |index| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -711,7 +724,7 @@ fn wire_gpu_table(app: &AppWindow) {
     let s = app.global::<AppState>();
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_toggle(move |id| {
+        s.on_model_profile_gpu_toggle(move |id| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -722,7 +735,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_move(move |id, delta| {
+        s.on_model_profile_gpu_move(move |id, delta| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -733,7 +746,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_weight(move |id, weight| {
+        s.on_model_profile_gpu_weight(move |id, weight| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -744,7 +757,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_blocks(move |id, blocks| {
+        s.on_model_profile_gpu_blocks(move |id, blocks| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -769,7 +782,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_auto(move || {
+        s.on_model_profile_gpu_auto(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -780,7 +793,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_gpu_even(move || {
+        s.on_model_profile_gpu_even(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -791,7 +804,7 @@ fn wire_gpu_table(app: &AppWindow) {
     }
     {
         let app_weak = app.as_weak();
-        s.on_preset_split_mode_picked(move |v| {
+        s.on_model_profile_split_mode_picked(move |v| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -816,7 +829,8 @@ fn do_select_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, index: i
         .ok()
         .and_then(|i| st.model_profiles.get(i))
     {
-        app.global::<AppState>().set_selected_preset_index(index);
+        app.global::<AppState>()
+            .set_selected_model_profile_index(index);
         apply_form(app, model_profile_to_form(&l.model_profile));
         drop(st);
         refresh_file_options(app, state);
@@ -829,7 +843,7 @@ fn do_select_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, index: i
 fn open_new_dialog(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    pending_clone_base: &Rc<RefCell<Option<presets::ModelProfile>>>,
+    pending_clone_base: &Rc<RefCell<Option<model_profiles::ModelProfile>>>,
 ) {
     *pending_clone_base.borrow_mut() = None;
     populate_dialog_models(app, state);
@@ -845,19 +859,19 @@ fn open_new_dialog(
 fn open_clone_dialog(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    pending_clone_base: &Rc<RefCell<Option<presets::ModelProfile>>>,
+    pending_clone_base: &Rc<RefCell<Option<model_profiles::ModelProfile>>>,
 ) {
     let s = app.global::<AppState>();
     let selected = {
         let st = state.borrow();
-        let idx = s.get_selected_preset_index();
+        let idx = s.get_selected_model_profile_index();
         usize::try_from(idx)
             .ok()
             .and_then(|i| st.model_profiles.get(i))
             .map(|l| l.model_profile.clone())
     };
     let Some(p) = selected else {
-        set_status(app, strings::t("select-preset-to-clone"), true);
+        set_status(app, strings::t("select-model-profile-to-clone"), true);
         return;
     };
     populate_dialog_models(app, state);
@@ -899,9 +913,12 @@ fn form_spec_type(spec_type: String) -> SharedString {
 ///
 /// This only fires for a draft FILE. Embedded MTP heads (spec-type alone) never
 /// reach it: llama.cpp ignores both keys for them and the UI disables both fields.
-fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
+fn apply_draft_pick(form: &mut ModelProfileForm, value: &str, spec: &str) {
     form.model_draft = value.into();
-    form.spec_type = form_spec_type(presets::spec_type_with_drafter(&form.spec_type, spec));
+    form.spec_type = form_spec_type(model_profiles::spec_type_with_drafter(
+        &form.spec_type,
+        spec,
+    ));
     if !value.is_empty() && form.n_gpu_layers_draft_auto && form.device_draft.is_empty() {
         form.n_gpu_layers_draft_auto = false;
         // Pinning the draft to a different device than the model is the exact
@@ -929,7 +946,7 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
 /// buffer (ROCm1) that cannot run the operation" (`docs/amd_ai_pro_r9700.md`
 /// section 4: the last device takes the head); a reduced-vocab drafter ships its own head and runs
 /// on either card, so the last one is safe for both.
-fn draft_pin_device(form: &PresetForm, spec: &str) -> Option<String> {
+fn draft_pin_device(form: &ModelProfileForm, spec: &str) -> Option<String> {
     let devices = gpu_split::parse_device_list(form.device.as_str());
     let shares_target_head = matches!(spec, "draft-dflash" | "draft-dspark");
     if shares_target_head
@@ -1016,15 +1033,20 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
     if id.is_empty() {
         return;
     }
-    let listed = presets::load_listed();
+    let listed = model_profiles::load_listed();
     let Some(target) = listed
         .iter()
         .find(|l| l.model_profile.id.eq_ignore_ascii_case(&id))
     else {
-        set_status(app, strings::fill("preset-not-on-disk", &[&id]), true);
+        set_status(
+            app,
+            strings::fill("model-profile-not-on-disk", &[&id]),
+            true,
+        );
         return;
     };
-    let all: Vec<presets::ModelProfile> = listed.iter().map(|l| l.model_profile.clone()).collect();
+    let all: Vec<model_profiles::ModelProfile> =
+        listed.iter().map(|l| l.model_profile.clone()).collect();
     let files = crate::linked_files::linked_files(&target.model_profile, &all);
     let dialog = DeleteDialog {
         id: target.model_profile.id.clone(),
@@ -1075,7 +1097,7 @@ fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::
     if !dialog.id.eq_ignore_ascii_case(id) {
         return Default::default();
     }
-    let all: Vec<presets::ModelProfile> = presets::load_listed()
+    let all: Vec<model_profiles::ModelProfile> = model_profiles::load_listed()
         .into_iter()
         .map(|l| l.model_profile)
         .collect();
@@ -1325,36 +1347,36 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
 /// the switched-off ones included (a namesake parked in the disabled file would
 /// collide the day it is switched back on). The id derives from the file name,
 /// so picking a model that already has a model profile (or a different file that
-/// sanitizes to the same id) would otherwise make `presets::save`
+/// sanitizes to the same id) would otherwise make `model_profiles::save`
 /// wholesale-replace the tuned section. Both New and Clone must route through
 /// this: first free `<id>`, `<id>-2`, …, compared ignoring case, with the
 /// `model profile` fallback for a name that sanitizes to nothing (an empty id would
 /// also be undeletable: on_delete_preset early-returns on one). The rule
-/// itself is `presets::new_model_profile_id`, shared with the Hugging Face download.
+/// itself is `model_profiles::new_model_profile_id`, shared with the Hugging Face download.
 fn deconflicted_id(path_str: &str) -> String {
-    let existing: Vec<String> = presets::load_listed()
+    let existing: Vec<String> = model_profiles::load_listed()
         .into_iter()
         .map(|l| l.model_profile.id)
         .collect();
-    presets::new_model_profile_id(path_str, &existing)
+    model_profiles::new_model_profile_id(path_str, &existing)
 }
 
 fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
-    let p = presets::ModelProfile::new_default(id.clone(), path_str);
-    commit_new_model_profile(app, state, p, strings::fill("preset-added", &[&id]));
+    let p = model_profiles::ModelProfile::new_default(id.clone(), path_str);
+    commit_new_model_profile(app, state, p, strings::fill("model-profile-added", &[&id]));
 }
 
 fn run_new_clone(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    base: presets::ModelProfile,
+    base: model_profiles::ModelProfile,
     path: PathBuf,
 ) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
-    let mut cloned = presets::ModelProfile {
+    let mut cloned = model_profiles::ModelProfile {
         id: id.clone(),
         model: path_str,
         ..base.clone()
@@ -1371,8 +1393,10 @@ fn run_new_clone(
     // model says nothing about.
     let dropped = match gguf::read_model_info(&path) {
         Some(info) => {
-            let mut dropped =
-                presets::prune_inactive_draft_keys(&mut cloned, info.nextn_predict_layers > 0);
+            let mut dropped = model_profiles::prune_inactive_draft_keys(
+                &mut cloned,
+                info.nextn_predict_layers > 0,
+            );
             let below_floor = cloned.moe_cache_mib.is_some_and(|v| {
                 let floor = gguf::read_tensors(&path)
                     .and_then(|t| {
@@ -1389,7 +1413,7 @@ fn run_new_clone(
                     .map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
                 v > 0 && (v as u64) < floor
             });
-            if presets::prune_inactive_moe_cache(&mut cloned, info.is_moe) || below_floor {
+            if model_profiles::prune_inactive_moe_cache(&mut cloned, info.is_moe) || below_floor {
                 cloned.moe_cache_mib = None;
                 dropped.push("moe-cache-mib");
             }
@@ -1406,17 +1430,17 @@ fn run_new_clone(
         app,
         state,
         cloned,
-        strings::fill("preset-cloned", &[&base.id, &id, &note]),
+        strings::fill("model-profile-cloned", &[&base.id, &id, &note]),
     );
 }
 
 fn commit_new_model_profile(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    p: presets::ModelProfile,
+    p: model_profiles::ModelProfile,
     success_status: String,
 ) {
-    let saved = presets::save(&p);
+    let saved = model_profiles::save(&p);
     finish_new_model_profile(app, state, &p, saved, success_status);
 }
 
@@ -1425,7 +1449,7 @@ fn commit_new_model_profile(
 fn finish_new_model_profile(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    p: &presets::ModelProfile,
+    p: &model_profiles::ModelProfile,
     saved: std::io::Result<()>,
     success_status: String,
 ) {
@@ -1440,15 +1464,15 @@ fn finish_new_model_profile(
     }
 }
 
-// Pure-struct tests (no Slint backend needed: PresetForm is a plain generated
+// Pure-struct tests (no Slint backend needed: ModelProfileForm is a plain generated
 // struct). The gemma4-MTP auto-pin policy used to live untestable inside the
 // .slint pick handler; these pin its three branches.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn form_with_auto_draft() -> PresetForm {
-        PresetForm {
+    fn form_with_auto_draft() -> ModelProfileForm {
+        ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             ..Default::default()
         }
@@ -1458,7 +1482,7 @@ mod tests {
     fn pick_pins_the_draft_to_the_model_profiles_first_device() {
         // The model runs on CUDA1 then CUDA0; the draft must land on the head
         // of that list: model and draft must share ONE device.
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             device: "CUDA1,CUDA0".into(),
             ..Default::default()
@@ -1473,7 +1497,7 @@ mod tests {
     // the draft context aborts at load.
     #[test]
     fn pick_pins_a_dflash_draft_to_the_device_holding_the_output_head() {
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             device: "ROCm0,ROCm1".into(),
             tensor_split: "1,1".into(),
@@ -1483,7 +1507,7 @@ mod tests {
         assert_eq!(f.device_draft, "ROCm1");
 
         // A device with no share holds no layers, so not the head either.
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             device: "ROCm0,ROCm1".into(),
             tensor_split: "1,0".into(),
@@ -1493,7 +1517,7 @@ mod tests {
         assert_eq!(f.device_draft, "ROCm0");
 
         // Split-mode none runs only the first device: everything is there.
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             device: "ROCm0,ROCm1".into(),
             split_mode: "none".into(),
@@ -1516,7 +1540,7 @@ mod tests {
     #[test]
     fn pick_leaves_a_user_configured_draft_alone() {
         // Auto already off → the user chose an offload; don't second-guess it.
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: false,
             n_gpu_layers_draft: 7,
             ..Default::default()
@@ -1526,7 +1550,7 @@ mod tests {
         assert_eq!(f.device_draft, "");
 
         // Device already pinned → keep it, even with auto on.
-        let mut f = PresetForm {
+        let mut f = ModelProfileForm {
             n_gpu_layers_draft_auto: true,
             device_draft: "CUDA1".into(),
             ..Default::default()

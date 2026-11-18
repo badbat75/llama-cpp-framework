@@ -246,7 +246,7 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
                     // message names the file that has no model profile section.
                     let model_profiles = crate::paths::instance_models(&id)
                         .unwrap_or_else(|| crate::paths::engine_config_dir().join("models.ini"));
-                    strings::fill("manager-no-presets", &[&model_profiles.display()])
+                    strings::fill("manager-no-model-profiles", &[&model_profiles.display()])
                 }
                 LaunchError::StateDir(p, kind) => {
                     strings::fill("manager-state-dir", &[&p.display(), &kind])

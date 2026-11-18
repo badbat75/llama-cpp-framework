@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::server_control::{self, ConfigFile};
-use crate::{bench, presets, server_cfg, strings};
+use crate::{bench, model_profiles, server_cfg, strings};
 
 // ── Command definitions (clap) ───────────────────────────────────────────
 
@@ -419,7 +419,7 @@ impl ServerSet {
         // unset state (a bool flag could only ever set one of the other two).
         // clap's PossibleValuesParser already refused anything else.
         if let Some(hb) = &self.rocblas_use_hipblaslt {
-            cfg.rocblas_use_hipblaslt = crate::presets::tri_bool(hb);
+            cfg.rocblas_use_hipblaslt = crate::model_profiles::tri_bool(hb);
         }
         // Same clearing rule: `default` normalizes to None, the unset state.
         if let Some(ar) = &self.cuda_allreduce {
@@ -1009,17 +1009,17 @@ fn run_server_boot_with(
 /// layer (read_section, rename_section, delete_section all use
 /// eq_ignore_ascii_case). The writers below act on the STORED id so the header
 /// is hit whatever case the user typed.
-fn find_listed(id: &str) -> Result<presets::Listed> {
-    presets::load_listed()
+fn find_listed(id: &str) -> Result<model_profiles::Listed> {
+    model_profiles::load_listed()
         .into_iter()
         .find(|l| l.model_profile.id.eq_ignore_ascii_case(id))
-        .ok_or_else(|| anyhow::anyhow!(strings::fill("preset-not-listed", &[&id])))
+        .ok_or_else(|| anyhow::anyhow!(strings::fill("model-profile-not-listed", &[&id])))
 }
 
 fn run_model_profile(c: ModelProfileCmd) -> Result<()> {
     match c {
         ModelProfileCmd::List => {
-            let listed = presets::load_listed();
+            let listed = model_profiles::load_listed();
             println!("models.ini: {}", config_path(ConfigFile::Models).display());
             if listed.iter().any(|l| !l.enabled) {
                 println!(
@@ -1031,13 +1031,13 @@ fn run_model_profile(c: ModelProfileCmd) -> Result<()> {
                 );
             }
             if listed.is_empty() {
-                println!("{}", strings::t("no-presets-defined"));
+                println!("{}", strings::t("no-model-profiles-defined"));
             }
             for l in listed {
                 let off = if l.enabled {
                     String::new()
                 } else {
-                    strings::t("preset-off-mark")
+                    strings::t("model-profile-off-mark")
                 };
                 println!(
                     "  [{}]{off}  model={}",
@@ -1049,9 +1049,9 @@ fn run_model_profile(c: ModelProfileCmd) -> Result<()> {
         ModelProfileCmd::Show { id } => {
             let l = find_listed(&id)?;
             if !l.enabled {
-                println!("{}", strings::t("preset-parked"));
+                println!("{}", strings::t("model-profile-parked"));
             }
-            println!("{}", presets::render_section(&l.model_profile));
+            println!("{}", model_profiles::render_section(&l.model_profile));
             Ok(())
         }
         ModelProfileCmd::Delete {
@@ -1075,10 +1075,11 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
     // ini::delete_section is a documented no-op for a missing section,
     // so look the id up first (mirroring Show), or a typo'd id gets a
     // "Removed" message for a model profile that never existed.
-    let listed = presets::load_listed();
+    let listed = model_profiles::load_listed();
     let l = find_listed(id)?;
     let real_id = l.model_profile.id.clone();
-    let all: Vec<presets::ModelProfile> = listed.into_iter().map(|l| l.model_profile).collect();
+    let all: Vec<model_profiles::ModelProfile> =
+        listed.into_iter().map(|l| l.model_profile).collect();
     let linked = linked_files::linked_files(&l.model_profile, &all);
     let chosen = pick_files(&linked, which);
     for kind in which.iter().filter(|k| **k != FileKind::All) {
@@ -1094,7 +1095,7 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
             anyhow::bail!(refusal);
         }
     }
-    presets::delete(&real_id).with_context(|| strings::t("delete-preset-failed"))?;
+    model_profiles::delete(&real_id).with_context(|| strings::t("delete-model-profile-failed"))?;
     let file = if l.enabled {
         config_path(ConfigFile::Models)
     } else {
@@ -1102,7 +1103,7 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
     };
     println!(
         "{}",
-        strings::fill("removed-preset-from", &[&real_id, &file.display()])
+        strings::fill("removed-model-profile-from", &[&real_id, &file.display()])
     );
     let mut failed = 0;
     if chosen.is_empty() {
@@ -1131,20 +1132,20 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
         failed = out.failed.len();
     }
     if failed > 0 {
-        anyhow::bail!(strings::fill("preset-gone-files-not", &[&failed]));
+        anyhow::bail!(strings::fill("model-profile-gone-files-not", &[&failed]));
     }
     Ok(())
 }
 
 /// A `--id` for `model-profile download`, checked before anything is fetched: a
-/// valid section name (`presets::valid_id`) that no model profile holds in ANY case
-/// (`presets::id_taken`; headers match case-insensitively, so a namesake
+/// valid section name (`model_profiles::valid_id`) that no model profile holds in ANY case
+/// (`model_profiles::id_taken`; headers match case-insensitively, so a namesake
 /// would be replaced wholesale).
 fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
-    if id.is_empty() || !presets::valid_id(id) {
+    if id.is_empty() || !model_profiles::valid_id(id) {
         anyhow::bail!(strings::fill("id-flag-invalid", &[&id]));
     }
-    if presets::id_taken(id, existing) {
+    if model_profiles::id_taken(id, existing) {
         anyhow::bail!(strings::fill("id-flag-taken", &[&id]));
     }
     Ok(())
@@ -1175,7 +1176,7 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
             return Ok(());
         }
     };
-    let existing: Vec<String> = presets::load_listed()
+    let existing: Vec<String> = model_profiles::load_listed()
         .into_iter()
         .map(|l| l.model_profile.id)
         .collect();
@@ -1338,7 +1339,7 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
     }
 
     // Re-read: another process may have added a model profile during the transfer.
-    let existing: Vec<String> = presets::load_listed()
+    let existing: Vec<String> = model_profiles::load_listed()
         .into_iter()
         .map(|l| l.model_profile.id)
         .collect();
@@ -1351,11 +1352,11 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
         model_profile.id = id;
     }
     hf::save_model_profile(&model_profile, &models_dir)
-        .with_context(|| strings::t("save-preset-failed"))?;
+        .with_context(|| strings::t("save-model-profile-failed"))?;
     println!(
         "{}",
         strings::fill(
-            "created-preset-in",
+            "created-model-profile-in",
             &[
                 &model_profile.id,
                 &config_path(ConfigFile::Models).display()
@@ -1371,7 +1372,7 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
 /// `Placement: device = ROCm1,CUDA0, tensor-split = 26,23, ctx-size = 32768
 /// (estimated at download ...)`: the placement keys a derived model profile got, and
 /// its note (pure); `None` when the download left them to the fit.
-fn placement_line(p: &presets::ModelProfile) -> Option<String> {
+fn placement_line(p: &model_profiles::ModelProfile) -> Option<String> {
     if p.placement_note.is_empty() {
         return None;
     }
@@ -1553,18 +1554,19 @@ fn set_model_profile_enabled(id: &str, enabled: bool) -> Result<()> {
     let real_id = l.model_profile.id;
     if l.enabled == enabled {
         let already = if enabled {
-            strings::fill("preset-already-on", &[&real_id])
+            strings::fill("model-profile-already-on", &[&real_id])
         } else {
-            strings::fill("preset-already-off", &[&real_id])
+            strings::fill("model-profile-already-off", &[&real_id])
         };
         println!("{already}");
         return Ok(());
     }
-    presets::set_enabled(&real_id, enabled).with_context(|| strings::t("switch-preset-failed"))?;
+    model_profiles::set_enabled(&real_id, enabled)
+        .with_context(|| strings::t("switch-model-profile-failed"))?;
     let switched = if enabled {
-        strings::fill("preset-switched-on", &[&real_id])
+        strings::fill("model-profile-switched-on", &[&real_id])
     } else {
-        strings::fill("preset-switched-off", &[&real_id])
+        strings::fill("model-profile-switched-off", &[&real_id])
     };
     println!("{switched}");
     // The router reads models.ini once, at launch.
@@ -1617,7 +1619,7 @@ fn snapshot_after_start(
     if !cfg.save_state_on_shutdown_or_default() {
         return;
     }
-    let known: Vec<String> = crate::presets::load_all()
+    let known: Vec<String> = crate::model_profiles::load_all()
         .into_iter()
         .map(|p| p.id)
         .collect();
@@ -2264,7 +2266,7 @@ mod tests {
         assert!(lines[7].starts_with("Estimated for 2 GPUs in split order, AMD Radeon AI PRO R9700 (ROCm1, 7.0 GiB usable) then "), "{}", lines[7]);
 
         // What a download prints once the model profile is saved.
-        let mut p = presets::ModelProfile::new_default("m".into(), "m.gguf".into());
+        let mut p = model_profiles::ModelProfile::new_default("m".into(), "m.gguf".into());
         assert_eq!(placement_line(&p), None, "left to the fit: nothing to say");
         p.device = "ROCm1,CUDA0".into();
         p.tensor_split = "2,3".into();

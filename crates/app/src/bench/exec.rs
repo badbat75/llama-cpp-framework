@@ -42,7 +42,7 @@ use std::time::Duration;
 use super::db::Sample;
 use super::record::Recorder;
 use super::{Mode, Plan, Point, RunMeta};
-use crate::{http, paths, presets, proc, runstate, server_cfg};
+use crate::{http, model_profiles, paths, proc, runstate, server_cfg};
 
 /// Deadline of one live request: connect, write and every read share it. The
 /// base `live_timeout` extends for the output cap. Generous for the same reason
@@ -254,7 +254,7 @@ impl Run {
     /// before it: the engine only moves on after a model profile is done.
     fn begin_model_profile(
         &mut self,
-        model_profile: &presets::ModelProfile,
+        model_profile: &model_profiles::ModelProfile,
         cfg: &server_cfg::ServerConfig,
     ) {
         self.commit_model_profile();
@@ -388,8 +388,8 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
         _ => {}
     }
 
-    let all = presets::load_all();
-    let chosen: Vec<presets::ModelProfile> = plan
+    let all = model_profiles::load_all();
+    let chosen: Vec<model_profiles::ModelProfile> = plan
         .model_profiles
         .iter()
         .filter_map(|id| all.iter().find(|p| &p.id == id).cloned())
@@ -504,7 +504,7 @@ fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
 fn run_live(
     run: &mut Run,
     cfg: &server_cfg::ServerConfig,
-    chosen: &[presets::ModelProfile],
+    chosen: &[model_profiles::ModelProfile],
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
@@ -755,7 +755,7 @@ fn live_timeout(plan: &Plan) -> Duration {
 /// slot size is asked for only here, so a normal repetition sends nothing extra.
 fn fail_if_cut(
     port: u16,
-    model_profile: &presets::ModelProfile,
+    model_profile: &model_profiles::ModelProfile,
     plan: &Plan,
     s: &super::Streamed,
 ) -> Result<(), String> {
@@ -799,7 +799,7 @@ struct SlotReply {
 fn run_concurrent(
     run: &mut Run,
     port: u16,
-    model_profile: &presets::ModelProfile,
+    model_profile: &model_profiles::ModelProfile,
     plan: &Plan,
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
@@ -1050,7 +1050,7 @@ fn warmup_body(model_profile_id: &str) -> String {
 fn run_synthetic(
     run: &mut Run,
     cfg: &server_cfg::ServerConfig,
-    chosen: &[presets::ModelProfile],
+    chosen: &[model_profiles::ModelProfile],
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
@@ -1097,7 +1097,7 @@ fn run_one(
     exe: &std::path::Path,
     argv: &[String],
     cfg: &server_cfg::ServerConfig,
-    model_profile: &presets::ModelProfile,
+    model_profile: &model_profiles::ModelProfile,
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {

@@ -1328,8 +1328,8 @@ pub(crate) fn server_control_e2e() {
 /// (the CLI, the GUI's save status) as the refusal's own text.
 #[cfg(test)]
 pub(crate) fn config_seam_e2e() {
+    use crate::model_profiles::{self, ModelProfile};
     use crate::paths;
-    use crate::presets::{self, ModelProfile};
     use crate::server_cfg::{self, ServerConfig};
     use fake::FakeClient;
     use pai_core::client::InstanceState;
@@ -1435,9 +1435,12 @@ pub(crate) fn config_seam_e2e() {
     };
     fake::scoped(fake::backend(seeded()), || {
         assert_eq!(server_cfg::load().port_or_default(), 8099, "server.ini");
-        let enabled: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
+        let enabled: Vec<String> = model_profiles::load_all()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
         assert_eq!(enabled, ["Qwen3.8-27B"], "models.ini");
-        let listed: Vec<(String, bool)> = presets::load_listed()
+        let listed: Vec<(String, bool)> = model_profiles::load_listed()
             .into_iter()
             .map(|l| (l.model_profile.id, l.enabled))
             .collect();
@@ -1487,7 +1490,7 @@ pub(crate) fn config_seam_e2e() {
         nothing_per_user("server_cfg::save");
 
         log.lock().unwrap().clear();
-        presets::save(&q8).expect("preset save");
+        model_profiles::save(&q8).expect("preset save");
         assert_eq!(fake::writes(&log), ["write_file models.ini"]);
         assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B", "Qwen3.8-27B-Q8"]);
         let section = crate::ini::parse_sections(&file("models.ini"))
@@ -1498,11 +1501,11 @@ pub(crate) fn config_seam_e2e() {
             section.keys.get("model").map(String::as_str),
             Some("/models/Qwen3.8-27B-Q8_0.gguf")
         );
-        nothing_per_user("presets::save");
+        nothing_per_user("model_profiles::save");
 
         // Switched off: the destination written first, as with the files.
         log.lock().unwrap().clear();
-        presets::set_enabled("Qwen3.8-27B", false).expect("switch off");
+        model_profiles::set_enabled("Qwen3.8-27B", false).expect("switch off");
         assert_eq!(
             fake::writes(&log),
             ["write_file models.ini.disabled", "write_file models.ini"]
@@ -1513,7 +1516,7 @@ pub(crate) fn config_seam_e2e() {
             ["Qwen3.8-Flash-Next", "Qwen3.8-27B"]
         );
         log.lock().unwrap().clear();
-        presets::set_enabled("Qwen3.8-27B", true).expect("switch on");
+        model_profiles::set_enabled("Qwen3.8-27B", true).expect("switch on");
         assert_eq!(
             fake::writes(&log),
             ["write_file models.ini", "write_file models.ini.disabled"]
@@ -1521,9 +1524,9 @@ pub(crate) fn config_seam_e2e() {
         assert_eq!(ids(file("models.ini.disabled")), ["Qwen3.8-Flash-Next"]);
         assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B-Q8", "Qwen3.8-27B"]);
 
-        presets::rename("Qwen3.8-27B-Q8", "Qwen3.8-27B-Q8_0").expect("rename");
+        model_profiles::rename("Qwen3.8-27B-Q8", "Qwen3.8-27B-Q8_0").expect("rename");
         assert_eq!(ids(file("models.ini")), ["Qwen3.8-27B-Q8_0", "Qwen3.8-27B"]);
-        presets::delete("Qwen3.8-Flash-Next").expect("delete");
+        model_profiles::delete("Qwen3.8-Flash-Next").expect("delete");
         assert!(ids(file("models.ini.disabled")).is_empty());
         nothing_per_user("set_enabled, rename, delete");
 
@@ -1577,7 +1580,7 @@ pub(crate) fn config_seam_e2e() {
         );
         let llm = dir.path().join("llm");
         let model = llm.join("models").join("Qwen3.8-4B-Q4_K_M.gguf");
-        presets::save(&ModelProfile::new_default(
+        model_profiles::save(&ModelProfile::new_default(
             "Qwen3.8-4B".into(),
             model.display().to_string(),
         ))
@@ -1630,9 +1633,10 @@ pub(crate) fn config_seam_e2e() {
         fake::scoped(fake::backend(c), || {
             let err = server_cfg::save(&cfg).expect_err("server save refused");
             assert_eq!(err.to_string(), e.text(), "{e:?}: server_cfg::save");
-            let err = presets::save(&q8).expect_err("preset save refused");
-            assert_eq!(err.to_string(), e.text(), "{e:?}: presets::save");
-            let err = presets::set_enabled("Qwen3.8-27B", false).expect_err("switch refused");
+            let err = model_profiles::save(&q8).expect_err("preset save refused");
+            assert_eq!(err.to_string(), e.text(), "{e:?}: model_profiles::save");
+            let err =
+                model_profiles::set_enabled("Qwen3.8-27B", false).expect_err("switch refused");
             assert_eq!(err.to_string(), e.text(), "{e:?}: set_enabled");
         });
         assert_eq!(*files.lock().unwrap(), before, "{e:?}: nothing changed");
@@ -1650,17 +1654,20 @@ pub(crate) fn config_seam_e2e() {
     log.lock().unwrap().clear();
     fake::scoped(fake::backend(c), || {
         for (what, result) in [
-            ("presets::save", presets::save(&q8)),
+            ("model_profiles::save", model_profiles::save(&q8)),
             (
                 "set_enabled off",
-                presets::set_enabled("Qwen3.8-27B", false),
+                model_profiles::set_enabled("Qwen3.8-27B", false),
             ),
             (
                 "set_enabled on",
-                presets::set_enabled("Qwen3.8-Flash-Next", true),
+                model_profiles::set_enabled("Qwen3.8-Flash-Next", true),
             ),
-            ("rename", presets::rename("Qwen3.8-27B", "Qwen3.8-27B-Q8_0")),
-            ("delete", presets::delete("Qwen3.8-27B")),
+            (
+                "rename",
+                model_profiles::rename("Qwen3.8-27B", "Qwen3.8-27B-Q8_0"),
+            ),
+            ("delete", model_profiles::delete("Qwen3.8-27B")),
             (
                 "hf::save_model_profile",
                 crate::hf::save_model_profile(&q8, &dir.path().join("hf-models")),

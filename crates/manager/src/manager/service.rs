@@ -6000,7 +6000,8 @@ mod tests {
                 .unwrap();
             let g = FakeGroup::new();
             let text = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
-            write_served_file(&model_profiles, &ConfigFile::Models, text, &g).expect("presets");
+            write_served_file(&model_profiles, &ConfigFile::Models, text, &g)
+                .expect("model-profiles");
             let disabled = dir.path().join("models.ini.disabled");
             write_served_file(&disabled, &ConfigFile::ModelsDisabled, text, &g).expect("disabled");
             assert_eq!(std::fs::read_to_string(&model_profiles).unwrap(), text);

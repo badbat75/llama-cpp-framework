@@ -6,7 +6,7 @@
 //! runs under a deadline, so a bff that waits on the manager fails instead of
 //! hanging.
 //!
-//! It is a file of its own beside `tests/presets.rs` (the list), because the
+//! It is a file of its own beside `tests/model_profiles.rs` (the list), because the
 //! switch asks the manager for more than a read: `write_file_if` (the
 //! compare and swap), `write_file` (only for a disabled file that does not
 //! exist yet) and the state of the instances, for `running`. The fake here
@@ -1770,9 +1770,9 @@ async fn switch_is_the_only_method_the_switch_path_serves() {
 fn the_disabled_header_is_the_configurators_one() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../app/src/presets.rs"
+        "/../app/src/model_profiles.rs"
     ))
-    .expect("the configurator's presets.rs: it owns the disabled file's header");
+    .expect("the configurator's model_profiles.rs: it owns the disabled file's header");
     const DECL: &str = "const DISABLED_FILE_HEADER: &str = \"";
     let start = source
         .find(DECL)
