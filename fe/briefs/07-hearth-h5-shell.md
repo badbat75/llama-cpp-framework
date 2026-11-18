@@ -204,6 +204,30 @@ declares `forced-color-adjust: none`, `background: Highlight`, `color: Highlight
 `aria-current='true'`" becomes "the only top-level rule": this forced-colours rule is the second.
 The UX pass checks in Firefox's forced colours that the focus ring on a current pill is still seen.
 
+**H5c review (2026-11-18), measured** (`build/ux-review/h5c-r.js`, Playwright Chromium, Firefox,
+WebKit). H5c.3 met: focusing Discard or Save by `focus()`, Tab from the last field and Shift+Tab from
+Save, scrolled to top, middle and bottom, 1280 and 320 px, both pages: `scrollY` moves 0 px in all
+three engines. The control run (the rule overridden to 0) moves Chromium 430 px and WebKit 112 px on
+every focus not at the page end, Firefox 0: the assumption (focus scrolling reads a negative
+`scroll-margin-bottom`) holds in all three. H5c.4 met (closest About to the bar 20 px, Firefox one
+control 0 px, none under). H5c.5 **not met**, see H5c.7. H5c.6 met.
+
+**H5c.7 (follow-up) The bar's buttons wrap.** With the browser's default text size at 32 px
+(Chromium `Page.setFontSizes`, Firefox `font.size.variable.x-western`), 320 by 568: the bar is static
+(the media rule applies, as section 3 (c) said), 254 px high, but `.save-actions` (`flex: none`, no
+wrap) is 406 px wide: Save changes ends at x 438, outside the bar (16 to 304), and the page scrolls
+sideways (scrollWidth 438), [1.4.4](https://www.w3.org/TR/WCAG22/#resize-text) and
+[1.4.10](https://www.w3.org/TR/WCAG22/#reflow). Not caused by H5c (no rule of it touches the
+layout); the earlier inline `font-size` method hid it. Fix: `.save-actions` declares
+`flex: 0 1 auto`, `min-width: 0`, `flex-wrap: wrap`, `justify-content: flex-end` (replacing
+`flex: none`). Measured injected: no sideways scroll, Discard on the first row and Save changes on
+the second, both right-aligned inside the bar (bar 324 px high); at 16 px text and at 1280 by 720
+unchanged. DOM and Tab order unchanged (row by row, 1.3.2). Tester pins the four declarations.
+Optional, same follow-up: in the short viewport, `scroll-margin-bottom: 0` lets a focused button
+end with its ring 5 px under the viewport's edge (1280 by 500, model profile page, all engines; the
+border box is in view, so 2.4.11 is met); a positive `var(--space-3)` there would show the ring
+(preference).
+
 **What the tester pins (H5c)**: H5c.6 as stylesheet text (the block by matched braces, the selector
 list, the three declarations); H5c.1 and H5c.2 as stylesheet text (the declaration, its order after
 `html:has(.save-bar)`, the media rule by matched braces). H5c.3 to H5c.5 are the designer's.

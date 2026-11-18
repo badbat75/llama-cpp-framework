@@ -109,8 +109,10 @@ Decided with the user on 2026-11-14.
   text, weight 600 (drawn with the 700 face, the only bold one shipped), no inset bar. The fill is
   decoration (1.09:1 light, 1.35:1 dark on `--page`); the non-colour cue is the weight
   ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color); bold is a cue in
-  [G182](https://www.w3.org/WAI/WCAG22/Techniques/general/G182)), and it is the one left under
-  forced colours, where the fill becomes `Canvas`. Text on the fill 6.04:1 light, 6.93:1 dark.
+  [G182](https://www.w3.org/WAI/WCAG22/Techniques/general/G182)). Under forced colours the
+  current entry (and the Sign in pill on `#/sign-in`) takes `Highlight` / `HighlightText` with
+  `forced-color-adjust: none`, as the pressed theme switch does (H5c.6; the focus ring stays seen on
+  it: H5c review, Chromium and Firefox). Text on the fill 6.04:1 light, 6.93:1 dark.
 - On every route change: `document.title` becomes `<page> | Private AI Framework`
   ([2.4.2 Page Titled](https://www.w3.org/TR/WCAG22/#page-titled)), and focus moves to the page's
   `h1` (`tabindex="-1"`), so a screen reader announces the new page
@@ -205,8 +207,12 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 - **Sticky save bar**: the scroll container sets `scroll-padding-bottom` to the bar's rendered height
   plus `--space-3`, kept current as the bar grows (an alert and its button can triple it at phone
   width: 242 px measured at 375 px in the 1b review), so a focused field is never hidden behind it; a
-  fixed guess does not do. Below a viewport height of 32rem (a phone in landscape, 400% zoom) the bar
-  is not sticky and sits at the end of the form
+  fixed guess does not do. The bar's own buttons cancel that padding with an equal negative
+  `scroll-margin-bottom`, so focusing Discard or Save does not scroll the page (without it, measured
+  in the H5c review: Chromium 430 px, WebKit 112 px on each focus; with it 0 in all three engines).
+  Below a viewport height of 32rem (a phone in landscape, 400% zoom, or 200% text on a 1023 px high
+  window: `rem` in a media query is the browser's text size) the bar is not sticky, both rules are 0,
+  and the bar sits at the end of the form
   ([2.4.11 Focus Not Obscured (Minimum)](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum),
   [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
 - **Field grid**: from 720px up, everything of a field but its label sits in the control column:

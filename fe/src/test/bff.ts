@@ -180,8 +180,9 @@ export const EN: Record<string, string> = {
     '{0} enabled model profiles would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another one, or raise ModelsMax',
   'api-load-on-startup-unlimited':
     '{0} enabled model profile(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off',
-  'api-client-address-in-use':
-    'Another instance, {0}, already uses that address and port.',
+  // The manager can name the web service itself as the holder of the address,
+  // so the sentence names only the holder ({0}).
+  'api-client-address-in-use': '{0} already uses that address and port.',
   'api-client-unresolvable-host':
     'The host name {0} does not resolve to an address.',
   // Slice S3 (section 4e): a save of a hand-edited file that binds 0.0.0.0

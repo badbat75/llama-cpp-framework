@@ -454,10 +454,15 @@ button {
   border-color: var(--accent);
 }
 
+/* The session part is a wrapping row of its own: when it is wider than the
+   line it is on, its items wrap to the left inside it, so justify-content
+   keeps the user name and Sign out at the right edge (H5b.0, as the H5b
+   review corrects it). The DOM and the Tab order are unchanged. */
 .session {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2) var(--space-3);
 }
 
@@ -1280,6 +1285,19 @@ html:has(.save-bar) {
   scroll-padding-bottom: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
 }
 
+/* A control of the bar always lies inside the strip the padding above adds to
+   the page, and a browser reads that padding when it decides whether a focused
+   element is in view (CSS Scroll Snap 1, scroll-padding), so focusing a bar
+   control scrolled the page toward it. An equal negative margin puts the
+   control's scroll area back inside the region, so the focus move scrolls
+   nothing (H5c.1, WCAG 2.4.11): the UX pass measures it in the three engines. */
+.save-bar button {
+  /* The padding above, negated, and pinned as written like that one: Prettier
+     would break this long calc across lines. */
+  /* prettier-ignore */
+  scroll-margin-bottom: calc(-1 * (max(var(--save-bar-height, 7rem), 7rem) + var(--space-3)));
+}
+
 /* The bar is lifted like the card it sits over, and flush at the viewport's
    bottom edge: only its top corners are round. */
 .save-bar {
@@ -1301,6 +1319,13 @@ html:has(.save-bar) {
 @media (max-height: 31.98rem) {
   html:has(.save-bar) {
     scroll-padding-bottom: 0;
+  }
+
+  /* The bar is static here and the page has no padding to cancel, so the
+     cancel goes too: a negative margin would let a focused button end below
+     the viewport (H5c.2). */
+  .save-bar button {
+    scroll-margin-bottom: 0;
   }
 
   .save-bar {
@@ -1366,6 +1391,19 @@ html:has(.save-bar) {
     background: Highlight;
     color: HighlightText;
     border-color: Highlight;
+  }
+
+  /* The nav's current entry keeps its mark there the way the pressed switch
+     does (the H5b review): the fill and the label take the system highlight,
+     and no colour adjust keeps the author's current state. The bolder label of
+     the top-level rule stays the cue that needs no colour. The three selectors
+     are those of that rule, unchanged. */
+  .nav a[aria-current='page'],
+  .nav a[aria-current='true'],
+  a.session[aria-current='page'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
   }
 }
 

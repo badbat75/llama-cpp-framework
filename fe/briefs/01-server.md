@@ -1297,7 +1297,7 @@ The existing `version-*`, `instances-*` and `instance-state-*` keys stay as they
 | `api-comment-markers` | copy of `comment-markers` |
 | `api-load-on-startup-over-max` | {0} enabled presets would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another preset, or raise ModelsMax (copy of `load-on-startup-over-max`, verbatim: no closing full stop, like every copied server check text in this table and in the configurator) |
 | `api-load-on-startup-unlimited` | {0} enabled preset(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off (copy of `load-on-startup-unlimited`, verbatim: no closing full stop) |
-| `api-client-address-in-use` | Another instance, {0}, already uses that address and port. (copy) |
+| `api-client-address-in-use` | {0} already uses that address and port. ({0} is an instance id or `private-ai-bff`, the web service itself; changed at the platform side's request, 2026-11-18) |
 | `api-client-unresolvable-host` | The host name {0} does not resolve to an address. (copy) |
 | `api-server-changed-elsewhere` | These settings were changed elsewhere after you opened them. Reload to see them; your edits here will be lost. |
 | `api-other` | The request was refused ({0}). |

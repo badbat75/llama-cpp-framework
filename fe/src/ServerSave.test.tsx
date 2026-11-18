@@ -463,6 +463,14 @@ const FALLBACK_CASES: [string, Record<string, unknown>, string, string][] = [
     'Port',
     en('api-client-address-in-use', 'coder'),
   ],
+  [
+    // The holder of the address may be the web service itself, named by the
+    // manager: the text is the holder and the sentence, nothing else.
+    'client-address-in-use naming the web service: Port',
+    { key: 'client-address-in-use', args: ['private-ai-bff'] },
+    'Port',
+    en('api-client-address-in-use', 'private-ai-bff'),
+  ],
 ]
 
 test.each(FALLBACK_CASES)(

@@ -939,10 +939,6 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   // with only some of the three is not exempt (H5a.5: the theme switch label
   // and the user name are hidden that way below 480 px, so they are not
   // listed).
-  // The clip box, recognised by its declarations rather than by its name: a
-  // box 1px tall, clipped to nothing, overflow hidden. Such a box shows no
-  // text, so its height is not a 1.4.12 problem, and a rule that does not
-  // carry all three is not exempt whatever it is called.
   const isClipBox = (body: string): boolean =>
     prop(body, 'clip-path') === 'inset(50%)' &&
     prop(body, 'height') === '1px' &&
