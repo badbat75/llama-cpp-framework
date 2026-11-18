@@ -20,7 +20,7 @@ exist yet. Change this file first when a shape changes.
   9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
   (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
-- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/presets`, `PUT /api/presets/{id}/enabled`, `GET /api/presets/{id}` and `PUT /api/presets/{id}` since they were served, 257147e, 3a63244, 36a892d, 3eb24b2; S1 of
+- **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/profiles/model`, `PUT /api/profiles/model/{id}/enabled`, `GET /api/profiles/model/{id}` and `PUT /api/profiles/model/{id}` since they were served, 257147e, 3a63244, 36a892d, 3eb24b2; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
   of `pai`, and the bff has **ended that session** at once (user, 2026-11-16: removed from `pai`, the
   session ends). The next request with the cookie answers 401; no `Set-Cookie` clears it. The bff
@@ -39,8 +39,8 @@ exist yet. Change this file first when a shape changes.
   `GET /api/instances` and `GET /api/instances/{id}/boot`; the `POST`s and `PUT`s move it.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
-- **Writes and their time limit** (the server save and the preset switch since 594e15e, the preset
-  save since 3eb24b2, which gives its read 5 s and the whole save 15 s): the manager's calls of a
+- **Writes and their time limit** (the server save and the model profile switch since 594e15e, the model
+  profile save since 3eb24b2, which gives its read 5 s and the whole save 15 s): the manager's calls of a
   write get **15 s** (`lib.rs` `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep
   **5 s** (`MANAGER_TIMEOUT`).
   503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
@@ -64,11 +64,19 @@ exist yet. Change this file first when a shape changes.
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
-| `GET /api/engines` | anyone | presets slice, proposed | `[{"id", "name"}]` |
-| `GET /api/presets` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
-| `PUT /api/presets/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
-| `GET /api/presets/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
-| `PUT /api/presets/{id}` | administrator (`configure`) | 2h, served (3eb24b2) | `{"revision", "running"}` |
+| `GET /api/engines` | anyone | model profiles slice, proposed | `[{"id", "name"}]` |
+| `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
+| `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
+| `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
+| `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2) | `{"revision", "running"}` |
+
+The four model profile routes were served at `/api/presets...` until 5d54590 (step 4b, below), with
+the keys `no-preset-named`, `preset-changed-elsewhere`, `presets-malformed`, `invalid-preset-id`,
+`preset-no-model` and `preset-name-taken`; since then the old paths are the router's own 404, with no
+body and no manager call (`crates/bff/tests/presets.rs`,
+`the_old_model_profile_paths_are_the_routers_404_with_no_body`). Bodies, fields, statuses and `args`
+did not change. The fe moved in ec6dbd0. The files are the engine's `models.ini` and
+`models.ini.disabled` since 872553d (were `presets.ini`, `presets.ini.disabled`).
 
 ### `GET /api/instances`
 
@@ -214,34 +222,34 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
 
 ### `GET /api/engines`
 
-The available engines, for the preset editor's engine field. A preset write naming an engine
+The available engines, for the model profile editor's engine field. A model profile write naming an engine
 outside the list is refused with a key of its own (proposed: `unknown-engine`, `args: [name]`). A
-preset's engine is the engine whose preset file holds it, never a key in the file (see
-`GET /api/presets`).
+model profile's engine is the engine whose model profile file holds it, never a key in the file (see
+`GET /api/profiles/model`).
 
-### `GET /api/presets`
+### `GET /api/profiles/model`
 
-The one preset list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
+The one model profile list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
 user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`. Served since 257147e
 (`crates/bff/src/presets.rs` `list`, `rows`, `row`); checked against the fe's `Models.tsx` on
 2026-11-17 (02-models.md, "Checked against the bff").
 
-- **llama-server's global section `[*]` is not listed**: it holds the defaults every preset starts
-  from, not a preset (`presets.rs` `is_global`). The switch and the read answer 404 for it.
-- **A missing preset file is an empty group**: no file at all is 200 `[]`, never an error.
+- **llama-server's global section `[*]` is not listed**: it holds the defaults every model profile
+  starts from, not a model profile (`presets.rs` `is_global`). The switch and the read answer 404 for it.
+- **A missing model profile file is an empty group**: no file at all is 200 `[]`, never an error.
 
-- `engine` is the id of the engine whose preset file holds the section. No key in the file names
+- `engine` is the id of the engine whose model profile file holds the section. No key in the file names
   it: llama-server refuses a `--models-preset` file with a key it does not know (llama.cpp v1.0.0:
-  `common/preset.cpp`, "option not recognized in preset"), so each engine keeps its own preset
-  files (llama.cpp's `presets.ini` and `presets.ini.disabled`).
+  `common/preset.cpp`, "option not recognized in preset"), so each engine keeps its own model
+  profile files (llama.cpp's `models.ini` and `models.ini.disabled`).
 - `engineAvailable` says whether that engine is in `GET /api/engines`; the bff sends true for every
   row while llama.cpp is the only engine.
-- `enabled` is true for a section of `presets.ini`, false for one of `presets.ini.disabled`.
-- The order is the GUI's (`presets::load_listed`): the switched-on presets, then the switched-off
-  ones, each in file order; an id in both files is listed once, as on; a missing file is an empty
+- `enabled` is true for a section of `models.ini`, false for one of `models.ini.disabled`.
+- The order is the GUI's (`presets::load_listed`): the switched-on model profiles, then the
+  switched-off ones, each in file order; an id in both files is listed once, as on; a missing file is an empty
   group. The fe does not sort.
 - `model` (slice 2b, for the list's filter) is the value of the section's `model` key as the INI
-  reader gives it (trimmed, cut at the first `;` or `#`, as for `GET /api/presets/{id}`'s
+  reader gives it (trimmed, cut at the first `;` or `#`, as for `GET /api/profiles/model/{id}`'s
   `values`), a string the bff does not otherwise change (no path resolution, no check that the
   file exists, the server machine's separators kept); `""` when the section has no `model` key or
   it is empty. The fe treats a row without a string `model` as a malformed reply.
@@ -249,53 +257,54 @@ user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`. Served since 
   (the session is ended, rules above; `client-not-authorized` is not sent); 503
   `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other`.
 
-### `PUT /api/presets/{id}/enabled`
+### `PUT /api/profiles/model/{id}/enabled`
 
-Switches a preset on or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
-does: the section moves, unchanged, between `presets.ini` and `presets.ini.disabled` (the
+Switches a model profile on or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
+does: the section moves, unchanged, between `models.ini` and `models.ini.disabled` (the
 destination written first; a missing disabled file created with the GUI's header). The id is
 matched case-insensitively. Body `{"enabled": <bool>}`. Served since 3a63244, time-outs as now
 since 594e15e (`crates/bff/src/presets.rs` `set_enabled`, `switch`, `switch_failure`, `field_of`,
 `not_found`); checked against the fe's `Models.tsx` on 2026-11-17.
 
-- 200 `{"enabled", "running"}`: `enabled` is read back after the writes (`presets.ini` read again);
+- 200 `{"enabled", "running"}`: `enabled` is read back after the writes (`models.ini` read again);
   `running` is true when any instance is `active` or `activating` (the fe then says to restart it;
-  the bff restarts nothing). A preset already where it was asked to go answers 200 and nothing is
+  the bff restarts nothing). A model profile already where it was asked to go answers 200 and nothing is
   written. When both writes landed but the read-back or the states failed or outran the limit,
   the answer is still 200: `enabled` the value asked for, `running` true.
-- Switching on runs the checks the GUI runs: the load-on-startup presets counted against the lowest
-  `ModelsMax` of the instances, and every preset check on the moved section.
-- The bff runs one preset-file write at a time: a move is two compare-and-swap writes (the
-  destination first, then the source). An interruption between them leaves the preset in both
-  files: it then reads enabled, and the next switch cleans up.
-- 409 `preset-changed-elsewhere`, `args: []`: either compare-and-swap write found its file changed
-  after the bff's read; when it was the second, the move is half done (the preset then in both
+- Switching on runs the checks the GUI runs: the load-on-startup model profiles counted against the lowest
+  `ModelsMax` of the instances, and every model profile check on the moved section.
+- The bff runs one model-profile-file write at a time: a move is two compare-and-swap writes (the
+  destination first, then the source). An interruption between them leaves the model profile in
+  both files: it then reads enabled, and the next switch cleans up.
+- 409 `model-profile-changed-elsewhere`, `args: []`: either compare-and-swap write found its file changed
+  after the bff's read; when it was the second, the move is half done (the model profile then in both
   files, read as enabled).
-- 404 `no-preset-named` when neither file holds the id, **and for `*`** (the global section).
-  `args: [id]` only when the id is one a preset can carry (`checks::preset_id`, not only dots);
+- 404 `no-model-profile-named` when neither file holds the id, **and for `*`** (the global section).
+  `args: [id]` only when the id is one a model profile can carry (`checks::model_profile_id`, not only dots);
   otherwise `args: []`. The fe fills the text with the id it sent, never with `args`.
 - 422 `{"key", "args", "field"?}` from the manager's checks on switching on:
   `load-on-startup-over-max` `[count, max]` or `load-on-startup-unlimited` `[count]` (`field`
-  `load-on-startup`), any other preset check failing on a hand-edited section (`field` its
+  `load-on-startup`), any other model profile check failing on a hand-edited section (`field` its
   `args[0]`; the fe shows a key it does not know as `api-other`), and **no `field`** for
-  `invalid-preset-id` and `preset-name-taken`. The page has no field to mark: the fe ignores it.
+  `invalid-model-profile-id` and `model-profile-name-taken`. The page has no field to mark: the fe ignores it.
 - 503 `client-unavailable` only while no write was asked; 504 `client-timeout` once one was sent
   and its outcome is unknown (the rule at the top, "Writes and their time limit").
 - Other errors, each `{"key", "args": []}`: 401 `session-required` (checked first); 403
   `session-not-administrator` (the session is ended; `client-not-authorized` is not sent); 400
-  `presets-malformed` for a body that is not `{"enabled": <bool>}` (the fe never sends one); 413
+  `model-profiles-malformed` for a body that is not `{"enabled": <bool>}` (the fe never sends one); 413
   `payload-too-large`; 502 `client-other`.
-- A preset id is unique across every engine (user, 2026-11-15), so the id alone names the preset.
+- A model profile id is unique across every engine (user, 2026-11-15), so the id alone names the
+  model profile.
   The ids `.` and `..` cannot travel in a URL path (URL Standard, dot path segments); the user
   decided (2026-11-15) that the common id check refuses them, for the GUI and the CLI too. A file
   edited by hand can still hold one: the fe sends no request for it (02-models.md 59a, 2c-E).
 
-### `GET /api/presets/{id}`
+### `GET /api/profiles/model/{id}`
 
-One preset, for its page ([02-models.md](02-models.md), slice 2d, section 2d.12 there with the
+One model profile, for its page ([02-models.md](02-models.md), slice 2d, section 2d.12 there with the
 reasons). Served since 36a892d (`crates/bff/src/presets.rs` `read`, `document`,
-`section_revision`); checked against the fe's `PresetPage.tsx` on 2026-11-17. `{id}` is one
-percent-decoded path segment, matched case-insensitively; `presets.ini` is searched first, so an
+`section_revision`); checked against the fe's `ModelProfilePage.tsx` on 2026-11-17. `{id}` is one
+percent-decoded path segment, matched case-insensitively; `models.ini` is searched first, so an
 id in both files is the enabled copy, as in the list. Needs a session; read as the signed-in user,
 with the 5 s limit of a read.
 
@@ -315,8 +324,8 @@ with the 5 s limit of a read.
 }
 ```
 
-- `id` as the file spells it; `engine`, `engineAvailable`, `enabled` as in `GET /api/presets`.
-- `values`: every key of the section, keyed by the preset file's key name **in the file's own
+- `id` as the file spells it; `engine`, `engineAvailable`, `enabled` as in `GET /api/profiles/model`.
+- `values`: every key of the section, keyed by the model profile file's key name **in the file's own
   letter case** (`CTX-SIZE` stays `CTX-SIZE`; the fe reads keys in exact case, as llama-server
   does), each value a string **as the INI parser reads it, as llama-server reads the file**
   (`pai-core` `ini::parse_sections`): trimmed, **cut at the first `;` or `#`** (an inline comment
@@ -329,25 +338,25 @@ with the 5 s limit of a read.
 - `revision`: opaque, sent back by the save (`PUT`, below); required from 2h on (a read without a
   string `revision` is a failed read). A keyed SipHash-2-4 over the name of the file holding the
   section and the section's raw text (trailing blank lines and the last line's ending cut), so it
-  differs per file, another preset's edit does not change it, and switching the preset on or off,
+  differs per file, another model profile's edit does not change it, and switching the model profile on or off,
   or editing a comment in it, does; the key is drawn at each bff start, so it does not survive a
   restart.
 - It grows without breaking: later slices read more keys from `values`, and add top-level fields
   (a comment such as `; placement =` as `placementNote`, server-computed data) or routes; no field
   is removed or retyped, and the fe ignores fields it does not know.
 - Errors, each `{"key", "args"}`: 401 `session-required` (the manager not asked); 404
-  `no-preset-named` for an unknown id, for `*` (the global section) and for an id no preset can
-  carry, `args: [id]` only for an id a preset can carry, else `[]` (as the switch); 403
+  `no-model-profile-named` for an unknown id, for `*` (the global section) and for an id no model
+  profile can carry, `args: [id]` only for an id a model profile can carry, else `[]` (as the switch); 403
   `session-not-administrator` (the session is ended; `client-not-authorized` is not sent); 503
   `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other` with empty `args`.
 
-### `PUT /api/presets/{id}`
+### `PUT /api/profiles/model/{id}`
 
-Saves the edits of one preset's page ([02h-model-profile-save.md](02h-model-profile-save.md)). Served since
+Saves the edits of one model profile's page ([02h-model-profile-save.md](02h-model-profile-save.md)). Served since
 3eb24b2 (`crates/bff/src/presets.rs` `save`, `parse_body`, `apply`, `field_of`); checked against
-the fe's `PresetPage.tsx` (2h.1) on 2026-11-17. Designed in `ARCHITECTURE.md`, "Saving a preset
+the fe's `ModelProfilePage.tsx` (2h.1) on 2026-11-17. Designed in `ARCHITECTURE.md`, "Saving a preset
 from the web". `{id}` as in the `GET`; the section is edited in the file that holds it
-(`presets.ini` first, as the read), so a switched-off preset stays switched off, as
+(`models.ini` first, as the read), so a switched-off model profile stays switched off, as
 `presets::save` does.
 
 Body `{"revision": <string>, "values": {<key>: <string> | null}}` with `Content-Type:
@@ -369,13 +378,13 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   the whole section from their struct (`presets::render_section`) and so drop comments and unknown
   keys and rewrite spellings (02h D-a; the user chose this, 2026-11-16).
 - **Accepted keys**: a fixed list of **65**, exactly the keys 2h.1 to 2h.9 enable (`pai-core`
-  `checks::WEB_PRESET_KEYS`; checked against 02e's tables on 2026-11-17): every key the
-  configurator writes minus the ten of `PRESET_KEYS_NOT_ON_WEB`: `model`, `mmproj`, `model-draft`,
+  `checks::WEB_MODEL_PROFILE_KEYS`; checked against 02e's tables on 2026-11-17): every key the
+  configurator writes minus the ten of `MODEL_PROFILE_KEYS_NOT_ON_WEB`: `model`, `mmproj`, `model-draft`,
   `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g), `device`,
   `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor placement,
   until 2j). A slice that makes one editable moves it to the list in the same commit. **Body keys
   match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables spell it.
-- **400 `presets-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
+- **400 `model-profiles-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
   a string or `values` not an object; a key outside the list; a value neither a string nor `null`;
   a value empty after trimming spaces and tabs (clearing a key is `null`); a value holding a
   control character other than tab; a value that starts or ends with another Unicode white space
@@ -385,43 +394,44 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   sorted, `field` the first of them (the strings take `{0}` only). Nothing is written.
 - `{}` (no change), or edits that leave the file's text as it is: 200 with nothing written, the
   revision still compared (409 if stale), `running` asked as after a write.
-- Then the manager checks the edited section **whole** (`checks::presets_file` or
-  `presets_disabled_file`, `preset_section`): integer ranges, floats, enums (compared **exactly**,
+- Then the manager checks the edited section **whole** (`checks::models_file` or
+  `models_disabled_file`, `model_profile_section`): integer ranges, floats, enums (compared **exactly**,
   case included, as llama.cpp does: `load-mode = MLOCK` is refused), JSON object, `fit-target`,
   `override-tensor`, min <= max, `moe-cache-mib` with `split-mode tensor`, a `model`, and, in
-  `presets.ini`, the load-on-startup count against `ModelsMax`. So a hand-edited bad value the user
+  `models.ini`, the load-on-startup count against `ModelsMax`. So a hand-edited bad value the user
   did not touch is refused too, on its own field. **The text keys** (`model`, `mmproj`,
   `model-draft`, `chat-template-kwargs`, `override-tensor`, `reasoning-budget-message`,
   `fit-target`) are checked for `;` and `#` on the **raw line, inline comment included**
-  (`checks.rs` `RawSection`, `preset_section`): an untouched `model = a.gguf ; Q8` makes every web
-  save of that preset 422 `comment-markers`, field `model` (open on the bff side, below). `fit` is
+  (`checks.rs` `RawSection`, `model_profile_section`): an untouched `model = a.gguf ; Q8` makes every web
+  save of that model profile 422 `comment-markers`, field `model` (open on the bff side, below). `fit` is
   not checked.
 - The write: the manager's compare-and-swap write as the signed-in user, given the text the bff
   read; it is asked only while the answer is still wanted.
 - **200 `{"revision", "running"}`**: `revision` of the section as now written, computed by the same
   function as the `GET`'s over the text written, so the `GET` that follows returns it and the next
-  save meets no 409; `running` true when the section is in `presets.ini` and any instance is
+  save meets no 409; `running` true when the section is in `models.ini` and any instance is
   `active` or `activating`, or when that state cannot be read after the write; **false for a
-  switched-off preset** (the states are not even asked). The fe says "Saved: restart llama-server
+  switched-off model profile** (the states are not even asked). The fe says "Saved: restart llama-server
   to apply." for true, "Saved." for false. The bff restarts and reloads nothing. Deliberate
-  difference: the configurator's preset save says only "Saved preset [id]".
+  difference: the configurator's model profile save says only "Saved model profile [id]"
+  (`preset-saved` in `crates/core/strings/en_US.toml`).
 - **422 `{"key", "args", "field"}`** from the manager's checks, `field` the INI key to mark:
   `args[0]` for `not-whole-number-in-range` (args key, value, min, max), `comment-markers` (key),
   `not-a-number` (key, value), `not-one-of` (key, value, the allowed list joined by `, `),
   `not-json-object` (key), `min-above-max` (min key, min, max key, max: the minimum's key is
   marked); `fit-target` for `fit-target-format` (value, `MiB`); `moe-cache-mib` for
   `moe-cache-with-tensor-split` (no args); `load-on-startup` for `load-on-startup-over-max` (count,
-  max) and `-unlimited` (count); `model` for `preset-no-model` (id); `override-tensor` for
+  max) and `-unlimited` (count); `model` for `model-profile-no-model` (id); `override-tensor` for
   `override-no-pattern` (position) and `override-no-device` (position, pattern); **no `field`** for
-  `invalid-preset-id` and `preset-name-taken` (id). `bind-all-with-others` cannot come from a
-  preset. Nothing is written.
-- 409 `preset-changed-elsewhere`, `args: []`: the revision is stale (the section changed, it was
+  `invalid-model-profile-id` and `model-profile-name-taken` (id). `bind-all-with-others` cannot come from a
+  model profile. Nothing is written.
+- 409 `model-profile-changed-elsewhere`, `args: []`: the revision is stale (the section changed, it was
   switched on or off, or the bff restarted since the read), or the compare-and-swap write found
-  the file changed after the bff's read. A save of **another** preset in the same file gives no
+  the file changed after the bff's read. A save of **another** model profile in the same file gives no
   409. Nothing is written.
 - Errors, each `{"key", "args"}`: 401 `session-required`; 403 `session-not-administrator` (at the
   read or the write; the session is ended; `client-not-authorized` is not sent, the fe still
-  handles it); 404 `no-preset-named` (`args` as the read's) for an id neither file holds and for
+  handles it); 404 `no-model-profile-named` (`args` as the read's) for an id neither file holds and for
   `*`; 413 `payload-too-large`; 503 `client-unavailable` (no write asked: the read failed or ran
   out of its 5 s, or the 15 s ran out before the write); 504 `client-timeout` (the write was sent
   and its outcome is unknown; a write that landed is the 200, `running` true, whatever follows);
@@ -432,10 +442,10 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 - **An administrator's save needs no second password** (user, 2026-11-15): the bff vouches for the
   user it authenticated, and the manager grants `configure` to members of the `pai` group. No
   status asks for the password again.
-- **The text keys' `;` / `#` check reads the raw line** (`checks.rs` `preset_section`), so an
+- **The text keys' `;` / `#` check reads the raw line** (`checks.rs` `model_profile_section`), so an
   inline comment the user never touched on `model`, `mmproj`, `model-draft`, `override-tensor`,
   `chat-template-kwargs`, `reasoning-budget-message` or `fit-target` blocks every web save of that
-  preset (the configurator's save re-renders the line and is not affected). Proposed: check the
+  model profile (the configurator's save re-renders the line and is not affected). Proposed: check the
   value as read (`RawSection::get`) for lines the save did not change. Platform's decision.
 - **Nothing creates `ModelsDir` after a save** (the GUI creates it as the logged-in user); the design
   recommends keeping it so, for the user to decide (`ARCHITECTURE.md`, "ModelsDir after a save").
@@ -448,7 +458,8 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 
 ## Planned: profiles, nodes and instances (PLAN step 10 items 13 and 13a), not built
 
-**Nothing in this section is served.** It records the routes as designed in `ARCHITECTURE.md`, "Nodes
+**Nothing in this section is served** (step 4b's model profile part is built and has moved into the
+sections above). It records the routes as designed in `ARCHITECTURE.md`, "Nodes
 and instances", block "Revision: profiles" (commit f3a519c), which wins over (a) to (j) of the same
 record, where "preset" reads as "model profile". The record is the authority; this section is the
 designer's reading of it against the fe on 2026-11-17, and replaces the earlier version of this section
@@ -468,21 +479,14 @@ stay the contract of what is built until a slice moves a route from here into th
 
 ### Step 4b: the wire rename (the platform's slice 4, no behaviour change)
 
-Lands back to back with the fe's rename ([05-profiles-rename.md](05-profiles-rename.md)); an old route
-then answers 404.
+**The model profile part is DONE**: built in the bff by 5d54590 and in the fe by ec6dbd0
+([05-profiles-rename.md](05-profiles-rename.md)); its routes and keys are in the sections above
+(the note under "Routes" lists the old names). What 4b planned and is **not built**: the server
+route, served today at `/api/instances/{id}/server` with `client-no-instance` (open point 4 below).
 
-| Built today | After 4b |
+| Built today | Planned |
 | --- | --- |
-| `GET /api/presets` | `GET /api/profiles/model` |
-| `GET`, `PUT /api/presets/{id}` | `GET`, `PUT /api/profiles/model/{id}` |
-| `PUT /api/presets/{id}/enabled` | `PUT /api/profiles/model/{id}/enabled` |
 | `GET`, `PUT /api/instances/{id}/server` | `GET`, `PUT /api/profiles/server/{id}` (`default` today: the profile is still the instance's own file) |
-| `no-preset-named` | `no-model-profile-named` |
-| `preset-changed-elsewhere` | `model-profile-changed-elsewhere` |
-| `preset-no-model` | `model-profile-no-model` |
-| `invalid-preset-id` | `invalid-model-profile-id` |
-| `preset-name-taken` | `model-profile-name-taken` |
-| `presets-malformed` | `model-profiles-malformed` |
 | `client-no-instance` on the server routes | `client-no-server-profile` `[id]` |
 
 Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes:

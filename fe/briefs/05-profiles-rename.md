@@ -214,6 +214,42 @@ state names `preset` -> `model-profile`, `preset-missing` -> `model-profile-miss
 5. Designer: build and UX check; review against this map.
 6. One commit for the fe, beside the bff's slice 4 commit, in the same pause.
 
+## 05a: rewordings after the rename
+
+The mechanical rename (ec6dbd0) left a few fe-own texts that read badly with the new words. This
+sub-slice changes four texts in `fe/src/strings/en_US.json` and confirms three; nothing else changes
+(no key, id, class, layout, request or behaviour). Each text must be in the file **exactly** as below,
+and the copies in `fe/src/test/bff.ts`, if any, follow.
+
+| Key | Final English | Today |
+| --- | --- | --- |
+| `model-profile-engine-hint` | The engine this model profile belongs to. Every instance of that engine can serve it. | changed (today: "The engine whose model profile files hold this model profile. ...": the name twice in one clause, and "files" is an internal detail) |
+| `model-profile-off` | This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles. | changed (today: "... Switch it on in the model profiles list.": no list has that name; the page's back link reads "All model profiles", so the new words point at it and stay true when 05b renames the page) |
+| `model-profile-fit-invalid` | llama-server refuses this value, so it cannot run this model profile. Use on or off. | changed (decided: yes; today: "... so this model profile does not start.": a profile does not start, an instance does) |
+| `model-profile-jump-label` | Model profile sections | changed (today: "Model profile sections.": an accessible name, not a sentence, so no full stop, as `nav-label` "Main") |
+| `model-profile-assets-read-only` | The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine. | confirmed, unchanged |
+| `model-profile-draft-group-off` | Used only with a draft: a Draft model or a Drafter, and this model profile has neither (Assets). | confirmed, unchanged |
+
+Testable criteria:
+
+1. On a switched-off model profile's page (`enabled: false`), the paragraph above the cards has the
+   text of `model-profile-off` exactly; on a switched-on one it is absent.
+2. The Engine field's hint (its `aria-describedby` target) has the text of
+   `model-profile-engine-hint` exactly ([1.3.1 Info and Relationships](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
+3. The section jump list is `getByRole('navigation', { name: 'Model profile sections' })`, the name
+   without a full stop ([4.1.2 Name, Role, Value](https://www.w3.org/TR/WCAG22/#name-role-value);
+   [2.4.6 Headings and Labels](https://www.w3.org/TR/WCAG22/#headings-and-labels)).
+4. A `fit` value other than on or off (as the existing 2e.3c tests set it) shows the error text of
+   `model-profile-fit-invalid` exactly, linked to the field as today.
+5. `model-profile-assets-read-only` and `model-profile-draft-group-off` are byte for byte today's.
+6. The test count is unchanged (assertions on these texts change; none is added or removed), and the
+   four fe commands stay green.
+
+Out of scope: the two `api-*` texts the review proposed to reword, `api-model-profile-no-model` and
+`api-load-on-startup-over-max`. They are copies of the GUI's `crates/core/strings/en_US.toml` lines
+(section 2), so the rewording is proposed to the platform side and changes in the fe only when the
+GUI's strings do, in the same words.
+
 ## The slices that follow, in build order (each small; the platform slice each needs)
 
 - **05b Navigation, model side** (needs slice 4 only): the nav's "Profiles" group with its Model entry;
