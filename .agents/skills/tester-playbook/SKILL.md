@@ -141,7 +141,17 @@ Lessons only: the rules are in `AGENTS.md`.
   clippy with dead code until wired in: say so, add no `allow`; a `pub` stub in a lib crate is not dead
   code, so there is no dead-code red to report. A new parameter on a core method: a stub that takes it
   and keeps the old body gives assertion reds in every phase, where a `todo!` stops the e2e at its first
-  call.
+  call. Rust has no default argument, so a new flag on a shared phase fn (`licenses::stage_in(dir, libs,
+  sources, web_ui: bool)`) is given the arity NOW with the flag inert (`let _ = web_ui;`): the old call
+  sites are updated to pass a constant, every pre-existing test keeps running, and the reds are the new
+  assertions. The constant at the callers is deliberate: it leaves the wiring (the flag's real expression)
+  for the coder, so the caller source lint reds. A new `pub` field on a struct of a BIN crate (xtask) that
+  only tests read is a `field is never read` dead-code red under `-D warnings` (in a lib crate it is not),
+  so say the coder must read it in production.
+- A call-args helper for a caller source lint: pass `what` ending with its `(` and scan the parens from
+  `src[at + what.len()..]` with `depth = 1`. Searching for the `(` again lands on the first NESTED paren
+  (`&licenses::libraries_under(`), so the extracted "arguments" are one sub-expression and the lint's red
+  names a file that is fine.
 - `pub const X: Duration = todo!()` is NOT a stub: const-eval panics at the definition (`E0080`) and
   stops the crate. Stub a constant with today's behaviour's value; the red is the assertion.
 - To pin a field a variant lacks without breaking the build, match `Variant(p, ..)` / `Variant { .. }`
@@ -155,6 +165,12 @@ Lessons only: the rules are in `AGENTS.md`.
   pinned by a test is the coder's: check by reading that all assertions can hold at once.
 - A file the current slice created is untracked: `git diff` on it prints nothing, which is no sign your
   edits were lost (`git status --short` shows `??`).
+- A mutant battery (each edit must turn a test red): copy the touched sources to the scratchpad, apply each
+  mutant with `sed -i '<line>s/.*/<text>/'` after printing the line with `sed -n '<line>p'` (the printed line
+  is the proof the address hit what you meant), run the crate's tests, extract the failing test names with
+  `grep -E '^    [a-z_][a-z0-9_:]*$'` (the failure list is 4-space test paths; the `---- name stdout ----`
+  lines carry `----` and filter out), restore with `cp` and prove it with `cmp`. Per-mutant `cargo test` of
+  xtask is ~10 s (deps cached), so nine mutants in one script beat reasoning.
 - Never `git stash` or `git checkout --` to compare: other sessions edit the same tree. Run one test on
   its own, or probe in a scratch copy and `cmp` it back. Plant lint violations in a scratch copy, never
   the real tree.
@@ -204,6 +220,19 @@ Lessons only: the rules are in `AGENTS.md`.
   every test without running one. The shared tree moves under a slice (HEAD changed `Caller` into
   `Requester` + `AsRequester` while these tests were being written): re-read the seam's signatures before
   finalising asserts, and read the red to see which seam moved.
+- A test that names an item of an OS-gated module (xtask `Component`, `component_ships_web_ui`, both
+  `#[cfg(target_os = "linux")]`) must carry the same gate, or the Windows and macOS test builds die E0425
+  and E0433 and every other test in the binary stops running. Gate the test, never widen the production gate.
+- "A new enum variant must be a compile error" as a test: a `for v in <Enum>::ALL` loop (the enum's own
+  exhaustive array) around a `match` that lists every variant and has no wildcard, asserted against
+  `<fn>(v)`. The `match` is the red (E0004); the loop source is not. When the enum has no `ALL`, list the
+  variants in the array by hand. Both enums of the xtask licences (`Component`, `Product`) derive
+  `Debug`/`Copy`, so `assert_eq!(.., "{v:?}")` names the case for free.
+- The proof that `cargo check --target <triple> --all-targets` type-checked the `#[cfg(test)]` tests is a
+  second `-v` run AFTER `cargo clean -p <pkg> --target <triple>`: its log carries one rustc line with
+  `--test` beside `--crate-name <pkg>` (a bin crate: two invocations, the plain bin and the test target).
+  A `Fresh` run prints none of them, and `grep -c "Compiling <pkg>"` is 0 on a check (it prints
+  `Checking <pkg>`).
 - `git grep` sees only tracked files: after an un-added move, use `grep -rn`.
 - A run-time-read fixture (`read_to_string(CARGO_MANIFEST_DIR/..)`) reds naming the missing file;
   `include_str!` would stop the crate compiling.
@@ -241,6 +270,12 @@ Lessons only: the rules are in `AGENTS.md`.
   (bind, release, rebind): one test in 12 flaked on the first cold run after `cargo clean` and never
   reproduced (11 full-suite greens + a solo `--test` run). Probe solo, then rerun the suite 2-3 times
   before reporting a red from that binary.
+- A fe/Vitest helper that opens a page (`startAt` + `fakeBff` + `render(<App/>)`) and is called TWICE
+  inside one `test()` (two scenarios in one test): the second render stacks a second `<main>`, so the
+  helper's own `screen.getByRole('main')` reds "Found multiple elements with the role main". `afterEach`
+  cleanup only runs BETWEEN tests, not between two calls in one test. Add `cleanup()` at the top of the
+  helper (the loop helper `cleanAnswers` already does this). This is a test-helper red (a stacked-DOM typo),
+  not the production rule: fix the helper, not the code under test.
 - The dev machine has `fe/dist` built, so `build.rs` embeds it and `tests/fe.rs` `embedded()`
   (`PAI_BFF_FE_DIR`) points there, NOT at `crates/bff/fe-fixture`: an asset added only to the fixture
   exercises no served path in `tests/fe.rs` on this machine. Pin a `build.rs` rule (e.g. a
@@ -1188,6 +1223,11 @@ Lessons only: the rules are in `AGENTS.md`.
   Per-OS modules are `#[cfg(unix)]`, so a test importing one needs it too; run `cargo check -p xtask
   --all-targets --target x86_64-pc-windows-gnu` (and `aarch64-apple-darwin` for the Mac side) before
   handing over.
+- A caller source lint that reads one call's args and forbids the literals `true`/`false` has two proven
+  survivors (licence scoping): the disjunction `product == Product::Framework || product == Product::Llama`
+  (contains the required needle, no literal), and any call site the lint does not read (`installer_page`'s
+  `web_ui` on Windows, `cfg(windows)` so it never compiles on Linux). Pin EVERY call of the function and
+  refuse `||` in the args; a literal `true` at the linted sites is caught.
 - xtask's CLI: `Cli::try_parse_from` (`cli_tests`); compare `ValueEnum` names via
   `to_possible_value().unwrap().get_name()`. clap 4 refuses `--flag -1` without `allow_hyphen_values`
   (`--flag=-1` parses): panic with clap's error so it is not read as a refusal.

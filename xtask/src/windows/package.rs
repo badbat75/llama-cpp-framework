@@ -671,9 +671,15 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
             rocm: hip_root.clone(),
             cuda: dists.find_cuda(),
             openssl: (!cfg.openssl_dir.is_empty()).then(|| PathBuf::from(&cfg.openssl_dir)),
+            ..Default::default()
         };
         let share = stage.join("share");
-        let entries = licenses::stage(&share, &licenses::libraries_under(&stage), &sources)?;
+        let entries = licenses::stage(
+            &share,
+            &licenses::libraries_under(&stage),
+            &sources,
+            licenses::product_ships_web_ui(product),
+        )?;
         let read_text = |p: &Path| -> Result<String> {
             let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
             Ok(String::from_utf8_lossy(&bytes).into_owned())
@@ -691,7 +697,12 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
         let license_rtf = stage.with_extension("license.rtf");
         std::fs::write(
             &license_rtf,
-            licenses::installer_page(&entries, &own, eula.as_deref()),
+            licenses::installer_page(
+                &entries,
+                &own,
+                eula.as_deref(),
+                licenses::product_ships_web_ui(product),
+            ),
         )?;
 
         // ── The MSI ─────────────────────────────────────────────────────

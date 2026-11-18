@@ -759,8 +759,12 @@ pub fn run(
                 cuda: dists.find_cuda(),
                 ..Default::default()
             },
+            licenses::component_ships_web_ui(*c),
         )?;
-        licence_fields.push((*c, licenses::rpm_license(&entries)));
+        licence_fields.push((
+            *c,
+            licenses::rpm_license(&entries, licenses::component_ships_web_ui(*c)),
+        ));
 
         let doc = root.join("usr/share/doc").join(c.package());
         std::fs::create_dir_all(&doc)?;

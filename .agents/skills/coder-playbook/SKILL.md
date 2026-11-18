@@ -115,6 +115,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - xtask compiles only its own OS's module (`linux/`, `windows/` or `macos/`): a `common/` helper that
   only the other OSes' phases call is dead code on Linux and fails clippy. Give the shared helper one
   signature every OS calls (`bench_share::stage(dest)`), not a Linux variant beside the old one.
+- xtask is a BIN crate, so a `pub fn` in `common/` is not exempt from dead_code: a per-OS decision fn
+  (`licenses::component_ships_web_ui`, `product_ships_web_ui`) needs the gate of the OS that calls it
+  and of its own imports (`#[cfg(target_os = "linux")] use crate::common::components::Component;`,
+  `#[cfg(any(windows, test))] use crate::Product;`, the same gates the neighbours `stage`/`rpm_license`
+  carry). A test that calls a linux-only item needs the same gate, else the Windows `--all-targets`
+  check breaks: `the_linux_component_that_ships_the_web_ui_is_the_bff` has no `#[cfg]` and answers 16
+  E0425/E0433 there; that is a tester fix, not a caller one.
 - `xtask/cmake/<os>.toml` is picked up by file name alone (`cmake_options::load`); a new OS file needs
   no code change, only the header and a reason per entry in the style of `macos.toml`.
 - The tests of `linux/system_files.rs` scan the generated maintainer scripts for `rm ` and the bus and
@@ -1385,3 +1392,22 @@ Lessons only: the rules are in `AGENTS.md`.
   `linux::system_files` script test while every other suite passes. Passes in isolation and on a
   rerun: pre-existing flake, say so in the report, do not chase. Same shape in pai-bff's
   `tests/session.rs` (35 timing tests): one occasional failure in 0.5 s, green on rerun.
+- Web UI, the react-hooks rules of `npm --prefix fe run lint`: a state update that answers a prop change
+  goes in the RENDER body guarded by a `useState` of the previous value (React's "adjusting state when
+  props change"), never in an effect (`set-state-in-effect`), and a hook takes render values, never
+  `ref.current` (`refs`: "Cannot access refs during render"). For "the answer of a save reads a save in
+  flight", pass `phase === 'saving'`: every edit path of the page must keep that phase
+  (`setPhase((p) => (p === 'saving' ? p : 'idle'))`), which `ServerForm`'s `edit` has always done, so the
+  model profile page's `edit`, `tickBoxed` and `textBoxed` now match it.
+- Web UI: Vitest here has no `globals: true` and no setup file, so RTL's auto-cleanup never registers.
+  A test that renders `<App />` twice (a shared helper called twice in one test) fails
+  `Found multiple elements with the role "main"` on the SECOND render, and a page that passed its whole
+  body on the first is proof the production code is right. The fix is the tester's: `cleanup()` at the
+  top of that helper.
+ - xtask's licence staging takes a `web_ui` flag at every caller (`stage`, `stage_in`, `rpm_license`,
+   `installer_page`): Linux true only for `Component::Bff`, Windows only for `Product::Framework`,
+   macOS a literal `false`. The caller test reads the argument text with `call_args`, which finds the
+   FIRST call of that name in the file and forbids the words `true`/`false` in the computed ones:
+   write `*c == Component::Bff` and `product == Product::Framework` inside the call, not a local.
+   Each MSI's licence page is `stage.with_extension("license.rtf")` so it is per product, and both
+   `.wxs` harvest `share\**`: a staged licence text needs no `.wxs` entry.
