@@ -1039,7 +1039,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     names, Strata's licence in the packages and what happens to the strata-framework repo.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
-    (user, 2026-11-17: after nodes and instances).
+    (user, 2026-11-17: after nodes and instances). It logs every request (user, 2026-11-18): the
+    client's address, from the connection or from `X-Forwarded-For` / `Forwarded` only when configured
+    (which proxies are trusted), the User-Agent, and what else helps: time, the authenticated caller, the
+    model asked for and the instance that served it, status, latency, prompt and completion tokens; never
+    the prompt or the reply text, nor a key. The design decides the format, where the log goes and its
+    rotation.
 
 Later slices (not yet written): the benchmark portal.
 
