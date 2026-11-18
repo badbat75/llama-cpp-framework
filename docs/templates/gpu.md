@@ -32,7 +32,7 @@ cap, or its spec) is in the row or the section that cites it.
 
 | key | value | evidence |
 | --- | --- | --- |
-| `<preset or server key>` | <the measured optimum on this card> | <numbers against the alternatives> (campaign `<name>`) |
+| `<model profile or server key>` | <the measured optimum on this card> | <numbers against the alternatives> (campaign `<name>`) |
 
 ## 4. Choices that look better than they measure
 

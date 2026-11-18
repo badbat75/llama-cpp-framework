@@ -1,6 +1,6 @@
 ---
 name: optimize-preset
-description: Tune one model's section of presets.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with pai bench run and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
+description: Tune one model's section of models.ini for speed (prefill and decode t/s) and GPU memory (VRAM used, headroom), measuring every change with pai bench run and recording it in bench.db. Use when asked to optimize, tune, speed up, fit, or shrink a preset, to raise its context, to rebalance tensor-split / n-cpu-moe / override-tensor across GPUs, or to pick KV cache type, ubatch-size or a speculator for a model.
 ---
 
 # Optimize a preset (speed and VRAM)
@@ -26,16 +26,18 @@ bench.db. Never claim a number you did not measure; never apply a value that onl
 ## 1. Establish the baseline
 
 ```bash
-pai preset list                 # ids, model paths, switched-off ones
-pai preset show <id>            # the section as INI
+pai model-profile list            # ids, model paths, switched-off ones
+pai model-profile show <id>       # the section as INI
 pai server show                 # Threads, ThreadsBatch, env knobs
 pai bench query campaigns --db benchmarks/bench.db
 pai bench query summary --db benchmarks/bench.db --model <name> \
   --show ctx-size,cache-type-k,n-cpu-moe,tensor-split,ubatch-size
 ```
 
-Config lives in `~/.config/private-ai/` on Linux, `%LOCALAPPDATA%\private-ai\config\` on
-Windows. **Back up before any edit**: `cp presets.ini presets.ini.bak-$(date +%Y%m%d-%H%M%S)`.
+Config lives in the manager's tree: `/etc/llama.cpp/` on Linux, `%ProgramData%\llama.cpp\config\`
+on Windows (type-checked only there): `server@default.ini` and `models.ini`, root-owned, so a
+hand edit needs the administrator's rights; `settings.ini` is the per-user file.
+**Back up before any edit**: `sudo cp /etc/llama.cpp/models.ini /etc/llama.cpp/models.ini.bak-$(date +%Y%m%d-%H%M%S)` (the write lands in the root-owned tree, so it needs root too).
 
 Ask the user (once, only what is unknown):
 - the minimum acceptable context (`ctx-size`) and slot count (`parallel`);
@@ -117,7 +119,7 @@ nvidia-smi --query-gpu=index,name,memory.used,memory.free --format=csv   # use m
 for d in /sys/class/drm/card*/device; do [ -r $d/mem_info_vram_used ] && \
   echo "$d used=$(( $(cat $d/mem_info_vram_used)>>20 ))MiB total=$(( $(cat $d/mem_info_vram_total)>>20 ))MiB gtt=$(( $(cat $d/mem_info_gtt_used)>>20 ))MiB"; done
 grep -E 'model buffer size|KV buffer size|RS buffer size|compute buffer size' \
-  ~/.local/share/private-ai/logs/llama-server.log | tail -30
+  <(sudo journalctl -u llama.cpp@default --no-pager) | tail -30   # the instance's log is the journal (sudo, or the groups systemd-journal, adm, wheel); a plain file only where the configurator spawns llama-server itself (macOS: ~/.local/share/private-ai/logs/llama-server.log)
 ```
 
 Windows: `tools\report-memory.ps1` (requested vs actual, spill into shared memory). For
@@ -135,7 +137,7 @@ Margins to keep (free memory after the prefill):
 ## 4. Measuring speed: one key per sweep
 
 ```bash
-pai bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
+pai bench run --model-profile <id> --key <key> --values '<a>,<b>,<c>' \
   --reps 3 --prompt-file /usr/share/private-ai/benchmarks/prompts/bench-prompt-43k-1.0.txt \
   --campaign <model>-<key>-<yyyymmdd> --question "<what this answers>"
 ```
@@ -144,7 +146,7 @@ pai bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   and end a single such value with one (`'16,50;'`): without a `;` the spec splits on
   `,` and sweeps `16` and `50`. `unset` removes the key for a leg. Ranges: `2..8`.
 - Not every preset key is sweepable (`mmproj-device` is refused, `mmproj-offload` is
-  not; the refusal lists the sweepable keys): set the key in presets.ini, then run a
+  not; the refusal lists the sweepable keys): set the key in models.ini, then run a
   one-leg sweep of a sweepable key (its current value) into the same campaign; the run
   records every key, so `bench query runs --show <key>` tells the legs apart even though
   their labels look alike. Launch-line levers are not preset keys at all: `Threads` and
@@ -170,9 +172,9 @@ pai bench run --preset <id> --key <key> --values '<a>,<b>,<c>' \
   Synthetic mode (llama-bench) needs the server DOWN and cannot model the drafter,
   `ctx-size` or `parallel`: use it only for raw prefill/decode of placement or quant.
 - Two keys that must move together (e.g. `n-cpu-moe` + `tensor-split`): set one by
-  editing presets.ini, sweep the other; or run one sweep per combination into the same
+  editing models.ini, sweep the other; or run one sweep per combination into the same
   campaign. Restart (`pai control restart`) after every manual edit: the
-  router reads presets.ini only at start.
+  router reads models.ini only at start.
 - `--apply original` (default) leaves the preset as it was; apply the winner yourself
   after the memory check. After an interrupted sweep, restore with `--restore-to` (the
   value is in `~/.local/share/private-ai/bench/sweep-pending-*.json`).
@@ -289,7 +291,7 @@ the repo's database; on this machine it does.)
 1. Present a table: candidate, prefill and decode (short and long prompt, mean +- sd),
    free VRAM per card after prefill, context reached. Recommend one; the user decides
    when the trade is speed vs margin or context.
-2. Apply the chosen values to presets.ini (back up first), restart, run one confirming
+2. Apply the chosen values to models.ini (back up first), restart, run one confirming
    long-prompt measurement and the memory readout.
 3. `pai bench answer <campaign> "<conclusion with the numbers>"`, and
    `bench publish <campaign> --to benchmarks/bench.db` when the runs went to the

@@ -19,7 +19,7 @@ so a difference between them is not the OS alone. Model-specific detail is in th
 
 **In short.** Use the ROCm backend with `f16` KV at the context you need and `ubatch-size 1024`. For two
 R9700s, use the tensor split with an even `tensor-split`: on Linux it decodes 48 to 65% faster than the
-layer split for 16 to 22% less cold prefill. Windows runs the same preset with one request's decode level
+layer split for 16 to 22% less cold prefill. Windows runs the same model profile with one request's decode level
 with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeasured there.
 
 **The build behind these figures.** The framework bundles llama.cpp v1.0.0, and no figure here was measured on it.
@@ -62,7 +62,7 @@ steps on upstream's tile kernel. How far the figures move is open ([section 7](#
 
 ## 3. Settings
 
-### Preset (presets.ini)
+### Model profile (models.ini)
 
 | key | value | evidence |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ at 514288, temperature 1, 5 repetitions, layer split. Two cold prefills run one 
 total is one request's rate, and a request decoding beside a prefill drops to 37.1 t/s under the tensor
 split and 20.2 under the layer split.
 
-**On *Windows* the same tensor preset runs at the same decode for one request and a slower prefill**: 57.7
+**On *Windows* the same tensor-split profile runs at the same decode for one request and a slower prefill**: 57.7
 against 59.3 at 43.7k, 53.9 against 59.2 at 115k, and prefill 952.1 against 1125.4 and 823.3 against 960.1
 (15% and 14% slower) (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). The cause of that prefill gap is
 unmeasured. One-repetition runs at 43.7k (`spec = custom`, derived from `standard-1.1`) find no change from
@@ -143,19 +143,19 @@ Each card sits at its 300 W cap while prefilling and at 210 to 270 W while decod
 sysfs, not recorded). `power1_cap_max` equals the default, so the cap can only go down without the driver's
 overdrive.
 
-An example `presets.ini` section, the preset of the
+An example `models.ini` section, the model profile of the
 [baseline under the standard spec](qwen3.8_27b.md#7-baseline-under-the-standard-spec-two-r9700s): set
 `model` and `mmproj` to your own paths, and `device` and `mmproj-device` to your own ids, which
 `llama-server --list-devices` prints (they can change between boots, and both cards print the same name,
 so the list does not say which one is the x16 card). On *Windows* the integrated GPU takes `ROCm0`, so the same
-preset reads `device = ROCm2,ROCm1` with `mmproj-device = ROCm1` on the machine measured. There, on this
+model profile reads `device = ROCm2,ROCm1` with `mmproj-device = ROCm1` on the machine measured. There, on this
 same-card tensor pair, either order prefills within 1%, one repetition per pass at 43.7k (campaign `swift27b-device-order-windows-20261102`),
 and the x16 card stays first; a decode difference stays open in
 [Qwen3.8-27B, section 9](qwen3.8_27b.md#9-not-yet-measured-placeholders). The order that reverses on *Windows*, below,
 concerns a card of another backend.
 
 <details>
-<summary>presets.ini: Qwen3.8-27B on two R9700s</summary>
+<summary>models.ini: Qwen3.8-27B on two R9700s</summary>
 
 ```ini
 [Swift-1.5-Qwen3.8-27B]

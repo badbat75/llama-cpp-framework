@@ -26,7 +26,7 @@ costs ~1.3% of decode, and the MoE cache never beats resident layers. With two R
 fit: prefill reaches x3.5 and decode 21% faster than the mixed pair. Then the separate MTP head with
 an n-gram drafter in front decodes 56 t/s on prose and 280 on a code rewrite. Keep the layer split there:
 on the Swift fine-tune the tensor split decodes 8 to 12% faster at 115k but prefills about 20% slower and
-holds 41k to 74k tokens less context ([section 6](#6-the-tensor-split-and-long-prompts)); its chosen preset decodes
+holds 41k to 74k tokens less context ([section 6](#6-the-tensor-split-and-long-prompts)); its chosen model profile decodes
 66.5 t/s at 43.7k and 44.7 at 115k under the standard spec. With the mixed pair,
 put the RTX 4070 SUPER first and use `f16`, `n-cpu-moe 16` and `no-host`. Windows stays about a third
 behind Linux on prefill, because the host experts run on the CPU.
@@ -104,7 +104,7 @@ rename   = unset=all experts in VRAM
 ### The Swift fine-tune on two R9700s
 
 Every expert in VRAM, one slot, the x16 card first. [Section 6](#6-the-tensor-split-and-long-prompts) has the
-method, the campaigns, the full comparison and [this preset's figures](#the-chosen-swift-preset-under-the-standard-spec).
+method, the campaigns, the full comparison and [this model profile's figures](#the-chosen-swift-model-profile-under-the-standard-spec).
 
 | key | value | evidence |
 | --- | --- | --- |
@@ -131,7 +131,7 @@ method, the campaigns, the full comparison and [this preset's figures](#the-chos
 (campaign `flash-next-device-order-linux-20261021`), and neither does `n-cpu-moe 15` at `23,26` (not recorded): weights
 and KV fit, the compute buffer does not.
 
-On *Linux* the IQ3_XXS preset (`q8_0` KV, `n-cpu-moe 7`) follows the same order: the RTX 4070 SUPER
+On *Linux* the IQ3_XXS model profile (`q8_0` KV, `n-cpu-moe 7`) follows the same order: the RTX 4070 SUPER
 first at `19,30` prefills 776.7 ±15.8 against 580.8 ±10.6 and decodes 27.8 ±0.4 against 26.1 ±0.8,
 but leaves only 72 MiB free on that card, and `20,29` does not load
 (campaign `flash-next-xxs-device-order-linux-20261021`). The order comes from where the work runs: the RTX 4070 SUPER takes blocks 0 to 22, among them the 16
@@ -162,7 +162,7 @@ Context and KV type at ubatch 512, `op-offload false`, the 43.7k prompt and thre
 | 262144, `q8_0` | 18, `41,8` | 349, 351 | 20.9, 20.7 | 26.0 |
 | 262144, `f16` | 21, `41,8` | 311, 319 | 23.3, 23.4 | 25.2 |
 
-Adding `no-host` and the RTX 4070 SUPER first to the bold row gives the recommended preset. `q8_0`
+Adding `no-host` and the RTX 4070 SUPER first to the bold row gives the recommended model profile. `q8_0`
 halves the KV but its compute buffer grows (877 against 533 MiB on the R9700 at 131072), so it saves
 one layer of experts at 131072 (15 against 16; the row's 14 comes from also moving that override's
 tensor to the RTX 4070 SUPER) and two at 262144.
@@ -263,7 +263,7 @@ rename   = unset=none, ngram-map-k4v,draft-mtp=k4v + mtp, bench-prompt-long=43.7
 The two cover each other's gap. The n-gram drafter finds nothing to copy in prose, where the MTP head
 lifts decode by 77%; on a rewrite the n-gram drafts whole runs of the context and the head adds little.
 The n-gram drafters are always tried first, whatever the order written. The chain costs 25% of cold
-prefill, all of it the head's: without it the same `q8_0` preset prefills 2020.4.
+prefill, all of it the head's: without it the same `q8_0` model profile prefills 2020.4.
 
 `spec-draft-n-max` 3 is the peak, and HIP graphs help most there
 (campaign `flash-next-mtp-graphs-2xr9700-linux-20261030`; graphs off with `CudaDisableGraphs = true`,
@@ -285,11 +285,11 @@ series   = CudaDisableGraphs
 rename   = unset=graphs on, true=graphs off
 ```
 
-Against the n-gram-only `f16` preset, the head decodes 54.9 t/s against 34.0 (61% faster) and prefills
+Against the n-gram-only `f16` model profile, the head decodes 54.9 t/s against 34.0 (61% faster) and prefills
 1520 against 1962 (23% slower), a good trade for conversations that grow turn by turn.
 
 **Where decode time goes**, live on a coding agent at ~75k tokens, 31.5 t/s: a decode pass takes ~41 ms,
-of which ~25 ms of kernels on the two cards. No preset key reaches the rest, which falls outside the kernels:
+of which ~25 ms of kernels on the two cards. No model profile key reaches the rest, which falls outside the kernels:
 [the profile of the Swift file](#where-a-decode-step-goes) bounds it. A tool-call grammar costs nothing measurable.
 
 ### N-gram settings
@@ -329,7 +329,7 @@ bounds it.
 
 The Swift file of [section 1](#1-model-facts), not the base file. One card in the CPU's x16 slot, one behind
 the chipset at x4 with no AtomicOps, internal AllReduce. llama.cpp v0.8.0, `f16`, ubatch 512, `ngram-map-k4v`
-(`size-m 32`) then MTP at the default draft length, 3. No spec: temperature 1 (the preset's sampling), 3 repetitions
+(`size-m 32`) then MTP at the default draft length, 3. No spec: temperature 1 (the model profile's sampling), 3 repetitions
 of 512 tokens unless marked, cold prompts of 43.7k and 115k tokens and a 1259-token image prompt.
 
 </details>
@@ -348,7 +348,7 @@ Layer rows at 172032 and 196608 (campaign `swift-flash-next-1slot-2xr9700-linux-
 quoted below (campaign `swift-flash-next-draft-2xr9700-linux-20261101`); the 122880 row
 (campaign `swift-flash-next-1slot-tensor-2xr9700-linux-20261101`).
 
-- (a) the [standard spec](#the-chosen-swift-preset-under-the-standard-spec), five repetitions. Prefill compares; its
+- (a) the [standard spec](#the-chosen-swift-model-profile-under-the-standard-spec), five repetitions. Prefill compares; its
   decode and acceptance are uncapped, so they do not and stay out of this table. Free is over the whole spec; over
   the 115k and image legs the other rows ran, one repetition each, it reads 600 / 904.
 - (b) no mmproj loaded on this leg; with the encoder on the CPU it takes no VRAM, so the row holds.
@@ -357,7 +357,7 @@ quoted below (campaign `swift-flash-next-draft-2xr9700-linux-20261101`); the 122
 Free memory is the per-leg minimum of a sysfs sampler read by hand, not recorded, except (c). The bench.db
 probe column differs from it: much lower under the tensor split (356 / 138 against 676 / 458 at 131072 and
 43.7k), a little higher under the layer split (186 / 708 against 180 / 695 at 180224, two slots), with one
-unreliable reading under the chosen preset, below.
+unreliable reading under the chosen model profile, below.
 
 **Decode.** At 131072, the one context both splits ran, the tensor split decodes 44.1 ±5.2 against 39.4 ±3.4
 at 115k (12% faster) and the repetitions overlap. At 122880 it decodes 42.0 ±1.2 against 38.9 ±1.7 and 37.8 ±3.1
@@ -383,11 +383,11 @@ leaves ~5.4 GiB for everything else, so these limits hold under it:
 33k tokens of context against the `24,25` row at 196608. At 172032 the x16 card keeps only 418 MiB, under a
 ~500 MiB margin, hence 163840, which sits right at that margin.
 
-### The chosen Swift preset under the standard spec
+### The chosen Swift model profile under the standard spec
 
 **Layer `25,24`, encoder on the x4 card, 163840, one slot: 66.5 t/s at 43.7k and 44.7 at 115k with the drafter.**
 The standard spec 1.1 (campaign `swift-flash-next-standard-1.1-2xr9700-linux-20261101`); its scenarios with two
-requests do not run at `parallel 1`. Real use: the preset as it is, temperature 1, 5 repetitions. Engine: no drafter,
+requests do not run at `parallel 1`. Real use: the model profile as it is, temperature 1, 5 repetitions. Engine: no drafter,
 temperature 0, 3 repetitions. Prefill / decode:
 
 | prompt | real use | accepted | engine |
@@ -407,7 +407,7 @@ its reasoning into the answer, which decodes faster: 144.2 against 60.7 at 43.7k
 MiB, reached on the writing-code leg. That leg's bench.db probe reads 0 / 500 and is unreliable there.
 
 **The engine pass needs the draft file gone, not only `spec-type none`.** With the file present the head takes
-3840 MiB of KV on the x16 card and this preset does not load, so `bench run` removes it from every run with
+3840 MiB of KV on the x16 card and this model profile does not load, so `bench run` removes it from every run with
 `spec-type none`.
 
 ### Where a decode step goes
@@ -424,7 +424,7 @@ bench.db), in ms per generated token:
 
 - **Layer split.** The cards run in series, so each is busy only about a third of the time, and about 30% of a token
   (7 to 10 ms) goes outside kernels, an estimate that assumes the profiler does not lengthen kernels. The host side
-  was not traced, so that time is not split further; no preset key reaches it. The x4 link's copies are not the limit.
+  was not traced, so that time is not split further; no model profile key reaches it. The x4 link's copies are not the limit.
 - **Tensor split.** The x16 card computes about 12 ms and then sits 6 ms in the AllReduce kernel, read as
   waiting for the x4 card (inference). Its 18.2 ms about equals the layer split's 18.6 ms total on both cards.
 - **Drafter.** It cuts kernel time per token by a third, 27.8 to 18.6 ms (62% accepted in that run). The profile does
@@ -480,7 +480,7 @@ all of them in RAM pin ~47 GiB, which is too much for a 59 GiB host.
 
 ## 7. Windows
 
-The same preset, files, llama.cpp and cards, with `device = ROCm1,CUDA0`, temperature 0. The *Windows* figures
+The same model profile, files, llama.cpp and cards, with `device = ROCm1,CUDA0`, temperature 0. The *Windows* figures
 are 3 runs per cell by hand, not recorded, except the `ThreadsBatch 24` row, two recorded runs:
 
 | system | prefill at 43.7k | decode at 43.7k |
@@ -529,6 +529,6 @@ it and have no leg without it, so their figures may not hold on the bundled v1.0
 | HIP upload cost per miss | n/a | a profile of the miss path on ROCm against CUDA | TBD: needs a trace (rocprofv3, nsys), not a bench run |
 | `device` order on *Windows* | the R9700 first | does the card on the fast link belong last? | partly: on two R9700s the x16 card last decodes 23.1 ±1.4 against 21.3 ±0.2, prefill 1499.8 against 1524.7 (campaign `flash-next-2xr9700-device-order-20261028`); with the RTX 4070 SUPER, TBD: needs that card in the test machine |
 | `load-mode none` abort | n/a | a minimal reproduction for upstream; does it also hit CUDA or Vulkan on *Windows*? | TBD |
-| the CPU backend alone, *Windows* against *Linux* | n/a | does `llama-bench` show the third lost in prefill, deciding between a build fix and a preset fix? | TBD |
+| the CPU backend alone, *Windows* against *Linux* | n/a | does `llama-bench` show the third lost in prefill, deciding between a build fix and a model profile fix? | TBD |
 | `split-mode tensor`, long session on the Swift file | `layer` | does it hold through a long live session on the driver of the bench legs? | TBD |
 | `spec-draft-n-max`, `size-m`, `ubatch-size` on the Swift file | 3, 32, 512 | do other values pay on this file? | TBD |

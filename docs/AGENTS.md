@@ -18,7 +18,7 @@ says which rules apply. `README.md` is the index: a new page gets its line there
 
 | `type` | pages | what it is |
 | --- | --- | --- |
-| `gpu` | `amd_ai_pro_r9700.md`, `nvidia_rtx4070_super.md` | one card: the measured optimum per llama.cpp/server/preset parameter on it |
+| `gpu` | `amd_ai_pro_r9700.md`, `nvidia_rtx4070_super.md` | one card: the measured optimum per llama.cpp/server/model-profile parameter on it |
 | `model` | `qwen3.8_27b.md`, `qwen3.8_flash_next.md` | one model: the same, on the cards it was measured on |
 | `reference` | `build-pipeline.md`, `build-prerequisites.md`, `build-compiling.md`, `build-packaging.md`, `build-macos.md` | developer reference; the measurement rules below do not apply |
 
@@ -69,7 +69,7 @@ fully answered moves to the settings or the choices table).
 - Every value traces to a measurement; a value recorded in `benchmarks\bench.db` names its campaign, as in (campaign `27b-kv-f16-20261016`) (`pai bench query campaigns --db benchmarks\bench.db` lists them), never a local archive file or path; no absolute paths. A cited campaign must exist in bench.db. A campaign reaches the site only once a guide cites or charts it. A failed leg is left out, unless it sets a limit a reader must respect; then state the limit.
 - When a campaign changes a result, update the row (and fill or retire its placeholder) in the same change, and `updated` in the front matter.
 - Runs recorded without a spec are `spec = custom`: say the method in the row or the section intro (temperature, repetitions, prompt, output cap), since no spec version stands for it.
-- A `gpu` page covers ITS card only: no split vector of one pairing, no mention of the other card. One exception: an example `presets.ini` section, folded in `<details>` under the multi-GPU section, may keep its `tensor-split`, with absolute paths removed.
+- A `gpu` page covers ITS card only: no split vector of one pairing, no mention of the other card. One exception: an example `models.ini` section, folded in `<details>` under the multi-GPU section, may keep its `tensor-split`, with absolute paths removed.
 - No hardware identifiers: MAC addresses, serial numbers, GPU UUIDs and the like. A backend device id (`ROCm1`, `CUDA0`) is fine: an enumeration index that identifies no machine. Its numbering depends on the machine, so a reader checks their own with `llama-server --list-devices`. A PCI address is fine too: it names a slot position and identifies no machine.
 - A `model` page names the cards it was measured on but stays about the model; per-card detail stays in the card guides, which it cites.
 

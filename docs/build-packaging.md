@@ -79,6 +79,12 @@ named by the component: `llama/` for the `llama.cpp` package). `licenses.rs` (`x
 
 - This project's licence, llama.cpp's and what llama.cpp's own `licenses/` holds, the configurator's
   icon font, and a text for every bundled library.
+- **The web UI's four own texts** (its two Atkinson Hyperlegible fonts, its Lucide icon set, the React
+  it is built on) are staged **only in the package that ships the web UI**: the `bff` package on Linux
+  (`component_ships_web_ui`) and the framework's MSI on Windows (`product_ships_web_ui`, the product that
+  holds `pai-bff.exe`); llama.cpp's packages and MSI carry none of them, and no macOS package does (the
+  flag there is a literal `false`: by the code, the macOS staging of this change has not been built).
+  `README.txt` names them only where they are staged, and llama.cpp's MSI licence page names none.
 - `README.txt` says which text covers which library. llama.cpp's own libraries are covered by its
   licence.
 - **The table in `licenses.rs` decides which licence a library has; nothing is guessed.** The package
@@ -172,7 +178,7 @@ framework rebuild.
 **llama.cpp's MSI ships its defaults and copies them into `%ProgramData%\llama.cpp\config\` only
 when missing**, never over a file, on install, repair and upgrade alike, and leaves them on uninstall
 (`NeverOverwrite`, `Permanent`). They are `crates/core/defaults/windows/`: a `server@default.ini`
-holding only `[Server]` `Port = 9931` and `Hostname = localhost`, and an empty `presets.ini`. As on
+holding only `[Server]` `Port = 9931` and `Hostname = localhost`, and an empty `models.ini`. As on
 Linux the manager reads the server file with pai's defaults for every other key and rewrites it in
 pai's template at its first write. The instance `default` therefore exists from the engine's install.
 
@@ -183,11 +189,11 @@ manual start type; automatic once the configurator's "start llama-server when th
 on, and the SCM then starts it at boot: the manager starts none itself), and serves the configurator
 over `\\.\pipe\private-ai-manager`. The instance runs the llama-server of llama.cpp's install, found
 through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%ProgramData%\llama.cpp\`
-holds `config\` (the instances' server and preset files, which users reach only through the
+holds `config\` (the instances' server and model profile files, which users reach only through the
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
 protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
 `models\` or `state\` there, not the profile of the account it runs under, and runs in `state\`; `pai`
-and the configurator's Server tab leave both unset at a save, and neither a preset save nor a Hugging Face download writes
+and the configurator's Server tab leave both unset at a save, and neither a model profile save nor a Hugging Face download writes
 `ModelsDir` (`server_cfg::seeds_models_dir`; the same on Linux). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
@@ -337,7 +343,7 @@ been run for real.
 | `/usr/lib/private-ai/.kpack/` | `llama.cpp-rocm` | hipBLASLt's `blas_lib_*` and RCCL's `rccl_lib_*` archives; ROCm looks in `<libdir>/../.kpack`, so they cannot sit at the top |
 | `/usr/share/private-ai/benchmarks/` | `cli` | The benchmark method |
 | `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
-| `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini` and an empty `presets.ini`, copied into `/etc/llama.cpp/` when missing |
+| `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini` and an empty `models.ini`, copied into `/etc/llama.cpp/` when missing |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
 | `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
@@ -400,19 +406,19 @@ still wins over RUNPATH. That no file is opened under the dists or the build tre
 (extracting the `.deb`, `strace` of a generation per backend, not recorded) with a `$ORIGIN`-relative
 RUNPATH; it has not been repeated with the absolute one.
 
-**The one config file shipped is `core`'s PAM service (below); `llama.cpp` ships its defaults.** The server and preset files
-(`server@<id>.ini`, `presets.ini`, `presets.ini.disabled`) are the engine's, in `/etc/llama.cpp/`
+**The one config file shipped is `core`'s PAM service (below); `llama.cpp` ships its defaults.** The server and model profile files
+(`server@<id>.ini`, `models.ini`, `models.ini.disabled`) are the engine's, in `/etc/llama.cpp/`
 (`paths::engine_config_dir`), which only the manager writes; the framework's own (`bff.ini`) are in
 `/etc/private-ai/`. systemd creates both at the manager's start (`ConfigurationDirectory=`).
 `llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini` and an
-empty `presets.ini`. The server file holds starting values only, a `[Server]` section with `Port`,
+empty `models.ini`. The server file holds starting values only, a `[Server]` section with `Port`,
 `Hostname`, `ModelsDir` and `StateDir` (the service user's paths under `/var/lib/private-ai`): the
 format belongs to the framework, so a change of pai's template does not touch the engine package.
 The manager reads it with pai's defaults for every other key and rewrites it in pai's full template
 at its first write (`server_cfg.rs` tests, which also check that the manager accepts it). Its scripts copy each into `/etc/llama.cpp/` only
 when it is missing, never over a file, so an upgrade leaves what the user or the manager wrote and
 dpkg asks nothing: `server@default.ini` 0640 `root:private-ai` when that group exists, else 0644,
-`presets.ini` 0644. The instance `default` therefore exists from the first install. No file is moved
+`models.ini` 0644. The instance `default` therefore exists from the first install. No file is moved
 from `/etc/private-ai/`: there is no migration between the pre-release layouts. `pai-config` keeps `settings.ini` per
 user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and moves release 2.4's
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
@@ -434,7 +440,7 @@ installed 0644, overwritten on every upgrade, the PAM service apart; local chang
 | `/usr/lib/sysusers.d/private-ai-bff.conf` (`bff`) | The system user `private-ai-bff`, with no home and no shell |
 
 **An administrator is a member of `pai`** (the user's decision of 2026-11-15, `PLAN.md` step 10): only
-a member saves the server and preset files or changes start at boot, from the configurator, `pai` or
+a member saves the server and model profile files or changes start at boot, from the configurator, `pai` or
 (once the bff calls the manager) the web UI. The packages create the group empty; add a user with
 
     sudo usermod -aG pai <user>
@@ -511,8 +517,10 @@ group-writable ones.
 so no image tool is needed.
 
 **Licence metadata.** The `.rpm` `License:` field is computed from what each package bundles: an SPDX
-expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. `usr/share/doc/<pkg>/copyright`
-includes that package's `share/licenses/<package>/README.txt` and points to the directory.
+expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. The `bff`'s, the only package with the
+web UI's texts and no bundled library, is `MIT AND OFL-1.1 AND ISC` (the two fonts are SIL OFL 1.1, Lucide
+ISC, React MIT); every other package's field is as before, from its own libraries.
+`usr/share/doc/<pkg>/copyright` includes that package's `share/licenses/<package>/README.txt` and points to the directory.
 
 **Maintainer.** `PRIVATE_AI_MAINTAINER` sets it, else git's `user.name` and `user.email`.
 

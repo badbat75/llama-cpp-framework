@@ -25,11 +25,11 @@ how to run it for speed on two machines built around a 12-core AVX-512 host with
 decodes 11 to 12% faster than `q8_0`. Put an n-gram drafter in front of the MTP head: it more
 than doubles decode on code and costs nothing on prose. On two R9700s use the tensor split with
 an even `tensor-split`: on Linux it decodes 48 to 65% faster than the layer split for 16 to 22% less
-cold prefill. Windows runs the same preset with one request's decode level with Linux and prefill
+cold prefill. Windows runs the same model profile with one request's decode level with Linux and prefill
 11 to 18% slower ([section 6](#6-linux-against-windows)); the gain over the layer split is unmeasured
 there. With two different cards, card order decides most of the speed, and the best
 order is the opposite on Windows and on Linux. [Section 7](#7-baseline-under-the-standard-spec-two-r9700s) holds the full baseline of the
-two-R9700 preset.
+two-R9700 model profile.
 
 All speeds are t/s, with ± the sample standard deviation over the repetitions. "43.7k" and "115k"
 are prompts of 43,730 and 115,343 tokens (the second is named `bench-prompt-110k` in bench.db and the
@@ -84,7 +84,7 @@ Three behaviours shape how to read every figure below:
 
 ### Two R9700s
 
-Measured on *Linux* unless a row says otherwise. *Windows* runs this same preset, with its own device ids
+Measured on *Linux* unless a row says otherwise. *Windows* runs this same model profile, with its own device ids
 ([section 6](#6-linux-against-windows)).
 
 | key | value | evidence |
@@ -113,9 +113,9 @@ Measured on *Linux* unless a row says otherwise. *Windows* runs this same preset
 
 ## 3. Drafters
 
-Two R9700s, layer split, the preset's sampling (temperature 1), 5 repetitions, all at `q8_0` KV,
+Two R9700s, layer split, the model profile's sampling (temperature 1), 5 repetitions, all at `q8_0` KV,
 `ctx-size 514288`, `35,31`, `parallel 2`: compare these figures with each other, not with the `f16`
-preset this page recommends. The code prompt is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
+model profile this page recommends. The code prompt is a rewrite with 1536 tokens out: at 256 tokens the reply ends inside the reasoning and the
 n-gram stage has nothing to copy (campaign `swift27b-drafter-2xr9700-linux-20261030`;
 campaign `swift27b-drafter-code1536-2xr9700-linux-20261030`).
 
@@ -128,7 +128,7 @@ campaign `swift27b-drafter-code1536-2xr9700-linux-20261030`).
 | n-gram (`ngram-map-k4v`), then DFlash2 | 31.0 | 127.1 |
 
 ```bench-chart
-title    = Swift: decode by drafter at the preset's sampling, 43.7k-token prose
+title    = Swift: decode by drafter at the model profile's sampling, 43.7k-token prose
 campaign = swift27b-drafter-2xr9700-linux-20261030
 metric   = decode
 x        = spec-type
@@ -267,7 +267,7 @@ x4).
 
 ![Two R9700s: the x16 card in the CPU slot, the x4 card behind the chipset without AtomicOps; the tensor split stages its AllReduce through host memory](assets/diagrams/two-r9700-topology.svg)
 
-*Linux*, the Swift preset with `f16` KV, `parallel 2`, the n-gram stage then MTP at `spec-draft-n-max 2`,
+*Linux*, the Swift model profile with `f16` KV, `parallel 2`, the n-gram stage then MTP at `spec-draft-n-max 2`,
 `ubatch-size 1024`, temperature 0, 3 repetitions, output uncapped, every cold request with the
 prompt cache off, no spec (campaign `swift27b-concurrency-2xr9700-linux-20261031`).
 
@@ -288,13 +288,13 @@ both requests over the window they share.
 | `prefill+decode` | decode total | 39.5 ±0.2 | 52.1 ±0.2 | 19.5 ±0.2 | 27.5 ±4.9 (b) |
 
 Most tensor columns ran at `tensor-split 35,31`, `ctx-size 393216`, with the image encoder on the CPU.
-The two 115k scenarios marked, five cells, come from runs of the same preset at the even split below,
+The two 115k scenarios marked, five cells, come from runs of the same model profile at the even split below,
 `ctx-size 425984`, with the encoder on the x4 card. The even split matches `35,31` at 43.7k (1126.4 prefill
 and 59.3 decode against 1136.1 and 59.8). At 115k it prefills 4% faster and decodes 7% slower (961.6 and
 51.4 against 924.8 and 55.4), on another text.
 
 - (a) one repetition at temperature 0 (campaign `swift27b-ctx-tensor-2xr9700-linux-20261031`);
-- (b) the baseline of [section 7](#7-baseline-under-the-standard-spec-two-r9700s), with the preset's own sampling and 5 repetitions: compare its
+- (b) the baseline of [section 7](#7-baseline-under-the-standard-spec-two-r9700s), with the model profile's own sampling and 5 repetitions: compare its
   prefill freely, but its decode only loosely with the temperature 0 layer column.
 
 ```bench-chart
@@ -325,7 +325,7 @@ rename   = unset=layer, bench-prompt-long=43.7k tokens, bench-prompt-110k=115k t
   take under 0.4% of the time and `mul_mat_vec_q` 67% of the GPU time.
 - **Temperature 0 with a drafter writes a different text under each split** (acceptance 84% layer,
   76% tensor, two decodes at 115k), so each decode figure is the drafter's rate on its own text.
-- **On *Windows* this comparison is unmeasured.** The tensor preset has its full run there
+- **On *Windows* this comparison is unmeasured.** The tensor-split model profile has its full run there
   ([section 6](#6-linux-against-windows)), but no run of this model uses the layer split on two R9700s on
   *Windows*, so neither the decode gain nor the prefill cost above can be claimed for it.
 
@@ -340,7 +340,7 @@ so its prefill follows the x4 card's host link, and a boot can train the CPU-to-
 width. Before a tensor-split benchmark run `tools\pcie-bench`; if the x4 card reads about half, power
 cycle the machine.
 
-- *Linux*: at Gen4 x2 the x4 card moved 3.5 GB/s instead of 7.0 and the same preset prefilled 785.6 ±0.5
+- *Linux*: at Gen4 x2 the x4 card moved 3.5 GB/s instead of 7.0 and the same model profile prefilled 785.6 ±0.5
   against 1136.1 ±2.3; decode 58.0 against 59.8 (campaign `swift27b-driver-check-2xr9700-linux-20261031`).
   The kernel's boot log names the width (`available PCIe bandwidth ... limited by ... x4 link`).
 - *Windows* shows the same symptom but no link width on the bridges, so x2 is inferred from the halved
@@ -376,10 +376,10 @@ has 342 MiB free after a 115k prefill, and the encoder runs it out of memory.
 
 ## 6. Linux against Windows
 
-### Two R9700s: the same preset on both systems
+### Two R9700s: the same model profile on both systems
 
 **Expect cold prefill 10 to 18% slower on *Windows* and the same decode for one request; decode drops under
-concurrency on code.** The machine, the two cards, the Swift-1.5 preset and the spec's legs are those of the
+concurrency on code.** The machine, the two cards, the Swift-1.5 model profile and the spec's legs are those of the
 *Linux* baseline in [section 7](#7-baseline-under-the-standard-spec-two-r9700s), whose folded notes list what
 differs (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). One request:
 
@@ -398,7 +398,7 @@ differs (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). One request
 The *Windows* run holds no cold leg of the agent turn, only its cached step below.
 
 ```bench-chart
-title    = Cold prefill of one request by prompt, Linux against Windows, the preset's speculator
+title    = Cold prefill of one request by prompt, Linux against Windows, the model profile's speculator
 campaign = swift27b-standard-1.0-2xr9700-linux-20261031, swift27b-standard-1.1-2xr9700-linux-20261101, swift27b-standard-1.1-2xr9700-windows-20261101
 metric   = prefill
 x        = prompt
@@ -415,9 +415,9 @@ rename   = 12=Linux, 24=Windows, bench-prompt-43k-1.0=43.7k prose, bench-prompt-
 - **Decode without it** is 8 to 10% faster on *Windows*, and on the text prompts both systems write the same
   number of tokens (1670, 7840 and 9599). The run does not explain why.
 
-**No *Windows* setting tried closes the prefill gap; leave them as they are.** The Swift preset on two R9700s,
+**No *Windows* setting tried closes the prefill gap; leave them as they are.** The Swift model profile on two R9700s,
 tensor split at `1,1`, the 43.7k prompt, `spec = custom` derived from `standard-1.1`: one repetition per pass,
-`engine` at temperature 0 with the speculator off, `real` with the preset's sampling and speculator. The first row
+`engine` at temperature 0 with the speculator off, `real` with the model profile's sampling and speculator. The first row
 is the standard run, with 3 and 5 repetitions (campaign `swift27b-standard-1.1-2xr9700-windows-20261101`). The
 others ran on one boot, where `tools\pcie-bench` read the x4 link at 6.8 GB/s, and compare with the second row
 (campaign `swift27b-memory-integrity-windows-20261102`; campaign `swift27b-device-order-windows-20261102`;
@@ -425,7 +425,7 @@ campaign `swift27b-threads-batch-windows-20261102`; campaign `swift27b-power-pla
 
 | *Windows* setup | `engine` prefill / decode | `real` prefill / decode |
 | --- | --- | --- |
-| **the preset, Memory Integrity on** | 1001.7 / 29.6 | 952.1 / 57.7 (repetitions 56.1 to 60.2) |
+| **the model profile, Memory Integrity on** | 1001.7 / 29.6 | 952.1 / 57.7 (repetitions 56.1 to 60.2) |
 | Memory Integrity off | 1034.3 / 30.0 | 970.9 / 59.4 |
 | Memory Integrity off, x4 card first | 1029.0 / 30.1 | 968.6 / 63.0 |
 | Memory Integrity off, `ThreadsBatch 12` | 1031.7 / 30.0 | n/a |
@@ -435,7 +435,7 @@ campaign `swift27b-threads-batch-windows-20261102`; campaign `swift27b-power-pla
   stayed on). That is a small part of the gap at most, *Windows* still 15% and 14% slower than *Linux*, and no
   reason to turn it off: the setting stays on. This comparison crosses boots, and that Memory Integrity was on during
   the standard run is inferred, not recorded: it was the machine's state until it was turned off for this test.
-- **`ThreadsBatch 12` against `24`** changes nothing on this preset, every weight on the GPUs: prefill 0.3% slower,
+- **`ThreadsBatch 12` against `24`** changes nothing on this model profile, every weight on the GPUs: prefill 0.3% slower,
   so the thread count does not explain the gap here. At `12`, the *Linux* value, *Windows* is still 15% slower, 1031.7
   against 1210.3. [Flash-Next](qwen3.8_flash_next.md), with experts on the CPU, is another case, with its own finding.
 - **The Ultimate Performance plan** turns PCIe ASPM off (Balanced: moderate) and changes nothing: prefill 0.3%
@@ -497,7 +497,7 @@ memory stays the same to the MiB ([section 4](#4-kv-cache-type-and-context)). Th
 in `real` decode, one repetition of a noisy pass, above the 56.1 to 60.2 of the standard run's repetitions, with
 acceptance 79% in both: an open lead, not a result ([section 9](#9-not-yet-measured-placeholders)). The
 "R9700 first" rule below belongs to a layer split across two different cards and does not apply here. The
-integrated GPU takes `ROCm0` on *Windows*, so a preset copied from *Linux* needs its ids renumbered: on this
+integrated GPU takes `ROCm0` on *Windows*, so a model profile copied from *Linux* needs its ids renumbered: on this
 machine `device = ROCm2,ROCm1`, with `ROCm2` the x16 card and `ROCm1` the x4 card.
 
 ### An R9700 and an RTX 4070 SUPER: the order reverses
@@ -529,7 +529,7 @@ MiB and draft acceptance within a few points, so the gap is the time of each ste
 Decode then passes the *Linux* figure and prefill comes within 4% at 43.7k and 6% at 115k. Free
 memory after the 115k prefill at `180224`: 1714 MiB on the R9700, 527 on the RTX 4070 SUPER. *Linux*
 goes the other way ([section 5](#5-splitting-the-model-across-two-cards)). *Windows* also lists the CPU's integrated GPU as a ROCm device
-ahead of the R9700, so a preset copied from *Linux* needs its device ids renumbered.
+ahead of the R9700, so a model profile copied from *Linux* needs its device ids renumbered.
 
 **Why the order matters on *Windows*.** llama's input buffers are pinned for the first device only,
 and the HIP runtime on *Windows* copies pageable memory at ~2 GB/s, blocking the thread. With the
@@ -548,12 +548,12 @@ same placement (campaign `coder390-placement-20261020`): within noise, decode th
 
 ## 7. Baseline under the standard spec (two R9700s)
 
-This is the reference for this preset, on *Linux*; [section 6](#6-linux-against-windows) sets the *Windows*
-run of the same spec beside it. Compare a later change to the preset, the machine or the
+This is the reference for this model profile, on *Linux*; [section 6](#6-linux-against-windows) sets the *Windows*
+run of the same spec beside it. Compare a later change to the model profile, the machine or the
 software against the figures of its own system, measured again under the same spec version. `pai bench query run
 <id> --db benchmarks/bench.db` prints every parameter of one run.
 
-The tables merge two runs on the same machine, software and preset. The prose, image and agent-turn
+The tables merge two runs on the same machine, software and model profile. The prose, image and agent-turn
 legs ran under `standard-1.0` (campaign `swift27b-standard-1.0-2xr9700-linux-20261031`).
 `standard-1.1` keeps the prose and image legs unchanged and adds writing code and the cached agent
 step, run separately (campaign `swift27b-standard-1.1-2xr9700-linux-20261101`). Both ran on llama.cpp v0.8.0 with
@@ -561,7 +561,7 @@ the FlashAttention band and the other patches listed below; this baseline has no
 v1.0.0, which carries neither.
 
 <details>
-<summary>Machine, software, preset and method</summary>
+<summary>Machine, software, model profile and method</summary>
 
 **Machine.** AMD Ryzen 9 9900X (12 cores, 24 threads), 64 GB DDR5 6000 MT/s (59 GiB visible), two
 AMD Radeon AI PRO R9700 (32624 MiB each, vbios `113-R9700AT-F40`): the x16 card in the CPU's Gen5 x16
@@ -577,7 +577,7 @@ TheRock 10.1.0. Environment: `GGML_CUDA_ALLREDUCE=internal`, `GGML_HIP_FA_BAND_W
 `src/models/qwen4exp.cpp`, the Flash-Next architecture, where this model is `qwen35`; no run compares
 this model with and without it.
 
-**Preset.** `Swift-1.5-Qwen3.8-27B-Q8_0.gguf` with `Qwen3.8-27B-UD-mmproj-BF16.gguf` (`mmproj-offload
+**Model profile.** `Swift-1.5-Qwen3.8-27B-Q8_0.gguf` with `Qwen3.8-27B-UD-mmproj-BF16.gguf` (`mmproj-offload
 true`, on the x4 card); `device` the x16 card first, `split-mode tensor`, `tensor-split 1,1`; `ctx-size
 425984` with `parallel 2`, `kv-unified false`; `cache-type-k/-v f16`, `ubatch-size 1024` (`batch-size`
 the default 2048); `spec-type ngram-map-k4v,draft-mtp`, `spec-draft-n-max 2`,
@@ -598,13 +598,13 @@ agent's task and files in one message and a request to write `paths.rs` back in 
 reasoning and then ~3.9k tokens of code; one photograph fitted into 1344x896 (1259 tokens).
 
 **Passes.** Every leg restarts llama-server, every cold request has the prompt cache off, output
-uncapped. `engine`: temperature 0, speculator off, 3 repetitions, one request. `real`: the preset's
+uncapped. `engine`: temperature 0, speculator off, 3 repetitions, one request. `real`: the model profile's
 sampling and speculator, 5 repetitions, one request and then the three two-request scenarios of
 [section 5](#5-splitting-the-model-across-two-cards). `agent`: described below.
 
 **Free memory** after the first prefill (x16 / x4 card), *Linux*: on text, 4488 to 4588 / 3350 to 3450 MiB under
 `engine`, 2338 to 2518 / 1240 to 1380 under `real` and `agent`; on the image, 4552 / 3168 under `engine` and 2478 / 1094
-under `real`. The *Windows* run of this spec holds none; one-repetition runs of the same preset do, at 43.7k
+under `real`. The *Windows* run of this spec holds none; one-repetition runs of the same model profile do, at 43.7k
 ([section 4](#4-kv-cache-type-and-context)).
 
 </details>
@@ -625,7 +625,7 @@ One request:
 | image | `real` | 50.6 ±0.5 | 613.4 ±33.0 | 63% |
 
 ```bench-chart
-title    = Decode of one request by prompt: bare engine against the preset's speculator
+title    = Decode of one request by prompt: bare engine against the model profile's speculator
 campaign = swift27b-standard-1.0-2xr9700-linux-20261031, swift27b-standard-1.1-2xr9700-linux-20261101
 metric   = decode
 x        = prompt
@@ -668,7 +668,7 @@ and the prefill the cold one's:
 | image | `prefill+decode` | 44.0 ±0.8 | 567.1 ±6.6 | 566.7 ±6.6 | 83.1 ±4.0 | 62% |
 
 ```bench-chart
-title    = Decode total by scenario, the preset's sampling and speculator
+title    = Decode total by scenario, the model profile's sampling and speculator
 campaign = swift27b-standard-1.0-2xr9700-linux-20261031, swift27b-standard-1.1-2xr9700-linux-20261101
 metric   = decode-total
 x        = concurrency
@@ -694,7 +694,7 @@ rename   = bench-prompt-43k-1.0=43.7k prose, bench-prompt-110k-1.0=115k prose, b
 
 The slot is first primed with the conversation up to its last assistant turn (37,043 tokens cached).
 The whole turn then goes out with the cache on, so it prefills only the last tool call and its result
-(5,457 tokens) and replies with one short step (86 to 236 tokens). The preset's sampling and speculator,
+(5,457 tokens) and replies with one short step (86 to 236 tokens). The model profile's sampling and speculator,
 5 repetitions. First token is the server's prefill time of the turn; turn is send to last byte, what
 the client waits.
 

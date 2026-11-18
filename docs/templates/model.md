@@ -28,7 +28,7 @@ or the section that cites it. Per-card detail lives in the card guides.
 
 | key | value | evidence |
 | --- | --- | --- |
-| `<preset key>` | <the measured optimum> | <numbers against the alternatives> (campaign `<name>`) |
+| `<model profile key>` | <the measured optimum> | <numbers against the alternatives> (campaign `<name>`) |
 
 ## 3. Choices that look better than they measure
 

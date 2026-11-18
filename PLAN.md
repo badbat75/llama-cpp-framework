@@ -916,13 +916,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    the docs pass. Reload of llama-server after a save: a later design; until then `running` drives
    "restart to apply".)
 11f. **The configurator's "Saved preset" says when a restart is needed** (from the architect,
-   2026-11-16): when the preset is in `presets.ini` and the instance is active, the GUI's `preset-saved`
+   2026-11-16): when the preset is in `presets.ini` and the instance is active, the GUI's `model-profile-saved`
    message adds "restart to apply" (one status read, one string).
 11d. **A preset flag reads as llama-server reads it** (found by the web UI session's designer,
    2026-11-16; checked in the v1.0.0 clone: `common/preset.cpp` turns a flag whose value is one of
    `off`, `disabled`, `false`, `0` into its `--no-` form, any other value into the plain flag,
    `common_arg_utils::is_falsey` in `common/arg.cpp`). The configurator reads a preset's booleans with
-   `ini::parse_bool` (`presets.rs`), which knows only `true`/`false`, so a hand-written `jinja = 0` runs
+   `ini::parse_bool` (`model_profiles.rs`), which knows only `true`/`false`, so a hand-written `jinja = 0` runs
    without jinja while the GUI shows the field's default (on). Rule, per key, in `presets.ini`
    (values trimmed of spaces and tabs, as llama.cpp's INI grammar does, `common/preset.cpp`): a plain flag
    (`jinja`, `prefill-assistant`, `mmproj-offload`, `kv-unified`, `reasoning-preserve`, `op-offload`,

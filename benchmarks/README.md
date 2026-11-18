@@ -77,7 +77,7 @@ keeps the preset's sampling. The off switch is for the benchmark only; the prese
 its speculator.
 
 ```sh
-pai bench run --spec standard --preset <id> --key split-mode --values 'unset,tensor'
+pai bench run --spec standard --model-profile <id> --key split-mode --values 'unset,tensor'
 ```
 
 `--spec standard` runs the newest published version, `--spec standard-1.0` that one: every

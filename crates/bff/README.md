@@ -4,14 +4,14 @@
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
 built from `fe/` and the API it calls. Today it answers the
 framework version, the manager's instances with their state, the run verbs, the start-at-boot flag
-and, for a signed-in user, an instance's server file read and saved, the preset list, the preset
-on/off switch and one preset, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
+and, for a signed-in user, an instance's server file read and saved, the model profile list, the model profile
+on/off switch and one model profile, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
 The web UI is for administrators only, members of the group `pai` (user, 2026-11-15): the Overview
 (version, instances) shows without sign-in, a right password of a `pai` member signs in, a right
 password of anyone else is 403 `session-not-administrator` (`fe/briefs/api-contract.md`). Behind
 sign-in it has an instance page (the server file, Start, Stop, Restart, start at boot: all served)
-and a Models page (the preset list, the on/off switch per preset and a preset page of its own, read
-and saved: all served, [below](#the-preset-routes)); on that page four cards are editable and the
+and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
+page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
@@ -103,10 +103,10 @@ runtime (axum).
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for anyone: the connect carries no principal, the session store is never touched, so the page can poll it; the failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
-| `GET /api/presets` | The preset rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<preset id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-preset-routes)) |
-| `GET /api/presets/{id}` | One preset for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-preset-page)) |
-| `PUT /api/presets/{id}` | The preset page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
-| `PUT /api/presets/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the preset switched on or off ([below](#the-preset-routes)) |
+| `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-model-profile-routes)) |
+| `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
+| `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
+| `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
 | `GET /` | The embedded `index.html` |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>` |
 
@@ -157,7 +157,7 @@ naming the session's user, what a signed-in route makes ([below](#the-server-fil
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The two routes that write a file, the server save and the
-  preset switch, run under the longer `WRITE_TIMEOUT` ([below](#saving-the-server-file)).
+  model profile switch, run under the longer `WRITE_TIMEOUT` ([below](#saving-the-server-file)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
@@ -325,23 +325,23 @@ Done answers the 200.
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
 
-## The preset routes
+## The model profile routes
 
-`GET /api/presets`, `GET /api/presets/{id}`, `PUT /api/presets/{id}` and
-`PUT /api/presets/{id}/enabled`
-(`crates/bff/src/presets.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
+`GET /api/profiles/model`, `GET /api/profiles/model/{id}`, `PUT /api/profiles/model/{id}` and
+`PUT /api/profiles/model/{id}/enabled`
+(`crates/bff/src/model_profiles.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
 designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
-the Models page's list and switch, and the read and the save of one preset. All four are behind
+the Model profiles page's list and switch, and the read and the save of one model profile. All four are behind
 sign-in and all four ask `private-ai-manager` on **one connect as the signed-in user**, so it is
 that user's own membership of `pai`, re-checked by the
 manager at the call, that answers: 401 `session-required` with no session (the manager is not
 connected to, nothing is written), 403 `session-not-administrator` and the end of the session when
 the manager refuses that user.
 
-What they read and write is the manager's pair of preset files, `presets.ini` and
-`presets.ini.disabled` in the engine's config directory (`paths::engine_config_dir`:
+What they read and write is the manager's pair of model profile files, `models.ini` and
+`models.ini.disabled` in the engine's config directory (`paths::engine_config_dir`:
 `/etc/llama.cpp/` on Linux, `%ProgramData%\llama.cpp\config\` on Windows): the same files the
-configurator's Models tab and `pai preset` read and write, and the one the engine reads the enabled
+configurator's Models tab and `pai model-profile` read and write, and the one the engine reads the enabled
 sections of. The disabled file is never read by the engine. The two names are constants in the code:
 the `{id}` of the URL is a section name, matched in any letter case, never a path.
 
@@ -350,21 +350,21 @@ the `{id}` of the URL is a section name, matched in any letter case, never a pat
 One read of each file, and one row per section except llama-server's global `[*]`,
 `[{"id", "engine", "engineAvailable", "enabled", "model"}]`:
 
-- `id` as the file spells it; `engine` the engine whose preset file holds the section (`llama.cpp`,
+- `id` as the file spells it; `engine` the engine whose model profile file holds the section (`llama.cpp`,
   the only engine today) and `engineAvailable` true for every row, there being no engines route to
   check it against.
 - `model` is the section's `model` key as the file holds it, no path resolution and no existence
   check, `""` when the section has no such key: every row carries a string.
 - The order is the GUI's: the switched-on sections, then the switched-off ones, each group in file
   order; an id in both files is listed once, as on. The web UI does not sort.
-- llama-server's global `[*]` is not a preset, it is the defaults every preset starts from, so it is
+- llama-server's global `[*]` is not a model profile, it is the defaults every model profile starts from, so it is
   never a row, in either file, and the sections beside it keep their place. The switch answers 404
   for it ([below](#the-switch)).
-- A missing file is an empty group, not an error: no `presets.ini` answers `[]`.
+- A missing file is an empty group, not an error: no `models.ini` answers `[]`.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | the rows, `[]` when there is no preset | the read answered |
+| 200 | the rows, `[]` when there is no model profile | the read answered |
 | 401 | `session-required` | no session, the manager not asked |
 | 403 | `session-not-administrator` | the manager refused the call for that user; the session ends |
 | 503 | `client-unavailable` | no manager, or one that outlives the bff's 5 s read deadline |
@@ -374,21 +374,21 @@ One read of each file, and one row per section except llama-server's global `[*]
 
 The body is `{"enabled": true|false}`. Both files are read, the section is looked for in each, and
 if it is in neither, or the name is llama-server's global `[*]`, the answer is 404
-`no-preset-named` and nothing is written. Otherwise the section moves, unchanged. Every manager call
+`no-model-profile-named` and nothing is written. Otherwise the section moves, unchanged. Every manager call
 of the move, the two reads, the two writes, the read back and the states, runs under one bound, the
 write's 15 s `WRITE_TIMEOUT` ([above](#saving-the-server-file)), not the reads' 5 s:
 
-- **The file the preset lands in is written first**, because a preset in both files reads as
-  enabled: switching off writes `presets.ini.disabled` and then `presets.ini`, switching on writes
-  `presets.ini` and then the disabled file.
+- **The file the model profile lands in is written first**, because a model profile in both files reads as
+  enabled: switching off writes `models.ini.disabled` and then `models.ini`, switching on writes
+  `models.ini` and then the disabled file.
 - Each write is a compare and swap (`write_file_if`) expecting the text read in this very request,
   so a write by the configurator, the CLI or a second page in between is refused and nothing moves.
-- A `presets.ini.disabled` that does not exist cannot be swapped (the swap refuses a missing file):
+- A `models.ini.disabled` that does not exist cannot be swapped (the swap refuses a missing file):
   it is created by a plain `write_file`, carrying the header the configurator writes for that file
-  (`DISABLED_FILE_HEADER` in `crates/app/src/presets.rs`, kept equal by the test
-  `the_disabled_header_is_the_configurators_one`). A new `presets.ini` needs no header.
+  (`DISABLED_FILE_HEADER` in `crates/app/src/model_profiles.rs`, kept equal by the test
+  `the_disabled_header_is_the_configurators_one`). A new `models.ini` needs no header.
 - An id already where it is asked for answers 200 and writes nothing.
-- The answer is not what the bff computed: after the writes, `presets.ini` is read again and
+- The answer is not what the bff computed: after the writes, `models.ini` is read again and
   `enabled` is whether the section is in it. Once both writes landed the move stands: a limit that
   runs out on that read back, or on the states asked after it, and a read back that fails, answer the
   switch's 200, `enabled` the value the move produced and `running` true. A finished move is not a
@@ -399,36 +399,36 @@ write's 15 s `WRITE_TIMEOUT` ([above](#saving-the-server-file)), not the reads' 
 
 The moved text goes through the manager's content checks, the configurator's own
 (`crates/core/src/checks.rs`, run by `check_contents` in `crates/manager/src/manager/service.rs`):
-`presets_file` for `presets.ini`, `presets_disabled_file` for the disabled one, then
-`preset_ids_free`, which keeps a section that is new to a file from taking an id the other file
+`models_file` for `models.ini`, `models_disabled_file` for the disabled one, then
+`model_profile_ids_free`, which keeps a section that is new to a file from taking an id the other file
 holds, so ids stay unique across the pair. A refusal is 422 with the check's key, its values and
-`field`, the preset key for the form to mark: `load-on-startup` for both
+`field`, the model profile key for the form to mark: `load-on-startup` for both
 `load-on-startup-*` keys, the key named in the check's args for the others, and no `field` for a
-refusal about the preset's name (`invalid-preset-id`, `preset-name-taken`). The destination is
+refusal about the model profile's name (`invalid-model-profile-id`, `model-profile-name-taken`). The destination is
 written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
 | --- | --- | --- |
 | 200 | `{"enabled", "running"}` | the move stands, or there was nothing to do, or the limit ran out on the read back and the states after both writes landed: `enabled` the value the move produced, `running` true |
-| 400 | `presets-malformed` | a body that is not `{"enabled": <bool>}`, or not JSON, the manager not asked |
+| 400 | `model-profiles-malformed` | a body that is not `{"enabled": <bool>}`, or not JSON, the manager not asked |
 | 401 | `session-required` | no session, the manager not connected to |
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
-| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`, not a preset, for which nothing is moved. `args: [id]` when the id is a name a preset can carry at all; `args: []` for one the id check refuses (a newline, a bracket, a path, the global `*`) and for a run of dots |
-| 409 | `preset-changed-elsewhere` | a compare and swap found its file changed, nothing moved. When it answers the second write the preset is in both files: it reads on, and the next switch of that preset mends it |
+| 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`, not a model profile, for which nothing is moved. `args: [id]` when the id is a name a model profile can carry at all; `args: []` for one the id check refuses (a newline, a bracket, a path, the global `*`) and for a run of dots |
+| 409 | `model-profile-changed-elsewhere` | a compare and swap found its file changed, nothing moved. When it answers the second write the model profile is in both files: it reads on, and the next switch of that model profile mends it |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
 | 422 | `{"key", "args", "field"}` | the manager refused the moved section, nothing written |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were, and one that runs out after both writes landed is the 200 above |
 | 502 | `client-other` | anything else, never the manager's detail |
 
-### The preset page
+### The model profile page
 
-`GET /api/presets/{id}` (`presets.rs` `read`) is the read of one preset, the route
-`#/models/<id>` reads (`fe/src/PresetPage.tsx`, reached from the Models table's id link): the page
+`GET /api/profiles/model/{id}` (`model_profiles.rs` `read`) is the read of one model profile, the route
+`#/profiles/model/<id>` reads (`fe/src/ModelProfilePage.tsx`, reached from the model profiles table's id link): the page
 whose save is [below](#the-save). This route only reads. One connect as the
 session's user, one read of each file, under the reads'
 5 s `MANAGER_TIMEOUT`. The `{id}` is a section name, matched in any letter case, never a path, and
-the enabled file is read first: a section in both files answers the `presets.ini` copy, as the list
+the enabled file is read first: a section in both files answers the `models.ini` copy, as the list
 does the same id. The answer is exactly seven fields:
 
 - `id`, `engine`, `engineAvailable`: the list row's, the id as the file spells it.
@@ -436,7 +436,7 @@ does the same id. The answer is exactly seven fields:
 - `values`: the section's keys as that file's parser reads them (`ini::parse_sections`), an object of
   strings, no path resolution and no check: the key as the file spells it, the value trimmed and cut
   at the first `;` or `#` (`q8#0` reads as `q8`), a key repeated in the section keeping its last
-  line, and two keys differing only in case being two entries. Verbatim on purpose: a preset the
+  line, and two keys differing only in case being two entries. Verbatim on purpose: a model profile the
   manager would refuse at a save is one the page can still show.
 - `projectUrl`: the section's `; url = ` comment, `""` when it has none. It is a whole-line comment
   of the section, read by the configurator's reader, now in `pai-core` (`ini::project_url_of` over
@@ -446,8 +446,8 @@ does the same id. The answer is exactly seven fields:
   ([above](#the-server-file-of-an-instance)), the text being the file's name, a newline, and the
   section as the file holds it: from its header through its last non-blank line, without that line's
   own ending (`section_revision`). In it: the section's keys, values and comments in the file's
-  spelling and order, and which of the two files holds it, so the preset switched off is another
-  preset to the page. Not in it: a section changed beside it, a section appended to the file, the
+  spelling and order, and which of the two files holds it, so the model profile switched off is another
+  model profile to the page. Not in it: a section changed beside it, a section appended to the file, the
   file's final line break, the blank lines after the section's last line. The save consumes it: the
   page sends it back at the `PUT` and a revision that is no longer the section's is 409
   ([below](#the-save)).
@@ -457,18 +457,18 @@ does the same id. The answer is exactly seven fields:
 | 200 | the seven fields | the read answered |
 | 401 | `session-required` | no session, the manager not connected to |
 | 403 | `session-not-administrator` | the manager refused the read for that user; the session ends, as the list's |
-| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`, never a preset. `args` as the switch's ([above](#the-switch)): `[id]` for a name a preset can carry at all, `[]` for one the id check refuses and for a run of dots |
+| 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`, never a model profile. `args` as the switch's ([above](#the-switch)): `[id]` for a name a model profile can carry at all, `[]` for one the id check refuses and for a run of dots |
 | 503 | `client-unavailable` | no manager, one that went away during the read, or one that outlives the 5 s deadline |
 | 502 | `client-other` | anything else, never the manager's detail |
 
 A read runs no content check and writes nothing. `POST` and `DELETE` on the path are 405, and a path
-below it, `/api/presets/alpha/*`, is the ROUTER's own 404: no body and no content type, no key, and
+below it, `/api/profiles/model/alpha/*`, is the ROUTER's own 404: no body and no content type, no key, and
 no connect to the manager.
 
 ### The save
 
-`PUT /api/presets/{id}` (`presets.rs` `save`, 3eb24b2, the design "Saving a preset from the web" in
-`ARCHITECTURE.md`) is the preset page's save: `{"revision", "values"}` in, `{"revision", "running"}`
+`PUT /api/profiles/model/{id}` (`model_profiles.rs` `save`, 3eb24b2, the design "Saving a preset from the web" in
+`ARCHITECTURE.md`) is the model profile page's save: `{"revision", "values"}` in, `{"revision", "running"}`
 out. `values` is an object of the keys the page touched, a string the text to write and `null` the
 key to remove, and the section is rewritten in place: the keys the body does not list, the comments
 and the rest of the file stand.
@@ -476,18 +476,18 @@ and the rest of the file stand.
 The body is read in full before a file is opened, and is refused whole:
 
 - Not `application/json`, not JSON, no `revision` string, no `values` object, a value that is
-  neither a string nor `null`, a key outside `checks::WEB_PRESET_KEYS` in its exact spelling:
-  400 `presets-malformed`, the manager not asked.
+  neither a string nor `null`, a key outside `checks::WEB_MODEL_PROFILE_KEYS` in its exact spelling:
+  400 `model-profiles-malformed`, the manager not asked.
 - A value empty, holding a control character beyond a tab, or starting or ending with a Unicode
   space beyond a space or a tab (the writer keeps that byte, the parser reads it away):
-  400 `presets-malformed`. Values arrive trimmed of the spaces and tabs no reader keeps.
+  400 `model-profiles-malformed`. Values arrive trimmed of the spaces and tabs no reader keeps.
 - A value holding a `;` or a `#` (`checks::comment_markers`): 422 `comment-markers`, the keys in
   `args` sorted, the first of them as `field`.
 
-Then one connect as the signed-in user reads `presets.ini` and `presets.ini.disabled` (the reads'
+Then one connect as the signed-in user reads `models.ini` and `models.ini.disabled` (the reads'
 5 s), the file order the list's, and answers the first section of that name in the pair; llama-server's
-global `[*]` is no preset, so 404 `no-preset-named` as the switch's. The section's revision
-([above](#the-preset-page)) must equal the body's, else 409 `preset-changed-elsewhere` with nothing
+global `[*]` is no model profile, so 404 `no-model-profile-named` as the switch's. The section's revision
+([above](#the-model-profile-page)) must equal the body's, else 409 `model-profile-changed-elsewhere` with nothing
 written: the page's copy is stale.
 
 The edits go to the file sorted by key, so the bytes written do not depend on the order of the
@@ -508,53 +508,56 @@ and `true` when that state cannot be read after the write landed, the safe answe
 | Status | Body | When |
 | --- | --- | --- |
 | 200 | `{"revision", "running"}` | the write landed and the manager accepted it, the revision the section as the file now holds it; also a body that asked for the text the file already holds, nothing written; and a limit that ran out after the write landed, `running` true |
-| 400 | `presets-malformed` | the body is not a preset save, the manager not asked |
+| 400 | `model-profiles-malformed` | the body is not a model profile save, the manager not asked |
 | 401 | `session-required` | no session, the manager not asked |
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
-| 404 | `no-preset-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
-| 409 | `preset-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
+| 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
+| 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
 | 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
 
-### A preset in both files
+### A model profile in both files
 
 An id in both files is listed once, as on. Switching it off writes the disabled file (its section is
-already there, unchanged, which that file's check accepts) and takes it out of `presets.ini`: the
+already there, unchanged, which that file's check accepts) and takes it out of `models.ini`: the
 state is mended. The global `*` is the one name that can never be in that state through these
-routes: it is not a preset, the list has no row for it in either file and the switch answers 404
-with nothing written, so only the configurator, which still lists `[*]` as a preset and switches it
-off (`PLAN.md` 11b), can put it in the disabled file, from which the preset-id check then refuses to
+routes: it is not a model profile, the list has no row for it in either file and the switch answers 404
+with nothing written, so only the configurator, which still lists `[*]` as a model profile and switches it
+off (`PLAN.md` 11b), can put it in the disabled file, from which the model-profile-id check then refuses to
 move it back. Read from the code on 2026-11-17, not tested: `PLAN.md` 11b lists the missing tests,
 and the plain write that creates a new disabled file (racing a file that appeared in between) is its
 other leftover.
 
 ### What has run
 
-The bff's own tests only: `tests/presets.rs`, `tests/presets_switch.rs` and `tests/server.rs`, whose
+The bff's own tests only: `tests/model_profiles.rs`, `tests/model_profiles_switch.rs` and `tests/server.rs`, whose
 fake manager answers a compare and swap only when the expected text is what it answered for that file
 in that
 test, and records every write, so the order of the two writes and the text of each are pinned.
 Green 2026-11-17 at 594e15e, rerun the same day (23, 48 and 64 tests in the three suites,
-`cargo test -p pai-bff --test presets --test presets_switch --test server`). The section read adds
-`tests/preset_read.rs`, over the same fake manager: 32 tests, green 2026-11-17 on the tree at
+`cargo test -p pai-bff --test model_profiles --test model_profiles_switch --test server`); after the
+preset to model profile rename, `model_profiles.rs` (24 tests) and `model_profiles_switch.rs` (48)
+were green again on 2026-11-18 at 8a2dc5b, with the read, the save and `--lib` (32, 47 and 44), and
+`server.rs` was not rerun. The section read adds
+`tests/model_profile_read.rs`, over the same fake manager: 32 tests, green 2026-11-17 on the tree at
 36a892d, pinning the document's seven fields, the values as the parser holds them, a repeated key's last line, the
 url comment, the global `*`, the router's own 404 below the path, and the revision stable across a
-neighbour section and a final line break (`cargo test -p pai-bff --test preset_read`). The save adds
-`tests/preset_save.rs`, over the same fake manager: 47 tests (3eb24b2, 26f5413), and the body read on
-its own in `src/tests/preset_body.rs`: 24 tests, pinning the body's shape and its refusals, the key
+neighbour section and a final line break (`cargo test -p pai-bff --test model_profile_read`). The save adds
+`tests/model_profile_save.rs`, over the same fake manager: 47 tests (3eb24b2, 26f5413), and the body read on
+its own in `src/tests/model_profile_body.rs`: 24 tests, pinning the body's shape and its refusals, the key
 set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
 edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
-2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test preset_save --lib`). The listen
+2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test model_profile_save --lib`). The listen
 address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (35), green the
 same day on that tree (`cargo test -p pai-bff --test listen --test origin`); the hand check of a
 `0.0.0.0` listen above predates them. The `; url =`
 reader moved with it, into `pai-core`, and its two tests went too
 (`cargo test -p pai-core -- project_url`). In the list and the switch suites: the list
 skipping `[*]` in both files
-(`the_global_section_is_not_a_preset`), the switch's 404 for it with nothing written
+(`the_global_section_is_not_a_model_profile`), the switch's 404 for it with nothing written
 (`switch_for_the_global_section_is_404_and_moves_nothing`), and the 200 for a move whose writes
 landed when the read back, or the states, run out. A read back that fails after a landed move, and
 the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read
@@ -573,17 +576,20 @@ kept by the `designer`; the slice briefs and the API contract the fe is built ag
 
 **A shell with hash routes** (`fe/src/App.tsx`, `fe/src/route.ts`), since the bff serves only `/`
 and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no role word: fe slice R4,
-1827023), a nav (behind a Menu button below 960px; the instances listed once signed in) and the
+1827023), a nav (behind a Menu button below 960px; the instances listed once signed in, under a
+**Profiles** heading the **Model profiles** entry, fe slice 05b: `nav-profiles`, `nav-model-profiles`;
+the **Server** entry waits on the server profile page, `fe/briefs/05b-profiles-nav.md`) and the
 route's page, whose heading takes the focus and names the document title on a change. Each page reads
-its data once when it opens and never shows a reply's text.
+its data once when it opens and never shows a reply's text. An old `#/models` bookmark is rewritten to
+`#/profiles/model` (`legacyHref`, 05b.8 and 05b.9), the rest of the address copied byte for byte.
 
 | Route | Page | Who |
 | --- | --- | --- |
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/models` | The presets of every engine (`GET /api/presets`) as a table of preset, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its preset that sends `PUT /api/presets/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/Models.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/models/<id>` | One preset, read once from `GET /api/presets/<id>`, reached from the row's id link in the Models table (`fe/src/PresetPage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/presets/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
@@ -599,8 +605,8 @@ its data once when it opens and never shows a reply's text.
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **Every preset call of the contract is served**: the page's read and its save
-  ([above](#the-save)), and the Models page's list and switch ([above](#the-preset-routes)); what is
+- **Every model profile call of the contract is served**: the page's read and its save
+  ([above](#the-save)), and the Model profiles page's list and switch ([above](#the-model-profile-routes)); what is
   open is the fe's own save (`PLAN.md` item 2h). The fe is tested against that contract with mocked
   replies only, never against a real bff, so what those pages show takes a run on a machine. Everything the
   instance page makes is served: the
@@ -644,13 +650,13 @@ manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/sessio
 `tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`
 the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
 manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
-`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/presets.rs`,
-`tests/presets_switch.rs`, `tests/preset_read.rs` and `tests/preset_save.rs` drive the preset list,
+`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/model_profiles.rs`,
+`tests/model_profiles_switch.rs`, `tests/model_profile_read.rs` and `tests/model_profile_save.rs` drive the model profile list,
 the switch, the section read and the save over the same fake manager, whose
 compare and swap lands only when the `expected` text is what the fake answered for that file in that
 test (a missing file answers `Changed`, as the real manager does) and every write is recorded as
 `(name, contents, expected)`, so the order of the two writes, the whole text of each and the channel
-each used are pinned; `src/tests/preset_body.rs` reads a save's body on its own, with the file's text
+each used are pinned; `src/tests/model_profile_body.rs` reads a save's body on its own, with the file's text
 handed in and no manager; `tests/listen.rs` reads `Listen` and `Hosts` from an INI text and a tempdir
 and builds the machine's names from a host name and a `resolv.conf` fixture, never the real host name
 nor the real `/etc/resolv.conf`, and `tests/origin.rs` drives the `Host` guard and the payload cap

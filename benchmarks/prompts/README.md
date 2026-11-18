@@ -9,6 +9,8 @@ finds the prompts it pinned. The configurator carries no text, only the digest o
 published spec version (`../specs/standard.versions`); each spec pins the sha256 of its
 prompts, and a prompt that does not match is refused before anything restarts. Only prompts
 a spec pins ship: a prompt no spec pins measures nothing another machine can compare with.
+A pinned file keeps the old links, paths and words of the snapshot it is: every byte of it is
+what a spec's sha256 pins, so a tidy edit there is a different prompt and a new spec version.
 
 A `.txt` prompt is sent as one user message. A `.json` one is a conversation,
 `{"messages": [...], "tools": [...]}` in the OpenAI chat format, sent as given
@@ -28,7 +30,7 @@ The default prompt of the live benchmark: **169,289 characters, roughly
 It exists because a benchmark ranks settings **in the regime it measured**, and
 a prompt of a few hundred characters is a regime nobody works in. On this
 machine a real agentic session sits at 40k tokens of context, where the same
-preset that benchmarks at 57 t/s serves at 24 to 40, and, more importantly,
+model profile that benchmarks at 57 t/s serves at 24 to 40, and, more importantly,
 where the *ranking* of a knob can move: at depth a verify pass costs far more
 relative to a draft iteration, so `spec-draft-n-max` peaks at 5 near the start
 of a conversation and at 3 at 43k. A sweep run only at 2k answers a question
@@ -126,7 +128,7 @@ A frozen snapshot of commit `87cda04`, like the agent turn; LF, BOM-free, no em-
 Image to text: one user message holding a photograph and a request to describe it
 (what it shows, how many animals, what they do, the setting and the light). It measures
 what the text prompts cannot: the mmproj's image encoder (its prefill share, its device,
-`mmproj-offload`) and a short multimodal turn. `standard` runs it only on a preset that
+`mmproj-offload`) and a short multimodal turn. `standard` runs it only on a model profile that
 loads an `mmproj` and skips it on the rest, so one spec covers text and vision models.
 
 The image is `bench-image-zebras-1.0.jpg`: the original 6000x4000 JPEG (6.1 MB, no

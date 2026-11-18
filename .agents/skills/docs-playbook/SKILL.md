@@ -88,13 +88,21 @@ Lessons only: the rules are in `AGENTS.md`.
   `crates/core/strings/*.toml` or the `.wxs` before writing, and grep `PLAN.md` too, which quotes them.
 - A renamed heading renames its anchor: grep `#<old-slug>` in every `.md` (the root README links into
   `crates/config/README.md`) before and after.
-- After modules move between crates, the crate docs name files bare (`presets.rs`) or crate-relative
-  (`src\presets.rs`): fix the crate-relative ones, say once at the top which crate holds the bare
+- After modules move between crates, the crate docs name files bare (`model_profiles.rs`) or crate-relative
+  (`src\model_profiles.rs`): fix the crate-relative ones, say once at the top which crate holds the bare
   ones, and recheck claims tied to the old crate (`pai-config` not GNU-checked, `system_connect`'s
   Windows arm, which `build.rs` emits what, the test crate a command needs: `cargo test -p <new>`).
+- A repo-wide word rename (`preset` to `model profile`): grep the word and mark what stays BEFORE
+  editing. What stays: llama.cpp's own words (`--models-preset`, `base_preset`, `common/preset.cpp`,
+  `common_preset::to_args`), what is stored as data (bench.db's `run_param.scope` is `preset`, so a
+  `bench-chart` comment and an `x`/`series`/`where` key keep the word: `sqlite3 benchmarks/bench.db
+  "select distinct scope from run_param"`), a WiX `Component Id` (`DefaultPresetsIni`), a skill's own
+  `name:`, a quoted design title (`ARCHITECTURE.md` "Saving a preset from the web"), and a run log of
+  an older layout. Sweep with `sed` on a word boundary, then read every changed line: "the tensor
+  preset" needs more than the substitution ("the tensor-split model profile").
 - A build script that reads `build/<os>/...` of the TARGET OS (pai-app's clone lookup) fails the GNU
   check on Linux: the docs give the override with an absolute path (the script runs in its crate dir).
-- After the command line moved to `pai` (package `pai-cli`), grep `pai-config (server|preset|control|bench|config)`
+- After the command line moved to `pai` (package `pai-cli`), grep `pai-config (server|model-profile|control|bench|config)`
   in every `.md` and in skill `description:` lines; `pai-config` stays where it is the GUI, the
   executable a script runs (`--version`, `sdk-devices`) or what xtask builds and packages. A command run
   on a GUI-only `pai-config.exe` gets exit 2; the MSI's stopper tries `pai.exe` first for that reason.
@@ -121,10 +129,10 @@ Lessons only: the rules are in `AGENTS.md`.
   the root `README.md` intro. A route that reaches the manager can be checked by hand with no manager:
   run the debug `pai-bff` with `PRIVATE_AI_DATA_ROOT` (and `<root>/system-config/bff.ini` for a port);
   it answers 503 `unavailable`.
-- A preset route change is repeated in eight spots of `crates/bff/README.md`: the intro's served list,
-  the route table's preset rows, the `## The preset routes` lead, its `### The list` / `### The switch`
-  / `### The preset page` / `### The save` sections, `### What has run` (the suite names and test
-  counts), the fe route table's `#/models/<id>` row, the fe "Every preset call of the contract is
+- A model profile route change is repeated in eight spots of `crates/bff/README.md`: the intro's served list,
+  the route table's model profile rows, the `## The model profile routes` lead, its `### The list` / `### The switch`
+  / `### The model profile page` / `### The save` sections, `### What has run` (the suite names and test
+  counts), the fe route table's `#/profiles/model/<id>` row, the fe "Every model profile call of the contract is
   served" bullet, and `## Tests`. Renaming the H2
   renames its anchor: the root README and `AGENTS.md` carry one sentence each. The `; url =` reader's
   home is `crates/core/src/ini.rs` (`project_url_of` over `comment_value`) since 36a892d, its tests
@@ -138,15 +146,15 @@ Lessons only: the rules are in `AGENTS.md`.
   sets no `Domain`), and the guard's 403 is `request-bad-host`, the cross-origin one
   `request-cross-origin` (`origin.rs`): both named in `crates/core/strings/cli.toml`, which no longer
   has `bff-listen-not-loopback`.
-- The bff suites and what reaches them: `tests/preset_save.rs` (47), `tests/preset_read.rs` (32),
-  `tests/listen.rs` (17), `tests/origin.rs` (35), and `src/tests/preset_body.rs` (24), a **lib** test:
+- The bff suites and what reaches them: `tests/model_profile_save.rs` (47), `tests/model_profile_read.rs` (32),
+  `tests/listen.rs` (17), `tests/origin.rs` (35), and `src/tests/model_profile_body.rs` (24), a **lib** test:
   `cargo test -p pai-bff --lib` reaches it, a `--test <name>` flag does not. The 5 s reads and the 15 s
   write of the save are counted from the request (`save` takes `write_timeout.saturating_sub(elapsed)`).
 - `tools/site` builds pages from `docs/` only (`tools/site/src/main.rs`), so a change to the root
   `README.md`, `AGENTS.md`, `ARCHITECTURE.md` or a crate README needs no
   `cargo run -p docs-site -- --check`. For an anchor, a small Python `re` pass over `](#...)` against
   the headings of the same file settles it.
-- The count of a preset page's editable cards moves with every fe slice (three at c69511e, four at
+- The count of a model profile page's editable cards moves with every fe slice (three at c69511e, four at
   dc1ff69, the same day): with `fe/` off-limits, run `git log --oneline <last-known>..HEAD` and read
   the `2h.<n>` messages before writing a count.
 - The fe can run ahead of the bff: a route the fe calls is served only if `router_with` in
@@ -164,7 +172,13 @@ Lessons only: the rules are in `AGENTS.md`.
   macOS slice is "later"; say so on `build-macos.md` rather than leave its table looking current.
 - When a package starts shipping defaults copied "only when missing", recheck every flow keyed on a
   file being absent: `migration::import_offered` skips a file the manager already has, so the import
-  of a 2.4 `server.ini`/`presets.ini` stops being offered on a packaged Linux install. The instance
+  of a 2.4 `server.ini`/`presets.ini` stops being offered on a packaged Linux install. The per-user
+  tree and the manager's tree name the model profile files DIFFERENTLY (per-user `presets.ini` and
+  `presets.ini.disabled`, manager `models.ini` and `models.ini.disabled`): the import is the rename
+  point, `migration::USER_FILES` pairs each pair, `migrate.rs`'s `OURS` and `OUR_CONFIG_FILES` hold
+  the 2.4 names, and a packaged machine has both sets on disk (here `/etc/llama.cpp` holds
+  `presets.ini` beside `models.ini`). Say which tree a named file sits in, and name the offer's
+  subject as the old-named user file whose manager-named twin is missing. The instance
   files' directory is `paths::engine_config_dir` (`/etc/llama.cpp` on Linux); `system_config_dir`
   is the framework's (`bff.ini`); grep both names and both paths after a layout change.
 - The content of the engine's shipped `crates/core/defaults/server@default.ini` (starting values only,
@@ -263,11 +277,11 @@ Lessons only: the rules are in `AGENTS.md`.
   listed once, in the "manager runs every content check" bullet of `crates/config/README.md`; the
   `pai server set` paragraph under its command block and the root README's headless line point there.
   `limits` in `crates/bff/README.md` follows `checks::server_int_range` (no `LogVerbosity` in it).
-  The preset rules (`checks::presets_file`, `presets_disabled_file`, `preset_ids_free`) and the save
-  side (`presets::validate_for_save`, its callers `presets::save` and `hf::save_preset`) sit in the same
+  The model profile rules (`checks::models_file`, `models_disabled_file`, `model_profile_ids_free`) and the save
+  side (`model_profiles::validate_for_save`, its callers `model_profiles::save` and `hf::save_model_profile`) sit in the same
   bullet; the "Ids are unique across both files" bullet of the Models tab points there.
-  The value rules (`checks::preset_values`: float, enum, `spec-type`, JSON, min <= max) are in that
-  bullet too; the MoE cache floor (`presets::validate_moe_cache_floor`, save only, needs the GGUF) is
+  The value rules (`checks::model_profile_values`: float, enum, `spec-type`, JSON, min <= max) are in that
+  bullet too; the MoE cache floor (`model_profiles::validate_moe_cache_floor`, save only, needs the GGUF) is
   named there, in the Hardware config bullet and the `moe_cache.rs` source-map row; a sweep's
   up-front check in "The key is typed" bullet and the `sweep.rs` row.
 - After an fe slice, check the bff README's web UI route table against `fe/src/route.ts` and the
@@ -296,15 +310,15 @@ Lessons only: the rules are in `AGENTS.md`.
   ended session from a live one without a second read); `client-not-authorized` (502) is what a
   session-free read answers when the bff's own account is refused (the instances list, `GET boot`:
   `control.rs` `read_failure`, `lib.rs`).
-- A bff route that writes two files at once (the preset switch): read the handler and its blocking task
+- A bff route that writes two files at once (the model profile switch): read the handler and its blocking task
   before writing the order. What is not obvious and broke a draft: `WriteState` is **per request**
   (shared by the handler and its task, `crates/bff/src/server.rs`), so the save and the switch share
   the 503/504 rule, not a lock; a bff read route runs no content check at all (a 422 comes from the
   manager's write), and which checks run per file is `check_contents` in
-  `crates/manager/src/manager/service.rs` (`presets_file` then `preset_ids_free` for `presets.ini`,
-  `presets_disabled_file` then `preset_ids_free` for the disabled one, each `?` first).
+  `crates/manager/src/manager/service.rs` (`models_file` then `model_profile_ids_free` for
+  `models.ini`, `models_disabled_file` then `model_profile_ids_free` for `models.ini.disabled`, each `?` first).
 - The bff's two time limits: `MANAGER_TIMEOUT` (5 s, reads and control verbs) and `WRITE_TIMEOUT`
-  (15 s, the server save and the preset switch), both `lib.rs`, pinned by
+  (15 s, the server save and the model profile switch), both `lib.rs`, pinned by
   `the_write_limit_outlasts_the_read_limit` (`src/tests/timeouts.rs`). The 5 s sits in five bff README
   spots (the instances 503 row, the connect bullet, the server-read paragraph and its 503 row, the
   list's 503 row): grep `5 s` and say which routes the longer limit covers. A 504 there means only a
@@ -312,11 +326,11 @@ Lessons only: the rules are in `AGENTS.md`.
   ran out on the read back, so grep `504` in the same file when a commit changes that rule.
 - The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
   `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
-  strings key (`preset-load-failed`). The preset page's route is `#/models/<id>` (`fe/src/route.ts`),
-  not `#/presets/<id>`, and `GET` of an unregistered path is a bare 404 with no JSON body
+  strings key (`model-profile-load-failed`). The model profile page's route is `#/profiles/model/<id>` (`fe/src/route.ts`),
+  not `#/presets/<id>` (the old one, redirected), and `GET` of an unregistered path is a bare 404 with no JSON body
   (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
 - `cargo test -p pai-bff` prints one block per suite and the tail shows only the last: scope it with
-  `cargo test -p pai-bff --test presets --test presets_switch` and grep `test result` to see the
+  `cargo test -p pai-bff --test model_profiles --test model_profiles_switch` and grep `test result` to see the
   suites you mean. When no shell is available, count the test functions in the suite file
   (`^async fn` and `^#[test]`) to check a README's test count, and keep the green run's date cited to
   the commit whose report it is.
@@ -337,5 +351,5 @@ Lessons only: the rules are in `AGENTS.md`.
   heading's "Designed <date>, proposed" becomes "built (<sha>, its follow-ups <sha>)", the "**What
   exists.**" paragraph is relabelled "**What existed when this was designed.**" (its text kept), and a
   key that moved after the design is recorded in that section's own "**As built**" paragraph, leaving
-  the record's "Done when" text alone (preset save: 3eb24b2, follow-ups 26f5413; 403 key: 5f0d405).
+  the record's "Done when" text alone (the model profile save: 3eb24b2, follow-ups 26f5413; 403 key: 5f0d405).
   Grep `proposed.`, `What exists.`, `is open`, `are open` at the start of each section.

@@ -45,7 +45,7 @@ a configuration: a clean load proves nothing.
 
 ## 3. Settings
 
-### Preset (presets.ini)
+### Model profile (models.ini)
 
 | key | value | evidence |
 | --- | --- | --- |

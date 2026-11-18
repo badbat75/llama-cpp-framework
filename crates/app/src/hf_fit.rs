@@ -211,7 +211,7 @@
 //! the drafter on another. The image encoder gets `mmproj-device` when it
 //! was counted on a card other than the first device, `mmproj-offload =
 //! false` when on the CPU. Every written placement carries a one-line note,
-//! the section's `; placement =` comment (`model profiles::ModelProfile::placement_note`),
+//! the section's `; placement =` comment (`model_profiles::ModelProfile::placement_note`),
 //! which names the extras counted and where.
 //!
 //! ## The recommendation (`recommend`)
