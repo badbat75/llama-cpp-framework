@@ -467,9 +467,18 @@ main > * {
 
 /* ── Content ──────────────────────────────────────────────────────────── */
 
+/* The table is a lifted box, like the card: the corner needs separate borders,
+   because a radius has no effect on a table whose borders collapse (CSS
+   Backgrounds 3 4.6), and the transparent border is the edge that survives
+   forced colours, where a shadow computes to none (brief 06 section 0). */
 table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: 100%;
+  background: var(--bg);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  border: 1px solid transparent;
 }
 
 th,
@@ -481,11 +490,19 @@ td {
 
 th {
   font-weight: 600;
+  color: var(--muted);
+  font-size: var(--fs-sm);
   border-bottom: 1px solid var(--control);
 }
 
 td {
   border-bottom: 1px solid var(--line);
+}
+
+/* The last row drops its divider, so no straight line crosses the box's
+   rounded corners. */
+tr:last-child td {
+  border-bottom: 0;
 }
 
 /* The model profiles keep three columns at 320 px: the name wraps anywhere,
@@ -699,11 +716,16 @@ td {
 
 /* ── Forms ────────────────────────────────────────────────────────────── */
 
+/* The card is a lifted box: the corner is the card token, the lift the shadow
+   token, and the transparent border the edge that survives forced colours,
+   where a shadow computes to none (brief 06 section 0). */
 .card {
   margin: 0 0 var(--space-5);
   padding: var(--space-4) var(--space-5);
   background: var(--bg);
-  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
 }
 
 /* A note between a card's fields (DESIGN.md 5.2, 02e-model-profile-cards.md 90): the
@@ -1109,6 +1131,8 @@ html:has(.save-bar) {
   scroll-padding-bottom: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
 }
 
+/* The bar is lifted like the card it sits over, and flush at the viewport's
+   bottom edge: only its top corners are round. */
 .save-bar {
   position: sticky;
   bottom: 0;
@@ -1120,7 +1144,8 @@ html:has(.save-bar) {
   padding: var(--space-3) var(--space-4);
   background: var(--bg);
   border-top: 1px solid var(--control);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  box-shadow: var(--shadow);
 }
 
 /* A short viewport (landscape phone, 400% zoom): the bar is not sticky. */
@@ -1199,6 +1224,9 @@ html:has(.save-bar) {
 
 /* ── Dialog (DESIGN.md 5.2) ───────────────────────────────────────────── */
 
+/* The dialog is lifted like the card. Its --control border is the edge that
+   shows in forced colours, so it needs no transparent one (brief 06
+   section 0). */
 .dialog {
   width: 28rem;
   max-width: calc(100vw - 2 * var(--space-4));
@@ -1206,7 +1234,8 @@ html:has(.save-bar) {
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--control);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
 }
 
 .dialog::backdrop {

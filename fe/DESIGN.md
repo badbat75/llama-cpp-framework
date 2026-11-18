@@ -213,8 +213,13 @@ Shape tokens: `--control-h` 40px (buttons and fields, a `min-height`), `--border
 borders; at a device pixel ratio of 1 the browsers draw it 1 px, since border widths snap down to
 whole device pixels: [CSS Values 4](https://www.w3.org/TR/css-values-4/#lengths)), `--ring-w` 3px,
 `--hatch` (the disabled stripes), `--radius-check` (checkbox), `--radius-pill` (primary, secondary,
-About buttons, switch track), all in use since H2a; declared for later slices: `--shadow`
-(redeclared in dark: an outline there), `--radius-card`, `--space-7` 64px (brief 06 section 1). In light `--bg` and `--field` are the same
+About buttons, switch track), all in use since H2a; `--radius-card` 16px and `--shadow` (redeclared
+in dark as a 1 px `--line` outline) on the card, the table box, the save bar (top corners only) and
+the dialog since H2b; declared for later slices: `--space-7` 64px (brief 06 section 1). The lift is
+decorative (cards carry no meaning): in light the card is told from the page by the shadow and the
+fill (`--bg` on `--page` 1.11:1), in dark by the outline (1.39:1 on `--page`) and the fill (1.07:1),
+measured in the H2b review; no floor applies. The card and the table box carry a transparent 1 px
+border, the edge that shows in forced colours, where a shadow computes to none. In light `--bg` and `--field` are the same
 colour; in dark an enabled field is darker than its card.
 
 - **Type**: Atkinson Hyperlegible Next (400 and 700) for text, Atkinson Hyperlegible Mono (400) for
@@ -229,7 +234,7 @@ colour; in dark an enabled field is darker than its card.
   0.9375rem, `--fs-body` 1.0625rem (17 px), `--fs-lg` 1.125rem (h3), `--fs-h2` 1.375rem, `--fs-h1`
   2rem (line height 1.2); body line height `--lh` 1.55. Bold is 600.
 - **Spacing**: 4, 8, 12, 16, 24, 40, 64 px (`--space-1` to `--space-7`). Radius `--radius` 10px
-  (fields, notices, alerts; cards keep it until H2b); buttons are pills. Focus ring: 3px
+  (fields, notices, alerts; cards, tables, the save bar and the dialog use `--radius-card`); buttons are pills. Focus ring: 3px
   (`--ring-w`) solid `--accent`, offset 2px, on `:focus-visible`
   ([2.4.7 Focus Visible](https://www.w3.org/TR/WCAG22/#focus-visible)); measured at least 6.04:1
   light and 6.93:1 dark against every colour beside it (the About toggle open, on `--accent-soft`;

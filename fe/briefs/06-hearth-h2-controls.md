@@ -155,7 +155,9 @@ var(--control)` kept (the bar's edge over a card of the same fill: N2), `border-
 var(--radius-card) var(--radius-card) 0 0`, `box-shadow: var(--shadow)`. `position: sticky`,
 `bottom: 0`, `z-index`, paddings, the `html:has(.save-bar)` scroll padding and the short-viewport
 rule all unchanged ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum); 2h.135 and the
-7rem test hold).
+7rem test hold). Differs from mockup B on purpose: no extra upward
+shadow and the top line stays `--control`, not `--line`; the line is the bar's edge over a card of the
+same fill (a preference; H2b review, 2026-11-18).
 
 **H2b.5 Dialog.** `.dialog`: `border-radius: var(--radius-card)`, `box-shadow: var(--shadow)`;
 `background: var(--bg)` and `border: 1px solid var(--control)` kept; `::backdrop` unchanged.
