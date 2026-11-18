@@ -241,6 +241,12 @@ Lessons only: the rules are in `AGENTS.md`.
   (bind, release, rebind): one test in 12 flaked on the first cold run after `cargo clean` and never
   reproduced (11 full-suite greens + a solo `--test` run). Probe solo, then rerun the suite 2-3 times
   before reporting a red from that binary.
+- The dev machine has `fe/dist` built, so `build.rs` embeds it and `tests/fe.rs` `embedded()`
+  (`PAI_BFF_FE_DIR`) points there, NOT at `crates/bff/fe-fixture`: an asset added only to the fixture
+  exercises no served path in `tests/fe.rs` on this machine. Pin a `build.rs` rule (e.g. a
+  `content_type` mapping) as a source lint in `tests/build_script.rs` (its `code()` strips comment
+  lines), and extend the wanted-type chain of `the_assets_the_page_names_are_served_with_their_type`
+  as a guard that fires once a real build ships such an asset.
 - bff oneshot: `Request::builder().header(name, value)` appends (`http-1.5.0/src/request.rs:899`), so
   the same name twice reaches the router as two values; `HeaderName::from_static` wants the lowercase
   name. A header the bff cannot read: `HeaderValue::from_bytes` accepts `>= 0x20` except `0x7F`, plus
@@ -1446,6 +1452,25 @@ Lessons only: the rules are in `AGENTS.md`.
   suite is loaded: they pass in their own run. Check a suspect test in its own run before blaming the
   slice (files are isolated, so one file cannot pollute another); a clean-tree stash of a shared helper
   only proves what the file-alone run does not.
+- Web UI: the load flakes are not one file's: a heavy new file pushed `RunControls.test.tsx` (1c.44a,
+  S2.1, S2.2, ...) red in the full run (7 and 9 reds, varying: "Test timed out in 5000 ms", a fake-timer
+  advance that lands on `Starting llama-server…`, a body with no `role="main"`), green in its own run and
+  green beside the new file. Prove it is the LOAD and not the file: run the suite with the new file
+  `--exclude`d on a box saturated by 20 `timeout 200 bash -c 'while :; do :; done'` loops (a script file,
+  the shell tool rejects the compound command) and the same reds come back, plus `ModelProfileCards1`,
+  `ModelProfileSave11`, `ModelProfileSave4`. Report them as load flakes naming the probes.
+- Web UI: a shared fixture module for tests is imported with its LITERAL extension (`./test/bff.ts`), so
+  one that renders JSX must be `.tsx`: a `.ts` holding `render(<App />)` reds the whole importing file at
+  transform (`Expected \`>\` but found \`/\``, "0 test"), which reads as a syntax bug in the test.
+- Web UI: "focusable" in jsdom is decided without layout (`getClientRects()` is always empty): filter
+  `a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])` on `disabled`, `inert`,
+  `closest('[inert]')`, `aria-hidden="true"` and `getComputedStyle(el).display === 'none'`.
+- Web UI: while a save is pending the status line AND the Save button read `save-saving`
+  (`SaveBar.tsx`), so a name-based `getByRole('button', { name: SAVE })` fails mid-PUT: capture the
+  element before the click when the test holds the request (`deferred()`).
+- Web UI: to set a text field's value at once (a value typed back exactly, a value cleared), use
+  `fireEvent.change(input, { target: { value } })`; `userEvent.type` appends and needs an `await` per
+  row, and a `type` helper imported bare does not exist (`ReferenceError: type is not defined`).
 - Web UI: to hand a handler a null `document.activeElement`, define an own getter on the `document`
   instance (shadows the prototype), delete it in `finally`, and probe with your own `hashchange`
   listener that the stub held when the handlers ran.
@@ -2104,3 +2129,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `#[cfg(test)] pub(crate) read_model_profiles(&path)`.
 - `let lines: Vec<&str> = render_section(&p).lines().collect();` is E0716 (the String temporary dies at the
   statement's end): bind it first (`let text = render_section(&p);`), the pattern the file's own tests use.
+- Two known flake seams, green 10/10 solo on a warm cache: `crates/bff/tests/session.rs` pins a 20 ms
+  sign-in bound and asserts the reply came before `HANG/2` (200 ms) on a 2-worker tokio runtime, so a
+  cold-compile suite (15 bff test binaries at once) can miss the wall-clock assert; xtask's
+  `linux::system_files` tests spawn `node -` (polkit rules JS) and `sh -n` with
+  `spawn().expect(..)` + `wait_with_output`, so a missing/loaded node is an env red, not a code red.
+  A slice that only recompiles these crates shares the load effect, never the behaviour: judge a flake
+  from the diff's module reach (the session routes never serve assets; the system_files tests never call
+  `licenses::stage_in`; temp dirs are per-test prefixes of one pid).

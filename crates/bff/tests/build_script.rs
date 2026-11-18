@@ -81,3 +81,20 @@ fn the_embedded_directory_is_exported_to_the_crate() {
         "build.rs does not emit rustc-env PAI_BFF_FE_DIR"
     );
 }
+
+/// The web UI's fonts are files of the build like the script and the sheet:
+/// a `.woff2` is served as `font/woff2`, the type RFC 9239 registers for
+/// it, not as `application/octet-stream`.
+#[test]
+fn a_woff2_file_is_served_as_font_woff2() {
+    let code = code();
+    let at = code.find("fn content_type").expect("content_type");
+    let line = code[at..]
+        .lines()
+        .find(|l| l.contains("\"woff2\""))
+        .unwrap_or_default();
+    assert!(
+        line.contains("font/woff2"),
+        "content_type has no woff2 arm mapping to font/woff2: {line:?}"
+    );
+}

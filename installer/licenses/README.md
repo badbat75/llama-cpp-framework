@@ -1,6 +1,6 @@
 # Licence texts of bundled libraries
 
-The licences of libraries a package bundles whose text the dist does not carry. `xtask\src\common\licenses.rs` says which library each covers, and stages them into `share\licenses\` of every package. The texts are verbatim unless the table says otherwise, taken on 2026-11-02 from the default branch of each project; when one is refreshed, this table says from where.
+The licences of libraries a package bundles whose text the dist does not carry. `xtask\src\common\licenses.rs` says which library each covers, and stages them into `share\licenses\` of every package. The texts are verbatim unless the table says otherwise, taken on 2026-11-02 from the default branch of each project; when one is refreshed, this table says from where. The four texts of the web UI at the end of the table were taken on 2026-11-18: the fonts and the icons are the `LICENSE` of the npm package and version named, `react.txt` is the `LICENSE` of the react version `fe\package.json` pins, byte-identical to react-dom's.
 
 | File | Project | Taken from |
 | --- | --- | --- |
@@ -25,3 +25,7 @@ The licences of libraries a package bundles whose text the dist does not carry. 
 | `numactl.txt` | libnuma | `numactl/numactl`, `LICENSE.LGPL2.1` |
 | `zlib.txt` | zlib | `madler/zlib`, `LICENSE` |
 | `zstd.txt` | zstd | `facebook/zstd`, `LICENSE` |
+| `atkinson-hyperlegible-next.txt` | Atkinson Hyperlegible Next, the web UI's sans font | npm `@fontsource/atkinson-hyperlegible-next` 5.3.0, `package/LICENSE` |
+| `atkinson-hyperlegible-mono.txt` | Atkinson Hyperlegible Mono, the web UI's mono font | npm `@fontsource/atkinson-hyperlegible-mono` 5.3.0, `package/LICENSE` |
+| `lucide.txt` | Lucide, the web UI's icons | npm `lucide-static` 1.74.0, `package/LICENSE` |
+| `react.txt` | React, the web UI's library | `fe\node_modules\react\LICENSE`, react 19.3.1 as pinned in `fe\package.json` |

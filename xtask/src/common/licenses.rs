@@ -226,6 +226,17 @@ pub fn stage_in(dir: &Path, libraries: &[String], sources: &Sources) -> Result<V
             .join("LICENSE"),
         &dir.join("fluent-system-icons.txt"),
     )?;
+    for file in [
+        "atkinson-hyperlegible-next.txt",
+        "atkinson-hyperlegible-mono.txt",
+        "lucide.txt",
+        "react.txt",
+    ] {
+        copy(
+            &repo.join("installer").join("licenses").join(file),
+            &dir.join(file),
+        )?;
+    }
     copy(
         &sources.llama_cpp.join("LICENSE"),
         &dir.join("llama.cpp.txt"),
@@ -281,6 +292,12 @@ fn readme(entries: &[Entry]) -> String {
          licences, and this project's MIT licence does not cover them:\n\n",
     );
     text.push_str(&listing(entries));
+    text.push_str(
+        "\nThe web UI is shipped with its own files under their own licences: its Atkinson\n\
+         Hyperlegible Next font under atkinson-hyperlegible-next.txt, its Atkinson\n\
+         Hyperlegible Mono font under atkinson-hyperlegible-mono.txt, its Lucide icon set\n\
+         under lucide.txt, and the React it is built on under react.txt.\n",
+    );
     if entries.iter().any(|e| e.file == CUDA_EULA_FILE) {
         text.push_str(
             "\nThe NVIDIA libraries are distributed with this application under NVIDIA's terms:\n\
@@ -447,6 +464,94 @@ mod tests {
             if let Origin::Vendored(name) = origin {
                 assert!(dir.join(format!("{name}.txt")).is_file(), "{name}");
             }
+        }
+    }
+
+    /// The web UI's own texts, vendored from `installer/licenses/` and staged
+    /// by `stage_in` beside `fluent-system-icons.txt`: its two fonts, its
+    /// icons, React. `README.txt` says what each covers.
+    #[test]
+    fn the_web_ui_texts_are_staged_beside_the_icon_font() {
+        let dir = std::env::temp_dir().join(format!("xtask-licences-webui-{}", std::process::id()));
+        let llama = dir.join("llama");
+        std::fs::create_dir_all(&llama).unwrap();
+        std::fs::write(llama.join("LICENSE"), "MIT").unwrap();
+        let share = dir.join("share");
+        let sources = Sources {
+            llama_cpp: llama,
+            ..Default::default()
+        };
+        let files = [
+            "atkinson-hyperlegible-next.txt",
+            "atkinson-hyperlegible-mono.txt",
+            "lucide.txt",
+            "react.txt",
+        ];
+        // A missing text stops the package naming it, as the other vendored
+        // texts do: an Ok that skipped them and an Err that named none are
+        // both refusals here.
+        let staged = stage(&share, &[], &sources);
+        let licenses = share.join("licenses");
+        let entries = match staged {
+            Ok(entries) => entries,
+            Err(e) => {
+                let text = e.to_string();
+                for file in files {
+                    assert!(
+                        text.contains(file),
+                        "staging stopped without naming {file}: {text}"
+                    );
+                }
+                panic!("staging stopped: {text}");
+            }
+        };
+        assert!(
+            entries.is_empty(),
+            "the fixed texts join no library entry: {entries:?}"
+        );
+        for file in files {
+            assert!(licenses.join(file).is_file(), "{file} is not staged");
+        }
+        let readme = std::fs::read_to_string(licenses.join("README.txt")).unwrap();
+        assert!(
+            readme.contains("web UI"),
+            "README.txt does not name the web UI:\n{readme}"
+        );
+        for (file, covers) in [
+            ("atkinson-hyperlegible-next.txt", "font"),
+            ("atkinson-hyperlegible-mono.txt", "font"),
+            ("lucide.txt", "icon"),
+            ("react.txt", "React"),
+        ] {
+            assert!(
+                covers_in_a_paragraph(&readme, file, covers),
+                "README.txt does not say {file} covers {covers}:\n{readme}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `file` and `covers` sit in the same paragraph of `readme`: the text
+    /// is named beside what it covers, not somewhere and the subject
+    /// somewhere.
+    fn covers_in_a_paragraph(readme: &str, file: &str, covers: &str) -> bool {
+        readme
+            .split("\n\n")
+            .any(|p| p.contains(file) && p.contains(covers))
+    }
+
+    /// The four texts are vendored in the repo like every one the table
+    /// names: a missing text stops the package.
+    #[test]
+    fn the_web_ui_vendored_texts_are_in_the_repo() {
+        let dir = util::repo_root().join("installer").join("licenses");
+        for name in [
+            "atkinson-hyperlegible-next",
+            "atkinson-hyperlegible-mono",
+            "lucide",
+            "react",
+        ] {
+            assert!(dir.join(format!("{name}.txt")).is_file(), "{name}");
         }
     }
 

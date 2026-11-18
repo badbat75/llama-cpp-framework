@@ -200,7 +200,7 @@ async fn root_serves_the_embedded_index() {
 }
 
 /// Every asset the page names is served at its path, byte for byte, as
-/// `text/javascript` (RFC 9239) or `text/css`.
+/// `text/javascript` (RFC 9239), `text/css` or `font/woff2` (RFC 9239).
 #[tokio::test]
 async fn the_assets_the_page_names_are_served_with_their_type() {
     let dir = embedded();
@@ -219,6 +219,8 @@ async fn the_assets_the_page_names_are_served_with_their_type() {
             "text/javascript"
         } else if uri.ends_with(".css") {
             "text/css"
+        } else if uri.ends_with(".woff2") {
+            "font/woff2"
         } else {
             panic!("no content type pinned for {uri}")
         };

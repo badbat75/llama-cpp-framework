@@ -1380,3 +1380,8 @@ Lessons only: the rules are in `AGENTS.md`.
   new comment in that writer naming the old word fails a test. `new_model_profile_id`'s fallback id is
   plain text in code (a section id, not user text, so no strings file), and its `-2` de-conflict comes
   from `unique_id`.
+- xtask's script-sandbox tests share ONE temp dir per process (`xtask-sysfiles-<pid>` etc., keyed
+  by `std::process::id()`, same in every thread): a full `cargo test -p xtask` can fail one
+  `linux::system_files` script test while every other suite passes. Passes in isolation and on a
+  rerun: pre-existing flake, say so in the report, do not chase. Same shape in pai-bff's
+  `tests/session.rs` (35 timing tests): one occasional failure in 0.5 s, green on rerun.

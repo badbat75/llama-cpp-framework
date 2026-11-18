@@ -995,9 +995,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on
     `main` and the web UI session says fe is clean, build and install; that request is the go-ahead for this one
     install.
-    Before its font slice: `font/woff2` in `crates/bff/build.rs`, and the licence texts of the two Atkinson
-    Hyperlegible fonts, Lucide and React in `installer/licenses/`, staged by `xtask/src/common/licenses.rs`
-    into every package (React's bundle ships today with no licence text in any package).
+    Before that deploy: the licence texts of the web UI (the two Atkinson Hyperlegible fonts, Lucide, React) go only
+    into the bff's package, not the engine's (`stage_in` in `xtask/src/common/licenses.rs` is shared by every
+    component), and the bff's `.rpm` `License:` field declares `OFL-1.1` and `ISC` beside `MIT`.
+    Seen once each under a cold parallel build, not reproduced in five solo runs: a failure in
+    `crates/bff/tests/session.rs` (wall-clock bounds) and one in xtask's `linux::system_files` script tests; the
+    cause is not established.
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
