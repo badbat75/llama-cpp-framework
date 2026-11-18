@@ -343,7 +343,7 @@ with the 5 s limit of a read.
 
 ### `PUT /api/presets/{id}`
 
-Saves the edits of one preset's page ([02h-preset-save.md](02h-preset-save.md)). Served since
+Saves the edits of one preset's page ([02h-model-profile-save.md](02h-model-profile-save.md)). Served since
 3eb24b2 (`crates/bff/src/presets.rs` `save`, `parse_body`, `apply`, `field_of`); checked against
 the fe's `PresetPage.tsx` (2h.1) on 2026-11-17. Designed in `ARCHITECTURE.md`, "Saving a preset
 from the web". `{id}` as in the `GET`; the section is edited in the file that holds it

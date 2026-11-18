@@ -2,7 +2,7 @@
 
 Written by the designer on 2026-11-16 for `PLAN.md` step 10, web UI slice 2h (the slice table of
 [02-models.md](02-models.md) section 0). Applies `fe/DESIGN.md` ("D5.2" points to its sections),
-builds on 2e ([02e-preset-cards.md](02e-preset-cards.md), criteria 83 to 129a, its field tables)
+builds on 2e ([02e-model-profile-cards.md](02e-model-profile-cards.md), criteria 83 to 129a, its field tables)
 and reuses the Server page's save ([01-server.md](01-server.md) section 3, S1, S3; "01's 30a"
 names its criteria). Criteria go on from 130. The bff route is served (3eb24b2), as
 [api-contract.md](api-contract.md) `PUT /api/presets/{id}` describes it; the read it builds on,

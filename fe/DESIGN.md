@@ -21,7 +21,7 @@ order, defaults and checks, and says where it differs on purpose.
 4. **No empty chrome.** A tab list with one tab, a filter with one choice, a nav entry for a page
    that does not exist yet: none of these are shown. The structure has a place for them (section 2);
    they appear when their second item or their page does. The exception is a value the user must
-   declare, such as a preset's engine (section 2.2): its select shows even with one entry.
+   declare, such as a model profile's engine (section 2.2): its select shows even with one entry.
 5. **Smallest design that does the job.** Reuse a component of section 5 before adding one; add a
    token or a pattern here only when a slice needs it.
 
@@ -37,7 +37,7 @@ only an administrator can be (section 3).
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Models | `#/models`, `#/models/<id>` | The one mixed preset list (every engine), each row with its engine and on/off state; the preset editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (preset page, read), 2e (plain cards, read: `fe/briefs/02e-preset-cards.md`), 2h (save of those cards: `fe/briefs/02h-preset-save.md`); the rest `fe/briefs/02-models.md` section 0 |
+| Models | `#/models`, `#/models/<id>` | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0 |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -71,24 +71,24 @@ Decided with the user on 2026-11-14.
   id (`#/instances/default`, as `/api/instances/{id}/...`). The page shows the id as the heading and
   "`<engine>` instance" under it: the engine is a fact about the instance, not a control.
 - The Overview's table gets an Engine column only when the instances span two or more engines.
-- **Presets** are one mixed list for every engine. Each preset has an engine, chosen from the
-  **available engines** the bff lists (today only llama.cpp). A preset's engine is the engine whose
-  preset file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
+- **Model profiles** are one mixed list for every engine. Each model profile has an engine, chosen
+  from the **available engines** the bff lists (today only llama.cpp). A model profile's engine is the
+  engine whose model profile file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
   `presets.ini.disabled`), never a key in the file: llama-server refuses a `--models-preset` file with
   a key it does not know (llama.cpp v1.0.0 `common/preset.cpp`, "option not recognized in preset").
-  - The preset editor's first field is **Engine**, a `<select>` over that list, never free text, shown
-    even with one entry (user decision: it is how a preset's engine is chosen). Choosing another engine
-    moves the preset to that engine's file; no key is written.
-  - Every preset today is in llama.cpp's files, so it is a llama.cpp preset: the editor shows llama.cpp
+  - The model profile editor's first field is **Engine**, a `<select>` over that list, never free
+    text, shown even with one entry (user decision: it is how a model profile's engine is chosen).
+    Choosing another engine moves the model profile to that engine's file; no key is written.
+  - Every model profile today is in llama.cpp's files, so it is a llama.cpp model profile: the editor shows llama.cpp
     selected, no migration prompt.
-  - **Engine not available**: a preset in the file of an engine the list lacks (e.g. Strata
-    uninstalled); possible only once a second engine's preset file exists. The
+  - **Engine not available**: a model profile in the file of an engine the list lacks (e.g. Strata
+    uninstalled); possible only once a second engine's model profile file exists. The
     list row shows the engine name with the text "not available"; the editor shows the select with that
-    name as an extra, selected option marked "(not available)" and a Notice that the preset cannot be
+    name as an extra, selected option marked "(not available)" and a Notice that the model profile cannot be
     started until the engine is installed or another engine is chosen. Its other fields stay readable;
     fields of an engine the fe does not know are shown read-only as raw `key = value` lines, kept on
     save.
-  - The preset list's Engine column is always shown (each row has an engine), sorted with the list.
+  - The model profile list's Engine column is always shown (each row has an engine), sorted with the list.
 - Engine names are data (`llama.cpp`, `Strata`): never in the strings file, never translated.
 
 ### 2.3 Navigation
@@ -98,7 +98,7 @@ Decided with the user on 2026-11-14.
 - The nav lists only pages that exist. Under "Instances" one link per instance, from
   `GET /api/instances`, in the manager's order.
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
-  link of its own (a preset's page under Models), that entry keeps the current-page style with
+  link of its own (a model profile's page under Models), that entry keeps the current-page style with
   `aria-current="true"`: it leads elsewhere, but the page belongs to it
   ([WAI-ARIA 1.2, `aria-current`](https://www.w3.org/TR/wai-aria-1.2/#aria-current)). Such a page
   also starts with a link back to its list, before the `h1` (`fe/briefs/02-models.md` 61).
@@ -217,10 +217,10 @@ Each is one React component, reused by every page.
   named group inside a card is one `div.subgroup` holding its `h4` and then its fields; when fields
   in two groups share a label, the fields sit in a `<div role="group">` named by the `h4`
   (`aria-labelledby`), the `h4` and that div the subgroup's only two children
-  (`fe/briefs/02e-preset-cards.md` 90, 90a). A subgroup has `--space-5` above it, more than the
+  (`fe/briefs/02e-model-profile-cards.md` 90, 90a). A subgroup has `--space-5` above it, more than the
   24 px between two fields, so a group heading sits with the fields under it; a subgroup right
   after the card's `h3` has none (the `h3`'s bottom margin parts them).
-- **Read-only form**: a form shown before its slice can save (the preset page's plain cards, 2e):
+- **Read-only form**: a form shown before its slice can save (the model profile page's plain cards, 2e):
   the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
   saving slice only enables them (2h does, card by card). Not `readonly` (text inputs only in HTML) and not `aria-disabled`
   (dozens of inert tab stops). The About toggles stay operable.
@@ -242,7 +242,7 @@ Each is one React component, reused by every page.
 - **Units** (MiB) sit after the input, never in the label, even where the GUI's label has them. The
   unit has an id and is the first id of the input's `aria-describedby`, so it is read with the
   input ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships); 02h, 159).
-- **Changed field and partial save** (a file the user may have hand-edited, the presets): a field
+- **Changed field and partial save** (a file the user may have hand-edited, the model profiles): a field
   is changed when its control's state differs from the state it loaded in, so changing it back
   makes it unchanged; only changed fields are sent, each in the configurator's spelling, and the
   bff edits those lines in place, so an untouched value keeps its spelling, its comments and its
@@ -253,7 +253,7 @@ Each is one React component, reused by every page.
   while disabled; a plain paragraph in reading order, not a live region and not in any
   `aria-describedby` (02h, 176 to 181, 192). A dependent field whose switch sits just above it needs
   none (Snapshot folder, Vision GPU).
-- **Section jump list**: on a form taller than a few screens (the preset page), a `<nav>` after the
+- **Section jump list**: on a form taller than a few screens (the model profile page), a `<nav>` after the
   form's `h2` holds one button per card; a button moves focus to the card's `h3` (`tabindex="-1"`)
   and scrolls it into view. Buttons, not `#fragment` links, which the hash router would read as a
   route (02h, 196).
@@ -301,7 +301,7 @@ Each is one React component, reused by every page.
     dashed beside it. A checkbox inactive by `aria-disabled` (a write in flight) shares the drawing
     but keeps `cursor: default` and its label colour: it turns back by itself in a moment. A field's
     own label (outside a checkbox) stays `--text`: it names the setting, the control
-    carries the state (user, 2026-11-17). One set of rules in `index.css`, shared by the preset page and the Server page.
+    carries the state (user, 2026-11-17). One set of rules in `index.css`, shared by the model profile page and the Server page.
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
@@ -318,7 +318,7 @@ Each is one React component, reused by every page.
   one extra, last option whose value and text are the value as written, selected, never silently
   read as the default (as the "(not available)" engine of section 2.2).
 - **Switch**: an on/off state written at once and named by a thing rather than a sentence (a
-  preset's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
+  model profile's row): a native `<input type="checkbox" role="switch">`, state in `checked`, never
   `aria-checked`, drawn and made inactive exactly as a checkbox
   ([APG Switch](https://www.w3.org/WAI/ARIA/apg/patterns/switch/),
   [ARIA in HTML](https://www.w3.org/TR/html-aria/)). A setting phrased as a statement ("start
@@ -347,7 +347,7 @@ Each is one React component, reused by every page.
 - **Table**: a native `<table>` with `<th scope="col">` headers; a link in the first cell when the row
   opens a page.
 - **Value list**: settings shown as text, not as controls (a page or card that reads before its
-  slice can write, e.g. the preset page's Assets in 2d): a `<dl>`, each field a `<dt>` label then
+  slice can write, e.g. the model profile page's Assets in 2d): a `<dl>`, each field a `<dt>` label then
   its `<dd>` value, laid out as Forms in section 4 (label column from 720px). Values from the file
   unchanged, in monospace for paths, flags and values, wrapping anywhere (`overflow-wrap: anywhere`,
   `min-width: 0`); an empty value is the page's "(none)" text in the body font and `--muted`.

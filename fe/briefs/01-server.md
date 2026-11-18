@@ -308,7 +308,7 @@ authorization (`PLAN.md` step 10, point 4).
     Otherwise the alert stays until Discard, a confirmed Reload (35), a successful sign-in in the
     dialog (36), or (2026-11-17) the form turning clean by an edit when the alert has no button;
     editing a field clears only that field's error (31), not the alert.
-    **Changed by 2h.4b** ([02h-preset-save.md](02h-preset-save.md) 198b to 198h, user, 2026-11-17):
+    **Changed by 2h.4b** ([02h-model-profile-save.md](02h-model-profile-save.md) 198b to 198h, user, 2026-11-17):
     an edit that makes the form clean removes an alert without an answer button (`save-invalid`,
     `save-refused`, `save-failed`, `save-timeout`, the 403 / 503 texts, 37a's `instance-not-found`);
     `session-ended`, `session-revoked` (Sign in) and the 409 (Reload) stay. Applies to 31, 34, 37,

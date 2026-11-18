@@ -46,7 +46,7 @@ pattern and the session-ended dialog of slice 1b.
 | 2b | R: the list's filter field (the GUI's "Filter presets…": id or model path, case-insensitive; adds `model` to the list reply). |
 | 2c | W: the on/off switch of each row (moves the section between `presets.ini` and `presets.ini.disabled`). |
 | **2d** | R (section 2d): the preset page `#/models/<id>`: heading, the row's name becomes a link, the **Engine** select (first field: the engine whose preset file holds the preset, shown with one entry, "(not available)" option and Notice per D2.2), and the Assets card's values as text (no file pickers yet). |
-| 2e | R: the plain cards, each field as in the GUI: Hardware, Resource / context, KV cache, Chat / reasoning, Sampling, Embeddings, Advanced, Vision, Speculative (values; no warnings), as disabled controls under a read-only Notice; the enable rules move to 2h. Brief: [02e-preset-cards.md](02e-preset-cards.md), five sub-slices 2e.1 to 2e.5 (criteria 83-117; 83 replaces 68's order). |
+| 2e | R: the plain cards, each field as in the GUI: Hardware, Resource / context, KV cache, Chat / reasoning, Sampling, Embeddings, Advanced, Vision, Speculative (values; no warnings), as disabled controls under a read-only Notice; the enable rules move to 2h. Brief: [02e-model-profile-cards.md](02e-model-profile-cards.md), five sub-slices 2e.1 to 2e.5 (criteria 83-117; 83 replaces 68's order). |
 | 2f | R: GPU distribution and Tensor placement tables (needs the server machine's device list from the bff). |
 | 2g | R: Model info card (needs a GGUF read on the server: the bff links pai-core only today, inventory 4.1). |
 | 2h | W: save of the plain cards of 2e (client checks of the inventory's (f) column, server refusals beside their field, Revert). |

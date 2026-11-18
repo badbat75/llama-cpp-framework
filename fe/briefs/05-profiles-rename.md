@@ -24,10 +24,10 @@ The rule, applied everywhere below: `preset` -> `model-profile` in kebab case (k
 start of a text or heading ("Model profile", "Model profiles"), lower case inside a sentence. The one
 word that stays: llama.cpp's source path `common/preset.cpp` (cited in two comments).
 
-### 1. String keys (`fe/src/strings/en_US.json`): 199 keys
+### 1. String keys (`fe/src/strings/en_US.json`)
 
-All 199 keys that contain `preset` today (173 `preset-*`, 21 `presets-*`, 5 `api-*`) are renamed by
-the rule; no key is added or removed. The 5 `api-*` ones follow the bff's renamed error keys:
+Every key that contains `preset` (at the time of writing 199: 173 `preset-*`, 21 `presets-*`, 5
+`api-*`; 2h has added more since) is renamed by the rule; no key is added or removed. The 5 `api-*` ones follow the bff's renamed error keys:
 
 | Old key | New key |
 | --- | --- |
@@ -109,19 +109,13 @@ Every `aria-labelledby`, `aria-describedby` and `for` that points at one of them
 `presets-switch-alert` -> the same with `model-profiles-`; `preset-back` -> `model-profile-back`. The
 rules' content does not change; the comments in `index.css` that say "preset" follow the rule.
 
-### 5. Files: 26, by `git mv`
+### 5. Files, by `git mv`
 
-| Old | New |
-| --- | --- |
-| `fe/src/PresetPage.tsx` | `fe/src/ModelProfilePage.tsx` |
-| `fe/src/PresetCards.tsx` | `fe/src/ModelProfileCards.tsx` |
-| `fe/src/test/presetCards.ts` | `fe/src/test/modelProfileCards.ts` |
-| `fe/src/PresetCards{1..5}.test.tsx` | `fe/src/ModelProfileCards{1..5}.test.tsx` |
-| `fe/src/PresetContent.test.tsx` | `fe/src/ModelProfileContent.test.tsx` |
-| `fe/src/PresetFlags.test.tsx` | `fe/src/ModelProfileFlags.test.tsx` |
-| `fe/src/PresetFullValue.test.tsx` | `fe/src/ModelProfileFullValue.test.tsx` |
-| `fe/src/PresetPage.test.tsx` | `fe/src/ModelProfilePage.test.tsx` |
-| `fe/src/PresetSave{1..14}.test.tsx` | `fe/src/ModelProfileSave{1..14}.test.tsx` |
+The rule: **every file under `fe/src` with `Preset` or `preset` in its name** is renamed by it, keeping
+the rest of the name (`PresetPage.tsx` -> `ModelProfilePage.tsx`, `PresetCards{1..5}.test.tsx` ->
+`ModelProfileCards{1..5}.test.tsx`, `PresetSave{1..16}.test.tsx` -> `ModelProfileSave{1..16}.test.tsx`,
+`test/presetCards.ts` -> `test/modelProfileCards.ts`). At the time of writing that was 26 files; 2h
+has added more since (`PresetSave15`, `PresetSave16`), and the rule, not a count, is the list.
 
 `Models.tsx`, `Models.test.tsx`, `ModelsFilter.test.tsx`, `ModelsSwitch.test.tsx` keep their names here
 (the page is still "Models" at `#/models`; 05b renames it). Two brief files the code cites in comments
@@ -138,26 +132,25 @@ By the rule, every identifier, type, local and comment in `fe/src`. The named on
 `{ page: 'model-profile' }` (`route.ts`, `App.tsx`); the `presets` state of `Models.tsx` and every
 helper of `test/bff.ts` that says preset.
 
-### 7. Fetch paths: 4 templates, 6 call sites
+### 7. Fetch paths: 3 templates, 4 call sites
 
 | Old | New | Call sites |
 | --- | --- | --- |
 | `GET /api/presets` | `GET /api/profiles/model` | `Models.tsx` |
 | `PUT /api/presets/{id}/enabled` | `PUT /api/profiles/model/{id}/enabled` | `Models.tsx` |
 | `GET`, `PUT /api/presets/{id}` | `GET`, `PUT /api/profiles/model/{id}` | `PresetPage.tsx` (2) |
-| `GET`, `PUT /api/instances/{id}/server` | `GET`, `PUT /api/profiles/server/{id}` | `ServerSection.tsx`, `ServerForm.tsx` |
 
-The server document's `{id}` is **the instance id of the page**: in the platform's slice 4 a server
-profile is still the instance's own `server@<id>.ini`, so the instance `default` has the profile
-`default`. That stays true until the fe reads `serverProfile` from `GET /api/instances` (05e). The run
-verbs and boot (`/api/instances/{id}/start|stop|restart|boot`) and `GET /api/instances` do not move.
+**Corrected after the platform's step 4b (commit 5d54590):** the server route did NOT move. `GET` and
+`PUT /api/instances/{id}/server` stay as they are, and so do the run verbs and boot
+(`/api/instances/{id}/start|stop|restart|boot`) and `GET /api/instances`. The server route's move to
+`/api/profiles/server/{id}` (planned as this table's fourth row) belongs to 05c.
 
 ### 8. JSON fields: none
 
 No body or reply field the fe reads or sends changes in step 4b (the model profile rows, the document,
 the save and switch bodies, the server document and its save are byte for byte today's).
 
-### 9. Error keys the fe maps: 6
+### 9. Error keys the fe maps: 5
 
 | Old | New | Where the fe maps it |
 | --- | --- | --- |
@@ -166,13 +159,12 @@ the save and switch bodies, the server document and its save are byte for byte t
 | `preset-no-model` | `model-profile-no-model` | `PresetPage.tsx` refusal text and field (`model`) |
 | `invalid-preset-id` | `invalid-model-profile-id` | `PresetPage.tsx` refusal text |
 | `preset-name-taken` | `model-profile-name-taken` | `PresetPage.tsx` refusal text |
-| `client-no-instance` (on the server routes only) | `client-no-server-profile` `[id]` | `ServerSection.tsx` read, `ServerForm.tsx` save |
 
-The last row: the server routes answer `client-no-server-profile` where they answered
-`client-no-instance`. The fe shows **the same text as today**, `instance-not-found` with the page's id
-(true in slice 4: a missing file is a missing instance); no new string. The run verbs and boot keep
-mapping `client-no-instance`. Not mapped today and still not: `presets-malformed` (->
-`model-profiles-malformed`, shown as the generic failure).
+**Corrected after step 4b:** the server routes still answer `client-no-instance`, and the fe keeps
+mapping it there (`ServerSection.tsx` read, `ServerForm.tsx` save) as everywhere else. The row
+`client-no-instance` -> `client-no-server-profile` planned here belongs to 05c, with the route. Not
+mapped today and still not: `presets-malformed` (-> `model-profiles-malformed` since step 4b, shown as
+the generic failure).
 
 ### 10. Hash routes: none in this slice
 
@@ -203,8 +195,9 @@ state names `preset` -> `model-profile`, `preset-missing` -> `model-profile-miss
 
        grep -rniE 'preset' fe/src fe/index.html fe/ux/check.js fe/ux/stub.py fe/ux/README.md | grep -v 'common/preset\.cpp'
 
-4. These return nothing: `grep -rn "/api/instances/[^'\"\`]*/server" fe/src fe/ux/stub.py` and
-   `grep -n "client-no-instance" fe/src/ServerSection.tsx fe/src/ServerForm.tsx`.
+4. (Moved to 05c after step 4b: the server route and `client-no-instance` stay in this slice, so the
+   greps for `/api/instances/{id}/server` and for `client-no-instance` in `ServerSection.tsx` and
+   `ServerForm.tsx` are 05c's check, not this one's.)
 5. `npm --prefix fe run build`, then the designer's UX check `npm --prefix fe/ux run check`: the seven
    states pass in the three engines, 1280 and 320 px, light and dark, no axe violation.
 
@@ -212,12 +205,12 @@ state names `preset` -> `model-profile`, `preset-missing` -> `model-profile-miss
 
 1. Precondition: 2h committed; `fe/` clean; the bff's slice 4 ready at the same pause.
 2. Designer: renames the two brief files (section 5) and updates `fe/DESIGN.md`'s words.
-3. Tester: `git mv` the 23 test files and `test/presetCards.ts`; renames, in them and in `test/bff.ts`,
+3. Tester: `git mv` the test files and `test/presetCards.ts` (the rule of section 5); renames, in them and in `test/bff.ts`,
    the keys, texts, ids, classes, paths and error keys of this map; shows them red (the imports of the
    renamed source files fail, the old paths and keys are not answered).
-4. Coder, in this order: `en_US.json` (keys and texts in one pass); the three source files by `git mv`
-   and their imports; code names; DOM ids and classes with `index.css`; fetch paths; error keys;
-   `fe/ux/`. Then the four commands, the greps of steps 3 and 4.
+4. Coder, in this order: `en_US.json` (keys and texts in one pass); the source files by `git mv` and
+   their imports; code names; DOM ids and classes with `index.css`; fetch paths; error keys;
+   `fe/ux/`. Then the four commands and the grep of step 3.
 5. Designer: build and UX check; review against this map.
 6. One commit for the fe, beside the bff's slice 4 commit, in the same pause.
 
@@ -226,10 +219,19 @@ state names `preset` -> `model-profile`, `preset-missing` -> `model-profile-miss
 - **05b Navigation, model side** (needs slice 4 only): the nav's "Profiles" group with its Model entry;
   `#/profiles/model` and `#/profiles/model/<id>` (old `#/models...` links: user question); `Models.tsx`
   becomes the model profiles page, its `h1` "Model profiles".
-- **05c Server profile page** (needs slice 4 only): `#/profiles/server/<id>` holds today's Server form
-  and its save; the instance page keeps its header (state, Start / Stop / Restart, start at boot) and
-  shows its server profile as a link; the Profiles group gains its Server entry.
+- **05c Server profile page** (needs the server route's move, not done in step 4b):
+  `#/profiles/server/<id>` holds today's Server form and its save; the fetch path `GET`, `PUT
+  /api/instances/{id}/server` -> `/api/profiles/server/{id}`, the document's `{id}` being the instance
+  id of the page until 05e (a server profile is still the instance's own `server@<id>.ini`); the error
+  key `client-no-instance` -> `client-no-server-profile` `[id]` on those routes only, shown with the
+  same text as today (`instance-not-found` with the page's id), the run verbs and boot keeping
+  `client-no-instance`; its check: `grep -rn "/api/instances/[^'\"\`]*/server" fe/src fe/ux/stub.py`
+  and `grep -n "client-no-instance" fe/src/ServerSection.tsx fe/src/ServerForm.tsx` return nothing.
+  The instance page keeps state, Start / Stop / Restart, start at boot and its associations (user,
+  2026-11-18), and shows its server profile as a link; the Profiles group gains its Server entry.
 - **05d Tags on the server profile page** (platform slice 12).
+- **05d2 Tags on the instance page** (the instance's own tags, `PUT /api/instances/{id}/tags`; user,
+  2026-11-18: tags on both the profile and the instance). Missing from the first list.
 - **05e Instances with port, tags and node** (platform slice 13): Overview columns Port and Tags; the
   node's name over the nav; the server profile id from `GET /api/instances` `serverProfile`.
 - **05f Server profiles list, create, delete** (platform slice 14): `#/profiles/server` with each
@@ -241,3 +243,16 @@ state names `preset` -> `model-profile`, `preset-missing` -> `model-profile-miss
   switch's `restart` list, the instance named in the refusals.
 - **05j Create and remove an instance** (platform slice 16), `client-no-model-profiles` on Start.
 - Later: the estimate as a read (platform slice 17).
+
+## The user's answers of 2026-11-18 (they bind the slices above)
+
+- **The instance page** shows the instance's state, the run verbs (Start / Stop / Restart), start at
+  boot and its associations (its server profile, its model profiles); the Server form leaves it for the
+  server profile page (05c).
+- **The menu** names its two entries "Server profiles" and "Model profiles" (05b, 05c; the keys and
+  texts are proposed in those briefs).
+- **After a profile save**, the success message names the running instances the change reaches, each
+  a link to its instance page; there is **no Restart button** in the message (05i).
+- **On one node a server profile serves one instance**; across nodes the same server profile may be
+  shared (05f, 05g: the list shows the one instance using it on this node).
+- **Tags** go on both the server profile (05d) and the instance (05d2).

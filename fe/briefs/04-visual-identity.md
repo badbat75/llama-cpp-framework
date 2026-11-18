@@ -415,6 +415,17 @@ Each holds in **both themes**. The first group is checkable from `index.css` tex
 
 ## 6. Questions for the user
 
+**Answered by the user, 2026-11-18** (the questions are kept below as the record):
+
+1. Start at boot on the Overview: **(a)**, shown only after sign-in, read per tile; the signed-out
+   Overview shows no boot state and `GET /api/instances` stays as it is.
+2. Font coverage: **(b)**, Latin plus Latin Extended, the extra file downloaded only when a page shows
+   such a letter.
+3. Theme switch: **(a)**, two states, Light and Dark, starting from the OS and back to following the OS
+   when switched to the OS's theme.
+4. Assets on the model profile page: **(a)**, collapsed by default, with the model file name under the
+   title and the Engine as a row of Assets.
+
 1. **Start at boot on the signed-out Overview?** (a) only when signed in, read per tile (recommended:
    no new unauthenticated data); (b) for everyone (the architect adds the boot state to the
    unauthenticated `GET /api/instances`); (c) not on the Overview, only on the instance page.
@@ -430,7 +441,7 @@ Each holds in **both themes**. The first group is checkable from `index.css` tex
 
 ## 7. Notes for the coordinator
 
-- Instance tags: `PUT /api/instances/{id}/tags` (platform slice 12) has no fe slice in 05's list (05d
-  is the server profile's tags only); 1.4 item 4 needs one.
+- Instance tags: `PUT /api/instances/{id}/tags` (platform slice 12) now has its fe slice, 05d2 in
+  `fe/briefs/05-profiles-rename.md` (user, 2026-11-18: tags on profile and instance); 1.4 item 4 is it.
 - `crates/bff/build.rs`: `woff2` -> `font/woff2` (section 3), a platform change to schedule with H1.
 - `fe/DESIGN.md` 5.1 says "No theme switch (preference)"; H4 changes it, with the user's choice.
