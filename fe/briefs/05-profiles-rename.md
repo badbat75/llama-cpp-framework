@@ -252,9 +252,10 @@ GUI's strings do, in the same words.
 
 ## The slices that follow, in build order (each small; the platform slice each needs)
 
-- **05b Navigation, model side** (needs slice 4 only): the nav's "Profiles" group with its Model entry;
-  `#/profiles/model` and `#/profiles/model/<id>` (old `#/models...` links: user question); `Models.tsx`
-  becomes the model profiles page, its `h1` "Model profiles".
+- **05b Navigation, model side** (needs slice 4 only; brief: `fe/briefs/05b-profiles-nav.md`): the
+  nav's "Profiles" group with its Model profiles entry; `#/profiles/model` and `#/profiles/model/<id>`
+  (old `#/models...` links rewritten to them, user, 2026-11-17); `Models.tsx` becomes
+  `ModelProfiles.tsx`, its `h1` "Model profiles".
 - **05c Server profile page** (needs the server route's move, not done in step 4b):
   `#/profiles/server/<id>` holds today's Server form and its save; the fetch path `GET`, `PUT
   /api/instances/{id}/server` -> `/api/profiles/server/{id}`, the document's `{id}` being the instance
