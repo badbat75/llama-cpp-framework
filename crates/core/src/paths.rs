@@ -296,6 +296,25 @@ pub fn try_instance_ids() -> std::io::Result<Vec<String>> {
     Ok(ids.into_iter().collect())
 }
 
+/// The server profile the instance `id` names: the `ServerProfile` of its
+/// section of [`instances_ini`], the file whose section the instance is. The
+/// section is the one named by `id` exactly, as [`instance_ids`] counts
+/// sections: a header that differs in case names no instance. `None` when the
+/// record has no such section, the section carries no key, the key has an
+/// empty value, or the name builds no server profile file: every one of them
+/// is an instance with no profile to read, and the launch of such a section
+/// refuses for the same reason.
+pub fn instance_server_profile(id: &str) -> Option<String> {
+    let section = crate::ini::read_all(&instances_ini())
+        .into_iter()
+        .find(|s| s.id == id)?;
+    section
+        .keys
+        .get("ServerProfile")
+        .map(|s| s.trim().to_string())
+        .filter(|name| !name.is_empty() && valid_instance_id(name))
+}
+
 pub fn server_ini() -> PathBuf {
     config_dir().join("server.ini")
 }

@@ -21,26 +21,17 @@ pub enum ListenError {
 
 /// The bff's config file.
 pub fn config_path() -> PathBuf {
-    pai_core::paths::system_config_dir().join("bff.ini")
+    pai_core::bff_cfg::config_path()
 }
 
 /// The address served when `bff.ini` sets none.
-const DEFAULT: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(
-    std::net::Ipv4Addr::LOCALHOST,
-    8590,
-));
+const DEFAULT: SocketAddr = pai_core::bff_cfg::DEFAULT_LISTEN;
 
-/// The address an INI text sets: an `ip:port`, never a host name.
+/// The address an INI text sets: an `ip:port`, never a host name. The read and
+/// the parse are `pai_core`'s, so the manager, which judges a server address
+/// against this service's address, reads the same value.
 pub fn parse(text: &str) -> Result<SocketAddr, ListenError> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let value = pai_core::ini::parse_sections(text)
-        .into_iter()
-        .filter(|s| s.id.eq_ignore_ascii_case("Bff"))
-        .find_map(|s| s.keys.get("Listen").cloned());
-    let Some(value) = value else {
-        return Ok(DEFAULT);
-    };
-    value.parse().map_err(|_| ListenError::Invalid(value))
+    pai_core::bff_cfg::parse_listen(text).map_err(ListenError::Invalid)
 }
 
 /// The `[Bff] Hosts` value of an INI text, as written: the names the `Host`

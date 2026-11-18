@@ -4,6 +4,7 @@
 
 // One instance's model profiles file, rendered from the pool and its assignment.
 pub mod assign;
+pub mod bff_cfg;
 pub mod checks;
 pub mod client;
 pub mod http;

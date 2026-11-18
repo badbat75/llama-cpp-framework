@@ -284,6 +284,17 @@ Lessons only: the rules are in `AGENTS.md`.
   bullet too; the MoE cache floor (`model_profiles::validate_moe_cache_floor`, save only, needs the GGUF) is
   named there, in the Hardware config bullet and the `moe_cache.rs` source-map row; a sweep's
   up-front check in "The key is typed" bullet and the `sweep.rs` row.
+- The save-time address check follows the profile, not the instance: its rules (host must resolve
+  or run; port judged only for a profile in use, against the other instances' profiles and the web
+  service's `[Bff] Listen` read through `pai_core::bff_cfg`; an unreadable profile judges nothing;
+  a refusal names the instance or `private-ai-bff`) are stated once, in the "manager runs every
+  content check" bullet of `crates/config/README.md`. The same fact repeats in six places: that
+  bullet, the bff README's "Running it" bullet, its 422 row, its "server file of an instance" lead,
+  the `paths.rs` and `bff_cfg.rs` source-map rows, and the `AGENTS.md` machine-tree sentence. When
+  the profile lookup changes, check all of them.
+- The route names the server file after the instance id (`server@<id>.ini`); it names the profile
+  in use only because the shipped defaults carry `[default] ServerProfile = default` (the lookup:
+  `paths::instance_server_profile`). Both READMEs now say this in one sentence; keep them so.
 - After an fe slice, check the bff README's web UI route table against `fe/src/route.ts` and the
   `call(` paths in `fe/src/*.tsx`, and the served routes with `grep -rn '"/api' crates/bff/src`: the
   table lagged two fe slices once (run controls, start at boot). The overview sentences in `AGENTS.md`

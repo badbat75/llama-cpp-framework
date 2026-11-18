@@ -50,6 +50,9 @@ fn data_root_e2e() {
     // ── Manager core: a verb's existence check reads the record ──────────
     crate::manager::service::manager_existing_id_e2e();
 
+    // ── Manager core: the checks follow the profile an instance runs ──────
+    crate::manager::service::manager_profiles_in_use_e2e();
+
     // ── Manager core: a render that cannot be written, and its report ─────
     crate::manager::service::manager_render_failure_e2e();
 

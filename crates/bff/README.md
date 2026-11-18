@@ -52,6 +52,11 @@ Listen = 127.0.0.1:8590
 ```
 
 - The value is an `ip:port` address: a host name (`localhost:8590`) is refused, nothing is resolved.
+- **The manager reads this same value** (`pai_core::bff_cfg`, the one place the file is parsed, shared
+  with `crates/bff/src/listen.rs`): it holds this address against a server profile an instance runs, so
+  saving such a profile on this port is refused naming `private-ai-bff`. No `bff.ini` is the default
+  above; a file that cannot be read, or a `Listen` the service will not start on, answers no address
+  and refuses nothing.
 - Any address is accepted, a LAN address and the wildcard (`0.0.0.0`, `[::]`) included, served plain
   HTTP. The administrator's choice (user, 2026-11-17, a requirement change): told that the sign-in
   password then crosses the LAN in clear, they chose it over TLS in the bff and over an SSH tunnel.
@@ -219,7 +224,12 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 
 `GET /api/instances/{id}/server` (`crates/bff/src/server.rs`) first needs a session: with no cookie,
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
-connect to the manager. `PUT` of the same path saves it ([below](#saving-the-server-file)).
+connect to the manager. `PUT` of the same path saves it ([below](#saving-the-server-file)). The route
+names the file after the id, while what an instance runs is the server profile its section of
+`instances.ini` names: the shipped record has `[default]` with `ServerProfile = default`, so for
+`default` they are one file, and a save there is judged as a profile in use (a `server@<id>.ini` no
+section names as its profile is a spare profile, judged against nothing,
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows)).
 Then it asks the manager for `ReadFileAs("server@<id>.ini")` naming the
 session's user, through the same connect and 5 s timeout as `/api/instances` (3de9283): the route
 connects as `Sessions::current`, never a name taken from the request. The manager answers a
@@ -320,7 +330,7 @@ Done answers the 200.
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id |
 | 409 | `{"key": "server-changed-elsewhere", "args": []}` | The file is not the one the form read: the sent revision does not match the read text, or the manager's compare and swap found it changed. Nothing is written, the session stays signed in |
 | 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
-| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body |
+| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |

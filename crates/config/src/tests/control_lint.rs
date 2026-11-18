@@ -715,13 +715,15 @@ fn the_gate_ask_scan_needs_the_backend_the_gate_asks() {
 // the framework's (`paths::system_config_dir`, `/etc/private-ai`) keeps only
 // its own files (`bff.ini`). Production code of every crate that touches
 // them names the framework's directory only where it is meant: `paths.rs`,
-// which defines it, and the bff's `listen.rs`, which reads `bff.ini`. Test
-// code may name it.
+// which defines it, and `core/src/bff_cfg.rs`, which reads the web service's
+// `bff.ini` for the service and for the manager. Test code may name it.
 
 /// The files allowed to name `system_config_dir`, relative to `crates/`.
 const SYSTEM_DIR_ALLOWED: [&str; 3] = [
     "core/src/paths.rs",
-    "bff/src/listen.rs",
+    // The one place the service's file is read, so the manager that judges a
+    // server address against it asks the same question the service answers.
+    "core/src/bff_cfg.rs",
     // The manager's own log sits in `logs` beside the framework's config
     // directory, so `manager_log_path` takes that directory's parent.
     "manager/src/manager/action_log.rs",

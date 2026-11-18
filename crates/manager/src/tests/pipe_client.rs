@@ -399,6 +399,14 @@ pub(crate) fn manager_pipe_client_e2e() {
                 "{bad:?}"
             );
         }
+        // The address check judges a profile an instance runs, so the record
+        // names lan-3 and its profile while these writes are made, and the
+        // record goes back to what it was once they are done.
+        std::fs::write(
+            sys.join("instances.ini"),
+            format!("{record}\n[lan-3]\nServerProfile = lan-3\n"),
+        )
+        .expect("write record with lan-3");
         assert_eq!(
             client.write_file(
                 "server@lan-3.ini",
@@ -453,6 +461,16 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert!(
             !sys.join("server@lan-3.ini").exists(),
             "refused writes write nothing"
+        );
+        std::fs::write(sys.join("instances.ini"), record).expect("restore the record");
+        assert_eq!(
+            client.list_instances(),
+            Ok(vec![
+                "broken".to_string(),
+                "default".to_string(),
+                "lan-2".to_string()
+            ]),
+            "the record is back to its three sections"
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("server@default.ini")).unwrap(),

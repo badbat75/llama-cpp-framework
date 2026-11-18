@@ -150,7 +150,9 @@ Lessons only: the rules are in `AGENTS.md`.
   the text: binding_lint is static. `log-journal-denied`/`-failed` are in both files for that reason.
 - The fe mirrors every `checks` refusal text of `crates/core/strings/` under `api-<key>` in
   `fe/src/strings/en_US.json` (and in the fake's table `fe/src/test/bff.ts`): a core text change leaves
-  it stale. The fe is a separate session's files: report it, do not edit it.
+  it stale. The fe is a separate session's files: report it, do not edit it. The same mirror covers the
+  manager's `client-*` texts: `client::tests` pins a value byte for byte in `en_US.toml` AND
+  `cli.toml`, so a copy change edits both files in one step.
 - `checks.rs` `RawSection` compares byte for byte where a save keeps the bytes (`unchanged_in` and
   `known_key_line`: id, key and raw value exact), and case-insensitively only in the name rules
   (`preset-name-taken`, `preset_ids_free`). `get` returns the value cut at `;`/`#`, `keys` holds the raw
@@ -550,6 +552,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - An edit that inserts before a function must carry that function's whole body in BOTH oldString and
   newString: an oldString of the signature plus one body line and a newString of only the signature
   deleted that line, and the file read back broken.
+- A phase of `data_root_e2e` runs only after the blocks before it, so a new rule that makes an OLD
+  fixture in an earlier block stale stops the run at that stale assertion and the new phase never
+  runs: the suite cannot show the new behaviour green, and you cannot enumerate the later stale
+  assertions by running (each rerun stops at the first one). Read the phase list, list the
+  assertions the new rule flips, and report them for the tester to refresh.
+- `std::net::SocketAddr::from(([127,0,0,1], port))` is NOT const-callable (E0658, `From` is not a
+  const trait): in a `const` write `SocketAddr::V4(std::net::SocketAddrV4::new(
+  std::net::Ipv4Addr::LOCALHOST, port))`. The manager's `Binding.port` is an `i32`, so
+  `SocketAddr::port()` (u16) needs a cast.
 - The manager's `render_all_locked` runs on EVERY write (`check_and_write` renders the whole pool
   after each write of a pool file, not only at the start), so a start-report test that counts log
   lines must count from `before` and expect `report_render_failures` lines, never action records,

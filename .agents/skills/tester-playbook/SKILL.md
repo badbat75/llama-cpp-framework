@@ -35,6 +35,38 @@ Lessons only: the rules are in `AGENTS.md`.
   coder branch: say they go green together, and prove the fixtures with a standalone `rustc --edition 2021`
   probe of the reader's predicates (`ini::parse_sections` trims both sides, so `Key =` and `Key =   ` are
   both the empty string, and a section with no key is the same answer).
+- Cheaper than waves for the pins of ONE phase: a twin built by a python transform that wraps every top-level
+  `assert_eq!`/`assert!` (paren-matched across lines) in `probe!(<file line>, { .. })`, where the local macro is
+  `catch_unwind(AssertUnwindSafe(|| $body))` + a downcast of the payload into a `Vec<String>` (one `println!`
+  per entry, `--nocapture`, a no-op panic hook set at the top and `take_hook()` at the end). ONE run lists every
+  red pin and every green one at once, no compile per wave. A refusal a pin expects is then WRITTEN (its assert
+  was neutralized), so a later "writes nothing" pin reds as a cascade: report it as such, it greens with the
+  fix. Rebuild the twin from the CURRENT file only (a stale `probe_fn.rs` inserted and then regenerated is a
+  duplicate definition), remove it by its own `fn` line + first `^}`, and diff the file against the pre-probe
+  backup: that diff is the proof the phase edits survived. Give the twin the attributes that sit above the
+  phase's own `fn` (`#[cfg(test)]`): without them it compiles into the plain lib and fails on the
+  cfg(test)-only imports it copied. Register it by APPENDING one `#[test]` to the module that calls the
+  phases; never rewrite that module's header (it lists its `mod`s).
+- A phase `fn` nothing calls NEVER runs, so the crate's green run says nothing about it: grep the phase name
+  for a call site (the manager's e2e phases run from `data_root_e2e`, `crates/manager/src/tests/mod.rs`) and
+  report a slice that added a phase and left it unregistered.
+- Cheapest way to see the pins of a phase that runs AFTER a red one in `data_root_e2e`: append ONE temporary
+  `#[test]` that calls only that phase and run it with `-- --exact tests::probe_<phase>` (libtest runs just it,
+  so the process-wide data-root redirect of the big sequence is not racing it). Delete the probe and rerun the
+  real sequence; no scratch copy, no transform.
+- A new "only a profile IN USE is judged" gate in a production check reds every pre-existing fixture that saves
+  a name the record does not carry: `left: Ok(()) right: Err(AddressInUse("default"))` (the save lands, the
+  refusal never runs). Keep the expectation, give the record the section of the saved name around those pins
+  (`std::fs::write(sys.join(INSTANCES_FILE), format!("{record}\n[x]\nServerProfile = x\n"))`), and restore the
+  record right after: the record feeds `list_instances()` (exact list), `status`/`start` (`NoInstance` for an
+  unregistered id) and `boot_enabled`, so a section left in place reds a LATER block. One section whose profile
+  file is missing is inert for the renders (the check skips it), so it is safe to carry through them.
+- A "the unreadable section is SKIPPED" accept greens for the wrong reason when the save is of an UNUSED name
+  (an unused save is checked against nothing at all): make the save a name IN USE, so the check runs and walks
+  the skipped sections. Check every expected value against the fixture's own state, not the idea (a `max` in a
+  refusal is a file's number: a phase that lowered it says so in the fixture write above it), and read the
+  renderer before pinning a count: `assign::render` under `* = inherit` renders the disabled pool's sections
+  OFF, so a section parked off the pool does NOT raise the `load-on-startup` count.
 - A refusal whose PATH the design leaves open: pin only `is_err()` and say so in the comment. Once the
   coordinator closes the rule, replace the loose assert with the exact value: `is_err()` greens on a refusal
   that names the wrong path (the id built into `server@<id>.ini` where the record is wanted).
@@ -188,6 +220,49 @@ Lessons only: the rules are in `AGENTS.md`.
   `grep -E '^    [a-z_][a-z0-9_:]*$'` (the failure list is 4-space test paths; the `---- name stdout ----`
   lines carry `----` and filter out), restore with `cp` and prove it with `cmp`. Per-mutant `cargo test` of
   xtask is ~10 s (deps cached), so nine mutants in one script beat reasoning.
+- A battery with a multi-line edit (move a block, replace 3 lines by 1): drive it from python, not `sed`:
+  a list of `(start, end, new_text)` applied in DESCENDING start order keeps the later addresses valid, and
+  no shell quoting. Restore the file at the TOP of every iteration, not only at the bottom: a script that
+  crashes (a `PosixPath % str` is a TypeError) leaves its mutant in the tree, and a `cargo test` that follows
+  reads as a real red. Run the mutant as ONE test (`--lib -- tests::data_root_e2e`): 0.6 s per mutant.
+- When an e2e is ONE `#[test]`, a mutant of the slice's own check often reds FIRST in an EARLIER phase that
+  exercises the same rule (an address-phase pin of the same `check_address`), so the slice's own pins are
+  unproven by that run. Report the catching pin as the file:line the panic names, and prove the slice's own
+  pins catch it with a probe: back up the crate's `src/tests/mod.rs` (a tracked, modified file: `cp` to the
+  scratchpad first), APPEND `#[test] fn probe_<phase>() { crate::<mod>::<phase>_e2e(); }`, run
+  `--lib -- --exact tests::probe_<phase>`, then `cp` the backup back and `cmp` it. The probe is a red-only
+  tool: it skips the module's process-wide redirect, so run the phase it names alone.
+- Inside the SAME phase an EARLIER pin of the same rule reds first (a mutant of `check_address` named the
+  address pin of the phase's first block, not the new block's), so the new pins stay unproven. Build a twin
+  `pub(crate) fn <block>_probe_e2e()` = the phase's fixture preamble + only the new block (a python slice of
+  the file, inserted after the phase's `^}`) and probe the twin. The backup the loop restores must be taken
+  AFTER the twin is inserted: restoring a PRE-twin backup at the top of the first iteration wipes the twin,
+  so every mutant reds as `E0425: cannot find function <twin>` (a script bug, not a code red). Keep a third
+  pre-twin copy for the final restore and end with `grep -c` of the twin and probe names (0).
+- A python line-address mutant: assert the line's exact text first (the assert caught my `ServerProfile(&other)`
+  against a line that reads `instance_server_profile(&other)`), and when moving a line out of a block insert it
+  at the index AFTER the closing `}` (at the brace's own index it lands inside the block: `E0425: cannot find
+  value`).
+- A strings key has a SECOND copy in the web UI (the bff answers a key, `fe` renders the sentence: a grep for
+  the old wording lands on `fe/src/test/bff.ts` and the brief's copy table), invisible to every Rust strings
+  pin: report it to the coordinator, the fe owner edits it, never edit it as the tester.
+- Dry-run the mutate script on a scratch copy of the file tree first (the python asserts on the exact line text
+  are the proof the address hits): a mutant that fails its assert leaves the tree untouched mid-battery.
+- A strings-file mutant is caught ONLY where the text is rendered: the bff's reply carries the key and its
+  args, so `crates/bff/tests/server.rs` (asserts `client-address-in-use` + `["llama.cpp@zz"]`) stays green, and
+  the pins are `client.rs`'s two byte-for-byte file pins (one per strings file) plus the `text()` fill pin,
+  which only the GUI file's mutant reds (the CLI file is never read by `text()`). A `KEYS` placeholder-count
+  parity pin stays green, the old text carries the same `{0}`.
+- A read-error arm mutated to the default reds in BOTH crates and the manager's is the far one: the core's
+  unit pins (`bff_cfg::tests::a_file_that_cannot_be_read_holds_no_address` first) red at once, and the
+  manager's e2e pin is `manager_profiles_in_use_e2e` inside `tests::data_root_e2e`
+  (`service.rs`: "a bff.ini that cannot be read refuses no save", `left: Err(AddressInUse("private-ai-bff"))`).
+  Run `cargo test -p pai-manager` under the core mutant to prove that pin (cargo rebuilds the mutated core,
+  ~40 s); a readable `bff.ini` fixture keeps every earlier `check_address` phase green.
+- A default duplicated in two crates is judged in one of them: the missing-`bff.ini` default is
+  `core::bff_cfg::listen_at`'s `NotFound` arm AND `bff::listen::load`'s own `NotFound` arm, so a
+  mutant of the core arm is caught ONLY by the manager's e2e (`pai-bff`'s tests stay green). Say which crate
+  carries the pin.
 - A battery script that builds package names as `pai-$crate` fakes reds on `xtask` (its package is plain
   `xtask`): a cargo spec error exits 101 like a test red, so read a `test result` line in each mutant log
   before counting a red. A subset rerun of the same script truncates the shared exits file (`: > "$X"`):
@@ -2008,6 +2083,29 @@ Lessons only: the rules are in `AGENTS.md`.
   `border-color(`, so the lookbehind must exclude `-` (`[0-9a-z]` + `-`), and the exemptions of a
   no-literal rule are positions, not selectors: the two `:root` blocks and the backdrop of
   `src/index.css:556` (the scrim whose alpha today is written in the channel values).
+- The `compact` form of that parse drops WHITESPACE ONLY, so it is the exact-match key: `.nav a` compacts
+  to `.nava` while `a.session` and `.theme-switch` keep their dot and hyphen. A compound selector goes
+  through the exact helper as `topBy('a.session', ..)`; a compact needle that drops the punctuation
+  (`'asession'`, `'.themeswitch'`) finds 0 rules, and the red reads as "the rule is missing" when the rule
+  is there. Descendant selectors (`.session > span`) match through the whitespace-stripped `flat` form.
+  A compact needle in a `includes()` test is looser than it looks: `'.navlabel'` also hits the compacted
+  selector LIST (`.theme-switch,.nav-label`), so list membership uses the split items.
+- Pin "the rule does not exist yet" as a COUNT, not as a declaration: a helper that throws
+  `expected exactly one rule: <what>, found 0` (and `expected exactly one <at-rule> block, found 0`) names
+  the missing rule in its own red. Reading `prop()` of an empty array reds `expected 0 to be 1`, which
+  reads as a fixture typo, and a `never(decls(...), 'x')` over a missing rule greens, so a "the rule keeps
+  this" pin needs a companion count assert (the brief's "exactly one rule" phrase is the shape).
+- The fe suite's total moves between runs of an UNCHANGED baseline (1904 and 1914 in the same 52 files of
+  this tree): account for your own tests by name, and get the baseline count by excluding your files
+  (`npm --prefix fe test -- --exclude src/<A>.test.tsx --exclude src/<B>.test.ts`), never by subtracting
+  the totals. `npm --prefix fe test` runs from the repo root, so the brief's `npx` forms are not needed.
+- A `fireEvent.click` on an `<a>` is not a click a user makes: jsdom follows the link and prints
+  `Not implemented: navigation (except hash changes)`. A focus assertion still passes under it, so the
+  noise hides: for a click whose activation matters use `userEvent.click` (the pattern of
+  `ProfilesNav.test.tsx`).
+- `edit` can report success on an untracked file and not land on disk (seen on this `/mnt/data` tree):
+  after editing a file the slice created, `grep -n` the new text and read the test NAMES in the run output
+  before reporting. A file the slice created is untracked, so `git diff` prints nothing about it.
 - A slice that promises "nothing else changes" (the brief's must-not-change list) is a text guard set:
   the focus-visible declarations verbatim, every forced-colours block scanned for declarations whose
   value is not a system colour keyword, every `min-height` collected into one sorted list, and the new
@@ -2359,3 +2457,34 @@ Lessons only: the rules are in `AGENTS.md`.
   A slice that only recompiles these crates shares the load effect, never the behaviour: judge a flake
   from the diff's module reach (the session routes never serve assets; the system_files tests never call
   `licenses::stage_in`; temp dirs are per-test prefixes of one pid).
+- fe: the mount helpers are `startAt(hash)` (the hash ONLY, no strings table, no `hashChange`: that name
+  does not exist in `fe/src/test/bff.ts`) + `fakeBff(options)` + `render(<App />)`, and the teardown is
+  `cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); startAt('')`. `fakeBff` answers a signed-in
+  session and `INSTANCES` (default, coder) by default, and `App` is a DEFAULT export. The Overview table
+  names the same instance ids as the nav, so every nav query needs `within(nav)` (a bare
+  `findByRole('link', { name: 'default' })` reds "Found multiple elements"); a link click in jsdom does
+  not always move `window.location.hash` (the 05b file asserts the h1 focus instead), so pin a close on
+  `aria-expanded` and the landing page by its heading.
+- fe CSS-text pins: the local reader's `TOP` is depth 0, so a rule inside `@media` is INVISIBLE to it. A
+  check that must read the media rules needs its own block scanner (a recursive `{`/`}` walk over the
+  comment-stripped text, the block whose selector starts with `@` is the at-rule, its body scanned
+  again). Run the same check over a scratch CSS string in both directions: the string that must be
+  flagged, and the block the stylesheet ships that must pass. A scratch case is the only proof the check
+  has teeth, and it costs no file touch.
+- Exempt by declarations, never by a name: an allowlist of selector names exempts a rule that only
+  looks the same (`height: 20px` on `.theme-switch-label` greens under a name-based list, and a 20px
+  label clips its text at 200 %). Recognise the sanctioned case by what it declares: a clip box is
+  `clip-path: inset(50%)` + `height: 1px` + `overflow: hidden`, all three, so a rule one declaration
+  short is a violation. A selector list shares one body, so the test reads the body, not each selector.
+- A CSS-only slice of a brief that names one existing test to edit: the slice's new stylesheet assertions
+  and that one edit are the reds, and the DOM/behaviour of the criterion "nothing else moves" is a GREEN
+  guard file (say so per criterion: RED with the one line, GREEN by what guard). Check the older
+  stylesheet files for pins of the values the slice replaces: `HearthH5a.test.ts` H5a.7 pins the pre-H5b
+  nav (`--surface`, `display: block`, the inset `box-shadow`, `--fs-sm`) and says "until H5b.3": it is
+  GREEN today and reds with the coder's CSS, so report it as a conflict for the coordinator, do not edit
+  it unasked.
+- Prettier (the repo's `format:check`) rewrites comments: a sentence ending a comment line right after
+  an operator can be merged with the line below it (`experimentalOperatorPosition` bug), and it wants
+  `as` casts on a multi-line type argument broken across lines. Run `npx --prefix fe prettier --write` on
+  the touched files and read the diff before the format check; a joined comment is cosmetic, a reformat
+  of a type assertion is not.

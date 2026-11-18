@@ -191,7 +191,7 @@ pub enum ManagerError {
     NotAuthorized,
     /// Not a valid instance id (`paths::valid_instance_id`).
     InvalidId,
-    /// A valid id with no `server@<id>.ini`.
+    /// A valid id that is not a section of the record (`instances.ini`).
     NoInstance,
     /// Not one of the files the manager reads and writes ([`config_file`]).
     BadFileName,
@@ -667,10 +667,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
-    /// Replace file `name` atomically, creating the directory; a new
-    /// `server@<id>.ini` adds instance `id`. With `keep_api_key`, an
-    /// instance file keeps the `OpencodeApiKey` its current file holds
-    /// ([`keep_held_api_key`]); the checks run on the text written.
+    /// Replace file `name` atomically, creating the directory. A
+    /// `server@<profile>.ini` is a server profile, not an instance: the
+    /// instances are the sections of `instances.ini`, and no write of a file
+    /// adds one. With `keep_api_key`, an instance file keeps the
+    /// `OpencodeApiKey` its current file holds ([`keep_held_api_key`]); the
+    /// checks run on the text written.
     pub fn write_file<W: AsRequester>(
         &self,
         who: &W,
@@ -1016,25 +1018,69 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         Ok(())
     }
 
-    /// Refuse `contents` for instance `id` when its address collides with
-    /// another instance's; an instance whose host does not resolve is skipped.
-    fn check_address(&self, id: &str, contents: &str) -> Result<(), ManagerError> {
+    /// Refuse the save of the server profile `name` when an instance runs it
+    /// and its address collides with the profile of another instance, or with
+    /// the address the web service listens at: the refusal names the instance,
+    /// the service is named as itself. A profile no instance runs binds
+    /// nothing, so it is judged against nothing: two spare profiles, or a spare
+    /// and one in use, share an address. Its own host is resolved all the
+    /// same, before that judgment: a host of this text that does not resolve is
+    /// its own refusal, spare profile or not. An instance whose section names
+    /// no profile, or names one whose file cannot be read, is skipped: its
+    /// launch refuses it, and a save is never judged on the defaults of a file
+    /// that is not there.
+    fn check_address(&self, name: &str, contents: &str) -> Result<(), ManagerError> {
         let cfg = crate::server_cfg::from_text(contents);
         let mine = binding(&cfg, &self.resolver).map_err(ManagerError::UnresolvableHost)?;
+        if !profile_in_use(name) {
+            return Ok(());
+        }
         for other in crate::paths::instance_ids() {
-            if other == id {
-                continue;
-            }
-            let Some(path) = crate::paths::instance_ini(&other) else {
+            let Some(path) = profile_file(&other) else {
                 continue;
             };
-            let theirs = binding(&crate::server_cfg::load_from(&path), &self.resolver);
+            if crate::paths::instance_server_profile(&other).as_deref() == Some(name) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let theirs = binding(&crate::server_cfg::from_text(&text), &self.resolver);
             if theirs.is_ok_and(|b| addresses_collide(&mine, &b)) {
                 return Err(ManagerError::AddressInUse(other));
             }
         }
+        // The web service's address: no `bff.ini` is its default, a file that
+        // cannot be read or names no address is an address nobody holds.
+        if let Some(addr) = pai_core::bff_cfg::listen() {
+            let theirs = Binding {
+                port: addr.port() as i32,
+                ips: vec![addr.ip()],
+            };
+            if addresses_collide(&mine, &theirs) {
+                return Err(ManagerError::AddressInUse(BFF_NAME.to_string()));
+            }
+        }
         Ok(())
     }
+}
+
+/// The name the manager gives the web service when its address is in use: the
+/// service's own name, the one the installer registers it under.
+const BFF_NAME: &str = "private-ai-bff";
+
+/// The file of the server profile the instance `id` names:
+/// `server@<profile>.ini`, `None` when the section names no profile.
+fn profile_file(id: &str) -> Option<std::path::PathBuf> {
+    crate::paths::instance_ini(&crate::paths::instance_server_profile(id)?)
+}
+
+/// Whether any instance runs the server profile `name`: the profiles the
+/// sections name are what binds an address and what caps a render.
+fn profile_in_use(name: &str) -> bool {
+    crate::paths::instance_ids()
+        .iter()
+        .any(|id| crate::paths::instance_server_profile(id).as_deref() == Some(name))
 }
 
 /// The content checks of `file` for `contents`, against the files on disk:
@@ -1042,7 +1088,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 /// and `models.ini.disabled` against the other model profile file and every
 /// instance's render. A render is the pool cut by the instance's section of
 /// `assignments.ini`, so the `load-on-startup` count is judged per instance,
-/// against that instance's `ModelsMax`. A refusal writes nothing.
+/// against the `ModelsMax` of the server profile that instance's section of
+/// `instances.ini` names. A refusal writes nothing.
 fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
@@ -1057,12 +1104,19 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
         _ => on_disk("models.ini.disabled"),
     };
     match file {
-        ConfigFile::ServerProfile(id) => {
+        ConfigFile::ServerProfile(name) => {
             // The Server rules alone: no pool caps them any more, the
             // instance's render does, against the `ModelsMax` of this text.
+            // This text caps a pool only where an instance runs it, so a
+            // profile no instance names loads nothing and is judged on nothing.
             checks::server_file(contents, "")?;
             let models_max = crate::server_cfg::from_text(contents).models_max;
-            check_render(id, &enabled, &disabled, models_max)
+            for id in crate::paths::instance_ids() {
+                if crate::paths::instance_server_profile(&id).as_deref() == Some(name) {
+                    check_render(&id, &enabled, &disabled, models_max)?;
+                }
+            }
+            Ok(())
         }
         ConfigFile::Models => {
             let (old, off) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
@@ -1105,19 +1159,24 @@ fn check_render(
     })
 }
 
-/// Every instance's render against its own `ModelsMax`, in id order: the
-/// first render over its max refuses.
+/// Every instance's render against the `ModelsMax` of the server profile its
+/// section names, in id order: the first render over its max refuses. An
+/// instance whose section names no profile, or names one whose file cannot be
+/// read, is skipped: its launch refuses it, and its render is not judged on
+/// the defaults of a file that is not there.
 fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::Refusal> {
     for id in crate::paths::instance_ids() {
-        let path = match crate::paths::instance_ini(&id) {
-            Some(path) => path,
-            None => continue,
+        let Some(path) = profile_file(&id) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
         };
         check_render(
             &id,
             enabled,
             disabled,
-            crate::server_cfg::load_from(&path).models_max,
+            crate::server_cfg::from_text(&text).models_max,
         )?;
     }
     Ok(())
@@ -2167,6 +2226,11 @@ pub(crate) fn manager_e2e() {
             FakeResolver::lan(),
         )
         .with_group(crate::manager::service::fakes::FakeGroup::new());
+        // Every save below is of a profile an instance runs: a profile no
+        // instance names binds nothing, so it is judged against nothing and
+        // any address is free. Each refusal names the instance whose profile
+        // holds the address.
+        record(&["default", "lan-2"]);
         // The same address as `default` (127.0.0.1:8081): refused, naming it.
         assert_eq!(
             m.write_file(&alice, "server@lan-2.ini", default_ini, false),
@@ -2182,7 +2246,7 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "server@lan-2.ini", lan2, false),
             Ok(())
         );
-        record(&["default", "lan-2"]);
+        record(&["default", "lan-2", "loop"]);
         // Host names are resolved: localhost is default's 127.0.0.1.
         assert_eq!(
             m.write_file(
@@ -2197,6 +2261,9 @@ pub(crate) fn manager_e2e() {
             !sys.join("server@loop.ini").exists(),
             "refused: not written"
         );
+        // An instance whose profile file was never written (its own save was
+        // refused) is skipped: only default and lan-2 hold an address.
+        record(&["default", "lan-2", "loop", "named"]);
         // Two names of one address collide, whichever is written.
         assert_eq!(
             m.write_file(
@@ -2207,6 +2274,7 @@ pub(crate) fn manager_e2e() {
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
+        record(&["default", "lan-2", "loop", "named", "multi-home"]);
         // A name with several addresses collides when one matches.
         assert_eq!(
             m.write_file(
@@ -2231,6 +2299,7 @@ pub(crate) fn manager_e2e() {
             !sys.join("server@nowhere.ini").exists(),
             "refused: not written"
         );
+        record(&["default", "lan-2", "loop", "named", "multi-home", "multi"]);
         // A host shared inside a Hostname list collides.
         assert_eq!(
             m.write_file(
@@ -2241,6 +2310,15 @@ pub(crate) fn manager_e2e() {
             ),
             Err(ManagerError::AddressInUse("lan-2".into()))
         );
+        record(&[
+            "default",
+            "lan-2",
+            "loop",
+            "named",
+            "multi-home",
+            "multi",
+            "wild",
+        ]);
         // A wildcard host on the same port collides with every host.
         for wild in ["0.0.0.0", "::"] {
             let text = format!("[Server]\nPort = 8081\nHostname = {wild}\n");
@@ -2262,7 +2340,7 @@ pub(crate) fn manager_e2e() {
             ),
             Ok(())
         );
-        record(&["default", "lan-2", "wild"]);
+        record(&["default", "lan-2", "wild", "late"]);
         // Then a specific host on that port collides with the wildcard.
         assert_eq!(
             m.write_file(
@@ -2299,11 +2377,12 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "server@bare.ini", "[Server]\n", false),
             Ok(())
         );
-        record(&["default", "lan-2", "wild", "bare"]);
+        record(&["default", "lan-2", "wild", "bare", "bare-2"]);
         assert_eq!(
             m.write_file(&alice, "server@bare-2.ini", "[Server]\n", false),
             Err(ManagerError::AddressInUse("bare".into()))
         );
+        record(&["default", "lan-2", "wild", "bare", "bare-2", "explicit"]);
         let explicit = format!(
             "[Server]\nPort = {}\nHostname = localhost\n",
             crate::server_cfg::DEFAULT_PORT
@@ -2319,7 +2398,9 @@ pub(crate) fn manager_e2e() {
             "[Server]\nPort = 8083\nHostname = gone.example\n",
         )
         .expect("stale fixture");
-        record(&["default", "lan-2", "wild", "bare", "stale"]);
+        // fresh is an instance too, so the check runs and walks stale's
+        // unresolvable host: an unused profile would be accepted unread.
+        record(&["default", "lan-2", "wild", "bare", "stale", "fresh"]);
         assert_eq!(
             m.write_file(
                 &alice,
@@ -3646,6 +3727,9 @@ pub(crate) fn manager_checks_e2e() {
         // So is a new instance that could not start with what its own render
         // loads: lan-2 inherits a model profile and has no room for it.
         std::fs::write(sys.join("assignments.ini"), a_lan).expect("assignments.ini");
+        // lan-2 joins the record: the render of a profile no instance runs is
+        // judged against nothing, so its ModelsMax of 0 would be accepted.
+        write_record(&sys, &["default", "lan-2"]);
         assert_eq!(
             m.write_file(
                 &alice,
@@ -4427,6 +4511,520 @@ pub(crate) fn manager_existing_id_e2e() {
     );
 }
 
+/// E2E phase: the port check and the `ModelsMax` check follow the profile an
+/// instance names in `instances.ini`, not the file named after its id. So two
+/// profiles no instance uses share a port freely, a profile in use collides
+/// with the profile of another instance and the refusal names the INSTANCE, an
+/// instance whose profile cannot be read is skipped and never judged on the
+/// defaults of a missing file, and a file named after an id that is not that
+/// instance's profile is never read. Instances `default` and `lan` run the
+/// profiles `big` and `small`: the names differ on purpose.
+#[cfg(test)]
+pub(crate) fn manager_profiles_in_use_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+    use pai_core::checks::Refusal;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let framework = crate::paths::system_config_dir();
+    let alice = Caller(":1.42".into());
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let record = |text: &str| {
+        std::fs::write(sys.join(INSTANCES_FILE), text).expect(INSTANCES_FILE);
+    };
+    let profile = |name: &str, text: &str| {
+        std::fs::write(sys.join(format!("server@{name}.ini")), text).expect("server profile");
+    };
+    let over_max = |count: &str, max: &str, id: &str| {
+        Err(ManagerError::Invalid(Refusal {
+            key: "load-on-startup-over-max",
+            values: vec![count.to_string(), max.to_string(), id.to_string()],
+        }))
+    };
+    let flagged = |ids: &[&str]| -> String {
+        ids.iter()
+            .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
+            .collect()
+    };
+    // default on big (8081), lan on small (8082).
+    let in_use = "[default]\nServerProfile = big\n\n[lan]\nServerProfile = small\n";
+    let big_8081 = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 8\n";
+    record(in_use);
+    profile("big", big_8081);
+    profile(
+        "small",
+        "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 8\n",
+    );
+
+    // ── A profile no instance uses is checked against nothing ─────────────
+    for name in ["spare-a", "spare-b"] {
+        assert_eq!(
+            m.write_file(
+                &alice,
+                &format!("server@{name}.ini"),
+                "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+                false
+            ),
+            Ok(()),
+            "{name}: two unused profiles with one port both save, they are \
+             alternatives for one instance"
+        );
+    }
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@spare-c.ini",
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\n",
+            false
+        ),
+        Ok(()),
+        "an unused profile may share the port of a profile in use"
+    );
+
+    // ── A profile in use collides with another instance's profile ─────────
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 8\n",
+            false
+        ),
+        Err(ManagerError::AddressInUse("lan".into())),
+        "the refusal names the INSTANCE that runs the colliding profile, \
+         never the profile's name"
+    );
+    assert_eq!(
+        read("server@big.ini").as_deref(),
+        Some(big_8081),
+        "a refused save writes nothing"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@small.ini",
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 8\n",
+            false
+        ),
+        Err(ManagerError::AddressInUse("default".into())),
+        "the other way round names default, the instance running big"
+    );
+    // An instance never collides with itself, and its id is not the profile's
+    // name: rewriting big with the address default already binds is its own.
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "big is the profile in use by default: it is not a second address"
+    );
+
+    // ── A section that cannot name a readable profile is skipped ──────────
+    // ghost's file is missing, noprofile has no key, bogus an invalid value:
+    // none of them is judged on the defaults of a missing file, so none of
+    // them (all of them on the built-in default address) holds a save whose
+    // port is that default. The save is of big, a profile in use, so the
+    // check runs and walks those sections.
+    record(&format!(
+        "{in_use}\n[ghost]\nServerProfile = ghost\n\n[noprofile]\n\n[bogus]\nServerProfile = ../x\n"
+    ));
+    let on_default_port = format!(
+        "[Server]\nPort = {}\nHostname = 127.0.0.1\nModelsMax = 8\n",
+        crate::server_cfg::DEFAULT_PORT
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", &on_default_port, false),
+        Ok(()),
+        "a missing profile file, a section with no ServerProfile and one with \
+         an invalid value refuse nothing: none is judged on the defaults of a \
+         missing file"
+    );
+    // The same port on a profile no instance uses: accepted as well.
+    assert_eq!(
+        m.write_file(&alice, "server@fresh.ini", &on_default_port, false),
+        Ok(()),
+        "and an unused profile is checked against nothing at all"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081"
+    );
+
+    // ── A file named after an instance, when its profile is another one ───
+    // lan runs small on 8091; server@lan.ini stands on 8090 and is no part of
+    // lan, so a profile in use may take 8090.
+    profile(
+        "small",
+        "[Server]\nPort = 8091\nHostname = 127.0.0.1\nModelsMax = 8\n",
+    );
+    profile("lan", "[Server]\nPort = 8090\nHostname = 127.0.0.1\n");
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8090\nHostname = 127.0.0.1\nModelsMax = 8\n",
+            false
+        ),
+        Ok(()),
+        "server@lan.ini is not lan's profile: it is never read"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081"
+    );
+
+    // ── The bff's own listen address ──────────────────────────────────────
+    std::fs::create_dir_all(&framework).expect("framework config dir");
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = 127.0.0.1:8590\n",
+    )
+    .expect("bff.ini");
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8590\nHostname = 127.0.0.1\nModelsMax = 8\n",
+            false
+        ),
+        Err(ManagerError::AddressInUse("private-ai-bff".into())),
+        "the bff's listen address holds its port against a profile in use, \
+         named as itself"
+    );
+    assert_eq!(
+        read("server@big.ini").as_deref(),
+        Some(big_8081),
+        "a refused save writes nothing"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "a profile in use on another port saves with bff.ini in place"
+    );
+    // The address the bff serves, as `crates/bff/src/listen.rs` reads the file.
+    let on_bff_port = "[Server]\nPort = 8590\nHostname = 127.0.0.1\nModelsMax = 8\n";
+
+    // No bff.ini at all, and one whose [Bff] section sets no Listen, both leave
+    // the bff on its default 127.0.0.1:8590: that address holds its port.
+    std::fs::remove_file(framework.join("bff.ini")).expect("remove bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Err(ManagerError::AddressInUse("private-ai-bff".into())),
+        "no bff.ini: the bff is on 127.0.0.1:8590 by default and holds it \
+         against a profile in use"
+    );
+    std::fs::write(framework.join("bff.ini"), "[Bff]\nHosts = box.local\n").expect("bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Err(ManagerError::AddressInUse("private-ai-bff".into())),
+        "a bff.ini that sets no Listen leaves the same default address: the \
+         same refusal"
+    );
+
+    // The wildcard binds every address, so a bff on 0.0.0.0:8590 collides with
+    // a profile bound to 127.0.0.1:8590 (`addresses_collide`); a bff bound to
+    // 127.0.0.1:8590 leaves the same port on another address free.
+    std::fs::write(framework.join("bff.ini"), "[Bff]\nListen = 0.0.0.0:8590\n").expect("bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Err(ManagerError::AddressInUse("private-ai-bff".into())),
+        "a bff on 0.0.0.0:8590 collides with a profile in use on \
+         127.0.0.1:8590"
+    );
+    assert_eq!(
+        read("server@big.ini").as_deref(),
+        Some(big_8081),
+        "a refused save writes nothing"
+    );
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = 127.0.0.1:8590\n",
+    )
+    .expect("bff.ini");
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8590\nHostname = 192.168.1.5\nModelsMax = 8\n",
+            false
+        ),
+        Ok(()),
+        "the bff on 127.0.0.1:8590 does not hold 192.168.1.5:8590"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081"
+    );
+
+    // A Listen the bff will not start on, and a bff.ini that cannot be read,
+    // refuse no save: the bff answers those by not starting, the manager has
+    // no address to hold. An empty value is no address and not the default.
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = box.local:8590\n",
+    )
+    .expect("bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Ok(()),
+        "a Listen that is no ip:port, a host name: the save lands"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081"
+    );
+    std::fs::write(framework.join("bff.ini"), "[Bff]\nListen =\n").expect("bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Ok(()),
+        "an empty Listen is no address and not the default: the save lands"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081"
+    );
+    // The file is a directory: reading it fails, and the manager asks nothing
+    // of a file it cannot read.
+    std::fs::remove_file(framework.join("bff.ini")).expect("remove bff.ini");
+    std::fs::create_dir_all(framework.join("bff.ini")).expect("directory as bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", on_bff_port, false),
+        Ok(()),
+        "a bff.ini that cannot be read refuses no save"
+    );
+    assert_eq!(
+        read("server@big.ini").as_deref(),
+        Some(on_bff_port),
+        "and it lands"
+    );
+    std::fs::remove_dir(framework.join("bff.ini")).expect("remove the directory");
+
+    // The bff's port is free for a profile no instance uses.
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = 127.0.0.1:8590\n",
+    )
+    .expect("bff.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@spare-d.ini", on_bff_port, false),
+        Ok(()),
+        "an unused profile on the bff's port saves: it is checked against \
+         nothing at all"
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big back on 8081, the bff's port left on an unused profile"
+    );
+
+    // ── ModelsMax of a profile in use ─────────────────────────────────────
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\n* = inherit\n\n[lan]\n",
+    )
+    .expect("assignments.ini");
+    std::fs::write(sys.join("models.ini"), flagged(&["a", "b"])).expect("models.ini");
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            false
+        ),
+        over_max("2", "1", "default"),
+        "lowered under what default loads: refused, naming the INSTANCE"
+    );
+    assert_eq!(
+        read("server@big.ini").as_deref(),
+        Some(big_8081),
+        "a refused save writes nothing"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@spare-a.ini",
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            false
+        ),
+        Ok(()),
+        "the same save on an unused profile: no instance loads anything from it"
+    );
+
+    // ── A model-profile write is judged against the profile the instance names
+    // big goes to a max of 2 (default loads two: legal), and a misleading
+    // server@default.ini (max 1) stands beside it: the profile is the cap.
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@big.ini",
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n",
+            false
+        ),
+        Ok(()),
+        "fixture: big's max down to the two loads default makes"
+    );
+    profile(
+        "default",
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+    );
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &flagged(&["a", "b"]), false),
+        Ok(()),
+        "big has room for the two default loads: the file named after the id is not read"
+    );
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
+        over_max("3", "2", "default"),
+        "the max the refusal carries is the profile's, and it names the instance"
+    );
+    assert_eq!(
+        read("models.ini").as_deref(),
+        Some(flagged(&["a", "b"]).as_str()),
+        "a refused pool write leaves the file it had"
+    );
+    // The other pool file is judged the same way, against the profile's max.
+    assert_eq!(
+        m.write_file(&alice, "models.ini.disabled", &flagged(&["f"]), false),
+        Ok(()),
+        "the off pool of an instance running big (max 2) fits: the id-named \
+         file's max 1 is not read"
+    );
+
+    // ── An instance whose profile cannot be read is skipped ───────────────
+    // ghost's profile file is missing and broken names an invalid one: with
+    // five loads in the pool neither is judged on the defaults of a missing
+    // file, so neither refuses the write on its own account.
+    record(
+        "[default]\nServerProfile = big\n\n[ghost]\nServerProfile = ghost\n\n\
+         [broken]\nServerProfile = ../x\n",
+    );
+    assert_eq!(
+        m.write_file(&alice, "server@big.ini", big_8081, false),
+        Ok(()),
+        "fixture: big's max back to 8, which fits the five loads below"
+    );
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\n* = inherit\n\n[ghost]\n* = inherit\n\n[broken]\n* = inherit\n",
+    )
+    .expect("assignments.ini");
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "models.ini",
+            &flagged(&["a", "b", "c", "d", "e"]),
+            false
+        ),
+        Ok(()),
+        "an instance with no readable profile refuses nothing"
+    );
+    assert_eq!(
+        read("models.ini").as_deref(),
+        Some(flagged(&["a", "b", "c", "d", "e"]).as_str()),
+        "and it lands"
+    );
+
+    // ── Two instances run one profile: it is one binding, not two ────────
+    // a and b both name shared (8081), c names other (8082). They are the
+    // same address, so they never collide with each other; c is the one
+    // holding 8082. The two pools of the record above are left behind.
+    record(
+        "[a]\nServerProfile = shared\n\n[b]\nServerProfile = shared\n\n\
+         [c]\nServerProfile = other\n",
+    );
+    let shared_8081 = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 8\n";
+    profile("shared", shared_8081);
+    profile(
+        "other",
+        "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 8\n",
+    );
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[a]\n* = inherit\n\n[b]\n* = inherit\n\n[c]\n* = inherit\n",
+    )
+    .expect("assignments.ini");
+    std::fs::write(sys.join("models.ini"), flagged(&["m1", "m2"])).expect("models.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@shared.ini", shared_8081, false),
+        Ok(()),
+        "a and b run shared on 127.0.0.1:8081: one binding, they are never \
+         two colliding addresses"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@shared.ini",
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 8\n",
+            false
+        ),
+        Err(ManagerError::AddressInUse("c".into())),
+        "shared on other's port: the refusal names c, the instance running \
+         other, and never a or b, which run the profile being saved"
+    );
+    assert_eq!(
+        read("server@shared.ini").as_deref(),
+        Some(shared_8081),
+        "a refused save writes nothing"
+    );
+
+    // ── One profile, two instances: each instance's own load count ────────
+    // Both a and b inherit the pool, so each loads two model profiles on
+    // startup: a max of 1 is under the count of each and is refused naming
+    // the instance whose render is over (a first, in id order).
+    let shared_max_1 = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n";
+    assert_eq!(
+        m.write_file(&alice, "server@shared.ini", shared_max_1, false),
+        over_max("2", "1", "a"),
+        "under what a loads: refused naming a"
+    );
+    assert_eq!(
+        read("server@shared.ini").as_deref(),
+        Some(shared_8081),
+        "a refused save writes nothing"
+    );
+    // a given one of the two, b left with both: the same save names b.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[a]\nm1 = inherit\n\n[b]\n* = inherit\n",
+    )
+    .expect("assignments.ini");
+    assert_eq!(
+        m.write_file(&alice, "server@shared.ini", shared_max_1, false),
+        over_max("2", "1", "b"),
+        "under what b loads: refused naming b, the other instance running \
+         the same profile"
+    );
+
+    // ── An unused profile is still the file's own content ─────────────────
+    // No instance names spare-x, so it binds nothing and caps nothing; a
+    // Hostname that does not resolve is a content error of the file, whoever
+    // uses it: the save stays refused, naming the host.
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@spare-x.ini",
+            "[Server]\nPort = 8095\nHostname = nowhere.example\n",
+            false
+        ),
+        Err(ManagerError::UnresolvableHost("nowhere.example".into())),
+        "an unused profile whose Hostname does not resolve is refused"
+    );
+    assert!(
+        !sys.join("server@spare-x.ini").exists(),
+        "refused: not written"
+    );
+}
+
 /// A render that cannot be written (its target is a directory, the disk is
 /// full): the render does not stop there and it is not silent. Every instance
 /// after it in id order is rendered, each failure comes back with its
@@ -5118,6 +5716,9 @@ pub(crate) fn manager_action_log_e2e() {
             matches!(failed, ManagerError::Service(_)),
             "the service manager's own failure: {failed:?}"
         );
+        // logtest joins the record: a save of a profile no instance runs is
+        // judged against nothing, so the collision with default would pass.
+        write_record(&sys, &["default", "logtest"]);
         assert_eq!(
             m.write_file(&alice, "server@logtest.ini", ini, false),
             Err(ManagerError::AddressInUse("default".into())),
@@ -5146,6 +5747,8 @@ pub(crate) fn manager_action_log_e2e() {
             "a refusal is recorded too: `refused` for NotAuthorized, the error's own name (quoted) for a failure, with the target as requested and `caller=-` for a request with no requester"
         );
     }
+    // The record is one instance again: the blocks below list the instances.
+    write_record(&sys, &["default"]);
 
     // ── The caller's own call: recorded with `principal=-` ───────────────
     // The files here are as the blocks above left them: `models.ini` holds

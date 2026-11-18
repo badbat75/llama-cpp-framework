@@ -1291,8 +1291,11 @@ invalid value): the launch never falls back to `server@<id>.ini`. A profile chan
 
 1. **Port**: unique among the profiles **in use** by instances (every engine) and against `[Bff] Listen`;
    two unused profiles may share a port (alternatives for one instance). `check_address` iterates
-   instances and their profiles instead of `server@*.ini`. Run at a save of a profile in use and at
-   `SetServerProfile`. Refusal `AddressInUse(<other instance>)`, key `client-address-in-use` `[instance]`
+   instances and their profiles instead of `server@*.ini`. Run at a save of a profile in use, at
+   `SetServerProfile` and at `CreateInstance`; an unused profile may hold any address until then. The
+   manager reads `bff.ini` through `pai-core` `bff_cfg`, the service's own parse: no file is the default
+   address; an unreadable file or an invalid `Listen` holds no address, since the service does not start
+   on it. Refusal `AddressInUse(<other instance>)`, key `client-address-in-use` `[instance]`
    or `["private-ai-bff"]`, unchanged.
 2. **One instance per profile**: `SetServerProfile` and `CreateInstance` refuse a profile another
    instance uses: `ServerProfileInUse(profile, instance)`, `client-server-profile-in-use`
@@ -1450,8 +1453,13 @@ profile waits until asked.
    refused naming the instance, on an unused one accepted.
 7. **`SetModelProfile`** (old 4; protocol 3, D-Bus and pipe). Done when: each value re-renders, an
    unknown model profile or instance is refused, a non-`configure` caller writes nothing.
-8. **`SetServerProfile`**. Done when: each refusal of (d') writes nothing; a success rewrites the section
-   and the next launch uses the new profile.
+8. **`SetServerProfile`**. The target profile is unused at that moment, so `check_address` as slice 6
+   left it judges nothing: split the walk from its in-use test and judge the target's address against
+   every other instance's profile and `[Bff] Listen`, leaving out the switching instance's current
+   profile (slice 16's `CreateInstance` calls the same walk). Done when: each refusal of (d') writes
+   nothing; an unused profile on another instance's port or on the web service's port is refused at the
+   switch; a switch to a profile on the instance's own current port succeeds; a success rewrites the
+   section and the next launch uses the new profile.
 9. **The model-file check** (old 5). 10. **The estimate to `pai-core`, then the memory check** (old 6).
 11. **Snapshots per instance** (old 7). 12. **Tags** on the server profile (`[Server] Tags`) and on the instance (`Tags` in its `instances.ini`
     section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused

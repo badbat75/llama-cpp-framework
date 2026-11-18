@@ -429,6 +429,43 @@ mod tests {
         }
     }
 
+    /// The address-in-use sentence names the holder of the address and
+    /// nothing beside it: no lead-in, so it reads the same for a competing
+    /// instance and for the web service, whose name is longer than any
+    /// instance's. The GUI's file, byte for byte.
+    #[test]
+    fn the_address_in_use_text_of_the_gui_file_names_only_the_holder() {
+        assert_eq!(
+            crate::strings::parse(include_str!("../strings/en_US.toml"))
+                .get("client-address-in-use")
+                .expect("client-address-in-use in en_US.toml"),
+            "{0} already uses that address and port."
+        );
+    }
+
+    /// The same sentence in the CLI's file, byte for byte: the two files say
+    /// the same thing, only the GUI's is read by `text()` here.
+    #[test]
+    fn the_address_in_use_text_of_the_cli_file_names_only_the_holder() {
+        assert_eq!(
+            crate::strings::parse(include_str!("../strings/cli.toml"))
+                .get("client-address-in-use")
+                .expect("client-address-in-use in cli.toml"),
+            "{0} already uses that address and port."
+        );
+    }
+
+    /// Filled with the web service's name, the text is the sentence about it:
+    /// the name is the whole subject, the sentence carries no word that the
+    /// service's name does not fit.
+    #[test]
+    fn the_address_in_use_text_filled_with_the_service_name() {
+        assert_eq!(
+            ClientError::AddressInUse("private-ai-bff".into()).text(),
+            "private-ai-bff already uses that address and port."
+        );
+    }
+
     /// A refused write shows the refusal's own text, values filled in.
     #[test]
     fn an_invalid_error_renders_the_refusal() {

@@ -441,6 +441,14 @@ pub(crate) fn manager_dbus_client_e2e() {
                 "{bad:?}"
             );
         }
+        // lan-3 joins the record, so its save is judged against the profiles
+        // in use: a profile no instance runs binds nothing, and every address
+        // would be free.
+        std::fs::write(
+            sys.join("instances.ini"),
+            format!("{record}\n[lan-3]\nServerProfile = lan-3\n"),
+        )
+        .expect("write instances");
         assert_eq!(
             client.write_file(
                 "server@lan-3.ini",
@@ -492,6 +500,8 @@ pub(crate) fn manager_dbus_client_e2e() {
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             model_profiles
         );
+        // The record back to its sections: lan-3 is no instance below.
+        std::fs::write(sys.join("instances.ini"), record).expect("write instances");
 
         // Start at boot, both ways, and its refusals.
         assert_eq!(client.boot_enabled("default"), Ok(false));

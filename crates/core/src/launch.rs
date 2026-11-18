@@ -227,24 +227,14 @@ pub fn instance_command(
     if !crate::paths::valid_instance_id(id) {
         return Err(LaunchError::InvalidId);
     }
-    // The record of the instances, and the server profile its section names.
-    // The section is the one named by `id` exactly, as the listing counts
-    // sections: a header that differs in case names no instance. A record
-    // with no section, a section with no key, a key with an empty value: no
-    // profile to read, and the refusal names the record.
+    // The record of the instances, and the server profile its section names:
+    // a record with no section, a section with no key, a key with an empty
+    // value, a name that builds no file: no profile to read, and the refusal
+    // names the record.
     let record = crate::paths::instances_ini();
-    let section = crate::ini::read_all(&record)
-        .into_iter()
-        .find(|s| s.id == id)
+    let profile = crate::paths::instance_server_profile(id)
         .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
-    let profile = section
-        .keys
-        .get("ServerProfile")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
-    // The profile's file. A name that builds no path names no file either, so
-    // the refusal is the record.
+    // The profile's file.
     let ini = crate::paths::instance_ini(&profile)
         .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
     if !ini.is_file() {
