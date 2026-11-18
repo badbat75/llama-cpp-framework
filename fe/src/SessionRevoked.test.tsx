@@ -423,8 +423,9 @@ async function loadedSave(options: BffOptions = {}) {
 
 // ── S1.1, S1.2: the keys that keep the place's generic failure ──────────
 
-test('S1.1: the guard keys and boot-malformed on a run action show request-failed, with no Sign in and the session kept', async () => {
-  for (const [key, status] of GUARD_KEYS) {
+test.each(GUARD_KEYS)(
+  'S1.1: the guard keys and boot-malformed on a run action show request-failed, with no Sign in and the session kept: %s %s',
+  async (key, status) => {
     const what = `${status} ${key}`
     const { bff, main } = await loaded({ run: guard(key, status) })
     const stop = button(main, 'run-stop')
@@ -437,12 +438,12 @@ test('S1.1: the guard keys and boot-malformed on a run action show request-faile
     expect(within(main).queryByText(en('session-revoked')), what).toBeNull()
     expectSignedIn(`${what}: the session lives on`)
     expect(posts(bff), what).toEqual(['/api/instances/default/stop'])
-    reset()
-  }
-})
+  },
+)
 
-test('S1.1: the guard keys and boot-malformed on the boot write show request-failed, and the box shows the state read again', async () => {
-  for (const [key, status] of GUARD_KEYS) {
+test.each(GUARD_KEYS)(
+  'S1.1: the guard keys and boot-malformed on the boot write show request-failed, and the box shows the state read again: %s %s',
+  async (key, status) => {
     const what = `${status} ${key}`
     const { bff, main } = await loaded({
       boot: boot(false, guard(key, status)),
@@ -456,9 +457,8 @@ test('S1.1: the guard keys and boot-malformed on the boot write show request-fai
     expect(bootBox(main).checked, what).toBe(false)
     expectSignedIn(`${what}: the session lives on`)
     expect(bootWrites(bff), what).toHaveLength(1)
-    reset()
-  }
-})
+  },
+)
 
 test('S1.1: the guard keys and boot-malformed on the Server save show save-failed and keep the edits', async () => {
   for (const [key, status] of GUARD_KEYS) {

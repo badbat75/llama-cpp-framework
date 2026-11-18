@@ -564,16 +564,19 @@ test('1c.40b: a click, Enter or Space on an inactive button sends nothing and ch
   expect(document.activeElement).toBe(start)
 })
 
-test('1c.40a: which buttons are inactive follows the state; never disabled', async () => {
-  const table: [string, boolean[]][] = [
-    ['active', [true, false, false]],
-    ['inactive', [false, true, true]],
-    ['failed', [false, true, true]],
-    ['activating', [true, true, true]],
-    ['deactivating', [true, true, true]],
-    ['reloading', [false, false, false]],
-  ]
-  for (const [state, expected] of table) {
+// The instance state and which of Start, Stop, Restart are inactive.
+const INACTIVE_TABLE: [string, boolean[]][] = [
+  ['active', [true, false, false]],
+  ['inactive', [false, true, true]],
+  ['failed', [false, true, true]],
+  ['activating', [true, true, true]],
+  ['deactivating', [true, true, true]],
+  ['reloading', [false, false, false]],
+]
+
+test.each(INACTIVE_TABLE)(
+  '1c.40a: which buttons are inactive follows the state; never disabled: %s',
+  async (state, expected) => {
     const { main } = await loaded({ instances: list(state) })
     expect(inactiveSet(main), state).toEqual(expected)
     for (const b of runButtons(main)) {
@@ -583,11 +586,8 @@ test('1c.40a: which buttons are inactive follows the state; never disabled', asy
       if (!inactive(b))
         expect(b.getAttribute('aria-disabled'), state).not.toBe('true')
     }
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.40a, 40b: while an action runs all three are inactive, stay focusable, and send nothing', async () => {
   const gate = deferred()

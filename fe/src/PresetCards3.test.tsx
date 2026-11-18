@@ -719,17 +719,15 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the cards (81, 86) ────────────────────
 
-test('2e.86, 2e.104: a key of 101 or 102 whose value is the empty string reads as absent, for every key of 2e.3 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
-  for (const f of FIELDS) {
-    if (f.key === 'reasoning-preserve') continue
+test.each(FIELDS.filter((f) => f.key !== 'reasoning-preserve'))(
+  '2e.86, 2e.104: a key of 101 or 102 whose value is the empty string reads as absent, for every key of 2e.3 that is not a flag (2e.3b: a flag reads "" as on, criterion 123): $key',
+  async (f) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards of 2e.3 hold exactly the fields of 101 and 102 in the table order', async () => {
   const { main } = await loaded({
@@ -843,7 +841,7 @@ test.each(CHECKBOX_CASES)(
   },
 )
 
-test('2e.104: the stub of 104 shows as the tables say: every key set, values {} with the checkboxes checked, jinja yes checked as the GUI reads it, reasoning maybe as one extra option', async () => {
+test('2e.104: the stub of 104 shows as the tables say, every key set: the three checkboxes unchecked and mmproj-device as the file writes it', async () => {
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // Every key set.
   const { main } = await loaded({ preset: () => reply(200, exactOf(SET)) })
@@ -855,8 +853,10 @@ test('2e.104: the stub of 104 shows as the tables say: every key set, values {} 
     selectedTextExact(selectOf(main, en('preset-vision-gpu'))),
     'mmproj-device ROCm1: the device as the file writes it',
   ).toBe('ROCm1')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.104: the stub of 104 shows as the tables say, values {}: every checkbox checked', async () => {
+  const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // values {}: every checkbox checked.
   const { main: empty } = await loaded({
     preset: () => reply(200, exactOf({})),
@@ -865,8 +865,10 @@ test('2e.104: the stub of 104 shows as the tables say: every key set, values {} 
     expect(checkBoxOf(empty, of_(key)).checked, `${key}: absent checked`).toBe(
       true,
     )
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.104: the stub of 104 shows as the tables say, jinja yes: checked as the GUI reads it', async () => {
+  const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // jinja yes: checked, as the GUI.
   const { main: yes } = await loaded({
     preset: () => reply(200, exactOf({ jinja: 'yes' })),
@@ -875,8 +877,9 @@ test('2e.104: the stub of 104 shows as the tables say: every key set, values {} 
     checkBoxOf(yes, of_('jinja')).checked,
     'jinja yes: checked as the GUI reads it',
   ).toBe(true)
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.104: the stub of 104 shows as the tables say, reasoning maybe: one extra option carrying it', async () => {
   // reasoning maybe: one extra option carrying it.
   const { main: maybe } = await loaded({
     preset: () => reply(200, exactOf({ reasoning: 'maybe' })),
@@ -963,7 +966,7 @@ test('2e.101, 2e.87: a value the mapping of Reasoning format does not list is on
   ).toBe('deepseekR1')
 })
 
-test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 917-918, in order and with the file values, and each listed value selects its own option', async () => {
+test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 917-918, in order and with the file values, and xhigh selects its own option', async () => {
   const label = en('preset-reasoning-effort')
   const { main } = await loaded({
     preset: () => reply(200, exactOf({ 'reasoning-effort': 'xhigh' })),
@@ -977,26 +980,28 @@ test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 91
   expect(selectedText(select), 'xhigh selects its own option').toBe(
     en('option-extra-high'),
   )
-  cleanup()
-  vi.unstubAllGlobals()
-  for (const value of EFFORT_VALUES) {
+})
+
+test.each(EFFORT_VALUES)(
+  '2e.101: each listed Reasoning effort value selects its own option: %s',
+  async (value) => {
+    const label = en('preset-reasoning-effort')
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ 'reasoning-effort': value })),
     })
     expect(selectedTextExact(selectOf(main, label)), `${value}: its own`).toBe(
       EFFORT[EFFORT_VALUES.indexOf(value)],
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
-test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking is the shared tri-state of 1.3: default, on, off; absent shows default, true on, false off, and a flag value the mapping does not list is on with no extra option (2e.3b)', async () => {
-  const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
-  for (const [value, shown] of [
-    ['true', en('option-on')],
-    ['false', en('option-off')],
-  ] as [string, string][]) {
+test.each([
+  ['true', en('option-on')],
+  ['false', en('option-off')],
+] as [string, string][])(
+  '2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking is the shared tri-state of 1.3: default, on, off; %s shows %s',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [f.key]: value })),
     })
@@ -1007,9 +1012,11 @@ test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking is the shared tri-state
     expect(selectedText(select), `${f.key}: ${value} shows ${shown}`).toBe(
       shown,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  },
+)
+
+test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking: a flag value the mapping does not list is on with no extra option (2e.3b)', async () => {
+  const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
   const { main } = await loaded({
     preset: () => reply(200, exactOf({ [f.key]: 'yes' })),
   })
@@ -1021,8 +1028,10 @@ test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking is the shared tri-state
   expect(selectedText(select), `${f.key}: yes is on, not an extra option`).toBe(
     en('option-on'),
   )
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking absent shows default', async () => {
+  const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
   const { main: absent } = await loaded({
     preset: () => reply(200, exactOf({})),
   })
@@ -1042,8 +1051,9 @@ test('2e.103: Vision GPU absent holds only the empty option, whose value is the 
   expect(select.disabled, 'the select disabled').toBe(true)
 })
 
-test('2e.103: Vision GPU present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: no device of a list, no (custom) marker', async () => {
-  for (const value of ['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu']) {
+test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
+  '2e.103: Vision GPU present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: no device of a list, no (custom) marker: %s',
+  async (value) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ 'mmproj-device': value })),
     })
@@ -1067,10 +1077,8 @@ test('2e.103: Vision GPU present keeps the empty option first and adds one optio
       optionTexts(select).join(' '),
       `${value}: no (custom) marker on the data`,
     ).not.toContain('(custom)')
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The notes inside the cards (90) ─────────────────────────────────────
 

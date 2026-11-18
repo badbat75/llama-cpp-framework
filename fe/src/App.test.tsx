@@ -102,16 +102,18 @@ test('1a.4: a failed instances read leaves the list out of the nav, the Overview
   expect(navLinks()).toEqual([en('nav-overview'), en('nav-models')])
 })
 
-test('1a.3: any session reply but 200 leaves the app signed out and the Overview whole', async () => {
-  // The bff's sign-in may not exist yet (404); a failure is signed out too.
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['404', () => reply(404, 'Not Found')],
-    ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
-    ['500', () => reply(500, { key: 'secret-detail', args: [] })],
-    ['200 not json', () => reply(200, 'secret-detail')],
-    ['200 {}', () => reply(200, {})],
-  ]
-  for (const [what, session] of answers) {
+// The bff's sign-in may not exist yet (404); a failure is signed out too.
+const SESSION_FAILURES: [string, () => Response | Promise<Response>][] = [
+  ['404', () => reply(404, 'Not Found')],
+  ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['500', () => reply(500, { key: 'secret-detail', args: [] })],
+  ['200 not json', () => reply(200, 'secret-detail')],
+  ['200 {}', () => reply(200, {})],
+]
+
+test.each(SESSION_FAILURES)(
+  '1a.3: any session reply but 200 leaves the app signed out and the Overview whole: %s',
+  async (what, session) => {
     fakeBff({ session })
     render(<App />)
     const main = screen.getByRole('main')
@@ -143,10 +145,8 @@ test('1a.3: any session reply but 200 leaves the app signed out and the Overview
     ).toBeNull()
     expect(navLinks(), what).toEqual([en('nav-overview')])
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The shell ───────────────────────────────────────────────────────────
 

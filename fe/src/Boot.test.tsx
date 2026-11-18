@@ -245,48 +245,56 @@ function boot(
 
 // ── Failure paths first: a failed read (45a) ────────────────────────────
 
-test('1c.45a: a failed read shows the legend, its About toggle and a plain paragraph by key in place of the checkbox, never the body', async () => {
-  const answers: [string, () => Response | Promise<Response>, string][] = [
-    [
-      '503 client-unavailable',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '502 client-not-authorized',
-      () => reply(502, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '404 client-no-instance',
-      () => reply(404, { key: 'client-no-instance', args: [] }),
-      en('boot-load-failed'),
-    ],
-    [
-      '502 client-other',
-      () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
-      en('boot-load-failed'),
-    ],
-    [
-      '500 no key',
-      () => reply(500, { error: 'secret-detail' }),
-      en('boot-load-failed'),
-    ],
-    ['200 {}', () => reply(200, {}), en('boot-load-failed')],
-    [
-      '200 enabled a string',
-      () => reply(200, { enabled: 'true' }),
-      en('boot-load-failed'),
-    ],
-    ['200 null', () => reply(200, 'null'), en('boot-load-failed')],
-    ['200 not json', () => reply(200, 'secret-detail'), en('boot-load-failed')],
-    [
-      'network',
-      () => Promise.reject(new TypeError('secret-detail')),
-      en('boot-load-failed'),
-    ],
-  ]
-  for (const [what, read, text] of answers) {
+// A failed read of the boot state: the answer, and the key whose text the
+// field shows in place of the checkbox.
+const BOOT_READ_FAILURES: [
+  string,
+  () => Response | Promise<Response>,
+  string,
+][] = [
+  [
+    '503 client-unavailable',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '502 client-not-authorized',
+    () => reply(502, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '404 client-no-instance',
+    () => reply(404, { key: 'client-no-instance', args: [] }),
+    en('boot-load-failed'),
+  ],
+  [
+    '502 client-other',
+    () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
+    en('boot-load-failed'),
+  ],
+  [
+    '500 no key',
+    () => reply(500, { error: 'secret-detail' }),
+    en('boot-load-failed'),
+  ],
+  ['200 {}', () => reply(200, {}), en('boot-load-failed')],
+  [
+    '200 enabled a string',
+    () => reply(200, { enabled: 'true' }),
+    en('boot-load-failed'),
+  ],
+  ['200 null', () => reply(200, 'null'), en('boot-load-failed')],
+  ['200 not json', () => reply(200, 'secret-detail'), en('boot-load-failed')],
+  [
+    'network',
+    () => Promise.reject(new TypeError('secret-detail')),
+    en('boot-load-failed'),
+  ],
+]
+
+test.each(BOOT_READ_FAILURES)(
+  '1c.45a: a failed read shows the legend, its About toggle and a plain paragraph by key in place of the checkbox, never the body: %s',
+  async (what, read, text) => {
     const { main } = await loaded({ boot: { read } })
     const group = within(main).queryByRole('group', { name: en('boot-label') })
     expect(group, `${what}: the group is shown`).not.toBeNull()
@@ -304,11 +312,8 @@ test('1c.45a: a failed read shows the legend, its About toggle and a plain parag
       `${what}: only the About toggle`,
     ).toEqual([`${en('field-about')} ${en('boot-label')}`])
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.45a: until the read answers the field is not rendered; then the checkbox shows enabled', async () => {
   for (const enabled of [true, false]) {
@@ -390,59 +395,67 @@ test('1c.45b: an administrator gets the checkbox enabled', async () => {
 
 // ── Failure paths of the write (45e) ────────────────────────────────────
 
-test('1c.45e: a failed write shows its alert by key, never the body; status empty; the box shows the state read again', async () => {
-  const answers: [string, () => Response | Promise<Response>, string][] = [
-    [
-      '403 client-not-authorized',
-      () => reply(403, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '503 client-unavailable',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '404 client-no-instance',
-      () => reply(404, { key: 'client-no-instance', args: [] }),
-      en('instance-not-found', 'default'),
-    ],
-    [
-      '502 client-service-failed',
-      () =>
-        reply(502, {
-          key: 'client-service-failed',
-          args: ['secret-detail'],
-        }),
-      en('api-client-service-failed'),
-    ],
-    [
-      '502 client-other',
-      () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
-      en('request-failed'),
-    ],
-    [
-      '422 another key',
-      () => reply(422, { key: 'secret-detail', args: [] }),
-      en('request-failed'),
-    ],
-    ['500 not json', () => reply(500, 'secret-detail'), en('request-failed')],
-    [
-      'network',
-      () => Promise.reject(new TypeError('secret-detail')),
-      en('request-failed'),
-    ],
-    // A 2xx of another shape is a failure too (45d).
-    ['200 {}', () => reply(200, {}), en('request-failed')],
-    [
-      '200 enabled a string',
-      () => reply(200, { enabled: 'true' }),
-      en('request-failed'),
-    ],
-    ['204', () => reply(204), en('request-failed')],
-    ['200 not json', () => reply(200, 'secret-detail'), en('request-failed')],
-  ]
-  for (const [what, write, text] of answers) {
+// A failed write: the answer, and the alert key the bar must show (never the
+// body). The `en(...)` texts are what the strings file gives for that key.
+const BOOT_WRITE_FAILURES: [
+  string,
+  () => Response | Promise<Response>,
+  string,
+][] = [
+  [
+    '403 client-not-authorized',
+    () => reply(403, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '503 client-unavailable',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '404 client-no-instance',
+    () => reply(404, { key: 'client-no-instance', args: [] }),
+    en('instance-not-found', 'default'),
+  ],
+  [
+    '502 client-service-failed',
+    () =>
+      reply(502, {
+        key: 'client-service-failed',
+        args: ['secret-detail'],
+      }),
+    en('api-client-service-failed'),
+  ],
+  [
+    '502 client-other',
+    () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
+    en('request-failed'),
+  ],
+  [
+    '422 another key',
+    () => reply(422, { key: 'secret-detail', args: [] }),
+    en('request-failed'),
+  ],
+  ['500 not json', () => reply(500, 'secret-detail'), en('request-failed')],
+  [
+    'network',
+    () => Promise.reject(new TypeError('secret-detail')),
+    en('request-failed'),
+  ],
+  // A 2xx of another shape is a failure too (45d).
+  ['200 {}', () => reply(200, {}), en('request-failed')],
+  [
+    '200 enabled a string',
+    () => reply(200, { enabled: 'true' }),
+    en('request-failed'),
+  ],
+  ['204', () => reply(204), en('request-failed')],
+  ['200 not json', () => reply(200, 'secret-detail'), en('request-failed')],
+]
+
+test.each(BOOT_WRITE_FAILURES)(
+  '1c.45e: a failed write shows its alert by key, never the body; status empty; the box shows the state read again: %s',
+  async (what, write, text) => {
     // Read off; the change asks on; the read after the failure says on (set
     // elsewhere meanwhile), which the previous value (off) cannot give.
     const { bff, main } = await loaded({
@@ -459,11 +472,8 @@ test('1c.45e: a failed write shows its alert by key, never the body; status empt
     expect(document.activeElement, `${what}: focus stays`).toBe(bootBox(main))
     expect(bootSignIns(main), `${what}: no Sign in`).toEqual([])
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.45e: while the read after a failure runs the box stays aria-disabled; when it fails the box shows its value before the change', async () => {
   for (const before_ of [false, true]) {
@@ -763,15 +773,19 @@ test('1c.45c: a change shows the new value at once and sends PUT {enabled}; whil
   }
 })
 
-test('1c.45d: a 2xx {enabled} sets the box from the reply and the status reads boot-on or boot-off', async () => {
-  const cases: [boolean, boolean, string][] = [
-    [false, true, en('boot-on')],
-    [true, false, en('boot-off')],
-    // The reply wins over the value asked.
-    [false, false, en('boot-off')],
-    [true, true, en('boot-on')],
-  ]
-  for (const [from, replied, status] of cases) {
+// The reply's `{enabled}` and the status it must show, over the value the read
+// gave and the one the change asked.
+const BOOT_REPLY_CASES: [boolean, boolean, string][] = [
+  [false, true, en('boot-on')],
+  [true, false, en('boot-off')],
+  // The reply wins over the value asked.
+  [false, false, en('boot-off')],
+  [true, true, en('boot-on')],
+]
+
+test.each(BOOT_REPLY_CASES)(
+  '1c.45d: a 2xx {enabled} sets the box from the reply and the status reads boot-on or boot-off: from %s, replied %s',
+  async (from, replied, status) => {
     const what = `from ${from}, replied ${replied}`
     const { bff, main } = await loaded({
       boot: boot(from, () => reply(200, { enabled: replied })),
@@ -784,11 +798,8 @@ test('1c.45d: a 2xx {enabled} sets the box from the reply and the status reads b
     expect(bootAlerts(main), what).toEqual([])
     expect(inactive(bootBox(main)), what).toBe(false)
     expect(bootReads(bff), `${what}: no read after a success`).toBe(1)
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1c.45d: under StrictMode a 2xx {enabled: true} still reads boot-on and the box is active again', async () => {
   fakeClock()

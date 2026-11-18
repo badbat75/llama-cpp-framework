@@ -889,18 +889,29 @@ test('2e.124: each flag with its own value gets its own line, in its own field',
   expect(writtenOf(main, 'no-host'), 'no-host absent: no line').toBeNull()
 })
 
-test('2e.124b: the checkbox or select names its written-as line in aria-describedby, beside every id it already names; with no line it names none, and no control names a full-value line', async () => {
-  // The keys, each with a value the configurator would not write (a line), and
-  // `true` (no line): the ids named with `true` are the ids that must still be
-  // there beside the written-as id, so the rule is additive (the error's id,
-  // where there is one, stays).
-  for (const [key, value] of [
-    ['jinja', 'yes'],
-    ['kv-unified', 'auto'],
-    ['embeddings', 'no'],
-    ['load-on-startup', 'yes'],
-    ['flash-attn', '0'],
-  ] as [string, string][]) {
+// The keys, each with a value the configurator would not write (a line), and
+// `true` (no line): the ids named with `true` are the ids that must still be
+// there beside the written-as id, so the rule is additive (the error's id,
+// where there is one, stays).
+const WRITTEN_LINE_IDS: [string, string][] = [
+  ['jinja', 'yes'],
+  ['kv-unified', 'auto'],
+  ['embeddings', 'no'],
+  ['load-on-startup', 'yes'],
+  ['flash-attn', '0'],
+]
+
+// No line, no written-as id: the valued key's extra option shows the value
+// itself (124a), and `true` is what the configurator writes (124).
+const NO_LINE_VALUES: [string, string][] = [
+  ['flash-attn', 'auto'],
+  ['kv-unified', 'true'],
+  ['jinja', 'true'],
+]
+
+test.each(WRITTEN_LINE_IDS)(
+  '2e.124b: the checkbox or select names its written-as line in aria-describedby, beside every id it already names: %s = %s',
+  async (key, value) => {
     const f = flagOf(key)
     const { main } = await page({ [key]: value })
     const ids = describedIds(controlOf(main, f))
@@ -914,16 +925,12 @@ test('2e.124b: the checkbox or select names its written-as line in aria-describe
       ids.filter((id) => id !== lineId),
       `${key}: the line's id joins the ids already named, none dropped`,
     ).toEqual(before)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  // No line, no written-as id: the valued key's extra option shows the value
-  // itself (124a), and `true` is what the configurator writes (124).
-  for (const [key, value] of [
-    ['flash-attn', 'auto'],
-    ['kv-unified', 'true'],
-    ['jinja', 'true'],
-  ] as [string, string][]) {
+  },
+)
+
+test.each(NO_LINE_VALUES)(
+  '2e.124b: with no line it names none: %s = %s',
+  async (key, value) => {
     const f = flagOf(key)
     const { main } = await page({ [key]: value })
     expect(writtenOf(main, key), `${key}: no line`).toBeNull()
@@ -931,9 +938,10 @@ test('2e.124b: the checkbox or select names its written-as line in aria-describe
       describedIds(controlOf(main, f)),
       `${key} ${value}: no line, so no written-as id named`,
     ).not.toContain(`preset-written-${key}`)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  },
+)
+
+test('2e.124b: no control names a full-value line', async () => {
   // 120, unchanged: the full-value line is named by no aria-describedby, on a
   // page where a full-value line and a written-as line sit side by side. The
   // valued key's example moved twice: 134 shows no line under an enabled

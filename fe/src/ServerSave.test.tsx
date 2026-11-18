@@ -421,49 +421,52 @@ test('1b.34: a 422 on ModelsDir lands under Models folder, its args filling the 
   expect(document.activeElement).toBe(box(main, 'Models folder'))
 })
 
-test('1b.34 (5.6): a 422 without field goes to the field of the fallback table', async () => {
-  const cases: [string, Record<string, unknown>, string, string][] = [
-    [
-      'not-whole-number-in-range: args[0]',
-      {
-        key: 'not-whole-number-in-range',
-        args: ['ModelsMemoryMargin', '99999', '0', '2147483647'],
-      },
-      'Memory margin',
-      en(
-        'api-not-whole-number-in-range',
-        'ModelsMemoryMargin',
-        '99999',
-        '0',
-        '2147483647',
-      ),
-    ],
-    [
-      'comment-markers: args[0]',
-      { key: 'comment-markers', args: ['StateDir'] },
-      'Snapshot folder',
-      en('api-comment-markers', 'StateDir'),
-    ],
-    [
-      'load-on-startup-over-max: Max models',
-      { key: 'load-on-startup-over-max', args: ['3', '2'] },
-      'Max models',
-      en('api-load-on-startup-over-max', '3', '2'),
-    ],
-    [
-      'load-on-startup-unlimited: Max models',
-      { key: 'load-on-startup-unlimited', args: ['2'] },
-      'Max models',
-      en('api-load-on-startup-unlimited', '2'),
-    ],
-    [
-      'client-address-in-use: Port',
-      { key: 'client-address-in-use', args: ['coder'] },
-      'Port',
-      en('api-client-address-in-use', 'coder'),
-    ],
-  ]
-  for (const [what, body, field, text] of cases) {
+// A 422 with no `field`: the key, the control its fallback names, and the text.
+const FALLBACK_CASES: [string, Record<string, unknown>, string, string][] = [
+  [
+    'not-whole-number-in-range: args[0]',
+    {
+      key: 'not-whole-number-in-range',
+      args: ['ModelsMemoryMargin', '99999', '0', '2147483647'],
+    },
+    'Memory margin',
+    en(
+      'api-not-whole-number-in-range',
+      'ModelsMemoryMargin',
+      '99999',
+      '0',
+      '2147483647',
+    ),
+  ],
+  [
+    'comment-markers: args[0]',
+    { key: 'comment-markers', args: ['StateDir'] },
+    'Snapshot folder',
+    en('api-comment-markers', 'StateDir'),
+  ],
+  [
+    'load-on-startup-over-max: Max models',
+    { key: 'load-on-startup-over-max', args: ['3', '2'] },
+    'Max models',
+    en('api-load-on-startup-over-max', '3', '2'),
+  ],
+  [
+    'load-on-startup-unlimited: Max models',
+    { key: 'load-on-startup-unlimited', args: ['2'] },
+    'Max models',
+    en('api-load-on-startup-unlimited', '2'),
+  ],
+  [
+    'client-address-in-use: Port',
+    { key: 'client-address-in-use', args: ['coder'] },
+    'Port',
+    en('api-client-address-in-use', 'coder'),
+  ],
+]
+
+test.each(FALLBACK_CASES)(
+  '1b.34 (5.6): a 422 without field goes to the field of the fallback table: %s',
+  async (what, body, field, text) => {
     const { bff, main } = await loaded({
       // Max models set, so its textbox is enabled and can take the focus.
       server: () => reply(200, serverDoc({ ModelsMax: 2 })),
@@ -475,10 +478,8 @@ test('1b.34 (5.6): a 422 without field goes to the field of the fallback table',
     expectError(box(main, field), text, what)
     expect(document.activeElement, what).toBe(box(main, field))
     expectAlert(main, en('save-refused', text), what)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('1b.34 (5.6): a 422 client-unresolvable-host without field shows its text in Bind to', async () => {
   const { bff, main } = await loaded({

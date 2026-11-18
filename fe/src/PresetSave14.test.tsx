@@ -503,7 +503,7 @@ test('2h.185: fit TRUE blocks the Save even when another field changed: the erro
   expect(bff.to('PUT', PUT), '185: nothing sent').toHaveLength(0)
 })
 
-test('2h.185: fit TRUE: one click checks it and sends on and clears the line and the error, two clicks send off, Discard brings them back', async () => {
+test('2h.185: fit TRUE: one click checks it and sends on and clears the line and the error', async () => {
   const first = await form(loaded('TRUE', false, false))
   fireEvent.click(fitBox(first.main))
   const one = fitBox(first.main)
@@ -519,14 +519,18 @@ test('2h.185: fit TRUE: one click checks it and sends on and clears the line and
   ).toBeNull()
   await save(first.main, first.bff)
   expect(sentValues(first.bff)['fit'], 'one click sends on').toBe('on')
-  cleanup()
+})
+
+test('2h.185: fit TRUE: two clicks send off', async () => {
   const second = await form(loaded('TRUE', false, false))
   fireEvent.click(fitBox(second.main))
   fireEvent.click(fitBox(second.main))
   expect(fitBox(second.main).checked, 'two clicks: unchecked').toBe(false)
   await save(second.main, second.bff)
   expect(sentValues(second.bff)['fit'], 'two clicks send off').toBe('off')
-  cleanup()
+})
+
+test('2h.185: fit TRUE: Discard brings the line and the error back', async () => {
   const third = await form(loaded('TRUE', false, false))
   fireEvent.click(fitBox(third.main))
   fireEvent.click(discardButton(third.main))

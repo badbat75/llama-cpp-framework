@@ -527,18 +527,18 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
     ).toBe(true)
 })
 
-test('2e.86: a key whose value is the empty string reads as absent, for every key of 92 and 93 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
-  for (const f of FIELDS) {
-    if (f.key === 'kv-unified' || f.key === 'embeddings') continue
+test.each(
+  FIELDS.filter((f) => f.key !== 'kv-unified' && f.key !== 'embeddings'),
+)(
+  '2e.86: $key is the empty string so it reads as absent, and its field shows the absent form (2e.3b: a flag reads "" as on, criterion 123)',
+  async (f) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     if (f.kind === 'number') expectAbsentNumber(main, en(f.label))
     else expectAbsentSelect(main, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.89, 2e.90: no 2e.1 field carries a unit and no card of 2e.1 has a note or a group, so no unit, no h4 and no role=group division in them', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
@@ -626,9 +626,10 @@ test.each(FIELDS)(
   },
 )
 
-test('2e.87, 2e.94: a number shows the reply string exactly, with no parsing and no reformatting, and its default box unticked: 0172032, abc, a negative, a float, spaces', async () => {
-  const label = en('preset-context-size')
-  for (const value of ['0172032', 'abc', '-1', '4096.50', ' 4096 ']) {
+test.each(['0172032', 'abc', '-1', '4096.50', ' 4096 '])(
+  '2e.87, 2e.94: a number shows the reply string exactly, with no parsing and no reformatting, and its default box unticked: %s',
+  async (value) => {
+    const label = en('preset-context-size')
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ 'ctx-size': value })),
     })
@@ -637,10 +638,8 @@ test('2e.87, 2e.94: a number shows the reply string exactly, with no parsing and
     expect(boxOf(group).checked, `ctx-size ${value}: the box unticked`).toBe(
       false,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.87, 2e.94: a value the mapping does not list becomes one extra last option carrying the reply string as its value and its text, selected: pooling weird (2e.3b: a flag select has no extra option, criterion 125, and kv-unified auto shows on with the line of 126)', async () => {
   for (const [f, value] of [
@@ -677,23 +676,22 @@ test('2e.87, 2e.94: a value the mapping does not list becomes one extra last opt
   }
 })
 
-test('2e.93, 2e.87: Pooling selects the option whose value equals the reply string exactly, and a value that differs only in case is the extra option', async () => {
-  const pooling = FIELDS.find((f) => f.key === 'pooling')!
-  const label = en(pooling.label)
-  for (const [value, shown] of [
-    ['cls', 'cls'],
-    ['rank', en('option-rank')],
-    ['MEAN', 'MEAN'],
-    ['Last', 'Last'],
-  ] as [string, string][]) {
+test.each([
+  ['cls', 'cls'],
+  ['rank', en('option-rank')],
+  ['MEAN', 'MEAN'],
+  ['Last', 'Last'],
+] as [string, string][])(
+  '2e.93, 2e.87: Pooling selects the option whose value equals the reply string exactly, and a value that differs only in case is the extra option: %s',
+  async (value, shown) => {
+    const pooling = FIELDS.find((f) => f.key === 'pooling')!
+    const label = en(pooling.label)
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, pooling: value })),
     })
     expect(selectedText(selectOf(main, label)), `pooling ${value}`).toBe(shown)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.93, 2e.1.3: Embedding mode is off / on and Unified KV is the tri-state: false shows off, and the shared option texts are the ones of 1.3', async () => {
   for (const f of [

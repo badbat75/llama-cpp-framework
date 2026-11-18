@@ -132,23 +132,25 @@ test('1a.14: too many attempts shows the seconds to wait', async () => {
   expect(alert.textContent).toBe(en('api-session-too-many-attempts', '30'))
 })
 
-test('1a.14: any other failure shows signin-failed, never the body', async () => {
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
-    ['500', () => reply(500, { key: 'secret-detail', args: [] })],
-    ['503', () => reply(503, { key: 'client-unavailable', args: [] })],
-    [
-      '400 session-malformed',
-      () => reply(400, { key: 'session-malformed', args: [] }),
-    ],
-    ['401 other key', () => reply(401, { key: 'secret-detail', args: [] })],
-    // 14b: by key, not status.
-    ['403 other key', () => reply(403, { key: 'secret-detail', args: [] })],
-    ['403 no key', () => reply(403, {})],
-    ['not json', () => reply(401, 'secret-detail')],
-    ['200 malformed', () => reply(200, '{"user":42}')],
-  ]
-  for (const [what, signIn] of answers) {
+const SIGN_IN_FAILURES: [string, () => Response | Promise<Response>][] = [
+  ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['500', () => reply(500, { key: 'secret-detail', args: [] })],
+  ['503', () => reply(503, { key: 'client-unavailable', args: [] })],
+  [
+    '400 session-malformed',
+    () => reply(400, { key: 'session-malformed', args: [] }),
+  ],
+  ['401 other key', () => reply(401, { key: 'secret-detail', args: [] })],
+  // 14b: by key, not status.
+  ['403 other key', () => reply(403, { key: 'secret-detail', args: [] })],
+  ['403 no key', () => reply(403, {})],
+  ['not json', () => reply(401, 'secret-detail')],
+  ['200 malformed', () => reply(200, '{"user":42}')],
+]
+
+test.each(SIGN_IN_FAILURES)(
+  '1a.14: any other failure shows signin-failed, never the body: %s',
+  async (what, signIn) => {
     fakeBff({ session: 'signed-out', signIn })
     render(<App />)
     const { main, username, password, submit } = await form()
@@ -162,11 +164,8 @@ test('1a.14: any other failure shows signin-failed, never the body', async () =>
       screen.queryByRole('button', { name: en('session-sign-out') }),
       what,
     ).toBeNull()
-    cleanup()
-    vi.unstubAllGlobals()
-    startAt('#/sign-in')
-  }
-})
+  },
+)
 
 test('1a.14a: sign-in unavailable shows its own alert, clears the password, and a retry is still sent', async () => {
   const bff = fakeBff({
@@ -447,8 +446,11 @@ test('1a.1, 13: a sign-in answered with {"user"} alone signs in: the banner name
   expect(signOut).toBeTruthy()
 })
 
-test('1a.1: a sign-in answered with canConfigure still in the reply signs in the same way (an older bff sent it)', async () => {
-  for (const canConfigure of [true, false]) {
+const CAN_CONFIGURE_FLAGS = [true, false]
+
+test.each(CAN_CONFIGURE_FLAGS)(
+  '1a.1: a sign-in answered with canConfigure still in the reply signs in the same way (an older bff sent it): %s',
+  async (canConfigure) => {
     const who = String(canConfigure)
     fakeBff({
       session: 'signed-out',
@@ -471,12 +473,8 @@ test('1a.1: a sign-in answered with canConfigure still in the reply signs in the
       level: 1,
       name: en('overview-title'),
     })
-    cleanup()
-    vi.unstubAllGlobals()
-    // The sign-in moved the page to #/: the next reply renders at #/sign-in.
-    startAt('#/sign-in')
-  }
-})
+  },
+)
 
 test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the Overview', async () => {
   fakeBff({
@@ -549,14 +547,16 @@ test('1a.13: signing in on a protected page returns to it with focus on its h1',
 
 // ── Sign out ────────────────────────────────────────────────────────────
 
-test('1a.15: Sign out sends DELETE /api/session and shows the signed-out Overview whatever the answer', async () => {
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['204', () => reply(204)],
-    ['401', () => reply(401, { key: 'session-required', args: [] })],
-    ['500', () => reply(500, 'secret-detail')],
-    ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
-  ]
-  for (const [what, signOut] of answers) {
+const SIGN_OUT_ANSWERS: [string, () => Response | Promise<Response>][] = [
+  ['204', () => reply(204)],
+  ['401', () => reply(401, { key: 'session-required', args: [] })],
+  ['500', () => reply(500, 'secret-detail')],
+  ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
+]
+
+test.each(SIGN_OUT_ANSWERS)(
+  '1a.15: Sign out sends DELETE /api/session and shows the signed-out Overview whatever the answer: %s',
+  async (what, signOut) => {
     startAt('#/instances/default')
     const bff = fakeBff({ session: 'signed-in', signOut })
     render(<App />)
@@ -588,7 +588,5 @@ test('1a.15: Sign out sends DELETE /api/session and shows the signed-out Overvie
       what,
     ).toBeNull()
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)

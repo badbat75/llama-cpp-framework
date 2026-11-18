@@ -504,7 +504,7 @@ export function specGroupEnabled(
   const entries = specTypeEntries(values)
   if (group === 'draft')
     return (
-      (values['model-draft'] ?? '') !== '' ||
+      (values['model-draft'] ?? '').trim() !== '' ||
       entries.some((entry) => entry.startsWith('draft-'))
     )
   return entries.includes(group)

@@ -630,23 +630,25 @@ test('2e.120: the line takes no focus: it is not a tab stop, and the tab order o
 
 // ── 121: the stub values, and no new string ─────────────────────────────
 
-test('2e.121: the stub values of the brief show exactly these lines and no others', async () => {
-  const cases: [Record<string, string>, string | null][] = [
-    [{ 'moe-cache-mib': '172032000' }, '172032000'],
-    [{ 'moe-cache-mib': '17203200' }, null],
-    [{}, null],
-    [{ 'spec-draft-type-k': SELECT_21 }, SELECT_21],
-    [{ 'spec-draft-type-k': SELECT_20 }, null],
-    [{ 'kv-unified': 'auto' }, null],
-    [
-      // The text example of the brief's list is chat-template-kwargs, editable
-      // since 2h.5's 164, so the same 25-character JSON is shown on the one
-      // text field a rule disables (186).
-      { 'fit-target': '{"enable_thinking":false}', fit: 'off' },
-      '{"enable_thinking":false}',
-    ],
-  ]
-  for (const [values, want] of cases) {
+const FULL_VALUE_CASES: [Record<string, string>, string | null][] = [
+  [{ 'moe-cache-mib': '172032000' }, '172032000'],
+  [{ 'moe-cache-mib': '17203200' }, null],
+  [{}, null],
+  [{ 'spec-draft-type-k': SELECT_21 }, SELECT_21],
+  [{ 'spec-draft-type-k': SELECT_20 }, null],
+  [{ 'kv-unified': 'auto' }, null],
+  [
+    // The text example of the brief's list is chat-template-kwargs, editable
+    // since 2h.5's 164, so the same 25-character JSON is shown on the one
+    // text field a rule disables (186).
+    { 'fit-target': '{"enable_thinking":false}', fit: 'off' },
+    '{"enable_thinking":false}',
+  ],
+]
+
+test.each(FULL_VALUE_CASES)(
+  '2e.121: the stub values of the brief show exactly these lines and no others: %s',
+  async (values, want) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf(values)),
     })
@@ -666,9 +668,8 @@ test('2e.121: the stub values of the brief show exactly these lines and no other
       )
       expect(line.textContent, 'the line is the value').toBe(want)
     }
-    cleanup()
-  }
-})
+  },
+)
 
 test('2e.121: no new string: what the line shows is data, not a text of the strings file', async () => {
   const { main } = await page(LONG)

@@ -264,84 +264,85 @@ function nameOf(el: HTMLElement): string {
 
 // ── Failure paths first: a failed write (48) ────────────────────────────
 
-test('2c.48, 2c.55: each failed write shows its alert by key, never the body; status empty; the row is read again and the switch takes its value; focus stays', async () => {
-  const answers: [string, () => Response | Promise<Response>, string][] = [
-    [
-      '403 client-not-authorized',
-      () => reply(403, { key: 'client-not-authorized', args: [] }),
-      en('api-client-not-authorized'),
-    ],
-    [
-      '503 client-unavailable',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      en('api-client-unavailable'),
-    ],
-    [
-      '404 no-preset-named',
-      () => reply(404, { key: 'no-preset-named', args: ['Old-Coder'] }),
-      en('api-no-preset-named', 'Old-Coder'),
-    ],
-    [
-      '422 load-on-startup-over-max',
-      () => reply(422, { key: 'load-on-startup-over-max', args: ['3', '2'] }),
-      en('api-load-on-startup-over-max', '3', '2'),
-    ],
-    [
-      '422 load-on-startup-unlimited',
-      () => reply(422, { key: 'load-on-startup-unlimited', args: ['3'] }),
-      en('api-load-on-startup-unlimited', '3'),
-    ],
-    [
-      '422 preset-no-model (unknown to the fe)',
-      () => reply(422, { key: 'preset-no-model', args: ['secret-detail'] }),
-      en('api-other', 'preset-no-model'),
-    ],
-    [
-      '502 client-other',
-      () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
-      en('request-failed'),
-    ],
-    [
-      '400 presets-malformed',
-      () => reply(400, { key: 'presets-malformed', args: [] }),
-      en('request-failed'),
-    ],
-    [
-      '403 another key',
-      () => reply(403, { key: 'secret-detail', args: [] }),
-      en('request-failed'),
-    ],
-    ['500 not json', () => reply(500, 'secret-detail'), en('request-failed')],
-    [
-      '503 not the error shape',
-      () => reply(503, { error: 'secret-detail' }),
-      en('request-failed'),
-    ],
-    [
-      'network',
-      () => Promise.reject(new TypeError('secret-detail')),
-      en('request-failed'),
-    ],
-    ['200 {}', () => reply(200, {}), en('request-failed')],
-    [
-      '200 without running',
-      () => reply(200, { enabled: true }),
-      en('request-failed'),
-    ],
-    [
-      '200 enabled a string',
-      () => reply(200, { enabled: 'true', running: false }),
-      en('request-failed'),
-    ],
-    [
-      '200 running a string',
-      () => reply(200, { enabled: true, running: 'no' }),
-      en('request-failed'),
-    ],
-    ['204', () => reply(204), en('request-failed')],
-    ['200 not json', () => reply(200, 'secret-detail'), en('request-failed')],
-  ]
-  for (const [what, write, text] of answers) {
+const FAILED_WRITES: [string, () => Response | Promise<Response>, string][] = [
+  [
+    '403 client-not-authorized',
+    () => reply(403, { key: 'client-not-authorized', args: [] }),
+    en('api-client-not-authorized'),
+  ],
+  [
+    '503 client-unavailable',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    en('api-client-unavailable'),
+  ],
+  [
+    '404 no-preset-named',
+    () => reply(404, { key: 'no-preset-named', args: ['Old-Coder'] }),
+    en('api-no-preset-named', 'Old-Coder'),
+  ],
+  [
+    '422 load-on-startup-over-max',
+    () => reply(422, { key: 'load-on-startup-over-max', args: ['3', '2'] }),
+    en('api-load-on-startup-over-max', '3', '2'),
+  ],
+  [
+    '422 load-on-startup-unlimited',
+    () => reply(422, { key: 'load-on-startup-unlimited', args: ['3'] }),
+    en('api-load-on-startup-unlimited', '3'),
+  ],
+  [
+    '422 preset-no-model (unknown to the fe)',
+    () => reply(422, { key: 'preset-no-model', args: ['secret-detail'] }),
+    en('api-other', 'preset-no-model'),
+  ],
+  [
+    '502 client-other',
+    () => reply(502, { key: 'client-other', args: ['secret-detail'] }),
+    en('request-failed'),
+  ],
+  [
+    '400 presets-malformed',
+    () => reply(400, { key: 'presets-malformed', args: [] }),
+    en('request-failed'),
+  ],
+  [
+    '403 another key',
+    () => reply(403, { key: 'secret-detail', args: [] }),
+    en('request-failed'),
+  ],
+  ['500 not json', () => reply(500, 'secret-detail'), en('request-failed')],
+  [
+    '503 not the error shape',
+    () => reply(503, { error: 'secret-detail' }),
+    en('request-failed'),
+  ],
+  [
+    'network',
+    () => Promise.reject(new TypeError('secret-detail')),
+    en('request-failed'),
+  ],
+  ['200 {}', () => reply(200, {}), en('request-failed')],
+  [
+    '200 without running',
+    () => reply(200, { enabled: true }),
+    en('request-failed'),
+  ],
+  [
+    '200 enabled a string',
+    () => reply(200, { enabled: 'true', running: false }),
+    en('request-failed'),
+  ],
+  [
+    '200 running a string',
+    () => reply(200, { enabled: true, running: 'no' }),
+    en('request-failed'),
+  ],
+  ['204', () => reply(204), en('request-failed')],
+  ['200 not json', () => reply(200, 'secret-detail'), en('request-failed')],
+]
+test.each(FAILED_WRITES)(
+  '2c.48, 2c.55: each failed write shows its alert by key, never the body; status empty; the row is read again and the switch takes its value; focus stays: %s',
+  async (what, write, text) => {
     // Old-Coder is off; the change asks on; the read after the failure says
     // on (the write happened), which the value before (off) cannot give.
     const { bff, main } = await open({
@@ -373,42 +374,40 @@ test('2c.48, 2c.55: each failed write shows its alert by key, never the body; st
     )
     expect(signIns(main), `${what}: no Sign in`).toEqual([])
     expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
-test('2c.48, 2c.55: the re-read after a failure: on, off, without the row, failed (401 and a 15 s hold included): the switch shows the row read, or the value before', async () => {
-  const lacking = [LIST[0]!, LIST[2]!]
-  const cases: [
-    string,
-    (n: number) => Response | Promise<Response>,
-    boolean,
-  ][] = [
-    ['says on', () => reply(200, LIST), true],
-    [
-      'says off',
-      () =>
-        reply(200, [
-          LIST[0]!,
-          preset('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
-          LIST[2]!,
-        ]),
-      false,
-    ],
-    // Coder-30B was on: the value before the change.
-    ['lacks the row', () => reply(200, lacking), true],
-    [
-      'fails 503',
-      () => reply(503, { key: 'client-unavailable', args: [] }),
-      true,
-    ],
-    ['fails 401', SESSION_ENDED, true],
-    ['fails network', () => Promise.reject(new TypeError('x')), true],
-    ['fails malformed', () => reply(200, [{ id: 'Coder-30B' }]), true],
-  ]
-  for (const [what, reread, expected] of cases) {
+const lacking = [LIST[0]!, LIST[2]!]
+const REREADS: [
+  string,
+  (n: number) => Response | Promise<Response>,
+  boolean,
+][] = [
+  ['says on', () => reply(200, LIST), true],
+  [
+    'says off',
+    () =>
+      reply(200, [
+        LIST[0]!,
+        preset('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
+        LIST[2]!,
+      ]),
+    false,
+  ],
+  // Coder-30B was on: the value before the change.
+  ['lacks the row', () => reply(200, lacking), true],
+  [
+    'fails 503',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+    true,
+  ],
+  ['fails 401', SESSION_ENDED, true],
+  ['fails network', () => Promise.reject(new TypeError('x')), true],
+  ['fails malformed', () => reply(200, [{ id: 'Coder-30B' }]), true],
+]
+test.each(REREADS)(
+  '2c.48, 2c.55: the re-read after a failure: on, off, without the row, failed (401 and a 15 s hold included): the switch shows the row read, or the value before: %s',
+  async (what, reread, expected) => {
     const { bff, main } = await open({
       presetSwitch: () => reply(503, { key: 'client-unavailable', args: [] }),
       presets: reads(reread),
@@ -436,8 +435,8 @@ test('2c.48, 2c.55: the re-read after a failure: on, off, without the row, faile
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2c.48: a re-read held 15 000 ms is aborted; the switches stay aria-disabled until then, then show the value before', async () => {
   const h = held()
@@ -795,40 +794,49 @@ test('2c.45: while a write runs every switch is aria-disabled, never disabled, a
   expect(switches(main).map(inactive)).toEqual([false, false, false])
 })
 
-test('2c.46: a 2xx {enabled, running} sets the switch from the reply and the status reads by both, with the id and the row engine; nothing is read', async () => {
-  const cases: [boolean, boolean, string][] = [
-    [true, false, 'presets-switched-on'],
-    [false, false, 'presets-switched-off'],
-    [true, true, 'presets-switched-on-restart'],
-    [false, true, 'presets-switched-off-restart'],
-  ]
-  for (const [enabled, running, key] of cases) {
-    for (const engine of ['llama.cpp', 'Strata']) {
-      const what = `${enabled} ${running} ${engine}`
-      // The preset starts as the opposite of the reply, so the change asks
-      // what the reply gives.
-      const { bff, main } = await open({
-        presets: [
-          preset('Qwen3-27B', !enabled, '', engine, engine === 'llama.cpp'),
-        ],
-        presetSwitch: () => reply(200, { enabled, running }),
-      })
-      press(switchOf(main, 'Qwen3-27B'))
-      await flush()
-      expect(switchOf(main, 'Qwen3-27B').checked, what).toBe(enabled)
-      expect(switchStatus(main).textContent, what).toBe(
-        en(key, 'Qwen3-27B', engine),
-      )
-      expect(alerts(main), what).toEqual([])
-      expect(presetsReads(bff), `${what}: nothing read`).toBe(1)
-      expect(switches(main).map(inactive), what).toEqual([false])
-      expect(document.activeElement, what).toBe(switchOf(main, 'Qwen3-27B'))
-      cleanup()
-      vi.useRealTimers()
-      vi.unstubAllGlobals()
-    }
-  }
-})
+// The reply's two booleans, the status key they give, and the row's engine:
+// every case on both engines (the preset starts as the opposite of the reply,
+// so the change asks what the reply gives).
+const SWITCH_REPLY_CASES: [boolean, boolean, string][] = [
+  [true, false, 'presets-switched-on'],
+  [false, false, 'presets-switched-off'],
+  [true, true, 'presets-switched-on-restart'],
+  [false, true, 'presets-switched-off-restart'],
+]
+const SWITCH_REPLY_ENGINES = ['llama.cpp', 'Strata']
+const SWITCH_REPLIES: [boolean, boolean, string, string][] =
+  SWITCH_REPLY_CASES.flatMap<[boolean, boolean, string, string]>(
+    ([enabled, running, key]) =>
+      SWITCH_REPLY_ENGINES.map((engine): [boolean, boolean, string, string] => [
+        enabled,
+        running,
+        key,
+        engine,
+      ]),
+  )
+
+test.each(SWITCH_REPLIES)(
+  '2c.46: a 2xx {enabled, running} sets the switch from the reply and the status reads by both, with the id and the row engine; nothing is read: %s %s %s',
+  async (enabled, running, key, engine) => {
+    const what = `${enabled} ${running} ${engine}`
+    const { bff, main } = await open({
+      presets: [
+        preset('Qwen3-27B', !enabled, '', engine, engine === 'llama.cpp'),
+      ],
+      presetSwitch: () => reply(200, { enabled, running }),
+    })
+    press(switchOf(main, 'Qwen3-27B'))
+    await flush()
+    expect(switchOf(main, 'Qwen3-27B').checked, what).toBe(enabled)
+    expect(switchStatus(main).textContent, what).toBe(
+      en(key, 'Qwen3-27B', engine),
+    )
+    expect(alerts(main), what).toEqual([])
+    expect(presetsReads(bff), `${what}: nothing read`).toBe(1)
+    expect(switches(main).map(inactive), what).toEqual([false])
+    expect(document.activeElement, what).toBe(switchOf(main, 'Qwen3-27B'))
+  },
+)
 
 test('2c.46: the reply wins over the value asked', async () => {
   const { main } = await open({

@@ -346,17 +346,19 @@ test('1a.24: 403 and 503 show their api- message in place of the form', async ()
   }
 })
 
-test('1a.24: anything else, malformed included, shows server-load-failed, never the body', async () => {
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
-    ['500', () => reply(500, { key: 'secret-detail', args: [] })],
-    ['502 not json', () => reply(502, 'secret-detail')],
-    ['200 not json', () => reply(200, 'secret-detail')],
-    ['200 {}', () => reply(200, {})],
-    ['200 []', () => reply(200, [])],
-    ['200 null', () => reply(200, 'null')],
-  ]
-  for (const [what, server] of answers) {
+const SERVER_LOAD_FAILURES: [string, () => Response | Promise<Response>][] = [
+  ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['500', () => reply(500, { key: 'secret-detail', args: [] })],
+  ['502 not json', () => reply(502, 'secret-detail')],
+  ['200 not json', () => reply(200, 'secret-detail')],
+  ['200 {}', () => reply(200, {})],
+  ['200 []', () => reply(200, [])],
+  ['200 null', () => reply(200, 'null')],
+]
+
+test.each(SERVER_LOAD_FAILURES)(
+  '1a.24: anything else, malformed included, shows server-load-failed, never the body: %s',
+  async (what, server) => {
     fakeBff({ server })
     render(<App />)
     const main = screen.getByRole('main')
@@ -370,10 +372,8 @@ test('1a.24: anything else, malformed included, shows server-load-failed, never 
       within(main).getByRole('heading', { level: 2, name: en('server-title') }),
       what,
     ).toBeTruthy()
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The header ──────────────────────────────────────────────────────────
 

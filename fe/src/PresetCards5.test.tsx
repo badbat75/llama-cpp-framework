@@ -842,8 +842,9 @@ const CASES: [string, Record<string, string>, string[]][] = [
   ],
 ]
 
-test("2h.190, 2h.191, 2h.91: on each fixture a group's controls are enabled exactly while its rule holds, and only its About toggles are tab stops while it is off", async () => {
-  for (const [what, values, enabled] of CASES) {
+test.each(CASES)(
+  "2h.190, 2h.191, 2h.91: on each fixture a group's controls are enabled exactly while its rule holds, and only its About toggles are tab stops while it is off: %s",
+  async (what, values, enabled) => {
     const doc = docOf({ ...SET, ...values })
     const { main } = await loaded({ preset: () => reply(200, doc) })
     for (const f of FIELDS) {
@@ -873,10 +874,8 @@ test("2h.190, 2h.191, 2h.91: on each fixture a group's controls are enabled exac
         stops,
         `${en(CARD)} (${what}): a read that enables no group leaves only the About toggles`,
       ).toEqual(FIELDS.map((f) => `${en('field-about')} ${f.label}`))
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The five groups of 112 and 114, and the note of 90 ─────────────────
 
@@ -1306,8 +1305,9 @@ test('2e.114: the card has exactly five h4 whose texts are the GUI texts of 114:
 
 // ── The cache-type selects (96, applied by 2e.5) ───────────────────────
 
-test('2e.112, 2e.96: Draft K-cache type and Draft V-cache type list default then the ten literals of 96 in order with the file values, absent shows default, and each listed value selects its own option', async () => {
-  for (const f of FIELDS.filter((x) => x.kind === 'select')) {
+test.each(FIELDS.filter((x) => x.kind === 'select'))(
+  '2e.112, 2e.96: $key lists default then the ten literals of 96 in order with the file values, and q8_0 selects its own option',
+  async (f) => {
     const { main } = await loaded({ preset: () => reply(200, exactOf(SET)) })
     const select = selectIn(rowGroup(main, f), f.label)
     expect(
@@ -1321,8 +1321,12 @@ test('2e.112, 2e.96: Draft K-cache type and Draft V-cache type list default then
     expect(selectedText(select), `${f.key}: q8_0 selects its own option`).toBe(
       'q8_0',
     )
-    cleanup()
-    vi.unstubAllGlobals()
+  },
+)
+
+test.each(FIELDS.filter((x) => x.kind === 'select'))(
+  '2e.112, 2e.96: $key absent shows default',
+  async (f) => {
     const { main: absent } = await loaded({
       preset: () => reply(200, exactOf({})),
     })
@@ -1330,21 +1334,27 @@ test('2e.112, 2e.96: Draft K-cache type and Draft V-cache type list default then
       selectedText(selectIn(rowGroup(absent, f), f.label)),
       `${f.key}: absent shows default`,
     ).toBe(en('option-default'))
-    cleanup()
-    vi.unstubAllGlobals()
-    for (const value of CACHE_TYPE_VALUES.slice(1)) {
-      const { main: one } = await loaded({
-        preset: () => reply(200, exactOf({ [f.key]: value })),
-      })
-      expect(
-        selectedText(selectIn(rowGroup(one, f), f.label)),
-        `${f.key}: ${value} selects its own option`,
-      ).toBe(value)
-      cleanup()
-      vi.unstubAllGlobals()
-    }
-  }
-})
+  },
+)
+
+test.each(
+  FIELDS.filter((x) => x.kind === 'select').flatMap((f) =>
+    CACHE_TYPE_VALUES.slice(1).map(
+      (value) => [f.key, value, f] as [string, string, (typeof FIELDS)[number]],
+    ),
+  ),
+)(
+  '2e.112, 2e.96: each listed cache type value selects its own option: %s %s',
+  async (key, value, f) => {
+    const { main: one } = await loaded({
+      preset: () => reply(200, exactOf({ [key]: value })),
+    })
+    expect(
+      selectedText(selectIn(rowGroup(one, f), f.label)),
+      `${key}: ${value} selects its own option`,
+    ).toBe(value)
+  },
+)
 
 test('2e.112, 2e.96, 2e.87: a draft cache type no option lists (q3_k, and F16 which differs only in case) becomes one extra last option carrying it as its value and its text, selected', async () => {
   for (const value of ['q3_k', 'F16']) {
@@ -1380,15 +1390,16 @@ test('2e.112, 2e.96, 2e.87: a draft cache type no option lists (q3_k, and F16 wh
 
 // ── Values exactly as the file holds them, and absent keys (86, 87, 89) ─
 
-test('2e.87, 2e.115: a value of 2e.5 shows exactly as the reply holds it, with no parsing, no trimming and no case change: a number with spaces and a leading zero, a float with a trailing zero, and a cache type with spaces', async () => {
-  for (const [key, value] of [
-    ['spec-draft-n-max', ' 16 '],
-    ['spec-draft-n-max', '0172032'],
-    ['spec-draft-p-min', ' 0.75 '],
-    ['spec-draft-p-min', '0.750'],
-    ['spec-draft-n-ubatch', '512.0'],
-    ['spec-ngram-map-k4v-min-hits', '007'],
-  ] as [string, string][]) {
+test.each([
+  ['spec-draft-n-max', ' 16 '],
+  ['spec-draft-n-max', '0172032'],
+  ['spec-draft-p-min', ' 0.75 '],
+  ['spec-draft-p-min', '0.750'],
+  ['spec-draft-n-ubatch', '512.0'],
+  ['spec-ngram-map-k4v-min-hits', '007'],
+] as [string, string][])(
+  '2e.87, 2e.115: a value of 2e.5 shows exactly as the reply holds it, with no parsing, no trimming and no case change: %s %s',
+  async (key, value) => {
     const f = row(key)
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [key]: value })),
@@ -1401,9 +1412,10 @@ test('2e.87, 2e.115: a value of 2e.5 shows exactly as the reply holds it, with n
     expect(boxOf(fieldGroup).checked, `${key} ${value}: the box unticked`).toBe(
       false,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  },
+)
+
+test('2e.87, 2e.115: a select shows the string the page adds for it as written', async () => {
   // A select shows the string the page adds for it as written.
   const { main } = await loaded({
     preset: () => reply(200, exactOf({ 'spec-draft-type-v': ' q8_0 ' })),
@@ -1419,16 +1431,15 @@ test('2e.87, 2e.115: a value of 2e.5 shows exactly as the reply holds it, with n
   ).toBe(' q8_0 ')
 })
 
-test('2e.86, 2e.115: a key of 112 whose value is the empty string reads as absent, for every key of the card (2e.5 adds no flag of its own, so 2e.3b reads no key of this card as a flag)', async () => {
-  for (const f of FIELDS) {
+test.each(FIELDS)(
+  '2e.86, 2e.115: a key of 112 whose value is the empty string reads as absent, for every key of the card (2e.5 adds no flag of its own, so 2e.3b reads no key of this card as a flag): $key',
+  async (f) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.89, 2e.112: no field of 112 carries a unit, so the card holds no unit element, and no field label carries MiB', async () => {
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })

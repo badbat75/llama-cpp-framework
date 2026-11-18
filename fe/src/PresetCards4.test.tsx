@@ -798,20 +798,22 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the card (81, 86) ─────────────────────
 
-test('2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123) and not `fit` (2e.3c: `""` reaches the engine as `--fit ""`, which it refuses, criterion 127)', async () => {
-  for (const f of FIELDS) {
-    // op-offload, repack, no-host: the flag reading of 123. fit: `-fit
-    // [on|off]` takes a value, so `""` is invalid, not absent (127, 128; the
-    // rows of 129 are pinned in PresetFlags.test.tsx).
-    if (['op-offload', 'repack', 'no-host', 'fit'].includes(f.key)) continue
+// op-offload, repack, no-host: the flag reading of 123. fit: `-fit
+// [on|off]` takes a value, so `""` is invalid, not absent (127, 128; the
+// rows of 129 are pinned in PresetFlags.test.tsx).
+test.each(
+  FIELDS.filter(
+    (f) => !['op-offload', 'repack', 'no-host', 'fit'].includes(f.key),
+  ),
+)(
+  '2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123) and not `fit` (2e.3c: `""` reaches the engine as `--fit ""`, which it refuses, criterion 127): $key',
+  async (f) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware card holds exactly the 14 fields of 107 in the table order', async () => {
   const { main } = await loaded({
@@ -852,13 +854,14 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware 
 
 // ── Fit to VRAM, the rule 2e.4 takes from the GUI (108, 109) ────────────
 
-test("2e.108, 2e.127, 2h.184: the rule picks the toggle text: preset-fit-allowed when Context size and GPU layers are both absent, preset-fit-not-allowed when not and the box unchecked, and 184's set text when not and checked: the box keeps the file reading of 127, so `fit: true` shows checked in every row", async () => {
-  for (const [ctx, layers] of [
-    [undefined, undefined],
-    ['172032', undefined],
-    [undefined, '99'],
-    ['172032', '99'],
-  ] as [string | undefined, string | undefined][]) {
+test.each([
+  [undefined, undefined],
+  ['172032', undefined],
+  [undefined, '99'],
+  ['172032', '99'],
+] as [string | undefined, string | undefined][])(
+  "2e.108, 2e.127, 2h.184: the rule picks the toggle text: preset-fit-allowed when Context size and GPU layers are both absent, preset-fit-not-allowed when not and the box unchecked, and 184's set text when not and checked: the box keeps the file reading of 127, so `fit: true` shows checked in every row: ctx-size %s, n-gpu-layers %s",
+  async (ctx, layers) => {
     const values: Record<string, string> = { fit: 'true' }
     if (ctx !== undefined) values['ctx-size'] = ctx
     if (layers !== undefined) values['n-gpu-layers'] = layers
@@ -876,30 +879,31 @@ test("2e.108, 2e.127, 2h.184: the rule picks the toggle text: preset-fit-allowed
       fitToggleKey(values),
       `ctx-size ${ctx ?? 'absent'}, n-gpu-layers ${layers ?? 'absent'}`,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
-test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-nothing, values {fit: on} checks it with preset-fit-allowed, values {} checks it, fit TRUE alone is refused so unchecked with the field error', async () => {
+test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-nothing', async () => {
   // Every key of 107 set, and the read holds n-gpu-layers: 184's last row,
   // the nothing-to-fit text. The file's `fit` is `on`, so the box is checked:
   // 127 replaces the unchecked 109 read from 108.
   const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
   fitShows(main, true, 'preset-fit-nothing', 'the stub of 109')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.109, 2h.184: values {fit: on} checks Fit to VRAM with preset-fit-allowed', async () => {
   // `values` {fit: "on"}: allowed, and `on` is on.
   const on = await loaded({ preset: () => reply(200, exactOf({ fit: 'on' })) })
   fitShows(on.main, true, 'preset-fit-allowed', 'values {fit: "on"}')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.109, 2h.184: values {} checks Fit to VRAM with preset-fit-allowed', async () => {
   // `values` {}: allowed, and an absent `fit` is on: llama.cpp's own default
   // (127 replaces the unchecked 109 read from 108).
   const none = await loaded({ preset: () => reply(200, exactOf({})) })
   fitShows(none.main, true, 'preset-fit-allowed', 'values {}')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.109, 2h.184: fit TRUE alone is refused so unchecked with the field error', async () => {
   // `fit` TRUE with nothing else: the engine's two lists are case-sensitive, so
   // it refuses the value: unchecked, with the field error of 128 (109 read it
   // checked, 127 and 128 replace that).
@@ -911,15 +915,17 @@ test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key se
     true_.main.querySelector('#preset-fit-error')?.textContent,
     'fit TRUE: 128: #preset-fit-error names the refused value',
   ).toContain(en('preset-fit-invalid'))
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.109, 2h.184: fit false with nothing else is allowed, unchecked', async () => {
   // `false` with nothing else: allowed, unchecked.
   const off = await loaded({
     preset: () => reply(200, exactOf({ fit: 'false' })),
   })
   fitShows(off.main, false, 'preset-fit-allowed', 'fit false')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.109, 2h.184: fit on with GPU layers set is checked, with 184s text naming the context', async () => {
   // `fit` on with GPU layers set: checked, with 184's text: the engine
   // still fits (127), the text says the context is what is left to fit.
   const layers = await loaded({
@@ -930,21 +936,24 @@ test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key se
 
 // ── The two selects 2e.4 adds (107) ────────────────────────────────────
 
-test('2e.107: Lazy tensors lists default, on, auto, off in that order, absent shows default, each value selects its own option, and the match is exact: Auto and " auto " are one extra last option as written, not auto', async () => {
+test('2e.107: Lazy tensors lists default, on, auto, off in that order, and absent shows default', async () => {
   const f = FIELDS.find((x) => x.key === 'lazy-mode')!
   const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
   expect(optionTexts(selectOf(main, f.label)), 'the options of 107').toEqual(
     LAZY,
   )
   expectAbsentSelect(main, f)
-  cleanup()
-  vi.unstubAllGlobals()
-  for (const [value, shown] of [
-    ['default', LAZY[0]],
-    ['on', LAZY[1]],
-    ['auto', LAZY[2]],
-    ['off', LAZY[3]],
-  ] as [string, string][]) {
+})
+
+test.each([
+  ['default', LAZY[0]],
+  ['on', LAZY[1]],
+  ['auto', LAZY[2]],
+  ['off', LAZY[3]],
+] as [string, string][])(
+  '2e.107: Lazy tensors: each value selects its own option: %s',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'lazy-mode')!
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'lazy-mode': value })),
     })
@@ -956,12 +965,15 @@ test('2e.107: Lazy tensors lists default, on, auto, off in that order, absent sh
     expect(selectedText(select), `lazy-mode ${value}: its own option`).toBe(
       shown,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  // The match is exact here and, since 2h.7's 180, for Load mode too: the case
-  // and the spaces stand.
-  for (const value of ['Auto', ' auto ', 'AUTO+']) {
+  },
+)
+
+// The match is exact here and, since 2h.7's 180, for Load mode too: the case
+// and the spaces stand.
+test.each(['Auto', ' auto ', 'AUTO+'])(
+  '2e.107: Lazy tensors: the match is exact, an unlisted value is one extra last option as written, not auto: %s',
+  async (value) => {
+    const f = FIELDS.find((x) => x.key === 'lazy-mode')!
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'lazy-mode': value })),
     })
@@ -974,21 +986,22 @@ test('2e.107: Lazy tensors lists default, on, auto, off in that order, absent sh
       selectedTextExact(select),
       `lazy-mode ${JSON.stringify(value)}: its own option, as written`,
     ).toBe(value)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
-test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap, mlock, mmap+mlock, dio in that order, absent shows default, each mode selects its own option, and the match is exact: MLOCK, " MLOCK ", MMAP+MLOCK and "  Dio  " are each one extra last option as written, never the mode they resemble', async () => {
+test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap, mlock, mmap+mlock, dio in that order, and absent shows default', async () => {
   const f = FIELDS.find((x) => x.key === 'load-mode')!
   const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
   expect(optionTexts(selectOf(main, f.label)), 'the options of 107').toEqual(
     LOAD,
   )
   expectAbsentSelect(main, f)
-  cleanup()
-  vi.unstubAllGlobals()
-  for (const [value, shown] of LOAD_MODES) {
+})
+
+test.each(LOAD_MODES)(
+  '2e.107, 2h.180: Load mode: each mode selects its own option: %s',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'load-mode')!
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'load-mode': value })),
     })
@@ -1000,13 +1013,16 @@ test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap,
     expect(selectedText(select), `load-mode ${value}: its own option`).toBe(
       shown,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  // 180: the match is EXACT, as llama.cpp's `--load-mode` and the manager's
-  // check compare it: the case and the surrounding space stand, so each of
-  // these is its own extra option, never the mode it resembles.
-  for (const value of ['MLOCK', ' MLOCK ', 'MMAP+MLOCK', '  Dio  ']) {
+  },
+)
+
+// 180: the match is EXACT, as llama.cpp's `--load-mode` and the manager's
+// check compare it: the case and the surrounding space stand, so each of
+// these is its own extra option, never the mode it resembles.
+test.each(['MLOCK', ' MLOCK ', 'MMAP+MLOCK', '  Dio  '])(
+  '2e.107, 2h.180: Load mode: the match is exact, an unlisted mode is one extra last option as written, never the mode it resembles: %s',
+  async (value) => {
+    const f = FIELDS.find((x) => x.key === 'load-mode')!
     const { main: m } = await loaded({
       preset: () => reply(200, exactOf({ 'load-mode': value })),
     })
@@ -1019,9 +1035,11 @@ test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap,
       selectedTextExact(select),
       `load-mode ${JSON.stringify(value)}: its own option, as written`,
     ).toBe(value)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  },
+)
+
+test('2e.107, 2h.180: Load mode, the stub of 109: load-mode MLOCK is the extra option MLOCK, listed last', async () => {
+  const f = FIELDS.find((x) => x.key === 'load-mode')!
   // The stub of 109: load-mode MLOCK is the extra option MLOCK, listed last.
   const set = await loaded({ preset: () => reply(200, docOf(SET)) })
   const sel = selectOf(set.main, f.label)
@@ -1033,8 +1051,10 @@ test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap,
     selectedTextExact(sel),
     'the stub: MLOCK selects MLOCK, not mlock (180)',
   ).toBe('MLOCK')
-  cleanup()
-  vi.unstubAllGlobals()
+})
+
+test('2e.107, 2h.180: Load mode: a value no mode is gets one extra last option, not the GUI fallback to auto', async () => {
+  const f = FIELDS.find((x) => x.key === 'load-mode')!
   // A value no mode is: one extra last option, not the GUI's fallback to auto.
   const miss = await loaded({
     preset: () => reply(200, exactOf({ 'load-mode': 'MLOCKED' })),
@@ -1049,29 +1069,51 @@ test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap,
   )
 })
 
-test('2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack are the shared tri-state (absent default, true on, false off, an unlisted flag value on with no extra option: 2e.3b), No host buffer is off / on (absent and false off, true on)', async () => {
-  for (const key of ['op-offload', 'repack']) {
+test('2e.107, 2e.1.3: Op offload and Repack carry the shared tri-state of 1.3, No host buffer the off / on of 1.3', () => {
+  for (const key of ['op-offload', 'repack'])
+    expect(
+      FIELDS.find((x) => x.key === key)!.options,
+      `${key}: the tri-state of 1.3`,
+    ).toEqual(TRISTATE)
+  expect(
+    FIELDS.find((x) => x.key === 'no-host')!.options,
+    'no-host: the off / on of 1.3',
+  ).toEqual(OFF_ON)
+})
+
+test.each(
+  (['op-offload', 'repack'] as string[]).flatMap((key) =>
+    (
+      [
+        [undefined, en('option-default')],
+        ['true', en('option-on')],
+        ['false', en('option-off')],
+      ] as [string | undefined, string][]
+    ).map(
+      ([value, shown]) =>
+        [key, value, shown] as [string, string | undefined, string],
+    ),
+  ),
+)(
+  '2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack are the shared tri-state (absent default, true on, false off: 2e.3b): %s %s shows %s',
+  async (key, value, shown) => {
     const f = FIELDS.find((x) => x.key === key)!
-    expect(f.options, `${key}: the tri-state of 1.3`).toEqual(TRISTATE)
-    for (const [value, shown] of [
-      [undefined, en('option-default')],
-      ['true', en('option-on')],
-      ['false', en('option-off')],
-    ] as [string | undefined, string][]) {
-      const { main } = await loaded({
-        preset: () =>
-          reply(200, exactOf(value === undefined ? {} : { [key]: value })),
-      })
-      const select = selectOf(main, f.label)
-      expect(optionTexts(select), `${key} ${value}: the three options`).toEqual(
-        TRISTATE,
-      )
-      expect(selectedText(select), `${key} ${value}: shows ${shown}`).toBe(
-        shown,
-      )
-      cleanup()
-      vi.unstubAllGlobals()
-    }
+    const { main } = await loaded({
+      preset: () =>
+        reply(200, exactOf(value === undefined ? {} : { [key]: value })),
+    })
+    const select = selectOf(main, f.label)
+    expect(optionTexts(select), `${key} ${value}: the three options`).toEqual(
+      TRISTATE,
+    )
+    expect(selectedText(select), `${key} ${value}: shows ${shown}`).toBe(shown)
+  },
+)
+
+test.each(['op-offload', 'repack'])(
+  '2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack: an unlisted flag value is on with no extra option (2e.3b): %s',
+  async (key) => {
+    const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [key]: 'yes' })),
     })
@@ -1083,16 +1125,17 @@ test('2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack are the shared tri-s
     expect(selectedText(select), `${key}: yes is on, not an extra option`).toBe(
       en('option-on'),
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  const f = FIELDS.find((x) => x.key === 'no-host')!
-  expect(f.options, 'no-host: the off / on of 1.3').toEqual(OFF_ON)
-  for (const [value, shown] of [
-    [undefined, en('option-off')],
-    ['false', en('option-off')],
-    ['true', en('option-on')],
-  ] as [string | undefined, string][]) {
+  },
+)
+
+test.each([
+  [undefined, en('option-off')],
+  ['false', en('option-off')],
+  ['true', en('option-on')],
+] as [string | undefined, string][])(
+  '2e.107, 2e.1.3, 2e.122, 2e.125: No host buffer is off / on (absent and false off, true on): %s shows %s',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'no-host')!
     const { main } = await loaded({
       preset: () =>
         reply(200, exactOf(value === undefined ? {} : { 'no-host': value })),
@@ -1102,10 +1145,8 @@ test('2e.107, 2e.1.3, 2e.122, 2e.125: Op offload and Repack are the shared tri-s
       OFF_ON,
     )
     expect(selectedText(select), `no-host ${value}: shows ${shown}`).toBe(shown)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The device select of 103 with its own empty option (107, 110) ───────
 
@@ -1119,8 +1160,9 @@ test('2e.103, 2e.107: Draft device absent holds only the empty option, whose val
   expect(select.disabled, 'the select disabled').toBe(true)
 })
 
-test('2e.103, 2e.107: Draft device present keeps the empty option first and adds one option whose value and text are the reply string as written, selected; and each device select carries its own empty option of 110', async () => {
-  for (const value of ['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu']) {
+test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
+  '2e.103, 2e.107: Draft device present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: %s',
+  async (value) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ 'device-draft': value })),
     })
@@ -1144,9 +1186,10 @@ test('2e.103, 2e.107: Draft device present keeps the empty option first and adds
       optionTexts(select).join(' '),
       `${value}: no (custom) marker on the data`,
     ).not.toContain('(custom)')
-    cleanup()
-    vi.unstubAllGlobals()
-  }
+  },
+)
+
+test('2e.103, 2e.107: each device select carries its own empty option of 110', async () => {
   // 110: Vision GPU keeps preset-device-follows-model, Draft device its own.
   const { main } = await loaded({
     preset: () =>

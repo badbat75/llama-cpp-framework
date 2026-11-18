@@ -647,17 +647,19 @@ test.each(FIELDS)(
 
 // ── Absent keys and the fields of the cards (81, 86) ────────────────────
 
-test('2e.86, 2e.99: a key of 96, 97 or 98 whose value is the empty string reads as absent, for every key of 2e.2 that is not a flag (2e.3b: a flag reads "" as on, criterion 123)', async () => {
-  for (const f of FIELDS) {
-    if (f.key === 'backend-sampling' || f.key === 'load-on-startup') continue
+test.each(
+  FIELDS.filter(
+    (f) => f.key !== 'backend-sampling' && f.key !== 'load-on-startup',
+  ),
+)(
+  '2e.86, 2e.99: $key is the empty string so it reads as absent, and its field shows the absent form (2e.3b: a flag reads "" as on, criterion 123)',
+  async (f) => {
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the three cards of 2e.2 hold exactly the fields of 96, 97 and 98 in the table order', async () => {
   const { main } = await loaded({
@@ -690,8 +692,9 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the three car
 
 // ── The cache types (96) ────────────────────────────────────────────────
 
-test('2e.96: both cache-type selects list default then the ten literals of MP 95-96, in order and with the file values, and each listed value selects its own option', async () => {
-  for (const key of ['cache-type-k', 'cache-type-v']) {
+test.each(['cache-type-k', 'cache-type-v'])(
+  '2e.96: %s lists default then the ten literals of MP 95-96, in order and with the file values, and q8_0 selects its own option',
+  async (key) => {
     const label = en(
       key === 'cache-type-k' ? 'preset-k-cache-type' : 'preset-v-cache-type',
     )
@@ -710,21 +713,28 @@ test('2e.96: both cache-type selects list default then the ten literals of MP 95
     expect(selectedText(select), `${key}: q8_0 selects its own option`).toBe(
       'q8_0',
     )
-    cleanup()
-    vi.unstubAllGlobals()
-    for (const value of CACHE_TYPE_VALUES.slice(1)) {
-      const { main } = await loaded({
-        preset: () => reply(200, exactOf({ [key]: value })),
-      })
-      expect(
-        selectedText(selectOf(main, label)),
-        `${key}: ${value} selects its own option`,
-      ).toBe(value)
-      cleanup()
-      vi.unstubAllGlobals()
-    }
-  }
-})
+  },
+)
+
+test.each(
+  (['cache-type-k', 'cache-type-v'] as string[]).flatMap((key) =>
+    CACHE_TYPE_VALUES.slice(1).map((value) => [key, value] as [string, string]),
+  ),
+)(
+  '2e.96: each listed cache type value selects its own option: %s %s',
+  async (key, value) => {
+    const label = en(
+      key === 'cache-type-k' ? 'preset-k-cache-type' : 'preset-v-cache-type',
+    )
+    const { main } = await loaded({
+      preset: () => reply(200, exactOf({ [key]: value })),
+    })
+    expect(
+      selectedText(selectOf(main, label)),
+      `${key}: ${value} selects its own option`,
+    ).toBe(value)
+  },
+)
 
 test('2e.96, 2e.99: a cache type no option lists (q3_k) becomes one extra last option carrying it as its value and its text, selected, and so does one differing only in case', async () => {
   for (const value of ['q3_k', 'F16']) {
@@ -757,12 +767,13 @@ test('2e.96, 2e.99: a cache type no option lists (q3_k) becomes one extra last o
   }
 })
 
-test('2e.97, 2e.1.3: Flash attention and Backend sampling are the tri-state and Load on startup is off / on, with the shared option texts and their mappings', async () => {
-  for (const [key, options] of [
-    ['flash-attn', TRISTATE],
-    ['backend-sampling', TRISTATE],
-    ['load-on-startup', OFF_ON],
-  ] as [string, string[]][]) {
+test.each([
+  ['flash-attn', TRISTATE],
+  ['backend-sampling', TRISTATE],
+  ['load-on-startup', OFF_ON],
+] as [string, string[]][])(
+  '2e.97, 2e.1.3: %s is the tri-state/off-on with the shared option texts and their mappings',
+  async (key, options) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [key]: 'false' })),
@@ -780,10 +791,8 @@ test('2e.97, 2e.1.3: Flash attention and Backend sampling are the tri-state and 
       preset: () => reply(200, exactOf({})),
     })
     expectAbsentSelect(absentMain, f)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
 // ── The unit, the numbers and the text field (87, 89, 99) ──────────────
 
@@ -832,14 +841,15 @@ test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeri
   }
 })
 
-test('2e.87, 2e.99: a number of 2e.2 shows the reply string exactly, with no parsing and no reformatting: a comma decimal, a negative, a trailing zero, a leading zero, spaces', async () => {
-  for (const [key, value] of [
-    ['presence-penalty', '1,5'],
-    ['temp', '0.60'],
-    ['cache-ram', '-1'],
-    ['top-k', '020'],
-    ['min-p', ' 0 '],
-  ] as [string, string][]) {
+test.each([
+  ['presence-penalty', '1,5'],
+  ['temp', '0.60'],
+  ['cache-ram', '-1'],
+  ['top-k', '020'],
+  ['min-p', ' 0 '],
+] as [string, string][])(
+  '2e.87, 2e.99: a number of 2e.2 shows the reply string exactly, with no parsing and no reformatting: %s %s',
+  async (key, value) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [key]: value })),
@@ -849,21 +859,22 @@ test('2e.87, 2e.99: a number of 2e.2 shows the reply string exactly, with no par
     expect(boxOf(group).checked, `${key} ${value}: the box unticked`).toBe(
       false,
     )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
 
-test('2e.98, 2e.87, 2h.164: Chat kwargs is a text field: a monospace input named by its label showing the reply string exactly, absent an empty input with no placeholder, enabled and with no unit', async () => {
-  const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
-  for (const [value, shown] of [
-    ['{"enable_thinking":false}', '{"enable_thinking":false}'],
-    ['a b  c', 'a b  c'],
-    // Spaces and case kept: a value trimmed or lower-cased on the way to the
-    // input is not the file's string.
-    [' {"A_b":TRUE} ', ' {"A_b":TRUE} '],
-    ['', ''],
-  ] as [string, string][]) {
+const CHAT_KWARGS_VALUES = [
+  ['{"enable_thinking":false}', '{"enable_thinking":false}'],
+  ['a b  c', 'a b  c'],
+  // Spaces and case kept: a value trimmed or lower-cased on the way to the
+  // input is not the file's string.
+  [' {"A_b":TRUE} ', ' {"A_b":TRUE} '],
+  ['', ''],
+] as [string, string][]
+
+test.each(CHAT_KWARGS_VALUES.slice(0, 2))(
+  '2e.98, 2e.87, 2h.164: Chat kwargs is a text field: a monospace input named by its label showing the reply string exactly, absent an empty input with no placeholder, enabled and with no unit: value %s (first half)',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
     const { main } = await loaded({
       preset: () => reply(200, exactOf({ [f.key]: value })),
     })
@@ -886,10 +897,37 @@ test('2e.98, 2e.87, 2h.164: Chat kwargs is a text field: a monospace input named
     // Monospace is drawn by Field.tsx's mono class: jsdom reads no font.
     expect(input.className, `${f.key}: monospace`).toContain('mono')
     expect(field.querySelectorAll('.unit').length, `${f.key}: no unit`).toBe(0)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
+  },
+)
+
+test.each(CHAT_KWARGS_VALUES.slice(2))(
+  '2e.98, 2e.87, 2h.164: Chat kwargs is a text field: a monospace input named by its label showing the reply string exactly, absent an empty input with no placeholder, enabled and with no unit: value %s (second half)',
+  async (value, shown) => {
+    const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
+    const { main } = await loaded({
+      preset: () => reply(200, exactOf({ [f.key]: value })),
+    })
+    const field = fieldOf(main, f.label)
+    const input = inputOfField(main, f.label)
+    expect(input.value, `${f.key} ${value}: shown as written`).toBe(shown)
+    expect(
+      input.getAttribute('placeholder') ?? '',
+      `${f.key} ${value}: no placeholder in 2e`,
+    ).toBe('')
+    expect(input.disabled, `${f.key}: the input enabled (2h.164)`).toBe(false)
+    expect(
+      input.getAttribute('aria-disabled'),
+      `${f.key}: never aria-disabled`,
+    ).toBeNull()
+    expect(
+      input.getAttribute('readonly'),
+      `${f.key}: never readonly`,
+    ).toBeNull()
+    // Monospace is drawn by Field.tsx's mono class: jsdom reads no font.
+    expect(input.className, `${f.key}: monospace`).toContain('mono')
+    expect(field.querySelectorAll('.unit').length, `${f.key}: no unit`).toBe(0)
+  },
+)
 
 // ── The cards: tables only, disabled, in their place (83, 85, 90) ──────
 
