@@ -22,7 +22,7 @@ import Models from './Models.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
-import PresetPage from './PresetPage.tsx'
+import ModelProfilePage from './ModelProfilePage.tsx'
 import { instanceHref, parseRoute, type Route } from './route.ts'
 import { readSession, signOut, type Session } from './session.ts'
 import SignIn from './SignIn.tsx'
@@ -273,15 +273,15 @@ export default function App() {
           {session && (
             <ul>
               <li>
-                {/* The preset page belongs to the list without being it, so the
-                    list is its current item, not its current page
+                {/* The model profile page belongs to the list without being it,
+                    so the list is its current item, not its current page
                     (02-models.md, 2d.64). */}
                 <a
                   href="#/models"
                   aria-current={
                     route.page === 'models'
                       ? 'page'
-                      : route.page === 'preset'
+                      : route.page === 'model-profile'
                         ? 'true'
                         : undefined
                   }
@@ -445,9 +445,9 @@ function Page({
       />
     )
   }
-  if (route.page === 'preset') {
+  if (route.page === 'model-profile') {
     return (
-      <PresetPage
+      <ModelProfilePage
         id={route.id}
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}

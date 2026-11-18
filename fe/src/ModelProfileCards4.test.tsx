@@ -1,4 +1,4 @@
-// The Hardware card of 2e.4 on the preset page (fe/briefs/02e-preset-cards.md,
+// The Hardware card of 2e.4 on the model profile page (fe/briefs/02e-model-profile-cards.md,
 // criteria 107 to 111): the field table of 107 (six numbers, four selects, the
 // device select of 103, one checkbox, one text, two MiB units), what 2e.4
 // brings that the earlier sub-slices did not have: the Fit to VRAM checkbox of
@@ -8,23 +8,23 @@
 // exactly, and the load-mode select matched ignoring case and space while
 // disabled (2e's 107), now exactly, since 2h.7 enables it (180). The
 // shared rules of section 1 are pinned for the cards of 2e.1 in
-// PresetCards1.test.tsx, for those of 2e.2 in PresetCards2.test.tsx and for
-// what 2e.3 adds in PresetCards3.test.tsx; here they are pinned for the
+// ModelProfileCards1.test.tsx, for those of 2e.2 in ModelProfileCards2.test.tsx and for
+// what 2e.3 adds in ModelProfileCards3.test.tsx; here they are pinned for the
 // Hardware card. 2h.7's 175 to 180 retarget what 2e left read-only: the seven
 // `always` rows and the draft pair (behind `model-draft`, 177) are enabled, the
 // Fit trio is enabled by 2h.8 (the box always, its two dependents while the box
 // is checked, 183 and 186), the two MoE rows (178) stay natively disabled, the
 // card holds the two note rows of 177 and 178, and load-mode is matched exactly
 // (180): `MLOCK` is the extra option `MLOCK`. The editing itself (the draft,
-// what a save sends, the checks) is PresetSave13.test.tsx, and for the Fit trio
-// PresetSave14.test.tsx.
+// what a save sends, the checks) is ModelProfileSave13.test.tsx, and for the Fit trio
+// ModelProfileSave14.test.tsx.
 // The checkbox is pinned here for the `on` value of the 109 stub
 // and for the absent key only: every row of the 129 table, with the written-as
-// line and the field error, is pinned in PresetFlags.test.tsx. The route and
+// line and the field error, is pinned in ModelProfileFlags.test.tsx. The route and
 // the read are
-// PresetPage.test.tsx, the Engine field and the Assets card are
-// PresetContent.test.tsx, the full-value line as a rule is
-// PresetFullValue.test.tsx. The colours of 85, the width of 91 and the muted
+// ModelProfilePage.test.tsx, the Engine field and the Assets card are
+// ModelProfileContent.test.tsx, the full-value line as a rule is
+// ModelProfileFullValue.test.tsx. The colours of 85, the width of 91 and the muted
 // style of 90 are checked in review, not in jsdom.
 import {
   cleanup,
@@ -40,7 +40,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -56,7 +56,7 @@ import {
   fitToggleText,
   pageStartTabStops,
   saveBarTabStops,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -115,10 +115,10 @@ const LOAD_MODES: [string, string][] = [
 ]
 
 /** The empty option of the Draft device select (107, 110). */
-const SAME = en('preset-device-same-as-model')
+const SAME = en('model-profile-device-same-as-model')
 
 /** The card of 107. */
-const CARD = 'preset-hardware-config'
+const CARD = 'model-profile-hardware-config'
 
 /** When 2h.7's 175 to 178 and 2h.8's 183 to 186 leave a row's controls
  * enabled. */
@@ -166,8 +166,8 @@ const FIELDS: Row[] = [
   {
     key: 'n-gpu-layers',
     enable: 'always',
-    label: en('preset-gpu-layers'),
-    hint: 'preset-gpu-layers-hint',
+    label: en('model-profile-gpu-layers'),
+    hint: 'model-profile-gpu-layers-hint',
     kind: 'number',
     integer: true,
     set: '99',
@@ -175,9 +175,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'n-cpu-moe',
-    label: en('preset-moe-cpu-layers'),
+    label: en('model-profile-moe-cpu-layers'),
     enable: 'read-only',
-    hint: 'preset-moe-cpu-layers-hint',
+    hint: 'model-profile-moe-cpu-layers-hint',
     kind: 'number',
     integer: true,
     set: '20',
@@ -185,9 +185,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'moe-cache-mib',
-    label: en('preset-moe-cache'),
+    label: en('model-profile-moe-cache'),
     enable: 'read-only',
-    hint: 'preset-moe-cache-hint',
+    hint: 'model-profile-moe-cache-hint',
     kind: 'number',
     integer: true,
     unit: 'MiB',
@@ -196,9 +196,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'n-cpu-ffn',
-    label: en('preset-dense-ffn-cpu-layers'),
+    label: en('model-profile-dense-ffn-cpu-layers'),
     enable: 'always',
-    hint: 'preset-dense-ffn-cpu-layers-hint',
+    hint: 'model-profile-dense-ffn-cpu-layers-hint',
     kind: 'number',
     integer: true,
     set: '4',
@@ -206,9 +206,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'op-offload',
-    label: en('preset-op-offload'),
+    label: en('model-profile-op-offload'),
     enable: 'always',
-    hint: 'preset-op-offload-hint',
+    hint: 'model-profile-op-offload-hint',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -217,9 +217,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'repack',
-    label: en('preset-repack'),
+    label: en('model-profile-repack'),
     enable: 'always',
-    hint: 'preset-repack-hint',
+    hint: 'model-profile-repack-hint',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -228,9 +228,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'no-host',
-    label: en('preset-no-host-buffer'),
+    label: en('model-profile-no-host-buffer'),
     enable: 'always',
-    hint: 'preset-no-host-buffer-hint',
+    hint: 'model-profile-no-host-buffer-hint',
     kind: 'select',
     options: OFF_ON,
     absentOption: en('option-off'),
@@ -239,9 +239,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'lazy-mode',
-    label: en('preset-lazy-tensors'),
+    label: en('model-profile-lazy-tensors'),
     enable: 'always',
-    hint: 'preset-lazy-tensors-hint',
+    hint: 'model-profile-lazy-tensors-hint',
     kind: 'select',
     options: LAZY,
     absentOption: en('option-default'),
@@ -250,9 +250,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'load-mode',
-    label: en('preset-load-mode'),
+    label: en('model-profile-load-mode'),
     enable: 'always',
-    hint: 'preset-load-mode-hint',
+    hint: 'model-profile-load-mode-hint',
     kind: 'select',
     // 180: the select is enabled, so the match is exact and the stub's `MLOCK`
     // stands as the extra option the file's value, listed last.
@@ -263,10 +263,10 @@ const FIELDS: Row[] = [
   },
   {
     key: 'fit',
-    label: en('preset-fit-to-vram'),
+    label: en('model-profile-fit-to-vram'),
     // 183: the box is always editable: the rule of 108 picks its text only.
     enable: 'always',
-    hint: 'preset-fit-to-vram-hint',
+    hint: 'model-profile-fit-to-vram-hint',
     kind: 'checkbox',
     // 127: the box is checked when `fit` is absent (llama.cpp's default) and
     // when it is one of the four on values, so `on` reads checked and the
@@ -278,10 +278,10 @@ const FIELDS: Row[] = [
   },
   {
     key: 'fit-ctx',
-    label: en('preset-fit-min-context'),
+    label: en('model-profile-fit-min-context'),
     // 186: the dependent of the box, enabled while it is checked.
     enable: 'fit-checked',
-    hint: 'preset-fit-min-context-hint',
+    hint: 'model-profile-fit-min-context-hint',
     kind: 'number',
     integer: true,
     set: '8192',
@@ -289,10 +289,10 @@ const FIELDS: Row[] = [
   },
   {
     key: 'fit-target',
-    label: en('preset-fit-free-vram'),
+    label: en('model-profile-fit-free-vram'),
     // 186: the other dependent of the box.
     enable: 'fit-checked',
-    hint: 'preset-fit-free-vram-hint',
+    hint: 'model-profile-fit-free-vram-hint',
     kind: 'text',
     unit: 'MiB',
     set: '2048,1024',
@@ -300,9 +300,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'device-draft',
-    label: en('preset-draft-device'),
+    label: en('model-profile-draft-device'),
     enable: 'model-draft',
-    hint: 'preset-draft-device-hint',
+    hint: 'model-profile-draft-device-hint',
     kind: 'device',
     absentOption: SAME,
     set: 'ROCm1',
@@ -310,9 +310,9 @@ const FIELDS: Row[] = [
   },
   {
     key: 'n-gpu-layers-draft',
-    label: en('preset-draft-gpu-layers'),
+    label: en('model-profile-draft-gpu-layers'),
     enable: 'model-draft',
-    hint: 'preset-draft-gpu-layers-hint',
+    hint: 'model-profile-draft-gpu-layers-hint',
     kind: 'number',
     integer: true,
     set: '0',
@@ -322,38 +322,38 @@ const FIELDS: Row[] = [
 
 /** The 32 new strings of 110. */
 const NEW_STRINGS = [
-  'preset-hardware-config',
-  'preset-gpu-layers',
-  'preset-gpu-layers-hint',
-  'preset-moe-cpu-layers',
-  'preset-moe-cpu-layers-hint',
-  'preset-moe-cache',
-  'preset-moe-cache-hint',
-  'preset-dense-ffn-cpu-layers',
-  'preset-dense-ffn-cpu-layers-hint',
-  'preset-op-offload',
-  'preset-op-offload-hint',
-  'preset-repack',
-  'preset-repack-hint',
-  'preset-no-host-buffer',
-  'preset-no-host-buffer-hint',
-  'preset-lazy-tensors',
-  'preset-lazy-tensors-hint',
-  'preset-load-mode',
-  'preset-load-mode-hint',
-  'preset-fit-to-vram',
-  'preset-fit-to-vram-hint',
-  'preset-fit-allowed',
-  'preset-fit-not-allowed',
-  'preset-fit-min-context',
-  'preset-fit-min-context-hint',
-  'preset-fit-free-vram',
-  'preset-fit-free-vram-hint',
-  'preset-draft-device',
-  'preset-draft-device-hint',
-  'preset-draft-gpu-layers',
-  'preset-draft-gpu-layers-hint',
-  'preset-device-same-as-model',
+  'model-profile-hardware-config',
+  'model-profile-gpu-layers',
+  'model-profile-gpu-layers-hint',
+  'model-profile-moe-cpu-layers',
+  'model-profile-moe-cpu-layers-hint',
+  'model-profile-moe-cache',
+  'model-profile-moe-cache-hint',
+  'model-profile-dense-ffn-cpu-layers',
+  'model-profile-dense-ffn-cpu-layers-hint',
+  'model-profile-op-offload',
+  'model-profile-op-offload-hint',
+  'model-profile-repack',
+  'model-profile-repack-hint',
+  'model-profile-no-host-buffer',
+  'model-profile-no-host-buffer-hint',
+  'model-profile-lazy-tensors',
+  'model-profile-lazy-tensors-hint',
+  'model-profile-load-mode',
+  'model-profile-load-mode-hint',
+  'model-profile-fit-to-vram',
+  'model-profile-fit-to-vram-hint',
+  'model-profile-fit-allowed',
+  'model-profile-fit-not-allowed',
+  'model-profile-fit-min-context',
+  'model-profile-fit-min-context-hint',
+  'model-profile-fit-free-vram',
+  'model-profile-fit-free-vram-hint',
+  'model-profile-draft-device',
+  'model-profile-draft-device-hint',
+  'model-profile-draft-gpu-layers',
+  'model-profile-draft-gpu-layers-hint',
+  'model-profile-device-same-as-model',
 ]
 
 /** The controls 107 puts in the card: a box and an input per number, one
@@ -368,7 +368,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards3.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards3.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -383,7 +383,7 @@ async function loaded(options: BffOptions = {}) {
   const h1 = await within(main).findByRole('heading', { level: 1, name: ID })
   const h3 = await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main, h1, h3 }
 }
@@ -393,18 +393,18 @@ function docOf(
   values: Record<string, string>,
   extra: Record<string, unknown> = {},
 ) {
-  return presetDoc({ model: MODEL, ...values }, extra)
+  return modelProfileDoc({ model: MODEL, ...values }, extra)
 }
 
 /** A read whose `values` are exactly `values` (the stubs of 109). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 function settingsTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
@@ -660,7 +660,9 @@ function rowEnabled(f: Row, values: Record<string, string>): boolean {
 test.each(FIELDS)(
   '2e.107, 2e.87, 2h.158, 2h.175: $key is a $kind named by $label inside the Hardware card, shows the set value $set as the reply holds it, and its controls are natively enabled exactly as $enable says',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const on = rowEnabled(f, docOf(SET).values)
     const field = fieldOf(main, f.label)
     expect(
@@ -755,7 +757,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.86, 2e.109: $key is absent from a values of {} so its field shows the absent form of $kind',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf({})),
+    })
     expectAbsent(main, f)
   },
 )
@@ -763,7 +767,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.88: $key has an About toggle named About its label, with aria-expanded and aria-controls, and its hint opens as one paragraph per line of the GUI text and closes again',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const lines = en(f.hint).split('\n')
     expect(lines.length, `${f.hint}: the hint has lines`).toBeGreaterThan(0)
     const about = aboutOf(main, f.label)
@@ -800,7 +806,7 @@ test.each(FIELDS)(
 
 // op-offload, repack, no-host: the flag reading of 123. fit: `-fit
 // [on|off]` takes a value, so `""` is invalid, not absent (127, 128; the
-// rows of 129 are pinned in PresetFlags.test.tsx).
+// rows of 129 are pinned in ModelProfileFlags.test.tsx).
 test.each(
   FIELDS.filter(
     (f) => !['op-offload', 'repack', 'no-host', 'fit'].includes(f.key),
@@ -809,7 +815,7 @@ test.each(
   '2e.86, 2e.109: a key of 107 whose value is the empty string reads as absent, for every key of the Hardware card that is not a flag (2e.3b: a flag reads "" as on, criterion 123) and not `fit` (2e.3c: `""` reaches the engine as `--fit ""`, which it refuses, criterion 127): $key',
   async (f) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
   },
@@ -817,7 +823,7 @@ test.each(
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware card holds exactly the 14 fields of 107 in the table order', async () => {
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         docOf({
@@ -837,7 +843,7 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Hardware 
   // 81: the key adds no Field, so the card carries no id, no label and no
   // shown text for it. The values are the reply's, and a missing strings key
   // shows as its key, so all three secrets read as plain text; the ids are
-  // what a Field gives a control (`preset-<key>-control`, `-box`, `-hint`).
+  // what a Field gives a control (`model-profile-<key>-control`, `-box`, `-hint`).
   const shown = cardText(card)
   for (const secret of ['zz-secret', 'draft-max', 'tensor-split']) {
     expect(shown, `${en(CARD)}: ${secret} is not shown`).not.toContain(secret)
@@ -860,13 +866,13 @@ test.each([
   [undefined, '99'],
   ['172032', '99'],
 ] as [string | undefined, string | undefined][])(
-  "2e.108, 2e.127, 2h.184: the rule picks the toggle text: preset-fit-allowed when Context size and GPU layers are both absent, preset-fit-not-allowed when not and the box unchecked, and 184's set text when not and checked: the box keeps the file reading of 127, so `fit: true` shows checked in every row: ctx-size %s, n-gpu-layers %s",
+  "2e.108, 2e.127, 2h.184: the rule picks the toggle text: model-profile-fit-allowed when Context size and GPU layers are both absent, model-profile-fit-not-allowed when not and the box unchecked, and 184's set text when not and checked: the box keeps the file reading of 127, so `fit: true` shows checked in every row: ctx-size %s, n-gpu-layers %s",
   async (ctx, layers) => {
     const values: Record<string, string> = { fit: 'true' }
     if (ctx !== undefined) values['ctx-size'] = ctx
     if (layers !== undefined) values['n-gpu-layers'] = layers
     const { main } = await loaded({
-      preset: () => reply(200, exactOf(values)),
+      modelProfile: () => reply(200, exactOf(values)),
     })
     fitShows(
       main,
@@ -882,25 +888,27 @@ test.each([
   },
 )
 
-test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with preset-fit-nothing', async () => {
+test('2e.109, 2h.184: the stub of 109 shows as 127 and 128 read it: every key set checks Fit to VRAM with model-profile-fit-nothing', async () => {
   // Every key of 107 set, and the read holds n-gpu-layers: 184's last row,
   // the nothing-to-fit text. The file's `fit` is `on`, so the box is checked:
   // 127 replaces the unchecked 109 read from 108.
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
-  fitShows(main, true, 'preset-fit-nothing', 'the stub of 109')
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
+  fitShows(main, true, 'model-profile-fit-nothing', 'the stub of 109')
 })
 
-test('2e.109, 2h.184: values {fit: on} checks Fit to VRAM with preset-fit-allowed', async () => {
+test('2e.109, 2h.184: values {fit: on} checks Fit to VRAM with model-profile-fit-allowed', async () => {
   // `values` {fit: "on"}: allowed, and `on` is on.
-  const on = await loaded({ preset: () => reply(200, exactOf({ fit: 'on' })) })
-  fitShows(on.main, true, 'preset-fit-allowed', 'values {fit: "on"}')
+  const on = await loaded({
+    modelProfile: () => reply(200, exactOf({ fit: 'on' })),
+  })
+  fitShows(on.main, true, 'model-profile-fit-allowed', 'values {fit: "on"}')
 })
 
-test('2e.109, 2h.184: values {} checks Fit to VRAM with preset-fit-allowed', async () => {
+test('2e.109, 2h.184: values {} checks Fit to VRAM with model-profile-fit-allowed', async () => {
   // `values` {}: allowed, and an absent `fit` is on: llama.cpp's own default
   // (127 replaces the unchecked 109 read from 108).
-  const none = await loaded({ preset: () => reply(200, exactOf({})) })
-  fitShows(none.main, true, 'preset-fit-allowed', 'values {}')
+  const none = await loaded({ modelProfile: () => reply(200, exactOf({})) })
+  fitShows(none.main, true, 'model-profile-fit-allowed', 'values {}')
 })
 
 test('2e.109, 2h.184: fit TRUE alone is refused so unchecked with the field error', async () => {
@@ -908,37 +916,43 @@ test('2e.109, 2h.184: fit TRUE alone is refused so unchecked with the field erro
   // it refuses the value: unchecked, with the field error of 128 (109 read it
   // checked, 127 and 128 replace that).
   const true_ = await loaded({
-    preset: () => reply(200, exactOf({ fit: 'TRUE' })),
+    modelProfile: () => reply(200, exactOf({ fit: 'TRUE' })),
   })
-  fitShows(true_.main, false, 'preset-fit-allowed', 'fit TRUE')
+  fitShows(true_.main, false, 'model-profile-fit-allowed', 'fit TRUE')
   expect(
-    true_.main.querySelector('#preset-fit-error')?.textContent,
-    'fit TRUE: 128: #preset-fit-error names the refused value',
-  ).toContain(en('preset-fit-invalid'))
+    true_.main.querySelector('#model-profile-fit-error')?.textContent,
+    'fit TRUE: 128: #model-profile-fit-error names the refused value',
+  ).toContain(en('model-profile-fit-invalid'))
 })
 
 test('2e.109, 2h.184: fit false with nothing else is allowed, unchecked', async () => {
   // `false` with nothing else: allowed, unchecked.
   const off = await loaded({
-    preset: () => reply(200, exactOf({ fit: 'false' })),
+    modelProfile: () => reply(200, exactOf({ fit: 'false' })),
   })
-  fitShows(off.main, false, 'preset-fit-allowed', 'fit false')
+  fitShows(off.main, false, 'model-profile-fit-allowed', 'fit false')
 })
 
 test('2e.109, 2h.184: fit on with GPU layers set is checked, with 184s text naming the context', async () => {
   // `fit` on with GPU layers set: checked, with 184's text: the engine
   // still fits (127), the text says the context is what is left to fit.
   const layers = await loaded({
-    preset: () => reply(200, exactOf({ fit: 'on', 'n-gpu-layers': '99' })),
+    modelProfile: () =>
+      reply(200, exactOf({ fit: 'on', 'n-gpu-layers': '99' })),
   })
-  fitShows(layers.main, true, 'preset-fit-context-only', 'fit on, layers set')
+  fitShows(
+    layers.main,
+    true,
+    'model-profile-fit-context-only',
+    'fit on, layers set',
+  )
 })
 
 // ── The two selects 2e.4 adds (107) ────────────────────────────────────
 
 test('2e.107: Lazy tensors lists default, on, auto, off in that order, and absent shows default', async () => {
   const f = FIELDS.find((x) => x.key === 'lazy-mode')!
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   expect(optionTexts(selectOf(main, f.label)), 'the options of 107').toEqual(
     LAZY,
   )
@@ -955,7 +969,7 @@ test.each([
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'lazy-mode')!
     const { main: m } = await loaded({
-      preset: () => reply(200, exactOf({ 'lazy-mode': value })),
+      modelProfile: () => reply(200, exactOf({ 'lazy-mode': value })),
     })
     const select = selectOf(m, f.label)
     expect(
@@ -975,7 +989,7 @@ test.each(['Auto', ' auto ', 'AUTO+'])(
   async (value) => {
     const f = FIELDS.find((x) => x.key === 'lazy-mode')!
     const { main: m } = await loaded({
-      preset: () => reply(200, exactOf({ 'lazy-mode': value })),
+      modelProfile: () => reply(200, exactOf({ 'lazy-mode': value })),
     })
     const select = selectOf(m, f.label)
     expect(
@@ -991,7 +1005,7 @@ test.each(['Auto', ' auto ', 'AUTO+'])(
 
 test('2e.107, 2h.180: Load mode lists default, auto, none and the literals mmap, mlock, mmap+mlock, dio in that order, and absent shows default', async () => {
   const f = FIELDS.find((x) => x.key === 'load-mode')!
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   expect(optionTexts(selectOf(main, f.label)), 'the options of 107').toEqual(
     LOAD,
   )
@@ -1003,7 +1017,7 @@ test.each(LOAD_MODES)(
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'load-mode')!
     const { main: m } = await loaded({
-      preset: () => reply(200, exactOf({ 'load-mode': value })),
+      modelProfile: () => reply(200, exactOf({ 'load-mode': value })),
     })
     const select = selectOf(m, f.label)
     expect(
@@ -1024,7 +1038,7 @@ test.each(['MLOCK', ' MLOCK ', 'MMAP+MLOCK', '  Dio  '])(
   async (value) => {
     const f = FIELDS.find((x) => x.key === 'load-mode')!
     const { main: m } = await loaded({
-      preset: () => reply(200, exactOf({ 'load-mode': value })),
+      modelProfile: () => reply(200, exactOf({ 'load-mode': value })),
     })
     const select = selectOf(m, f.label)
     expect(
@@ -1041,7 +1055,7 @@ test.each(['MLOCK', ' MLOCK ', 'MMAP+MLOCK', '  Dio  '])(
 test('2e.107, 2h.180: Load mode, the stub of 109: load-mode MLOCK is the extra option MLOCK, listed last', async () => {
   const f = FIELDS.find((x) => x.key === 'load-mode')!
   // The stub of 109: load-mode MLOCK is the extra option MLOCK, listed last.
-  const set = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const set = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const sel = selectOf(set.main, f.label)
   expect(optionTexts(sel), 'the stub: the seven options, then MLOCK').toEqual([
     ...LOAD,
@@ -1057,7 +1071,7 @@ test('2e.107, 2h.180: Load mode: a value no mode is gets one extra last option, 
   const f = FIELDS.find((x) => x.key === 'load-mode')!
   // A value no mode is: one extra last option, not the GUI's fallback to auto.
   const miss = await loaded({
-    preset: () => reply(200, exactOf({ 'load-mode': 'MLOCKED' })),
+    modelProfile: () => reply(200, exactOf({ 'load-mode': 'MLOCKED' })),
   })
   const select = selectOf(miss.main, f.label)
   expect(
@@ -1099,7 +1113,7 @@ test.each(
   async (key, value, shown) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () =>
+      modelProfile: () =>
         reply(200, exactOf(value === undefined ? {} : { [key]: value })),
     })
     const select = selectOf(main, f.label)
@@ -1115,7 +1129,7 @@ test.each(['op-offload', 'repack'])(
   async (key) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: 'yes' })),
+      modelProfile: () => reply(200, exactOf({ [key]: 'yes' })),
     })
     const select = selectOf(main, f.label)
     expect(
@@ -1137,7 +1151,7 @@ test.each([
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'no-host')!
     const { main } = await loaded({
-      preset: () =>
+      modelProfile: () =>
         reply(200, exactOf(value === undefined ? {} : { 'no-host': value })),
     })
     const select = selectOf(main, f.label)
@@ -1150,9 +1164,9 @@ test.each([
 
 // ── The device select of 103 with its own empty option (107, 110) ───────
 
-test('2e.103, 2e.107: Draft device absent holds only the empty option, whose value is the empty string and whose text is preset-device-same-as-model, selected; the page lists no device, it has no device list in 2e', async () => {
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
-  const select = selectOf(main, en('preset-draft-device'))
+test('2e.103, 2e.107: Draft device absent holds only the empty option, whose value is the empty string and whose text is model-profile-device-same-as-model, selected; the page lists no device, it has no device list in 2e', async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
+  const select = selectOf(main, en('model-profile-draft-device'))
   expectAbsentDevice(
     main,
     FIELDS.find((f) => f.key === 'device-draft')!,
@@ -1164,9 +1178,9 @@ test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
   '2e.103, 2e.107: Draft device present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: %s',
   async (value) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'device-draft': value })),
+      modelProfile: () => reply(200, exactOf({ 'device-draft': value })),
     })
-    const select = selectOf(main, en('preset-draft-device'))
+    const select = selectOf(main, en('model-profile-draft-device'))
     const opts = optionsOf(select)
     expect(opts.length, `${value}: the empty option plus one`).toBe(2)
     expect(opts[0]!.value, `${value}: the empty option stays first`).toBe('')
@@ -1190,28 +1204,28 @@ test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
 )
 
 test('2e.103, 2e.107: each device select carries its own empty option of 110', async () => {
-  // 110: Vision GPU keeps preset-device-follows-model, Draft device its own.
+  // 110: Vision GPU keeps model-profile-device-follows-model, Draft device its own.
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         exactOf({ 'mmproj-device': 'CUDA0', 'device-draft': 'CUDA1' }),
       ),
   })
   expect(
-    optionsOf(selectOf(main, en('preset-draft-device')))[0]!.textContent,
+    optionsOf(selectOf(main, en('model-profile-draft-device')))[0]!.textContent,
     'the empty option of the Draft device select of 110',
   ).toBe(SAME)
   expect(
-    optionsOf(selectOf(main, en('preset-vision-gpu')))[0]!.textContent,
+    optionsOf(selectOf(main, en('model-profile-vision-gpu')))[0]!.textContent,
     'the empty option of the Vision GPU select stays its own',
-  ).toBe(en('preset-device-follows-model'))
+  ).toBe(en('model-profile-device-follows-model'))
 })
 
 // ── The card: units, numbers, disabled, in its place (83, 85, 87, 89, 91) ──
 
 test('2e.89: MoE cache and Fit free VRAM carry the literal MiB after their input and their label has no MiB, and no other field of 107 carries a unit', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const key of ['moe-cache-mib', 'fit-target']) {
     const f = FIELDS.find((x) => x.key === key)!
     const field = fieldOf(main, f.label)
@@ -1238,7 +1252,7 @@ test('2e.89: MoE cache and Fit free VRAM carry the literal MiB after their input
 })
 
 test('2e.87, 2h.158: the six number keys of 107 are all integer keys: the numeric form on the ranged two, none on the four layer counts', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const numbers = FIELDS.filter((f) => f.kind === 'number')
   expect(
     numbers.map((f) => f.key),
@@ -1263,7 +1277,7 @@ test('2e.87, 2h.158: the six number keys of 107 are all integer keys: the numeri
 
 test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (the two MoE rows, and the draft pair while the read holds no model-draft), the Fit trio enabled per 183 and 186, never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
   const doc = docOf(SET)
-  const { main } = await loaded({ preset: () => reply(200, doc) })
+  const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const controls = [
     ...cardOf(main, CARD).querySelectorAll<HTMLElement>(
       'input, select, textarea',
@@ -1308,7 +1322,9 @@ test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are nativ
 })
 
 test('2e.83: the Hardware card is a D5.2 Card inside the section of the h2, after Assets and before Resource / context, and the page shows every card in the order of 83', async () => {
-  const { main, h1 } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main, h1 } = await loaded({
+    modelProfile: () => reply(200, docOf(SET)),
+  })
   const h2 = settingsTitle(main)
   const section = h2.closest('section')
   expect(section, 'the h2 sits in a section').toBeTruthy()
@@ -1333,13 +1349,13 @@ test('2e.83: the Hardware card is a D5.2 Card inside the section of the h2, afte
     within(main)
       .getAllByRole('heading', { level: 3 })
       .map((h) => text(h)),
-    'the cards, in the order of 83 (the list of test/presetCards.ts)',
+    'the cards, in the order of 83 (the list of test/modelProfileCards.ts)',
   ).toEqual(cardHeadings())
 })
 
-test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the only paragraphs outside a Field are the two note rows of 2h.7 (this read has no model-draft): preset-moe-later before MoE CPU layers, preset-draft-file-off before Draft device', async () => {
+test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the only paragraphs outside a Field are the two note rows of 2h.7 (this read has no model-draft): model-profile-moe-later before MoE CPU layers, model-profile-draft-file-off before Draft device', async () => {
   const doc = docOf(SET)
-  const { main } = await loaded({ preset: () => reply(200, doc) })
+  const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const card = cardOf(main, CARD)
   const notes = [...card.querySelectorAll('p')].filter(
     (p) => p.closest('.field') === null,
@@ -1347,15 +1363,15 @@ test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the
   expect(
     notes.map((p) => text(p)),
     `${en(CARD)}: the note rows of 177 and 178, in reading order`,
-  ).toEqual([en('preset-moe-later'), en('preset-draft-file-off')])
+  ).toEqual([en('model-profile-moe-later'), en('model-profile-draft-file-off')])
   const h3 = card.querySelector('h3')!
   expect(before(h3, notes[0]!), '181: after the card h3').toBe(true)
   expect(
-    before(notes[0]!, fieldOf(main, en('preset-moe-cpu-layers'))),
+    before(notes[0]!, fieldOf(main, en('model-profile-moe-cpu-layers'))),
     '178: the MoE note before MoE CPU layers',
   ).toBe(true)
   expect(
-    before(notes[1]!, fieldOf(main, en('preset-draft-device'))),
+    before(notes[1]!, fieldOf(main, en('model-profile-draft-device'))),
     '177: the draft note before Draft device',
   ).toBe(true)
   expect(card.querySelectorAll('h4').length, `${en(CARD)}: no h4`).toBe(0)
@@ -1365,13 +1381,13 @@ test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the
   ).toBe(0)
 })
 
-test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
+test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
   const doc = docOf(SET)
-  const { main } = await loaded({ preset: () => reply(200, doc) })
+  const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('preset-engine')}`,
-    en('preset-engine'),
+    `${en('field-about')} ${en('model-profile-engine')}`,
+    en('model-profile-engine'),
     ...fieldTabStops(doc.values),
     ...saveBarTabStops(),
   ])
@@ -1402,9 +1418,9 @@ test('2e.110: the card, every label, hint, toggle, option and the empty device o
       en(key).length,
       `${key}: the test's English is not empty`,
     ).toBeGreaterThan(0)
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(text(cardOf(main, CARD).querySelector('h3')!), 'the h3 of 110').toBe(
-    en('preset-hardware-config'),
+    en('model-profile-hardware-config'),
   )
   for (const f of FIELDS) {
     const field = fieldOf(main, f.label)
@@ -1430,29 +1446,29 @@ test('2e.110: the card, every label, hint, toggle, option and the empty device o
   // 109 holds both keys, so 184's last text; an exact {fit: true} holds
   // neither, so 108's allowed text.
   expect(fitState(main)[1], 'both set: the toggle text of 110').toBe(
-    en('preset-fit-nothing'),
+    en('model-profile-fit-nothing'),
   )
   cleanup()
   vi.unstubAllGlobals()
   const { main: allowed } = await loaded({
-    preset: () => reply(200, exactOf({ fit: 'true' })),
+    modelProfile: () => reply(200, exactOf({ fit: 'true' })),
   })
   expect(fitState(allowed)[1], 'allowed: the toggle text of 110').toBe(
-    en('preset-fit-allowed'),
+    en('model-profile-fit-allowed'),
   )
   cleanup()
   vi.unstubAllGlobals()
   const { main: dev } = await loaded({
-    preset: () => reply(200, exactOf({})),
+    modelProfile: () => reply(200, exactOf({})),
   })
   expect(
-    optionsOf(selectOf(dev, en('preset-draft-device')))[0]!.textContent,
+    optionsOf(selectOf(dev, en('model-profile-draft-device')))[0]!.textContent,
     'the empty device option of 110',
-  ).toBe(en('preset-device-same-as-model'))
+  ).toBe(en('model-profile-device-same-as-model'))
 })
 
 test('2e.111, 2e.87: no field of 2e.4 shows a placeholder, and the card shows no text of 111: the embedded-MTP note, the slider maxima, the CPU/GPU switch, a probed device list', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const inputs = [
     ...cardOf(main, CARD).querySelectorAll<HTMLInputElement>('input'),
   ]
@@ -1462,7 +1478,7 @@ test('2e.111, 2e.87: no field of 2e.4 shows a placeholder, and the card shows no
       input.getAttribute('placeholder') ?? '',
       `${input.getAttribute('id')}: no placeholder in 2e`,
     ).toBe('')
-  // The reply holds the 2e.5 and 2g keys of the same preset; the card shows
+  // The reply holds the 2e.5 and 2g keys of the same model profile; the card shows
   // none of the texts 111 leaves out.
   const shown = (cardOf(main, CARD).textContent ?? '').toLowerCase()
   for (const out of [
@@ -1492,7 +1508,7 @@ test('2e.87, 2e.109: a value of 2e.4 shows exactly as the reply holds it, with n
   ] as [string, string][]) {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     if (f.kind === 'number') {
       const group = groupBox(main, f.label)
@@ -1514,15 +1530,15 @@ test('2e.87, 2e.109: a value of 2e.4 shows exactly as the reply holds it, with n
   }
   // A select shows the string the page adds for it as written.
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(200, exactOf({ 'lazy-mode': ' Auto ', 'device-draft': ' ROCm1 ' })),
   })
   expect(
-    selectedTextExact(selectOf(main, en('preset-lazy-tensors'))),
+    selectedTextExact(selectOf(main, en('model-profile-lazy-tensors'))),
     'an unlisted lazy-mode value keeps its spaces and its case',
   ).toBe(' Auto ')
   expect(
-    selectedTextExact(selectOf(main, en('preset-draft-device'))),
+    selectedTextExact(selectOf(main, en('model-profile-draft-device'))),
     'the device keeps its spaces and its case',
   ).toBe(' ROCm1 ')
 })

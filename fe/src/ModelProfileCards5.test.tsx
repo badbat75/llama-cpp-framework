@@ -1,6 +1,6 @@
-// Slices 2e.5 (fe/briefs/02e-preset-cards.md, criteria 112 to 117) and 2h.9
-// (fe/briefs/02h-preset-save.md, criteria 189 to 193): the last card of the
-// preset page, Speculative decoding, in the five named groups of 112. 2h.9's
+// Slices 2e.5 (fe/briefs/02e-model-profile-cards.md, criteria 112 to 117) and 2h.9
+// (fe/briefs/02h-model-profile-save.md, criteria 189 to 193): the last card of the
+// model profile page, Speculative decoding, in the five named groups of 112. 2h.9's
 // 189 made the card editable: a group's controls are enabled exactly while its
 // rule of 190 (the draft group) or 191 (an n-gram group) holds for the read,
 // and a group the rule leaves off says why in the one line of 192, right after
@@ -23,7 +23,7 @@ import {
   EN,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -37,7 +37,7 @@ import {
   saveBarTabStops,
   specGroupEnabled,
   type Field,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -88,16 +88,16 @@ const CACHE_TYPE_VALUES = CACHE_TYPES.map((text, i) =>
   i === 0 ? 'default' : text,
 )
 
-const CARD = 'preset-speculative-decoding'
+const CARD = 'model-profile-speculative-decoding'
 
 /** The five groups of 112, in the table's order. `heading` is the group's h4
- * text: the strings text of `preset-draft-model-group`, and the four
+ * text: the strings text of `model-profile-draft-model-group`, and the four
  * speculator names as the INI literals they are (114, D7). */
 type Group = { heading: string; headingKey?: string; keys: string[] }
 const GROUPS: Group[] = [
   {
-    heading: en('preset-draft-model-group'),
-    headingKey: 'preset-draft-model-group',
+    heading: en('model-profile-draft-model-group'),
+    headingKey: 'model-profile-draft-model-group',
     keys: [
       'spec-draft-n-max',
       'spec-draft-p-min',
@@ -145,7 +145,7 @@ type Row = {
   /** The label as the page shows it. */
   label: string
   /** The strings key of the label: the identity the shared list of
-   * test/presetCards.ts lists the field under (189). */
+   * test/modelProfileCards.ts lists the field under (189). */
   labelKey: string
   /** The strings key of the field's hint (88). */
   hint: string
@@ -220,95 +220,95 @@ const FIELDS: Row[] = [
   num(
     'spec-draft-n-max',
     DRAFT,
-    'preset-draft-n-max',
-    'preset-draft-n-max-hint',
+    'model-profile-draft-n-max',
+    'model-profile-draft-n-max-hint',
     '16',
   ),
-  flt('spec-draft-p-min', DRAFT, 'preset-draft-p-min', '0.75'),
+  flt('spec-draft-p-min', DRAFT, 'model-profile-draft-p-min', '0.75'),
   num(
     'spec-draft-n-min',
     DRAFT,
-    'preset-draft-n-min',
-    'preset-draft-n-min-hint',
+    'model-profile-draft-n-min',
+    'model-profile-draft-n-min-hint',
     '2',
   ),
   num(
     'spec-draft-n-ubatch',
     DRAFT,
-    'preset-draft-n-ubatch',
-    'preset-draft-n-ubatch-hint',
+    'model-profile-draft-n-ubatch',
+    'model-profile-draft-n-ubatch-hint',
     '512',
   ),
-  cacheType('spec-draft-type-k', 'preset-draft-k-cache-type'),
-  cacheType('spec-draft-type-v', 'preset-draft-v-cache-type'),
+  cacheType('spec-draft-type-k', 'model-profile-draft-k-cache-type'),
+  cacheType('spec-draft-type-v', 'model-profile-draft-v-cache-type'),
   num(
     'spec-ngram-mod-n-match',
     'ngram-mod',
-    'preset-match-length',
-    'preset-match-length-hint',
+    'model-profile-match-length',
+    'model-profile-match-length-hint',
     '101',
   ),
   num(
     'spec-ngram-mod-n-min',
     'ngram-mod',
-    'preset-min-draft',
-    'preset-min-draft-hint',
+    'model-profile-min-draft',
+    'model-profile-min-draft-hint',
     '102',
   ),
   num(
     'spec-ngram-mod-n-max',
     'ngram-mod',
-    'preset-max-draft',
-    'preset-max-draft-hint',
+    'model-profile-max-draft',
+    'model-profile-max-draft-hint',
     '103',
   ),
   num(
     'spec-ngram-simple-size-n',
     'ngram-simple',
-    'preset-lookup-n-gram',
-    'preset-ngram-simple-lookup-hint',
+    'model-profile-lookup-n-gram',
+    'model-profile-ngram-simple-lookup-hint',
     '104',
   ),
   num(
     'spec-ngram-simple-size-m',
     'ngram-simple',
-    'preset-draft-m-gram',
-    'preset-ngram-simple-draft-hint',
+    'model-profile-draft-m-gram',
+    'model-profile-ngram-simple-draft-hint',
     '105',
   ),
   num(
     'spec-ngram-map-k-size-n',
     'ngram-map-k',
-    'preset-lookup-n-gram',
-    'preset-ngram-map-lookup-hint',
+    'model-profile-lookup-n-gram',
+    'model-profile-ngram-map-lookup-hint',
     '106',
   ),
   num(
     'spec-ngram-map-k-size-m',
     'ngram-map-k',
-    'preset-draft-m-gram',
-    'preset-ngram-map-draft-hint',
+    'model-profile-draft-m-gram',
+    'model-profile-ngram-map-draft-hint',
     '107',
   ),
   num(
     'spec-ngram-map-k4v-size-n',
     'ngram-map-k4v',
-    'preset-lookup-n-gram',
-    'preset-ngram-map-values-lookup-hint',
+    'model-profile-lookup-n-gram',
+    'model-profile-ngram-map-values-lookup-hint',
     '108',
   ),
   num(
     'spec-ngram-map-k4v-size-m',
     'ngram-map-k4v',
-    'preset-draft-m-gram',
-    'preset-ngram-map-values-draft-hint',
+    'model-profile-draft-m-gram',
+    'model-profile-ngram-map-values-draft-hint',
     '109',
   ),
   num(
     'spec-ngram-map-k4v-min-hits',
     'ngram-map-k4v',
-    'preset-min-hits',
-    'preset-min-hits-hint',
+    'model-profile-min-hits',
+    'model-profile-min-hits-hint',
     '110',
   ),
 ]
@@ -317,13 +317,13 @@ const row = (key: string): Row => FIELDS.find((f) => f.key === key)!
 
 // ── The group rules of 2h.9 (190, 191) ──────────────────────────────────
 
-/** The rule of a group as the shared list of test/presetCards.ts names it:
+/** The rule of a group as the shared list of test/modelProfileCards.ts names it:
  * `draft` for the draft group (190), the literal speculator name for an n-gram
  * group (191). */
 const specGroupOf = (heading: string): string =>
   heading === DRAFT ? 'draft' : heading
 
-/** The field as the shared list of test/presetCards.ts lists it (189): the
+/** The field as the shared list of test/modelProfileCards.ts lists it (189): the
  * card's expectations and the page-wide ones come from one source. */
 const sharedField = (f: Row): Field => ({
   label: f.labelKey,
@@ -342,7 +342,7 @@ function controlOn(f: Row, values: Record<string, string>): boolean {
   const on = groupOn(f, values) && (f.kind !== 'number' || f.key in values)
   expect(
     controlEnabled(sharedField(f), values),
-    `${f.key}: the shared list of test/presetCards.ts agrees (189)`,
+    `${f.key}: the shared list of test/modelProfileCards.ts agrees (189)`,
   ).toBe(on)
   return on
 }
@@ -365,7 +365,7 @@ function controlsOf(
  * every field's About toggle, then the controls its group rule leaves enabled:
  * the box of a boxed number, then its input while the box is unticked, and a
  * select named by its label. The page-wide path is the list of
- * test/presetCards.ts, which the whole-page test of 91 reads. */
+ * test/modelProfileCards.ts, which the whole-page test of 91 reads. */
 function cardTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
   for (const f of FIELDS) {
@@ -382,41 +382,41 @@ function cardTabStops(values: Record<string, string>): string[] {
 
 /** The 31 new strings of 116. */
 const NEW_STRINGS = [
-  'preset-speculative-decoding',
-  'preset-draft-model-group',
-  'preset-draft-n-max',
-  'preset-draft-n-max-hint',
-  'preset-draft-p-min',
-  'preset-draft-p-min-hint',
-  'preset-draft-n-min',
-  'preset-draft-n-min-hint',
-  'preset-draft-n-ubatch',
-  'preset-draft-n-ubatch-hint',
-  'preset-draft-cache-note',
-  'preset-draft-k-cache-type',
-  'preset-draft-k-cache-type-hint',
-  'preset-draft-v-cache-type',
-  'preset-draft-v-cache-type-hint',
-  'preset-match-length',
-  'preset-match-length-hint',
-  'preset-min-draft',
-  'preset-min-draft-hint',
-  'preset-max-draft',
-  'preset-max-draft-hint',
-  'preset-min-hits',
-  'preset-min-hits-hint',
-  'preset-lookup-n-gram',
-  'preset-draft-m-gram',
-  'preset-ngram-simple-lookup-hint',
-  'preset-ngram-simple-draft-hint',
-  'preset-ngram-map-lookup-hint',
-  'preset-ngram-map-draft-hint',
-  'preset-ngram-map-values-lookup-hint',
-  'preset-ngram-map-values-draft-hint',
+  'model-profile-speculative-decoding',
+  'model-profile-draft-model-group',
+  'model-profile-draft-n-max',
+  'model-profile-draft-n-max-hint',
+  'model-profile-draft-p-min',
+  'model-profile-draft-p-min-hint',
+  'model-profile-draft-n-min',
+  'model-profile-draft-n-min-hint',
+  'model-profile-draft-n-ubatch',
+  'model-profile-draft-n-ubatch-hint',
+  'model-profile-draft-cache-note',
+  'model-profile-draft-k-cache-type',
+  'model-profile-draft-k-cache-type-hint',
+  'model-profile-draft-v-cache-type',
+  'model-profile-draft-v-cache-type-hint',
+  'model-profile-match-length',
+  'model-profile-match-length-hint',
+  'model-profile-min-draft',
+  'model-profile-min-draft-hint',
+  'model-profile-max-draft',
+  'model-profile-max-draft-hint',
+  'model-profile-min-hits',
+  'model-profile-min-hits-hint',
+  'model-profile-lookup-n-gram',
+  'model-profile-draft-m-gram',
+  'model-profile-ngram-simple-lookup-hint',
+  'model-profile-ngram-simple-draft-hint',
+  'model-profile-ngram-map-lookup-hint',
+  'model-profile-ngram-map-draft-hint',
+  'model-profile-ngram-map-values-lookup-hint',
+  'model-profile-ngram-map-values-draft-hint',
   // The two new strings of 2h.9's 193: the reason line of the draft group, and
   // the one of an n-gram group, filled with the group's name.
-  'preset-draft-group-off',
-  'preset-ngram-off',
+  'model-profile-draft-group-off',
+  'model-profile-ngram-off',
 ]
 
 /** The strings of 116, and the two of 2h.9's 193. */
@@ -430,7 +430,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards4.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards4.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -445,25 +445,25 @@ async function loaded(options: BffOptions = {}) {
   const h1 = await within(main).findByRole('heading', { level: 1, name: ID })
   const h3 = await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main, h1, h3 }
 }
 
 /** A read whose `values` are the Assets keys plus `values`. */
 function docOf(values: Record<string, string>) {
-  return presetDoc({ model: MODEL, ...values })
+  return modelProfileDoc({ model: MODEL, ...values })
 }
 
 /** A read whose `values` are exactly `values` (the stub of 115). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 function settingsTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
@@ -679,7 +679,7 @@ test.each(FIELDS)(
   '2e.112, 2e.115, 2e.87, 2h.190, 2h.191: $key is a $kind of the $group group named by $label, shows the set value $set as the reply holds it, and its controls are natively enabled while the rule of its group holds for the read (this read lists ngram-mod and a draft-mtp drafter)',
   async (f) => {
     const doc = docOf(SET)
-    const { main } = await loaded({ preset: () => reply(200, doc) })
+    const { main } = await loaded({ modelProfile: () => reply(200, doc) })
     const group = rowGroup(main, f)
     const field = fieldIn(group, f.label)
     // 190 / 191: the group's rule on this read, and what it leaves the control.
@@ -744,7 +744,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.115, 2e.86: $key is absent from a values of {} so its field shows the absent form of $kind',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf({})),
+    })
     expectAbsent(main, f)
   },
 )
@@ -752,7 +754,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.88, 2e.115: $key has an About toggle named About its label, with aria-expanded and aria-controls, and its hint opens as one paragraph per line of the GUI text and closes again',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const group = rowGroup(main, f)
     const lines = en(f.hint).split('\n')
     expect(lines.length, `${f.hint}: the hint has lines`).toBeGreaterThan(0)
@@ -846,7 +850,7 @@ test.each(CASES)(
   "2h.190, 2h.191, 2h.91: on each fixture a group's controls are enabled exactly while its rule holds, and only its About toggles are tab stops while it is off: %s",
   async (what, values, enabled) => {
     const doc = docOf({ ...SET, ...values })
-    const { main } = await loaded({ preset: () => reply(200, doc) })
+    const { main } = await loaded({ modelProfile: () => reply(200, doc) })
     for (const f of FIELDS) {
       const want = enabled.includes(specGroupOf(f.group))
       expect(
@@ -880,7 +884,7 @@ test.each(CASES)(
 // ── The five groups of 112 and 114, and the note of 90 ─────────────────
 
 test('2e.90a: each of the five groups of 112 is drawn as the Server page subgroup: one div.subgroup, a direct child of the card section, holding exactly its h4 and then the role=group division named by that h4', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   const subs = [...el.children].filter(
     (c) => c.tagName === 'DIV' && c.classList.contains('subgroup'),
@@ -925,7 +929,9 @@ test('2e.90a: each of the five groups of 112 is drawn as the Server page subgrou
 })
 
 test('2e.112, 2e.83: Speculative decoding is a D5.2 Card inside the section of the h2, the last card after Vision, and the page shows every card in the order of 83', async () => {
-  const { main, h1 } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main, h1 } = await loaded({
+    modelProfile: () => reply(200, docOf(SET)),
+  })
   const h2 = settingsTitle(main)
   const section = h2.closest('section')
   expect(section, 'the h2 sits in a section').toBeTruthy()
@@ -951,13 +957,13 @@ test('2e.112, 2e.83: Speculative decoding is a D5.2 Card inside the section of t
     .map((h) => text(h))
   expect(
     headings,
-    'the cards, in the order of 83 (the list of test/presetCards.ts)',
+    'the cards, in the order of 83 (the list of test/modelProfileCards.ts)',
   ).toEqual(cardHeadings())
   expect(headings[headings.length - 1], 'the last card of 83').toBe(en(CARD))
 })
 
 test('2e.112, 2e.114, 2e.90: the card is the five groups of 112 in the table order, each an h4 and a role=group division named by it through aria-labelledby, and the card holds no other group', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   const h4s = [...el.querySelectorAll('h4')]
   expect(
@@ -1005,7 +1011,7 @@ test('2e.112, 2e.114, 2e.90: the card is the five groups of 112 in the table ord
 })
 
 test('2e.112, 2e.90: every field of 112 sits in the group its row names, in the row order, so each group holds exactly the fields of its rows and no field is outside a group', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   for (const g of GROUPS) {
     const group = groupOf(el, g.heading)
@@ -1036,9 +1042,9 @@ test('2e.112, 2e.90: every field of 112 sits in the group its row names, in the 
     ).toBeTruthy()
 })
 
-test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are preset-draft-cache-note of the Draft model group, a muted paragraph after Draft n-ubatch and before Draft K-cache type, and one reason line per group the rule of 190 / 191 leaves off: this read lists ngram-mod and a draft-mtp drafter, so preset-ngram-off for ngram-simple, ngram-map-k and ngram-map-k4v, each right after its h4', async () => {
+test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are model-profile-draft-cache-note of the Draft model group, a muted paragraph after Draft n-ubatch and before Draft K-cache type, and one reason line per group the rule of 190 / 191 leaves off: this read lists ngram-mod and a draft-mtp drafter, so model-profile-ngram-off for ngram-simple, ngram-map-k and ngram-map-k4v, each right after its h4', async () => {
   const doc = docOf(SET)
-  const { main } = await loaded({ preset: () => reply(200, doc) })
+  const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const el = card(main)
   // 190 / 191 on this read: the draft group (a draft-mtp drafter) and
   // ngram-mod are on, the three other n-gram groups are off.
@@ -1055,40 +1061,41 @@ test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are preset-dr
     notes.map((p) => text(p)),
     `${en(CARD)}: the notes of the card, in browse order (181, 192)`,
   ).toEqual([
-    en('preset-draft-cache-note'),
-    ...off.map((g) => en('preset-ngram-off', g)),
+    en('model-profile-draft-cache-note'),
+    ...off.map((g) => en('model-profile-ngram-off', g)),
   ])
   const note = notes[0]!
   expect(note.tagName, `${en(CARD)}: the note is a paragraph`).toBe('P')
-  expect(text(note), 'preset-draft-cache-note: the text of toml 377').toBe(
-    en('preset-draft-cache-note'),
-  )
+  expect(
+    text(note),
+    'model-profile-draft-cache-note: the text of toml 377',
+  ).toBe(en('model-profile-draft-cache-note'))
   expect(
     note.className,
-    'preset-draft-cache-note: the note style of 90',
+    'model-profile-draft-cache-note: the note style of 90',
   ).toContain('note')
   expect(
     note.closest('.field'),
-    'preset-draft-cache-note: the note is not inside a field',
+    'model-profile-draft-cache-note: the note is not inside a field',
   ).toBeNull()
   const group = groupOf(el, DRAFT)
   expect(
     group.contains(note),
-    'preset-draft-cache-note: inside the Draft model group',
+    'model-profile-draft-cache-note: inside the Draft model group',
   ).toBe(true)
   expect(
-    before(fieldIn(group, en('preset-draft-n-ubatch')), note),
+    before(fieldIn(group, en('model-profile-draft-n-ubatch')), note),
     'Draft n-ubatch before the note',
   ).toBe(true)
   expect(
-    before(note, fieldIn(group, en('preset-draft-k-cache-type'))),
+    before(note, fieldIn(group, en('model-profile-draft-k-cache-type'))),
     'the note before Draft K-cache type',
   ).toBe(true)
   expect(
     within(el).queryByRole('button', {
-      name: `${en('field-about')} ${en('preset-draft-cache-note')}`,
+      name: `${en('field-about')} ${en('model-profile-draft-cache-note')}`,
     }),
-    'preset-draft-cache-note: no About toggle for a note',
+    'model-profile-draft-cache-note: no About toggle for a note',
   ).toBeNull()
   // 192: each reason line sits inside the role=group division of its group,
   // right after its h4 and before the group's first field, in the Card note
@@ -1096,7 +1103,9 @@ test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are preset-dr
   for (const heading of off) {
     const div = groupOf(el, heading)
     const h4 = within(el).getByRole('heading', { level: 4, name: heading })
-    const line = notes.find((p) => text(p) === en('preset-ngram-off', heading))!
+    const line = notes.find(
+      (p) => text(p) === en('model-profile-ngram-off', heading),
+    )!
     expect(line, `${heading}: its reason line of 192 is shown`).toBeTruthy()
     expect(line.tagName, `${heading}: the reason line is a paragraph`).toBe('P')
     expect(line.className, `${heading}: the Card note style of 192`).toContain(
@@ -1117,32 +1126,32 @@ test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are preset-dr
     ).toBe(true)
     expect(
       within(el).queryByRole('button', {
-        name: `${en('field-about')} ${en('preset-ngram-off', heading)}`,
+        name: `${en('field-about')} ${en('model-profile-ngram-off', heading)}`,
       }),
       `${heading}: no About toggle for a reason line`,
     ).toBeNull()
   }
 })
 
-test('2h.192, 2h.193: a group the rule enables shows no reason line and one it leaves off shows its own: preset-draft-group-off for the draft group, preset-ngram-off filled with the group name for each n-gram group, the five of them in browse order on a read of values {} and none of them on a read that names every group', async () => {
+test('2h.192, 2h.193: a group the rule enables shows no reason line and one it leaves off shows its own: model-profile-draft-group-off for the draft group, model-profile-ngram-off filled with the group name for each n-gram group, the five of them in browse order on a read of values {} and none of them on a read that names every group', async () => {
   // 193: values {} (no key of the section), so every rule fails.
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   const notes = notesOf(card(main))
   expect(
     notes.map((p) => text(p)),
     `${en(CARD)}: a read with no rule key shows the five lines of 192, and the card's own note`,
   ).toEqual([
-    en('preset-draft-group-off'),
-    en('preset-draft-cache-note'),
-    ...NGRAMS.map((g) => en('preset-ngram-off', g)),
+    en('model-profile-draft-group-off'),
+    en('model-profile-draft-cache-note'),
+    ...NGRAMS.map((g) => en('model-profile-ngram-off', g)),
   ])
   for (const g of NGRAMS) {
-    const line = en('preset-ngram-off', g)
+    const line = en('model-profile-ngram-off', g)
     expect(line, `${g}: the line names its own group (192)`).toContain(g)
     // The names are prefixes of one another (ngram-map-k of ngram-map-k4v), so
     // the four lines are told apart by equality, not by a substring test.
     expect(
-      new Set(NGRAMS.map((name) => en('preset-ngram-off', name))).size,
+      new Set(NGRAMS.map((name) => en('model-profile-ngram-off', name))).size,
       `${g}: one line per group name (192)`,
     ).toBe(4)
     const div = groupOf(card(main), g)
@@ -1154,14 +1163,14 @@ test('2h.192, 2h.193: a group the rule enables shows no reason line and one it l
   const draft = groupOf(card(main), DRAFT)
   expect(
     draft.textContent ?? '',
-    'the draft group: preset-draft-group-off',
-  ).toContain(en('preset-draft-group-off'))
+    'the draft group: model-profile-draft-group-off',
+  ).toContain(en('model-profile-draft-group-off'))
   cleanup()
   vi.unstubAllGlobals()
   // Every group named: the draft group by its model-draft, the four n-gram
   // groups by their exact name. No line of 192 shows, only the card's note.
   const { main: on } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         docOf({
@@ -1174,7 +1183,7 @@ test('2h.192, 2h.193: a group the rule enables shows no reason line and one it l
   expect(
     notesOf(card(on)).map((p) => text(p)),
     `${en(CARD)}: every group enabled leaves no reason line`,
-  ).toEqual([en('preset-draft-cache-note')])
+  ).toEqual([en('model-profile-draft-cache-note')])
   for (const g of GROUPS)
     expect(
       FIELDS.filter((f) => f.group === g.heading)
@@ -1186,10 +1195,13 @@ test('2h.192, 2h.193: a group the rule enables shows no reason line and one it l
 
 // ── The same label in several groups (113) ──────────────────────────────
 
-const SAME_LABELS = ['preset-lookup-n-gram', 'preset-draft-m-gram']
+const SAME_LABELS = [
+  'model-profile-lookup-n-gram',
+  'model-profile-draft-m-gram',
+]
 
 test('2e.113: the three Lookup n-gram and the three Draft m-gram fields carry one label each, are told apart by their group, and each group shows the value of its own key', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   for (const key of SAME_LABELS)
     expect(
@@ -1202,8 +1214,8 @@ test('2e.113: the three Lookup n-gram and the three Draft m-gram fields carry on
     // The key of the group's own row of 112: the speculator name with its
     // `spec-` prefix, so the value it shows names the group.
     for (const [labelKey, key] of [
-      ['preset-lookup-n-gram', `spec-${g.heading}-size-n`],
-      ['preset-draft-m-gram', `spec-${g.heading}-size-m`],
+      ['model-profile-lookup-n-gram', `spec-${g.heading}-size-n`],
+      ['model-profile-draft-m-gram', `spec-${g.heading}-size-m`],
     ] as [string, string][]) {
       const fieldGroup = within(group).getByRole('group', {
         name: en(labelKey),
@@ -1217,7 +1229,7 @@ test('2e.113: the three Lookup n-gram and the three Draft m-gram fields carry on
 })
 
 test('2e.113: the About toggles are About Lookup n-gram thrice and About Draft m-gram thrice, each controlling the hint of its own group, and opening one shows that group hint and no other', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   for (const key of SAME_LABELS)
     expect(
@@ -1228,15 +1240,30 @@ test('2e.113: the About toggles are About Lookup n-gram thrice and About Draft m
     ).toBe(3)
   // Each n-gram group's own hint of 116, per label.
   const HINTS = new Map<string, string>([
-    ['ngram-simple preset-lookup-n-gram', 'preset-ngram-simple-lookup-hint'],
-    ['ngram-simple preset-draft-m-gram', 'preset-ngram-simple-draft-hint'],
-    ['ngram-map-k preset-lookup-n-gram', 'preset-ngram-map-lookup-hint'],
-    ['ngram-map-k preset-draft-m-gram', 'preset-ngram-map-draft-hint'],
     [
-      'ngram-map-k4v preset-lookup-n-gram',
-      'preset-ngram-map-values-lookup-hint',
+      'ngram-simple model-profile-lookup-n-gram',
+      'model-profile-ngram-simple-lookup-hint',
     ],
-    ['ngram-map-k4v preset-draft-m-gram', 'preset-ngram-map-values-draft-hint'],
+    [
+      'ngram-simple model-profile-draft-m-gram',
+      'model-profile-ngram-simple-draft-hint',
+    ],
+    [
+      'ngram-map-k model-profile-lookup-n-gram',
+      'model-profile-ngram-map-lookup-hint',
+    ],
+    [
+      'ngram-map-k model-profile-draft-m-gram',
+      'model-profile-ngram-map-draft-hint',
+    ],
+    [
+      'ngram-map-k4v model-profile-lookup-n-gram',
+      'model-profile-ngram-map-values-lookup-hint',
+    ],
+    [
+      'ngram-map-k4v model-profile-draft-m-gram',
+      'model-profile-ngram-map-values-draft-hint',
+    ],
   ])
   for (const g of GROUPS.slice(2))
     for (const labelKey of SAME_LABELS) {
@@ -1272,8 +1299,8 @@ test('2e.113: the About toggles are About Lookup n-gram thrice and About Draft m
     }
 })
 
-test('2e.114: the card has exactly five h4 whose texts are the GUI texts of 114: the string preset-draft-model-group, and the four speculator names as the INI literals they are, each naming its group', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.114: the card has exactly five h4 whose texts are the GUI texts of 114: the string model-profile-draft-model-group, and the four speculator names as the INI literals they are, each naming its group', async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   expect(
     [...el.querySelectorAll('h4')].map((h) => text(h)),
@@ -1282,7 +1309,7 @@ test('2e.114: the card has exactly five h4 whose texts are the GUI texts of 114:
   expect(
     el.querySelector('h4')!.textContent,
     'the Draft model heading is the strings text of toml 368',
-  ).toBe(en('preset-draft-model-group'))
+  ).toBe(en('model-profile-draft-model-group'))
   // 114 and D7: the four names are INI values, not strings: each is a part of
   // every key of its group, and no strings text of the test's English is one.
   for (const g of GROUPS.slice(1)) {
@@ -1308,7 +1335,9 @@ test('2e.114: the card has exactly five h4 whose texts are the GUI texts of 114:
 test.each(FIELDS.filter((x) => x.kind === 'select'))(
   '2e.112, 2e.96: $key lists default then the ten literals of 96 in order with the file values, and q8_0 selects its own option',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf(SET)),
+    })
     const select = selectIn(rowGroup(main, f), f.label)
     expect(
       optionTexts(select),
@@ -1328,7 +1357,7 @@ test.each(FIELDS.filter((x) => x.kind === 'select'))(
   '2e.112, 2e.96: $key absent shows default',
   async (f) => {
     const { main: absent } = await loaded({
-      preset: () => reply(200, exactOf({})),
+      modelProfile: () => reply(200, exactOf({})),
     })
     expect(
       selectedText(selectIn(rowGroup(absent, f), f.label)),
@@ -1347,7 +1376,7 @@ test.each(
   '2e.112, 2e.96: each listed cache type value selects its own option: %s %s',
   async (key, value, f) => {
     const { main: one } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     expect(
       selectedText(selectIn(rowGroup(one, f), f.label)),
@@ -1359,7 +1388,7 @@ test.each(
 test('2e.112, 2e.96, 2e.87: a draft cache type no option lists (q3_k, and F16 which differs only in case) becomes one extra last option carrying it as its value and its text, selected', async () => {
   for (const value of ['q3_k', 'F16']) {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'spec-draft-type-k': value })),
+      modelProfile: () => reply(200, exactOf({ 'spec-draft-type-k': value })),
     })
     const select = selectIn(
       rowGroup(main, row('spec-draft-type-k')),
@@ -1402,7 +1431,7 @@ test.each([
   async (key, value) => {
     const f = row(key)
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     const fieldGroup = fieldGroupIn(rowGroup(main, f), f.label)
     expect(
@@ -1418,7 +1447,7 @@ test.each([
 test('2e.87, 2e.115: a select shows the string the page adds for it as written', async () => {
   // A select shows the string the page adds for it as written.
   const { main } = await loaded({
-    preset: () => reply(200, exactOf({ 'spec-draft-type-v': ' q8_0 ' })),
+    modelProfile: () => reply(200, exactOf({ 'spec-draft-type-v': ' q8_0 ' })),
   })
   expect(
     selectedTextExact(
@@ -1435,14 +1464,14 @@ test.each(FIELDS)(
   '2e.86, 2e.115: a key of 112 whose value is the empty string reads as absent, for every key of the card (2e.5 adds no flag of its own, so 2e.3b reads no key of this card as a flag): $key',
   async (f) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
   },
 )
 
 test('2e.89, 2e.112: no field of 112 carries a unit, so the card holds no unit element, and no field label carries MiB', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   expect(
     el.querySelectorAll('.unit').length,
@@ -1458,7 +1487,7 @@ test('2e.89, 2e.112: no field of 112 carries a unit, so the card holds no unit e
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the Speculative decoding card holds exactly the 16 fields of 112 in the table order', async () => {
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         docOf({
@@ -1477,7 +1506,7 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Speculati
   )
   // 81: the key adds no Field, so the card carries no id, no label and no
   // shown text for it. The ids are what a Field gives a control
-  // (`preset-<key>-control`, `-box`, `-hint`).
+  // (`model-profile-<key>-control`, `-box`, `-hint`).
   const shown = cardText(el)
   for (const secret of ['zz-secret', 'draft-max', 'tensor-split']) {
     expect(shown, `${en(CARD)}: ${secret} is not shown`).not.toContain(secret)
@@ -1500,9 +1529,9 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the Speculati
 
 // ── Keyboard (91) and the strings (116) ────────────────────────────────
 
-test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 in the table order, About Lookup n-gram and About Draft m-gram three times each, each followed by the controls the rule of its group leaves enabled (this read lists ngram-mod and a draft-mtp drafter, so the draft group and ngram-mod), and the page tab order is the list of test/presetCards.ts', async () => {
+test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 in the table order, About Lookup n-gram and About Draft m-gram three times each, each followed by the controls the rule of its group leaves enabled (this read lists ngram-mod and a draft-mtp drafter, so the draft group and ngram-mod), and the page tab order is the list of test/modelProfileCards.ts', async () => {
   const doc = docOf(SET)
-  const { main } = await loaded({ preset: () => reply(200, doc) })
+  const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const el = card(main)
   const stops = cardTabStops(doc.values)
   expect(
@@ -1530,8 +1559,8 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   const tabbed = mainTabbable(main)
   const start = [
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('preset-engine')}`,
-    en('preset-engine'),
+    `${en('field-about')} ${en('model-profile-engine')}`,
+    en('model-profile-engine'),
   ]
   expect(
     tabbed.slice(0, start.length),
@@ -1539,7 +1568,7 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   ).toEqual(start)
   expect(
     tabbed.slice(start.length),
-    'the page tab order is the list of test/presetCards.ts',
+    'the page tab order is the list of test/modelProfileCards.ts',
   ).toEqual([...fieldTabStops(docOf(SET).values), ...saveBarTabStops()])
 })
 
@@ -1554,7 +1583,7 @@ test('2e.116, 2h.193: the card, its five group headings, every label, hint and n
       en(key).length,
       `${key}: the test's English is not empty`,
     ).toBeGreaterThan(0)
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const el = card(main)
   expect(text(el.querySelector('h3')!), 'the h3 of 116').toBe(en(CARD))
   const h4s = [...el.querySelectorAll('h4')].map((h) => text(h))
@@ -1588,9 +1617,9 @@ test('2e.116, 2h.193: the card, its five group headings, every label, hint and n
     notesOf(el).map((p) => text(p)),
     'the notes show the English of the card note and of the three groups this read leaves off (192, 193)',
   ).toEqual([
-    en('preset-draft-cache-note'),
-    en('preset-ngram-off', 'ngram-simple'),
-    en('preset-ngram-off', 'ngram-map-k'),
-    en('preset-ngram-off', 'ngram-map-k4v'),
+    en('model-profile-draft-cache-note'),
+    en('model-profile-ngram-off', 'ngram-simple'),
+    en('model-profile-ngram-off', 'ngram-map-k'),
+    en('model-profile-ngram-off', 'ngram-map-k4v'),
   ])
 })

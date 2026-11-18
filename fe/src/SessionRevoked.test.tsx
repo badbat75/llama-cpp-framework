@@ -22,13 +22,13 @@ import {
   before,
   en,
   fakeBff,
-  presetDoc,
+  modelProfileDoc,
   reply,
   serverDoc,
   startAt,
   stubDialog,
   type BffOptions,
-  type Preset,
+  type ModelProfile,
 } from './test/bff.ts'
 
 /** The exact English of the one new string (S1.10). */
@@ -125,16 +125,16 @@ async function loaded(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main }
 }
 
-/** The presets list at #/models, on fake timers, with the table loaded. */
+/** The model profiles list at #/models, on fake timers, with the table loaded. */
 async function loadedModels(options: BffOptions = {}) {
   fakeClock()
   startAt('#/models')
-  const bff = fakeBff({ presets: LIST, ...options })
+  const bff = fakeBff({ modelProfiles: LIST, ...options })
   render(<App />)
   await flush()
   const main = screen.getByRole('main')
   expect(
-    within(main).queryByRole('table', { name: en('presets-title') }),
+    within(main).queryByRole('table', { name: en('model-profiles-title') }),
     'the table is loaded',
   ).not.toBeNull()
   return { bff, main }
@@ -303,20 +303,20 @@ function boot(
   }
 }
 
-// The presets list.
+// The model profiles list.
 
-function preset(id: string, enabled: boolean, model = ''): Preset {
+function modelProfile(id: string, enabled: boolean, model = ''): ModelProfile {
   return { id, engine: 'llama.cpp', engineAvailable: true, enabled, model }
 }
 
-const LIST: Preset[] = [
-  preset('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
-  preset('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
-  preset('Old-Coder', false),
+const LIST: ModelProfile[] = [
+  modelProfile('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
+  modelProfile('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
+  modelProfile('Old-Coder', false),
 ]
 
 function table(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('table', { name: en('presets-title') })
+  return within(main).getByRole('table', { name: en('model-profiles-title') })
 }
 
 function switchOf(main: HTMLElement, id: string): HTMLInputElement {
@@ -331,7 +331,7 @@ function alerts(main: HTMLElement): string[] {
     .map((a) => a.textContent ?? '')
 }
 
-/** Which presets switches are inactive (aria-disabled), in table order. */
+/** Which model profiles switches are inactive (aria-disabled), in table order. */
 function switchesInactive(main: HTMLElement): boolean[] {
   return within(table(main))
     .queryAllByRole('switch')
@@ -354,13 +354,17 @@ function signIns(main: HTMLElement): HTMLButtonElement[] {
   ).filter((b) => b.closest('dialog') === null)
 }
 
-function presetsReads(bff: ReturnType<typeof fakeBff>): number {
-  return bff.to('GET', '/api/presets').length
+function modelProfilesReads(bff: ReturnType<typeof fakeBff>): number {
+  return bff.to('GET', '/api/profiles/model').length
 }
 
-function presetWrites(bff: ReturnType<typeof fakeBff>): [string, unknown][] {
+function modelProfileWrites(
+  bff: ReturnType<typeof fakeBff>,
+): [string, unknown][] {
   return bff.calls
-    .filter((c) => c.method === 'PUT' && c.path.startsWith('/api/presets/'))
+    .filter(
+      (c) => c.method === 'PUT' && c.path.startsWith('/api/profiles/model/'),
+    )
     .map((c) => [c.path, c.body])
 }
 
@@ -501,29 +505,29 @@ test('S1.1: the guard keys and boot-malformed on sign-in show signin-failed and 
   }
 })
 
-test('S1.1: the guard keys and boot-malformed on a preset switch show request-failed, then the row is read again, with no Sign in and the session kept', async () => {
+test('S1.1: the guard keys and boot-malformed on a model profile switch show request-failed, then the row is read again, with no Sign in and the session kept', async () => {
   for (const [key, status] of GUARD_KEYS) {
     const what = `${status} ${key}`
     const { bff, main } = await loadedModels({
-      presetSwitch: guard(key, status),
+      modelProfileSwitch: guard(key, status),
     })
     press(switchOf(main, 'Qwen3-27B'))
     await flush()
     expect(alerts(main), what).toEqual([en('request-failed')])
     expect(switchStatus(main).textContent, `${what}: status emptied`).toBe('')
-    expect(presetsReads(bff), `${what}: the row read again`).toBe(2)
+    expect(modelProfilesReads(bff), `${what}: the row read again`).toBe(2)
     expect(switchOf(main, 'Qwen3-27B').checked, `${what}: the list value`).toBe(
       true,
     )
     expect(signIns(main), `${what}: no Sign in`).toEqual([])
     expect(within(main).queryByText(en('session-revoked')), what).toBeNull()
     expectSignedIn(`${what}: the session lives on`)
-    expect(presetWrites(bff), what).toHaveLength(1)
+    expect(modelProfileWrites(bff), what).toHaveLength(1)
     reset()
   }
 })
 
-test('S1.1: the guard keys on a read show that reads generic failure, in place of the page, with no sign-in form (server, presets list, preset page)', async () => {
+test('S1.1: the guard keys on a read show that reads generic failure, in place of the page, with no sign-in form (server, model profiles list, model profile page)', async () => {
   const rows: [string, BffOptions, string][] = [
     [
       'GET /api/instances/{id}/server',
@@ -531,21 +535,23 @@ test('S1.1: the guard keys on a read show that reads generic failure, in place o
       en('server-load-failed'),
     ],
     [
-      'GET /api/presets',
-      { presets: () => reply(413, { key: 'payload-too-large', args: [] }) },
-      en('presets-load-failed'),
+      'GET /api/profiles/model',
+      {
+        modelProfiles: () => reply(413, { key: 'payload-too-large', args: [] }),
+      },
+      en('model-profiles-load-failed'),
     ],
     [
-      'GET /api/presets/{id}',
-      { preset: () => reply(400, { key: 'boot-malformed', args: [] }) },
-      en('preset-load-failed'),
+      'GET /api/profiles/model/{id}',
+      { modelProfile: () => reply(400, { key: 'boot-malformed', args: [] }) },
+      en('model-profile-load-failed'),
     ],
   ]
   for (const [route, options, text] of rows) {
     const hash =
-      route === 'GET /api/presets'
+      route === 'GET /api/profiles/model'
         ? '#/models'
-        : route === 'GET /api/presets/{id}'
+        : route === 'GET /api/profiles/model/{id}'
           ? '#/models/Qwen3-27B'
           : '#/instances/default'
     openAt(hash, options)
@@ -727,8 +733,8 @@ test('S1.6: a 403 session-not-administrator on the save is 36 row with session-r
   expect(bff.to(...PUT)).toHaveLength(1)
 })
 
-test('S1.7: a 403 session-not-administrator on a preset switch is 2c row with session-revoked: the switch shows its value before, nothing is read again, focus on the switch, Sign in after the alert', async () => {
-  const { bff, main } = await loadedModels({ presetSwitch: REVOKED })
+test('S1.7: a 403 session-not-administrator on a model profile switch is 2c row with session-revoked: the switch shows its value before, nothing is read again, focus on the switch, Sign in after the alert', async () => {
+  const { bff, main } = await loadedModels({ modelProfileSwitch: REVOKED })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(alerts(main)).toEqual([en('session-revoked')])
@@ -739,7 +745,7 @@ test('S1.7: a 403 session-not-administrator on a preset switch is 2c row with se
   expect(before(alert, buttons[0]!), 'Sign in after the alert').toBe(true)
   expect(before(buttons[0]!, table(main)), 'before the table').toBe(true)
   expect(switchOf(main, 'Qwen3-27B').checked, 'the value before').toBe(true)
-  expect(presetsReads(bff), 'nothing read again').toBe(1)
+  expect(modelProfilesReads(bff), 'nothing read again').toBe(1)
   expect(switchesInactive(main), 'the switches stay active').toEqual([
     false,
     false,
@@ -750,7 +756,7 @@ test('S1.7: a 403 session-not-administrator on a preset switch is 2c row with se
   )
   expectSignedIn('the page stays signed in')
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
-  expect(presetWrites(bff), 'one write sent').toHaveLength(1)
+  expect(modelProfileWrites(bff), 'one write sent').toHaveLength(1)
 })
 
 // ── S1.8: the Sign in dialog opened from a write ────────────────────────
@@ -861,11 +867,13 @@ test('S1.9: a 403 session-not-administrator on the server read signs the app out
   ).toBeNull()
 })
 
-test('S1.9: a 403 session-not-administrator on the presets read signs the app out with session-revoked in place of signin-required; after a sign-in the list reads again', async () => {
+test('S1.9: a 403 session-not-administrator on the model profiles read signs the app out with session-revoked in place of signin-required; after a sign-in the list reads again', async () => {
   let reads = 0
   const { bff, main } = openAt('#/models', {
-    presets: () =>
-      ++reads === 1 ? REVOKED() : reply(200, [preset('after-sign-in', true)]),
+    modelProfiles: () =>
+      ++reads === 1
+        ? REVOKED()
+        : reply(200, [modelProfile('after-sign-in', true)]),
   })
   const { username, password, submit } = await signInForm(main)
   expect(window.location.hash, 'the route stays').toBe('#/models')
@@ -873,7 +881,7 @@ test('S1.9: a 403 session-not-administrator on the presets read signs the app ou
   expect(note.getAttribute('role'), 'the paragraph is an alert').toBe('alert')
   expect(before(note, username), 'above the sign-in fields').toBe(true)
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
-  expect(within(main).queryByText(en('presets-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profiles-load-failed'))).toBeNull()
   expect(within(main).queryByRole('table')).toBeNull()
   const banner = screen.getByRole('banner')
   expect(
@@ -886,23 +894,26 @@ test('S1.9: a 403 session-not-administrator on the presets read signs the app ou
   type(password, 'hunter2')
   fireEvent.click(submit)
   expect(
-    await within(main).findByRole('table', { name: en('presets-title') }),
+    await within(main).findByRole('table', {
+      name: en('model-profiles-title'),
+    }),
   ).toBeTruthy()
-  expect(presetsReads(bff)).toBe(2)
+  expect(modelProfilesReads(bff)).toBe(2)
   expect(within(main).queryByText(en('session-revoked'))).toBeNull()
 })
 
-test('S1.9: a 403 session-not-administrator on the preset read signs the app out with session-revoked; after a sign-in the page reads again and focus goes to its h1', async () => {
+test('S1.9: a 403 session-not-administrator on the model profile read signs the app out with session-revoked; after a sign-in the page reads again and focus goes to its h1', async () => {
   let reads = 0
   const { bff, main } = openAt('#/models/Qwen3-27B', {
-    preset: () => (++reads === 1 ? REVOKED() : reply(200, presetDoc())),
+    modelProfile: () =>
+      ++reads === 1 ? REVOKED() : reply(200, modelProfileDoc()),
   })
   const { username, password, submit } = await signInForm(main)
   expect(window.location.hash, 'the route stays').toBe('#/models/Qwen3-27B')
   const note = within(main).getByText(en('session-revoked'))
   expect(note.getAttribute('role'), 'the paragraph is an alert').toBe('alert')
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
-  expect(within(main).queryByText(en('preset-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
   expect(
     within(main).queryByRole('heading', { level: 1, name: 'Qwen3-27B' }),
   ).toBeNull()
@@ -916,7 +927,7 @@ test('S1.9: a 403 session-not-administrator on the preset read signs the app out
   await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(window.location.hash).toBe('#/models/Qwen3-27B')
   expect(
-    bff.calls.filter((c) => c.path === '/api/presets/Qwen3-27B'),
+    bff.calls.filter((c) => c.path === '/api/profiles/model/Qwen3-27B'),
   ).toHaveLength(2)
   expect(within(main).queryByText(en('session-revoked'))).toBeNull()
 })

@@ -1,6 +1,7 @@
 // The default box of a text input (fe/DESIGN.md 5.2, the Server page's 1b.28a
-// and the preset page's 2h.156): the state of a field with a `default`, `auto`
-// or `No key` box, the text its input shows, and what one tick of the box does.
+// and the model profile page's 2h.156): the state of a field with a `default`,
+// `auto` or `No key` box, the text its input shows, and what one tick of the
+// box does.
 // The text the input held is kept while the box is ticked and comes back when
 // it is unticked; which untick takes the focus is the rule the caller passes.
 import { flushSync } from 'react-dom'
@@ -29,7 +30,7 @@ function boxTick(b: Boxed, ticked: boolean): Boxed {
 /** When an untick moves the focus to the input: `always` where the box covers
  * a value the user is expected to replace (the Server page's thread counts,
  * 5.2), `when-empty` where an input that comes back with a value is already
- * filled (the preset page, 2h.156). */
+ * filled (the model profile page, 2h.156). */
 export type FocusOnUntick = 'always' | 'when-empty'
 
 /** One tick of a box: renders it, then applies the focus rule `focusOn`, so the

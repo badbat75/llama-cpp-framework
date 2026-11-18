@@ -1,7 +1,7 @@
 // The bottom save bar of a form page: the status line, the alert and its
 // answer button, Discard and Save, and the scroll padding that follows the
-// bar's rendered height. ServerForm (the Server page) and the preset page
-// share it, so a save answers the same way on both.
+// bar's rendered height. ServerForm (the Server page) and the model profile
+// page share it, so a save answers the same way on both.
 // The text is in en_US.json.
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { flushSync } from 'react-dom'
@@ -92,7 +92,7 @@ export function useAsk(
 }
 
 /** The bar's alert of a save, read the same way by the Server page's form and
- * the preset page (01's 36, 2h's 151 to 153): a `sign-in` alert set when the
+ * the model profile page (01's 36, 2h's 151 to 153): a `sign-in` alert set when the
  * page's sign-ins were at `at` goes when a later sign-in kept the page, which
  * is what raises `renewals`. */
 export function useSaveAlert(renewals: number): {

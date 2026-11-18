@@ -1,17 +1,17 @@
 // The Speculative decoding card editable, sub-slice 2h.9 of
-// fe/briefs/02h-preset-save.md (189, 190, 191, 192, 193): the draft group
+// fe/briefs/02h-model-profile-save.md (189, 190, 191, 192, 193): the draft group
 // enabled while the read's `model-draft` is not empty or `spec-type` holds a
 // `draft-` entry (190, split as 2-models' 75: on `,`, each entry trimmed,
 // empty entries and `none` dropped), each n-gram group enabled while
 // `spec-type` lists its name (191), one reason line per DISABLED group right
-// after its h4 inside its role="group" (192: `preset-draft-group-off`, and
-// `preset-ngram-off` filled with the group's name), what each field of 2e's
+// after its h4 inside its role="group" (192: `model-profile-draft-group-off`, and
+// `model-profile-ngram-off` filled with the group's name), what each field of 2e's
 // table 112 sends by its kind (133), the ranges of 157 and the decimal check of
 // 165 on `spec-draft-p-min`, the full-value line of 134 kept only under a
 // disabled control, `model-draft` and `spec-type` never sent, and the two new
 // strings (193). The card's read-only look is 2e's 112, in
-// PresetCards5.test.tsx; the helpers are those of PresetSave12, PresetSave13
-// and PresetSave14.test.tsx, which this file repeats (a test file imports no
+// ModelProfileCards5.test.tsx; the helpers are those of ModelProfileSave12, ModelProfileSave13
+// and ModelProfileSave14.test.tsx, which this file repeats (a test file imports no
 // other test file).
 import {
   cleanup,
@@ -29,7 +29,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -37,23 +37,23 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const CARD = en('preset-speculative-decoding')
+const PUT = `/api/profiles/model/${ID}`
+const CARD = en('model-profile-speculative-decoding')
 /** The five groups of 2e's table 112: the draft group's h4 is a string, the
  * four n-gram groups' are literal. */
-const DRAFT = en('preset-draft-model-group')
+const DRAFT = en('model-profile-draft-model-group')
 const MOD = 'ngram-mod'
 const SIMPLE = 'ngram-simple'
 const MAP_K = 'ngram-map-k'
 const MAP_K4V = 'ngram-map-k4v'
-const DRAFT_K = en('preset-draft-k-cache-type')
-const DRAFT_V = en('preset-draft-v-cache-type')
+const DRAFT_K = en('model-profile-draft-k-cache-type')
+const DRAFT_V = en('model-profile-draft-v-cache-type')
 const DEFAULT = en('field-default')
 /** 193: the two new strings, the brief's exact English as a literal. 198
- * changed the draft one: the Assets row it names is `preset-draft-model`,
+ * changed the draft one: the Assets row it names is `model-profile-draft-model`,
  * "Draft model", not a file. */
 const OFF_DRAFT =
-  'Used only with a draft: a Draft model or a Drafter, and this preset has neither (Assets).'
+  'Used only with a draft: a Draft model or a Drafter, and this model profile has neither (Assets).'
 const offNgram = (group: string) =>
   `Used only when N-gram drafters (Assets) includes ${group}.`
 /** 157's rows the card's number fields sit in, and 165's decimal text. */
@@ -190,7 +190,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave12, 13 and 14.test.tsx) ──────────────────────
+// ── Helpers (as ModelProfileSave12, 13 and 14.test.tsx) ──────────────────────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -199,8 +199,11 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
@@ -222,14 +225,14 @@ function headingOf(main: HTMLElement, name: string): HTMLElement {
 /** A field's control, by the id of its row (a Field's control is
  * `<id>-control`). */
 function control(key: string): HTMLInputElement | HTMLSelectElement {
-  const el = document.getElementById(`preset-${key}-control`)
+  const el = document.getElementById(`model-profile-${key}-control`)
   expect(el, `the control of ${key}`).not.toBeNull()
   return el as HTMLInputElement | HTMLSelectElement
 }
 
 /** A number field's default box (`<id>-box`). */
 function boxOf(key: string): HTMLInputElement {
-  const el = document.getElementById(`preset-${key}-box`)
+  const el = document.getElementById(`model-profile-${key}-box`)
   expect(el, `the default box of ${key}`).not.toBeNull()
   return el as HTMLInputElement
 }
@@ -262,13 +265,13 @@ function saveButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-button') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -394,7 +397,7 @@ const DRAFT_OFF = [
 ]
 
 test.each(DRAFT_ON)(
-  '2h.190: $name: the draft group is enabled, every one of its controls, and its line preset-draft-group-off is away',
+  '2h.190: $name: the draft group is enabled, every one of its controls, and its line model-profile-draft-group-off is away',
   async (c) => {
     const { main } = await form(c.values)
     expect(
@@ -411,7 +414,7 @@ test.each(DRAFT_ON)(
 )
 
 test.each(DRAFT_OFF)(
-  '2h.190, 2h.192: $name: every control of the draft group is natively disabled and its line preset-draft-group-off shows',
+  '2h.190, 2h.192: $name: every control of the draft group is natively disabled and its line model-profile-draft-group-off shows',
   async (c) => {
     const { main } = await form(c.values)
     expect(
@@ -524,7 +527,7 @@ test('2h.192: the reason line is a P inside the group role="group", right after 
     ).toBe(g)
     const h4 = headingOf(main, group.name)
     // 192 puts the line "right after its h4, inside the role="group" div".
-    // 2e's 90a, pinned in PresetCards5.test.tsx, is what makes that a pair of
+    // 2e's 90a, pinned in ModelProfileCards5.test.tsx, is what makes that a pair of
     // pins and not one: the h4 is not inside the division it names (the
     // division names itself through aria-labelledby), it sits above it. So the
     // division is the element right after the h4, and the line the first
@@ -638,7 +641,7 @@ test('2h.190, 2h.176: a locked card with junk in its fields: no mark, nothing fo
   // load leaves it on the body, which is as valid a place to stay as the
   // page's own focus target).
   const focusBefore = document.activeElement
-  pick(main, en('preset-pooling'), 'rank')
+  pick(main, en('model-profile-pooling'), 'rank')
   await save(main, bff)
   const sent = sentValues(bff)
   // The key of the Embeddings card's Pooling row (2h.1's 133: "Pool `rank`
@@ -935,7 +938,7 @@ test('2h.134, 2h.118: the draft group disabled, a long Draft K-cache type keeps 
   await form(read(MOD, { 'spec-draft-type-k': SELECT_21 }))
   const el = control('spec-draft-type-k') as HTMLSelectElement
   expect(el.disabled, '190: no draft, the select is locked').toBe(true)
-  const line = document.getElementById('preset-full-spec-draft-type-k')
+  const line = document.getElementById('model-profile-full-spec-draft-type-k')
   expect(
     line,
     '118: the long value is repeated in full under the control',
@@ -949,18 +952,21 @@ test('2h.134, 2h.118: the draft group disabled, a long Draft K-cache type keeps 
     '190: a drafter named, the select is open',
   ).toBe(false)
   expect(
-    document.getElementById('preset-full-spec-draft-type-k'),
+    document.getElementById('model-profile-full-spec-draft-type-k'),
     '134: an open select shows no full-value line',
   ).toBeNull()
 })
 
 // ── 193: the two new strings ──────────────────────────────────────────
 
-test('2h.193: the new strings preset-draft-group-off and preset-ngram-off are the briefs sentences, word for word', () => {
-  expect(en('preset-draft-group-off')).toBe(OFF_DRAFT)
-  expect(en('preset-ngram-off', 'ngram-mod')).toBe(offNgram('ngram-mod'))
-  expect(t('preset-draft-group-off'), 'the fe strings file').toBe(OFF_DRAFT)
-  expect(t('preset-ngram-off', 'ngram-map-k4v'), 'the fe strings file').toBe(
-    offNgram('ngram-map-k4v'),
+test('2h.193: the new strings model-profile-draft-group-off and model-profile-ngram-off are the briefs sentences, word for word', () => {
+  expect(en('model-profile-draft-group-off')).toBe(OFF_DRAFT)
+  expect(en('model-profile-ngram-off', 'ngram-mod')).toBe(offNgram('ngram-mod'))
+  expect(t('model-profile-draft-group-off'), 'the fe strings file').toBe(
+    OFF_DRAFT,
   )
+  expect(
+    t('model-profile-ngram-off', 'ngram-map-k4v'),
+    'the fe strings file',
+  ).toBe(offNgram('ngram-map-k4v'))
 })

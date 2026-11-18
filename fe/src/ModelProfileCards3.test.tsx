@@ -1,13 +1,13 @@
-// The two cards of 2e.3 on the preset page (fe/briefs/02e-preset-cards.md,
+// The two cards of 2e.3 on the model profile page (fe/briefs/02e-model-profile-cards.md,
 // criteria 101 to 106): Chat / reasoning and Vision, tables of fields, plus
 // what 2e.3 brings: the checkbox field (criterion 87's fourth kind), the two
 // notes (90), and the device select of 103, which in 2e holds only the file's
 // value because the device list arrives in 2f. The shared rules of section 1
-// are pinned for the cards of 2e.1 in PresetCards1.test.tsx and for those of
-// 2e.2 in PresetCards2.test.tsx; here they are pinned for what 2e.3 adds. The
-// route and the read are PresetPage.test.tsx, the Engine field and the Assets
-// card are PresetContent.test.tsx, the full-value line as a rule is
-// PresetFullValue.test.tsx (here only the case of 104). The colours of 85, the
+// are pinned for the cards of 2e.1 in ModelProfileCards1.test.tsx and for those of
+// 2e.2 in ModelProfileCards2.test.tsx; here they are pinned for what 2e.3 adds. The
+// route and the read are ModelProfilePage.test.tsx, the Engine field and the Assets
+// card are ModelProfileContent.test.tsx, the full-value line as a rule is
+// ModelProfileFullValue.test.tsx (here only the case of 104). The colours of 85, the
 // width of 91 and the muted style of a note of 90 are checked in review, not
 // in jsdom.
 import {
@@ -24,7 +24,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -36,7 +36,7 @@ import {
   fieldTabStops,
   pageStartTabStops,
   saveBarTabStops,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -89,7 +89,7 @@ const EFFORT_VALUES = [
 ]
 
 /** The empty option of a device select (103). */
-const FOLLOW = en('preset-device-follows-model')
+const FOLLOW = en('model-profile-device-follows-model')
 
 /** One row of the field tables of 101 and 102. */
 type Row = {
@@ -125,34 +125,34 @@ type Row = {
 /** The field tables of 101 and 102, in the cards' and the GUI's order. */
 const FIELDS: Row[] = [
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'jinja',
-    label: en('preset-chat-template'),
-    hint: 'preset-chat-template-hint',
+    label: en('model-profile-chat-template'),
+    hint: 'model-profile-chat-template-hint',
     kind: 'checkbox',
-    toggle: 'preset-chat-template-toggle',
+    toggle: 'model-profile-chat-template-toggle',
     absentChecked: true,
     set: 'false',
     shown: 'unchecked',
     shownChecked: false,
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'prefill-assistant',
-    label: en('preset-prefill-assistant'),
-    hint: 'preset-prefill-assistant-hint',
+    label: en('model-profile-prefill-assistant'),
+    hint: 'model-profile-prefill-assistant-hint',
     kind: 'checkbox',
-    toggle: 'preset-prefill-assistant-toggle',
+    toggle: 'model-profile-prefill-assistant-toggle',
     absentChecked: true,
     set: 'false',
     shown: 'unchecked',
     shownChecked: false,
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning',
-    label: en('preset-reasoning'),
-    hint: 'preset-reasoning-hint',
+    label: en('model-profile-reasoning'),
+    hint: 'model-profile-reasoning-hint',
     kind: 'select',
     options: REASONING,
     optionValues: ['auto', 'on', 'off'],
@@ -161,10 +161,10 @@ const FIELDS: Row[] = [
     shown: en('option-off'),
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning-format',
-    label: en('preset-reasoning-format'),
-    hint: 'preset-reasoning-format-hint',
+    label: en('model-profile-reasoning-format'),
+    hint: 'model-profile-reasoning-format-hint',
     kind: 'select',
     options: REASONING_FORMAT,
     optionValues: ['auto', 'none', 'deepseek'],
@@ -173,10 +173,10 @@ const FIELDS: Row[] = [
     shown: 'deepseek',
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning-effort',
-    label: en('preset-reasoning-effort'),
-    hint: 'preset-reasoning-effort-hint',
+    label: en('model-profile-reasoning-effort'),
+    hint: 'model-profile-reasoning-effort-hint',
     kind: 'select',
     options: EFFORT,
     optionValues: EFFORT_VALUES,
@@ -185,10 +185,10 @@ const FIELDS: Row[] = [
     shown: en('option-extra-high'),
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning-preserve',
-    label: en('preset-keep-past-thinking'),
-    hint: 'preset-keep-past-thinking-hint',
+    label: en('model-profile-keep-past-thinking'),
+    hint: 'model-profile-keep-past-thinking-hint',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -196,51 +196,51 @@ const FIELDS: Row[] = [
     shown: en('option-off'),
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning-budget',
-    label: en('preset-thinking-budget'),
-    hint: 'preset-thinking-budget-hint',
+    label: en('model-profile-thinking-budget'),
+    hint: 'model-profile-thinking-budget-hint',
     kind: 'number',
     integer: true,
     set: '-1',
     shown: '-1',
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'reasoning-budget-message',
-    label: en('preset-budget-message'),
-    hint: 'preset-budget-message-hint',
+    label: en('model-profile-budget-message'),
+    hint: 'model-profile-budget-message-hint',
     kind: 'text',
     set: 'Wrap up now.',
     shown: 'Wrap up now.',
   },
   {
-    card: 'preset-chat-reasoning',
+    card: 'model-profile-chat-reasoning',
     key: 'n-predict',
-    label: en('preset-max-output'),
-    hint: 'preset-max-output-hint',
+    label: en('model-profile-max-output'),
+    hint: 'model-profile-max-output-hint',
     kind: 'number',
     integer: true,
     set: '8192',
     shown: '8192',
   },
   {
-    card: 'preset-vision',
+    card: 'model-profile-vision',
     key: 'mmproj-offload',
-    label: en('preset-vision-on-gpu'),
-    hint: 'preset-vision-on-gpu-hint',
+    label: en('model-profile-vision-on-gpu'),
+    hint: 'model-profile-vision-on-gpu-hint',
     kind: 'checkbox',
-    toggle: 'preset-vision-offload-toggle',
+    toggle: 'model-profile-vision-offload-toggle',
     absentChecked: true,
     set: 'false',
     shown: 'unchecked',
     shownChecked: false,
   },
   {
-    card: 'preset-vision',
+    card: 'model-profile-vision',
     key: 'mmproj-device',
-    label: en('preset-vision-gpu'),
-    hint: 'preset-vision-gpu-hint',
+    label: en('model-profile-vision-gpu'),
+    hint: 'model-profile-vision-gpu-hint',
     kind: 'select',
     options: [FOLLOW, 'ROCm1'],
     optionValues: ['', 'ROCm1'],
@@ -249,20 +249,20 @@ const FIELDS: Row[] = [
     shown: 'ROCm1',
   },
   {
-    card: 'preset-vision',
+    card: 'model-profile-vision',
     key: 'image-min-tokens',
-    label: en('preset-min-image-tokens'),
-    hint: 'preset-min-image-tokens-hint',
+    label: en('model-profile-min-image-tokens'),
+    hint: 'model-profile-min-image-tokens-hint',
     kind: 'number',
     integer: true,
     set: '1024',
     shown: '1024',
   },
   {
-    card: 'preset-vision',
+    card: 'model-profile-vision',
     key: 'image-max-tokens',
-    label: en('preset-max-image-tokens'),
-    hint: 'preset-max-image-tokens-hint',
+    label: en('model-profile-max-image-tokens'),
+    hint: 'model-profile-max-image-tokens-hint',
     kind: 'number',
     integer: true,
     set: '2048',
@@ -271,54 +271,54 @@ const FIELDS: Row[] = [
 ]
 
 /** The two cards of 2e.3. */
-const CARDS = ['preset-chat-reasoning', 'preset-vision']
+const CARDS = ['model-profile-chat-reasoning', 'model-profile-vision']
 
 /** The cards of 2e.3 that 2h.170 made editable: every control of these is
  * enabled (a number's input while its default box is unticked, 156), every
  * control of a card not listed stays natively disabled (2e.85). */
-const EDITABLE_CARDS = ['preset-chat-reasoning']
+const EDITABLE_CARDS = ['model-profile-chat-reasoning']
 
 /** The notes inside the two cards (90): the card, the note's strings key, and
  * the labels of the fields each note sits between (MP 933-938, 1099-1104). */
 const NOTES = [
   [
-    'preset-chat-reasoning',
-    'preset-output-budget-note',
-    en('preset-keep-past-thinking'),
-    en('preset-thinking-budget'),
+    'model-profile-chat-reasoning',
+    'model-profile-output-budget-note',
+    en('model-profile-keep-past-thinking'),
+    en('model-profile-thinking-budget'),
   ],
   [
-    'preset-vision',
-    'preset-image-tokens-note',
-    en('preset-vision-gpu'),
-    en('preset-min-image-tokens'),
+    'model-profile-vision',
+    'model-profile-image-tokens-note',
+    en('model-profile-vision-gpu'),
+    en('model-profile-min-image-tokens'),
   ],
 ] as const
 
 /** The 41 new strings of 105. */
 const NEW_STRINGS = [
-  'preset-chat-reasoning',
-  'preset-chat-template',
-  'preset-chat-template-hint',
-  'preset-chat-template-toggle',
-  'preset-prefill-assistant',
-  'preset-prefill-assistant-hint',
-  'preset-prefill-assistant-toggle',
-  'preset-reasoning',
-  'preset-reasoning-hint',
-  'preset-reasoning-format',
-  'preset-reasoning-format-hint',
-  'preset-reasoning-effort',
-  'preset-reasoning-effort-hint',
-  'preset-keep-past-thinking',
-  'preset-keep-past-thinking-hint',
-  'preset-thinking-budget',
-  'preset-thinking-budget-hint',
-  'preset-budget-message',
-  'preset-budget-message-hint',
-  'preset-max-output',
-  'preset-max-output-hint',
-  'preset-output-budget-note',
+  'model-profile-chat-reasoning',
+  'model-profile-chat-template',
+  'model-profile-chat-template-hint',
+  'model-profile-chat-template-toggle',
+  'model-profile-prefill-assistant',
+  'model-profile-prefill-assistant-hint',
+  'model-profile-prefill-assistant-toggle',
+  'model-profile-reasoning',
+  'model-profile-reasoning-hint',
+  'model-profile-reasoning-format',
+  'model-profile-reasoning-format-hint',
+  'model-profile-reasoning-effort',
+  'model-profile-reasoning-effort-hint',
+  'model-profile-keep-past-thinking',
+  'model-profile-keep-past-thinking-hint',
+  'model-profile-thinking-budget',
+  'model-profile-thinking-budget-hint',
+  'model-profile-budget-message',
+  'model-profile-budget-message-hint',
+  'model-profile-max-output',
+  'model-profile-max-output-hint',
+  'model-profile-output-budget-note',
   'option-auto',
   'option-minimal',
   'option-low',
@@ -326,18 +326,18 @@ const NEW_STRINGS = [
   'option-high',
   'option-extra-high',
   'option-maximum',
-  'preset-vision',
-  'preset-vision-on-gpu',
-  'preset-vision-on-gpu-hint',
-  'preset-vision-offload-toggle',
-  'preset-vision-gpu',
-  'preset-vision-gpu-hint',
-  'preset-image-tokens-note',
-  'preset-min-image-tokens',
-  'preset-min-image-tokens-hint',
-  'preset-max-image-tokens',
-  'preset-max-image-tokens-hint',
-  'preset-device-follows-model',
+  'model-profile-vision',
+  'model-profile-vision-on-gpu',
+  'model-profile-vision-on-gpu-hint',
+  'model-profile-vision-offload-toggle',
+  'model-profile-vision-gpu',
+  'model-profile-vision-gpu-hint',
+  'model-profile-image-tokens-note',
+  'model-profile-min-image-tokens',
+  'model-profile-min-image-tokens-hint',
+  'model-profile-max-image-tokens',
+  'model-profile-max-image-tokens-hint',
+  'model-profile-device-follows-model',
 ]
 
 /** The controls 101 and 102 put in the two cards: a box and an input per
@@ -352,7 +352,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards2.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards2.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -367,7 +367,7 @@ async function loaded(options: BffOptions = {}) {
   const h1 = await within(main).findByRole('heading', { level: 1, name: ID })
   const h3 = await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main, h1, h3 }
 }
@@ -377,18 +377,18 @@ function docOf(
   values: Record<string, string>,
   extra: Record<string, unknown> = {},
 ) {
-  return presetDoc({ model: MODEL, ...values }, extra)
+  return modelProfileDoc({ model: MODEL, ...values }, extra)
 }
 
 /** A read whose `values` are exactly `values` (the `{}` stub of 104). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 function settingsTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
@@ -568,7 +568,9 @@ function notesOf(card: HTMLElement): HTMLElement[] {
 test.each(FIELDS)(
   '2e.101, 2e.102, 2e.87, 2h.158, 2e.85, 2h.170: $key is a $kind named by $label inside its card, shows the set value $set as the reply holds it, its control enabled on the editable card and natively disabled on the read-only one',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     // 2h.170: the Chat / reasoning card is editable, every field always
     // enabled; a card this file's rows do not list stays read-only, so the
     // table also pins the natively disabled control (2e.85).
@@ -596,7 +598,7 @@ test.each(FIELDS)(
       ).toBe(!editable)
       // 156: on the editable card the input follows the unticked box, so it is
       // enabled and can scroll; a ticked box disables it, pinned in
-      // PresetSave11.test.tsx.
+      // ModelProfileSave11.test.tsx.
       expect(
         input.disabled,
         `${f.key}: the input ${editable ? 'enabled' : 'disabled'}`,
@@ -676,7 +678,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.86, 2e.104: $key is absent from a values of {} so its field shows the absent form of $kind',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf({})),
+    })
     expectAbsent(main, f)
   },
 )
@@ -684,7 +688,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.88: $key has an About toggle named About its label, with aria-expanded and aria-controls, and its hint opens as one paragraph per line of the GUI text and closes again',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const lines = en(f.hint).split('\n')
     expect(lines.length, `${f.hint}: the hint has lines`).toBeGreaterThan(0)
     const about = aboutOf(main, f.label)
@@ -723,7 +729,7 @@ test.each(FIELDS.filter((f) => f.key !== 'reasoning-preserve'))(
   '2e.86, 2e.104: a key of 101 or 102 whose value is the empty string reads as absent, for every key of 2e.3 that is not a flag (2e.3b: a flag reads "" as on, criterion 123): $key',
   async (f) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
   },
@@ -731,7 +737,7 @@ test.each(FIELDS.filter((f) => f.key !== 'reasoning-preserve'))(
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards of 2e.3 hold exactly the fields of 101 and 102 in the table order', async () => {
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         docOf({
@@ -810,7 +816,7 @@ test.each(CHECKBOX_CASES)(
   '2e.87, 2e.101, 2e.102, 2e.122, 2h.170: $key is a group named by its label holding one checkbox whose text is the table toggle, $value is checked $checked, and its control is enabled on the editable card and natively disabled on the read-only one',
   async ({ row: f, value, checked, editable }) => {
     const { main } = await loaded({
-      preset: () =>
+      modelProfile: () =>
         reply(200, exactOf(value === undefined ? {} : { [f.key]: value })),
     })
     const group = groupBox(main, f.label)
@@ -844,13 +850,15 @@ test.each(CHECKBOX_CASES)(
 test('2e.104: the stub of 104 shows as the tables say, every key set: the three checkboxes unchecked and mmproj-device as the file writes it', async () => {
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // Every key set.
-  const { main } = await loaded({ preset: () => reply(200, exactOf(SET)) })
+  const { main } = await loaded({
+    modelProfile: () => reply(200, exactOf(SET)),
+  })
   for (const key of ['jinja', 'prefill-assistant', 'mmproj-offload'])
     expect(checkBoxOf(main, of_(key)).checked, `${key} false: unchecked`).toBe(
       false,
     )
   expect(
-    selectedTextExact(selectOf(main, en('preset-vision-gpu'))),
+    selectedTextExact(selectOf(main, en('model-profile-vision-gpu'))),
     'mmproj-device ROCm1: the device as the file writes it',
   ).toBe('ROCm1')
 })
@@ -859,7 +867,7 @@ test('2e.104: the stub of 104 shows as the tables say, values {}: every checkbox
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // values {}: every checkbox checked.
   const { main: empty } = await loaded({
-    preset: () => reply(200, exactOf({})),
+    modelProfile: () => reply(200, exactOf({})),
   })
   for (const key of ['jinja', 'prefill-assistant', 'mmproj-offload'])
     expect(checkBoxOf(empty, of_(key)).checked, `${key}: absent checked`).toBe(
@@ -871,7 +879,7 @@ test('2e.104: the stub of 104 shows as the tables say, jinja yes: checked as the
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // jinja yes: checked, as the GUI.
   const { main: yes } = await loaded({
-    preset: () => reply(200, exactOf({ jinja: 'yes' })),
+    modelProfile: () => reply(200, exactOf({ jinja: 'yes' })),
   })
   expect(
     checkBoxOf(yes, of_('jinja')).checked,
@@ -882,9 +890,9 @@ test('2e.104: the stub of 104 shows as the tables say, jinja yes: checked as the
 test('2e.104: the stub of 104 shows as the tables say, reasoning maybe: one extra option carrying it', async () => {
   // reasoning maybe: one extra option carrying it.
   const { main: maybe } = await loaded({
-    preset: () => reply(200, exactOf({ reasoning: 'maybe' })),
+    modelProfile: () => reply(200, exactOf({ reasoning: 'maybe' })),
   })
-  const select = selectOf(maybe, en('preset-reasoning'))
+  const select = selectOf(maybe, en('model-profile-reasoning'))
   const opts = optionsOf(select)
   expect(opts.length, 'reasoning maybe: the three options plus one').toBe(
     REASONING.length + 1,
@@ -913,14 +921,14 @@ test('2e.101: Reasoning lists auto / on / off and Reasoning format lists auto, n
   for (const [key, label, options, values, shown] of [
     [
       'reasoning',
-      en('preset-reasoning'),
+      en('model-profile-reasoning'),
       REASONING,
       ['auto', 'on', 'off'],
       en('option-off'),
     ],
     [
       'reasoning-format',
-      en('preset-reasoning-format'),
+      en('model-profile-reasoning-format'),
       REASONING_FORMAT,
       ['auto', 'none', 'deepseek'],
       'deepseek',
@@ -928,7 +936,7 @@ test('2e.101: Reasoning lists auto / on / off and Reasoning format lists auto, n
   ] as [string, string, string[], string[], string][]) {
     const last = values[values.length - 1]!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: last })),
+      modelProfile: () => reply(200, exactOf({ [key]: last })),
     })
     const select = selectOf(main, label)
     expect(optionTexts(select), `${key}: the options of 101`).toEqual(options)
@@ -946,9 +954,10 @@ test('2e.101: Reasoning lists auto / on / off and Reasoning format lists auto, n
 
 test('2e.101, 2e.87: a value the mapping of Reasoning format does not list is one extra last option carrying it as its value and its text, selected, and is not read as auto as the GUI reads it', async () => {
   const { main } = await loaded({
-    preset: () => reply(200, exactOf({ 'reasoning-format': 'deepseekR1' })),
+    modelProfile: () =>
+      reply(200, exactOf({ 'reasoning-format': 'deepseekR1' })),
   })
-  const select = selectOf(main, en('preset-reasoning-format'))
+  const select = selectOf(main, en('model-profile-reasoning-format'))
   const opts = optionsOf(select)
   expect(opts.length, 'an unlisted format: the three options plus one').toBe(
     REASONING_FORMAT.length + 1,
@@ -967,9 +976,9 @@ test('2e.101, 2e.87: a value the mapping of Reasoning format does not list is on
 })
 
 test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 917-918, in order and with the file values, and xhigh selects its own option', async () => {
-  const label = en('preset-reasoning-effort')
+  const label = en('model-profile-reasoning-effort')
   const { main } = await loaded({
-    preset: () => reply(200, exactOf({ 'reasoning-effort': 'xhigh' })),
+    modelProfile: () => reply(200, exactOf({ 'reasoning-effort': 'xhigh' })),
   })
   const select = selectOf(main, label)
   expect(optionTexts(select), 'the seven effort texts of 105').toEqual(EFFORT)
@@ -985,9 +994,9 @@ test('2e.101: Reasoning effort lists the seven reasoning-effort options of MP 91
 test.each(EFFORT_VALUES)(
   '2e.101: each listed Reasoning effort value selects its own option: %s',
   async (value) => {
-    const label = en('preset-reasoning-effort')
+    const label = en('model-profile-reasoning-effort')
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'reasoning-effort': value })),
+      modelProfile: () => reply(200, exactOf({ 'reasoning-effort': value })),
     })
     expect(selectedTextExact(selectOf(main, label)), `${value}: its own`).toBe(
       EFFORT[EFFORT_VALUES.indexOf(value)],
@@ -1003,7 +1012,7 @@ test.each([
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [f.key]: value })),
+      modelProfile: () => reply(200, exactOf({ [f.key]: value })),
     })
     const select = selectOf(main, f.label)
     expect(optionTexts(select), `${f.key}: the shared options of 1.3`).toEqual(
@@ -1018,7 +1027,7 @@ test.each([
 test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking: a flag value the mapping does not list is on with no extra option (2e.3b)', async () => {
   const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
   const { main } = await loaded({
-    preset: () => reply(200, exactOf({ [f.key]: 'yes' })),
+    modelProfile: () => reply(200, exactOf({ [f.key]: 'yes' })),
   })
   const select = selectOf(main, f.label)
   expect(
@@ -1033,16 +1042,16 @@ test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking: a flag value the mappi
 test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking absent shows default', async () => {
   const f = FIELDS.find((x) => x.key === 'reasoning-preserve')!
   const { main: absent } = await loaded({
-    preset: () => reply(200, exactOf({})),
+    modelProfile: () => reply(200, exactOf({})),
   })
   expectAbsentSelect(absent, f)
 })
 
 // ── The device select of 103 ────────────────────────────────────────────
 
-test('2e.103: Vision GPU absent holds only the empty option, whose value is the empty string and whose text is preset-device-follows-model, selected; the page lists no device, it has no device list in 2e', async () => {
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
-  const select = selectOf(main, en('preset-vision-gpu'))
+test('2e.103: Vision GPU absent holds only the empty option, whose value is the empty string and whose text is model-profile-device-follows-model, selected; the page lists no device, it has no device list in 2e', async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
+  const select = selectOf(main, en('model-profile-vision-gpu'))
   const opts = optionsOf(select)
   expect(opts.length, 'absent: only the empty option').toBe(1)
   expect(opts[0]!.value, 'the empty option carries the empty value').toBe('')
@@ -1055,9 +1064,9 @@ test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
   '2e.103: Vision GPU present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: no device of a list, no (custom) marker: %s',
   async (value) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'mmproj-device': value })),
+      modelProfile: () => reply(200, exactOf({ 'mmproj-device': value })),
     })
-    const select = selectOf(main, en('preset-vision-gpu'))
+    const select = selectOf(main, en('model-profile-vision-gpu'))
     const opts = optionsOf(select)
     expect(opts.length, `${value}: the empty option plus one`).toBe(2)
     expect(opts[0]!.value, `${value}: the empty option stays first`).toBe('')
@@ -1083,12 +1092,12 @@ test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
 // ── The notes inside the cards (90) ─────────────────────────────────────
 
 test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fields the table names, in the muted note style, and are no field: no About toggle; and the two cards hold no group, so no h4 and no role=group division', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const [cardKey, noteKey, afterLabel, beforeLabel] of NOTES) {
     const card = cardOf(main, cardKey)
     // 2h.176: the SET stub has no mmproj, so the Vision card opens with its
-    // preset-vision-off paragraph right after the h3, before the first field
-    // (the paragraph is pinned by 176 and 181 in PresetSave12.test.tsx). The
+    // model-profile-vision-off paragraph right after the h3, before the first field
+    // (the paragraph is pinned by 176 and 181 in ModelProfileSave12.test.tsx). The
     // notes of 90 sit between fields, so a 90 note is a card paragraph that
     // starts after the card's first field; the intro is not one of them.
     const firstField = card.querySelector('.field')
@@ -1148,7 +1157,7 @@ test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with n
   ] as [string, string][]) {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     if (f.kind === 'number') {
       const group = groupBox(main, f.label)
@@ -1170,18 +1179,18 @@ test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with n
   }
   // A select shows the string the page adds for it as written.
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         exactOf({ 'mmproj-device': ' ROCm1 ', 'reasoning-effort': 'XHigh' }),
       ),
   })
   expect(
-    selectedTextExact(selectOf(main, en('preset-vision-gpu'))),
+    selectedTextExact(selectOf(main, en('model-profile-vision-gpu'))),
     'the device keeps its spaces and its case',
   ).toBe(' ROCm1 ')
   expect(
-    selectedTextExact(selectOf(main, en('preset-reasoning-effort'))),
+    selectedTextExact(selectOf(main, en('model-profile-reasoning-effort'))),
     'an effort no option lists keeps its case',
   ).toBe('XHigh')
 })
@@ -1202,15 +1211,16 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
     'and a device value past the same limit of a select',
   ).toBeGreaterThan(20)
   const { main } = await loaded({
-    preset: () => reply(200, exactOf({ 'reasoning-budget-message': LONG })),
+    modelProfile: () =>
+      reply(200, exactOf({ 'reasoning-budget-message': LONG })),
   })
   const msg = within(main).getByRole('textbox', {
-    name: en('preset-budget-message'),
+    name: en('model-profile-budget-message'),
   }) as HTMLInputElement
   expect(msg.disabled, 'the budget message is editable (170)').toBe(false)
   expect(msg.value, 'and it holds the long value').toBe(LONG)
   expect(
-    main.querySelector('#preset-full-reasoning-budget-message'),
+    main.querySelector('#model-profile-full-reasoning-budget-message'),
     'an enabled input shows no line (134)',
   ).toBeNull()
   // 2h.176: with the read's mmproj present and Vision on GPU checked, the
@@ -1219,7 +1229,7 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
   cleanup()
   vi.unstubAllGlobals()
   const { main: on } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         exactOf({
@@ -1230,7 +1240,7 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
       ),
   })
   const gpu = within(on).getByRole('combobox', {
-    name: en('preset-vision-gpu'),
+    name: en('model-profile-vision-gpu'),
   }) as HTMLSelectElement
   expect(
     gpu.disabled,
@@ -1238,7 +1248,7 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
   ).toBe(false)
   expect(gpu.value, 'the enabled select holds the long value').toBe(DEVICE_LONG)
   expect(
-    on.querySelector('#preset-full-mmproj-device'),
+    on.querySelector('#model-profile-full-mmproj-device'),
     'an enabled select shows no line (134)',
   ).toBeNull()
   // While mmproj is absent the select is disabled (176), and 134 keeps the
@@ -1246,16 +1256,16 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
   cleanup()
   vi.unstubAllGlobals()
   const { main: off } = await loaded({
-    preset: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
+    modelProfile: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
   })
   const device = within(off).getByRole('combobox', {
-    name: en('preset-vision-gpu'),
+    name: en('model-profile-vision-gpu'),
   }) as HTMLSelectElement
   expect(
     device.disabled,
     'the Vision GPU select is disabled without an MMProj (176)',
   ).toBe(true)
-  const line = off.querySelector('#preset-full-mmproj-device')
+  const line = off.querySelector('#model-profile-full-mmproj-device')
   expect(
     line,
     'the disabled control has its full-value line (134, 118)',
@@ -1268,7 +1278,7 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
 // ── The cards: numbers, units, disabled, in their place (83, 85, 87, 89, 91) ──
 
 test('2e.87, 2h.158: the four number keys of 2e.3 are all integer keys: the numeric form on the ranged two, none on the two any-whole-number keys', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const numbers = FIELDS.filter((f) => f.kind === 'number')
   expect(
     numbers.map((f) => f.key),
@@ -1290,7 +1300,7 @@ test('2e.87, 2h.158: the four number keys of 2e.3 are all integer keys: the nume
 })
 
 test('2e.89: no field of 2e.3 carries a unit, so neither card shows a .unit element', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const cardKey of CARDS)
     expect(
       cardOf(main, cardKey).querySelectorAll('.unit').length,
@@ -1299,7 +1309,7 @@ test('2e.89: no field of 2e.3 carries a unit, so neither card shows a .unit elem
 })
 
 test('2e.85, 2h.170: every control of the Chat / reasoning card is enabled, every control of the Vision card is natively disabled, the checkboxes included, while every About toggle of 2e.3 stays enabled', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const controls = CARDS.flatMap((cardKey) => [
     ...cardOf(main, cardKey).querySelectorAll<HTMLElement>(
       'input, select, textarea',
@@ -1335,7 +1345,9 @@ test('2e.85, 2h.170: every control of the Chat / reasoning card is enabled, ever
 })
 
 test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, Chat / reasoning after KV cache and before Sampling overrides, Vision after Advanced, and the page shows every card in the order of 83', async () => {
-  const { main, h1 } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main, h1 } = await loaded({
+    modelProfile: () => reply(200, docOf(SET)),
+  })
   const h2 = settingsTitle(main)
   const section = h2.closest('section')
   expect(section, 'the h2 sits in a section').toBeTruthy()
@@ -1360,16 +1372,16 @@ test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, 
     within(main)
       .getAllByRole('heading', { level: 3 })
       .map((h) => text(h)),
-    'the cards, in the order of 83 (the list of test/presetCards.ts)',
+    'the cards, in the order of 83 (the list of test/modelProfileCards.ts)',
   ).toEqual(cardHeadings())
 })
 
-test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('preset-engine')}`,
-    en('preset-engine'),
+    `${en('field-about')} ${en('model-profile-engine')}`,
+    en('model-profile-engine'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
@@ -1399,7 +1411,7 @@ test('2e.105: the two cards, every label, hint, toggle, option, note and the emp
       en(key).length,
       `${key}: the test's English is not empty`,
     ).toBeGreaterThan(0)
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const cardKey of CARDS)
     expect(
       text(cardOf(main, cardKey).querySelector('h3')!),
@@ -1436,20 +1448,20 @@ test('2e.105: the two cards, every label, hint, toggle, option, note and the emp
       `${en(cardKey)}: the note shows the English of 105`,
     ).toEqual(
       // 2h.176: the SET stub has no mmproj, so the Vision card opens with
-      // its preset-vision-off paragraph (the string of 2h.7's 182) before
+      // its model-profile-vision-off paragraph (the string of 2h.7's 182) before
       // 90's note; the Chat / reasoning card has only the note of 90.
-      cardKey === 'preset-vision'
-        ? [en('preset-vision-off'), en(noteKey)]
+      cardKey === 'model-profile-vision'
+        ? [en('model-profile-vision-off'), en(noteKey)]
         : [en(noteKey)],
     )
   expect(
-    optionsOf(selectOf(main, en('preset-vision-gpu')))[0]!.textContent,
+    optionsOf(selectOf(main, en('model-profile-vision-gpu')))[0]!.textContent,
     'the empty device option of 105',
-  ).toBe(en('preset-device-follows-model'))
+  ).toBe(en('model-profile-device-follows-model'))
 })
 
 test('2e.106, 2e.87: no field of 2e.3 shows a placeholder, and the two cards show no text of 106: the budget message example of toml 337, the KV warning strip, the embedded-MTP note', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const inputs = CARDS.flatMap((cardKey) => [
     ...cardOf(main, cardKey).querySelectorAll<HTMLInputElement>('input'),
   ])

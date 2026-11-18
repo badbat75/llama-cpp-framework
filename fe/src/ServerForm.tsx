@@ -3,7 +3,7 @@
 // showing the file's value. Every signed-in session edits it: the controls
 // follow their dependencies (5.3) and the save bar checks the values, sends
 // them typed (5.4) and shows the answer by its key. The answer is read in
-// save.ts, shared with the preset page; this file keeps the keys of its own
+// save.ts, shared with the model profile page; this file keeps the keys of its own
 // (section 3) and the tables of its check keys.
 import { useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'

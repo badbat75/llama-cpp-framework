@@ -1,6 +1,6 @@
 // The Models page, slice 2a (fe/briefs/02-models.md, section 2): the nav's
-// Models link, the #/models route and its read-only preset list. The whole
-// app renders against a fake bff (mocked fetch) answering GET /api/presets
+// Models link, the #/models route and its read-only model profile list. The whole
+// app renders against a fake bff (mocked fetch) answering GET /api/profiles/model
 // with [{"id", "engine", "engineAvailable", "enabled", "model"}] in the bff's
 // order (the model since slice 2b, whose filter is in ModelsFilter.test.tsx),
 // errors as {"key", "args"} (fe/briefs/api-contract.md). "2a.17" is the
@@ -28,7 +28,7 @@ import {
   reply,
   startAt,
   type BffOptions,
-  type Preset,
+  type ModelProfile,
 } from './test/bff.ts'
 
 beforeEach(() => startAt('#/models'))
@@ -42,13 +42,13 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function preset(
+function modelProfile(
   id: string,
   enabled = true,
   engine = 'llama.cpp',
   engineAvailable = true,
   model = '',
-): Preset {
+): ModelProfile {
   return { id, engine, engineAvailable, enabled, model }
 }
 
@@ -70,8 +70,8 @@ function navLinks(): string[] {
     .map((a) => a.textContent ?? '')
 }
 
-function presetsReads(bff: ReturnType<typeof fakeBff>): number {
-  return bff.to('GET', '/api/presets').length
+function modelProfilesReads(bff: ReturnType<typeof fakeBff>): number {
+  return bff.to('GET', '/api/profiles/model').length
 }
 
 async function heading1(main: HTMLElement): Promise<HTMLElement> {
@@ -84,13 +84,13 @@ async function heading1(main: HTMLElement): Promise<HTMLElement> {
 function heading2(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('presets-title'),
+    name: en('model-profiles-title'),
   })
 }
 
-/** The presets table, found by its name (the h2). */
+/** The model profiles table, found by its name (the h2). */
 async function table(main: HTMLElement): Promise<HTMLElement> {
-  return within(main).findByRole('table', { name: en('presets-title') })
+  return within(main).findByRole('table', { name: en('model-profiles-title') })
 }
 
 /** The cells of a row: data cells, or a row header if the name is one. */
@@ -116,8 +116,8 @@ async function message(main: HTMLElement, text: string): Promise<HTMLElement> {
 /** The h2, the intro and the note are on the page, in that order around `content`. */
 function framed(main: HTMLElement, content: HTMLElement, what: string) {
   const h2 = heading2(main)
-  const intro = within(main).getByText(en('presets-intro'))
-  const note = within(main).getByText(en('presets-off-note'))
+  const intro = within(main).getByText(en('model-profiles-intro'))
+  const note = within(main).getByText(en('model-profiles-off-note'))
   expect(before(h2, intro), `${what}: intro after the h2`).toBe(true)
   expect(before(intro, content), `${what}: content after the intro`).toBe(true)
   expect(before(content, note), `${what}: note after the content`).toBe(true)
@@ -186,20 +186,25 @@ test('2a.17: 403 client-not-authorized and 503 client-unavailable show their api
     [403, 'client-not-authorized', en('api-client-not-authorized')],
     [503, 'client-unavailable', en('api-client-unavailable')],
   ] as const) {
-    const { main } = open({ presets: () => reply(status, { key, args: [] }) })
+    const { main } = open({
+      modelProfiles: () => reply(status, { key, args: [] }),
+    })
     const shown = await message(main, english)
     expect(shown.tagName, key).toBe('P')
     expect(shown.getAttribute('role'), key).toBeNull()
     expect(within(main).queryByRole('alert'), key).toBeNull()
     expect(within(main).queryByRole('table'), key).toBeNull()
-    expect(within(main).queryByText(en('presets-load-failed')), key).toBeNull()
+    expect(
+      within(main).queryByText(en('model-profiles-load-failed')),
+      key,
+    ).toBeNull()
     framed(main, shown, key)
     cleanup()
     vi.unstubAllGlobals()
   }
 })
 
-test('2a.17, 2b.22: any other status or key, a malformed body (a row without a string model included) or a network failure shows presets-load-failed, never the body', async () => {
+test('2a.17, 2b.22: any other status or key, a malformed body (a row without a string model included) or a network failure shows model-profiles-load-failed, never the body', async () => {
   const answers: [string, () => Response | Promise<Response>][] = [
     ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
     ['500', () => reply(500, { key: 'secret-detail', args: [] })],
@@ -211,7 +216,10 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
     ['200 not json', () => reply(200, 'secret-detail')],
     ['200 null', () => reply(200, 'null')],
     ['200 {}', () => reply(200, {})],
-    ['200 an object of rows', () => reply(200, { presets: [preset('a')] })],
+    [
+      '200 an object of rows',
+      () => reply(200, { modelProfiles: [modelProfile('a')] }),
+    ],
     ['200 [string]', () => reply(200, ['secret-detail'])],
     ['200 [null]', () => reply(200, [null])],
     [
@@ -356,7 +364,7 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
       '200 one good row, one without model',
       () =>
         reply(200, [
-          preset('good-one'),
+          modelProfile('good-one'),
           {
             id: 'secret-detail',
             engine: 'llama.cpp',
@@ -369,7 +377,7 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
       '200 one good row, one bad',
       () =>
         reply(200, [
-          preset('good-one'),
+          modelProfile('good-one'),
           {
             model: '',
             id: 'secret-detail',
@@ -379,9 +387,9 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
         ]),
     ],
   ]
-  for (const [what, presets] of answers) {
-    const { main } = open({ presets })
-    const shown = await message(main, en('presets-load-failed'))
+  for (const [what, modelProfiles] of answers) {
+    const { main } = open({ modelProfiles })
+    const shown = await message(main, en('model-profiles-load-failed'))
     expect(shown.tagName, what).toBe('P')
     expect(within(main).queryByRole('alert'), what).toBeNull()
     expect(within(main).queryByRole('table'), what).toBeNull()
@@ -393,33 +401,33 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
   }
 })
 
-test('2a.17: a presets read held 15 000 ms is aborted and shows presets-load-failed', async () => {
+test('2a.17: a model profiles read held 15 000 ms is aborted and shows model-profiles-load-failed', async () => {
   fakeClock()
   const h = held()
-  open({ presets: h.answer })
+  open({ modelProfiles: h.answer })
   await flush()
   const main = screen.getByRole('main')
-  expect(h.signals, 'the presets were read once').toHaveLength(1)
+  expect(h.signals, 'the model profiles were read once').toHaveLength(1)
   expect(h.signals[0], 'the read passes a signal').toBeInstanceOf(AbortSignal)
   await advance(14_999)
   expect(h.signals[0]!.aborted, 'not aborted at 14 999 ms').toBe(false)
-  expect(within(main).queryByText(en('presets-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profiles-load-failed'))).toBeNull()
   await advance(1)
   expect(h.signals[0]!.aborted, 'aborted at 15 000 ms').toBe(true)
-  const shown = within(main).getByText(en('presets-load-failed'))
-  expect(within(main).queryByText(en('presets-loading'))).toBeNull()
+  const shown = within(main).getByText(en('model-profiles-load-failed'))
+  expect(within(main).queryByText(en('model-profiles-loading'))).toBeNull()
   framed(main, shown, 'timeout')
 })
 
 // ── 401 and signed out (4, 16) ──────────────────────────────────────────
 
-test('2a.16: a 401 on the presets read signs the whole app out; after sign-in the page reads again', async () => {
+test('2a.16: a 401 on the model profiles read signs the whole app out; after sign-in the page reads again', async () => {
   let reads = 0
   const { bff, main } = open({
-    presets: () =>
+    modelProfiles: () =>
       ++reads === 1
         ? reply(401, { key: 'session-required', args: [] })
-        : reply(200, [preset('after-sign-in')]),
+        : reply(200, [modelProfile('after-sign-in')]),
   })
   const username = (await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -433,7 +441,7 @@ test('2a.16: a 401 on the presets read signs the whole app out; after sign-in th
   expect(
     within(main).queryByRole('heading', {
       level: 2,
-      name: en('presets-title'),
+      name: en('model-profiles-title'),
     }),
   ).toBeNull()
   const banner = screen.getByRole('banner')
@@ -457,16 +465,16 @@ test('2a.16: a 401 on the presets read signs the whole app out; after sign-in th
   )
   const t = await table(main)
   expect(rows(t)).toEqual([
-    ['after-sign-in', 'llama.cpp', en('presets-status-on')],
+    ['after-sign-in', 'llama.cpp', en('model-profiles-status-on')],
   ])
   expect(window.location.hash).toBe('#/models')
-  expect(presetsReads(bff)).toBe(2)
+  expect(modelProfilesReads(bff)).toBe(2)
   expect(
     await within(nav()).findByRole('link', { name: en('nav-models') }),
   ).toBeTruthy()
 })
 
-test('2a.4: signed out, #/models shows the sign-in form with signin-required, keeps the route and reads no presets', async () => {
+test('2a.4: signed out, #/models shows the sign-in form with signin-required, keeps the route and reads no model profiles', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   const username = await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -478,10 +486,10 @@ test('2a.4: signed out, #/models shows the sign-in form with signin-required, ke
     within(main).queryByRole('heading', { level: 1, name: en('models-title') }),
   ).toBeNull()
   expect(within(main).queryByRole('table')).toBeNull()
-  expect(presetsReads(bff)).toBe(0)
+  expect(modelProfilesReads(bff)).toBe(0)
 })
 
-test('2a.4, 2a.18: after sign-in from #/models the Models page opens with focus on its h1 and reads the presets once', async () => {
+test('2a.4, 2a.18: after sign-in from #/models the Models page opens with focus on its h1 and reads the model profiles once', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   const username = await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -498,16 +506,16 @@ test('2a.4, 2a.18: after sign-in from #/models the Models page opens with focus 
   await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(window.location.hash).toBe('#/models')
   await table(main)
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
 })
 
 // ── Nav and route (1 to 5) ──────────────────────────────────────────────
 
-test('2a.1: while the session read is pending the nav holds only Overview, and no presets are read', async () => {
+test('2a.1: while the session read is pending the nav holds only Overview, and no model profiles are read', async () => {
   const session = deferred()
   const { bff } = open({ session: () => session.promise })
   expect(navLinks()).toEqual([en('nav-overview')])
-  expect(presetsReads(bff)).toBe(0)
+  expect(modelProfilesReads(bff)).toBe(0)
   await act(async () => {
     session.resolve(reply(200, { user: 'alice' }))
   })
@@ -592,8 +600,8 @@ test('2a.3: a route change to #/models sets the h1, the page title and the focus
   expect(document.title).toBe(en('page-title', en('models-title')))
 })
 
-test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found page; a real id is the preset page, not the list', async () => {
-  // 2d replaces 2a.5: the id segment is the preset page now (56), so what is
+test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found page; a real id is the model profile page, not the list', async () => {
+  // 2d replaces 2a.5: the id segment is the model profile page now (56), so what is
   // not-found is what 57 lists as malformed: an empty id, more than one
   // segment, a segment that does not decode.
   for (const hash of ['#/models/', '#/models/a/b', '#/models/%E0%A4%A']) {
@@ -611,7 +619,7 @@ test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found pag
     vi.unstubAllGlobals()
   }
   // A real id is not the not-found page, and it is not the list: the list's
-  // table is gone (the preset page is the preset page's own test, 2d.56).
+  // table is gone (the model profile page is the model profile page's own test, 2d.56).
   const id = 'Qwen3.6-35B-A3B-UD-Q4_K_XL'
   startAt(`#/models/${id}`)
   const { main } = open()
@@ -626,27 +634,27 @@ test('2a.5, 2d.56, 2d.57: only a malformed #/models address is the not-found pag
 
 // ── Page structure and states (6, 14, 15) ───────────────────────────────
 
-test('2a.14: while the presets load, a status paragraph stands in for the table; it goes when they arrive', async () => {
+test('2a.14: while the model profiles load, a status paragraph stands in for the table; it goes when they arrive', async () => {
   const pending = deferred()
-  const { main } = open({ presets: () => pending.promise })
+  const { main } = open({ modelProfiles: () => pending.promise })
   // The session's own loading status comes first; wait for the page's.
-  const status = await within(main).findByText(en('presets-loading'))
+  const status = await within(main).findByText(en('model-profiles-loading'))
   expect(status.tagName).toBe('P')
   expect(status.getAttribute('role')).toBe('status')
   expect(within(main).queryByRole('table')).toBeNull()
   expect(heading2(main)).toBeTruthy()
-  expect(within(main).getByText(en('presets-intro'))).toBeTruthy()
+  expect(within(main).getByText(en('model-profiles-intro'))).toBeTruthy()
   expect(before(heading2(main), status)).toBe(true)
   await act(async () => {
-    pending.resolve(reply(200, [preset('one')]))
+    pending.resolve(reply(200, [modelProfile('one')]))
   })
   await table(main)
-  expect(within(main).queryByText(en('presets-loading'))).toBeNull()
+  expect(within(main).queryByText(en('model-profiles-loading'))).toBeNull()
 })
 
-test('2a.15: an empty list shows presets-empty as a plain paragraph, no table, then the note', async () => {
-  const { main } = open({ presets: [] })
-  const empty = await message(main, en('presets-empty'))
+test('2a.15: an empty list shows model-profiles-empty as a plain paragraph, no table, then the note', async () => {
+  const { main } = open({ modelProfiles: [] })
+  const empty = await message(main, en('model-profiles-empty'))
   expect(empty.tagName).toBe('P')
   expect(empty.getAttribute('role')).toBeNull()
   expect(within(main).queryByRole('alert')).toBeNull()
@@ -660,12 +668,14 @@ test('2a.6: below the h1 come the h2, the intro, the table, then the note', asyn
   const h1 = await heading1(main)
   expect(before(h1, heading2(main))).toBe(true)
   framed(main, t, 'table')
-  expect(within(main).getByText(en('presets-off-note')).tagName).toBe('P')
+  expect(within(main).getByText(en('model-profiles-off-note')).tagName).toBe(
+    'P',
+  )
 })
 
 // ── The table (7, 8) ────────────────────────────────────────────────────
 
-test('2a.7: a native table named by the h2, with one header row of Preset, Engine, Status as scope="col"', async () => {
+test('2a.7: a native table named by the h2, with one header row of ModelProfile, Engine, Status as scope="col"', async () => {
   const { main } = open()
   const t = await table(main)
   expect(t.tagName).toBe('TABLE')
@@ -674,9 +684,9 @@ test('2a.7: a native table named by the h2, with one header row of Preset, Engin
   expect(labelledBy).not.toBe('')
   const headers = within(t).getAllByRole('columnheader')
   expect(headers.map((h) => (h.textContent ?? '').trim())).toEqual([
-    en('presets-column-name'),
-    en('presets-column-engine'),
-    en('presets-column-status'),
+    en('model-profiles-column-name'),
+    en('model-profiles-column-engine'),
+    en('model-profiles-column-status'),
   ])
   for (const h of headers) {
     expect(h.tagName).toBe('TH')
@@ -689,13 +699,19 @@ test('2a.7: a native table named by the h2, with one header row of Preset, Engin
   expect(headerRows).toHaveLength(1)
 })
 
-test('2a.8: the Engine column shows even when every preset has the same engine', async () => {
+test('2a.8: the Engine column shows even when every model profile has the same engine', async () => {
   const { main } = open({
-    presets: [preset('a'), preset('b', false), preset('c')],
+    modelProfiles: [
+      modelProfile('a'),
+      modelProfile('b', false),
+      modelProfile('c'),
+    ],
   })
   const t = await table(main)
   expect(
-    within(t).getByRole('columnheader', { name: en('presets-column-engine') }),
+    within(t).getByRole('columnheader', {
+      name: en('model-profiles-column-engine'),
+    }),
   ).toBeTruthy()
   expect(rows(t).map((r) => r[1])).toEqual([
     'llama.cpp',
@@ -706,13 +722,13 @@ test('2a.8: the Engine column shows even when every preset has the same engine',
 
 // ── Rows (9 to 13) ──────────────────────────────────────────────────────
 
-test('2a.9: one row per preset in the order received; the fe does not sort', async () => {
+test('2a.9: one row per model profile in the order received; the fe does not sort', async () => {
   const { main } = open({
-    presets: [
-      preset('zeta'),
-      preset('Alpha'),
-      preset('mid-off', false),
-      preset('a-off', false),
+    modelProfiles: [
+      modelProfile('zeta'),
+      modelProfile('Alpha'),
+      modelProfile('mid-off', false),
+      modelProfile('a-off', false),
     ],
   })
   const t = await table(main)
@@ -724,14 +740,14 @@ test('2a.9: one row per preset in the order received; the fe does not sort', asy
   ])
 })
 
-test('2a.10, 2a.12, 2d.60: each row is the id as a link to the preset page, the engine, then On or Off', async () => {
+test('2a.10, 2a.12, 2d.60: each row is the id as a link to the model profile page, the engine, then On or Off', async () => {
   const { main } = open()
   const t = await table(main)
   expect(rows(t)).toEqual([
-    ['Qwen3.6-35B-A3B-UD-Q4_K_XL', 'llama.cpp', en('presets-status-on')],
-    ['gemma-3-12b-it', 'llama.cpp', en('presets-status-off')],
+    ['Qwen3.6-35B-A3B-UD-Q4_K_XL', 'llama.cpp', en('model-profiles-status-on')],
+    ['gemma-3-12b-it', 'llama.cpp', en('model-profiles-status-off')],
   ])
-  // 2d.60 replaces 2a.10's plain text: the id is an <a> to the preset page.
+  // 2d.60 replaces 2a.10's plain text: the id is an <a> to the model profile page.
   expect(
     within(t)
       .getAllByRole('link')
@@ -744,25 +760,25 @@ test('2a.10, 2a.12, 2d.60: each row is the id as a link to the preset page, the 
 
 test('2a.11: the engine is shown as data, and an engine not available reads "<engine> (not available)"', async () => {
   const { main } = open({
-    presets: [
-      preset('on-strata', true, 'Strata', false),
+    modelProfiles: [
+      modelProfile('on-strata', true, 'Strata', false),
       // An engine id that is also a strings key is still shown as is.
-      preset('keyish', true, 'loading', true),
-      preset('off-strata', false, 'Strata', false),
+      modelProfile('keyish', true, 'loading', true),
+      modelProfile('off-strata', false, 'Strata', false),
     ],
   })
   const t = await table(main)
   expect(rows(t)).toEqual([
     [
       'on-strata',
-      en('presets-engine-not-available', 'Strata'),
-      en('presets-status-on'),
+      en('model-profiles-engine-not-available', 'Strata'),
+      en('model-profiles-status-on'),
     ],
-    ['keyish', 'loading', en('presets-status-on')],
+    ['keyish', 'loading', en('model-profiles-status-on')],
     [
       'off-strata',
-      en('presets-engine-not-available', 'Strata'),
-      en('presets-status-off'),
+      en('model-profiles-engine-not-available', 'Strata'),
+      en('model-profiles-status-off'),
     ],
   ])
 })
@@ -793,29 +809,29 @@ test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing 
 
 // ── When it reads (18) ──────────────────────────────────────────────────
 
-test('2a.18: the presets are read once on open, with no polling', async () => {
+test('2a.18: the model profiles are read once on open, with no polling', async () => {
   fakeClock()
   const { bff } = open()
   await flush()
   expect(
-    screen.queryByRole('table', { name: en('presets-title') }),
+    screen.queryByRole('table', { name: en('model-profiles-title') }),
   ).not.toBeNull()
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
   await advance(60_000)
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
 })
 
-test('2a.18: leaving #/models and coming back reads the presets again, once', async () => {
+test('2a.18: leaving #/models and coming back reads the model profiles again, once', async () => {
   const { bff, main } = open()
   await table(main)
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
   navigate('#/')
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
   navigate('#/models')
   await heading1(main)
   await table(main)
-  expect(presetsReads(bff)).toBe(2)
+  expect(modelProfilesReads(bff)).toBe(2)
 })
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
@@ -835,7 +851,7 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     'default',
     'coder',
     en('nav-models'),
-    en('presets-filter-label'),
+    en('model-profiles-filter-label'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'gemma-3-12b-it',

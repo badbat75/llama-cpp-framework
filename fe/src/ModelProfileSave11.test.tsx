@@ -1,5 +1,5 @@
 // The Chat / reasoning card editable, sub-slice 2h.6 of
-// fe/briefs/02h-preset-save.md (170 to 174): every field of the card always
+// fe/briefs/02h-model-profile-save.md (170 to 174): every field of the card always
 // enabled (170, 2e's table 101), what each sends by its kind (171, 133: the
 // `jinja` and `prefill-assistant` checkboxes, the `reasoning`,
 // `reasoning-format`, `reasoning-effort` and `reasoning-preserve` selects), the
@@ -9,9 +9,9 @@
 // `jinja` written `0` with its written-as line, an absent `prefill-assistant`
 // checked). The designer's decision for an editable text field with no default
 // box (a plain labelled input, no group named by the label) is pinned here for
-// Budget message and in PresetSave10.test.tsx for Chat kwargs. The card's
-// read-only look is 2e's 101, in PresetCards3.test.tsx; the helpers are those of
-// PresetSave8, PresetSave9 and PresetSave10.test.tsx, which this file repeats (a
+// Budget message and in ModelProfileSave10.test.tsx for Chat kwargs. The card's
+// read-only look is 2e's 101, in ModelProfileCards3.test.tsx; the helpers are those of
+// ModelProfileSave8, ModelProfileSave9 and ModelProfileSave10.test.tsx, which this file repeats (a
 // test file imports no other test file).
 import {
   cleanup,
@@ -28,7 +28,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -37,21 +37,21 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const JINJA = en('preset-chat-template')
-const JINJA_TOGGLE = en('preset-chat-template-toggle')
-const PRE = en('preset-prefill-assistant')
-const PRE_TOGGLE = en('preset-prefill-assistant-toggle')
-const REASON = en('preset-reasoning')
-const FORMAT = en('preset-reasoning-format')
-const EFFORT = en('preset-reasoning-effort')
-const PRESERVE = en('preset-keep-past-thinking')
+const PUT = `/api/profiles/model/${ID}`
+const JINJA = en('model-profile-chat-template')
+const JINJA_TOGGLE = en('model-profile-chat-template-toggle')
+const PRE = en('model-profile-prefill-assistant')
+const PRE_TOGGLE = en('model-profile-prefill-assistant-toggle')
+const REASON = en('model-profile-reasoning')
+const FORMAT = en('model-profile-reasoning-format')
+const EFFORT = en('model-profile-reasoning-effort')
+const PRESERVE = en('model-profile-keep-past-thinking')
 /** The KV cache card's tri-state, editable since 2h.5's 164: the same reading
  * as `reasoning-preserve`, pinned beside it. */
-const FLASH = en('preset-flash-attention')
-const BUDGET = en('preset-thinking-budget')
-const MSG = en('preset-budget-message')
-const MAXOUT = en('preset-max-output')
+const FLASH = en('model-profile-flash-attention')
+const BUDGET = en('model-profile-thinking-budget')
+const MSG = en('model-profile-budget-message')
+const MAXOUT = en('model-profile-max-output')
 const MARKERS = en('field-error-comment-markers')
 const WHOLE = en('field-error-whole-number')
 /** What the read gives: every key of the card present, each a value the
@@ -131,7 +131,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave8, PresetSave9 and PresetSave10.test.tsx) ─────
+// ── Helpers (as ModelProfileSave8, ModelProfileSave9 and ModelProfileSave10.test.tsx) ─────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -140,15 +140,18 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -183,7 +186,7 @@ function inputOf(main: HTMLElement, label: string): HTMLInputElement {
 
 /** A number field's default box, by the page's id for the key. */
 function boxOf(key: string): HTMLInputElement {
-  return document.getElementById(`preset-${key}-box`) as HTMLInputElement
+  return document.getElementById(`model-profile-${key}-box`) as HTMLInputElement
 }
 
 function pick(main: HTMLElement, label: string, value: string) {
@@ -202,13 +205,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -221,7 +224,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -282,7 +285,7 @@ function expectNoError(el: HTMLElement, what: string) {
 
 /** The written-as line of a field (124, 134), by the page's id for its key. */
 function writtenLine(key: string): HTMLElement | null {
-  return document.getElementById(`preset-written-${key}`)
+  return document.getElementById(`model-profile-written-${key}`)
 }
 
 /** The save bar's buttons are inert: the form is clean. */
@@ -301,17 +304,23 @@ test('2h.170: every field of the card has its control enabled, on a read that ho
     if (f.kind === 'checkbox') {
       const el = checkBoxOf(main, f.toggle!)
       expect(el.disabled, `${f.key}: the checkbox enabled (170)`).toBe(false)
-      expect(el.id, `${f.key}: the field id`).toBe(`preset-${f.key}-control`)
+      expect(el.id, `${f.key}: the field id`).toBe(
+        `model-profile-${f.key}-control`,
+      )
       expect(el.checked, `${f.key}: the file value shows checked`).toBe(true)
     } else if (f.kind === 'select') {
       const el = selectOf(main, f.label)
       expect(el.disabled, `${f.key}: the select enabled (170)`).toBe(false)
-      expect(el.id, `${f.key}: the field id`).toBe(`preset-${f.key}-control`)
+      expect(el.id, `${f.key}: the field id`).toBe(
+        `model-profile-${f.key}-control`,
+      )
       expect(el.value, `${f.key}: the file value shows`).toBe(AS_LOADED[f.key])
     } else if (f.kind === 'text') {
       const el = inputOf(main, f.label)
       expect(el.disabled, `${f.key}: the input enabled (170)`).toBe(false)
-      expect(el.id, `${f.key}: the field id`).toBe(`preset-${f.key}-control`)
+      expect(el.id, `${f.key}: the field id`).toBe(
+        `model-profile-${f.key}-control`,
+      )
       expect(el.value, `${f.key}: the file text shows`).toBe(AS_LOADED[f.key])
     } else {
       const c = boxOf(f.key)
@@ -400,13 +409,13 @@ test('2h.171, 2h.174: jinja checked sends "true" and unchecked sends "false", an
   const line = writtenLine('jinja')
   expect(line, 'the written-as line shows the spelling').not.toBeNull()
   expect(line!.textContent, 'the spelling as the file writes it').toBe(
-    en('preset-written-as', '0'),
+    en('model-profile-written-as', '0'),
   )
   expect(isHidden(line!), 'the line is read by assistive technology').toBe(
     false,
   )
   expect(described(zero), 'the checkbox is described by the line').toContain(
-    en('preset-written-as', '0'),
+    en('model-profile-written-as', '0'),
   )
   fireEvent.click(zero)
   expect(
@@ -652,7 +661,7 @@ test('2h.133, 2h.132: a Budget message the file holds sends null when emptied an
 // ── The designer's decision for a text field with no default box ────────
 // A plain labelled input: a `<label>` tied to the input, and no element groups
 // the field under the label, which would make a screen reader say the name
-// twice. The same pin for Chat kwargs is in PresetSave10.test.tsx.
+// twice. The same pin for Chat kwargs is in ModelProfileSave10.test.tsx.
 
 test('2h (design): Budget message is a plain labelled input, not a group named by the label, and its empty box carries no example', async () => {
   const { main } = await form(without('reasoning-budget-message'))
@@ -676,7 +685,9 @@ test('2h.173, 2h.158: reasoning-budget and n-predict take any whole number, a -1
   const first = await form()
   const budget = inputOf(first.main, BUDGET)
   expect(budget.getAttribute('inputmode'), 'no input mode (158)').toBeNull()
-  expect(budget.id, 'the field id').toBe('preset-reasoning-budget-control')
+  expect(budget.id, 'the field id').toBe(
+    'model-profile-reasoning-budget-control',
+  )
   type(first.main, BUDGET, '-1')
   await save(first.main, first.bff)
   expect(
@@ -687,7 +698,7 @@ test('2h.173, 2h.158: reasoning-budget and n-predict take any whole number, a -1
   const second = await form()
   const predict = inputOf(second.main, MAXOUT)
   expect(predict.getAttribute('inputmode'), 'no input mode (158)').toBeNull()
-  expect(predict.id, 'the field id').toBe('preset-n-predict-control')
+  expect(predict.id, 'the field id').toBe('model-profile-n-predict-control')
   type(second.main, MAXOUT, '-1')
   await save(second.main, second.bff)
   expect(sentValues(second.bff)['n-predict'], '-1 goes out as typed').toBe('-1')
@@ -728,7 +739,7 @@ test.each(NUMBERS)(
 // stands for, and no option can be picked from it. The two keys of the row that
 // sit on the Hardware card (`op-offload`, `repack`) have no `editable` yet
 // (2e.4), so they are read there as the read-only card of 122, whose states are
-// pinned in PresetCards4.test.tsx (absent, true, false and an unlisted
+// pinned in ModelProfileCards4.test.tsx (absent, true, false and an unlisted
 // spelling, the word `default` not among them: observed on 2026-11-17, the
 // disabled select reads the word `default` as the on it stands for, exactly as
 // the paragraph above, and that read is left unpinned).
@@ -736,8 +747,8 @@ test.each(NUMBERS)(
 /** The tri-state selects of 133's flag row that the form edits, each with the
  * label of its field. */
 const FLAGS = [
-  { key: 'kv-unified', label: en('preset-unified-kv') },
-  { key: 'backend-sampling', label: en('preset-backend-sampling') },
+  { key: 'kv-unified', label: en('model-profile-unified-kv') },
+  { key: 'backend-sampling', label: en('model-profile-backend-sampling') },
   { key: 'reasoning-preserve', label: PRESERVE },
 ]
 

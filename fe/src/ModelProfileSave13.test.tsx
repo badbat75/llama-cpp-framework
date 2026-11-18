@@ -1,5 +1,5 @@
 // The Hardware card editable, the second part of sub-slice 2h.7 of
-// fe/briefs/02h-preset-save.md (175, 177, 178, 179, 180, 181, 182): the seven
+// fe/briefs/02h-model-profile-save.md (175, 177, 178, 179, 180, 181, 182): the seven
 // always rows (the two layer counts behind a default box with 157's whole
 // numbers and their exact `auto` / `all`, the tri-state flags with 124's
 // written-as line, the off / on flag, the two word selects matched exactly),
@@ -7,10 +7,10 @@
 // cache always disabled with their note, their values kept and never sent and
 // never checked, and the two MoE rows the only controls the card leaves
 // disabled once every key is there (130, with 2h.8's 183 and 186, whose own
-// editing is 2h.14's in PresetSave14.test.tsx),
+// editing is 2h.14's in ModelProfileSave14.test.tsx),
 // the load-mode exact match (180), the two notes as plain paragraphs (181)
 // and their exact strings (182). The card's read-only look is 2e's 107, in
-// PresetCards4.test.tsx; the helpers are those of PresetSave12.test.tsx,
+// ModelProfileCards4.test.tsx; the helpers are those of ModelProfileSave12.test.tsx,
 // which this file repeats (a test file imports no other test file).
 import {
   cleanup,
@@ -27,7 +27,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -35,29 +35,29 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const HEADING = en('preset-hardware-config')
-const NEXT = en('preset-resource-context')
-const GPU_LAYERS = en('preset-gpu-layers')
-const MOE = en('preset-moe-cpu-layers')
-const MOE_CACHE = en('preset-moe-cache')
-const FFN = en('preset-dense-ffn-cpu-layers')
-const OP = en('preset-op-offload')
-const REPACK = en('preset-repack')
-const NO_HOST = en('preset-no-host-buffer')
-const LAZY = en('preset-lazy-tensors')
-const LOAD = en('preset-load-mode')
-const DRAFT_DEV = en('preset-draft-device')
-const DRAFT_LAYERS = en('preset-draft-gpu-layers')
+const PUT = `/api/profiles/model/${ID}`
+const HEADING = en('model-profile-hardware-config')
+const NEXT = en('model-profile-resource-context')
+const GPU_LAYERS = en('model-profile-gpu-layers')
+const MOE = en('model-profile-moe-cpu-layers')
+const MOE_CACHE = en('model-profile-moe-cache')
+const FFN = en('model-profile-dense-ffn-cpu-layers')
+const OP = en('model-profile-op-offload')
+const REPACK = en('model-profile-repack')
+const NO_HOST = en('model-profile-no-host-buffer')
+const LAZY = en('model-profile-lazy-tensors')
+const LOAD = en('model-profile-load-mode')
+const DRAFT_DEV = en('model-profile-draft-device')
+const DRAFT_LAYERS = en('model-profile-draft-gpu-layers')
 /** The text of Draft device's empty option (2e's 103, 107; follows-model is
  *  Vision GPU's). */
-const SAME = en('preset-device-same-as-model')
+const SAME = en('model-profile-device-same-as-model')
 const DEFAULT = en('field-default')
 /** 157's last row: the layer counts are checked as whole numbers. */
 const WHOLE = en('field-error-whole-number')
 /** 182: the brief's exact text of the two new strings, as literals. */
 const DRAFT_OFF_TEXT =
-  'Draft device and Draft GPU layers apply only to a Draft model file, and this preset has none (Assets).'
+  'Draft device and Draft GPU layers apply only to a Draft model file, and this model profile has none (Assets).'
 const MOE_LATER_TEXT =
   'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.'
 /** The number past the full-value line's 8 characters of a number (119). */
@@ -98,7 +98,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave12.test.tsx) ─────────────────────────────────
+// ── Helpers (as ModelProfileSave12.test.tsx) ─────────────────────────────────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -107,8 +107,11 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
@@ -178,13 +181,13 @@ function expectInert(main: HTMLElement, what: string) {
     )
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -252,7 +255,7 @@ test('2h.175, 2h.156, 2h.158: GPU layers and Dense FFN CPU layers are enabled, e
       el.disabled,
       `${key}: the input follows the unticked box (156)`,
     ).toBe(false)
-    expect(el.id, `${key}: the field id`).toBe(`preset-${key}-control`)
+    expect(el.id, `${key}: the field id`).toBe(`model-profile-${key}-control`)
     expect(el.getAttribute('inputmode'), `${key}: no input mode (158)`).toBe(
       null,
     )
@@ -261,7 +264,7 @@ test('2h.175, 2h.156, 2h.158: GPU layers and Dense FFN CPU layers are enabled, e
     NUM_9,
   )
   expect(
-    document.getElementById('preset-full-n-gpu-layers'),
+    document.getElementById('model-profile-full-n-gpu-layers'),
     '134: an enabled input shows no full-value line',
   ).toBeNull()
   cleanup()
@@ -379,7 +382,7 @@ test.each([
     expect(
       describedIds(sel),
       '124b: the written-as line is the select description',
-    ).toContain(`preset-written-${c.key}`)
+    ).toContain(`model-profile-written-${c.key}`)
     pick(main, c.label, 'true')
     expect(selectedText(sel), 'the select shows the picked option').toBe(
       en('option-on'),
@@ -437,15 +440,15 @@ test('2h.175, 2h.122, 2h.124, 2h.125: No host buffer at the file word default is
     'false',
     'true',
   ])
-  const written = document.getElementById('preset-written-no-host')
+  const written = document.getElementById('model-profile-written-no-host')
   expect(written, 'the spelling the file holds (124)').not.toBeNull()
   expect(written!.textContent, 'the spelling the file holds (124)').toBe(
-    en('preset-written-as', 'default'),
+    en('model-profile-written-as', 'default'),
   )
   expect(
     describedIds(sel),
     'the control names the written-as line (124b)',
-  ).toContain('preset-written-no-host')
+  ).toContain('model-profile-written-no-host')
   // The word is a value the configurator keeps as it is, so the page is clean.
   expectInert(main, 'the file word default is the state the read gave')
   pick(main, NO_HOST, 'false')
@@ -495,7 +498,7 @@ test('2h.180, 2h.133: Load mode matches the file value exactly: MLOCK is the ext
     'MLOCK',
   )
   expect(
-    document.getElementById('preset-full-load-mode'),
+    document.getElementById('model-profile-full-load-mode'),
     '5 characters: no full-value line (119)',
   ).toBeNull()
   pick(main, LOAD, 'mlock')
@@ -515,7 +518,7 @@ const NO_DRAFT = [
 ]
 
 test.each(NO_DRAFT)(
-  '2h.177, 2h.182: model-draft $name: Draft device and Draft GPU layers are natively disabled and the note preset-draft-file-off sits before Draft device',
+  '2h.177, 2h.182: model-draft $name: Draft device and Draft GPU layers are natively disabled and the note model-profile-draft-file-off sits before Draft device',
   async (c) => {
     const { main } = await form(c.values)
     expect(selectOf(main, DRAFT_DEV).disabled, 'Draft device disabled').toBe(
@@ -553,7 +556,7 @@ test('2h.177, 2h.179, 2h.133: model-draft present: no note, Draft device is a de
   expect(within(main).queryByText(DRAFT_OFF_TEXT), 'no note (177)').toBeNull()
   const sel = selectOf(main, DRAFT_DEV)
   expect(sel.disabled, 'Draft device enabled (177)').toBe(false)
-  expect(sel.id, 'the field id').toBe('preset-device-draft-control')
+  expect(sel.id, 'the field id').toBe('model-profile-device-draft-control')
   expect(
     optionValues(sel),
     '103: the empty option first, then the file value only',
@@ -583,7 +586,7 @@ test('2h.177, 2h.179, 2h.133: model-draft present: no note, Draft device is a de
 
 // ── 178, 182: the MoE rows, always disabled ──────────────────────────
 
-test('2h.178, 2h.182, 2h.157: MoE CPU layers and MoE cache are always disabled with the note preset-moe-later before MoE CPU layers; a bad file value in them does not block a save, their values show and are never sent', async () => {
+test('2h.178, 2h.182, 2h.157: MoE CPU layers and MoE cache are always disabled with the note model-profile-moe-later before MoE CPU layers; a bad file value in them does not block a save, their values show and are never sent', async () => {
   const { bff, main } = await form({
     ...AS_LOADED,
     'n-cpu-moe': 'abc',
@@ -650,9 +653,9 @@ test('2h.181: both notes are plain paragraphs: no role, no live region, not in a
 
 // ── 182: the two new strings ─────────────────────────────────────────
 
-test('2h.182: the new strings preset-draft-file-off and preset-moe-later are the briefs sentences, word for word', () => {
-  expect(en('preset-draft-file-off')).toBe(DRAFT_OFF_TEXT)
-  expect(en('preset-moe-later')).toBe(MOE_LATER_TEXT)
+test('2h.182: the new strings model-profile-draft-file-off and model-profile-moe-later are the briefs sentences, word for word', () => {
+  expect(en('model-profile-draft-file-off')).toBe(DRAFT_OFF_TEXT)
+  expect(en('model-profile-moe-later')).toBe(MOE_LATER_TEXT)
 })
 
 // ── 178 with 2h.8's 183, 186: what the card leaves disabled ───────────
@@ -663,9 +666,9 @@ test('2h.178, 2h.130, 2h.183, 2h.186: with every key of the card present, MoE CP
   // disabled controls are the two MoE rows of 178, each its default box and
   // its input. 2h.8's 183 took `fit`, `fit-ctx` and `fit-target` out of this
   // list (their editing and their enable rule are 2h.14's, in
-  // PresetSave14.test.tsx), and 134 gives a long value under a control a rule
-  // disables the full-value line (PresetSave1.test.tsx and
-  // PresetFullValue.test.tsx).
+  // ModelProfileSave14.test.tsx), and 134 gives a long value under a control a rule
+  // disables the full-value line (ModelProfileSave1.test.tsx and
+  // ModelProfileFullValue.test.tsx).
   const { main } = await form()
   const card = headingOf(main, HEADING).closest('section') as HTMLElement
   const controls = [...card.querySelectorAll<HTMLElement>('input, select')]
@@ -681,10 +684,10 @@ test('2h.178, 2h.130, 2h.183, 2h.186: with every key of the card present, MoE CP
     disabled,
     'the two MoE rows, and nothing else, are natively disabled',
   ).toEqual([
-    'preset-moe-cache-mib-box',
-    'preset-moe-cache-mib-control',
-    'preset-n-cpu-moe-box',
-    'preset-n-cpu-moe-control',
+    'model-profile-moe-cache-mib-box',
+    'model-profile-moe-cache-mib-control',
+    'model-profile-n-cpu-moe-box',
+    'model-profile-n-cpu-moe-control',
   ])
   for (const el of controls)
     expect(

@@ -1,4 +1,4 @@
-// The disabled look of the controls (fe/briefs/02h-preset-save.md, criteria
+// The disabled look of the controls (fe/briefs/02h-model-profile-save.md, criteria
 // 163a to 163g, DESIGN.md 5.2 "Disabled looks different from enabled"): a
 // disabled field, checkbox and button are drawn on --surface with a dashed
 // --control border, the value text in --muted, the cursor not-allowed, no
@@ -349,7 +349,7 @@ test('DESIGN.md 5.2: the save-bar scroll padding has a 7rem floor inside max(), 
   ).toBe(true)
 })
 
-// The jump list's landing (fe/briefs/02h-preset-save.md, 2h.196): a jump button moves
+// The jump list's landing (fe/briefs/02h-model-profile-save.md, 2h.196): a jump button moves
 // focus to the card's h3 and scrolls it into view. The heading lands at the viewport's
 // top edge, where the ring's top line, with its offset, was cut off (2026-11-18 review),
 // so the rule keeps room above it. jsdom does no layout, so as 2h.135, 2e.118 and the

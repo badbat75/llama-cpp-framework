@@ -1,4 +1,4 @@
-// The first part of sub-slice 2h.5 of fe/briefs/02h-preset-save.md: the KV cache
+// The first part of sub-slice 2h.5 of fe/briefs/02h-model-profile-save.md: the KV cache
 // card editable (164: every field of the card always enabled), what each of its
 // fields sends (133: the cache types as a select of words, flash-attn as the
 // tri-state, the number fields by their box and their range), the input mode and
@@ -6,8 +6,8 @@
 // number fields (157: cache-ram any whole number, ctx-checkpoints and
 // checkpoint-min-step 0 or more, cache-reuse 1 or more). Sampling overrides,
 // Advanced and the decimal and JSON checks (165, 166) are not here. The card's
-// read-only look is 2e's 96, in PresetCards2.test.tsx; the helpers are those of
-// PresetSave6 and PresetSave7.test.tsx, which this file repeats (a test file
+// read-only look is 2e's 96, in ModelProfileCards2.test.tsx; the helpers are those of
+// ModelProfileSave6 and ModelProfileSave7.test.tsx, which this file repeats (a test file
 // imports no other test file).
 import {
   cleanup,
@@ -24,7 +24,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -33,15 +33,15 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const KCACHE = en('preset-k-cache-type')
-const VCACHE = en('preset-v-cache-type')
-const FLASH = en('preset-flash-attention')
-const RAM = en('preset-cache-ram')
-const REUSE = en('preset-cache-reuse')
-const CHECK = en('preset-context-checkpoints')
-const STEP = en('preset-checkpoint-step')
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const KCACHE = en('model-profile-k-cache-type')
+const VCACHE = en('model-profile-v-cache-type')
+const FLASH = en('model-profile-flash-attention')
+const RAM = en('model-profile-cache-ram')
+const REUSE = en('model-profile-cache-reuse')
+const CHECK = en('model-profile-context-checkpoints')
+const STEP = en('model-profile-checkpoint-step')
 const DEFAULT = en('field-default')
 /** The literal unit of Cache RAM (2e's 89), not a strings key. */
 const MIB = 'MiB'
@@ -87,7 +87,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave6 and PresetSave7.test.tsx) ───────────────────
+// ── Helpers (as ModelProfileSave6 and ModelProfileSave7.test.tsx) ───────────────────
 
 /** `AS_LOADED` without the named keys: the file does not hold them. */
 function without(...keys: string[]): Record<string, string> {
@@ -103,15 +103,18 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -165,13 +168,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -184,7 +187,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -372,7 +375,7 @@ test('2h.158, 2h.159, 2h.134: Cache RAM has no input mode, its unit MiB is the i
   const { main } = await form()
   const el = box(main, RAM)
   expect(el.disabled, 'the input enabled (164)').toBe(false)
-  expect(el.id, 'the field id').toBe('preset-cache-ram-control')
+  expect(el.id, 'the field id').toBe('model-profile-cache-ram-control')
   expect(el.getAttribute('inputmode'), 'no input mode (158)').toBeNull()
   const uid = unitId(el)
   const unit = document.getElementById(uid)
@@ -384,7 +387,7 @@ test('2h.158, 2h.159, 2h.134: Cache RAM has no input mode, its unit MiB is the i
   expect(described(el)[0], 'the unit is read before the hint').toBe(MIB)
   // 134: the full-value line shows only under a disabled control.
   expect(
-    document.getElementById('preset-full-cache-ram'),
+    document.getElementById('model-profile-full-cache-ram'),
     'no full-value line under an enabled input',
   ).toBeNull()
 })
@@ -397,7 +400,7 @@ test('2h.158: the card is editable, so its three ranged integer inputs keep inpu
     ['checkpoint-min-step', STEP],
   ] as [string, string][]) {
     const el = box(main, label)
-    expect(el.id, `${key}: the field id`).toBe(`preset-${key}-control`)
+    expect(el.id, `${key}: the field id`).toBe(`model-profile-${key}-control`)
     expect(el.getAttribute('inputmode'), `${key}: input mode`).toBe('numeric')
   }
 })
@@ -632,7 +635,7 @@ test('2h.157, 2h.159: a refused Cache RAM is described by the unit first and the
   expectError(el, en('field-error-whole-number'), RAM)
   expect(describedIds(el).slice(0, 2), 'unit first, then the error').toEqual([
     unitId(el),
-    'preset-cache-ram-error',
+    'model-profile-cache-ram-error',
   ])
   expect(bff.to('PUT', PUT), 'nothing sent').toHaveLength(0)
 })

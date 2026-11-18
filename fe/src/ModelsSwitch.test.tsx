@@ -1,6 +1,6 @@
-// The preset table's on/off switch, slice 2c (fe/briefs/02-models.md, section
-// 2c): an administrator switches a preset at #/models with PUT
-// /api/presets/{id}/enabled (fe/briefs/api-contract.md); one status and one
+// The model profile table's on/off switch, slice 2c (fe/briefs/02-models.md, section
+// 2c): an administrator switches a model profile at #/models with PUT
+// /api/profiles/model/{id}/enabled (fe/briefs/api-contract.md); one status and one
 // alert for the whole table, a re-read of the row after a failure, and a
 // sign-in after a 401. The whole app renders against the fake bff (mocked
 // fetch) on fake timers. "2c.48" is the brief's criterion 48. Only the
@@ -29,7 +29,7 @@ import {
   startAt,
   stubDialog,
   type BffOptions,
-  type Preset,
+  type ModelProfile,
 } from './test/bff.ts'
 
 let dialogs: ReturnType<typeof stubDialog>
@@ -48,21 +48,21 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-function preset(
+function modelProfile(
   id: string,
   enabled: boolean,
   model = '',
   engine = 'llama.cpp',
   engineAvailable = true,
-): Preset {
+): ModelProfile {
   return { id, engine, engineAvailable, enabled, model }
 }
 
 /** Two on, one off, in the bff's order. */
-const LIST: Preset[] = [
-  preset('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
-  preset('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
-  preset('Old-Coder', false),
+const LIST: ModelProfile[] = [
+  modelProfile('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
+  modelProfile('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
+  modelProfile('Old-Coder', false),
 ]
 
 const IDS = LIST.map((p) => p.id)
@@ -96,43 +96,45 @@ async function advance(ms: number) {
 async function open(options: BffOptions = {}) {
   fakeClock()
   startAt('#/models')
-  const bff = fakeBff({ presets: LIST, ...options })
+  const bff = fakeBff({ modelProfiles: LIST, ...options })
   render(<App />)
   await flush()
   const main = screen.getByRole('main')
   expect(
-    within(main).queryByRole('table', { name: en('presets-title') }),
+    within(main).queryByRole('table', { name: en('model-profiles-title') }),
     'the table is loaded',
   ).not.toBeNull()
   return { bff, main }
 }
 
-/** GET /api/presets: `first` on open, then `reread(n)` for the n-th read. */
+/** GET /api/profiles/model: `first` on open, then `reread(n)` for the n-th read. */
 function reads(
   reread: (n: number, init?: RequestInit) => Response | Promise<Response>,
-  first: Preset[] = LIST,
-): BffOptions['presets'] {
+  first: ModelProfile[] = LIST,
+): BffOptions['modelProfiles'] {
   let n = 0
   return (init) => (++n === 1 ? reply(200, first) : reread(n, init))
 }
 
-function presetsReads(bff: ReturnType<typeof fakeBff>): number {
-  return bff.to('GET', '/api/presets').length
+function modelProfilesReads(bff: ReturnType<typeof fakeBff>): number {
+  return bff.to('GET', '/api/profiles/model').length
 }
 
 /** The bodies of every switch PUT, with the path each went to. */
 function writes(bff: ReturnType<typeof fakeBff>): [string, unknown][] {
   return bff.calls
-    .filter((c) => c.method === 'PUT' && c.path.startsWith('/api/presets/'))
+    .filter(
+      (c) => c.method === 'PUT' && c.path.startsWith('/api/profiles/model/'),
+    )
     .map((c) => [c.path, c.body])
 }
 
 function path(id: string): string {
-  return `/api/presets/${encodeURIComponent(id)}/enabled`
+  return `/api/profiles/model/${encodeURIComponent(id)}/enabled`
 }
 
 function table(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('table', { name: en('presets-title') })
+  return within(main).getByRole('table', { name: en('model-profiles-title') })
 }
 
 function dataRows(main: HTMLElement): HTMLElement[] {
@@ -175,7 +177,7 @@ function press(el: HTMLElement) {
 
 function filterField(main: HTMLElement): HTMLInputElement {
   return within(main).getByRole('searchbox', {
-    name: en('presets-filter-label'),
+    name: en('model-profiles-filter-label'),
   }) as HTMLInputElement
 }
 
@@ -276,9 +278,9 @@ const FAILED_WRITES: [string, () => Response | Promise<Response>, string][] = [
     en('api-client-unavailable'),
   ],
   [
-    '404 no-preset-named',
-    () => reply(404, { key: 'no-preset-named', args: ['Old-Coder'] }),
-    en('api-no-preset-named', 'Old-Coder'),
+    '404 no-model-profile-named',
+    () => reply(404, { key: 'no-model-profile-named', args: ['Old-Coder'] }),
+    en('api-no-model-profile-named', 'Old-Coder'),
   ],
   [
     '422 load-on-startup-over-max',
@@ -291,9 +293,10 @@ const FAILED_WRITES: [string, () => Response | Promise<Response>, string][] = [
     en('api-load-on-startup-unlimited', '3'),
   ],
   [
-    '422 preset-no-model (unknown to the fe)',
-    () => reply(422, { key: 'preset-no-model', args: ['secret-detail'] }),
-    en('api-other', 'preset-no-model'),
+    '422 model-profile-no-model (unknown to the fe)',
+    () =>
+      reply(422, { key: 'model-profile-no-model', args: ['secret-detail'] }),
+    en('api-other', 'model-profile-no-model'),
   ],
   [
     '502 client-other',
@@ -301,8 +304,8 @@ const FAILED_WRITES: [string, () => Response | Promise<Response>, string][] = [
     en('request-failed'),
   ],
   [
-    '400 presets-malformed',
-    () => reply(400, { key: 'presets-malformed', args: [] }),
+    '400 model-profiles-malformed',
+    () => reply(400, { key: 'model-profiles-malformed', args: [] }),
     en('request-failed'),
   ],
   [
@@ -346,9 +349,9 @@ test.each(FAILED_WRITES)(
     // Old-Coder is off; the change asks on; the read after the failure says
     // on (the write happened), which the value before (off) cannot give.
     const { bff, main } = await open({
-      presetSwitch: write,
-      presets: reads(() =>
-        reply(200, [...LIST.slice(0, 2), preset('Old-Coder', true)]),
+      modelProfileSwitch: write,
+      modelProfiles: reads(() =>
+        reply(200, [...LIST.slice(0, 2), modelProfile('Old-Coder', true)]),
       ),
     })
     press(switchOf(main, 'Old-Coder'))
@@ -356,14 +359,14 @@ test.each(FAILED_WRITES)(
     expect(writes(bff), what).toEqual([[path('Old-Coder'), { enabled: true }]])
     expect(alerts(main), what).toEqual([text])
     expect(switchStatus(main).textContent, `${what}: status empty`).toBe('')
-    expect(presetsReads(bff), `${what}: read again once`).toBe(2)
+    expect(modelProfilesReads(bff), `${what}: read again once`).toBe(2)
     expect(switchOf(main, 'Old-Coder').checked, `${what}: read value`).toBe(
       true,
     )
     expect(rows(main)[2], `${what}: the word follows`).toEqual([
       'Old-Coder',
       'llama.cpp',
-      en('presets-status-on'),
+      en('model-profiles-status-on'),
     ])
     expect(
       switches(main).map(inactive),
@@ -389,7 +392,7 @@ const REREADS: [
     () =>
       reply(200, [
         LIST[0]!,
-        preset('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
+        modelProfile('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
         LIST[2]!,
       ]),
     false,
@@ -409,13 +412,14 @@ test.each(REREADS)(
   '2c.48, 2c.55: the re-read after a failure: on, off, without the row, failed (401 and a 15 s hold included): the switch shows the row read, or the value before: %s',
   async (what, reread, expected) => {
     const { bff, main } = await open({
-      presetSwitch: () => reply(503, { key: 'client-unavailable', args: [] }),
-      presets: reads(reread),
+      modelProfileSwitch: () =>
+        reply(503, { key: 'client-unavailable', args: [] }),
+      modelProfiles: reads(reread),
     })
     press(switchOf(main, 'Coder-30B'))
     await flush()
     expect(writes(bff), what).toEqual([[path('Coder-30B'), { enabled: false }]])
-    expect(presetsReads(bff), `${what}: read again once`).toBe(2)
+    expect(modelProfilesReads(bff), `${what}: read again once`).toBe(2)
     expect(switchOf(main, 'Coder-30B').checked, what).toBe(expected)
     expect(alerts(main), `${what}: the write's alert`).toEqual([
       en('api-client-unavailable'),
@@ -441,10 +445,11 @@ test.each(REREADS)(
 test('2c.48: a re-read held 15 000 ms is aborted; the switches stay aria-disabled until then, then show the value before', async () => {
   const h = held()
   const { bff, main } = await open({
-    presetSwitch: () => reply(503, { key: 'client-unavailable', args: [] }),
-    presets: reads((_n, init) => h.answer(init)),
+    modelProfileSwitch: () =>
+      reply(503, { key: 'client-unavailable', args: [] }),
+    modelProfiles: reads((_n, init) => h.answer(init)),
   })
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(h.signals, 'the re-read was sent').toHaveLength(1)
@@ -461,14 +466,14 @@ test('2c.48: a re-read held 15 000 ms is aborted; the switches stay aria-disable
 
 test('2c.48: only that row takes the re-read value: the order, the other rows and the filter stay as shown', async () => {
   const { main } = await open({
-    presetSwitch: () => reply(502, { key: 'client-other', args: [] }),
+    modelProfileSwitch: () => reply(502, { key: 'client-other', args: [] }),
     // Another order, other rows changed, one added: none of it is shown.
-    presets: reads(() =>
+    modelProfiles: reads(() =>
       reply(200, [
-        preset('New-One', true),
-        preset('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
-        preset('Qwen3-27B', false, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
-        preset('Old-Coder', true),
+        modelProfile('New-One', true),
+        modelProfile('Coder-30B', false, '/m/coder/Coder-30B.gguf'),
+        modelProfile('Qwen3-27B', false, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
+        modelProfile('Old-Coder', true),
       ]),
     ),
   })
@@ -479,11 +484,11 @@ test('2c.48: only that row takes the re-read value: the order, the other rows an
   expect(alerts(main)).toEqual([en('request-failed')])
   expect(filterField(main).value).toBe('coder')
   expect(rows(main)).toEqual([
-    ['Coder-30B', 'llama.cpp', en('presets-status-on')],
-    ['Old-Coder', 'llama.cpp', en('presets-status-on')],
+    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on')],
+    ['Old-Coder', 'llama.cpp', en('model-profiles-status-on')],
   ])
   expect(filterStatus(main).textContent).toBe(
-    en('presets-filter-count', '2', '3'),
+    en('model-profiles-filter-count', '2', '3'),
   )
   type(filterField(main), '')
   expect(shownIds(main)).toEqual(IDS)
@@ -493,12 +498,13 @@ test('2c.48: only that row takes the re-read value: the order, the other rows an
 test('2c.48: while the re-read runs every switch stays aria-disabled; a click sends nothing', async () => {
   const gate = deferred()
   const { bff, main } = await open({
-    presetSwitch: () => reply(503, { key: 'client-unavailable', args: [] }),
-    presets: reads(() => gate.promise),
+    modelProfileSwitch: () =>
+      reply(503, { key: 'client-unavailable', args: [] }),
+    modelProfiles: reads(() => gate.promise),
   })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
-  expect(presetsReads(bff)).toBe(2)
+  expect(modelProfilesReads(bff)).toBe(2)
   expect(switches(main).map(inactive)).toEqual([true, true, true])
   expect(switches(main).map((s) => s.disabled)).toEqual([false, false, false])
   press(switchOf(main, 'Old-Coder'))
@@ -515,9 +521,9 @@ test('2c.48: while the re-read runs every switch stays aria-disabled; a click se
 test('2c.48, 2c.55: a write held to 120 000 ms is aborted and shows request-failed, then the row is read again', async () => {
   const h = held()
   const { bff, main } = await open({
-    presetSwitch: (_body, _id, _n, init) => h.answer(init),
-    presets: reads(() =>
-      reply(200, [preset('Qwen3-27B', false), ...LIST.slice(1)]),
+    modelProfileSwitch: (_body, _id, _n, init) => h.answer(init),
+    modelProfiles: reads(() =>
+      reply(200, [modelProfile('Qwen3-27B', false), ...LIST.slice(1)]),
     ),
   })
   press(switchOf(main, 'Qwen3-27B'))
@@ -530,7 +536,7 @@ test('2c.48, 2c.55: a write held to 120 000 ms is aborted and shows request-fail
   await advance(1)
   expect(h.signals[0]?.aborted, 'aborted at 120 000 ms').toBe(true)
   expect(alerts(main)).toEqual([en('request-failed')])
-  expect(presetsReads(bff)).toBe(2)
+  expect(modelProfilesReads(bff)).toBe(2)
   expect(switchOf(main, 'Qwen3-27B').checked).toBe(false)
   expect(switches(main).map(inactive)).toEqual([false, false, false])
 })
@@ -538,7 +544,7 @@ test('2c.48, 2c.55: a write held to 120 000 ms is aborted and shows request-fail
 // ── 401 and Sign in (48, 49) ────────────────────────────────────────────
 
 test('2c.48, 2c.50: a 401 shows session-ended-retry and a Sign in after it; the switch shows the value before; nothing is read; the page stays signed in', async () => {
-  const { bff, main } = await open({ presetSwitch: SESSION_ENDED })
+  const { bff, main } = await open({ modelProfileSwitch: SESSION_ENDED })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(alerts(main)).toEqual([en('session-ended-retry')])
@@ -549,7 +555,7 @@ test('2c.48, 2c.50: a 401 shows session-ended-retry and a Sign in after it; the 
   expect(before(alert, buttons[0]!), 'Sign in after the alert').toBe(true)
   expect(before(buttons[0]!, table(main)), 'before the table').toBe(true)
   expect(switchOf(main, 'Qwen3-27B').checked, 'the value before').toBe(true)
-  expect(presetsReads(bff), 'nothing read again').toBe(1)
+  expect(modelProfilesReads(bff), 'nothing read again').toBe(1)
   expect(switches(main).map(inactive)).toEqual([false, false, false])
   expect(screen.getByRole('banner').textContent).toContain(
     en('session-signed-in-as', 'alice'),
@@ -560,7 +566,7 @@ test('2c.48, 2c.50: a 401 shows session-ended-retry and a Sign in after it; the 
 
 test('2c.49: the Sign in opens the sign-in dialog; Escape and Cancel close it, focus back on it, alert kept, nothing sent', async () => {
   for (const how of ['Escape', 'Cancel']) {
-    const { bff, main } = await open({ presetSwitch: SESSION_ENDED })
+    const { bff, main } = await open({ modelProfileSwitch: SESSION_ENDED })
     press(switchOf(main, 'Qwen3-27B'))
     await flush()
     press(signIns(main)[0]!)
@@ -593,7 +599,7 @@ test('2c.49: the Sign in opens the sign-in dialog; Escape and Cancel close it, f
 })
 
 test('2c.49: the same administrator signs in again: alert and Sign in go, focus on the switch showing its value before, nothing resent or read', async () => {
-  const { bff, main } = await open({ presetSwitch: SESSION_ENDED })
+  const { bff, main } = await open({ modelProfileSwitch: SESSION_ENDED })
   type(filterField(main), 'q')
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
@@ -605,13 +611,13 @@ test('2c.49: the same administrator signs in again: alert and Sign in go, focus 
   expect(document.activeElement).toBe(switchOf(main, 'Qwen3-27B'))
   expect(switchOf(main, 'Qwen3-27B').checked).toBe(true)
   expect(filterField(main).value, 'the filter kept').toBe('q')
-  expect(presetsReads(bff), 'nothing read').toBe(1)
+  expect(modelProfilesReads(bff), 'nothing read').toBe(1)
   expect(writes(bff), 'nothing resent').toHaveLength(1)
 })
 
-test('2c.49: another administrator signs in: the banner shows it, the alert goes, the presets are read again, the filter emptied, focus on the h1', async () => {
+test('2c.49: another administrator signs in: the banner shows it, the alert goes, the model profiles are read again, the filter emptied, focus on the h1', async () => {
   const { bff, main } = await open({
-    presetSwitch: SESSION_ENDED,
+    modelProfileSwitch: SESSION_ENDED,
     signIn: () => reply(200, { user: 'carol' }),
   })
   type(filterField(main), 'q')
@@ -625,7 +631,7 @@ test('2c.49: another administrator signs in: the banner shows it, the alert goes
   )
   expect(alerts(main)).toEqual([])
   expect(signIns(main)).toEqual([])
-  expect(presetsReads(bff), 'read again for the new session').toBe(2)
+  expect(modelProfilesReads(bff), 'read again for the new session').toBe(2)
   expect(filterField(main).value, 'the filter emptied').toBe('')
   expect(shownIds(main)).toEqual(IDS)
   expect(document.activeElement).toBe(h1(main))
@@ -662,9 +668,9 @@ test('2c.37, 2c.12, 2d.60: each row has a native checkbox with role="switch" in 
   })
 })
 
-test('2c.38: each switch is named by the id in its row, through aria-labelledby to a unique fe-made id that is not the preset id', async () => {
+test('2c.38: each switch is named by the id in its row, through aria-labelledby to a unique fe-made id that is not the model profile id', async () => {
   const { main } = await open({
-    presets: [...LIST, preset('presets-title', true)],
+    modelProfiles: [...LIST, modelProfile('model-profiles-title', true)],
   })
   const seen = new Set<string>()
   for (const row of dataRows(main)) {
@@ -693,7 +699,9 @@ test('2c.39, 2c.54: the Status cell holds the switch then its On/Off word, the w
     const cell = row.querySelectorAll('td, th')[2]!
     const input = cell.querySelector('input')!
     const word = en(
-      LIST[i]!.enabled ? 'presets-status-on' : 'presets-status-off',
+      LIST[i]!.enabled
+        ? 'model-profiles-status-on'
+        : 'model-profiles-status-off',
     )
     expect((cell.textContent ?? '').trim(), IDS[i]).toBe(word)
     const holder = [...cell.querySelectorAll('*')].find(
@@ -710,7 +718,10 @@ test('2c.39, 2c.54: the Status cell holds the switch then its On/Off word, the w
 
 test('2c.42: for an administrator every switch is enabled, a row whose engine is not available included', async () => {
   const { main } = await open({
-    presets: [...LIST, preset('on-strata', true, '', 'Strata', false)],
+    modelProfiles: [
+      ...LIST,
+      modelProfile('on-strata', true, '', 'Strata', false),
+    ],
   })
   for (const s of switches(main)) {
     expect(s.disabled, nameOf(s)).toBe(false)
@@ -736,8 +747,8 @@ test('2c.44: a change shows the new value at once (switch and word) and sends PU
   for (const id of ['Qwen3-27B', 'a b#c/d?e']) {
     const gate = deferred()
     const { bff, main } = await open({
-      presets: [preset(id, true), LIST[2]!],
-      presetSwitch: () => gate.promise,
+      modelProfiles: [modelProfile(id, true), LIST[2]!],
+      modelProfileSwitch: () => gate.promise,
     })
     press(switchOf(main, id))
     await flush()
@@ -745,25 +756,25 @@ test('2c.44: a change shows the new value at once (switch and word) and sends PU
     expect(rows(main)[0], id).toEqual([
       id,
       'llama.cpp',
-      en('presets-status-off'),
+      en('model-profiles-status-off'),
     ])
     expect(writes(bff), id).toEqual([[path(id), { enabled: false }]])
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   }
-  // An off preset asks on.
+  // An off model profile asks on.
   const { bff, main } = await open()
   press(switchOf(main, 'Old-Coder'))
   await flush()
   expect(writes(bff)).toEqual([
-    ['/api/presets/Old-Coder/enabled', { enabled: true }],
+    ['/api/profiles/model/Old-Coder/enabled', { enabled: true }],
   ])
 })
 
 test('2c.45: while a write runs every switch is aria-disabled, never disabled, a click changes and sends nothing, focus stays, no text, the filter usable', async () => {
   const gate = deferred()
-  const { bff, main } = await open({ presetSwitch: () => gate.promise })
+  const { bff, main } = await open({ modelProfileSwitch: () => gate.promise })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(switches(main).map(inactive)).toEqual([true, true, true])
@@ -795,13 +806,13 @@ test('2c.45: while a write runs every switch is aria-disabled, never disabled, a
 })
 
 // The reply's two booleans, the status key they give, and the row's engine:
-// every case on both engines (the preset starts as the opposite of the reply,
+// every case on both engines (the model profile starts as the opposite of the reply,
 // so the change asks what the reply gives).
 const SWITCH_REPLY_CASES: [boolean, boolean, string][] = [
-  [true, false, 'presets-switched-on'],
-  [false, false, 'presets-switched-off'],
-  [true, true, 'presets-switched-on-restart'],
-  [false, true, 'presets-switched-off-restart'],
+  [true, false, 'model-profiles-switched-on'],
+  [false, false, 'model-profiles-switched-off'],
+  [true, true, 'model-profiles-switched-on-restart'],
+  [false, true, 'model-profiles-switched-off-restart'],
 ]
 const SWITCH_REPLY_ENGINES = ['llama.cpp', 'Strata']
 const SWITCH_REPLIES: [boolean, boolean, string, string][] =
@@ -820,10 +831,10 @@ test.each(SWITCH_REPLIES)(
   async (enabled, running, key, engine) => {
     const what = `${enabled} ${running} ${engine}`
     const { bff, main } = await open({
-      presets: [
-        preset('Qwen3-27B', !enabled, '', engine, engine === 'llama.cpp'),
+      modelProfiles: [
+        modelProfile('Qwen3-27B', !enabled, '', engine, engine === 'llama.cpp'),
       ],
-      presetSwitch: () => reply(200, { enabled, running }),
+      modelProfileSwitch: () => reply(200, { enabled, running }),
     })
     press(switchOf(main, 'Qwen3-27B'))
     await flush()
@@ -832,7 +843,7 @@ test.each(SWITCH_REPLIES)(
       en(key, 'Qwen3-27B', engine),
     )
     expect(alerts(main), what).toEqual([])
-    expect(presetsReads(bff), `${what}: nothing read`).toBe(1)
+    expect(modelProfilesReads(bff), `${what}: nothing read`).toBe(1)
     expect(switches(main).map(inactive), what).toEqual([false])
     expect(document.activeElement, what).toBe(switchOf(main, 'Qwen3-27B'))
   },
@@ -840,14 +851,14 @@ test.each(SWITCH_REPLIES)(
 
 test('2c.46: the reply wins over the value asked', async () => {
   const { main } = await open({
-    presetSwitch: () => reply(200, { enabled: true, running: false }),
+    modelProfileSwitch: () => reply(200, { enabled: true, running: false }),
   })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(switchOf(main, 'Qwen3-27B').checked).toBe(true)
-  expect(rows(main)[0]![2]).toBe(en('presets-status-on'))
+  expect(rows(main)[0]![2]).toBe(en('model-profiles-status-on'))
   expect(switchStatus(main).textContent).toBe(
-    en('presets-switched-on', 'Qwen3-27B'),
+    en('model-profiles-switched-on', 'Qwen3-27B'),
   )
 })
 
@@ -856,21 +867,21 @@ test('2c.47: after a success the row keeps its place, nothing is read, the filte
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(rows(main)).toEqual([
-    ['Qwen3-27B', 'llama.cpp', en('presets-status-off')],
-    ['Coder-30B', 'llama.cpp', en('presets-status-on')],
-    ['Old-Coder', 'llama.cpp', en('presets-status-off')],
+    ['Qwen3-27B', 'llama.cpp', en('model-profiles-status-off')],
+    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on')],
+    ['Old-Coder', 'llama.cpp', en('model-profiles-status-off')],
   ])
   press(switchOf(main, 'Old-Coder'))
   await flush()
   expect(shownIds(main)).toEqual(IDS)
-  expect(presetsReads(bff)).toBe(1)
+  expect(modelProfilesReads(bff)).toBe(1)
   type(filterField(main), '27b')
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(filterField(main).value).toBe('27b')
   expect(shownIds(main)).toEqual(['Qwen3-27B'])
   expect(filterStatus(main).textContent).toBe(
-    en('presets-filter-count', '1', '3'),
+    en('model-profiles-filter-count', '1', '3'),
   )
   expect(writes(bff).map((w) => w[1])).toEqual([
     { enabled: false },
@@ -898,7 +909,8 @@ test('2c.50: the status is in the page, empty, after the filter status and befor
 
 test('2c.50: the alert comes after the status and before the table', async () => {
   const { main } = await open({
-    presetSwitch: () => reply(503, { key: 'client-unavailable', args: [] }),
+    modelProfileSwitch: () =>
+      reply(503, { key: 'client-unavailable', args: [] }),
   })
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
@@ -912,7 +924,7 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
   let n = 0
   const gate = deferred()
   const { main } = await open({
-    presetSwitch: () => {
+    modelProfileSwitch: () => {
       n++
       if (n === 1) return reply(200, { enabled: false, running: false })
       if (n === 2) return reply(503, { key: 'client-unavailable', args: [] })
@@ -922,12 +934,12 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(switchStatus(main).textContent).toBe(
-    en('presets-switched-off', 'Qwen3-27B'),
+    en('model-profiles-switched-off', 'Qwen3-27B'),
   )
   type(filterField(main), 'q')
   type(filterField(main), '')
   expect(switchStatus(main).textContent, 'typing keeps the status').toBe(
-    en('presets-switched-off', 'Qwen3-27B'),
+    en('model-profiles-switched-off', 'Qwen3-27B'),
   )
   press(switchOf(main, 'Coder-30B'))
   await flush()
@@ -947,7 +959,7 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
   })
   await flush()
   expect(switchStatus(main).textContent).toBe(
-    en('presets-switched-on', 'Old-Coder'),
+    en('model-profiles-switched-on', 'Old-Coder'),
   )
   navigate('#/')
   await flush()
@@ -961,7 +973,7 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
 
 test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign in after a 401, then each row link and switch in row order', async () => {
   // 2d.60 puts each row's link before its switch.
-  const { main } = await open({ presetSwitch: SESSION_ENDED })
+  const { main } = await open({ modelProfileSwitch: SESSION_ENDED })
   const head = [
     en('skip-to-content'),
     en('app-name'),
@@ -971,7 +983,7 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     'default',
     'coder',
     en('nav-models'),
-    en('presets-filter-label'),
+    en('model-profiles-filter-label'),
   ]
   const rowsTwice = IDS.flatMap((id) => [id, id])
   expect(tabbable().map(nameOf)).toEqual([...head, ...rowsTwice])
@@ -979,14 +991,14 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
   type(filterField(main), 'e')
   expect(tabbable().map(nameOf)).toEqual([
     ...head,
-    en('presets-filter-clear'),
+    en('model-profiles-filter-clear'),
     ...rowsTwice,
   ])
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(tabbable().map(nameOf)).toEqual([
     ...head,
-    en('presets-filter-clear'),
+    en('model-profiles-filter-clear'),
     en('session-sign-in'),
     ...rowsTwice,
   ])
@@ -996,8 +1008,8 @@ test('2c.52: focus stays on the switch through a write and a failure with its re
   const write = deferred()
   const reread = deferred()
   const { main } = await open({
-    presetSwitch: () => write.promise,
-    presets: reads(() => reread.promise),
+    modelProfileSwitch: () => write.promise,
+    modelProfiles: reads(() => reread.promise),
   })
   const s = switchOf(main, 'Coder-30B')
   press(s)
@@ -1022,6 +1034,6 @@ test('2c.55: the fake bff answers a switch with 200, the asked enabled and runni
   press(switchOf(main, 'Old-Coder'))
   await flush()
   expect(switchStatus(main).textContent).toBe(
-    en('presets-switched-on', 'Old-Coder'),
+    en('model-profiles-switched-on', 'Old-Coder'),
   )
 })

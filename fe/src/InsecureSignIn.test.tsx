@@ -20,7 +20,7 @@ import {
   before,
   en,
   fakeBff,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -193,26 +193,26 @@ test('I2, I3: insecure, the dialog of a save answered 401 holds the notice after
   secure(false)
   startAt('#/models/Qwen3-27B')
   const bff = fakeBff({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
-        presetDoc(
+        modelProfileDoc(
           {},
           { revision: 'r1', values: { embeddings: 'true', pooling: 'mean' } },
         ),
       ),
-    presetSave: () => reply(401, { key: 'session-required', args: [] }),
+    modelProfileSave: () => reply(401, { key: 'session-required', args: [] }),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: 'Qwen3-27B' })
   const mode = (await within(main).findByRole('combobox', {
-    name: en('preset-embedding-mode'),
+    name: en('model-profile-embedding-mode'),
   })) as HTMLSelectElement
   fireEvent.change(mode, { target: { value: 'false' } })
   fireEvent.click(within(main).getByRole('button', { name: en('save-button') }))
   await waitFor(() =>
-    expect(bff.to('PUT', '/api/presets/Qwen3-27B')).toHaveLength(1),
+    expect(bff.to('PUT', '/api/profiles/model/Qwen3-27B')).toHaveLength(1),
   )
   fireEvent.click(
     await within(main).findByRole('button', { name: en('session-sign-in') }),

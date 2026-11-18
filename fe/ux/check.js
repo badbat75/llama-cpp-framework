@@ -30,14 +30,14 @@ const STUB_START_MS = 5000
 // rendered page is a round trip away.
 const RENDER_MS = 5000
 // What a page needs after its marker to be at rest: the last fetch's reply
-// rendered (the server document, the preset, arrive after the heading).
+// rendered (the server document, the model profile, arrive after the heading).
 const SETTLE_MS = 400
 
 // The stub's data, as stub.py gives it: the signed-in user name in the banner,
-// the preset that is there and the one that is not.
+// the model profile that is there and the one that is not.
 const USER = 'abcdefghijklmnopqrstuvwxyz012345'
-const PRESET_ID = 'Qwen3-27B'
-const MISSING_ID = 'No-Such-Preset'
+const MODEL_PROFILE_ID = 'Qwen3-27B'
+const MISSING_ID = 'No-Such-Model-Profile'
 
 // The states to look at: the stub's /__set query, the route, and the expect:
 // the selectors (with the text they carry) only that state shows. A page that
@@ -87,26 +87,26 @@ const STATES = [
     name: 'models',
     set: 'session=admin',
     hash: '#/models',
-    expect: [{ selector: '#presets-filter' }],
+    expect: [{ selector: '#model-profiles-filter' }],
   },
   {
-    name: 'preset',
+    name: 'model-profile',
     set: 'session=admin',
-    hash: `#/models/${PRESET_ID}`,
+    hash: `#/models/${MODEL_PROFILE_ID}`,
     expect: [
-      { selector: '#page-heading', text: PRESET_ID },
-      { selector: 'h3', text: S['preset-assets'] },
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      { selector: 'h3', text: S['model-profile-assets'] },
     ],
   },
   {
-    name: 'preset-missing',
+    name: 'model-profile-missing',
     set: 'session=admin',
     hash: `#/models/${MISSING_ID}`,
     expect: [
       { selector: '#page-heading', text: MISSING_ID },
       {
         selector: 'p',
-        text: S['preset-not-found'].replace('{0}', MISSING_ID),
+        text: S['model-profile-not-found'].replace('{0}', MISSING_ID),
       },
     ],
   },

@@ -1,5 +1,5 @@
-// The Models page (#/models, fe/briefs/02-models.md, slice 2a): the presets of
-// every engine read from the bff's /api/presets, with a
+// The Models page (#/models, fe/briefs/02-models.md, slice 2a): the model
+// profiles of every engine read from the bff's /api/profiles/model, with a
 // filter over them (slice 2b), and each row's on/off switch (slice 2c).
 import { useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
@@ -12,12 +12,12 @@ import {
 } from './api.ts'
 import Dialog from './Dialog.tsx'
 import PageHeading from './PageHeading.tsx'
-import { presetHref, presetIdUnreadable } from './route.ts'
+import { modelProfileHref, modelProfileIdUnreadable } from './route.ts'
 import type { Session } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { t } from './strings.ts'
 
-type Preset = {
+type ModelProfile = {
   id: string
   engine: string
   engineAvailable: boolean
@@ -25,14 +25,14 @@ type Preset = {
   model: string
 }
 
-/** What the read gave: the presets, or the error key of its message. */
+/** What the read gave: the model profiles, or the error key of its message. */
 type Answer =
-  | Preset[]
+  | ModelProfile[]
   | { error: 'client-not-authorized' | 'client-unavailable' | 'failed' }
   | 'signed-out'
   | 'revoked'
 
-function isPreset(value: unknown): value is Preset {
+function isModelProfile(value: unknown): value is ModelProfile {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
@@ -43,9 +43,9 @@ function isPreset(value: unknown): value is Preset {
   )
 }
 
-async function readPresets(): Promise<Answer> {
+async function readModelProfiles(): Promise<Answer> {
   try {
-    const reply = await call('/api/presets')
+    const reply = await call('/api/profiles/model')
     if (reply.status === 401) return 'signed-out'
     if (sessionRevoked(reply)) return 'revoked'
     if (!reply.ok) {
@@ -58,7 +58,7 @@ async function readPresets(): Promise<Answer> {
           return { error: 'failed' }
       }
     }
-    if (!Array.isArray(reply.body) || !reply.body.every(isPreset))
+    if (!Array.isArray(reply.body) || !reply.body.every(isModelProfile))
       return { error: 'failed' }
     return reply.body
   } catch {
@@ -76,11 +76,14 @@ type Written =
 
 async function writeEnabled(id: string, enabled: boolean): Promise<Written> {
   try {
-    const reply = await call(`/api/presets/${encodeURIComponent(id)}/enabled`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    })
+    const reply = await call(
+      `/api/profiles/model/${encodeURIComponent(id)}/enabled`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      },
+    )
     if (reply.ok) {
       const body = reply.body
       return isRecord(body) &&
@@ -111,8 +114,8 @@ function failureText(
       return t('api-client-not-authorized')
     case 'client-unavailable':
       return t('api-client-unavailable')
-    case 'no-preset-named':
-      return t('api-no-preset-named', id)
+    case 'no-model-profile-named':
+      return t('api-no-model-profile-named', id)
     case 'load-on-startup-over-max':
       return t('api-load-on-startup-over-max', ...result.args)
     case 'load-on-startup-unlimited':
@@ -125,15 +128,15 @@ function failureText(
 }
 
 /** The status of a switch that held (2c.46). */
-function switchedText(p: Preset, running: boolean): string {
+function switchedText(p: ModelProfile, running: boolean): string {
   if (p.enabled) {
     return running
-      ? t('presets-switched-on-restart', p.id, p.engine)
-      : t('presets-switched-on', p.id, p.engine)
+      ? t('model-profiles-switched-on-restart', p.id, p.engine)
+      : t('model-profiles-switched-on', p.id, p.engine)
   }
   return running
-    ? t('presets-switched-off-restart', p.id, p.engine)
-    : t('presets-switched-off', p.id, p.engine)
+    ? t('model-profiles-switched-off-restart', p.id, p.engine)
+    : t('model-profiles-switched-off', p.id, p.engine)
 }
 
 export default function Models({
@@ -150,12 +153,12 @@ export default function Models({
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
-  // Raised by a sign-in as another session: the presets are read again.
+  // Raised by a sign-in as another session: the model profiles are read again.
   const [reads, setReads] = useState(0)
 
   useEffect(() => {
     let live = true
-    readPresets().then((a) => {
+    readModelProfiles().then((a) => {
       if (!live) return
       if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
       else setAnswer(a)
@@ -174,8 +177,8 @@ export default function Models({
     <>
       <PageHeading text={t('models-title')} />
       <section>
-        <h2 id="presets-title">{t('presets-title')}</h2>
-        <p className="intro">{t('presets-intro')}</p>
+        <h2 id="model-profiles-title">{t('model-profiles-title')}</h2>
+        <p className="intro">{t('model-profiles-intro')}</p>
         <Body
           answer={answer}
           filter={filterText}
@@ -184,14 +187,14 @@ export default function Models({
           onReread={reread}
         />
         {answer !== undefined && (
-          <p className="presets-note">{t('presets-off-note')}</p>
+          <p className="model-profiles-note">{t('model-profiles-off-note')}</p>
         )}
       </section>
     </>
   )
 }
 
-/** The presets as a table, or the message in their place. */
+/** The model profiles as a table, or the message in their place. */
 function Body({
   answer,
   filter,
@@ -206,7 +209,7 @@ function Body({
   onReread: () => void
 }) {
   if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
-    return <p role="status">{t('presets-loading')}</p>
+    return <p role="status">{t('model-profiles-loading')}</p>
   }
   if (!Array.isArray(answer)) {
     if (answer.error === 'client-not-authorized') {
@@ -215,10 +218,10 @@ function Body({
     if (answer.error === 'client-unavailable') {
       return <p>{t('api-client-unavailable')}</p>
     }
-    return <p>{t('presets-load-failed')}</p>
+    return <p>{t('model-profiles-load-failed')}</p>
   }
   if (answer.length === 0) {
-    return <p>{t('presets-empty')}</p>
+    return <p>{t('model-profiles-empty')}</p>
   }
   return (
     <Filtered
@@ -232,7 +235,7 @@ function Body({
 }
 
 /** The GUI's rule: the whole text, lowercased, in the id or the model. */
-function matches(p: Preset, filter: string): boolean {
+function matches(p: ModelProfile, filter: string): boolean {
   const text = filter.toLowerCase()
   return (
     p.id.toLowerCase().includes(text) || p.model.toLowerCase().includes(text)
@@ -251,7 +254,7 @@ function Filtered({
   onRenewed,
   onReread,
 }: {
-  read: Preset[]
+  read: ModelProfile[]
   filter: string
   onFilter: (text: string) => void
   onRenewed: (session: Session) => boolean
@@ -259,7 +262,7 @@ function Filtered({
 }) {
   const uid = useId()
   // The rows as read, each switch's value kept up to date in place (2c.47).
-  const [presets, setPresets] = useState(read)
+  const [modelProfiles, setModelProfiles] = useState(read)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
@@ -276,17 +279,19 @@ function Filtered({
       mounted.current = false
     }
   }, [])
-  const shown = presets
+  const shown = modelProfiles
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => matches(p, filter))
 
   function setEnabled(i: number, enabled: boolean) {
-    setPresets((ps) => ps.map((p, j) => (j === i ? { ...p, enabled } : p)))
+    setModelProfiles((ps) =>
+      ps.map((p, j) => (j === i ? { ...p, enabled } : p)),
+    )
   }
 
   async function change(i: number, enabled: boolean) {
     if (busy) return
-    const p = presets[i]!
+    const p = modelProfiles[i]!
     const previous = p.enabled
     last.current = i
     setEnabled(i, enabled)
@@ -311,7 +316,7 @@ function Filtered({
       return
     }
     // The write may have happened: that row's value as read again (2c.48).
-    const again = await readPresets()
+    const again = await readModelProfiles()
     if (!mounted.current) return
     const row = Array.isArray(again)
       ? again.find((r) => r.id === p.id)
@@ -344,26 +349,28 @@ function Filtered({
   if (filter !== '') {
     statusText =
       shown.length === 0
-        ? t('presets-no-match')
+        ? t('model-profiles-no-match')
         : t(
-            'presets-filter-count',
+            'model-profiles-filter-count',
             String(shown.length),
-            String(presets.length),
+            String(modelProfiles.length),
           )
   }
 
   return (
     <>
-      <div className="presets-filter">
-        <label htmlFor="presets-filter">{t('presets-filter-label')}</label>
-        <div className="presets-filter-row">
+      <div className="model-profiles-filter">
+        <label htmlFor="model-profiles-filter">
+          {t('model-profiles-filter-label')}
+        </label>
+        <div className="model-profiles-filter-row">
           <input
             ref={field}
-            id="presets-filter"
+            id="model-profiles-filter"
             type="search"
             autoComplete="off"
             spellCheck={false}
-            aria-describedby="presets-filter-hint"
+            aria-describedby="model-profiles-filter-hint"
             value={filter}
             onChange={(e) => onFilter(e.target.value)}
             onKeyDown={(e) => {
@@ -375,22 +382,25 @@ function Filtered({
           />
           {filter !== '' && (
             <button type="button" className="secondary" onClick={clear}>
-              {t('presets-filter-clear')}
+              {t('model-profiles-filter-clear')}
             </button>
           )}
         </div>
-        <p id="presets-filter-hint" className="presets-filter-hint">
-          {t('presets-filter-hint')}
+        <p
+          id="model-profiles-filter-hint"
+          className="model-profiles-filter-hint"
+        >
+          {t('model-profiles-filter-hint')}
         </p>
       </div>
-      <p role="status" className="presets-filter-status">
+      <p role="status" className="model-profiles-filter-status">
         {statusText}
       </p>
-      <p role="status" className="presets-switch-status">
+      <p role="status" className="model-profiles-switch-status">
         {status}
       </p>
       {alert !== null && (
-        <p role="alert" className="presets-switch-alert">
+        <p role="alert" className="model-profiles-switch-alert">
           {alert.text}
         </p>
       )}
@@ -427,7 +437,7 @@ function Filtered({
 }
 
 /**
- * The presets as a table; row `i` (its place in the list read) names its
+ * The model profiles as a table; row `i` (its place in the list read) names its
  * switch `<uid>-switch-<i>` by its name `<uid>-name-<i>`.
  */
 function Table({
@@ -437,18 +447,18 @@ function Table({
   onChange,
 }: {
   uid: string
-  rows: { p: Preset; i: number }[]
+  rows: { p: ModelProfile; i: number }[]
   /** A write runs: every switch aria-disabled, its changes ignored (2c.45). */
   busy: boolean
   onChange: (i: number, enabled: boolean) => void
 }) {
   return (
-    <table className="presets" aria-labelledby="presets-title">
+    <table className="model-profiles" aria-labelledby="model-profiles-title">
       <thead>
         <tr>
-          <th scope="col">{t('presets-column-name')}</th>
-          <th scope="col">{t('presets-column-engine')}</th>
-          <th scope="col">{t('presets-column-status')}</th>
+          <th scope="col">{t('model-profiles-column-name')}</th>
+          <th scope="col">{t('model-profiles-column-engine')}</th>
+          <th scope="col">{t('model-profiles-column-status')}</th>
         </tr>
       </thead>
       <tbody>
@@ -456,20 +466,20 @@ function Table({
           <tr key={p.id} className={p.enabled ? undefined : 'off'}>
             <td>
               <span id={`${uid}-name-${i}`}>
-                {presetIdUnreadable(p.id) ? (
+                {modelProfileIdUnreadable(p.id) ? (
                   p.id
                 ) : (
-                  <a href={presetHref(p.id)}>{p.id}</a>
+                  <a href={modelProfileHref(p.id)}>{p.id}</a>
                 )}
               </span>
             </td>
             <td>
               {p.engineAvailable
                 ? p.engine
-                : t('presets-engine-not-available', p.engine)}
+                : t('model-profiles-engine-not-available', p.engine)}
             </td>
             <td>
-              <label className="presets-switch">
+              <label className="model-profiles-switch">
                 <input
                   id={`${uid}-switch-${i}`}
                   type="checkbox"
@@ -483,7 +493,9 @@ function Table({
                 />
               </label>
               <span aria-hidden="true">
-                {p.enabled ? t('presets-status-on') : t('presets-status-off')}
+                {p.enabled
+                  ? t('model-profiles-status-on')
+                  : t('model-profiles-status-off')}
               </span>
             </td>
           </tr>

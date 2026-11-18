@@ -1,8 +1,8 @@
-// The preset page #/models/<id>, slice 2d part 1 (fe/briefs/02-models.md,
+// The model profile page #/models/<id>, slice 2d part 1 (fe/briefs/02-models.md,
 // sections 2d.1 to 2d.4): the route and its address, coming from the list and
 // back, heading, title, nav, focus, and the states: loading, 401, 403, 503,
-// 404 no-preset-named, everything else, the 15 s read limit. The page reads
-// only GET /api/presets/<id> (fe/briefs/api-contract.md, the proposed
+// 404 no-model-profile-named, everything else, the 15 s read limit. The page reads
+// only GET /api/profiles/model/<id> (fe/briefs/api-contract.md, the proposed
 // section); "2d.56" is the brief's criterion 56. The loaded page's Engine
 // field and Assets card (2d.5 to 2d.8) are not tested here, so a loaded page
 // is checked only for what 56 to 67 say: the h1, the title, the back link, the
@@ -28,13 +28,13 @@ import {
   fakeBff,
   held,
   navigate,
-  PRESETS,
-  presetDoc,
+  MODEL_PROFILES,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import { cardHeadings, fieldLabels } from './test/presetCards.ts'
+import { cardHeadings, fieldLabels } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -89,7 +89,7 @@ async function focusOnH1(main: HTMLElement, name: string) {
 
 /** The way back (criterion 61). */
 function backLink(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('link', { name: en('preset-back') })
+  return within(main).getByRole('link', { name: en('model-profile-back') })
 }
 
 /** Waits until the page shows `text` in main, then returns its element. */
@@ -97,19 +97,19 @@ async function message(main: HTMLElement, text: string): Promise<HTMLElement> {
   return within(main).findByText(text)
 }
 
-/** The preset page's read of `id`. */
-function presetReads(bff: ReturnType<typeof fakeBff>, id = ID): number {
-  return bff.to('GET', `/api/presets/${encodeURIComponent(id)}`).length
+/** The model profile page's read of `id`. */
+function modelProfileReads(bff: ReturnType<typeof fakeBff>, id = ID): number {
+  return bff.to('GET', `/api/profiles/model/${encodeURIComponent(id)}`).length
 }
 
-/** Every call under /api/presets, list and single reads. */
-function presetCalls(bff: ReturnType<typeof fakeBff>) {
-  return bff.calls.filter((c) => c.path.startsWith('/api/presets'))
+/** Every call under /api/profiles/model, list and single reads. */
+function modelProfileCalls(bff: ReturnType<typeof fakeBff>) {
+  return bff.calls.filter((c) => c.path.startsWith('/api/profiles/model'))
 }
 
 // List-page helpers (criteria 60, 62).
 async function table(main: HTMLElement): Promise<HTMLElement> {
-  return within(main).findByRole('table', { name: en('presets-title') })
+  return within(main).findByRole('table', { name: en('model-profiles-title') })
 }
 
 function dataRows(t: HTMLElement): HTMLElement[] {
@@ -126,13 +126,13 @@ function shownIds(t: HTMLElement): string[] {
 
 function filterField(main: HTMLElement): HTMLInputElement {
   return within(main).getByRole('searchbox', {
-    name: en('presets-filter-label'),
+    name: en('model-profiles-filter-label'),
   }) as HTMLInputElement
 }
 
 function clearFilter(main: HTMLElement): HTMLElement | null {
   return within(main).queryByRole('button', {
-    name: en('presets-filter-clear'),
+    name: en('model-profiles-filter-clear'),
   })
 }
 
@@ -232,12 +232,17 @@ test('2d.66: 403 and 503 show their api- message as a plain paragraph in place o
     [403, 'client-not-authorized', en('api-client-not-authorized')],
     [503, 'client-unavailable', en('api-client-unavailable')],
   ] as const) {
-    const { main } = open({ preset: () => reply(status, { key, args: [] }) })
+    const { main } = open({
+      modelProfile: () => reply(status, { key, args: [] }),
+    })
     const shown = await message(main, english)
     expect(shown.tagName, key).toBe('P')
     expect(shown.getAttribute('role'), key).toBeNull()
     expect(within(main).queryByRole('alert'), key).toBeNull()
-    expect(within(main).queryByText(en('preset-load-failed')), key).toBeNull()
+    expect(
+      within(main).queryByText(en('model-profile-load-failed')),
+      key,
+    ).toBeNull()
     const h1 = await heading1(main, ID)
     expect(h1.getAttribute('tabindex'), key).toBe('-1')
     expect(document.title, key).toBe(en('page-title', ID))
@@ -249,7 +254,7 @@ test('2d.66: 403 and 503 show their api- message as a plain paragraph in place o
   }
 })
 
-test('2d.66: any other status, key, body, reply shape, a network failure shows preset-load-failed, never the body; a field the fe does not know is ignored', async () => {
+test('2d.66: any other status, key, body, reply shape, a network failure shows model-profile-load-failed, never the body; a field the fe does not know is ignored', async () => {
   const answers: [string, () => Response | Promise<Response>][] = [
     ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
     ['500', () => reply(500, { key: 'secret-detail', args: [] })],
@@ -263,43 +268,52 @@ test('2d.66: any other status, key, body, reply shape, a network failure shows p
     ['200 null', () => reply(200, 'null')],
     ['200 []', () => reply(200, [])],
     ['200 {}', () => reply(200, {})],
-    ['200 no id', () => reply(200, presetDoc({}, { id: undefined }))],
-    ['200 no engine', () => reply(200, presetDoc({}, { engine: undefined }))],
+    ['200 no id', () => reply(200, modelProfileDoc({}, { id: undefined }))],
+    [
+      '200 no engine',
+      () => reply(200, modelProfileDoc({}, { engine: undefined })),
+    ],
     [
       '200 no engineAvailable',
-      () => reply(200, presetDoc({}, { engineAvailable: undefined })),
+      () => reply(200, modelProfileDoc({}, { engineAvailable: undefined })),
     ],
-    ['200 no enabled', () => reply(200, presetDoc({}, { enabled: undefined }))],
+    [
+      '200 no enabled',
+      () => reply(200, modelProfileDoc({}, { enabled: undefined })),
+    ],
     [
       '200 no projectUrl',
-      () => reply(200, presetDoc({}, { projectUrl: undefined })),
+      () => reply(200, modelProfileDoc({}, { projectUrl: undefined })),
     ],
-    ['200 id a number', () => reply(200, presetDoc({}, { id: 7 }))],
+    ['200 id a number', () => reply(200, modelProfileDoc({}, { id: 7 }))],
     [
       '200 enabled a string',
-      () => reply(200, presetDoc({}, { enabled: 'true' })),
+      () => reply(200, modelProfileDoc({}, { enabled: 'true' })),
     ],
     [
       '200 engineAvailable a number',
-      () => reply(200, presetDoc({}, { engineAvailable: 1 })),
+      () => reply(200, modelProfileDoc({}, { engineAvailable: 1 })),
     ],
     [
       '200 projectUrl null',
-      () => reply(200, presetDoc({}, { projectUrl: null })),
+      () => reply(200, modelProfileDoc({}, { projectUrl: null })),
     ],
     [
       '200 values a string',
-      () => reply(200, presetDoc({}, { values: 'secret-detail' })),
+      () => reply(200, modelProfileDoc({}, { values: 'secret-detail' })),
     ],
-    ['200 values null', () => reply(200, presetDoc({}, { values: null }))],
+    [
+      '200 values null',
+      () => reply(200, modelProfileDoc({}, { values: null })),
+    ],
     [
       '200 values holds a number',
-      () => reply(200, presetDoc({}, { values: { model: 7 } })),
+      () => reply(200, modelProfileDoc({}, { values: { model: 7 } })),
     ],
   ]
-  for (const [what, preset] of answers) {
-    const { main } = open({ preset })
-    const shown = await message(main, en('preset-load-failed'))
+  for (const [what, modelProfile] of answers) {
+    const { main } = open({ modelProfile })
+    const shown = await message(main, en('model-profile-load-failed'))
     expect(shown.tagName, what).toBe('P')
     expect(shown.getAttribute('role'), what).toBeNull()
     expect(within(main).queryByRole('alert'), what).toBeNull()
@@ -311,47 +325,47 @@ test('2d.66: any other status, key, body, reply shape, a network failure shows p
   }
   // Criterion 81: the shape is id, engine, engineAvailable, enabled, values,
   // projectUrl; every other field is ignored. 2h.1's 131 took `revision` out
-  // of that set (a read without one is preset-load-failed, pinned by 131 in
-  // PresetSave1.test.tsx), so the field ignored here is one the fe never
+  // of that set (a read without one is model-profile-load-failed, pinned by 131 in
+  // ModelProfileSave1.test.tsx), so the field ignored here is one the fe never
   // reads. The content is awaited: the h1 of the id stands while the read is
   // in flight, so checking the text next to it alone is a race.
   const { main } = open({
-    preset: () => reply(200, presetDoc({}, { note: 'zzz' })),
+    modelProfile: () => reply(200, modelProfileDoc({}, { note: 'zzz' })),
   })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   expect(await heading1(main, ID)).toBeTruthy()
-  expect(within(main).queryByText(en('preset-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
 })
 
-test('2d.66: a preset read held 15 000 ms is aborted and shows preset-load-failed, and the loading status goes', async () => {
+test('2d.66: a model profile read held 15 000 ms is aborted and shows model-profile-load-failed, and the loading status goes', async () => {
   fakeClock()
   const h = held()
-  open({ preset: (_id, init) => h.answer(init) })
+  open({ modelProfile: (_id, init) => h.answer(init) })
   await flush()
   const main = screen.getByRole('main')
-  expect(h.signals, 'the preset was read once').toHaveLength(1)
+  expect(h.signals, 'the model profile was read once').toHaveLength(1)
   expect(h.signals[0], 'the read passes a signal').toBeInstanceOf(AbortSignal)
-  expect(within(main).getByText(en('preset-loading'))).toBeTruthy()
+  expect(within(main).getByText(en('model-profile-loading'))).toBeTruthy()
   await advance(14_999)
   expect(h.signals[0]!.aborted, 'not aborted at 14 999 ms').toBe(false)
-  expect(within(main).queryByText(en('preset-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
   await advance(1)
   expect(h.signals[0]!.aborted, 'aborted at 15 000 ms').toBe(true)
-  const shown = within(main).getByText(en('preset-load-failed'))
+  const shown = within(main).getByText(en('model-profile-load-failed'))
   expect(shown.tagName).toBe('P')
-  expect(within(main).queryByText(en('preset-loading'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-loading'))).toBeNull()
 })
 
 test('2d.66: a 401 on the read signs the whole app out; after sign-in the page reads again, focus on its h1', async () => {
   let reads = 0
   const { bff, main } = open({
-    preset: () =>
+    modelProfile: () =>
       ++reads === 1
         ? reply(401, { key: 'session-required', args: [] })
-        : reply(200, presetDoc()),
+        : reply(200, modelProfileDoc()),
   })
   const username = (await within(main).findByRole('textbox', {
     name: en('signin-username'),
@@ -381,22 +395,23 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
   const h1 = await heading1(main, ID)
   await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(window.location.hash).toBe(HASH)
-  expect(presetReads(bff)).toBe(2)
+  expect(modelProfileReads(bff)).toBe(2)
   expect(
     await within(nav()).findByRole('link', { name: en('nav-models') }),
   ).toBeTruthy()
 })
 
-test('2d.59: a 404 no-preset-named shows preset-not-found filled with the id from the address, a plain paragraph below the h1; the back link stays', async () => {
+test('2d.59: a 404 no-model-profile-named shows model-profile-not-found filled with the id from the address, a plain paragraph below the h1; the back link stays', async () => {
   startAt('#/models/Qwen3-28B')
   const { main } = open({
-    preset: () => reply(404, { key: 'no-preset-named', args: ['Qwen3-28B'] }),
+    modelProfile: () =>
+      reply(404, { key: 'no-model-profile-named', args: ['Qwen3-28B'] }),
   })
-  const shown = await message(main, en('preset-not-found', 'Qwen3-28B'))
+  const shown = await message(main, en('model-profile-not-found', 'Qwen3-28B'))
   expect(shown.tagName).toBe('P')
   expect(shown.getAttribute('role')).toBeNull()
   expect(within(main).queryByRole('alert')).toBeNull()
-  expect(within(main).queryByText(en('preset-load-failed'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
   const h1 = await heading1(main, 'Qwen3-28B')
   const b = backLink(main)
   expect(b.getAttribute('href')).toBe('#/models')
@@ -404,7 +419,7 @@ test('2d.59: a 404 no-preset-named shows preset-not-found filled with the id fro
   expect(before(h1, shown), 'the sentence below the h1').toBe(true)
 })
 
-test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a dot segment): preset-not-found with the id, with no loading status in between; the back link and the h1 as in 59', async () => {
+test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a dot segment): model-profile-not-found with the id, with no loading status in between; the back link and the h1 as in 59', async () => {
   for (const [hash, id] of [
     ['#/models/.', '.'],
     ['#/models/..', '..'],
@@ -413,7 +428,7 @@ test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a do
     startAt(hash)
     fakeClock()
     const { bff, main } = open({
-      preset: () => reply(200, presetDoc({}, { id })),
+      modelProfile: () => reply(200, modelProfileDoc({}, { id })),
     })
     // Every text main ever received: the loading status must never be among
     // them, so an implementation that shows it for one render is caught.
@@ -429,20 +444,26 @@ test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a do
       subtree: true,
       characterData: true,
     })
-    // The session read lands; the preset page is rendered with its message,
+    // The session read lands; the model profile page is rendered with its message,
     // with no read to answer it.
     await flush()
     observer.disconnect()
-    const shown = within(main).getByText(en('preset-not-found', id))
+    const shown = within(main).getByText(en('model-profile-not-found', id))
     expect(
       seen.join(' '),
       `${hash}: no loading status in between`,
-    ).not.toContain(en('preset-loading'))
+    ).not.toContain(en('model-profile-loading'))
     expect(shown.tagName, hash).toBe('P')
     expect(shown.getAttribute('role'), hash).toBeNull()
     expect(within(main).queryByRole('alert'), hash).toBeNull()
-    expect(within(main).queryByText(en('preset-load-failed')), hash).toBeNull()
-    expect(within(main).queryByText(en('preset-loading')), hash).toBeNull()
+    expect(
+      within(main).queryByText(en('model-profile-load-failed')),
+      hash,
+    ).toBeNull()
+    expect(
+      within(main).queryByText(en('model-profile-loading')),
+      hash,
+    ).toBeNull()
     expect(within(main).queryAllByRole('status'), hash).toHaveLength(0)
     const h1 = within(main).getByRole('heading', { level: 1, name: id })
     expect(h1.getAttribute('tabindex'), hash).toBe('-1')
@@ -452,14 +473,21 @@ test('2d.59a: the ids . and .. send no read at all (the URL parser resolves a do
     expect(before(b, h1), `${hash}: back before the h1`).toBe(true)
     expect(before(h1, shown), `${hash}: the sentence below the h1`).toBe(true)
     // Nothing is sent, not once, not later: past the read limit the fake saw
-    // no preset read, and neither the single route nor the list route (where
-    // a /api/presets/.. request would land).
+    // no model profile read, and neither the single route nor the list route (where
+    // a /api/profiles/model/.. request would land).
     await advance(15_500)
-    expect(presetCalls(bff), `${hash}: no preset read at all`).toHaveLength(0)
-    expect(bff.to('GET', '/api/presets'), `${hash}: not the list`).toHaveLength(
-      0,
-    )
-    expect(within(main).getByText(en('preset-not-found', id)), hash).toBe(shown)
+    expect(
+      modelProfileCalls(bff),
+      `${hash}: no model profile read at all`,
+    ).toHaveLength(0)
+    expect(
+      bff.to('GET', '/api/profiles/model'),
+      `${hash}: not the list`,
+    ).toHaveLength(0)
+    expect(
+      within(main).getByText(en('model-profile-not-found', id)),
+      hash,
+    ).toBe(shown)
     expect(within(main).queryAllByRole('status'), hash).toHaveLength(0)
     cleanup()
     vi.unstubAllGlobals()
@@ -471,16 +499,19 @@ test('2d.59a: only exactly . and .. are refused: ... and a.b read as usual, with
   for (const id of ['...', 'a.b'] as const) {
     startAt(`#/models/${id}`)
     const { bff, main } = open()
-    const status = await within(main).findByText(en('preset-loading'))
+    const status = await within(main).findByText(en('model-profile-loading'))
     expect(status.getAttribute('role'), id).toBe('status')
     const h1 = await heading1(main, id)
     expect(h1.getAttribute('tabindex'), id).toBe('-1')
     expect(document.title, id).toBe(en('page-title', id))
-    expect(within(main).queryByText(en('preset-not-found', id)), id).toBeNull()
     expect(
-      presetCalls(bff).map((c) => `${c.method} ${c.path}`),
+      within(main).queryByText(en('model-profile-not-found', id)),
       id,
-    ).toEqual([`GET /api/presets/${id}`])
+    ).toBeNull()
+    expect(
+      modelProfileCalls(bff).map((c) => `${c.method} ${c.path}`),
+      id,
+    ).toEqual([`GET /api/profiles/model/${id}`])
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -495,11 +526,11 @@ test('2d.58: signed out, #/models/<id> shows the sign-in form with signin-requir
   expect(before(required, username)).toBe(true)
   expect(window.location.hash).toBe(HASH)
   expect(within(main).queryByRole('heading', { level: 1, name: ID })).toBeNull()
-  expect(presetReads(bff)).toBe(0)
-  expect(presetCalls(bff)).toHaveLength(0)
+  expect(modelProfileReads(bff)).toBe(0)
+  expect(modelProfileCalls(bff)).toHaveLength(0)
 })
 
-test('2d.58, 2d.63, 2d.67: after sign-in the preset page is read, once, with focus on its h1', async () => {
+test('2d.58, 2d.63, 2d.67: after sign-in the model profile page is read, once, with focus on its h1', async () => {
   const { bff, main } = open({ session: 'signed-out' })
   await signInto(main)
   const h1 = await heading1(main, ID)
@@ -507,12 +538,12 @@ test('2d.58, 2d.63, 2d.67: after sign-in the preset page is read, once, with foc
   expect(h1.getAttribute('tabindex')).toBe('-1')
   expect(document.title).toBe(en('page-title', ID))
   expect(window.location.hash).toBe(HASH)
-  expect(presetReads(bff)).toBe(1)
+  expect(modelProfileReads(bff)).toBe(1)
 })
 
 // ── Route and address (56, 57) ──────────────────────────────────────────
 
-test('2d.56: the address reads GET /api/presets/<id>, the id percent-encoded as one path segment, and the page reads nothing else', async () => {
+test('2d.56: the address reads GET /api/profiles/model/<id>, the id percent-encoded as one path segment, and the page reads nothing else', async () => {
   for (const [id, encoded] of [
     [ID, ID],
     ['a b', 'a%20b'],
@@ -523,12 +554,12 @@ test('2d.56: the address reads GET /api/presets/<id>, the id percent-encoded as 
     expect(await heading1(main, id), id).toBeTruthy()
     // The h1 is there from the address, before the read is sent: the call is
     // waited for, the way the switch tests wait for their write.
-    await waitFor(() => expect(presetReads(bff, id), id).toBe(1))
+    await waitFor(() => expect(modelProfileReads(bff, id), id).toBe(1))
     // Criterion 80: the page reads only this, not the list, not the engines.
     expect(
-      presetCalls(bff).map((c) => `${c.method} ${c.path}`),
+      modelProfileCalls(bff).map((c) => `${c.method} ${c.path}`),
       id,
-    ).toEqual([`GET /api/presets/${encoded}`])
+    ).toEqual([`GET /api/profiles/model/${encoded}`])
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -549,7 +580,7 @@ test('2d.57: #/models/, #/models/a/b and a segment that does not decode show the
       name: en('not-found-home'),
     })
     expect(home.getAttribute('href'), hash).toBe('#/')
-    expect(presetCalls(bff), hash).toHaveLength(0)
+    expect(modelProfileCalls(bff), hash).toHaveLength(0)
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -565,7 +596,7 @@ test('2d.57: #/models/, #/models/a/b and a segment that does not decode show the
 
 // ── From the list and back (60, 61, 62) ─────────────────────────────────
 
-test('2d.60: in the list each row name is a link to the preset page, its text the id, inside the element that names the row switch, in the switched-off row too; clicking it opens the page, focus on its h1', async () => {
+test('2d.60: in the list each row name is a link to the model profile page, its text the id, inside the element that names the row switch, in the switched-off row too; clicking it opens the page, focus on its h1', async () => {
   startAt('#/models')
   const { main } = open()
   const t = await table(main)
@@ -602,7 +633,7 @@ test('2d.60: in the list each row name is a link to the preset page, its text th
 test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text, not a link, still inside the element that names its switch; the other rows stay links', async () => {
   startAt('#/models')
   const { main } = open({
-    presets: [
+    modelProfiles: [
       {
         id: '..',
         engine: 'llama.cpp',
@@ -617,7 +648,7 @@ test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text,
         enabled: false,
         model: '',
       },
-      ...PRESETS,
+      ...MODEL_PROFILES,
     ],
   })
   const t = await table(main)
@@ -667,29 +698,37 @@ test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text,
   }
 })
 
-test('2d.61: the preset-back link is the first thing in main, before the h1, in every state: loading, 403, 503, not found, load failed, loaded', async () => {
+test('2d.61: the model-profile-back link is the first thing in main, before the h1, in every state: loading, 403, 503, not found, load failed, loaded', async () => {
   const states: [string, BffOptions][] = [
-    ['loading', { preset: () => deferred().promise }],
+    ['loading', { modelProfile: () => deferred().promise }],
     [
       '403',
-      { preset: () => reply(403, { key: 'client-not-authorized', args: [] }) },
+      {
+        modelProfile: () =>
+          reply(403, { key: 'client-not-authorized', args: [] }),
+      },
     ],
     [
       '503',
-      { preset: () => reply(503, { key: 'client-unavailable', args: [] }) },
+      {
+        modelProfile: () => reply(503, { key: 'client-unavailable', args: [] }),
+      },
     ],
     [
       'not found',
-      { preset: () => reply(404, { key: 'no-preset-named', args: [ID] }) },
+      {
+        modelProfile: () =>
+          reply(404, { key: 'no-model-profile-named', args: [ID] }),
+      },
     ],
-    ['load failed', { preset: () => reply(500, { key: 'x', args: [] }) }],
+    ['load failed', { modelProfile: () => reply(500, { key: 'x', args: [] }) }],
     ['loaded', {}],
   ]
   for (const [what, options] of states) {
     const { main } = open(options)
     const h1 = await heading1(main, ID)
     const b = backLink(main)
-    expect((b.textContent ?? '').trim(), what).toBe(en('preset-back'))
+    expect((b.textContent ?? '').trim(), what).toBe(en('model-profile-back'))
     expect(b.getAttribute('href'), what).toBe('#/models')
     expect(before(b, h1), `${what}: back before the h1`).toBe(true)
     expect(
@@ -708,18 +747,19 @@ test('2d.62: back to the list keeps the filter: read again, the field holds the 
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
   navigate(OFF_HASH)
   await heading1(main, OFF_ID)
-  expect(presetReads(bff, OFF_ID)).toBe(1)
+  expect(modelProfileReads(bff, OFF_ID)).toBe(1)
   await clickLink(backLink(main))
   expect(window.location.hash).toBe('#/models')
-  expect(bff.to('GET', '/api/presets'), 'the list is read again').toHaveLength(
-    2,
-  )
+  expect(
+    bff.to('GET', '/api/profiles/model'),
+    'the list is read again',
+  ).toHaveLength(2)
   const t = await table(main)
   expect(filterField(main).value, 'the text last typed is kept').toBe('gemma')
   expect(shownIds(t), 'the rows are filtered by it').toEqual([OFF_ID])
   expect(clearFilter(main), 'Clear filter is shown').not.toBeNull()
   expect(filterStatus(main).textContent).toBe(
-    en('presets-filter-count', '1', '2'),
+    en('model-profiles-filter-count', '1', '2'),
   )
   const h1 = await heading1(main, en('models-title'))
   expect(document.activeElement, 'focus is not in the field').not.toBe(
@@ -733,7 +773,8 @@ test('2d.62: the nav Models link opens the list with the kept text too; while th
   const pending = deferred()
   let reads = 0
   const { main } = open({
-    presets: () => (++reads === 1 ? reply(200, PRESETS) : pending.promise),
+    modelProfiles: () =>
+      ++reads === 1 ? reply(200, MODEL_PROFILES) : pending.promise,
   })
   await table(main)
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
@@ -745,7 +786,7 @@ test('2d.62: the nav Models link opens the list with the kept text too; while th
     'no field while the list loads',
   ).toBeNull()
   await act(async () => {
-    pending.resolve(reply(200, PRESETS))
+    pending.resolve(reply(200, MODEL_PROFILES))
   })
   const t = await table(main)
   expect(filterField(main).value, 'the text kept across the load').toBe('gemma')
@@ -775,10 +816,10 @@ test('2d.62a: a sign-in after a 401 keeps the filter for the same user', async (
   startAt('#/models')
   let reads = 0
   const { main } = open({
-    presets: () =>
+    modelProfiles: () =>
       ++reads === 3
         ? reply(401, { key: 'session-required', args: [] })
-        : reply(200, PRESETS),
+        : reply(200, MODEL_PROFILES),
   })
   await table(main)
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
@@ -799,10 +840,10 @@ test('2d.62a: a sign-in as another user after a 401 empties the filter', async (
   startAt('#/models')
   let reads = 0
   const { main } = open({
-    presets: () =>
+    modelProfiles: () =>
       ++reads === 3
         ? reply(401, { key: 'session-required', args: [] })
-        : reply(200, PRESETS),
+        : reply(200, MODEL_PROFILES),
     signIn: () => reply(200, { user: 'carol' }),
   })
   await table(main)
@@ -824,7 +865,7 @@ test('2d.62a: a sign-in as another user after a 401 empties the filter', async (
 test('2d.63: on arrival from the address the h1 and the title are the id from the address, focus on the h1', async () => {
   startAt('#/')
   const pending = deferred()
-  const { main } = open({ preset: () => pending.promise })
+  const { main } = open({ modelProfile: () => pending.promise })
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
   navigate(HASH)
   const h1 = await heading1(main, ID)
@@ -832,17 +873,17 @@ test('2d.63: on arrival from the address the h1 and the title are the id from th
   expect(document.title).toBe(en('page-title', ID))
   await waitFor(() => expect(document.activeElement).toBe(h1))
   // Still loading: the h1 is the address id (the reply cannot be asked for).
-  expect(within(main).getByText(en('preset-loading'))).toBeTruthy()
+  expect(within(main).getByText(en('model-profile-loading'))).toBeTruthy()
 })
 
 test('2d.63: once read, the h1 and the title take the id of the reply, the file spelling', async () => {
   startAt('#/models/qwen3-27b')
   const pending = deferred()
-  const { main } = open({ preset: () => pending.promise })
+  const { main } = open({ modelProfile: () => pending.promise })
   await heading1(main, 'qwen3-27b')
   expect(document.title).toBe(en('page-title', 'qwen3-27b'))
   await act(async () => {
-    pending.resolve(reply(200, presetDoc({}, { id: ID })))
+    pending.resolve(reply(200, modelProfileDoc({}, { id: ID })))
   })
   const h1 = await heading1(main, ID)
   expect(h1.getAttribute('tabindex')).toBe('-1')
@@ -850,7 +891,7 @@ test('2d.63: once read, the h1 and the title take the id of the reply, the file 
 })
 
 test('2d.63: focus goes to the h1 from the address bar, from Back and from Forward', async () => {
-  // The page remounts on every arrival, which is what makes the preset read
+  // The page remounts on every arrival, which is what makes the model profile read
   // once per opening (67), so the h1 is a new element each time: what is pinned
   // is that the focused element is the page's h1, carrying the id (63).
   startAt('#/models')
@@ -864,7 +905,7 @@ test('2d.63: focus goes to the h1 from the address bar, from Back and from Forwa
   await focusOnH1(main, ID)
 })
 
-test('2d.64: on the preset page the nav Models link has aria-current="true"; on #/models it keeps "page"', async () => {
+test('2d.64: on the model profile page the nav Models link has aria-current="true"; on #/models it keeps "page"', async () => {
   open()
   const models = await within(nav()).findByRole('link', {
     name: en('nav-models'),
@@ -881,10 +922,10 @@ test('2d.64: on the preset page the nav Models link has aria-current="true"; on 
 
 // ── States (65, 67) ─────────────────────────────────────────────────────
 
-test('2d.65: while the preset loads, a status paragraph preset-loading below the h1 stands in for the content; it goes when the read answers', async () => {
+test('2d.65: while the model profile loads, a status paragraph model-profile-loading below the h1 stands in for the content; it goes when the read answers', async () => {
   const pending = deferred()
-  const { main } = open({ preset: () => pending.promise })
-  const status = await within(main).findByText(en('preset-loading'))
+  const { main } = open({ modelProfile: () => pending.promise })
+  const status = await within(main).findByText(en('model-profile-loading'))
   expect(status.tagName).toBe('P')
   expect(status.getAttribute('role')).toBe('status')
   expect(within(main).getAllByRole('status')).toEqual([status])
@@ -892,20 +933,20 @@ test('2d.65: while the preset loads, a status paragraph preset-loading below the
   expect(before(backLink(main), h1), 'back first').toBe(true)
   expect(before(h1, status), 'the status below the h1').toBe(true)
   await act(async () => {
-    pending.resolve(reply(200, presetDoc()))
+    pending.resolve(reply(200, modelProfileDoc()))
   })
-  expect(within(main).queryByText(en('preset-loading'))).toBeNull()
+  expect(within(main).queryByText(en('model-profile-loading'))).toBeNull()
 })
 
-test('2d.67: the preset is read once on open and once on each route change to it, with no polling and no refresh button', async () => {
+test('2d.67: the model profile is read once on open and once on each route change to it, with no polling and no refresh button', async () => {
   fakeClock()
   const { bff, main } = open()
   await flush()
-  expect(presetReads(bff)).toBe(1)
+  expect(modelProfileReads(bff)).toBe(1)
   // Criterion 67: no refresh button. 2h.10's 196: the page's buttons start
   // with the ten section jump buttons, named by the card titles; criterion 70
   // and 88: then the Engine About toggle and one About toggle per 2e field, in
-  // DOM order (the list of test/presetCards.ts), and 2h.1's 135 adds the save
+  // DOM order (the list of test/modelProfileCards.ts), and 2h.1's 135 adds the save
   // bar's two buttons at the end of the settings section: so no other button
   // (a refresh) is in main.
   expect(
@@ -915,23 +956,23 @@ test('2d.67: the preset is read once on open and once on each route change to it
     'main holds the ten jump buttons, the Engine About toggle, one About toggle per field, then the bar',
   ).toEqual([
     ...cardHeadings(),
-    ...[en('preset-engine'), ...fieldLabels()].map(
+    ...[en('model-profile-engine'), ...fieldLabels()].map(
       (label) => `${en('field-about')} ${label}`,
     ),
     en('save-discard'),
     en('save-button'),
   ])
   await advance(60_000)
-  expect(presetReads(bff), 'no polling').toBe(1)
+  expect(modelProfileReads(bff), 'no polling').toBe(1)
   navigate(OFF_HASH)
   await flush()
   expect(shownH1(main, OFF_ID), 'the new id shows').toBeTruthy()
-  expect(presetReads(bff, OFF_ID), 'the new id is read').toBe(1)
-  expect(presetReads(bff), 'the old id is not read again').toBe(1)
+  expect(modelProfileReads(bff, OFF_ID), 'the new id is read').toBe(1)
+  expect(modelProfileReads(bff), 'the old id is not read again').toBe(1)
   navigate(HASH)
   await flush()
   expect(shownH1(main, ID), 'the first id shows again').toBeTruthy()
-  expect(presetReads(bff), 'opening the first id reads it again').toBe(2)
+  expect(modelProfileReads(bff), 'opening the first id reads it again').toBe(2)
   await advance(60_000)
-  expect(presetReads(bff), 'no polling after the second open').toBe(2)
+  expect(modelProfileReads(bff), 'no polling after the second open').toBe(2)
 })

@@ -1,12 +1,12 @@
-// The Resource / context card of the preset page editable (fe/briefs/
-// 02h-preset-save.md, sub-slice 2h.4): the card's controls enabled, with
+// The Resource / context card of the model profile page editable (fe/briefs/
+// 02h-model-profile-save.md, sub-slice 2h.4): the card's controls enabled, with
 // Unified KV enabled only while Parallel slots' default box is unticked (155);
 // the default box disabling and emptying the input, giving back the text it
 // held, the focus moving to it when it comes back empty, and Discard and a 200
 // resetting that memory (156); and at Save the integer check of every enabled
 // unticked number field, its error text by range, the focus on the first
 // failing control, the bar's alert and the number the PUT sends (157). The
-// Embeddings card (130 to 154) is PresetSave1 to 5, whose helpers this file
+// Embeddings card (130 to 154) is ModelProfileSave1 to 5, whose helpers this file
 // repeats (a test file imports no other test file).
 import {
   cleanup,
@@ -23,7 +23,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -32,13 +32,13 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const CTX = en('preset-context-size')
-const PAR = en('preset-parallel-slots')
-const KVU = en('preset-unified-kv')
-const SLOT = en('preset-per-slot-context')
-const BATCH = en('preset-batch-size')
-const UBATCH = en('preset-u-batch-size')
+const PUT = `/api/profiles/model/${ID}`
+const CTX = en('model-profile-context-size')
+const PAR = en('model-profile-parallel-slots')
+const KVU = en('model-profile-unified-kv')
+const SLOT = en('model-profile-per-slot-context')
+const BATCH = en('model-profile-batch-size')
+const UBATCH = en('model-profile-u-batch-size')
 /** The default box of every number field (the Server page's 28a). */
 const DEFAULT = en('field-default')
 /** What the read gives. Per-slot context and Batch size are absent from the
@@ -64,7 +64,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave2 to 5.test.tsx) ──────────────────────────────
+// ── Helpers (as ModelProfileSave2 to 5.test.tsx) ──────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -79,7 +79,7 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -87,8 +87,8 @@ async function loaded(options: BffOptions = {}) {
 /** The page read as `AS_LOADED` with revision `r1`, plus `options`. */
 function form(options: BffOptions = {}) {
   return loaded({
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED })),
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED })),
     ...options,
   })
 }
@@ -138,13 +138,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -157,7 +157,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -417,10 +417,10 @@ test('2h.157: the focus goes to the first failing control in DOM order, every fa
 
 test('2h.157: every enabled unticked field is checked, changed or not: a value the read gave out of range blocks the save', async () => {
   const { bff, main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
-        presetDoc(
+        modelProfileDoc(
           {},
           { revision: 'r1', values: { ...AS_LOADED, parallel: '0' } },
         ),

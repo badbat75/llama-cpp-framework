@@ -1,10 +1,10 @@
-// The three cards of 2e.2 on the preset page (fe/briefs/02e-preset-cards.md,
+// The three cards of 2e.2 on the model profile page (fe/briefs/02e-model-profile-cards.md,
 // criteria 96 to 100): KV cache, Sampling overrides and Advanced, tables of
 // fields only. The shared rules of section 1 are pinned for the first two
-// cards in PresetCards1.test.tsx (83 to 95); here they are pinned for what
+// cards in ModelProfileCards1.test.tsx (83 to 95); here they are pinned for what
 // 2e.2 adds: the cache-type options, the unit MiB, the float inputs, the text
-// field, the cards' place. The route and the read are PresetPage.test.tsx, the
-// Engine field and the Assets card are PresetContent.test.tsx. The colours of
+// field, the cards' place. The route and the read are ModelProfilePage.test.tsx, the
+// Engine field and the Assets card are ModelProfileContent.test.tsx. The colours of
 // 85, the width of 91 and the words a screen reader uses are checked in the
 // designer's review, not in jsdom.
 import {
@@ -21,7 +21,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -33,7 +33,7 @@ import {
   fieldTabStops,
   pageStartTabStops,
   saveBarTabStops,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -113,10 +113,10 @@ type Row = {
 /** The field table of 96, 97 and 98, in the cards' and the GUI's order. */
 const FIELDS: Row[] = [
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'cache-type-k',
-    label: en('preset-k-cache-type'),
-    hint: 'preset-k-cache-type-hint',
+    label: en('model-profile-k-cache-type'),
+    hint: 'model-profile-k-cache-type-hint',
     kind: 'select',
     options: CACHE_TYPES,
     optionValues: CACHE_TYPE_VALUES,
@@ -125,10 +125,10 @@ const FIELDS: Row[] = [
     shown: 'q8_0',
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'cache-type-v',
-    label: en('preset-v-cache-type'),
-    hint: 'preset-v-cache-type-hint',
+    label: en('model-profile-v-cache-type'),
+    hint: 'model-profile-v-cache-type-hint',
     kind: 'select',
     options: CACHE_TYPES,
     optionValues: CACHE_TYPE_VALUES,
@@ -137,10 +137,10 @@ const FIELDS: Row[] = [
     shown: 'q8_0',
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'flash-attn',
-    label: en('preset-flash-attention'),
-    hint: 'preset-flash-attention-hint',
+    label: en('model-profile-flash-attention'),
+    hint: 'model-profile-flash-attention-hint',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -148,10 +148,10 @@ const FIELDS: Row[] = [
     shown: en('option-on'),
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'cache-ram',
-    label: en('preset-cache-ram'),
-    hint: 'preset-cache-ram-hint',
+    label: en('model-profile-cache-ram'),
+    hint: 'model-profile-cache-ram-hint',
     kind: 'number',
     integer: true,
     unit: 'MiB',
@@ -159,100 +159,100 @@ const FIELDS: Row[] = [
     shown: '-1',
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'cache-reuse',
-    label: en('preset-cache-reuse'),
-    hint: 'preset-cache-reuse-hint',
+    label: en('model-profile-cache-reuse'),
+    hint: 'model-profile-cache-reuse-hint',
     kind: 'number',
     integer: true,
     set: '256',
     shown: '256',
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'ctx-checkpoints',
-    label: en('preset-context-checkpoints'),
-    hint: 'preset-context-checkpoints-hint',
+    label: en('model-profile-context-checkpoints'),
+    hint: 'model-profile-context-checkpoints-hint',
     kind: 'number',
     integer: true,
     set: '0',
     shown: '0',
   },
   {
-    card: 'preset-kv-cache',
+    card: 'model-profile-kv-cache',
     key: 'checkpoint-min-step',
-    label: en('preset-checkpoint-step'),
-    hint: 'preset-checkpoint-step-hint',
+    label: en('model-profile-checkpoint-step'),
+    hint: 'model-profile-checkpoint-step-hint',
     kind: 'number',
     integer: true,
     set: '8192',
     shown: '8192',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'temp',
-    label: en('preset-temperature'),
-    hint: 'preset-temperature-hint',
+    label: en('model-profile-temperature'),
+    hint: 'model-profile-temperature-hint',
     kind: 'number',
     integer: false,
     set: '0.6',
     shown: '0.6',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'top-k',
     label: 'Top-K',
-    hint: 'preset-top-k-hint',
+    hint: 'model-profile-top-k-hint',
     kind: 'number',
     integer: true,
     set: '20',
     shown: '20',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'top-p',
     label: 'Top-P',
-    hint: 'preset-top-p-hint',
+    hint: 'model-profile-top-p-hint',
     kind: 'number',
     integer: false,
     set: '0.95',
     shown: '0.95',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'min-p',
     label: 'Min-P',
-    hint: 'preset-min-p-hint',
+    hint: 'model-profile-min-p-hint',
     kind: 'number',
     integer: false,
     set: '0',
     shown: '0',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'repeat-penalty',
-    label: en('preset-repeat-penalty'),
-    hint: 'preset-repeat-penalty-hint',
+    label: en('model-profile-repeat-penalty'),
+    hint: 'model-profile-repeat-penalty-hint',
     kind: 'number',
     integer: false,
     set: '1.05',
     shown: '1.05',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'presence-penalty',
-    label: en('preset-presence-penalty'),
-    hint: 'preset-presence-penalty-hint',
+    label: en('model-profile-presence-penalty'),
+    hint: 'model-profile-presence-penalty-hint',
     kind: 'number',
     integer: false,
     set: '1,5',
     shown: '1,5',
   },
   {
-    card: 'preset-sampling-overrides',
+    card: 'model-profile-sampling-overrides',
     key: 'backend-sampling',
-    label: en('preset-backend-sampling'),
-    hint: 'preset-backend-sampling-hint',
+    label: en('model-profile-backend-sampling'),
+    hint: 'model-profile-backend-sampling-hint',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -260,10 +260,10 @@ const FIELDS: Row[] = [
     shown: en('option-off'),
   },
   {
-    card: 'preset-advanced',
+    card: 'model-profile-advanced',
     key: 'load-on-startup',
-    label: en('preset-load-on-startup'),
-    hint: 'preset-load-on-startup-hint',
+    label: en('model-profile-load-on-startup'),
+    hint: 'model-profile-load-on-startup-hint',
     kind: 'select',
     options: OFF_ON,
     absentOption: en('option-off'),
@@ -271,10 +271,10 @@ const FIELDS: Row[] = [
     shown: en('option-on'),
   },
   {
-    card: 'preset-advanced',
+    card: 'model-profile-advanced',
     key: 'chat-template-kwargs',
-    label: en('preset-chat-kwargs'),
-    hint: 'preset-chat-kwargs-hint',
+    label: en('model-profile-chat-kwargs'),
+    hint: 'model-profile-chat-kwargs-hint',
     kind: 'text',
     set: '{"enable_thinking":false}',
     shown: '{"enable_thinking":false}',
@@ -283,17 +283,17 @@ const FIELDS: Row[] = [
 
 /** The cards of 2e.2, in the order of criterion 83. */
 const CARDS = [
-  'preset-kv-cache',
-  'preset-sampling-overrides',
-  'preset-advanced',
+  'model-profile-kv-cache',
+  'model-profile-sampling-overrides',
+  'model-profile-advanced',
 ]
 
 /** The cards of 2e.2 that 2h.164 made editable: every control of these is
  * enabled, every control of a card not listed stays natively disabled (2e.85). */
 const EDITABLE_CARDS = [
-  'preset-kv-cache',
-  'preset-sampling-overrides',
-  'preset-advanced',
+  'model-profile-kv-cache',
+  'model-profile-sampling-overrides',
+  'model-profile-advanced',
 ]
 
 /** The controls 96, 97 and 98 put in the three cards: a box and an input per
@@ -308,7 +308,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards1.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards1.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -323,7 +323,7 @@ async function loaded(options: BffOptions = {}) {
   const h1 = await within(main).findByRole('heading', { level: 1, name: ID })
   const h3 = await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main, h1, h3 }
 }
@@ -333,18 +333,18 @@ function docOf(
   values: Record<string, string>,
   extra: Record<string, unknown> = {},
 ) {
-  return presetDoc({ model: MODEL, ...values }, extra)
+  return modelProfileDoc({ model: MODEL, ...values }, extra)
 }
 
 /** A read whose `values` are exactly `values` (the `{}` stub of 99). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 function settingsTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
@@ -504,7 +504,9 @@ function expectAbsent(main: HTMLElement, f: Row): void {
 test.each(FIELDS)(
   '2e.96, 2e.97, 2e.98, 2e.87, 2h.158, 2e.85, 2h.164: $key is a $kind named by $label inside its card, shows the set value $set exactly as the reply holds it, every control of the three cards enabled',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     // 2h.164: the three cards of 2e.2 are editable, every field always
     // enabled (SET holds every key, so each box is unticked and its input
     // follows, 2h.156). A card this file's rows do not list stays read-only,
@@ -604,7 +606,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.86, 2e.99: $key is absent from a values of {} so its field shows the absent form of $kind',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf({})),
+    })
     expectAbsent(main, f)
   },
 )
@@ -612,7 +616,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.88: $key has an About toggle named About its label, with aria-expanded and aria-controls, and its hint opens as one paragraph per line of the GUI text and closes again',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const lines = en(f.hint).split('\n')
     expect(lines.length, `${f.hint}: the hint has lines`).toBeGreaterThan(0)
     const about = aboutOf(main, f.label)
@@ -655,7 +661,7 @@ test.each(
   '2e.86, 2e.99: $key is the empty string so it reads as absent, and its field shows the absent form (2e.3b: a flag reads "" as on, criterion 123)',
   async (f) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     expectAbsent(main, f)
   },
@@ -663,7 +669,7 @@ test.each(
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the three cards of 2e.2 hold exactly the fields of 96, 97 and 98 in the table order', async () => {
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
         docOf({ ...SET, 'n-cpu-moe': 'zz-secret', faqs: 'zz-secret' }),
@@ -696,10 +702,12 @@ test.each(['cache-type-k', 'cache-type-v'])(
   '2e.96: %s lists default then the ten literals of MP 95-96, in order and with the file values, and q8_0 selects its own option',
   async (key) => {
     const label = en(
-      key === 'cache-type-k' ? 'preset-k-cache-type' : 'preset-v-cache-type',
+      key === 'cache-type-k'
+        ? 'model-profile-k-cache-type'
+        : 'model-profile-v-cache-type',
     )
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: 'q8_0' })),
+      modelProfile: () => reply(200, exactOf({ [key]: 'q8_0' })),
     })
     const select = selectOf(main, label)
     expect(
@@ -724,10 +732,12 @@ test.each(
   '2e.96: each listed cache type value selects its own option: %s %s',
   async (key, value) => {
     const label = en(
-      key === 'cache-type-k' ? 'preset-k-cache-type' : 'preset-v-cache-type',
+      key === 'cache-type-k'
+        ? 'model-profile-k-cache-type'
+        : 'model-profile-v-cache-type',
     )
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     expect(
       selectedText(selectOf(main, label)),
@@ -739,9 +749,9 @@ test.each(
 test('2e.96, 2e.99: a cache type no option lists (q3_k) becomes one extra last option carrying it as its value and its text, selected, and so does one differing only in case', async () => {
   for (const value of ['q3_k', 'F16']) {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'cache-type-k': value })),
+      modelProfile: () => reply(200, exactOf({ 'cache-type-k': value })),
     })
-    const select = selectOf(main, en('preset-k-cache-type'))
+    const select = selectOf(main, en('model-profile-k-cache-type'))
     const opts = optionsOf(select)
     expect(opts.length, `${value}: the listed options plus one`).toBe(
       CACHE_TYPES.length + 1,
@@ -776,7 +786,7 @@ test.each([
   async (key, options) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: 'false' })),
+      modelProfile: () => reply(200, exactOf({ [key]: 'false' })),
     })
     const select = selectOf(main, f.label)
     expect(optionTexts(select), `${key}: the shared options of 1.3`).toEqual(
@@ -788,7 +798,7 @@ test.each([
     cleanup()
     vi.unstubAllGlobals()
     const { main: absentMain } = await loaded({
-      preset: () => reply(200, exactOf({})),
+      modelProfile: () => reply(200, exactOf({})),
     })
     expectAbsentSelect(absentMain, f)
   },
@@ -797,21 +807,23 @@ test.each([
 // ── The unit, the numbers and the text field (87, 89, 99) ──────────────
 
 test('2e.89, 2e.96: Cache RAM shows the unit MiB after the input as a literal, and no other field of 2e.2 carries a unit', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
-  const field = fieldOf(main, en('preset-cache-ram'))
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
+  const field = fieldOf(main, en('model-profile-cache-ram'))
   const units = [...field.querySelectorAll('.unit')].map((u) => text(u))
   expect(units, 'one unit in the Cache RAM field').toEqual(['MiB'])
-  const group = groupBox(main, en('preset-cache-ram'))
+  const group = groupBox(main, en('model-profile-cache-ram'))
   expect(
     before(
-      inputOf(group, en('preset-cache-ram')),
+      inputOf(group, en('model-profile-cache-ram')),
       field.querySelector('.unit')!,
     ),
     'the unit sits after the input',
   ).toBe(true)
   // The label is the strings text, with no unit in it (89: "Cache RAM (MiB)"
   // becomes "Cache RAM" plus MiB).
-  expect(text(field), 'the label is shown').toContain(en('preset-cache-ram'))
+  expect(text(field), 'the label is shown').toContain(
+    en('model-profile-cache-ram'),
+  )
   expect(text(field), 'no unit in the label').not.toContain('(MiB)')
   for (const f of FIELDS)
     if (f.key !== 'cache-ram')
@@ -822,7 +834,7 @@ test('2e.89, 2e.96: Cache RAM shows the unit MiB after the input as a literal, a
 })
 
 test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeric form of the input, an any-whole-number key and a float key a plain text input', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const f of FIELDS.filter((x) => x.kind === 'number')) {
     const input = inputOf(groupBox(main, f.label), f.label)
     expect(
@@ -852,7 +864,7 @@ test.each([
   async (key, value) => {
     const f = FIELDS.find((x) => x.key === key)!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [key]: value })),
+      modelProfile: () => reply(200, exactOf({ [key]: value })),
     })
     const group = groupBox(main, f.label)
     expect(inputOf(group, f.label).value, `${key} ${value}`).toBe(value)
@@ -876,7 +888,7 @@ test.each(CHAT_KWARGS_VALUES.slice(0, 2))(
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [f.key]: value })),
+      modelProfile: () => reply(200, exactOf({ [f.key]: value })),
     })
     const field = fieldOf(main, f.label)
     const input = inputOfField(main, f.label)
@@ -905,7 +917,7 @@ test.each(CHAT_KWARGS_VALUES.slice(2))(
   async (value, shown) => {
     const f = FIELDS.find((x) => x.key === 'chat-template-kwargs')!
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ [f.key]: value })),
+      modelProfile: () => reply(200, exactOf({ [f.key]: value })),
     })
     const field = fieldOf(main, f.label)
     const input = inputOfField(main, f.label)
@@ -932,7 +944,7 @@ test.each(CHAT_KWARGS_VALUES.slice(2))(
 // ── The cards: tables only, disabled, in their place (83, 85, 90) ──────
 
 test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a role=group division, a note paragraph or an intro', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const title of CARDS) {
     const card = cardOf(main, title)
     for (const sel of ['h4', '[role="group"]', '.note', '.intro'])
@@ -950,7 +962,7 @@ test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a ro
 })
 
 test('2e.85, 2h.164: every control of the three cards of 2e.2 is enabled, the default boxes included, while every About toggle of 2e.2 stays enabled and no control carries aria-disabled or readonly', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const controls = CARDS.flatMap((title) => [
     ...cardOf(main, title).querySelectorAll<HTMLElement>(
       'input, select, textarea',
@@ -986,7 +998,9 @@ test('2e.85, 2h.164: every control of the three cards of 2e.2 is enabled, the de
 })
 
 test('2e.83, 2e.96, 2e.97, 2e.98: the three cards of 2e.2 are D5.2 Cards inside the section of the h2, after the Embeddings card, in the order KV cache, Sampling overrides, Advanced', async () => {
-  const { main, h1 } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main, h1 } = await loaded({
+    modelProfile: () => reply(200, docOf(SET)),
+  })
   const h2 = settingsTitle(main)
   const section = h2.closest('section')
   expect(section, 'the h2 sits in a section').toBeTruthy()
@@ -1011,18 +1025,18 @@ test('2e.83, 2e.96, 2e.97, 2e.98: the three cards of 2e.2 are D5.2 Cards inside 
     within(main)
       .getAllByRole('heading', { level: 3 })
       .map((h) => text(h)),
-    'the cards, in the order of 83 (the list of test/presetCards.ts)',
+    'the cards, in the order of 83 (the list of test/modelProfileCards.ts)',
   ).toEqual(cardHeadings())
 })
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/presetCards.ts), and no control of a 2e card', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), and no control of a 2e card', async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('preset-engine')}`,
-    en('preset-engine'),
+    `${en('field-about')} ${en('model-profile-engine')}`,
+    en('model-profile-engine'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
@@ -1031,19 +1045,19 @@ test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in
 // ── The strings (100) ───────────────────────────────────────────────────
 
 test('2e.100: the three cards, every label, every hint and every option of 2e.2 show the English of the 32 new strings of 100, Top-K, Top-P and Min-P are literals, and Cache RAM carries no unit in its label', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(
-    text(cardOf(main, 'preset-kv-cache').querySelector('h3')!),
+    text(cardOf(main, 'model-profile-kv-cache').querySelector('h3')!),
     'the KV cache card',
-  ).toBe(en('preset-kv-cache'))
+  ).toBe(en('model-profile-kv-cache'))
   expect(
-    text(cardOf(main, 'preset-sampling-overrides').querySelector('h3')!),
+    text(cardOf(main, 'model-profile-sampling-overrides').querySelector('h3')!),
     'the Sampling overrides card',
-  ).toBe(en('preset-sampling-overrides'))
+  ).toBe(en('model-profile-sampling-overrides'))
   expect(
-    text(cardOf(main, 'preset-advanced').querySelector('h3')!),
+    text(cardOf(main, 'model-profile-advanced').querySelector('h3')!),
     'the Advanced card',
-  ).toBe(en('preset-advanced'))
+  ).toBe(en('model-profile-advanced'))
   // Every label is the strings text of 100 (a literal for Top-K, Top-P,
   // Min-P), it names its control, and the hint's English is the strings one.
   for (const f of FIELDS) {
@@ -1062,7 +1076,7 @@ test('2e.100: the three cards, every label, every hint and every option of 2e.2 
   }
   // The literals of 96 and 97 are the literals of the brief, not strings.
   expect(
-    optionTexts(selectOf(main, en('preset-k-cache-type'))).slice(1),
+    optionTexts(selectOf(main, en('model-profile-k-cache-type'))).slice(1),
     'the ten cache types, as the file writes them',
   ).toEqual(CACHE_TYPES.slice(1))
   // Top-K, Top-P and Min-P carry the literal of MP 987 as their label: each is

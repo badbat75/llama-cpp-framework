@@ -249,7 +249,7 @@ const SESSION_ENDED = () => reply(401, { key: 'session-required', args: [] })
 // ── Failure paths first: errors of an action (43) ───────────────────────
 
 /** 1c.43: one test per row, one mount each (as 2h.139 in
- * PresetSave2.test.tsx: the cleanup between rows is the file's afterEach). */
+ * ModelProfileSave2.test.tsx: the cleanup between rows is the file's afterEach). */
 const ANSWERS_43: [string, () => Response | Promise<Response>, string][] = [
   [
     '403 client-not-authorized',

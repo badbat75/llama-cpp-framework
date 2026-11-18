@@ -1,9 +1,9 @@
-// The session answers of a preset save (fe/briefs/02h-preset-save.md, sub-slice
+// The session answers of a model profile save (fe/briefs/02h-model-profile-save.md, sub-slice
 // 2h.3): a 401 ends the session over the page (151), the sign-in in the dialog
 // carries on for the same user and drops the edits for another (152), and a 403
 // session-not-administrator revokes it (153). The tests of 154: 401 then same
 // user, 401 then another user, revoked. The bar, the Embeddings selects, the
-// PUT and the keyed failures are 135 to 149, in PresetSave1 to 4, whose
+// PUT and the keyed failures are 135 to 149, in ModelProfileSave1 to 4, whose
 // helpers this file repeats (a test file imports no other test file).
 import {
   cleanup,
@@ -20,7 +20,7 @@ import {
   en,
   fakeBff,
   navigate,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -29,10 +29,10 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const GET = `/api/presets/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const POOLING = en('preset-pooling')
+const GET = `/api/profiles/model/${ID}`
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const POOLING = en('model-profile-pooling')
 /** What the first read gives, and what the read after a sign-in gives. */
 const AS_LOADED = { embeddings: 'true', pooling: 'mean' }
 const ELSEWHERE = { embeddings: 'false', pooling: 'cls' }
@@ -55,7 +55,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave2/3/4.test.tsx) ────────────────────────────────
+// ── Helpers (as ModelProfileSave2/3/4.test.tsx) ────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -70,17 +70,19 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The page, then dirty: Embedding mode picked off. */
-async function dirty(presetSave: BffOptions['presetSave'] = () => ENDED()) {
+async function dirty(
+  modelProfileSave: BffOptions['modelProfileSave'] = () => ENDED(),
+) {
   const { bff, main } = await loaded({
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED })),
-    presetSave,
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED })),
+    modelProfileSave,
   })
   pick(main, MODE, 'false')
   return { bff, main }
@@ -110,13 +112,13 @@ function press(el: HTMLElement) {
   fireEvent.click(el)
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The whole body of the n-th recorded PUT of this preset. */
+/** The whole body of the n-th recorded PUT of this model profile. */
 function sentBody(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -138,14 +140,14 @@ function status(main: HTMLElement): HTMLElement {
 function settingsH2(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
 function assetsCard(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
 }
 
@@ -198,21 +200,21 @@ function type(input: HTMLElement, value: string) {
 
 /**
  * Saves into a 401, opens the bar's Sign in and signs in as `session.user`
- * in the dialog. The preset reads answer `first` at first and `again` from
+ * in the dialog. The model profile reads answer `first` at first and `again` from
  * the second read on.
  */
 async function signInAs(
   session: { user: string },
   again: () => Response,
-  presetSave?: BffOptions['presetSave'],
+  modelProfileSave?: BffOptions['modelProfileSave'],
 ) {
   let reads = 0
   const { bff, main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       ++reads === 1
-        ? reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED }))
+        ? reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED }))
         : again(),
-    presetSave: presetSave ?? (() => ENDED()),
+    modelProfileSave: modelProfileSave ?? (() => ENDED()),
     signIn: () => reply(200, session),
   })
   pick(main, MODE, 'false')
@@ -236,7 +238,7 @@ async function signInAs(
 
 // ── 151: a 401 ends the session over the page ────────────────────────────
 
-test('2h.151: a 401 on a preset save shows session-ended with the bar Sign in after it; the edits stay dirty, the page, the banner and the nav stay, no Reload', async () => {
+test('2h.151: a 401 on a model profile save shows session-ended with the bar Sign in after it; the edits stay dirty, the page, the banner and the nav stay, no Reload', async () => {
   const { bff, main } = await dirty()
   await save(main, bff)
   const ended = await within(main).findByText(en('session-ended'))
@@ -314,7 +316,8 @@ test('2h.151: the bar Sign in opens the sign-in dialog over the page; Escape, th
 test('2h.152: signing in as the same user closes the dialog, ends the alert, focuses Save changes, keeps the edits and resends nothing', async () => {
   const { bff, main } = await signInAs(
     { user: 'alice' },
-    () => reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED })),
+    () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED })),
     (_body, _id, n) =>
       n === 1 ? ENDED() : reply(200, { revision: 'r2', running: false }),
   )
@@ -337,7 +340,10 @@ test('2h.152: signing in as the same user closes the dialog, ends the alert, foc
     en('save-unsaved'),
   )
   expect(bff.to('PUT', PUT), 'the save is not resent').toHaveLength(1)
-  expect(bff.to('GET', GET), 'the preset is not read again').toHaveLength(1)
+  expect(
+    bff.to('GET', GET),
+    'the model profile is not read again',
+  ).toHaveLength(1)
   // Saving again is the user's choice, and sends the same revision.
   await save(main, bff, 2)
   expect(sentBody(bff, 2), 'the same revision').toMatchObject({
@@ -346,10 +352,10 @@ test('2h.152: signing in as the same user closes the dialog, ends the alert, foc
   })
 })
 
-test('2h.152: signing in as another user drops the edits, reads the preset once, and shows server-edits-dropped after the settings h2 with focus on the h1; the alert stays until the page is left', async () => {
+test('2h.152: signing in as another user drops the edits, reads the model profile once, and shows server-edits-dropped after the settings h2 with focus on the h1; the alert stays until the page is left', async () => {
   const OTHER = 'gemma-3-27b'
   const { bff, main } = await signInAs({ user: 'carol' }, () =>
-    reply(200, presetDoc({}, { revision: 'r-9', values: ELSEWHERE })),
+    reply(200, modelProfileDoc({}, { revision: 'r-9', values: ELSEWHERE })),
   )
   await waitFor(() => expect(bff.to('GET', GET)).toHaveLength(2))
   await waitFor(() =>
@@ -394,17 +400,20 @@ test('2h.152: signing in as another user drops the edits, reads the preset once,
 // ── 152: a sign-in as another user with a CLEAN form: nothing to drop ─────
 // The path: a 401 leaves the bar's alert and its Sign in (151), the user puts
 // the edit back on its own (clean form, Save inert), then signs in in that
-// same dialog as another user. The preset is read again for the new session,
+// same dialog as another user. The model profile is read again for the new session,
 // and no edit is dropped: the notice server-edits-dropped must NOT show.
 
-test('2h.152: a sign-in as another user on a clean form (the edit put back after the 401) re-reads the preset and shows no server-edits-dropped', async () => {
+test('2h.152: a sign-in as another user on a clean form (the edit put back after the 401) re-reads the model profile and shows no server-edits-dropped', async () => {
   let reads = 0
   const { bff, main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       ++reads === 1
-        ? reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED }))
-        : reply(200, presetDoc({}, { revision: 'r-9', values: ELSEWHERE })),
-    presetSave: () => ENDED(),
+        ? reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED }))
+        : reply(
+            200,
+            modelProfileDoc({}, { revision: 'r-9', values: ELSEWHERE }),
+          ),
+    modelProfileSave: () => ENDED(),
     signIn: () => reply(200, { user: 'carol' }),
   })
   pick(main, MODE, 'false')
@@ -429,7 +438,7 @@ test('2h.152: a sign-in as another user on a clean form (the edit put back after
   )
   fireEvent.click(within(d).getByRole('button', { name: en('signin-submit') }))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  // The preset is read again for the new session.
+  // The model profile is read again for the new session.
   await waitFor(() => expect(bff.to('GET', GET)).toHaveLength(2))
   await waitFor(() =>
     expect(selectOf(main, POOLING).value).toBe(ELSEWHERE.pooling),
@@ -457,7 +466,7 @@ test('2h.152: a sign-in as another user on a clean form (the edit put back after
 
 // ── 153: a revoked session (403 session-not-administrator) ──────────────
 
-test('2h.153: a 403 session-not-administrator on a preset save shows session-revoked in place of session-ended: edits kept dirty, the bar Sign in after the alert, focus stays on Save, banner and nav stay', async () => {
+test('2h.153: a 403 session-not-administrator on a model profile save shows session-revoked in place of session-ended: edits kept dirty, the bar Sign in after the alert, focus stays on Save, banner and nav stay', async () => {
   const { bff, main } = await dirty(() => REVOKED())
   // press, not a bare click: a real click focuses Save, and the code must
   // not move focus away from it.

@@ -54,7 +54,7 @@ export const EN: Record<string, string> = {
   'instance-not-found': 'There is no instance named {0}.',
   'server-title': 'Server',
   'server-intro':
-    'llama-server settings of this instance, shared by every model it serves ({0}). Per-model settings belong to the presets.',
+    'llama-server settings of this instance, shared by every model it serves ({0}). Per-model settings belong to the model profiles.',
   'server-loading': 'Loading the server settings…',
   'server-load-failed': 'The server settings could not be read.',
   'api-client-not-authorized':
@@ -146,7 +146,7 @@ export const EN: Record<string, string> = {
   'save-saved-restart': 'Saved: restart llama-server to apply.',
   'save-invalid': 'Not saved: correct the marked fields.',
   'save-refused': 'Not saved: {0}',
-  // Sub-slice 2h.10 (fe/briefs/02h-preset-save.md, criterion 198a): the alert
+  // Sub-slice 2h.10 (fe/briefs/02h-model-profile-save.md, criterion 198a): the alert
   // for a refusal on a field that cannot take focus.
   'save-refused-at': 'Not saved: {0}. The field is {1}, on the card {2}.',
   'save-failed':
@@ -176,9 +176,9 @@ export const EN: Record<string, string> = {
   'api-comment-markers':
     "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters",
   'api-load-on-startup-over-max':
-    '{0} enabled presets would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another preset, or raise ModelsMax',
+    '{0} enabled model profiles would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another model profile, or raise ModelsMax',
   'api-load-on-startup-unlimited':
-    '{0} enabled preset(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off',
+    '{0} enabled model profile(s) would load on startup with ModelsMax = 0, which llama-server rejects at startup (it reads 0 as a limit there, not as unlimited). Set ModelsMax to at least {0}, or turn Load on startup off',
   'api-client-address-in-use':
     'Another instance, {0}, already uses that address and port.',
   'api-client-unresolvable-host':
@@ -189,14 +189,14 @@ export const EN: Record<string, string> = {
     'Hostname lists 0.0.0.0 with other addresses; 0.0.0.0 already covers every address, so bind it alone.',
   'api-server-changed-elsewhere':
     'These settings changed elsewhere, or the web service restarted, after you opened them. Reload to see them; your edits here will be lost.',
-  // Sub-slice 2h.2 (fe/briefs/02h-preset-save.md, criterion 145): a preset
-  // save answered 409 preset-changed-elsewhere. The English is the brief's,
+  // Sub-slice 2h.2 (fe/briefs/02h-model-profile-save.md, criterion 145): a model profile
+  // save answered 409 model-profile-changed-elsewhere. The English is the brief's,
   // verbatim.
-  'api-preset-changed-elsewhere':
-    'This preset changed elsewhere (edited, or switched on or off), or the web service restarted, after you opened it. Reload to see it as it is now; your edits here will be lost.',
+  'api-model-profile-changed-elsewhere':
+    'This model profile changed elsewhere (edited, or switched on or off), or the web service restarted, after you opened it. Reload to see it as it is now; your edits here will be lost.',
   'api-other': 'The request was refused ({0}).',
-  // Sub-slice 2h.2 (fe/briefs/02h-preset-save.md, the table of criterion 150):
-  // the bff's 422 keys for a preset. Each English is the en_US.toml line the
+  // Sub-slice 2h.2 (fe/briefs/02h-model-profile-save.md, the table of criterion 150):
+  // the bff's 422 keys for a model profile. Each English is the en_US.toml line the
   // criterion names, verbatim (no closing full stop, as every copied check).
   'api-not-a-number': '{0} = `{1}` is not a number',
   'api-not-one-of': '{0} = `{1}` is not one of: {2}',
@@ -208,14 +208,14 @@ export const EN: Record<string, string> = {
     'fit-target `{0}`: {1} as whole numbers, one value or a comma-separated list per device',
   'api-moe-cache-with-tensor-split':
     "moe-cache-mib with split-mode tensor: llama.cpp's MoE cache does not support tensor parallelism and the model would not load. Clear the MoE cache or pick another split mode",
-  'api-preset-no-model':
-    'preset `{0}` names no model: every preset needs a `model` path',
+  'api-model-profile-no-model':
+    'model profile `{0}` names no model: every model profile needs a `model` path',
   'api-override-no-pattern': 'tensor override {0} has an empty pattern',
   'api-override-no-device':
     'tensor override {0} (`{1}`) names no device: a rule is `<pattern>=<device>`, and llama.cpp splits it at the first `=`',
-  'api-invalid-preset-id':
-    "invalid preset id `{0}`: use letters, digits, '.', '-', '_'",
-  'api-preset-name-taken': 'a preset named `{0}` already exists',
+  'api-invalid-model-profile-id':
+    "invalid model profile id `{0}`: use letters, digits, '.', '-', '_'",
+  'api-model-profile-name-taken': 'a model profile named `{0}` already exists',
   'server-edits-dropped':
     'Your unsaved changes were dropped: you signed in with a different account. The form shows the saved settings.',
   // Slice 1c (section 5.7): run controls and live state.
@@ -250,187 +250,187 @@ export const EN: Record<string, string> = {
   // Slice 1c (section 5.7, 4.8): a save that timed out.
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
-  // Slice 2a (fe/briefs/02-models.md, section 2.7): the preset list.
+  // Slice 2a (fe/briefs/02-models.md, section 2.7): the model profile list.
   'nav-models': 'Models',
   'models-title': 'Models',
-  'presets-title': 'Presets',
-  'presets-intro':
-    "Each preset is one model with its settings. Every instance of the preset's engine can serve it.",
-  'presets-column-name': 'Preset',
-  'presets-column-engine': 'Engine',
-  'presets-column-status': 'Status',
-  'presets-status-on': 'On',
-  'presets-status-off': 'Off',
-  'presets-engine-not-available': '{0} (not available)',
-  'presets-loading': 'Loading the presets…',
-  'presets-empty': 'No presets yet.',
-  'presets-load-failed': 'The presets could not be read.',
-  'presets-off-note':
-    'A preset switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
+  'model-profiles-title': 'Model profiles',
+  'model-profiles-intro':
+    "Each model profile is one model with its settings. Every instance of the profile's engine can serve it.",
+  'model-profiles-column-name': 'Model profile',
+  'model-profiles-column-engine': 'Engine',
+  'model-profiles-column-status': 'Status',
+  'model-profiles-status-on': 'On',
+  'model-profiles-status-off': 'Off',
+  'model-profiles-engine-not-available': '{0} (not available)',
+  'model-profiles-loading': 'Loading the model profiles…',
+  'model-profiles-empty': 'No model profiles yet.',
+  'model-profiles-load-failed': 'The model profiles could not be read.',
+  'model-profiles-off-note':
+    'A model profile switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
   // Slice 2b (fe/briefs/02-models.md, section 2b.9): the list's filter.
-  'presets-filter-label': 'Filter presets',
-  'presets-filter-hint':
-    'Matches part of the preset name or of its model file path. Case does not matter.',
-  'presets-filter-clear': 'Clear filter',
-  'presets-filter-count': 'Presets shown: {0} of {1}.',
-  'presets-no-match': 'No presets match the filter.',
+  'model-profiles-filter-label': 'Filter model profiles',
+  'model-profiles-filter-hint':
+    'Matches part of the model profile name or of its model file path. Case does not matter.',
+  'model-profiles-filter-clear': 'Clear filter',
+  'model-profiles-filter-count': 'Model profiles shown: {0} of {1}.',
+  'model-profiles-no-match': 'No model profiles match the filter.',
   // Slice 2c (fe/briefs/02-models.md, section 2c.8): the on/off switch.
-  'presets-switched-on': 'Switched {0} on.',
-  'presets-switched-off': 'Switched {0} off.',
-  'presets-switched-on-restart':
+  'model-profiles-switched-on': 'Switched {0} on.',
+  'model-profiles-switched-off': 'Switched {0} off.',
+  'model-profiles-switched-on-restart':
     'Switched {0} on: restart the running instances of {1} to apply.',
-  'presets-switched-off-restart':
+  'model-profiles-switched-off-restart':
     'Switched {0} off: restart the running instances of {1} to apply.',
-  'api-no-preset-named':
-    'There is no preset named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the presets as they are.',
-  // Slice 2d (fe/briefs/02-models.md, section 2d.10): the preset page, the
+  'api-no-model-profile-named':
+    'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the Models page again to see the model profiles as they are.',
+  // Slice 2d (fe/briefs/02-models.md, section 2d.10): the model profile page, the
   // keys the criteria of 2d.1 to 2d.4 use, and those of the content (2d.5 to 2d.8).
-  'preset-back': 'All presets',
-  'preset-loading': 'Loading the preset…',
-  'preset-load-failed': 'The preset could not be read.',
-  'preset-not-found': 'There is no preset named {0}.',
-  'preset-off':
-    'This preset is switched off: it is kept, but its engine does not serve it. Switch it on in the presets list.',
-  'preset-settings-title': 'Preset settings',
-  'preset-engine': 'Engine',
-  'preset-engine-hint':
-    'The engine whose preset files hold this preset. Every instance of that engine can serve it.',
-  'preset-engine-unavailable':
-    '{0} is not available on the server, so no instance can serve this preset until it is installed again.',
-  'preset-assets': 'Assets',
-  'preset-model-file': 'Model file',
-  'preset-project-url': 'Project URL',
-  'preset-draft-model': 'Draft model',
-  'preset-drafter': 'Drafter',
-  'preset-ngram-drafters': 'N-gram drafters',
-  'preset-value-none': '(none)',
-  // Sub-slice 2h.10 (fe/briefs/02h-preset-save.md, criteria 195, 196): the
+  'model-profile-back': 'All model profiles',
+  'model-profile-loading': 'Loading the model profile…',
+  'model-profile-load-failed': 'The model profile could not be read.',
+  'model-profile-not-found': 'There is no model profile named {0}.',
+  'model-profile-off':
+    'This model profile is switched off: it is kept, but its engine does not serve it. Switch it on in the model profiles list.',
+  'model-profile-settings-title': 'Model profile settings',
+  'model-profile-engine': 'Engine',
+  'model-profile-engine-hint':
+    'The engine whose model profile files hold this model profile. Every instance of that engine can serve it.',
+  'model-profile-engine-unavailable':
+    '{0} is not available on the server, so no instance can serve this model profile until it is installed again.',
+  'model-profile-assets': 'Assets',
+  'model-profile-model-file': 'Model file',
+  'model-profile-project-url': 'Project URL',
+  'model-profile-draft-model': 'Draft model',
+  'model-profile-drafter': 'Drafter',
+  'model-profile-ngram-drafters': 'N-gram drafters',
+  'model-profile-value-none': '(none)',
+  // Sub-slice 2h.10 (fe/briefs/02h-model-profile-save.md, criteria 195, 196): the
   // Assets card intro, and the name of the section jump list.
-  'preset-assets-read-only':
-    'The files, Project URL and drafters of a preset cannot be changed here yet. Change them in pai-config on the server machine.',
-  'preset-jump-label': 'Preset sections.',
-  // Slice 2e.1 (fe/briefs/02e-preset-cards.md, criterion 95): the Resource /
+  'model-profile-assets-read-only':
+    'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.',
+  'model-profile-jump-label': 'Model profile sections.',
+  // Slice 2e.1 (fe/briefs/02e-model-profile-cards.md, criterion 95): the Resource /
   // context and Embeddings cards, and the pooling options the shared texts of
   // 1.3 lack. The hints are the GUI's tooltips (en_US.toml), unchanged except
-  // preset-context-size-hint, whose web text criterion 92 gives.
-  // Slice 2h.1's Notice preset-partly-editable, and the read-only Notice
-  // preset-read-only it replaced, are both out (2h.10's 194).
-  'preset-resource-context': 'Resource / context',
-  'preset-context-size': 'Context size',
-  'preset-context-size-hint':
+  // model-profile-context-size-hint, whose web text criterion 92 gives.
+  // Slice 2h.1's Notice model-profile-partly-editable, and the read-only Notice
+  // model-profile-read-only it replaced, are both out (2h.10's 194).
+  'model-profile-resource-context': 'Resource / context',
+  'model-profile-context-size': 'Context size',
+  'model-profile-context-size-hint':
     "How many tokens of conversation the model can hold. Bigger = longer history, more VRAM for the KV cache. It can be divided among requests: see Parallel slots.\nDefault: 0 (llama.cpp's own), meaning the context the model was trained with.\nFlag: --ctx-size",
-  'preset-parallel-slots': 'Parallel slots',
-  'preset-parallel-slots-hint':
+  'model-profile-parallel-slots': 'Parallel slots',
+  'model-profile-parallel-slots-hint':
     "How many requests can run at once. A number you set DIVIDES the context among them: 2 leaves each request half of Context size.\nDefault: auto (llama-server's own), 4 slots sharing one KV cache, so one request can use the WHOLE context. Leave it at default to give one request the model's full context.\nFlag: --parallel",
-  'preset-unified-kv': 'Unified KV',
-  'preset-unified-kv-hint':
+  'model-profile-unified-kv': 'Unified KV',
+  'model-profile-unified-kv-hint':
     'One KV cache shared by all parallel slots, so any request can grow into the WHOLE context instead of its own share.\nOn pays off when requests are uneven (one long, others short). Off gives each slot a fixed share, so one long request cannot starve the others.\nDefault: off with Parallel slots set. With Parallel slots at default, llama-server turns it on anyway, so this is disabled.\nFlags: --kv-unified, --no-kv-unified',
-  'preset-per-slot-context': 'Per-slot context',
-  'preset-per-slot-context-hint':
+  'model-profile-per-slot-context': 'Per-slot context',
+  'model-profile-per-slot-context-hint':
     "Limits every slot to this many tokens. Works with Unified KV on or off.\nWith Context size at default it also sizes the KV cache as Parallel slots × this value, instead of the model's trained context: 4 slots at 32768 allocate 128k tokens.\nDefault: no limit.\nFlag: --kv-unified-per-slot",
-  'preset-batch-size': 'Batch size',
-  'preset-batch-size-hint':
+  'model-profile-batch-size': 'Batch size',
+  'model-profile-batch-size-hint':
     "How many tokens of a prompt are handled per step. Higher speeds up prefill (reading the prompt) and uses more VRAM.\nDefault: 2048 (llama.cpp's own).\nFlag: --batch-size",
-  'preset-u-batch-size': 'U-Batch size',
-  'preset-u-batch-size-hint':
+  'model-profile-u-batch-size': 'U-Batch size',
+  'model-profile-u-batch-size-hint':
     "How many tokens are actually computed at once. Must not exceed Batch size.\nDefault: 512 (llama.cpp's own).\nFlag: --ubatch-size",
-  'preset-embeddings': 'Embeddings',
-  'preset-embedding-mode': 'Embedding mode',
-  'preset-embedding-mode-hint':
+  'model-profile-embeddings': 'Embeddings',
+  'model-profile-embedding-mode': 'Embedding mode',
+  'model-profile-embedding-mode-hint':
     'Serves this model as an embedding model, turning on /v1/embeddings (without it, llama-server answers 501 "This server does not support embeddings"). Only for dedicated embedding models.\nEvery input must fit in one batch: set Batch size and U-Batch size above to at least your longest text, or the request fails with "input is too large" (U-Batch size defaults to 512 tokens).\nDefault: off.\nFlag: --embeddings',
-  'preset-pooling': 'Pooling',
-  'preset-pooling-hint':
+  'model-profile-pooling': 'Pooling',
+  'model-profile-pooling-hint':
     "How a text's token vectors become ONE embedding. Only used in embedding mode.\nDefault: the model's own, read from its GGUF.\nnone = one vector per token; mean = their average; cls = the first token's; last = the last token's (Qwen3-Embedding); rank = the reranker head.\nA wrong choice gives no error, only vectors of the right size that search worse.\nFlag: --pooling",
   'option-mean': 'mean',
   'option-last': 'last',
   'option-rank': 'rank',
-  // Slice 2e.2 (fe/briefs/02e-preset-cards.md, criterion 100): the KV cache,
+  // Slice 2e.2 (fe/briefs/02e-model-profile-cards.md, criterion 100): the KV cache,
   // Sampling overrides and Advanced cards. Every English is the en_US.toml line
-  // the criterion names, unchanged except preset-cache-ram, whose label drops
+  // the criterion names, unchanged except model-profile-cache-ram, whose label drops
   // "(MiB)": the unit sits after the input (criterion 89).
-  'preset-kv-cache': 'KV cache',
-  'preset-k-cache-type': 'K-cache type',
-  'preset-k-cache-type-hint':
+  'model-profile-kv-cache': 'KV cache',
+  'model-profile-k-cache-type': 'K-cache type',
+  'model-profile-k-cache-type-hint':
     "Compresses the K half of the KV cache. Lower types use less VRAM but reduce quality.\nDefault: f16 (llama.cpp's own).\nFlag: --cache-type-k",
-  'preset-v-cache-type': 'V-cache type',
-  'preset-v-cache-type-hint':
+  'model-profile-v-cache-type': 'V-cache type',
+  'model-profile-v-cache-type-hint':
     "Compresses the V half of the KV cache. Lower types use less VRAM but reduce quality; usually set to match K.\nA quantized V needs flash attention: with Flash attention off, the model does not load.\nDefault: f16 (llama.cpp's own).\nFlag: --cache-type-v",
-  'preset-flash-attention': 'Flash attention',
-  'preset-flash-attention-hint':
+  'model-profile-flash-attention': 'Flash attention',
+  'model-profile-flash-attention-hint':
     "A faster attention method: faster prefill and less KV memory.\nDefault: auto (llama.cpp's own): on wherever the backend supports it.\non forces it. off disables it, which loses most of the gain of a quantized K cache and stops a quantized V cache from loading.\nFlag: --flash-attn",
-  'preset-cache-ram': 'Cache RAM',
-  'preset-cache-ram-hint':
+  'model-profile-cache-ram': 'Cache RAM',
+  'model-profile-cache-ram-hint':
     "How much RAM may hold past prompts for reuse, in MiB, so they need not be read again. Context checkpoints count against it: on a large hybrid model with long prompts and several slots, old prompts are dropped sooner than their KV size suggests.\nDefault: 8192 MiB (llama.cpp's own). 0 = off, -1 = no limit.\nFlag: --cache-ram",
-  'preset-cache-reuse': 'Cache reuse',
-  'preset-cache-reuse-hint':
+  'model-profile-cache-reuse': 'Cache reuse',
+  'model-profile-cache-reuse-hint':
     "Lets a new prompt reuse matching pieces of the cached one by shifting the KV cache, instead of reading them again. The value is the smallest piece worth reusing, in tokens.\nDefault: 0, off (llama.cpp's own). llama.cpp also turns it off, with a warning in the log, on a model with an mmproj and on one whose cache cannot shift.\nFlag: --cache-reuse",
-  'preset-context-checkpoints': 'Context checkpoints',
-  'preset-context-checkpoints-hint':
+  'model-profile-context-checkpoints': 'Context checkpoints',
+  'model-profile-context-checkpoints-hint':
     "How many saved states (checkpoints) each slot keeps, so a prompt that changes partway need not be read again from the start. Matters on recurrent, hybrid and SWA models (Qwen3.5/3.8, qwen4exp, Mamba, Jamba...), which cannot rewind: without checkpoints they read the whole prompt again. No effect on a pure-attention model.\nEach checkpoint is a copy of that state in RAM; the oldest is dropped once the slot holds this many.\nDefault: 32 (llama.cpp's own). 0 = off.\nFlag: --ctx-checkpoints",
-  'preset-checkpoint-step': 'Checkpoint step',
-  'preset-checkpoint-step-hint':
+  'model-profile-checkpoint-step': 'Checkpoint step',
+  'model-profile-checkpoint-step-hint':
     "The minimum distance between two checkpoints, in tokens. Smaller = a changed prompt resumes closer to the change, but more checkpoints use more RAM (those of a cached prompt also count against Cache RAM).\nDefault: 8192 (llama.cpp's own). 0 = no minimum.\nFlag: --checkpoint-min-step",
-  'preset-sampling-overrides': 'Sampling overrides',
-  'preset-temperature': 'Temperature',
-  'preset-temperature-hint':
+  'model-profile-sampling-overrides': 'Sampling overrides',
+  'model-profile-temperature': 'Temperature',
+  'model-profile-temperature-hint':
     "How adventurous the output is. Lower = more predictable, higher = more creative.\nDefault: 0.80 (llama.cpp's own).\nFlag: --temp",
-  'preset-top-k-hint':
+  'model-profile-top-k-hint':
     "Considers only the K likeliest next tokens. 0 = off.\nDefault: 40 (llama.cpp's own).\nFlag: --top-k",
-  'preset-top-p-hint':
+  'model-profile-top-p-hint':
     "Considers only the smallest set of likely tokens whose probabilities add up to P (such as 0.95).\nDefault: 0.95 (llama.cpp's own).\nFlag: --top-p",
-  'preset-min-p-hint':
+  'model-profile-min-p-hint':
     "Drops tokens less likely than this fraction of the likeliest one.\nDefault: 0.05 (llama.cpp's own).\nFlag: --min-p",
-  'preset-repeat-penalty': 'Repeat penalty',
-  'preset-repeat-penalty-hint':
+  'model-profile-repeat-penalty': 'Repeat penalty',
+  'model-profile-repeat-penalty-hint':
     "Above 1 discourages repeating recent tokens (such as 1.1).\nDefault: 1.0, off (llama.cpp's own).\nFlag: --repeat-penalty",
-  'preset-presence-penalty': 'Presence penalty',
-  'preset-presence-penalty-hint':
+  'model-profile-presence-penalty': 'Presence penalty',
+  'model-profile-presence-penalty-hint':
     "Positive values discourage any token already seen, pushing toward new topics.\nDefault: 0.0, off (llama.cpp's own).\nFlag: --presence-penalty",
-  'preset-backend-sampling': 'Backend sampling',
-  'preset-backend-sampling-hint':
+  'model-profile-backend-sampling': 'Backend sampling',
+  'model-profile-backend-sampling-hint':
     "Experimental: picks the next token on the GPU that holds the model's output, instead of copying that output to the CPU first.\nOnly some samplers can run there (greedy, dist, top-k, top-p, min-p, temp, penalties, logit-bias). Any other in the chain (typical, xtc, mirostat, top-n-sigma, dry, adaptive-p) silently sends the WHOLE chain back to the CPU.\nTurned off by a grammar or JSON schema, by a Thinking budget, and by split mode tensor. A request asking for pre-sampling probabilities uses the CPU for that request.\nDefault: off (llama.cpp's own); on is the one value that changes anything. An MTP or DFlash drafter already samples on the GPU, whatever this says.\nFlag: --backend-sampling",
-  'preset-advanced': 'Advanced',
-  'preset-load-on-startup': 'Load on startup',
-  'preset-load-on-startup-hint':
-    'Loads this model as soon as the server starts, instead of on its first request. Read only at startup: a preset added while the server runs is loaded on demand.\nThe server refuses to start when more presets load on startup than ModelsMax allows, and with ModelsMax = 0 whenever any does, so Save refuses that too.\nKey: load-on-startup (preset only, no command-line flag)',
-  'preset-chat-kwargs': 'Chat kwargs',
-  'preset-chat-kwargs-hint':
+  'model-profile-advanced': 'Advanced',
+  'model-profile-load-on-startup': 'Load on startup',
+  'model-profile-load-on-startup-hint':
+    'Loads this model as soon as the server starts, instead of on its first request. Read only at startup: a model profile added while the server runs is loaded on demand.\nThe server refuses to start when more model profiles load on startup than ModelsMax allows, and with ModelsMax = 0 whenever any does, so Save refuses that too.\nKey: load-on-startup (model profile only, no command-line flag)',
+  'model-profile-chat-kwargs': 'Chat kwargs',
+  'model-profile-chat-kwargs-hint':
     'Extra values passed to the chat template, as JSON, such as {"enable_thinking":true}.\nAdvanced: leave blank unless the model\'s documentation lists them.\nFlag: --chat-template-kwargs',
-  // Slice 2e.3 (fe/briefs/02e-preset-cards.md, criterion 105): the Chat /
+  // Slice 2e.3 (fe/briefs/02e-model-profile-cards.md, criterion 105): the Chat /
   // reasoning and Vision cards. Every English is the en_US.toml line the
   // criterion names, unchanged.
-  'preset-chat-reasoning': 'Chat / reasoning',
-  'preset-chat-template': 'Chat template',
-  'preset-chat-template-hint':
+  'model-profile-chat-reasoning': 'Chat / reasoning',
+  'model-profile-chat-template': 'Chat template',
+  'model-profile-chat-template-hint':
     'Uses the chat template embedded in the model to format conversations, instead of built-in guesses. Recommended on, for correct tool calls and roles.\nFlag: --jinja',
-  'preset-chat-template-toggle': 'use embedded chat template (--jinja)',
-  'preset-prefill-assistant': 'Prefill assistant',
-  'preset-prefill-assistant-hint':
+  'model-profile-chat-template-toggle': 'use embedded chat template (--jinja)',
+  'model-profile-prefill-assistant': 'Prefill assistant',
+  'model-profile-prefill-assistant-hint':
     "What to do when a request ends with an assistant message.\nOn (default, llama.cpp's own): treat it as the start of the reply and continue it, so a client can seed the answer's opening.\nOff: treat it as a finished turn and answer it. Turn it off if a client ends on an assistant turn and the model resumes mid-sentence instead of replying.\nFlags: --prefill-assistant, --no-prefill-assistant",
-  'preset-prefill-assistant-toggle':
+  'model-profile-prefill-assistant-toggle':
     'continue a trailing assistant message (--prefill-assistant)',
-  'preset-reasoning': 'Reasoning',
-  'preset-reasoning-hint':
+  'model-profile-reasoning': 'Reasoning',
+  'model-profile-reasoning-hint':
     "Whether the model thinks before answering.\nauto (recommended): follows the model's template.\non: force thinking.\noff: disable it.\nFlag: --reasoning",
-  'preset-reasoning-format': 'Reasoning format',
-  'preset-reasoning-format-hint':
+  'model-profile-reasoning-format': 'Reasoning format',
+  'model-profile-reasoning-format-hint':
     'How thinking is delivered to the client.\nauto = let the template decide.\ndeepseek = thinking goes in a separate channel, apart from the answer.\nnone = left inline in the answer.\nFlag: --reasoning-format',
-  'preset-reasoning-effort': 'Reasoning effort',
-  'preset-reasoning-effort-hint':
+  'model-profile-reasoning-effort': 'Reasoning effort',
+  'model-profile-reasoning-effort-hint':
     "How hard the template asks the model to think: a level handed to the chat template, neither an on/off switch nor a token limit.\nDefault: whatever the template does on its own.\nOnly some templates read it (gpt-oss and harmony do, most do not); the others ignore it silently, and llama-server's log does not say. The Thinking row in Model info is the place that tells you.\nSet it here, not in Chat kwargs below: this one setting binds both names templates use (reasoning_effort, reasoning_strength), and a hand-written one sets only one of them.\nFlag: --reasoning-effort",
-  'preset-keep-past-thinking': 'Keep past thinking',
-  'preset-keep-past-thinking-hint':
+  'model-profile-keep-past-thinking': 'Keep past thinking',
+  'model-profile-keep-past-thinking-hint':
     "Sends the thinking of EVERY past assistant turn back to the model, not just the last one. It costs prompt tokens: the thinking is re-sent every turn.\nDefault: on (llama.cpp's own). on pins it; off drops it, the one value that changes anything.\nOnly works where the template supports it: llama-server says so in its log at startup.\nUse this, not preserve_thinking or preserve_reasoning in Chat kwargs below: templates read different names, so a hand-written one usually does nothing.\nFlags: --reasoning-preserve, --no-reasoning-preserve",
-  'preset-output-budget-note':
+  'model-profile-output-budget-note':
     "The next three split one output budget in two. Thinking budget limits the thinking alone; Max output limits thinking and answer together, so the answer gets what the thinking leaves. Do not copy a model card's numbers as they are: they assume a certain context, and a budget larger than your context never takes effect.",
-  'preset-thinking-budget': 'Thinking budget',
-  'preset-thinking-budget-hint':
+  'model-profile-thinking-budget': 'Thinking budget',
+  'model-profile-thinking-budget-hint':
     "The most tokens the model may spend thinking. Pick it by how long you are willing to wait.\n-1 = no limit, 0 = end thinking immediately, N > 0 = that many tokens.\nDefault: -1 (llama.cpp's own).\nAt the limit llama.cpp closes the thinking block for the model, which still writes a normal answer. Only works where the template declares thinking tags.\nFlag: --reasoning-budget",
-  'preset-budget-message': 'Budget message',
-  'preset-budget-message-hint':
+  'model-profile-budget-message': 'Budget message',
+  'model-profile-budget-message-hint':
     "Text added just before thinking is closed at the budget, to steer the model into wrapping up instead of stopping mid-thought. Write it in the language the model answers in: another language invites mixed replies.\nBlank = no message (llama.cpp's own default).\nNo ';' or '#': the INI format cannot escape them, and the value would reload truncated.\nFlag: --reasoning-budget-message",
-  'preset-max-output': 'Max output',
-  'preset-max-output-hint':
+  'model-profile-max-output': 'Max output',
+  'model-profile-max-output-hint':
     "The most tokens one request may generate, thinking and answer together, for clients that do not set their own limit.\n-1 = keep going until the context is full.\nDefault: -1 (llama.cpp's own).\nNot a hard limit: a client's own max_tokens always wins, higher or lower.\nFlag: --n-predict",
   'option-auto': 'auto',
   'option-minimal': 'minimal',
@@ -439,149 +439,151 @@ export const EN: Record<string, string> = {
   'option-high': 'high',
   'option-extra-high': 'xhigh',
   'option-maximum': 'max',
-  'preset-vision': 'Vision',
-  'preset-vision-on-gpu': 'Vision on GPU',
-  'preset-vision-on-gpu-hint':
+  'model-profile-vision': 'Vision',
+  'model-profile-vision-on-gpu': 'Vision on GPU',
+  'model-profile-vision-on-gpu-hint':
     "Runs the image encoder (mmproj) on the GPU. On (default, llama.cpp's own), it holds VRAM as long as the model is loaded but only works on image requests. Off: slower image encoding, no VRAM.\nWhich GPU: see 'Vision GPU' below.\nFlags: --mmproj-offload, --no-mmproj-offload",
-  'preset-vision-offload-toggle': 'offload the image encoder to GPU',
-  'preset-vision-gpu': 'Vision GPU',
-  'preset-vision-gpu-hint':
-    "The GPU the image encoder runs on.\nDefault: the first GPU in this preset's device list; with no device checked, the first GPU llama.cpp finds, which on a mixed machine is often not the one running the model. It holds VRAM there and stays idle until an image arrives.\nName a device to override both.\nFlag: --mmproj-device",
-  // 2h.7's 176, 182: the note shown while the preset has no MMProj.
-  'preset-vision-off':
-    'Used only with an MMProj file, and this preset has none (Assets).',
-  'preset-image-tokens-note':
+  'model-profile-vision-offload-toggle': 'offload the image encoder to GPU',
+  'model-profile-vision-gpu': 'Vision GPU',
+  'model-profile-vision-gpu-hint':
+    "The GPU the image encoder runs on.\nDefault: the first GPU in this model profile's device list; with no device checked, the first GPU llama.cpp finds, which on a mixed machine is often not the one running the model. It holds VRAM there and stays idle until an image arrives.\nName a device to override both.\nFlag: --mmproj-device",
+  // 2h.7's 176, 182: the note shown while the model profile has no MMProj.
+  'model-profile-vision-off':
+    'Used only with an MMProj file, and this model profile has none (Assets).',
+  'model-profile-image-tokens-note':
     'The two limits below set how many tokens ONE image takes on dynamic-resolution vision models. They apply only with an MMProj picked above. Leave them at default to read the limit from the model.',
-  'preset-min-image-tokens': 'Min image tokens',
-  'preset-min-image-tokens-hint':
+  'model-profile-min-image-tokens': 'Min image tokens',
+  'model-profile-min-image-tokens-hint':
     'The fewest tokens each image is encoded to, on vision models with dynamic resolution.\nDefault: read from the model.\nFlag: --image-min-tokens',
-  'preset-max-image-tokens': 'Max image tokens',
-  'preset-max-image-tokens-hint':
+  'model-profile-max-image-tokens': 'Max image tokens',
+  'model-profile-max-image-tokens-hint':
     'The most tokens each image is encoded to, on vision models with dynamic resolution. Lower it to limit the prefill cost and VRAM of large images.\nDefault: read from the model.\nFlag: --image-max-tokens',
-  'preset-device-follows-model': '(default: follows device)',
+  'model-profile-device-follows-model': '(default: follows device)',
   // Slice 2e.3b (criterion 124): the line naming how the file spells a flag.
-  'preset-written-as': 'Written as {0}',
-  'preset-written-empty': 'Written with no value',
+  'model-profile-written-as': 'Written as {0}',
+  'model-profile-written-empty': 'Written with no value',
   // 2h.7's 177, 178, 182: the two note rows of the Hardware card.
-  'preset-draft-file-off':
-    'Draft device and Draft GPU layers apply only to a Draft model file, and this preset has none (Assets).',
-  'preset-moe-later':
+  'model-profile-draft-file-off':
+    'Draft device and Draft GPU layers apply only to a Draft model file, and this model profile has none (Assets).',
+  'model-profile-moe-later':
     'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.',
-  'preset-hardware-config': 'Hardware config',
-  'preset-gpu-layers': 'GPU layers',
-  'preset-gpu-layers-hint':
+  'model-profile-hardware-config': 'Hardware config',
+  'model-profile-gpu-layers': 'GPU layers',
+  'model-profile-gpu-layers-hint':
     "How many of the model's layers run on the GPU. The rest stay on the CPU: less VRAM, slower.\nDefault: all layers on the GPU. A model too big for it fails to load, unless Fit to VRAM is on.\nFlag: --n-gpu-layers",
-  'preset-moe-cpu-layers': 'MoE CPU layers',
-  'preset-moe-cpu-layers-hint':
+  'model-profile-moe-cpu-layers': 'MoE CPU layers',
+  'model-profile-moe-cpu-layers-hint':
     "Frees VRAM by keeping the experts of this many layers on the CPU; generation gets slower. Only for MoE models: on a dense model use 'Dense FFN CPU layers' below.\nDefault: 0, every expert stays on the GPU with its layer.\nFlag: --n-cpu-moe",
-  'preset-moe-cache': 'MoE cache',
-  'preset-moe-cache-hint':
+  'model-profile-moe-cache': 'MoE cache',
+  'model-profile-moe-cache-hint':
     "VRAM set aside for recently used experts kept in RAM, so a token that needs them reads them from the card instead of over PCIe. Experimental.\nIt only acts on layers whose experts are ALL in RAM (MoE CPU layers above, or an exps=CPU Tensor placement rule); with none, llama.cpp runs without a cache.\nWith several GPUs the budget is split like the layers: by Tensor split, or by free VRAM when that is blank.\nThe model FAILS TO LOAD under Split mode tensor, and below the experts of one token.\nThe draft model never uses it, and the synthetic benchmark cannot measure it.\nDefault: 0, no cache (llama.cpp's own).\nFlag: --moe-cache-mib",
-  'preset-dense-ffn-cpu-layers': 'Dense FFN CPU layers',
-  'preset-dense-ffn-cpu-layers-hint':
+  'model-profile-dense-ffn-cpu-layers': 'Dense FFN CPU layers',
+  'model-profile-dense-ffn-cpu-layers-hint':
     "Frees VRAM by keeping the feed-forward weights (most of a layer's size) of the first N layers on the CPU; attention stays on the GPU. For dense models: on a MoE model it reaches only the dense layers such a model may have, never the experts.\nDefault: every feed-forward weight stays on the GPU with its layer.\nFlag: --n-cpu-ffn",
-  'preset-op-offload': 'Op offload',
-  'preset-op-offload-hint':
+  'model-profile-op-offload': 'Op offload',
+  'model-profile-op-offload-hint':
     "Whether work on weights kept in RAM is still sent to the GPU. Worth trying when experts or other tensors are in RAM and the card sits on a narrow PCIe link: off then prefills faster, because those weights are no longer copied to the card on every prefill batch (the Qwen3.8-Flash-Next guide has the figures). Decode does not change.\nDefault: on (llama.cpp's own); off is the one value that changes anything. No effect when every weight is in VRAM.\nFlags: --op-offload, --no-op-offload",
-  'preset-repack': 'Repack',
-  'preset-repack-hint':
+  'model-profile-repack': 'Repack',
+  'model-profile-repack-hint':
     "When loading, rearranges weights kept in RAM into the layout the CPU's fast kernels use, for the types it has them for (x86 AVX2: Q4_0, Q4_K, IQ4_NL, MXFP4; Q2_K with AVX-512).\nOnly matters without a GPU, or with No host buffer on: with a GPU, weights in RAM go to its host buffer and this does nothing.\nDefault: on (llama.cpp's own); off is the one value that changes anything. No effect when no weight is in RAM.\nFlags: --repack, --no-repack",
-  'preset-no-host-buffer': 'No host buffer',
-  'preset-no-host-buffer-hint':
+  'model-profile-no-host-buffer': 'No host buffer',
+  'model-profile-no-host-buffer-hint':
     "Keeps weights left in RAM in ordinary memory instead of the GPU's pinned host buffer (RAM locked in place, which the GPU reads directly).\nOff (default, llama.cpp's own): pinned.\nOn: ordinary, pageable RAM, and the CPU repacks the types it can (see Repack). The copies Op offload makes then come from pageable memory, and repacked experts leave the MoE cache.\nNo effect when no weight is in RAM.\nFlag: --no-host",
-  'preset-lazy-tensors': 'Lazy tensors',
-  'preset-lazy-tensors-hint':
+  'model-profile-lazy-tensors': 'Lazy tensors',
+  'model-profile-lazy-tensors-hint':
     "Saves RAM on models with very large tables: reads them from disk as needed, a row per token, instead of keeping them in memory. Only a few architectures have such tables (such as gemma4 and qwen4exp); no effect on others. Keep the GGUF on an SSD.\nDefault: auto (llama.cpp's own): lazy only for a table over 4 GiB, and off if one of the model's devices cannot memory-map (an integrated GPU).\non = lazy whatever the size and the devices; off = always in RAM (no disk reads, but all of the RAM).\nWorks whatever Load mode says.\nFlag: --lazy-mode",
-  'preset-load-mode': 'Load mode',
-  'preset-load-mode-hint':
+  'model-profile-load-mode': 'Load mode',
+  'model-profile-load-mode-hint':
     "How this model's weights get into memory. Pick one: the modes do not combine.\nDefault: auto (llama.cpp's own).\nauto: memory-maps the file (reads it on demand) unless a device can't; fastest to load.\nnone: reads the weights into RAM up front: slower, uses the model's size in RAM, but nothing can be dropped back to the file.\nmmap: always memory-maps.\nmlock: locks the weights in physical RAM WITHOUT memory-mapping: steady latency, needs room for the whole model.\nmmap+mlock: memory-maps and locks what it maps.\ndio: Direct I/O where the platform offers it.\nLazy tensors stay mapped whatever this says.\nFlag: --load-mode",
-  'preset-fit-to-vram': 'Fit to VRAM',
-  'preset-fit-to-vram-hint':
+  'model-profile-fit-to-vram': 'Fit to VRAM',
+  'model-profile-fit-to-vram-hint':
     'Lets llama.cpp pick the context size and GPU layers that fit your GPU memory, leaving about 1 GiB free on each GPU.\nOn by default, as in llama.cpp. For a full fit, leave Context size and GPU layers at default.\nWhen on, also leave tensor-split, Tensor placement, MoE CPU layers and Dense FFN CPU layers empty: with any of them llama.cpp fits only the context (the log warns), which can over-fill one card.\nFlag: -fit',
-  'preset-fit-allowed':
+  'model-profile-fit-allowed':
     'auto-fit context and layers to device memory (-fit on)',
-  'preset-fit-not-allowed': 'needs Context size and GPU layers at default',
-  'preset-fit-invalid':
-    'llama-server refuses this value, so this preset does not start. Use on or off.',
+  'model-profile-fit-not-allowed':
+    'needs Context size and GPU layers at default',
+  'model-profile-fit-invalid':
+    'llama-server refuses this value, so this model profile does not start. Use on or off.',
   // The three lose the trailing period, to read as one family with
-  // preset-fit-allowed and preset-fit-not-allowed (2h.8 review).
-  'preset-fit-layers-only':
+  // model-profile-fit-allowed and model-profile-fit-not-allowed (2h.8 review).
+  'model-profile-fit-layers-only':
     'auto-fit the GPU layers only: Context size is set (-fit on)',
-  'preset-fit-context-only':
+  'model-profile-fit-context-only':
     'auto-fit the context only: GPU layers is set, so llama.cpp keeps your layers (-fit on)',
-  'preset-fit-nothing':
+  'model-profile-fit-nothing':
     'nothing to fit: Context size and GPU layers are both set (-fit on)',
-  'preset-fit-min-context': 'Fit min context',
-  'preset-fit-min-context-hint':
+  'model-profile-fit-min-context': 'Fit min context',
+  'model-profile-fit-min-context-hint':
     "The smallest context Fit to VRAM may cut down to. Only used with Fit to VRAM on.\nDefault: 4096 (llama.cpp's own).\nFlag: --fit-ctx",
-  'preset-fit-free-vram': 'Fit free VRAM',
-  'preset-fit-free-vram-hint':
+  'model-profile-fit-free-vram': 'Fit free VRAM',
+  'model-profile-fit-free-vram-hint':
     "How much VRAM Fit to VRAM leaves free, in MiB: one number for every device, or a comma-separated list in device order (such as 2048,1024). Only used with Fit to VRAM on.\nBlank = 1024 per device (llama.cpp's own).\nFlag: --fit-target",
-  'preset-draft-device': 'Draft device',
-  'preset-draft-device-hint':
+  'model-profile-draft-device': 'Draft device',
+  'model-profile-draft-device-hint':
     "The GPU for a separate draft model file. Pin it to ONE device: MTP heads crash on an automatic multi-GPU split.\nA full-vocabulary DFlash or DSpark drafter under a layer split must sit on the GPU with the last layers, or it aborts at load; picking the file pins it there for you.\nDisabled with built-in MTP heads, which share the main model's GPU.\nBlank = automatic, same as the model.\nFlag: --device-draft",
-  'preset-draft-gpu-layers': 'Draft GPU layers',
-  'preset-draft-gpu-layers-hint':
+  'model-profile-draft-gpu-layers': 'Draft GPU layers',
+  'model-profile-draft-gpu-layers-hint':
     'How many layers of a separate draft model file run on the GPU.\nFor an MTP head file, which has no layers, 99 puts the draft on the GPU and 0 on the CPU.\nPin a device above: MTP heads crash on an automatic multi-GPU split.\nDisabled with built-in MTP heads.\nDefault: all draft layers on the GPU.\nFlag: --n-gpu-layers-draft',
-  'preset-device-same-as-model': '(auto / same as model)',
-  // Slice 2e.5 (fe/briefs/02e-preset-cards.md, criterion 116): the Speculative
+  'model-profile-device-same-as-model': '(auto / same as model)',
+  // Slice 2e.5 (fe/briefs/02e-model-profile-cards.md, criterion 116): the Speculative
   // decoding card. Every English is the en_US.toml line the criterion names
   // (367 to 397), unchanged.
-  'preset-speculative-decoding': 'Speculative decoding',
-  'preset-draft-model-group':
+  'model-profile-speculative-decoding': 'Speculative decoding',
+  'model-profile-draft-model-group':
     'Draft model (draft-mtp, draft-dflash, draft-dspark, draft-simple)',
-  'preset-draft-n-max': 'Draft n-max',
-  'preset-draft-n-max-hint':
+  'model-profile-draft-n-max': 'Draft n-max',
+  'model-profile-draft-n-max-hint':
     "The most tokens a draft proposes per step. DFlash limits this to the size it was trained for, minus one (the Draft file row shows it).\nDefault: 3 (llama.cpp's own).\nFlag: --spec-draft-n-max",
-  'preset-draft-p-min': 'Draft p-min',
-  'preset-draft-p-min-hint':
+  'model-profile-draft-p-min': 'Draft p-min',
+  'model-profile-draft-p-min-hint':
     "How sure the drafter must be, 0 to 1. Drafting stops at the first token below this, so the model checks a shorter batch instead of tokens it would reject.\nDefault: 0, never stops early (llama.cpp's own).\nFlag: --spec-draft-p-min",
-  'preset-draft-n-min': 'Draft n-min',
-  'preset-draft-n-min-hint':
+  'model-profile-draft-n-min': 'Draft n-min',
+  'model-profile-draft-n-min-hint':
     "The shortest draft worth checking. A shorter one, usually cut by Draft p-min, is thrown away, and that step generates one token normally. Raise it when short drafts cost more to check than they save.\nDefault: 0, keeps any length (llama.cpp's own).\nFlag: --spec-draft-n-min",
-  'preset-draft-n-ubatch': 'Draft n-ubatch',
-  'preset-draft-n-ubatch-hint':
+  'model-profile-draft-n-ubatch': 'Draft n-ubatch',
+  'model-profile-draft-n-ubatch-hint':
     "How many tokens the draft computes at once. Smaller spares VRAM, at the cost of more passes when the drafter catches up on a long prompt. Applies to built-in MTP heads too.\nDefault: 0, the model's U-Batch size (llama.cpp's own).\nFlag: --spec-draft-n-ubatch",
-  'preset-draft-cache-note':
+  'model-profile-draft-cache-note':
     "The draft keeps its OWN KV cache, which does not follow the model's: it stays at f16 unless you set it here. Quantize it to reclaim VRAM. Unlike the placement settings above, these two also apply to MTP heads built into the main model.",
-  'preset-draft-k-cache-type': 'Draft K-cache type',
-  'preset-draft-k-cache-type-hint':
+  'model-profile-draft-k-cache-type': 'Draft K-cache type',
+  'model-profile-draft-k-cache-type-hint':
     "Compresses the K half of the draft's KV cache. A draft context is small, so this matters most with a separate draft model and a large context.\nDefault: f16, NOT the model's K-cache type.\nFlag: --spec-draft-type-k",
-  'preset-draft-v-cache-type': 'Draft V-cache type',
-  'preset-draft-v-cache-type-hint':
+  'model-profile-draft-v-cache-type': 'Draft V-cache type',
+  'model-profile-draft-v-cache-type-hint':
     "Compresses the V half of the draft's KV cache. Usually matched to Draft K-cache type. A quantized V needs flash attention.\nDefault: f16, NOT the model's V-cache type.\nFlag: --spec-draft-type-v",
-  'preset-match-length': 'Match length',
-  'preset-match-length-hint':
+  'model-profile-match-length': 'Match length',
+  'model-profile-match-length-hint':
     "How many recent tokens must match before a draft is proposed. Below 16, llama.cpp warns that drafts may be poor.\nDefault: 24 (llama.cpp's own).\nFlag: --spec-ngram-mod-n-match",
-  'preset-min-draft': 'Min draft',
-  'preset-min-draft-hint':
+  'model-profile-min-draft': 'Min draft',
+  'model-profile-min-draft-hint':
     "The fewest tokens a draft must have to be proposed, 0 to 1024.\nDefault: 48 (llama.cpp's own).\nFlag: --spec-ngram-mod-n-min",
-  'preset-max-draft': 'Max draft',
-  'preset-max-draft-hint':
+  'model-profile-max-draft': 'Max draft',
+  'model-profile-max-draft-hint':
     "The most tokens drafted per step, 0 to 1024.\nDefault: 64 (llama.cpp's own).\nFlag: --spec-ngram-mod-n-max",
-  'preset-lookup-n-gram': 'Lookup n-gram',
-  'preset-ngram-simple-lookup-hint':
+  'model-profile-lookup-n-gram': 'Lookup n-gram',
+  'model-profile-ngram-simple-lookup-hint':
     "How many recent tokens are looked up in the context (the n-gram), 1 to 1024.\nDefault: 12 (llama.cpp's own).\nFlag: --spec-ngram-simple-size-n",
-  'preset-draft-m-gram': 'Draft m-gram',
-  'preset-ngram-simple-draft-hint':
+  'model-profile-draft-m-gram': 'Draft m-gram',
+  'model-profile-ngram-simple-draft-hint':
     "How many tokens are drafted after a match (the m-gram), 1 to 1024.\nDefault: 48 (llama.cpp's own).\nFlag: --spec-ngram-simple-size-m",
-  'preset-ngram-map-lookup-hint':
+  'model-profile-ngram-map-lookup-hint':
     "How many recent tokens are looked up in the context (the n-gram), 1 to 1024.\nDefault: 12 (llama.cpp's own).\nFlag: --spec-ngram-map-k-size-n",
-  'preset-ngram-map-draft-hint':
+  'model-profile-ngram-map-draft-hint':
     "How many tokens are drafted after a match (the m-gram), 1 to 1024.\nDefault: 48 (llama.cpp's own).\nFlag: --spec-ngram-map-k-size-m",
-  'preset-ngram-map-values-lookup-hint':
+  'model-profile-ngram-map-values-lookup-hint':
     "How many recent tokens are looked up in the context (the n-gram), 1 to 1024.\nDefault: 12 (llama.cpp's own).\nFlag: --spec-ngram-map-k4v-size-n",
-  'preset-ngram-map-values-draft-hint':
+  'model-profile-ngram-map-values-draft-hint':
     "How many tokens are drafted after a match (the m-gram), 1 to 1024.\nDefault: 48 (llama.cpp's own).\nFlag: --spec-ngram-map-k4v-size-m",
-  'preset-min-hits': 'Min hits',
-  'preset-min-hits-hint':
+  'model-profile-min-hits': 'Min hits',
+  'model-profile-min-hits-hint':
     "How many times an n-gram must have been seen before what follows it is proposed. Higher drafts less often but more reliably.\nDefault: 1 (llama.cpp's own).\nFlag: --spec-ngram-map-k4v-min-hits",
-  // Sub-slice 2h.9 (fe/briefs/02h-preset-save.md, criterion 193): the two
+  // Sub-slice 2h.9 (fe/briefs/02h-model-profile-save.md, criterion 193): the two
   // reason lines of the Speculative decoding card's groups. 2h.10's 198
   // rewords the draft one: the Assets row it points to is "Draft model".
-  'preset-draft-group-off':
-    'Used only with a draft: a Draft model or a Drafter, and this preset has neither (Assets).',
-  'preset-ngram-off': 'Used only when N-gram drafters (Assets) includes {0}.',
+  'model-profile-draft-group-off':
+    'Used only with a draft: a Draft model or a Drafter, and this model profile has neither (Assets).',
+  'model-profile-ngram-off':
+    'Used only when N-gram drafters (Assets) includes {0}.',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -662,8 +664,8 @@ export const INSTANCES: Instance[] = [
   { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
 ]
 
-/** One preset as GET /api/presets lists it (fe/briefs/api-contract.md). */
-export type Preset = {
+/** One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md). */
+export type ModelProfile = {
   id: string
   engine: string
   engineAvailable: boolean
@@ -672,8 +674,8 @@ export type Preset = {
   model: string
 }
 
-/** The default preset list: one switched on, one switched off, one engine. */
-export const PRESETS: Preset[] = [
+/** The default model profile list: one switched on, one switched off, one engine. */
+export const MODEL_PROFILES: ModelProfile[] = [
   {
     id: 'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     engine: 'llama.cpp',
@@ -692,13 +694,13 @@ export const PRESETS: Preset[] = [
 ]
 
 /**
- * One preset as GET /api/presets/{id} reads it (fe/briefs/api-contract.md,
+ * One model profile as GET /api/profiles/model/{id} reads it (fe/briefs/api-contract.md,
  * the proposed section, the shape of criterion 81). `values` adds to or
  * replaces the keys of the section; `extra` adds, replaces, and with
  * `undefined` drops top-level members (of `revision`, of `id`, of anything:
  * the tests of 2d.66 need to answer without a key of the shape).
  */
-export function presetDoc(
+export function modelProfileDoc(
   values: Record<string, string> = {},
   extra: Record<string, unknown> = {},
 ) {
@@ -784,30 +786,33 @@ export type BffOptions = {
   version?: Answer
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
-  /** GET /api/presets: the presets, or the reply. Default PRESETS. */
-  presets?: Preset[] | Answer
+  /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
+  modelProfiles?: ModelProfile[] | Answer
   /**
-   * GET /api/presets/{id}: the reply per decoded id. Default 200 presetDoc
+   * GET /api/profiles/model/{id}: the reply per decoded id. Default 200 modelProfileDoc
    * with the `id` of the request (the file spells it as asked).
    */
-  preset?: (id: string, init?: RequestInit) => Response | Promise<Response>
+  modelProfile?: (
+    id: string,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /**
-   * PUT /api/presets/{id}/enabled: the reply to the n-th switch (from 1),
+   * PUT /api/profiles/model/{id}/enabled: the reply to the n-th switch (from 1),
    * given the parsed body and the decoded id. Default 200 with the body's
    * `enabled` echoed and `running: false`.
    */
-  presetSwitch?: (
+  modelProfileSwitch?: (
     body: unknown,
     id: string,
     n: number,
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
-   * PUT /api/presets/{id}: the reply to the n-th save (from 1), given the
+   * PUT /api/profiles/model/{id}: the reply to the n-th save (from 1), given the
    * parsed body and the decoded id. Default 200 {"revision": "r2",
    * "running": false} (fe/briefs/api-contract.md).
    */
-  presetSave?: (
+  modelProfileSave?: (
     body: unknown,
     id: string,
     n: number,
@@ -912,44 +917,46 @@ export function fakeBff(options: BffOptions = {}) {
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))
       return answer(i, init)
     }
-    if (route === 'GET /api/presets') {
-      const p = options.presets ?? PRESETS
+    if (route === 'GET /api/profiles/model') {
+      const p = options.modelProfiles ?? MODEL_PROFILES
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
     }
-    const presetSwitch = /^PUT \/api\/presets\/([^/]+)\/enabled$/.exec(route)
-    if (presetSwitch) {
-      const id = decodeURIComponent(presetSwitch[1]!)
+    const modelProfileSwitch =
+      /^PUT \/api\/profiles\/model\/([^/]+)\/enabled$/.exec(route)
+    if (modelProfileSwitch) {
+      const id = decodeURIComponent(modelProfileSwitch[1]!)
       const n = calls.filter(
         (c) =>
-          c.method === 'PUT' && /^\/api\/presets\/[^/]+\/enabled$/.test(c.path),
+          c.method === 'PUT' &&
+          /^\/api\/profiles\/model\/[^/]+\/enabled$/.test(c.path),
       ).length
       const enabled = (body as { enabled?: unknown } | undefined)?.enabled
       return Promise.resolve(
-        options.presetSwitch
-          ? options.presetSwitch(body, id, n, init)
+        options.modelProfileSwitch
+          ? options.modelProfileSwitch(body, id, n, init)
           : reply(200, { enabled, running: false }),
       )
     }
-    const presetSave = /^PUT \/api\/presets\/([^/]+)$/.exec(route)
-    if (presetSave) {
-      const id = decodeURIComponent(presetSave[1]!)
+    const modelProfileSave = /^PUT \/api\/profiles\/model\/([^/]+)$/.exec(route)
+    if (modelProfileSave) {
+      const id = decodeURIComponent(modelProfileSave[1]!)
       const n = calls.filter(
         (c) => c.method === 'PUT' && c.path === path,
       ).length
       return Promise.resolve(
-        options.presetSave
-          ? options.presetSave(body, id, n, init)
+        options.modelProfileSave
+          ? options.modelProfileSave(body, id, n, init)
           : reply(200, { revision: 'r2', running: false }),
       )
     }
-    const presetRead = /^GET \/api\/presets\/([^/]+)$/.exec(route)
-    if (presetRead) {
-      const id = decodeURIComponent(presetRead[1]!)
+    const modelProfileRead = /^GET \/api\/profiles\/model\/([^/]+)$/.exec(route)
+    if (modelProfileRead) {
+      const id = decodeURIComponent(modelProfileRead[1]!)
       return Promise.resolve(
-        options.preset
-          ? options.preset(id, init)
-          : reply(200, presetDoc({}, { id })),
+        options.modelProfile
+          ? options.modelProfile(id, init)
+          : reply(200, modelProfileDoc({}, { id })),
       )
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)

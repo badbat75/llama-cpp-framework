@@ -1,9 +1,9 @@
-// The keyed answers of a preset save (fe/briefs/02h-preset-save.md, sub-slice
+// The keyed answers of a model profile save (fe/briefs/02h-model-profile-save.md, sub-slice
 // 2h.2): a 422 on a field (142), a refusal whose field is not a control of
 // this page, or has none (143), a refusal on a control that is disabled (144),
 // and the table of 150 (each check key, its field and its text). The bar, the
 // editable Embeddings selects, the PUT and the plain answers are 135 to 141,
-// in PresetSave1.test.tsx and PresetSave2.test.tsx, whose helpers this file
+// in ModelProfileSave1.test.tsx and ModelProfileSave2.test.tsx, whose helpers this file
 // repeats (a test file imports no other test file). 409, 404, 403, 503, 504,
 // the guard's keys and the session (145 to 149, 2h.3) are not here.
 import {
@@ -21,7 +21,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -29,9 +29,9 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const POOLING = en('preset-pooling')
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const POOLING = en('model-profile-pooling')
 
 beforeEach(() => {
   startAt(HASH)
@@ -43,16 +43,17 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave2.test.tsx) ───────────────────────────────────
+// ── Helpers (as ModelProfileSave2.test.tsx) ───────────────────────────────────
 
 /** The loaded page with revision `r1`, `values`, and `answer` for the save. */
 function form(
   values: Record<string, string>,
-  answer?: BffOptions['presetSave'],
+  answer?: BffOptions['modelProfileSave'],
 ) {
   const bff = fakeBff({
-    preset: () => reply(200, presetDoc({}, { revision: 'r1', values })),
-    presetSave: answer,
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values })),
+    modelProfileSave: answer,
   })
   render(<App />)
   const main = screen.getByRole('main')
@@ -62,13 +63,13 @@ function form(
 /** Waits for the loaded page, then makes it dirty (Embedding mode off). */
 async function loaded(
   values: Record<string, string>,
-  answer?: BffOptions['presetSave'],
+  answer?: BffOptions['modelProfileSave'],
 ) {
   const { bff, main } = form(values, answer)
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -130,7 +131,7 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the PUT of this preset. */
+/** Clicks Save changes and waits for the PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(1))
@@ -140,7 +141,7 @@ async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -299,7 +300,7 @@ const TABLE_150: [
       args: ['n-gpu-layers', '-5', '0', '1024'],
     },
     'text',
-    en('preset-gpu-layers'),
+    en('model-profile-gpu-layers'),
     // 2h.7's 175 made GPU layers editable and the read has its key, so the
     // input is enabled and takes the focus (144).
     true,
@@ -309,7 +310,7 @@ const TABLE_150: [
     'comment-markers: args[0]',
     { key: 'comment-markers', args: ['chat-template-kwargs'] },
     'text',
-    en('preset-chat-kwargs'),
+    en('model-profile-chat-kwargs'),
     true,
     '',
   ],
@@ -317,17 +318,17 @@ const TABLE_150: [
     'not-a-number: args[0]',
     { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
     'text',
-    en('preset-moe-cpu-layers'),
+    en('model-profile-moe-cpu-layers'),
     // 178: MoE CPU layers is never editable in 2h, so its control and its
     // default box are both disabled: 198a's where.
     false,
-    en('preset-hardware-config'),
+    en('model-profile-hardware-config'),
   ],
   [
     'not-json-object: args[0]',
     { key: 'not-json-object', args: ['chat-template-kwargs'] },
     'text',
-    en('preset-chat-kwargs'),
+    en('model-profile-chat-kwargs'),
     true,
     '',
   ],
@@ -338,7 +339,7 @@ const TABLE_150: [
       args: ['fit-ctx', '8192', 'ctx-size', '4096'],
     },
     'text',
-    en('preset-fit-min-context'),
+    en('model-profile-fit-min-context'),
     // 2h.8's 183 made Fit min context editable: the read's key leaves its box
     // unticked and 186 leaves the field enabled while Fit to VRAM reads
     // checked, so its input is enabled and takes the focus (144).
@@ -349,7 +350,7 @@ const TABLE_150: [
     'fit-target-format: fit-target',
     { key: 'fit-target-format', args: ['2048,x', 'use'] },
     'text',
-    en('preset-fit-free-vram'),
+    en('model-profile-fit-free-vram'),
     // 2h.8's 183 made Fit free VRAM editable and 186 leaves it enabled while
     // Fit to VRAM reads checked, which it does with no `fit` in the read
     // (2h.127), so its input is enabled and takes the focus.
@@ -360,17 +361,17 @@ const TABLE_150: [
     'moe-cache-with-tensor-split: moe-cache-mib',
     { key: 'moe-cache-with-tensor-split', args: [] },
     'text',
-    en('preset-moe-cache'),
+    en('model-profile-moe-cache'),
     // 178, as the row above, and 198a's own example: the manager refuses the
     // whole file on it (Split mode is not on the page in 2h).
     false,
-    en('preset-hardware-config'),
+    en('model-profile-hardware-config'),
   ],
   [
     'load-on-startup-over-max: load-on-startup',
     { key: 'load-on-startup-over-max', args: ['3', '2'] },
     'select',
-    en('preset-load-on-startup'),
+    en('model-profile-load-on-startup'),
     true,
     '',
   ],
@@ -378,7 +379,7 @@ const TABLE_150: [
     'load-on-startup-unlimited: load-on-startup',
     { key: 'load-on-startup-unlimited', args: ['2'] },
     'select',
-    en('preset-load-on-startup'),
+    en('model-profile-load-on-startup'),
     true,
     '',
   ],
@@ -389,7 +390,7 @@ const TABLE_150: [
       args: ['pooling', 'weird', 'default, none, mean'],
     },
     'select',
-    en('preset-pooling'),
+    en('model-profile-pooling'),
     true,
     '',
   ],
@@ -433,14 +434,23 @@ it.each(TABLE_150)(
 /** 143: one test per row: the field of the refusal is not a control of this
  * page, or there is none, so only the bar's alert answers. */
 const TABLE_143: [string, Record<string, unknown>][] = [
-  ['preset-no-model (Assets)', { key: 'preset-no-model', args: [ID] }],
+  [
+    'model-profile-no-model (Assets)',
+    { key: 'model-profile-no-model', args: [ID] },
+  ],
   ['override-no-pattern (2j)', { key: 'override-no-pattern', args: ['0'] }],
   [
     'override-no-device (2j)',
     { key: 'override-no-device', args: ['0', 'ffn.*'] },
   ],
-  ['invalid-preset-id', { key: 'invalid-preset-id', args: ['Bad name!'] }],
-  ['preset-name-taken', { key: 'preset-name-taken', args: ['Qwen3-32B'] }],
+  [
+    'invalid-model-profile-id',
+    { key: 'invalid-model-profile-id', args: ['Bad name!'] },
+  ],
+  [
+    'model-profile-name-taken',
+    { key: 'model-profile-name-taken', args: ['Qwen3-32B'] },
+  ],
   [
     'a key 2h shows nowhere',
     {
@@ -530,7 +540,7 @@ test('2h.144 (2h.6 170, 2h.10 198a): not-one-of on Reasoning effort, an editable
   await save(main, bff)
   const text = en('api-not-one-of', ...ARGS)
   await within(main).findByText(en('save-refused', text))
-  const effort = selectOf(main, en('preset-reasoning-effort'))
+  const effort = selectOf(main, en('model-profile-reasoning-effort'))
   // 170: the Chat / reasoning card is editable, so 142 applies: the marked
   // control is enabled and takes the focus.
   expect(effort.disabled, 'the Reasoning effort select is enabled').toBe(false)
@@ -555,11 +565,11 @@ test('2h.144 (2h.6 170, 2h.10 198a): not-one-of on Reasoning effort, an editable
   const at2 = en(
     'save-refused-at',
     text2,
-    en('preset-unified-kv'),
-    en('preset-resource-context'),
+    en('model-profile-unified-kv'),
+    en('model-profile-resource-context'),
   )
   await within(second.main).findByText(at2)
-  const unified = selectOf(second.main, en('preset-unified-kv'))
+  const unified = selectOf(second.main, en('model-profile-unified-kv'))
   expect(unified.disabled, 'the Unified KV select is disabled').toBe(true)
   expectError(unified, text2, 'Unified KV (disabled)')
   expectAlert(second.main, at2, 'the disabled Unified KV field (198a)')

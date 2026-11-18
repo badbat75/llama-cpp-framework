@@ -1,6 +1,6 @@
-// The preset page's cards in the page order of criterion 83
-// (fe/briefs/02e-preset-cards.md): each card's h3 strings key, then its
-// fields' labels in order. Every whole-page assertion of the preset page's
+// The model profile page's cards in the page order of criterion 83
+// (fe/briefs/02e-model-profile-cards.md): each card's h3 strings key, then its
+// fields' labels in order. Every whole-page assertion of the model profile page's
 // tests (the h3 list, the About toggles, the tab path, the heading levels)
 // derives from this one list: a sub-slice that adds cards adds them here, at
 // the place 83 gives them, and nowhere else.
@@ -58,153 +58,165 @@ function boxedKeyOf(field: Field): string | undefined {
  * 73) has no About toggle and adds no tab stop. */
 export type Card = { heading: string; fields: Field[] }
 
-export const PRESET_CARDS: Card[] = [
-  { heading: 'preset-assets', fields: [] },
+export const MODEL_PROFILE_CARDS: Card[] = [
+  { heading: 'model-profile-assets', fields: [] },
   {
-    heading: 'preset-hardware-config',
+    heading: 'model-profile-hardware-config',
     fields: [
-      'preset-gpu-layers',
-      'preset-moe-cpu-layers',
-      'preset-moe-cache',
-      'preset-dense-ffn-cpu-layers',
-      'preset-op-offload',
-      'preset-repack',
-      'preset-no-host-buffer',
-      'preset-lazy-tensors',
-      'preset-load-mode',
-      'preset-fit-to-vram',
-      'preset-fit-min-context',
-      'preset-fit-free-vram',
-      'preset-draft-device',
-      'preset-draft-gpu-layers',
+      'model-profile-gpu-layers',
+      'model-profile-moe-cpu-layers',
+      'model-profile-moe-cache',
+      'model-profile-dense-ffn-cpu-layers',
+      'model-profile-op-offload',
+      'model-profile-repack',
+      'model-profile-no-host-buffer',
+      'model-profile-lazy-tensors',
+      'model-profile-load-mode',
+      'model-profile-fit-to-vram',
+      'model-profile-fit-min-context',
+      'model-profile-fit-free-vram',
+      'model-profile-draft-device',
+      'model-profile-draft-gpu-layers',
     ],
   },
   {
-    heading: 'preset-resource-context',
+    heading: 'model-profile-resource-context',
     fields: [
-      'preset-context-size',
-      'preset-parallel-slots',
-      'preset-unified-kv',
-      'preset-per-slot-context',
-      'preset-batch-size',
-      'preset-u-batch-size',
+      'model-profile-context-size',
+      'model-profile-parallel-slots',
+      'model-profile-unified-kv',
+      'model-profile-per-slot-context',
+      'model-profile-batch-size',
+      'model-profile-u-batch-size',
     ],
   },
   {
-    heading: 'preset-embeddings',
-    fields: ['preset-embedding-mode', 'preset-pooling'],
+    heading: 'model-profile-embeddings',
+    fields: ['model-profile-embedding-mode', 'model-profile-pooling'],
   },
   {
-    heading: 'preset-kv-cache',
+    heading: 'model-profile-kv-cache',
     fields: [
-      'preset-k-cache-type',
-      'preset-v-cache-type',
-      'preset-flash-attention',
-      'preset-cache-ram',
-      'preset-cache-reuse',
-      'preset-context-checkpoints',
-      'preset-checkpoint-step',
+      'model-profile-k-cache-type',
+      'model-profile-v-cache-type',
+      'model-profile-flash-attention',
+      'model-profile-cache-ram',
+      'model-profile-cache-reuse',
+      'model-profile-context-checkpoints',
+      'model-profile-checkpoint-step',
     ],
   },
   {
-    heading: 'preset-chat-reasoning',
+    heading: 'model-profile-chat-reasoning',
     fields: [
-      'preset-chat-template',
-      'preset-prefill-assistant',
-      'preset-reasoning',
-      'preset-reasoning-format',
-      'preset-reasoning-effort',
-      'preset-keep-past-thinking',
-      'preset-thinking-budget',
-      'preset-budget-message',
-      'preset-max-output',
+      'model-profile-chat-template',
+      'model-profile-prefill-assistant',
+      'model-profile-reasoning',
+      'model-profile-reasoning-format',
+      'model-profile-reasoning-effort',
+      'model-profile-keep-past-thinking',
+      'model-profile-thinking-budget',
+      'model-profile-budget-message',
+      'model-profile-max-output',
     ],
   },
   {
-    heading: 'preset-sampling-overrides',
+    heading: 'model-profile-sampling-overrides',
     fields: [
-      'preset-temperature',
+      'model-profile-temperature',
       shown('Top-K'),
       shown('Top-P'),
       shown('Min-P'),
-      'preset-repeat-penalty',
-      'preset-presence-penalty',
-      'preset-backend-sampling',
+      'model-profile-repeat-penalty',
+      'model-profile-presence-penalty',
+      'model-profile-backend-sampling',
     ],
   },
   {
-    heading: 'preset-advanced',
-    fields: ['preset-load-on-startup', 'preset-chat-kwargs'],
+    heading: 'model-profile-advanced',
+    fields: ['model-profile-load-on-startup', 'model-profile-chat-kwargs'],
   },
   {
-    heading: 'preset-vision',
+    heading: 'model-profile-vision',
     fields: [
-      'preset-vision-on-gpu',
-      'preset-vision-gpu',
-      'preset-min-image-tokens',
-      'preset-max-image-tokens',
+      'model-profile-vision-on-gpu',
+      'model-profile-vision-gpu',
+      'model-profile-min-image-tokens',
+      'model-profile-max-image-tokens',
     ],
   },
   {
-    heading: 'preset-speculative-decoding',
+    heading: 'model-profile-speculative-decoding',
     fields: [
-      { label: 'preset-draft-n-max', key: 'spec-draft-n-max', boxed: true },
-      { label: 'preset-draft-p-min', key: 'spec-draft-p-min', boxed: true },
-      { label: 'preset-draft-n-min', key: 'spec-draft-n-min', boxed: true },
       {
-        label: 'preset-draft-n-ubatch',
+        label: 'model-profile-draft-n-max',
+        key: 'spec-draft-n-max',
+        boxed: true,
+      },
+      {
+        label: 'model-profile-draft-p-min',
+        key: 'spec-draft-p-min',
+        boxed: true,
+      },
+      {
+        label: 'model-profile-draft-n-min',
+        key: 'spec-draft-n-min',
+        boxed: true,
+      },
+      {
+        label: 'model-profile-draft-n-ubatch',
         key: 'spec-draft-n-ubatch',
         boxed: true,
       },
-      { label: 'preset-draft-k-cache-type', key: 'spec-draft-type-k' },
-      { label: 'preset-draft-v-cache-type', key: 'spec-draft-type-v' },
+      { label: 'model-profile-draft-k-cache-type', key: 'spec-draft-type-k' },
+      { label: 'model-profile-draft-v-cache-type', key: 'spec-draft-type-v' },
       {
-        label: 'preset-match-length',
+        label: 'model-profile-match-length',
         key: 'spec-ngram-mod-n-match',
         boxed: true,
       },
       {
-        label: 'preset-min-draft',
+        label: 'model-profile-min-draft',
         key: 'spec-ngram-mod-n-min',
         boxed: true,
       },
       {
-        label: 'preset-max-draft',
+        label: 'model-profile-max-draft',
         key: 'spec-ngram-mod-n-max',
         boxed: true,
       },
       {
-        label: 'preset-lookup-n-gram',
+        label: 'model-profile-lookup-n-gram',
         key: 'spec-ngram-simple-size-n',
         boxed: true,
       },
       {
-        label: 'preset-draft-m-gram',
+        label: 'model-profile-draft-m-gram',
         key: 'spec-ngram-simple-size-m',
         boxed: true,
       },
       {
-        label: 'preset-lookup-n-gram',
+        label: 'model-profile-lookup-n-gram',
         key: 'spec-ngram-map-k-size-n',
         boxed: true,
       },
       {
-        label: 'preset-draft-m-gram',
+        label: 'model-profile-draft-m-gram',
         key: 'spec-ngram-map-k-size-m',
         boxed: true,
       },
       {
-        label: 'preset-lookup-n-gram',
+        label: 'model-profile-lookup-n-gram',
         key: 'spec-ngram-map-k4v-size-n',
         boxed: true,
       },
       {
-        label: 'preset-draft-m-gram',
+        label: 'model-profile-draft-m-gram',
         key: 'spec-ngram-map-k4v-size-m',
         boxed: true,
       },
       {
-        label: 'preset-min-hits',
+        label: 'model-profile-min-hits',
         key: 'spec-ngram-map-k4v-min-hits',
         boxed: true,
       },
@@ -214,12 +226,12 @@ export const PRESET_CARDS: Card[] = [
 
 /** The text of every card's h3, in page order (83). */
 export function cardHeadings(): string[] {
-  return PRESET_CARDS.map((card) => en(card.heading))
+  return MODEL_PROFILE_CARDS.map((card) => en(card.heading))
 }
 
 /** The card headings as strings keys, for `cardOf`. */
 export function cardHeadingKeys(): string[] {
-  return PRESET_CARDS.map((card) => card.heading)
+  return MODEL_PROFILE_CARDS.map((card) => card.heading)
 }
 
 /** The integer keys that get NO input mode (2h.158): the any-whole-number
@@ -249,7 +261,7 @@ export function expectedInputMode(
 
 /** Every field's label, in card and field order (92, 93, 96, 97, 98). */
 export function fieldLabels(): string[] {
-  return PRESET_CARDS.flatMap((card) =>
+  return MODEL_PROFILE_CARDS.flatMap((card) =>
     card.fields.map((f) => labelText(fieldLabel(f))),
   )
 }
@@ -267,7 +279,7 @@ function fieldId(field: Label): string {
   return typeof field === 'string' ? field : field.shown
 }
 
-/** The fields the preset page makes editable: 2h.1's 130 (the Embeddings
+/** The fields the model profile page makes editable: 2h.1's 130 (the Embeddings
  * card's two controls), 2h.4's 155 (the Resource / context card's six),
  * 2h.5's 164 (the KV cache card's seven, all always enabled), 2h.5's 164
  * (the Sampling overrides card's seven, all always enabled) and 2h.5's 164
@@ -281,107 +293,107 @@ function fieldId(field: Label): string {
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
-  'preset-context-size',
-  'preset-parallel-slots',
-  'preset-unified-kv',
-  'preset-per-slot-context',
-  'preset-batch-size',
-  'preset-u-batch-size',
-  'preset-embedding-mode',
-  'preset-pooling',
-  'preset-k-cache-type',
-  'preset-v-cache-type',
-  'preset-flash-attention',
-  'preset-cache-ram',
-  'preset-cache-reuse',
-  'preset-context-checkpoints',
-  'preset-checkpoint-step',
-  'preset-temperature',
+  'model-profile-context-size',
+  'model-profile-parallel-slots',
+  'model-profile-unified-kv',
+  'model-profile-per-slot-context',
+  'model-profile-batch-size',
+  'model-profile-u-batch-size',
+  'model-profile-embedding-mode',
+  'model-profile-pooling',
+  'model-profile-k-cache-type',
+  'model-profile-v-cache-type',
+  'model-profile-flash-attention',
+  'model-profile-cache-ram',
+  'model-profile-cache-reuse',
+  'model-profile-context-checkpoints',
+  'model-profile-checkpoint-step',
+  'model-profile-temperature',
   shown('Top-K'),
   shown('Top-P'),
   shown('Min-P'),
-  'preset-repeat-penalty',
-  'preset-presence-penalty',
-  'preset-backend-sampling',
-  'preset-load-on-startup',
-  'preset-chat-kwargs',
-  'preset-chat-template',
-  'preset-prefill-assistant',
-  'preset-reasoning',
-  'preset-reasoning-format',
-  'preset-reasoning-effort',
-  'preset-keep-past-thinking',
-  'preset-thinking-budget',
-  'preset-budget-message',
-  'preset-max-output',
-  'preset-vision-on-gpu',
-  'preset-vision-gpu',
-  'preset-min-image-tokens',
-  'preset-max-image-tokens',
-  'preset-gpu-layers',
-  'preset-dense-ffn-cpu-layers',
-  'preset-op-offload',
-  'preset-repack',
-  'preset-no-host-buffer',
-  'preset-lazy-tensors',
-  'preset-load-mode',
-  'preset-fit-to-vram',
-  'preset-fit-min-context',
-  'preset-fit-free-vram',
-  'preset-draft-device',
-  'preset-draft-gpu-layers',
+  'model-profile-repeat-penalty',
+  'model-profile-presence-penalty',
+  'model-profile-backend-sampling',
+  'model-profile-load-on-startup',
+  'model-profile-chat-kwargs',
+  'model-profile-chat-template',
+  'model-profile-prefill-assistant',
+  'model-profile-reasoning',
+  'model-profile-reasoning-format',
+  'model-profile-reasoning-effort',
+  'model-profile-keep-past-thinking',
+  'model-profile-thinking-budget',
+  'model-profile-budget-message',
+  'model-profile-max-output',
+  'model-profile-vision-on-gpu',
+  'model-profile-vision-gpu',
+  'model-profile-min-image-tokens',
+  'model-profile-max-image-tokens',
+  'model-profile-gpu-layers',
+  'model-profile-dense-ffn-cpu-layers',
+  'model-profile-op-offload',
+  'model-profile-repack',
+  'model-profile-no-host-buffer',
+  'model-profile-lazy-tensors',
+  'model-profile-load-mode',
+  'model-profile-fit-to-vram',
+  'model-profile-fit-min-context',
+  'model-profile-fit-free-vram',
+  'model-profile-draft-device',
+  'model-profile-draft-gpu-layers',
   // 2h.9's 189 to 191: the Speculative decoding card's sixteen fields, each
   // enabled by its group's rule (190, 191).
-  'preset-draft-n-max',
-  'preset-draft-p-min',
-  'preset-draft-n-min',
-  'preset-draft-n-ubatch',
-  'preset-draft-k-cache-type',
-  'preset-draft-v-cache-type',
-  'preset-match-length',
-  'preset-min-draft',
-  'preset-max-draft',
-  'preset-lookup-n-gram',
-  'preset-draft-m-gram',
-  'preset-min-hits',
+  'model-profile-draft-n-max',
+  'model-profile-draft-p-min',
+  'model-profile-draft-n-min',
+  'model-profile-draft-n-ubatch',
+  'model-profile-draft-k-cache-type',
+  'model-profile-draft-v-cache-type',
+  'model-profile-match-length',
+  'model-profile-min-draft',
+  'model-profile-max-draft',
+  'model-profile-lookup-n-gram',
+  'model-profile-draft-m-gram',
+  'model-profile-min-hits',
 ]
 
 /** The editable fields whose control sits behind a default box (2h.156): the
  * field identity mapped to the key in the read's `values`. A key the file lacks
  * starts its box ticked, and a ticked box disables and empties the input. */
 const BOXED_FIELDS: Record<string, string> = {
-  'preset-context-size': 'ctx-size',
-  'preset-parallel-slots': 'parallel',
-  'preset-per-slot-context': 'kv-unified-per-slot',
-  'preset-batch-size': 'batch-size',
-  'preset-u-batch-size': 'ubatch-size',
-  'preset-cache-ram': 'cache-ram',
-  'preset-cache-reuse': 'cache-reuse',
-  'preset-context-checkpoints': 'ctx-checkpoints',
-  'preset-checkpoint-step': 'checkpoint-min-step',
-  'preset-temperature': 'temp',
+  'model-profile-context-size': 'ctx-size',
+  'model-profile-parallel-slots': 'parallel',
+  'model-profile-per-slot-context': 'kv-unified-per-slot',
+  'model-profile-batch-size': 'batch-size',
+  'model-profile-u-batch-size': 'ubatch-size',
+  'model-profile-cache-ram': 'cache-ram',
+  'model-profile-cache-reuse': 'cache-reuse',
+  'model-profile-context-checkpoints': 'ctx-checkpoints',
+  'model-profile-checkpoint-step': 'checkpoint-min-step',
+  'model-profile-temperature': 'temp',
   'Top-K': 'top-k',
   'Top-P': 'top-p',
   'Min-P': 'min-p',
-  'preset-repeat-penalty': 'repeat-penalty',
-  'preset-presence-penalty': 'presence-penalty',
-  'preset-thinking-budget': 'reasoning-budget',
-  'preset-max-output': 'n-predict',
-  'preset-min-image-tokens': 'image-min-tokens',
-  'preset-max-image-tokens': 'image-max-tokens',
-  'preset-gpu-layers': 'n-gpu-layers',
-  'preset-dense-ffn-cpu-layers': 'n-cpu-ffn',
-  'preset-fit-min-context': 'fit-ctx',
-  'preset-draft-gpu-layers': 'n-gpu-layers-draft',
+  'model-profile-repeat-penalty': 'repeat-penalty',
+  'model-profile-presence-penalty': 'presence-penalty',
+  'model-profile-thinking-budget': 'reasoning-budget',
+  'model-profile-max-output': 'n-predict',
+  'model-profile-min-image-tokens': 'image-min-tokens',
+  'model-profile-max-image-tokens': 'image-max-tokens',
+  'model-profile-gpu-layers': 'n-gpu-layers',
+  'model-profile-dense-ffn-cpu-layers': 'n-cpu-ffn',
+  'model-profile-fit-min-context': 'fit-ctx',
+  'model-profile-draft-gpu-layers': 'n-gpu-layers-draft',
 }
 
 /** The editable fields whose control is a checkbox: the label's strings key
  * mapped to the strings key of the toggle text that names the control (2e's
  * 87: a checkbox's accessible name is its own text, not the field's label). */
 const CHECKBOX_TOGGLES: Record<string, string> = {
-  'preset-chat-template': 'preset-chat-template-toggle',
-  'preset-prefill-assistant': 'preset-prefill-assistant-toggle',
-  'preset-vision-on-gpu': 'preset-vision-offload-toggle',
+  'model-profile-chat-template': 'model-profile-chat-template-toggle',
+  'model-profile-prefill-assistant': 'model-profile-prefill-assistant-toggle',
+  'model-profile-vision-on-gpu': 'model-profile-vision-offload-toggle',
 }
 
 /** One field's enable rule: `present` keys must be in the read's `values`
@@ -398,17 +410,20 @@ type Rule = { present: string[]; checked?: string }
  * free VRAM are enabled while the Fit to VRAM box reads checked at load
  * (2h.8's 186). */
 const ENABLE_RULE: Record<string, Rule> = {
-  'preset-unified-kv': { present: ['parallel'] },
-  'preset-vision-on-gpu': { present: ['mmproj'] },
-  'preset-vision-gpu': { present: ['mmproj'], checked: 'mmproj-offload' },
-  'preset-min-image-tokens': { present: ['mmproj'] },
-  'preset-max-image-tokens': { present: ['mmproj'] },
-  'preset-draft-device': { present: ['model-draft'] },
-  'preset-draft-gpu-layers': { present: ['model-draft'] },
+  'model-profile-unified-kv': { present: ['parallel'] },
+  'model-profile-vision-on-gpu': { present: ['mmproj'] },
+  'model-profile-vision-gpu': {
+    present: ['mmproj'],
+    checked: 'mmproj-offload',
+  },
+  'model-profile-min-image-tokens': { present: ['mmproj'] },
+  'model-profile-max-image-tokens': { present: ['mmproj'] },
+  'model-profile-draft-device': { present: ['model-draft'] },
+  'model-profile-draft-gpu-layers': { present: ['model-draft'] },
   // 2h.8's 186: both Fit dependents are enabled only while the Fit to VRAM
   // box is checked, which is the load state below and the user's clicks.
-  'preset-fit-min-context': { present: [], checked: 'fit' },
-  'preset-fit-free-vram': { present: [], checked: 'fit' },
+  'model-profile-fit-min-context': { present: [], checked: 'fit' },
+  'model-profile-fit-free-vram': { present: [], checked: 'fit' },
 }
 
 /** The flag spellings 2e.3c's 127 reads as on for `fit` (`common/arg.cpp`
@@ -437,11 +452,11 @@ function keySet(values: Record<string, string>, key: string): boolean {
 export function fitToggleKey(values: Record<string, string>): string {
   const ctx = keySet(values, 'ctx-size')
   const layers = keySet(values, 'n-gpu-layers')
-  if (!ctx && !layers) return 'preset-fit-allowed'
-  if (!fitCheckedAtLoad(values)) return 'preset-fit-not-allowed'
-  if (ctx && layers) return 'preset-fit-nothing'
-  if (ctx) return 'preset-fit-layers-only'
-  return 'preset-fit-context-only'
+  if (!ctx && !layers) return 'model-profile-fit-allowed'
+  if (!fitCheckedAtLoad(values)) return 'model-profile-fit-not-allowed'
+  if (ctx && layers) return 'model-profile-fit-nothing'
+  if (ctx) return 'model-profile-fit-layers-only'
+  return 'model-profile-fit-context-only'
 }
 
 /** The toggle text that names the Fit to VRAM checkbox (2h.8's 184), from
@@ -543,11 +558,11 @@ export function controlEnabled(
  * field's default box, named by the box's own text and only while the field's
  * enable rule leaves the box enabled (176), and its input while the box is
  * unticked; a checkbox, named by its toggle text (87). The whole-page tab path
- * of every preset page test is this list, read with the values of its
+ * of every model profile page test is this list, read with the values of its
  * fixture. */
 export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
-  for (const card of PRESET_CARDS)
+  for (const card of MODEL_PROFILE_CARDS)
     for (const field of card.fields) {
       const label = labelText(fieldLabel(field))
       stops.push(`${en('field-about')} ${label}`)
@@ -556,7 +571,7 @@ export function fieldTabStops(values: Record<string, string>): string[] {
         if (isEditableField(field) && ruleHolds(field, values))
           stops.push(en('field-default'))
       if (!controlEnabled(field, values)) continue
-      if (fieldId(fieldLabel(field)) === 'preset-fit-to-vram') {
+      if (fieldId(fieldLabel(field)) === 'model-profile-fit-to-vram') {
         stops.push(fitToggleText(values))
         continue
       }
@@ -571,7 +586,7 @@ export function fieldTabStops(values: Record<string, string>): string[] {
  * page order, each named by its card's title (196). The card h3s are not tab
  * stops: only a jump button gives one the focus. */
 export function pageStartTabStops(): string[] {
-  return [en('preset-back'), ...cardHeadings()]
+  return [en('model-profile-back'), ...cardHeadings()]
 }
 
 /** The save bar's two buttons, at the end of the page (2h.1's 141). */

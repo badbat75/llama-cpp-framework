@@ -1,9 +1,9 @@
-// The end of sub-slice 2h.10 of fe/briefs/02h-preset-save.md (194, 195, 196,
-// 197, 198, 198a): the read-only Notice `preset-partly-editable` is gone from
+// The end of sub-slice 2h.10 of fe/briefs/02h-model-profile-save.md (194, 195, 196,
+// 197, 198, 198a): the read-only Notice `model-profile-partly-editable` is gone from
 // the page and from the strings file while the controls 194 lists as greyed
 // out stay disabled; the Assets card's intro paragraph
-// `preset-assets-read-only` right after its h3; the section jump `<nav>` named
-// `preset-jump-label` between the h2 and the Engine field, a `ul` of
+// `model-profile-assets-read-only` right after its h3; the section jump `<nav>` named
+// `model-profile-jump-label` between the h2 and the Engine field, a `ul` of
 // buttons named by the card titles, moving focus to a card's h3
 // (`tabindex="-1"`, not a tab stop) and scrolling it into view with no hash
 // change and no discard dialog while dirty; the tab order of the page's start;
@@ -11,8 +11,8 @@
 // are both disabled reads `save-refused-at` with the check text, the field's
 // label and its card's title, while every other refusal keeps `save-refused`
 // (143, 144). The cards, their fields and the reading of a value are 2e's, in
-// PresetCards*.test.tsx; the helpers are those of PresetSave14 and
-// PresetSave15.test.tsx, which this file repeats (a test file imports no other
+// ModelProfileCards*.test.tsx; the helpers are those of ModelProfileSave14 and
+// ModelProfileSave15.test.tsx, which this file repeats (a test file imports no other
 // test file).
 import {
   cleanup,
@@ -30,32 +30,32 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
   type BffOptions,
 } from './test/bff.ts'
-import { cardHeadings } from './test/presetCards.ts'
+import { cardHeadings } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const ENGINE = en('preset-engine')
+const PUT = `/api/profiles/model/${ID}`
+const ENGINE = en('model-profile-engine')
 /** 196: the cards in page order; the jump buttons take their titles. */
 const TITLES = cardHeadings()
 const ASSETS = TITLES[0]!
-const KV = en('preset-kv-cache')
+const KV = en('model-profile-kv-cache')
 const SPEC = TITLES[TITLES.length - 1]!
 /** 198: the strings as the brief words them, as a literal. */
-const JUMP_LABEL = 'Preset sections.'
+const JUMP_LABEL = 'Model profile sections.'
 const ASSETS_INTRO =
-  'The files, Project URL and drafters of a preset cannot be changed here yet. Change them in pai-config on the server machine.'
+  'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.'
 const REFUSED_AT = 'Not saved: {0}. The field is {1}, on the card {2}.'
 /** 198's change (193): the draft group's line names the Assets row as the page
  * labels it, "Draft model". */
 const DRAFT_OFF =
-  'Used only with a draft: a Draft model or a Drafter, and this preset has neither (Assets).'
+  'Used only with a draft: a Draft model or a Drafter, and this model profile has neither (Assets).'
 /** 194: the Notice's text, out of the page and out of the strings file. */
 const NOTICE =
   'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.'
@@ -98,7 +98,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave14 and PresetSave15.test.tsx) ────────────────
+// ── Helpers (as ModelProfileSave14 and ModelProfileSave15.test.tsx) ────────────────
 
 /** Waits for the page read with revision `r1` and the values `values`. */
 async function form(
@@ -106,8 +106,11 @@ async function form(
   options: BffOptions = {},
 ) {
   const bff = fakeBff({
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
     ...options,
   })
   render(<App />)
@@ -132,7 +135,9 @@ function cardOf(main: HTMLElement, title: string): HTMLElement {
 
 /** The jump nav, found by its name (196). */
 function navOf(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('navigation', { name: en('preset-jump-label') })
+  return within(main).getByRole('navigation', {
+    name: en('model-profile-jump-label'),
+  })
 }
 
 /** The jump buttons, in the nav's order. */
@@ -147,16 +152,16 @@ function engineSelect(main: HTMLElement): HTMLSelectElement {
   }) as HTMLSelectElement
 }
 
-/** A field's control by the key of its row: `preset-<key>-control`. */
+/** A field's control by the key of its row: `model-profile-<key>-control`. */
 function control(key: string): HTMLInputElement | HTMLSelectElement {
-  const el = document.getElementById(`preset-${key}-control`)
+  const el = document.getElementById(`model-profile-${key}-control`)
   expect(el, `the control of ${key}`).not.toBeNull()
   return el as HTMLInputElement | HTMLSelectElement
 }
 
 /** A number field's default box. */
 function boxOf(key: string): HTMLInputElement {
-  const el = document.getElementById(`preset-${key}-box`)
+  const el = document.getElementById(`model-profile-${key}-box`)
   expect(el, `the default box of ${key}`).not.toBeNull()
   return el as HTMLInputElement
 }
@@ -188,7 +193,7 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the PUT of this preset. */
+/** Clicks Save changes and waits for the PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(1))
@@ -198,7 +203,7 @@ async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -281,7 +286,7 @@ function nameOf(el: HTMLElement): string {
 
 // ── 194: the Notice goes, and nothing new is enabled ──────────────────
 
-test('2h.194: the paragraph preset-partly-editable is gone from the page, and no read-only sentence of 2e is shown', async () => {
+test('2h.194: the paragraph model-profile-partly-editable is gone from the page, and no read-only sentence of 2e is shown', async () => {
   const { main } = await form()
   expect(
     within(main).queryByText(NOTICE),
@@ -291,10 +296,11 @@ test('2h.194: the paragraph preset-partly-editable is gone from the page, and no
     within(main).queryByText(/greyed out/),
     '194: no sentence about greyed-out controls',
   ).toBeNull()
-  // `preset-read-only` went in 2h.1: the key shows as itself, so no text of it.
-  expect(t('preset-read-only'), 'preset-read-only is out of the strings').toBe(
-    'preset-read-only',
-  )
+  // `model-profile-read-only` went in 2h.1: the key shows as itself, so no text of it.
+  expect(
+    t('model-profile-read-only'),
+    'model-profile-read-only is out of the strings',
+  ).toBe('model-profile-read-only')
 })
 
 test('2h.194: this sub-slice enables nothing new: every control 194 lists as greyed out is disabled on a read that locks it, and a ticked default box still disables its input', async () => {
@@ -334,7 +340,7 @@ test('2h.194: this sub-slice enables nothing new: every control 194 lists as gre
 
 // ── 195: the Assets card says why it is text ──────────────────────────
 
-test('2h.195: the Assets card intro preset-assets-read-only is the first thing after its h3, before the list, and names the files, the Project URL and the drafters', async () => {
+test('2h.195: the Assets card intro model-profile-assets-read-only is the first thing after its h3, before the list, and names the files, the Project URL and the drafters', async () => {
   const { main } = await form()
   const card = cardOf(main, ASSETS)
   const h3 = headingOf(main, ASSETS)
@@ -342,7 +348,7 @@ test('2h.195: the Assets card intro preset-assets-read-only is the first thing a
   expect(paras.length, 'the card has one paragraph (D5.2)').toBe(1)
   const intro = paras[0]!
   expect(intro.textContent, 'the intro of 195').toBe(
-    en('preset-assets-read-only'),
+    en('model-profile-assets-read-only'),
   )
   expect(isHidden(intro), 'the intro is shown').toBe(false)
   expect(before(h3, intro), 'the intro follows the h3').toBe(true)
@@ -353,12 +359,12 @@ test('2h.195: the Assets card intro preset-assets-read-only is the first thing a
 
 // ── 196: the section jump list ────────────────────────────────────────
 
-test('2h.196: the jump nav named preset-jump-label sits between the h2 and the Engine field, and is a ul of ten buttons named by the ten card titles in card order, no link', async () => {
+test('2h.196: the jump nav named model-profile-jump-label sits between the h2 and the Engine field, and is a ul of ten buttons named by the ten card titles in card order, no link', async () => {
   const { main } = await form()
   const nav = navOf(main)
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   expect(nav.tagName, '196: a nav element').toBe('NAV')
   expect(before(h2, nav), 'the nav follows the h2').toBe(true)
@@ -431,8 +437,8 @@ test('2h.196: a dirty form built from a select, a checkbox and a number on three
   // on them are the ones that catch it: the boxed number alone (the test
   // above) cannot, its value is not in the draft.
   const { main } = await form()
-  const pooling = en('preset-pooling')
-  const jinja = en('preset-chat-template-toggle')
+  const pooling = en('model-profile-pooling')
+  const jinja = en('model-profile-chat-template-toggle')
   // A select on the Embeddings card, a checkbox on the Chat / reasoning card,
   // a boxed number on the Resource / context card: three different cards.
   pick(main, pooling, 'cls')
@@ -488,7 +494,7 @@ test('2h.197: Tab from the top reaches the back link, then the ten jump buttons 
     tabbed.slice(0, TITLES.length + 3),
     '197: back, the ten jumps in card order, the Engine About toggle and the Engine select',
   ).toEqual([
-    en('preset-back'),
+    en('model-profile-back'),
     ...TITLES,
     `${en('field-about')} ${ENGINE}`,
     ENGINE,
@@ -497,31 +503,41 @@ test('2h.197: Tab from the top reaches the back link, then the ten jump buttons 
 
 // ── 198: the strings, and the changed one ─────────────────────────────
 
-test('2h.198: the two new strings and the changed preset-draft-group-off are the brief English in the test table and in the fe strings file, and preset-partly-editable is out of it', () => {
-  expect(en('preset-jump-label'), '196, 198: the nav name').toBe(JUMP_LABEL)
-  expect(t('preset-jump-label'), '198: in the fe strings file').toBe(JUMP_LABEL)
-  expect(en('preset-assets-read-only'), '195: the intro').toBe(ASSETS_INTRO)
-  expect(t('preset-assets-read-only'), '195: in the fe strings file').toBe(
+test('2h.198: the two new strings and the changed model-profile-draft-group-off are the brief English in the test table and in the fe strings file, and model-profile-partly-editable is out of it', () => {
+  expect(en('model-profile-jump-label'), '196, 198: the nav name').toBe(
+    JUMP_LABEL,
+  )
+  expect(t('model-profile-jump-label'), '198: in the fe strings file').toBe(
+    JUMP_LABEL,
+  )
+  expect(en('model-profile-assets-read-only'), '195: the intro').toBe(
     ASSETS_INTRO,
   )
+  expect(
+    t('model-profile-assets-read-only'),
+    '195: in the fe strings file',
+  ).toBe(ASSETS_INTRO)
   expect(en('save-refused-at'), '198a: the alert').toBe(REFUSED_AT)
   expect(t('save-refused-at'), '198a: in the fe strings file').toBe(REFUSED_AT)
-  expect(en('preset-draft-group-off'), '193 as revised in 198').toBe(DRAFT_OFF)
-  expect(t('preset-draft-group-off'), '198: in the fe strings file').toBe(
+  expect(en('model-profile-draft-group-off'), '193 as revised in 198').toBe(
     DRAFT_OFF,
   )
   expect(
-    t('preset-partly-editable'),
+    t('model-profile-draft-group-off'),
+    '198: in the fe strings file',
+  ).toBe(DRAFT_OFF)
+  expect(
+    t('model-profile-partly-editable'),
     '198: the removed Notice shows as itself',
-  ).toBe('preset-partly-editable')
+  ).toBe('model-profile-partly-editable')
 })
 
 test('2h.198: the page shows the new strings: the nav name, the Assets intro, and the draft group line naming the Draft model row', async () => {
   const { main } = await form()
   expect(
     navOf(main).getAttribute('aria-label'),
-    'the nav is named by preset-jump-label',
-  ).toBe(en('preset-jump-label'))
+    'the nav is named by model-profile-jump-label',
+  ).toBe(en('model-profile-jump-label'))
   expect(
     within(main).getByText(ASSETS_INTRO),
     'the Assets intro on the page',
@@ -540,7 +556,7 @@ async function refused(
   dirty: (main: HTMLElement) => void,
 ) {
   const { bff, main } = await form(BASE, {
-    presetSave: () => reply(422, body),
+    modelProfileSave: () => reply(422, body),
   })
   dirty(main)
   saveButton(main).focus()
@@ -560,8 +576,8 @@ test('2h.198a: a 422 naming moe-cache-mib, a settings field whose control and bo
   const at = en(
     'save-refused-at',
     MOE_SPLIT,
-    en('preset-moe-cache'),
-    en('preset-hardware-config'),
+    en('model-profile-moe-cache'),
+    en('model-profile-hardware-config'),
   )
   await within(main).findByText(at)
   expectAlert(main, at, '198a: where the field is')
@@ -584,7 +600,7 @@ test('2h.198a: a 422 naming pooling, a field that can take focus, keeps save-ref
     field: 'pooling',
   }
   const { main } = await refused(body, (main) =>
-    pick(main, en('preset-pooling'), 'rank'),
+    pick(main, en('model-profile-pooling'), 'rank'),
   )
   const text = en('api-not-one-of', ...body.args)
   await within(main).findByText(en('save-refused', text))
@@ -596,7 +612,7 @@ test('2h.198a: a 422 naming pooling, a field that can take focus, keeps save-ref
     '198a: no where for a field that can take focus',
   ).toBeNull()
   const pool = within(main).getByRole('combobox', {
-    name: en('preset-pooling'),
+    name: en('model-profile-pooling'),
   })
   expect(document.activeElement, '144: focus on the enabled control').toBe(pool)
   expectError(pool, text, 'Pooling (144)')
@@ -624,10 +640,10 @@ test('2h.198a: a 422 on a field whose default box is ticked keeps save-refused a
 
 test('2h.198a: a 422 naming an Assets key keeps save-refused, marks nothing and leaves the focus on Save changes (143)', async () => {
   const { main } = await refused(
-    { key: 'preset-no-model', args: [ID], field: 'model' },
+    { key: 'model-profile-no-model', args: [ID], field: 'model' },
     () => type(control('ctx-size'), '65536'),
   )
-  const text = en('api-preset-no-model', ID)
+  const text = en('api-model-profile-no-model', ID)
   await within(main).findByText(en('save-refused', text))
   expectAlert(main, en('save-refused', text), '143: the Assets key')
   const invalid = [...main.querySelectorAll('[aria-invalid="true"]')]

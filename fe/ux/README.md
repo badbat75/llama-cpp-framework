@@ -5,8 +5,8 @@ that starts, at 1280 and 320 px, in light and dark, reads each page with
 [axe-core](https://github.com/dequelabs/axe-core) (the `wcag2a`, `wcag2aa`,
 `wcag21aa`, `wcag22aa` tags) and compares `scrollWidth` with the viewport. The
 states: Overview signed out, the sign-in page, Overview signed in, the instance
-page with the Server form, the Models list, a preset page that is there, a
-preset page that is not. Each state names an `expect`: the selectors, with the
+page with the Server form, the Models list, a model profile page that is there, a
+model profile page that is not. Each state names an `expect`: the selectors, with the
 text they carry, only that state shows. The page is waited for up to 5 s, so a
 blank page, a page still loading, an error banner or the wrong route is reported
 as `not rendered` and not read as a clean page. Once per browser the check also
@@ -32,7 +32,7 @@ check uses the global `fetch`.
   API routes with fixed shapes (its states are set with `GET /__set?name=value`).
 - No screen reader: axe reads the DOM, it does not hear the page.
 - Pages at rest only: no click, no typing, no save, no focus walk, no busy,
-  error or long-request shape beyond the two preset answers.
+  error or long-request shape beyond the two model profile answers.
 - Not the layout's quality: the overflow check only says a page is wider than
   the viewport.
 
@@ -65,6 +65,6 @@ Add a line to `STATES` in `check.js`: the stub's `/__set` query, the hash route
 and the `expect` (the selectors, with their text, that only that state shows:
 `check.js` reads the words from `fe/src/strings/en_US.json`, the rest are the
 stub's data). A state whose marker never appears is `not rendered`. The stub's
-answers live in `stub.py` (`STATE` for the names it sets, `PRESETS`,
-`PRESET_DOC`, `SERVER_DOC` for the bodies); a route the pages read that
+answers live in `stub.py` (`STATE` for the names it sets, `MODEL_PROFILES`,
+`MODEL_PROFILE_DOC`, `SERVER_DOC` for the bodies); a route the pages read that
 `stub.py` does not answer goes there too.

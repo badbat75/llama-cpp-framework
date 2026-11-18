@@ -1,4 +1,4 @@
-// The second part of sub-slice 2h.5 of fe/briefs/02h-preset-save.md: the
+// The second part of sub-slice 2h.5 of fe/briefs/02h-model-profile-save.md: the
 // Sampling overrides card editable (164: every field of the card always
 // enabled, its six number fields behind the default box built in 2h.4), the
 // decimal check of its five float keys (165: the text trimmed and with `,` read
@@ -7,8 +7,8 @@
 // of the card (158: floats and the any-whole-number key get none) and the new
 // string (169: `field-error-decimal`). Advanced, the chat-kwargs JSON check
 // (166) and `spec-draft-p-min` (2h.9) are not here. The card's read-only look
-// is 2e's 97, in PresetCards2.test.tsx; the helpers are those of PresetSave6,
-// PresetSave7 and PresetSave8.test.tsx, which this file repeats (a test file
+// is 2e's 97, in ModelProfileCards2.test.tsx; the helpers are those of ModelProfileSave6,
+// ModelProfileSave7 and ModelProfileSave8.test.tsx, which this file repeats (a test file
 // imports no other test file).
 import {
   cleanup,
@@ -26,7 +26,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -35,15 +35,15 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const TEMP = en('preset-temperature')
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const TEMP = en('model-profile-temperature')
 const TOPK = 'Top-K'
 const TOPP = 'Top-P'
 const MINP = 'Min-P'
-const REPEAT = en('preset-repeat-penalty')
-const PRESENCE = en('preset-presence-penalty')
-const BACKEND = en('preset-backend-sampling')
+const REPEAT = en('model-profile-repeat-penalty')
+const PRESENCE = en('model-profile-presence-penalty')
+const BACKEND = en('model-profile-backend-sampling')
 const DEFAULT = en('field-default')
 const DECIMAL = en('field-error-decimal')
 const WHOLE = en('field-error-whole-number')
@@ -90,7 +90,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave6, PresetSave7 and PresetSave8.test.tsx) ───────
+// ── Helpers (as ModelProfileSave6, ModelProfileSave7 and ModelProfileSave8.test.tsx) ───────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -99,15 +99,18 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -168,13 +171,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -187,7 +190,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -412,7 +415,7 @@ test('2h.158: the card is editable, and none of its inputs carries an input mode
   for (const { key, label, integer } of BOXED) {
     const el = box(main, label)
     expect(el.disabled, `${key}: the input enabled (164)`).toBe(false)
-    expect(el.id, `${key}: the field id`).toBe(`preset-${key}-control`)
+    expect(el.id, `${key}: the field id`).toBe(`model-profile-${key}-control`)
     expect(
       el.getAttribute('inputmode'),
       `${key}: ${integer ? 'the any-whole-number row' : 'a float key'} has no input mode`,

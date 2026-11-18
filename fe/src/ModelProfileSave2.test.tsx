@@ -1,10 +1,10 @@
-// Saving a preset (fe/briefs/02h-preset-save.md, sub-slice 2h.1, criteria 135
+// Saving a model profile (fe/briefs/02h-model-profile-save.md, sub-slice 2h.1, criteria 135
 // to 141): the save bar of the Server page (D5.2) at the end of the settings,
 // Discard, the PUT and its pending state, what a 200 leaves loaded and what it
 // says, every answer that is not a shaped 200, leaving with unsaved edits
 // through the app's discard dialog, and the tab order. The editable fields,
 // the revision, dirty and what a changed field sends are 130 to 134, in
-// PresetSave1.test.tsx, whose helpers this file repeats (a test file imports
+// ModelProfileSave1.test.tsx, whose helpers this file repeats (a test file imports
 // no other test file). The keyed answers (409, 422, 401) are 2h.2 and 2h.3.
 import {
   act,
@@ -25,7 +25,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -34,9 +34,9 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const POOLING = en('preset-pooling')
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const POOLING = en('model-profile-pooling')
 
 let dialogs: ReturnType<typeof stubDialog>
 
@@ -57,7 +57,7 @@ afterEach(async () => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave1.test.tsx) ───────────────────────────────────
+// ── Helpers (as ModelProfileSave1.test.tsx) ───────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -72,14 +72,16 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The loaded page with `values` holding exactly `values`. */
 function page(values: Record<string, string>) {
-  return loaded({ preset: () => reply(200, presetDoc({}, { values })) })
+  return loaded({
+    modelProfile: () => reply(200, modelProfileDoc({}, { values })),
+  })
 }
 
 /** An element's text, with the page's runs of whitespace folded. */
@@ -99,7 +101,7 @@ function pick(main: HTMLElement, label: string, value: string) {
 
 /** The written-as line of `key` (2e's 124). */
 function writtenOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#preset-written-${key}`)
+  return main.querySelector(`#model-profile-written-${key}`)
 }
 
 function saveButton(main: HTMLElement): HTMLElement {
@@ -123,7 +125,7 @@ function inactive(el: HTMLElement): boolean {
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -132,13 +134,13 @@ function status(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The whole body of the n-th recorded PUT of this preset. */
+/** The whole body of the n-th recorded PUT of this model profile. */
 function sentBody(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -184,11 +186,12 @@ function expectNoAlert(main: HTMLElement, what: string) {
 /** The loaded page with revision `r1`, `values`, and `answer` for the save. */
 function form(
   values: Record<string, string>,
-  answer?: BffOptions['presetSave'],
+  answer?: BffOptions['modelProfileSave'],
 ) {
   return loaded({
-    preset: () => reply(200, presetDoc({}, { revision: 'r1', values })),
-    presetSave: answer,
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values })),
+    modelProfileSave: answer,
   })
 }
 
@@ -284,8 +287,8 @@ function unloadBlocked(): boolean {
   return e.defaultPrevented
 }
 
-/** The preset page reached by a real navigation, so Back has an entry. */
-async function presetAfterNavigation() {
+/** The model profile page reached by a real navigation, so Back has an entry. */
+async function modelProfileAfterNavigation() {
   startAt('#/models')
   const bff = fakeBff()
   render(<App />)
@@ -305,7 +308,7 @@ test("2h.135: the save bar is the settings section's last child, after the last 
   const { bff, main } = await page({ embeddings: 'true', pooling: 'mean' })
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const section = h2.parentElement!
   const b = bar(main)
@@ -397,7 +400,7 @@ test('2h.136: Discard puts both selects back to what the read gave, ends the bar
 
 // ── 137: the save and its pending state ─────────────────────────────────
 
-test('2h.137: Save sends PUT /api/presets/<id> as JSON with the read revision and only the changed key', async () => {
+test('2h.137: Save sends PUT /api/profiles/model/<id> as JSON with the read revision and only the changed key', async () => {
   const { bff, main } = await form({ embeddings: 'true', pooling: 'mean' })
   pick(main, MODE, 'false')
   await save(main, bff)
@@ -461,7 +464,7 @@ test("2h.138: a 200 makes the sent values and the reply's revision the loaded on
   const line = status(main)
   const button = saveButton(main)
   expect(text(writtenOf(main, 'embeddings')!), 'the file spelling').toBe(
-    en('preset-written-as', '0'),
+    en('model-profile-written-as', '0'),
   )
   pick(main, MODE, 'true')
   pick(main, POOLING, 'rank')
@@ -512,7 +515,9 @@ test("2h.138: a 200 makes the sent values and the reply's revision the loaded on
     bff.calls.filter((c) => c.method === 'POST'),
     'no restart',
   ).toEqual([])
-  expect(bff.to('GET', `/api/presets/${ID}`), 'no re-read').toHaveLength(1)
+  expect(bff.to('GET', `/api/profiles/model/${ID}`), 'no re-read').toHaveLength(
+    1,
+  )
 })
 
 test('2h.138: an edit made while the PUT runs stays on screen and is dirty against the values just saved; what was sent is the clean state now', async () => {
@@ -546,7 +551,7 @@ test('2h.138: an edit made while the PUT runs stays on screen and is dirty again
 // ── 139: every answer that is not the 200 of 138 ───────────────────────
 
 /** 139: one test per row, one mount each (as 2h.150 in
- * PresetSave3.test.tsx: the cleanup between rows is the file's afterEach). */
+ * ModelProfileSave3.test.tsx: the cleanup between rows is the file's afterEach). */
 const ANSWERS_139: [string, () => Response | Promise<Response>][] = [
   ['500 with a key', () => reply(500, { key: 'secret-detail', args: [] })],
   ['204', () => reply(204)],
@@ -591,10 +596,12 @@ it.each(ANSWERS_139)(
 
 // ── 140: leaving while dirty ────────────────────────────────────────────
 
-test('2h.140: preset-back and a nav link while the preset form is dirty ask with the discard dialog: Keep editing keeps the page, the edit and the focus back on the link, Discard changes goes on and leaves nothing dirty', async () => {
+test('2h.140: model-profile-back and a nav link while the model profile form is dirty ask with the discard dialog: Keep editing keeps the page, the edit and the focus back on the link, Discard changes goes on and leaves nothing dirty', async () => {
   const { main } = await page({ embeddings: 'true', pooling: 'mean' })
   await navReady()
-  const back = within(main).getByRole('link', { name: en('preset-back') })
+  const back = within(main).getByRole('link', {
+    name: en('model-profile-back'),
+  })
   back.focus()
   makeDirty(main)
   fireEvent.click(back)
@@ -607,7 +614,9 @@ test('2h.140: preset-back and a nav link while the preset form is dirty ask with
   expect(document.activeElement, 'Keep editing is focused').toBe(keepButton(d))
   fireEvent.click(keepButton(d))
   await flushTasks()
-  expect(window.location.hash, 'the address is the preset again').toBe(HASH)
+  expect(window.location.hash, 'the address is the model profile again').toBe(
+    HASH,
+  )
   expect(selectOf(main, MODE).value, 'the edit stays').toBe('false')
   expect(document.activeElement, 'focus back on the link').toBe(back)
   // A nav link asks the same; Discard changes goes on.
@@ -631,15 +640,16 @@ test('2h.140: preset-back and a nav link while the preset form is dirty ask with
   })
 })
 
-test('2h.140: a typed hash and Back while the preset form is dirty are put back and asked, the select and its edit kept; clean, they change the page and nothing is asked', async () => {
-  const { main } = await presetAfterNavigation()
+test('2h.140: a typed hash and Back while the model profile form is dirty are put back and asked, the select and its edit kept; clean, they change the page and nothing is asked', async () => {
+  const { main } = await modelProfileAfterNavigation()
   const select = selectOf(main, MODE)
   makeDirty(main)
   await typeHash('#/models')
   const d = await discardDialog()
-  expect(window.location.hash, 'the address is the preset page again').toBe(
-    HASH,
-  )
+  expect(
+    window.location.hash,
+    'the address is the model profile page again',
+  ).toBe(HASH)
   expect(selectOf(main, MODE), 'the same form, not a remount').toBe(select)
   // The default fixture has no embeddings key: 2e.93 shows off, makeDirty
   // picks the other option, on.
@@ -655,13 +665,13 @@ test('2h.140: a typed hash and Back while the preset form is dirty are put back 
 
   // Back while dirty, on a page of its own. The typed hash above cannot be
   // followed by a Back: the guard's put-back is a replaceState on the entry
-  // the browser stands on, so the entry behind it holds the preset hash too
+  // the browser stands on, so the entry behind it holds the model profile hash too
   // and a traversal to it fires no hashchange in jsdom (the tests of
   // LeaveGuard.test.tsx press Back on a page reached by a navigation, which
   // leaves a Models entry behind, as here).
   cleanup()
   vi.unstubAllGlobals()
-  const second = await presetAfterNavigation()
+  const second = await modelProfileAfterNavigation()
   const backSelect = selectOf(second.main, MODE)
   makeDirty(second.main)
   await pressBack()
@@ -675,12 +685,12 @@ test('2h.140: a typed hash and Back while the preset form is dirty are put back 
   await flushTasks()
   expect(
     screen.queryByRole('dialog'),
-    'Keep editing closes it, the preset page stays',
+    'Keep editing closes it, the model profile page stays',
   ).toBeNull()
   // Clean: the same two navigations go through, nobody asks.
   cleanup()
   vi.unstubAllGlobals()
-  const third = await presetAfterNavigation()
+  const third = await modelProfileAfterNavigation()
   await typeHash('#/models')
   expect(
     screen.queryByRole('dialog'),
@@ -695,7 +705,7 @@ test('2h.140: a typed hash and Back while the preset form is dirty are put back 
   await within(third.main).findByRole('heading', { level: 1, name: ID })
 })
 
-test('2h.140: a closing tab is blocked only while the preset form is dirty, and Sign out asks first: Keep editing signs out nobody, Discard changes signs out', async () => {
+test('2h.140: a closing tab is blocked only while the model profile form is dirty, and Sign out asks first: Keep editing signs out nobody, Discard changes signs out', async () => {
   const { bff, main } = await form({ embeddings: 'true', pooling: 'mean' })
   expect(unloadBlocked(), 'clean on load').toBe(false)
   makeDirty(main)
@@ -749,7 +759,7 @@ test('2h.140: a page that has just saved reports no unsaved changes: Sign out si
 })
 
 // The product link (01's 38) and the browser's Forward.
-test('2h.140: the product link while the preset form is dirty asks, and Discard changes lands on the Overview', async () => {
+test('2h.140: the product link while the model profile form is dirty asks, and Discard changes lands on the Overview', async () => {
   const { main } = await page({ embeddings: 'true', pooling: 'mean' })
   const link = productLink()
   link.focus()
@@ -767,9 +777,9 @@ test('2h.140: the product link while the preset form is dirty asks, and Discard 
   ).toBeTruthy()
 })
 
-test('2h.140: the browser Forward while the preset form is dirty is put back and asked, the edit kept; Keep editing keeps the page, a clean navigation leaves it', async () => {
-  const { main } = await presetAfterNavigation()
-  // Forward needs an entry ahead of the preset page, and the guard's put-back
+test('2h.140: the browser Forward while the model profile form is dirty is put back and asked, the edit kept; Keep editing keeps the page, a clean navigation leaves it', async () => {
+  const { main } = await modelProfileAfterNavigation()
+  // Forward needs an entry ahead of the model profile page, and the guard's put-back
   // overwrites the entry the browser stands on (replaceState): so the Models
   // entry is pushed while the form is still clean, as in LeaveGuard.test.tsx,
   // then the page comes back by a traversal, and only then the edit.
@@ -793,7 +803,10 @@ test('2h.140: the browser Forward while the preset form is dirty is put back and
   )
   fireEvent.click(keepButton(d))
   await flushTasks()
-  expect(window.location.hash, 'Keep editing keeps the preset page').toBe(HASH)
+  expect(
+    window.location.hash,
+    'Keep editing keeps the model profile page',
+  ).toBe(HASH)
   expect(selectOf(main, MODE).value, 'the edit is kept').toBe('true')
   // After Keep editing the page is left for good the ordinary way: Discard
   // cleans the form, and the hash typed then moves.
@@ -841,7 +854,7 @@ test("2h.141: the tab order takes each Embeddings About toggle and then its sele
     at(pool),
   )
   expect(
-    at(selectOf(main, en('preset-engine'))),
+    at(selectOf(main, en('model-profile-engine'))),
     'the Embeddings card sits after the Engine field',
   ).toBeLessThan(at(about(MODE)))
   expect(
@@ -889,7 +902,7 @@ test("2h.141: the brief's script: Written as 1, off hiding it and sending null, 
   )
   const line = status(main)
   expect(text(writtenOf(main, 'embeddings')!), 'the file spelling 1').toBe(
-    en('preset-written-as', '1'),
+    en('model-profile-written-as', '1'),
   )
   // off: dirty, the line hidden, and a save sends exactly the body of 133.
   pick(main, MODE, 'false')

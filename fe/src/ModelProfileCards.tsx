@@ -1,8 +1,8 @@
-// The plain cards of a preset's page (fe/briefs/02e-preset-cards.md, section
-// 1.4): a card is a table of fields and each field is one row of data, the key
-// it reads in the read's `values`, the strings keys of its label and hint, its
-// control and, for a select, its options. A later slice adds rows; the renderer
-// here does not change.
+// The plain cards of a model profile's page (fe/briefs/02e-model-profile-cards.md,
+// section 1.4): a card is a table of fields and each field is one row of data,
+// the key it reads in the read's `values`, the strings keys of its label and
+// hint, its control and, for a select, its options. A later slice adds rows;
+// the renderer here does not change.
 //
 // Every control of a card is natively disabled (criterion 85): the page shows
 // the file for it and sends nothing. 2h.1 makes the Embeddings card's two
@@ -56,7 +56,7 @@ type Option = { value: string; text: string }
  * - `flag`: an option without a value. The engine passes the negative flag for
  *   the four falsey words and the plain flag for any other value, the empty one
  *   included (`common_preset::to_args` and `common_arg_utils::is_falsey`).
- * - `truthy`: a preset-only key the router reads as truthy only, so on is the
+ * - `truthy`: a model-profile-only key the router reads as truthy only, so on is the
  *   short list of words and every other value, the empty one included, is off
  *   (`is_truthy`, `tools/server/server-models.cpp`).
  * - `valued`: `[on|off|auto]`: its handler reads both lists and keeps any other
@@ -209,7 +209,7 @@ type Row =
   NumberRow | SelectRow | TextRow | CheckboxRow | DeviceRow | NoteRow | GroupRow
 
 /** The rows that are a field or a note: what a group holds, and what
- * `PresetField` shows. */
+ * `ModelProfileField` shows. */
 export type FieldRow = Exclude<Row, GroupRow>
 
 /** A card: its h3 and its fields, in the order of the GUI's page. */
@@ -315,7 +315,7 @@ const LOAD_MODES: Option[] = [
 const CARDS: CardFields[] = [
   {
     id: 'hardware',
-    title: t('preset-hardware-config'),
+    title: t('model-profile-hardware-config'),
     // 2h.7's 175: the seven rows the table enables always, and the draft pair
     // behind `model-draft` (177), all editable. The MoE pair stays disabled
     // until 2g reads the model (178); the Fit trio joined with 2h.8.
@@ -324,37 +324,37 @@ const CARDS: CardFields[] = [
         kind: 'number',
         integer: true,
         key: 'n-gpu-layers',
-        label: t('preset-gpu-layers'),
-        hint: t('preset-gpu-layers-hint'),
+        label: t('model-profile-gpu-layers'),
+        hint: t('model-profile-gpu-layers-hint'),
         editable: true,
       },
       // 178: the note of the two rows that stay disabled until 2g.
       {
         kind: 'note',
         key: 'moe-later-note',
-        text: t('preset-moe-later'),
+        text: t('model-profile-moe-later'),
       },
       {
         kind: 'number',
         integer: true,
         key: 'n-cpu-moe',
-        label: t('preset-moe-cpu-layers'),
-        hint: t('preset-moe-cpu-layers-hint'),
+        label: t('model-profile-moe-cpu-layers'),
+        hint: t('model-profile-moe-cpu-layers-hint'),
       },
       {
         kind: 'number',
         integer: true,
         unit: 'MiB',
         key: 'moe-cache-mib',
-        label: t('preset-moe-cache'),
-        hint: t('preset-moe-cache-hint'),
+        label: t('model-profile-moe-cache'),
+        hint: t('model-profile-moe-cache-hint'),
       },
       {
         kind: 'number',
         integer: true,
         key: 'n-cpu-ffn',
-        label: t('preset-dense-ffn-cpu-layers'),
-        hint: t('preset-dense-ffn-cpu-layers-hint'),
+        label: t('model-profile-dense-ffn-cpu-layers'),
+        hint: t('model-profile-dense-ffn-cpu-layers-hint'),
         editable: true,
       },
       {
@@ -363,8 +363,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-op-offload'),
-        hint: t('preset-op-offload-hint'),
+        label: t('model-profile-op-offload'),
+        hint: t('model-profile-op-offload-hint'),
         editable: true,
       },
       {
@@ -373,8 +373,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-repack'),
-        hint: t('preset-repack-hint'),
+        label: t('model-profile-repack'),
+        hint: t('model-profile-repack-hint'),
         editable: true,
       },
       {
@@ -383,8 +383,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: OFF_ON,
         absent: 'false',
-        label: t('preset-no-host-buffer'),
-        hint: t('preset-no-host-buffer-hint'),
+        label: t('model-profile-no-host-buffer'),
+        hint: t('model-profile-no-host-buffer-hint'),
         editable: true,
       },
       {
@@ -392,8 +392,8 @@ const CARDS: CardFields[] = [
         key: 'lazy-mode',
         options: LAZY_MODES,
         absent: 'default',
-        label: t('preset-lazy-tensors'),
-        hint: t('preset-lazy-tensors-hint'),
+        label: t('model-profile-lazy-tensors'),
+        hint: t('model-profile-lazy-tensors-hint'),
         editable: true,
       },
       {
@@ -402,36 +402,39 @@ const CARDS: CardFields[] = [
         key: 'load-mode',
         options: LOAD_MODES,
         absent: 'default',
-        label: t('preset-load-mode'),
-        hint: t('preset-load-mode-hint'),
+        label: t('model-profile-load-mode'),
+        hint: t('model-profile-load-mode-hint'),
         editable: true,
       },
       {
         kind: 'checkbox',
         key: 'fit',
         reading: 'fit',
-        toggle: t('preset-fit-allowed'),
+        toggle: t('model-profile-fit-allowed'),
         absent: true,
         onSend: 'on',
         offSend: 'off',
         allowed: {
           needsAbsent: [
-            { key: 'ctx-size', setOne: t('preset-fit-layers-only') },
-            { key: 'n-gpu-layers', setOne: t('preset-fit-context-only') },
+            { key: 'ctx-size', setOne: t('model-profile-fit-layers-only') },
+            {
+              key: 'n-gpu-layers',
+              setOne: t('model-profile-fit-context-only'),
+            },
           ],
-          notAllowed: t('preset-fit-not-allowed'),
-          setAll: t('preset-fit-nothing'),
+          notAllowed: t('model-profile-fit-not-allowed'),
+          setAll: t('model-profile-fit-nothing'),
         },
-        label: t('preset-fit-to-vram'),
-        hint: t('preset-fit-to-vram-hint'),
+        label: t('model-profile-fit-to-vram'),
+        hint: t('model-profile-fit-to-vram-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'fit-ctx',
-        label: t('preset-fit-min-context'),
-        hint: t('preset-fit-min-context-hint'),
+        label: t('model-profile-fit-min-context'),
+        hint: t('model-profile-fit-min-context-hint'),
         editable: true,
         enabledWhen: [{ rule: 'checked', key: 'fit' }],
       },
@@ -439,8 +442,8 @@ const CARDS: CardFields[] = [
         kind: 'text',
         unit: 'MiB',
         key: 'fit-target',
-        label: t('preset-fit-free-vram'),
-        hint: t('preset-fit-free-vram-hint'),
+        label: t('model-profile-fit-free-vram'),
+        hint: t('model-profile-fit-free-vram-hint'),
         editable: true,
         enabledWhen: [{ rule: 'checked', key: 'fit' }],
       },
@@ -449,15 +452,15 @@ const CARDS: CardFields[] = [
       {
         kind: 'note',
         key: 'draft-file-off-note',
-        text: t('preset-draft-file-off'),
+        text: t('model-profile-draft-file-off'),
         shownWithout: 'model-draft',
       },
       {
         kind: 'device',
         key: 'device-draft',
-        empty: t('preset-device-same-as-model'),
-        label: t('preset-draft-device'),
-        hint: t('preset-draft-device-hint'),
+        empty: t('model-profile-device-same-as-model'),
+        label: t('model-profile-draft-device'),
+        hint: t('model-profile-draft-device-hint'),
         editable: true,
         enabledWhen: [{ rule: 'file', key: 'model-draft' }],
       },
@@ -465,8 +468,8 @@ const CARDS: CardFields[] = [
         kind: 'number',
         integer: true,
         key: 'n-gpu-layers-draft',
-        label: t('preset-draft-gpu-layers'),
-        hint: t('preset-draft-gpu-layers-hint'),
+        label: t('model-profile-draft-gpu-layers'),
+        hint: t('model-profile-draft-gpu-layers-hint'),
         editable: true,
         enabledWhen: [{ rule: 'file', key: 'model-draft' }],
       },
@@ -474,22 +477,22 @@ const CARDS: CardFields[] = [
   },
   {
     id: 'resource-context',
-    title: t('preset-resource-context'),
+    title: t('model-profile-resource-context'),
     rows: [
       {
         kind: 'number',
         integer: true,
         key: 'ctx-size',
-        label: t('preset-context-size'),
-        hint: t('preset-context-size-hint'),
+        label: t('model-profile-context-size'),
+        hint: t('model-profile-context-size-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'parallel',
-        label: t('preset-parallel-slots'),
-        hint: t('preset-parallel-slots-hint'),
+        label: t('model-profile-parallel-slots'),
+        hint: t('model-profile-parallel-slots-hint'),
         editable: true,
       },
       {
@@ -498,8 +501,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-unified-kv'),
-        hint: t('preset-unified-kv-hint'),
+        label: t('model-profile-unified-kv'),
+        hint: t('model-profile-unified-kv-hint'),
         editable: true,
         enabledWhen: [{ rule: 'unticked', key: 'parallel' }],
       },
@@ -507,31 +510,31 @@ const CARDS: CardFields[] = [
         kind: 'number',
         integer: true,
         key: 'kv-unified-per-slot',
-        label: t('preset-per-slot-context'),
-        hint: t('preset-per-slot-context-hint'),
+        label: t('model-profile-per-slot-context'),
+        hint: t('model-profile-per-slot-context-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'batch-size',
-        label: t('preset-batch-size'),
-        hint: t('preset-batch-size-hint'),
+        label: t('model-profile-batch-size'),
+        hint: t('model-profile-batch-size-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'ubatch-size',
-        label: t('preset-u-batch-size'),
-        hint: t('preset-u-batch-size-hint'),
+        label: t('model-profile-u-batch-size'),
+        hint: t('model-profile-u-batch-size-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'embeddings',
-    title: t('preset-embeddings'),
+    title: t('model-profile-embeddings'),
     rows: [
       {
         kind: 'select',
@@ -539,8 +542,8 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: OFF_ON,
         absent: 'false',
-        label: t('preset-embedding-mode'),
-        hint: t('preset-embedding-mode-hint'),
+        label: t('model-profile-embedding-mode'),
+        hint: t('model-profile-embedding-mode-hint'),
         editable: true,
       },
       {
@@ -551,29 +554,29 @@ const CARDS: CardFields[] = [
           { value: 'none', text: t('option-none') },
           { value: 'mean', text: t('option-mean') },
           // Not a strings key: a literal of the Embeddings table of
-          // fe/briefs/02e-preset-cards.md section 1.4.
+          // fe/briefs/02e-model-profile-cards.md section 1.4.
           { value: 'cls', text: 'cls' },
           { value: 'last', text: t('option-last') },
           { value: 'rank', text: t('option-rank') },
         ],
         absent: 'default',
-        label: t('preset-pooling'),
-        hint: t('preset-pooling-hint'),
+        label: t('model-profile-pooling'),
+        hint: t('model-profile-pooling-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'kv-cache',
-    title: t('preset-kv-cache'),
+    title: t('model-profile-kv-cache'),
     rows: [
       {
         kind: 'select',
         key: 'cache-type-k',
         options: CACHE_TYPES,
         absent: 'default',
-        label: t('preset-k-cache-type'),
-        hint: t('preset-k-cache-type-hint'),
+        label: t('model-profile-k-cache-type'),
+        hint: t('model-profile-k-cache-type-hint'),
         editable: true,
       },
       {
@@ -581,8 +584,8 @@ const CARDS: CardFields[] = [
         key: 'cache-type-v',
         options: CACHE_TYPES,
         absent: 'default',
-        label: t('preset-v-cache-type'),
-        hint: t('preset-v-cache-type-hint'),
+        label: t('model-profile-v-cache-type'),
+        hint: t('model-profile-v-cache-type-hint'),
         editable: true,
       },
       {
@@ -591,8 +594,8 @@ const CARDS: CardFields[] = [
         reading: 'valued',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-flash-attention'),
-        hint: t('preset-flash-attention-hint'),
+        label: t('model-profile-flash-attention'),
+        hint: t('model-profile-flash-attention-hint'),
         editable: true,
       },
       {
@@ -600,62 +603,62 @@ const CARDS: CardFields[] = [
         integer: true,
         unit: 'MiB',
         key: 'cache-ram',
-        label: t('preset-cache-ram'),
-        hint: t('preset-cache-ram-hint'),
+        label: t('model-profile-cache-ram'),
+        hint: t('model-profile-cache-ram-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'cache-reuse',
-        label: t('preset-cache-reuse'),
-        hint: t('preset-cache-reuse-hint'),
+        label: t('model-profile-cache-reuse'),
+        hint: t('model-profile-cache-reuse-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'ctx-checkpoints',
-        label: t('preset-context-checkpoints'),
-        hint: t('preset-context-checkpoints-hint'),
+        label: t('model-profile-context-checkpoints'),
+        hint: t('model-profile-context-checkpoints-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'checkpoint-min-step',
-        label: t('preset-checkpoint-step'),
-        hint: t('preset-checkpoint-step-hint'),
+        label: t('model-profile-checkpoint-step'),
+        hint: t('model-profile-checkpoint-step-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'chat-reasoning',
-    title: t('preset-chat-reasoning'),
+    title: t('model-profile-chat-reasoning'),
     rows: [
       {
         kind: 'checkbox',
         key: 'jinja',
         reading: 'flag',
-        toggle: t('preset-chat-template-toggle'),
+        toggle: t('model-profile-chat-template-toggle'),
         absent: true,
         onSend: 'true',
         offSend: 'false',
-        label: t('preset-chat-template'),
-        hint: t('preset-chat-template-hint'),
+        label: t('model-profile-chat-template'),
+        hint: t('model-profile-chat-template-hint'),
         editable: true,
       },
       {
         kind: 'checkbox',
         key: 'prefill-assistant',
         reading: 'flag',
-        toggle: t('preset-prefill-assistant-toggle'),
+        toggle: t('model-profile-prefill-assistant-toggle'),
         absent: true,
         onSend: null,
         offSend: 'false',
-        label: t('preset-prefill-assistant'),
-        hint: t('preset-prefill-assistant-hint'),
+        label: t('model-profile-prefill-assistant'),
+        hint: t('model-profile-prefill-assistant-hint'),
         editable: true,
       },
       {
@@ -664,8 +667,8 @@ const CARDS: CardFields[] = [
         options: REASONING,
         absent: 'auto',
         ownValue: true,
-        label: t('preset-reasoning'),
-        hint: t('preset-reasoning-hint'),
+        label: t('model-profile-reasoning'),
+        hint: t('model-profile-reasoning-hint'),
         editable: true,
       },
       {
@@ -674,8 +677,8 @@ const CARDS: CardFields[] = [
         options: REASONING_FORMAT,
         absent: 'auto',
         ownValue: true,
-        label: t('preset-reasoning-format'),
-        hint: t('preset-reasoning-format-hint'),
+        label: t('model-profile-reasoning-format'),
+        hint: t('model-profile-reasoning-format-hint'),
         editable: true,
       },
       {
@@ -683,8 +686,8 @@ const CARDS: CardFields[] = [
         key: 'reasoning-effort',
         options: EFFORT,
         absent: 'default',
-        label: t('preset-reasoning-effort'),
-        hint: t('preset-reasoning-effort-hint'),
+        label: t('model-profile-reasoning-effort'),
+        hint: t('model-profile-reasoning-effort-hint'),
         editable: true,
       },
       {
@@ -693,51 +696,51 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-keep-past-thinking'),
-        hint: t('preset-keep-past-thinking-hint'),
+        label: t('model-profile-keep-past-thinking'),
+        hint: t('model-profile-keep-past-thinking-hint'),
         editable: true,
       },
       {
         // The note of 90, at the GUI's place (MP 933-938).
         kind: 'note',
         key: 'output-budget-note',
-        text: t('preset-output-budget-note'),
+        text: t('model-profile-output-budget-note'),
       },
       {
         kind: 'number',
         integer: true,
         key: 'reasoning-budget',
-        label: t('preset-thinking-budget'),
-        hint: t('preset-thinking-budget-hint'),
+        label: t('model-profile-thinking-budget'),
+        hint: t('model-profile-thinking-budget-hint'),
         editable: true,
       },
       {
         kind: 'text',
         key: 'reasoning-budget-message',
-        label: t('preset-budget-message'),
-        hint: t('preset-budget-message-hint'),
+        label: t('model-profile-budget-message'),
+        hint: t('model-profile-budget-message-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: true,
         key: 'n-predict',
-        label: t('preset-max-output'),
-        hint: t('preset-max-output-hint'),
+        label: t('model-profile-max-output'),
+        hint: t('model-profile-max-output-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'sampling-overrides',
-    title: t('preset-sampling-overrides'),
+    title: t('model-profile-sampling-overrides'),
     rows: [
       {
         kind: 'number',
         integer: false,
         key: 'temp',
-        label: t('preset-temperature'),
-        hint: t('preset-temperature-hint'),
+        label: t('model-profile-temperature'),
+        hint: t('model-profile-temperature-hint'),
         editable: true,
       },
       {
@@ -747,7 +750,7 @@ const CARDS: CardFields[] = [
         integer: true,
         key: 'top-k',
         label: 'Top-K',
-        hint: t('preset-top-k-hint'),
+        hint: t('model-profile-top-k-hint'),
         editable: true,
       },
       {
@@ -755,7 +758,7 @@ const CARDS: CardFields[] = [
         integer: false,
         key: 'top-p',
         label: 'Top-P',
-        hint: t('preset-top-p-hint'),
+        hint: t('model-profile-top-p-hint'),
         editable: true,
       },
       {
@@ -763,23 +766,23 @@ const CARDS: CardFields[] = [
         integer: false,
         key: 'min-p',
         label: 'Min-P',
-        hint: t('preset-min-p-hint'),
+        hint: t('model-profile-min-p-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: false,
         key: 'repeat-penalty',
-        label: t('preset-repeat-penalty'),
-        hint: t('preset-repeat-penalty-hint'),
+        label: t('model-profile-repeat-penalty'),
+        hint: t('model-profile-repeat-penalty-hint'),
         editable: true,
       },
       {
         kind: 'number',
         integer: false,
         key: 'presence-penalty',
-        label: t('preset-presence-penalty'),
-        hint: t('preset-presence-penalty-hint'),
+        label: t('model-profile-presence-penalty'),
+        hint: t('model-profile-presence-penalty-hint'),
         editable: true,
       },
       {
@@ -788,15 +791,15 @@ const CARDS: CardFields[] = [
         reading: 'flag',
         options: TRISTATE,
         absent: 'default',
-        label: t('preset-backend-sampling'),
-        hint: t('preset-backend-sampling-hint'),
+        label: t('model-profile-backend-sampling'),
+        hint: t('model-profile-backend-sampling-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'advanced',
-    title: t('preset-advanced'),
+    title: t('model-profile-advanced'),
     rows: [
       {
         kind: 'select',
@@ -804,46 +807,46 @@ const CARDS: CardFields[] = [
         reading: 'truthy',
         options: OFF_ON,
         absent: 'false',
-        label: t('preset-load-on-startup'),
-        hint: t('preset-load-on-startup-hint'),
+        label: t('model-profile-load-on-startup'),
+        hint: t('model-profile-load-on-startup-hint'),
         editable: true,
       },
       {
         kind: 'text',
         key: 'chat-template-kwargs',
-        label: t('preset-chat-kwargs'),
-        hint: t('preset-chat-kwargs-hint'),
+        label: t('model-profile-chat-kwargs'),
+        hint: t('model-profile-chat-kwargs-hint'),
         editable: true,
       },
     ],
   },
   {
     id: 'vision',
-    title: t('preset-vision'),
+    title: t('model-profile-vision'),
     // 176: the card works only with an MMProj (the read's value: this page
     // does not edit `mmproj`). Every row carries the same rule; the card
     // shows its note while the rule is not met.
-    needsFile: { key: 'mmproj', note: t('preset-vision-off') },
+    needsFile: { key: 'mmproj', note: t('model-profile-vision-off') },
     rows: [
       {
         kind: 'checkbox',
         key: 'mmproj-offload',
         reading: 'flag',
-        toggle: t('preset-vision-offload-toggle'),
+        toggle: t('model-profile-vision-offload-toggle'),
         absent: true,
         onSend: 'true',
         offSend: 'false',
-        label: t('preset-vision-on-gpu'),
-        hint: t('preset-vision-on-gpu-hint'),
+        label: t('model-profile-vision-on-gpu'),
+        hint: t('model-profile-vision-on-gpu-hint'),
         editable: true,
         enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
       {
         kind: 'device',
         key: 'mmproj-device',
-        empty: t('preset-device-follows-model'),
-        label: t('preset-vision-gpu'),
-        hint: t('preset-vision-gpu-hint'),
+        empty: t('model-profile-device-follows-model'),
+        label: t('model-profile-vision-gpu'),
+        hint: t('model-profile-vision-gpu-hint'),
         editable: true,
         // 176: Vision GPU also needs Vision on GPU checked, live from the
         // draft (the switch sits just above, so it needs no note of its own).
@@ -856,14 +859,14 @@ const CARDS: CardFields[] = [
         // The note of 90, at the GUI's place (MP 1099-1104).
         kind: 'note',
         key: 'image-tokens-note',
-        text: t('preset-image-tokens-note'),
+        text: t('model-profile-image-tokens-note'),
       },
       {
         kind: 'number',
         integer: true,
         key: 'image-min-tokens',
-        label: t('preset-min-image-tokens'),
-        hint: t('preset-min-image-tokens-hint'),
+        label: t('model-profile-min-image-tokens'),
+        hint: t('model-profile-min-image-tokens-hint'),
         editable: true,
         enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
@@ -871,8 +874,8 @@ const CARDS: CardFields[] = [
         kind: 'number',
         integer: true,
         key: 'image-max-tokens',
-        label: t('preset-max-image-tokens'),
-        hint: t('preset-max-image-tokens-hint'),
+        label: t('model-profile-max-image-tokens'),
+        hint: t('model-profile-max-image-tokens-hint'),
         editable: true,
         enabledWhen: [{ rule: 'file', key: 'mmproj' }],
       },
@@ -880,23 +883,23 @@ const CARDS: CardFields[] = [
   },
   {
     id: 'speculative-decoding',
-    title: t('preset-speculative-decoding'),
+    title: t('model-profile-speculative-decoding'),
     rows: [
       {
         kind: 'group',
         key: 'draft-model',
-        title: t('preset-draft-model-group'),
+        title: t('model-profile-draft-model-group'),
         // 190: the group of a draft model file or of a drafter built into the
-        // model, enabled while the preset has one.
+        // model, enabled while the model profile has one.
         enabledBy: 'draft',
-        offNote: t('preset-draft-group-off'),
+        offNote: t('model-profile-draft-group-off'),
         rows: [
           {
             kind: 'number',
             integer: true,
             key: 'spec-draft-n-max',
-            label: t('preset-draft-n-max'),
-            hint: t('preset-draft-n-max-hint'),
+            label: t('model-profile-draft-n-max'),
+            hint: t('model-profile-draft-n-max-hint'),
             editable: true,
           },
           {
@@ -904,24 +907,24 @@ const CARDS: CardFields[] = [
             kind: 'number',
             integer: false,
             key: 'spec-draft-p-min',
-            label: t('preset-draft-p-min'),
-            hint: t('preset-draft-p-min-hint'),
+            label: t('model-profile-draft-p-min'),
+            hint: t('model-profile-draft-p-min-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-draft-n-min',
-            label: t('preset-draft-n-min'),
-            hint: t('preset-draft-n-min-hint'),
+            label: t('model-profile-draft-n-min'),
+            hint: t('model-profile-draft-n-min-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-draft-n-ubatch',
-            label: t('preset-draft-n-ubatch'),
-            hint: t('preset-draft-n-ubatch-hint'),
+            label: t('model-profile-draft-n-ubatch'),
+            hint: t('model-profile-draft-n-ubatch-hint'),
             editable: true,
           },
           {
@@ -929,15 +932,15 @@ const CARDS: CardFields[] = [
             // it speaks of.
             kind: 'note',
             key: 'draft-cache-note',
-            text: t('preset-draft-cache-note'),
+            text: t('model-profile-draft-cache-note'),
           },
           {
             kind: 'select',
             key: 'spec-draft-type-k',
             options: CACHE_TYPES,
             absent: 'default',
-            label: t('preset-draft-k-cache-type'),
-            hint: t('preset-draft-k-cache-type-hint'),
+            label: t('model-profile-draft-k-cache-type'),
+            hint: t('model-profile-draft-k-cache-type-hint'),
             editable: true,
           },
           {
@@ -945,8 +948,8 @@ const CARDS: CardFields[] = [
             key: 'spec-draft-type-v',
             options: CACHE_TYPES,
             absent: 'default',
-            label: t('preset-draft-v-cache-type'),
-            hint: t('preset-draft-v-cache-type-hint'),
+            label: t('model-profile-draft-v-cache-type'),
+            hint: t('model-profile-draft-v-cache-type-hint'),
             editable: true,
           },
         ],
@@ -961,30 +964,30 @@ const CARDS: CardFields[] = [
         key: 'ngram-mod',
         title: 'ngram-mod',
         enabledBy: 'ngram-mod',
-        offNote: t('preset-ngram-off', 'ngram-mod'),
+        offNote: t('model-profile-ngram-off', 'ngram-mod'),
         rows: [
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-mod-n-match',
-            label: t('preset-match-length'),
-            hint: t('preset-match-length-hint'),
+            label: t('model-profile-match-length'),
+            hint: t('model-profile-match-length-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-mod-n-min',
-            label: t('preset-min-draft'),
-            hint: t('preset-min-draft-hint'),
+            label: t('model-profile-min-draft'),
+            hint: t('model-profile-min-draft-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-mod-n-max',
-            label: t('preset-max-draft'),
-            hint: t('preset-max-draft-hint'),
+            label: t('model-profile-max-draft'),
+            hint: t('model-profile-max-draft-hint'),
             editable: true,
           },
         ],
@@ -994,22 +997,22 @@ const CARDS: CardFields[] = [
         key: 'ngram-simple',
         title: 'ngram-simple',
         enabledBy: 'ngram-simple',
-        offNote: t('preset-ngram-off', 'ngram-simple'),
+        offNote: t('model-profile-ngram-off', 'ngram-simple'),
         rows: [
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-simple-size-n',
-            label: t('preset-lookup-n-gram'),
-            hint: t('preset-ngram-simple-lookup-hint'),
+            label: t('model-profile-lookup-n-gram'),
+            hint: t('model-profile-ngram-simple-lookup-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-simple-size-m',
-            label: t('preset-draft-m-gram'),
-            hint: t('preset-ngram-simple-draft-hint'),
+            label: t('model-profile-draft-m-gram'),
+            hint: t('model-profile-ngram-simple-draft-hint'),
             editable: true,
           },
         ],
@@ -1019,22 +1022,22 @@ const CARDS: CardFields[] = [
         key: 'ngram-map-k',
         title: 'ngram-map-k',
         enabledBy: 'ngram-map-k',
-        offNote: t('preset-ngram-off', 'ngram-map-k'),
+        offNote: t('model-profile-ngram-off', 'ngram-map-k'),
         rows: [
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-map-k-size-n',
-            label: t('preset-lookup-n-gram'),
-            hint: t('preset-ngram-map-lookup-hint'),
+            label: t('model-profile-lookup-n-gram'),
+            hint: t('model-profile-ngram-map-lookup-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-map-k-size-m',
-            label: t('preset-draft-m-gram'),
-            hint: t('preset-ngram-map-draft-hint'),
+            label: t('model-profile-draft-m-gram'),
+            hint: t('model-profile-ngram-map-draft-hint'),
             editable: true,
           },
         ],
@@ -1044,30 +1047,30 @@ const CARDS: CardFields[] = [
         key: 'ngram-map-k4v',
         title: 'ngram-map-k4v',
         enabledBy: 'ngram-map-k4v',
-        offNote: t('preset-ngram-off', 'ngram-map-k4v'),
+        offNote: t('model-profile-ngram-off', 'ngram-map-k4v'),
         rows: [
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-map-k4v-size-n',
-            label: t('preset-lookup-n-gram'),
-            hint: t('preset-ngram-map-values-lookup-hint'),
+            label: t('model-profile-lookup-n-gram'),
+            hint: t('model-profile-ngram-map-values-lookup-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-map-k4v-size-m',
-            label: t('preset-draft-m-gram'),
-            hint: t('preset-ngram-map-values-draft-hint'),
+            label: t('model-profile-draft-m-gram'),
+            hint: t('model-profile-ngram-map-values-draft-hint'),
             editable: true,
           },
           {
             kind: 'number',
             integer: true,
             key: 'spec-ngram-map-k4v-min-hits',
-            label: t('preset-min-hits'),
-            hint: t('preset-min-hits-hint'),
+            label: t('model-profile-min-hits'),
+            hint: t('model-profile-min-hits-hint'),
             editable: true,
           },
         ],
@@ -1122,8 +1125,8 @@ function iniTrim(value: string): string {
  * trimmed, or the words for a key written with no value. */
 function writtenText(trimmed: string): string {
   return trimmed === ''
-    ? t('preset-written-empty')
-    : t('preset-written-as', trimmed)
+    ? t('model-profile-written-empty')
+    : t('model-profile-written-as', trimmed)
 }
 
 /** A key's value read as llama-server reads it (criterion 122), with the
@@ -1154,7 +1157,7 @@ function readAs(
     return {
       on: truthy,
       written: raw === 'on' || raw === 'off' ? undefined : writtenText(trimmed),
-      error: falsey || truthy ? undefined : t('preset-fit-invalid'),
+      error: falsey || truthy ? undefined : t('model-profile-fit-invalid'),
     }
   if (reading === 'valued' && !falsey && !truthy)
     return { on: undefined, written: undefined, error: undefined }
@@ -1364,8 +1367,8 @@ export function checkRows(): (NumberRow | TextRow | CheckboxRow)[] {
   )
 }
 
-/** 2h.4's 157: the range of every preset integer key, the brief's table: the
- * bounds the manager's `checks.rs` `PRESET_INT_KEYS` applies. `null` is no
+/** 2h.4's 157: the range of every model profile integer key, the brief's table: the
+ * bounds the manager's `checks.rs` `MODEL_PROFILE_INT_KEYS` applies. `null` is no
  * bound; every key's value is at most `I32_MAX`, the largest number the file
  * writes. A later card's keys are here before the card is editable. */
 function bounded(keys: string[], min: number | null, max: number | null) {
@@ -1434,9 +1437,9 @@ const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
   'spec-ngram-map-k4v-min-hits': { min: 1, max: 65535 },
 }
 
-/** 2h.5's 165: the preset float keys, the ones the decimal check of 165 applies
- * to, the manager's `checks.rs` `PRESET_FLOAT_KEYS`. A later card's keys are
- * added here before its card is editable, as with `INT_KEYS`. */
+/** 2h.5's 165: the model profile float keys, the ones the decimal check of 165
+ * applies to, the manager's `checks.rs` `MODEL_PROFILE_FLOAT_KEYS`. A later
+ * card's keys are added here before its card is editable, as with `INT_KEYS`. */
 const FLOAT_KEYS: string[] = [
   'temp',
   'top-p',
@@ -1692,13 +1695,13 @@ function fullValue(
 ) {
   return text.length <= FULL_LIMIT[row.kind]
     ? undefined
-    : { id: `preset-full-${row.key}`, text }
+    : { id: `model-profile-full-${row.key}`, text }
 }
 
 /** The id of the field a row renders (the Field's convention: its control is
  * `<id>-control`): the page marks a field by the key of its row. */
 export function fieldId(key: string): string {
-  return `preset-${key}`
+  return `model-profile-${key}`
 }
 
 /** 2h.8's 184: is the number field a row's `allowed` rule reads at default
@@ -1813,7 +1816,7 @@ export function unlockControl(row: RowBase): string | undefined {
  * that is not in `boxed` shows the file and is disabled. `errors` is the field
  * error of a save refusal, by key (2h's 142): it marks the field the refusal
  * named. */
-function PresetField({
+function ModelProfileField({
   row,
   values,
   loaded,
@@ -1941,7 +1944,7 @@ function PresetField({
         written={
           written === undefined
             ? undefined
-            : { id: `preset-written-${row.key}`, text: written }
+            : { id: `model-profile-written-${row.key}`, text: written }
         }
         error={common.error ?? state?.error}
         onChange={(checked) =>
@@ -2038,7 +2041,7 @@ function PresetField({
       written={
         written === undefined
           ? undefined
-          : { id: `preset-written-${row.key}`, text: written }
+          : { id: `model-profile-written-${row.key}`, text: written }
       }
       onChange={(value, picked) =>
         editable && picked ? onEdit(row.key, value) : undefined
@@ -2048,8 +2051,9 @@ function PresetField({
 }
 
 /** One row of a card: a group is its heading and the division the heading
- * names, holding its own rows; every other row is the field of `PresetField`. */
-function PresetRow({
+ * names, holding its own rows; every other row is the field of
+ * `ModelProfileField`. */
+function ModelProfileRow({
   row,
   values,
   loaded,
@@ -2069,7 +2073,7 @@ function PresetRow({
   errors: Partial<Record<string, string>>
 }) {
   if (row.kind === 'group') {
-    const heading = `preset-group-${row.key}`
+    const heading = `model-profile-group-${row.key}`
     // 192: a group the rule of 190 or 191 leaves off says why, in a plain
     // paragraph before its first field, inside the division the heading names.
     // Shown only while the group is off, never a live region and never the
@@ -2084,7 +2088,7 @@ function PresetRow({
             <p className="note">{row.offNote}</p>
           )}
           {row.rows.map((nested) => (
-            <PresetRow
+            <ModelProfileRow
               key={nested.key}
               row={nested}
               values={values}
@@ -2101,7 +2105,7 @@ function PresetRow({
     )
   }
   return (
-    <PresetField
+    <ModelProfileField
       row={row}
       values={values}
       loaded={loaded}
@@ -2117,7 +2121,7 @@ function PresetRow({
 /** 2h.10's 196: the id of a card's heading, the jump list's target for that
  * card. The page's Assets card and the cards of this file share the shape. */
 export function cardHeadingId(id: string): string {
-  return `preset-card-${id}`
+  return `model-profile-card-${id}`
 }
 
 /** The jump list of 196, in card order: each card's heading id and the title
@@ -2163,7 +2167,7 @@ export function fieldPlace(
  * number fields into `boxed` through `onTick` and `onBoxText`; a page that only
  * shows the file leaves every control disabled and passes an empty `boxed`.
  * `errors` marks the fields a save refusal named (2h's 142), by key. */
-export default function PresetCards({
+export default function ModelProfileCards({
   values,
   loaded,
   onEdit,
@@ -2200,7 +2204,7 @@ export default function PresetCards({
           }
         >
           {card.rows.map((row) => (
-            <PresetRow
+            <ModelProfileRow
               key={row.key}
               row={row}
               values={values}

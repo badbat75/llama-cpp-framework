@@ -1,4 +1,4 @@
-// The third part of sub-slice 2h.5 of fe/briefs/02h-preset-save.md: the
+// The third part of sub-slice 2h.5 of fe/briefs/02h-model-profile-save.md: the
 // Advanced card editable (164: its two fields, the Load on startup select and
 // the Chat kwargs text, always enabled), what each sends by its kind (133: the
 // off / on select sends "true" on and null off, the text sends the text
@@ -6,9 +6,9 @@
 // load-on-startup (167, 2e's 122: on, enabled, true, 1 are on, everything else
 // off), the chat-kwargs check (166: the comment markers first, then one JSON
 // object) and the new string (169: `field-error-json-object`). Cache RAM's
-// input mode (167) is the KV cache card's, in PresetSave8.test.tsx. The card's
-// read-only look is 2e's 98, in PresetCards2.test.tsx; the helpers are those of
-// PresetSave8 and PresetSave9.test.tsx, which this file repeats (a test file
+// input mode (167) is the KV cache card's, in ModelProfileSave8.test.tsx. The card's
+// read-only look is 2e's 98, in ModelProfileCards2.test.tsx; the helpers are those of
+// ModelProfileSave8 and ModelProfileSave9.test.tsx, which this file repeats (a test file
 // imports no other test file).
 import {
   cleanup,
@@ -26,7 +26,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -35,9 +35,9 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const LOAD = en('preset-load-on-startup')
-const KWARGS = en('preset-chat-kwargs')
+const PUT = `/api/profiles/model/${ID}`
+const LOAD = en('model-profile-load-on-startup')
+const KWARGS = en('model-profile-chat-kwargs')
 const MARKERS = en('field-error-comment-markers')
 const JSONOBJ = en('field-error-json-object')
 /** A kwargs value the file holds: a real JSON object, the brief's example. */
@@ -62,7 +62,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave8 and PresetSave9.test.tsx) ──────────────────
+// ── Helpers (as ModelProfileSave8 and ModelProfileSave9.test.tsx) ──────────────────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -71,15 +71,18 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -123,13 +126,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -142,7 +145,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -210,7 +213,9 @@ test('2h.164: on a read that holds both keys of the card, the select shows the f
   expect(select.value, 'the file value shows').toBe('true')
   const el = input(main, KWARGS)
   expect(el.disabled, 'Chat kwargs enabled (164)').toBe(false)
-  expect(el.id, 'the field id').toBe('preset-chat-template-kwargs-control')
+  expect(el.id, 'the field id').toBe(
+    'model-profile-chat-template-kwargs-control',
+  )
   expect(el.value, 'the file text as written').toBe(FILE_KWARGS)
   expectNoError(el, 'a valid object loaded: no error')
 })

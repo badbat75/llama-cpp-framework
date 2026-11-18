@@ -1,18 +1,18 @@
-// The full-value line of the preset page (fe/briefs/02e-preset-cards.md,
+// The full-value line of the model profile page (fe/briefs/02e-model-profile-cards.md,
 // criteria 118 to 121): a value longer than its disabled control shows is
 // repeated in full as text under the control, because a disabled input or
 // select cannot wrap, scroll or be read past its edge. It is built once in the
-// shared field renderer of fe/src/PresetCards.tsx, so every field of 2e.1 and
+// shared field renderer of fe/src/ModelProfileCards.tsx, so every field of 2e.1 and
 // 2e.2 gets it. 2h.4's 160 and 2h.5's 164 keep the rule (134: the line is
 // only for a control that is disabled now, a rule's lock of 176 included), and
-// 2h.8's 183 to 186 left no read-only field anywhere on the preset page: every
+// 2h.8's 183 to 186 left no read-only field anywhere on the model profile page: every
 // card is editable now. So every example here is of a control a rule disables,
 // one per kind: Fit free VRAM of the Hardware card as the text input and as
 // the number box, both disabled while the Fit to VRAM box is off (186), and
 // the Draft K-cache type of the Speculative decoding card, the select 2h.9's
-// 190 disables while the preset names no drafter. The fields, their controls
-// and how a value is shown are PresetCards1.test.tsx and
-// PresetCards2.test.tsx; the route and the read are PresetPage.test.tsx. The
+// 190 disables while the model profile names no drafter. The fields, their controls
+// and how a value is shown are ModelProfileCards1.test.tsx and
+// ModelProfileCards2.test.tsx; the route and the read are ModelProfilePage.test.tsx. The
 // colour and the wrap at 320 px are the designer's review, not jsdom:
 // criterion 118's style is pinned as the CSS rule, the way App.test.tsx pins
 // the banner's.
@@ -29,7 +29,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   serverDoc,
   startAt,
@@ -69,20 +69,20 @@ const NO_DRAFTERS = { 'spec-type': 'none' }
 /** A number value a trim would change, past the number limit. */
 const NUM_PAD = ' 172032000 '
 
-const CTX = en('preset-context-size')
-const MOE = en('preset-moe-cache')
+const CTX = en('model-profile-context-size')
+const MOE = en('model-profile-moe-cache')
 /** The fields that carry the examples (134): Fit free VRAM is the text
  * `fit-target`, the Draft K-cache type the select `spec-draft-type-k` (2h.7's
  * 175 made the Hardware card's Lazy tensors and Load mode editable, so 134
  * takes their line away; 2h.9's 189 made the Speculative decoding card
  * editable, so its select keeps the line only under `NO_DRAFTERS`). */
-const FIT = en('preset-fit-free-vram')
-const MIN_CTX = en('preset-fit-min-context')
-const DRAFT_K = en('preset-draft-k-cache-type')
+const FIT = en('model-profile-fit-free-vram')
+const MIN_CTX = en('model-profile-fit-min-context')
+const DRAFT_K = en('model-profile-draft-k-cache-type')
 /** The other editable number fields of the Resource / context card (2h.4). */
-const SLOT = en('preset-per-slot-context')
-const BATCH = en('preset-batch-size')
-const UBATCH = en('preset-u-batch-size')
+const SLOT = en('model-profile-per-slot-context')
+const BATCH = en('model-profile-batch-size')
+const UBATCH = en('model-profile-u-batch-size')
 
 beforeEach(() => startAt(HASH))
 
@@ -92,7 +92,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards2.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards2.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -107,24 +107,24 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The page read with `values` on top of the fixture's Asset keys. */
 function page(values: Record<string, string>) {
-  return loaded({ preset: () => reply(200, docOf(values)) })
+  return loaded({ modelProfile: () => reply(200, docOf(values)) })
 }
 
 /** A read with `values` added to the Assets keys. */
 function docOf(values: Record<string, string>) {
-  return presetDoc({ model: MODEL, ...values })
+  return modelProfileDoc({ model: MODEL, ...values })
 }
 
 /** A read whose `values` are exactly `values` (the `{}` stub of 121). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 /** The field that holds the About toggle of `label` (Field.tsx `.field`). */
@@ -168,7 +168,7 @@ function selectedText(select: HTMLSelectElement): string {
 
 /** The full-value line of `key`, found by the id criterion 118 names. */
 function lineOf(main: HTMLElement, key: string): HTMLElement {
-  const id = `preset-full-${key}`
+  const id = `model-profile-full-${key}`
   const line = main.querySelector(`#${id}`)
   expect(line, `#${id}: the full-value line`).toBeTruthy()
   return line as HTMLElement
@@ -176,14 +176,14 @@ function lineOf(main: HTMLElement, key: string): HTMLElement {
 
 function expectNoLine(main: HTMLElement, key: string): void {
   expect(
-    main.querySelector(`#preset-full-${key}`),
+    main.querySelector(`#model-profile-full-${key}`),
     `${key}: no line`,
   ).toBeNull()
 }
 
 /** The line's hint, named by the field's id (Field.tsx). */
 function hintOf(main: HTMLElement, key: string): HTMLElement {
-  const hint = main.querySelector(`#preset-${key}-hint`)
+  const hint = main.querySelector(`#model-profile-${key}-hint`)
   expect(hint, `${key}: its hint`).toBeTruthy()
   return hint as HTMLElement
 }
@@ -226,7 +226,7 @@ function nameOf(el: HTMLElement): string {
 
 // ── 118: the line, its text and its place ───────────────────────────────
 
-test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the id preset-full-moe-cache-mib, shown, holding the value', async () => {
+test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the id model-profile-full-moe-cache-mib, shown, holding the value', async () => {
   const { main } = await page({ 'moe-cache-mib': NUM_9 })
   const line = lineOf(main, 'moe-cache-mib')
   expect(line.tagName, 'the line is a paragraph').toBe('P')
@@ -326,7 +326,7 @@ test('2e.118, 2h.160, 2h.170, 2h.175, 2h.190: one line per long field: each line
   const { main } = await page({
     'moe-cache-mib': NUM_9,
     'spec-draft-type-k': SELECT_LONG,
-    // 2h.9's 190: the preset names no drafter, so the draft group is locked
+    // 2h.9's 190: the model profile names no drafter, so the draft group is locked
     // and its select keeps the line.
     ...NO_DRAFTERS,
     // The Resource / context card, every key past its limit: 160 says an
@@ -365,7 +365,7 @@ test('2e.118, 2h.160, 2h.170, 2h.175, 2h.190: one line per long field: each line
     'fit-ctx': NUM_9,
     'fit-target': TEXT_21,
   })
-  const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
+  const lines = [...main.querySelectorAll('[id^="model-profile-full-"]')]
   expect(
     lines.length,
     'exactly the four long disabled fields have a line',
@@ -403,7 +403,7 @@ test('2e.118, 2h.160, 2h.170, 2h.175, 2h.190: one line per long field: each line
   ] as const) {
     const field = fieldOf(main, label)
     expect(
-      field.querySelector(`#preset-full-${key}`),
+      field.querySelector(`#model-profile-full-${key}`),
       `${key}: its line is in its own field`,
     ).toBeTruthy()
     const control = controlOf(main, kind, label) as HTMLInputElement
@@ -437,18 +437,18 @@ test('2h.160: in the Resource / context card only Unified KV is ever disabled wi
     ).toBe(false)
   }
   expect(
-    selectOf(enabled.main, en('preset-unified-kv')).disabled,
+    selectOf(enabled.main, en('model-profile-unified-kv')).disabled,
     'Unified KV is enabled while Parallel slots is unticked',
   ).toBe(false)
   expect(
-    enabled.main.querySelectorAll('[id^="preset-full-"]').length,
+    enabled.main.querySelectorAll('[id^="model-profile-full-"]').length,
     'an enabled control shows no line',
   ).toBe(0)
   cleanup()
   // Every key absent: every box is ticked (156), so every input is disabled
   // AND EMPTY (160: a ticked box has no value to show, so it never has a
   // line), and Unified KV is the one control disabled while holding a value.
-  const dflt = await loaded({ preset: () => reply(200, exactOf({})) })
+  const dflt = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   for (const label of [CTX, SLOT, BATCH, UBATCH]) {
     const input = within(dflt.main).getByRole('textbox', {
       name: label,
@@ -458,7 +458,7 @@ test('2h.160: in the Resource / context card only Unified KV is ever disabled wi
     )
     expect(input.value, `${label}: and leaves it empty`).toBe('')
   }
-  const kv = selectOf(dflt.main, en('preset-unified-kv'))
+  const kv = selectOf(dflt.main, en('model-profile-unified-kv'))
   expect(
     kv.disabled,
     'Unified KV: the card control disabled with a value',
@@ -467,7 +467,7 @@ test('2h.160: in the Resource / context card only Unified KV is ever disabled wi
     '',
   )
   expect(
-    dflt.main.querySelectorAll('[id^="preset-full-"]').length,
+    dflt.main.querySelectorAll('[id^="model-profile-full-"]').length,
     'the card shows no line: 134 needs a disabled control, 160 a long value',
   ).toBe(0)
 })
@@ -479,11 +479,11 @@ test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem 
   const raw = readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')
   const css = raw.replace(/\/\*[\s\S]*?\*\//g, '')
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) =>
-    /preset-full|full-value/.test(m[1]),
+    /model-profile-full|full-value/.test(m[1]),
   )
   expect(
     rules.length,
-    'a CSS rule whose selector names the full-value line (its id prefix preset-full)',
+    'a CSS rule whose selector names the full-value line (its id prefix model-profile-full)',
   ).toBeGreaterThan(0)
   const body = rules.map((m) => m[2]).join(' ')
   for (const decl of [
@@ -537,9 +537,9 @@ test('2e.119: an unlisted select value shows no line at 20 characters and its li
 })
 
 test('2e.119: no key, no line: an empty values object shows no line on any field of the page', async () => {
-  const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   expect(
-    main.querySelectorAll('[id^="preset-full-"]').length,
+    main.querySelectorAll('[id^="model-profile-full-"]').length,
     'no field has a line',
   ).toBe(0)
 })
@@ -604,7 +604,7 @@ test('2e.120: the line is not the control description: nothing points its aria-d
     .flatMap((ids) => ids.split(/\s+/))
   for (const key of LONG_KEYS) {
     expect(named, `${key}: no aria-describedby names the line`).not.toContain(
-      `preset-full-${key}`,
+      `model-profile-full-${key}`,
     )
   }
 })
@@ -650,17 +650,17 @@ test.each(FULL_VALUE_CASES)(
   '2e.121: the stub values of the brief show exactly these lines and no others: %s',
   async (values, want) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf(values)),
+      modelProfile: () => reply(200, exactOf(values)),
     })
     if (want === null) {
       expect(
-        main.querySelectorAll('[id^="preset-full-"]').length,
+        main.querySelectorAll('[id^="model-profile-full-"]').length,
         `${JSON.stringify(values)}: no line anywhere`,
       ).toBe(0)
     } else {
       // The one line of the page, by its id, hidden from a screen reader, with
       // the text equal to the value.
-      const lines = [...main.querySelectorAll('[id^="preset-full-"]')]
+      const lines = [...main.querySelectorAll('[id^="model-profile-full-"]')]
       expect(lines.length, `${JSON.stringify(values)}: one line`).toBe(1)
       const line = lines[0] as HTMLElement
       expect(line.getAttribute('aria-hidden'), 'the line is aria-hidden').toBe(

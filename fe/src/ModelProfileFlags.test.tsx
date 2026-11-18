@@ -1,4 +1,4 @@
-// A preset flag reads as llama-server reads it (fe/briefs/02e-preset-cards.md,
+// A model profile flag reads as llama-server reads it (fe/briefs/02e-model-profile-cards.md,
 // sub-slice 2e.3b, criteria 122 to 126). For a flag, an option without a value,
 // the engine passes the plain flag for any value that is not falsey, the empty
 // value included, and the negative flag for `off`, `disabled`, `false`, `0`
@@ -10,11 +10,11 @@
 // `aria-describedby` (124b), and a valued key's extra option needs no line, since
 // the option itself shows the value (124a). The trim is the INI grammar's, spaces
 // and tabs only, not JavaScript's `trim()`. Two keys read differently:
-// `load-on-startup` is preset-only and the router reads it as truthy only, and
+// `load-on-startup` is model-profile-only and the router reads it as truthy only, and
 // `flash-attn` is a valued option whose extra option of 87 stays. The reading
-// lives in the shared renderer of fe/src/PresetCards.tsx, so it applies to every
+// lives in the shared renderer of fe/src/ModelProfileCards.tsx, so it applies to every
 // card of 2e. The fields themselves, their labels, hints and options are
-// PresetCards1 to PresetCards4.test.tsx; for a field that is NOT a flag the
+// ModelProfileCards1 to ModelProfileCards4.test.tsx; for a field that is NOT a flag the
 // empty value stays absent (criterion 86, pinned there). `fit` takes a value
 // (`-fit [on|off]`) and reads as llama-server reads it, with a field error for
 // a value the engine refuses: sub-slice 2e.3c, criteria 127 to 129, pinned at
@@ -36,7 +36,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -93,28 +93,28 @@ type Flag = {
 const FLAGS: Flag[] = [
   {
     key: 'jinja',
-    label: 'preset-chat-template',
+    label: 'model-profile-chat-template',
     kind: 'checkbox',
-    toggle: 'preset-chat-template-toggle',
+    toggle: 'model-profile-chat-template-toggle',
     absentChecked: true,
   },
   {
     key: 'prefill-assistant',
-    label: 'preset-prefill-assistant',
+    label: 'model-profile-prefill-assistant',
     kind: 'checkbox',
-    toggle: 'preset-prefill-assistant-toggle',
+    toggle: 'model-profile-prefill-assistant-toggle',
     absentChecked: true,
   },
   {
     key: 'mmproj-offload',
-    label: 'preset-vision-on-gpu',
+    label: 'model-profile-vision-on-gpu',
     kind: 'checkbox',
-    toggle: 'preset-vision-offload-toggle',
+    toggle: 'model-profile-vision-offload-toggle',
     absentChecked: true,
   },
   {
     key: 'kv-unified',
-    label: 'preset-unified-kv',
+    label: 'model-profile-unified-kv',
     kind: 'tristate',
     options: TRISTATE,
     optionValues: TRISTATE_VALUES,
@@ -122,7 +122,7 @@ const FLAGS: Flag[] = [
   },
   {
     key: 'reasoning-preserve',
-    label: 'preset-keep-past-thinking',
+    label: 'model-profile-keep-past-thinking',
     kind: 'tristate',
     options: TRISTATE,
     optionValues: TRISTATE_VALUES,
@@ -130,7 +130,7 @@ const FLAGS: Flag[] = [
   },
   {
     key: 'embeddings',
-    label: 'preset-embedding-mode',
+    label: 'model-profile-embedding-mode',
     kind: 'off-on',
     options: OFF_ON,
     optionValues: OFF_ON_VALUES,
@@ -138,7 +138,7 @@ const FLAGS: Flag[] = [
   },
   {
     key: 'no-host',
-    label: 'preset-no-host-buffer',
+    label: 'model-profile-no-host-buffer',
     kind: 'off-on',
     options: OFF_ON,
     optionValues: OFF_ON_VALUES,
@@ -146,7 +146,7 @@ const FLAGS: Flag[] = [
   },
   {
     key: 'load-on-startup',
-    label: 'preset-load-on-startup',
+    label: 'model-profile-load-on-startup',
     kind: 'off-on',
     options: OFF_ON,
     optionValues: OFF_ON_VALUES,
@@ -155,7 +155,7 @@ const FLAGS: Flag[] = [
   },
   {
     key: 'flash-attn',
-    label: 'preset-flash-attention',
+    label: 'model-profile-flash-attention',
     kind: 'tristate',
     options: TRISTATE,
     optionValues: TRISTATE_VALUES,
@@ -169,9 +169,9 @@ const FLAGS: Flag[] = [
   // llama.cpp defaults to (127).
   {
     key: 'fit',
-    label: 'preset-fit-to-vram',
+    label: 'model-profile-fit-to-vram',
     kind: 'checkbox',
-    toggle: 'preset-fit-allowed',
+    toggle: 'model-profile-fit-allowed',
     absentChecked: true,
     valued: true,
   },
@@ -184,8 +184,8 @@ function flagOf(key: string): Flag {
 }
 
 /** The written-as line of table 124. */
-const as_ = (value: string) => en('preset-written-as', value)
-const EMPTY = en('preset-written-empty')
+const as_ = (value: string) => en('model-profile-written-as', value)
+const EMPTY = en('model-profile-written-empty')
 
 /** One value of one key, with what the page must show. */
 type Reading = {
@@ -542,7 +542,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetCards3.test.tsx) ──────────────────────────────────
+// ── Helpers (as ModelProfileCards3.test.tsx) ──────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -557,14 +557,16 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The loaded page with `values` holding exactly `values`. */
 function page(values: Record<string, string>) {
-  return loaded({ preset: () => reply(200, presetDoc({}, { values })) })
+  return loaded({
+    modelProfile: () => reply(200, modelProfileDoc({}, { values })),
+  })
 }
 
 function selectOf(main: HTMLElement, label: string): HTMLSelectElement {
@@ -617,7 +619,7 @@ function controlOf(main: HTMLElement, f: Flag): HTMLElement {
 
 /** The written-as line of `key`, found by the id of 124. */
 function writtenOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#preset-written-${key}`)
+  return main.querySelector(`#model-profile-written-${key}`)
 }
 
 /** The ids the control's `aria-describedby` names, in order (124b). */
@@ -671,12 +673,12 @@ function expectReading(main: HTMLElement, r: Reading): void {
   else
     expect(
       (line ?? { textContent: null }).textContent,
-      `#preset-written-${f.key} ${shown}: the written-as line's text`,
+      `#model-profile-written-${f.key} ${shown}: the written-as line's text`,
     ).toBe(r.written)
   // 124b: the control names its line, so a reader hears the spelling after the
   // control's name and state; with no line it names no written-as id.
   const ids = describedIds(controlOf(main, f))
-  const lineId = `preset-written-${f.key}`
+  const lineId = `model-profile-written-${f.key}`
   if (r.written === undefined)
     expect(
       ids,
@@ -721,7 +723,7 @@ test('2e.124: the line is a paragraph in its own field, after its control, not a
     const f = flagOf(key)
     const { main } = await page({ [key]: value })
     const line = writtenOf(main, key)
-    expect(line, `#preset-written-${key}: the line`).toBeTruthy()
+    expect(line, `#model-profile-written-${key}: the line`).toBeTruthy()
     expect(line!.tagName, `${key}: a paragraph, so no tab stop`).toBe('P')
     // 124: not aria-hidden, and shown: a checkbox or a select does not expose
     // the spelling, so this is the only place a reader can read it.
@@ -748,7 +750,7 @@ test('2e.124: the line is a paragraph in its own field, after its control, not a
         'utf8',
       ).replace(/\/\*[\s\S]*?\*\//g, '')
       const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) =>
-        /preset-written|written-as/.test(m[1]),
+        /model-profile-written|written-as/.test(m[1]),
       )
       expect(
         rules.length,
@@ -777,7 +779,7 @@ test('2e.124, 2e.118: a flag select with a value longer than its control shows t
   // The control shows the reading (on), which is short, so there is nothing for
   // the full-value line of 118 to repeat: the spelling is the written-as line's.
   expect(
-    main.querySelector('#preset-full-kv-unified'),
+    main.querySelector('#model-profile-full-kv-unified'),
     'no full-value line beside it',
   ).toBeNull()
   expect(
@@ -801,7 +803,7 @@ test('2e.124a, 2h.134, 2h.164: a valued key past what its select holds shows the
     ).toBeGreaterThan(20)
     const trimmed = iniTrim(value)
     const { main } = await page({ 'flash-attn': value })
-    const select = selectOf(main, en('preset-flash-attention'))
+    const select = selectOf(main, en('model-profile-flash-attention'))
     expect(
       optionValues(select),
       `flash-attn ${JSON.stringify(value)}: the extra option carries the value trimmed`,
@@ -819,7 +821,7 @@ test('2e.124a, 2h.134, 2h.164: a valued key past what its select holds shows the
       'flash-attn: the extra option shows the value, so no written-as line',
     ).toBeNull()
     expect(
-      main.querySelector('#preset-full-flash-attn'),
+      main.querySelector('#model-profile-full-flash-attn'),
       '134: the enabled select opens and shows the whole value, so no full-value line',
     ).toBeNull()
     expect(
@@ -830,7 +832,7 @@ test('2e.124a, 2h.134, 2h.164: a valued key past what its select holds shows the
     expect(
       describedIds(select),
       'flash-attn: the select names no full-value line',
-    ).not.toContain('preset-full-flash-attn')
+    ).not.toContain('model-profile-full-flash-attn')
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -845,7 +847,7 @@ test('2e.124, 2e.124b: true and false, what the configurator writes, show no lin
     for (const f of FLAGS.filter((x) => x.key !== 'fit'))
       values[f.key] = spelling
     const { main } = await page(values)
-    const lines = [...main.querySelectorAll('[id^="preset-written-"]')]
+    const lines = [...main.querySelectorAll('[id^="model-profile-written-"]')]
     expect(
       lines.map((el) => el.id),
       `${spelling}: no written-as line for the page's flags`,
@@ -856,7 +858,7 @@ test('2e.124, 2e.124b: true and false, what the configurator writes, show no lin
     )
     for (const id of named)
       expect(id, `${spelling}: no control names a written-as line`).not.toMatch(
-        /^preset-written-/,
+        /^model-profile-written-/,
       )
     cleanup()
     vi.unstubAllGlobals()
@@ -874,14 +876,14 @@ test('2e.124: each flag with its own value gets its own line, in its own field',
   for (const [key, value] of Object.entries(values)) {
     const f = flagOf(key)
     const field = controlOf(main, f).closest('.field')!
-    const lines = [...field.querySelectorAll('[id^="preset-written-"]')].map(
-      (el) => el.id,
-    )
+    const lines = [
+      ...field.querySelectorAll('[id^="model-profile-written-"]'),
+    ].map((el) => el.id)
     expect(lines, `${key}: one line, in its own field`).toEqual([
-      `preset-written-${key}`,
+      `model-profile-written-${key}`,
     ])
     expect(
-      field.querySelector(`#preset-written-${key}`)!.textContent,
+      field.querySelector(`#model-profile-written-${key}`)!.textContent,
       `${key}: the value as written`,
     ).toBe(as_(value))
   }
@@ -915,7 +917,7 @@ test.each(WRITTEN_LINE_IDS)(
     const f = flagOf(key)
     const { main } = await page({ [key]: value })
     const ids = describedIds(controlOf(main, f))
-    const lineId = `preset-written-${key}`
+    const lineId = `model-profile-written-${key}`
     expect(ids, `${key}: the control names its line`).toContain(lineId)
     cleanup()
     vi.unstubAllGlobals()
@@ -937,7 +939,7 @@ test.each(NO_LINE_VALUES)(
     expect(
       describedIds(controlOf(main, f)),
       `${key} ${value}: no line, so no written-as id named`,
-    ).not.toContain(`preset-written-${key}`)
+    ).not.toContain(`model-profile-written-${key}`)
   },
 )
 
@@ -953,7 +955,7 @@ test('2e.124b: no control names a full-value line', async () => {
     jinja: 'yes',
   })
   expect(
-    main.querySelector('#preset-full-spec-draft-type-k'),
+    main.querySelector('#model-profile-full-spec-draft-type-k'),
     'the page has a full-value line',
   ).toBeTruthy()
   expect(
@@ -965,14 +967,14 @@ test('2e.124b: no control names a full-value line', async () => {
   )
   for (const id of named)
     expect(id, 'no control names a full-value line').not.toMatch(
-      /^preset-full-/,
+      /^model-profile-full-/,
     )
 })
 
 // ── 124b: the tie, at its two edges ───────────────────────────────────
 // The rule has an additive half (the line joins the ids already named, the
 // error's among them) and a bare half (nothing to name, so no description).
-// A read-only preset page has no field error and a line only where 124 puts
+// A read-only model profile page has no field error and a line only where 124 puts
 // one, so the two halves are pinned here at the page for the bare one, and on
 // the shared renderer of fe/src/Field.tsx for the additive one.
 
@@ -998,17 +1000,17 @@ test('2e.124b: with no written-as line and no error the control names no descrip
 
 test('2e.124b: a control with an error and a line names the error first and the line beside it: the line never replaces an id already there', () => {
   // The additive half of 124b, on the two controls that carry a written-as
-  // line. A preset field has no error (the page is read-only), so the case is
+  // line. A model profile field has no error (the page is read-only), so the case is
   // reached on the shared renderer, which is where the rule lives.
   const error = en('field-error-number', '1', '10')
   const box = render(
     <CheckboxField
       id="demo-box"
-      label={en('preset-chat-template')}
-      hint={en('preset-chat-template-hint')}
+      label={en('model-profile-chat-template')}
+      hint={en('model-profile-chat-template-hint')}
       error={error}
-      written={{ id: 'preset-written-jinja', text: as_('off') }}
-      toggle={en('preset-chat-template-toggle')}
+      written={{ id: 'model-profile-written-jinja', text: as_('off') }}
+      toggle={en('model-profile-chat-template-toggle')}
       checked={false}
       onChange={() => undefined}
     />,
@@ -1016,10 +1018,10 @@ test('2e.124b: a control with an error and a line names the error first and the 
   const sel = render(
     <SelectField
       id="demo-select"
-      label={en('preset-unified-kv')}
-      hint={en('preset-unified-kv-hint')}
+      label={en('model-profile-unified-kv')}
+      hint={en('model-profile-unified-kv-hint')}
       error={error}
-      written={{ id: 'preset-written-kv-unified', text: as_('auto') }}
+      written={{ id: 'model-profile-written-kv-unified', text: as_('auto') }}
       options={[{ value: 'true', text: en('option-on') }]}
       value="true"
       onChange={() => undefined}
@@ -1030,13 +1032,13 @@ test('2e.124b: a control with an error and a line names the error first and the 
       'checkbox',
       'demo-box',
       box.container.querySelector('#demo-box-control')!,
-      'preset-written-jinja',
+      'model-profile-written-jinja',
     ],
     [
       'select',
       'demo-select',
       sel.container.querySelector('#demo-select-control')!,
-      'preset-written-kv-unified',
+      'model-profile-written-kv-unified',
     ],
   ] as [string, string, Element, string][]) {
     expect(
@@ -1100,7 +1102,7 @@ test('2e.122, 2e.127, 2e.128: Fit to VRAM is none of the three readings: yes and
     expect(
       (box.closest('label')?.textContent ?? '').trim(),
       `fit ${JSON.stringify(value)}: the toggle text of 108, the rule untouched`,
-    ).toBe(en('preset-fit-allowed'))
+    ).toBe(en('model-profile-fit-allowed'))
     expect(
       (writtenOf(main, 'fit') ?? { textContent: null }).textContent,
       `fit ${JSON.stringify(value)}: 127: the spelling the file holds`,
@@ -1124,7 +1126,7 @@ test('2e.122, 2e.127, 2e.128: Fit to VRAM is none of the three readings: yes and
 // written and its handler (`common/arg.cpp`) sets fit on for `on`, `enabled`,
 // `true`, `1` and off for `off`, `disabled`, `false`, `0`, compared trimmed
 // (spaces and tabs) and case-sensitive, and refuses anything else, so
-// llama-server does not start that preset. The box shows that reading, the
+// llama-server does not start that model profile. The box shows that reading, the
 // absent key included (127); a refused value gets the field error of 128, not
 // a spelling of its own. The allowed rule of 108 stays, and only picks the
 // toggle's text.
@@ -1142,7 +1144,7 @@ type FitReading = {
 }
 
 /** The words 129 gives for a value llama-server refuses. */
-const FIT_INVALID = en('preset-fit-invalid')
+const FIT_INVALID = en('model-profile-fit-invalid')
 
 /** One row per value: the four on spellings and the absent key, the four off
  * ones, the refused ones, and the trims. The INI grammar drops spaces and
@@ -1169,7 +1171,7 @@ const FIT: FitReading[] = [
   { value: 'false', checked: false, written: as_('false'), error: undefined },
   { value: '0', checked: false, written: as_('0'), error: undefined },
   // Refused: the engine's two lists are case-sensitive, so these do not start
-  // the preset: the box is unchecked and the field says so (128).
+  // the modelProfile: the box is unchecked and the field says so (128).
   { value: 'TRUE', checked: false, written: as_('TRUE'), error: FIT_INVALID },
   { value: 'yes', checked: false, written: as_('yes'), error: FIT_INVALID },
   // `fit =` reaches the engine as `--fit ""` and is refused: the absent key of
@@ -1190,7 +1192,7 @@ const FIT: FitReading[] = [
 
 /** The field error of `key`, by the id 128 gives it (`<id>-error`). */
 function errorOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#preset-${key}-error`)
+  return main.querySelector(`#model-profile-${key}-error`)
 }
 
 /** What one row of the 2e.3c table shows: the box, its line, its error. */
@@ -1207,7 +1209,7 @@ function expectFit(main: HTMLElement, r: FitReading): void {
   expect(
     (box.closest('label')?.textContent ?? '').trim(),
     `fit ${shown}: 184: the toggle text`,
-  ).toBe(en('preset-fit-allowed'))
+  ).toBe(en('model-profile-fit-allowed'))
   // 127, 124: the written-as line of the spelling the file holds.
   const line = writtenOf(main, 'fit')
   if (r.written === undefined)
@@ -1215,16 +1217,16 @@ function expectFit(main: HTMLElement, r: FitReading): void {
   else
     expect(
       (line ?? { textContent: null }).textContent,
-      `fit ${shown}: 127: #preset-written-fit`,
+      `fit ${shown}: 127: #model-profile-written-fit`,
     ).toBe(r.written)
   // 128: the field error of this field, and no other field's in 2e.
   const err = errorOf(main, 'fit')
   expect(
     [...main.querySelectorAll('.field-error')].map((el) => el.id),
     `fit ${shown}: 128: this field's error, alone on the page`,
-  ).toEqual(r.error === undefined ? [] : ['preset-fit-error'])
+  ).toEqual(r.error === undefined ? [] : ['model-profile-fit-error'])
   if (r.error !== undefined) {
-    expect(err, `fit ${shown}: 128: #preset-fit-error`).toBeTruthy()
+    expect(err, `fit ${shown}: 128: #model-profile-fit-error`).toBeTruthy()
     expect(
       (err!.textContent ?? '').trim(),
       `fit ${shown}: 128: the words of 129`,
@@ -1277,8 +1279,8 @@ function expectFit(main: HTMLElement, r: FitReading): void {
   // 124b, 128: the control names the error first and the line beside it, and
   // with neither there is no description at all.
   const ids: string[] = []
-  if (r.error !== undefined) ids.push('preset-fit-error')
-  if (r.written !== undefined) ids.push('preset-written-fit')
+  if (r.error !== undefined) ids.push('model-profile-fit-error')
+  if (r.written !== undefined) ids.push('model-profile-written-fit')
   expect(describedIds(box), `fit ${shown}: 124b, 128: what it names`).toEqual(
     ids,
   )
@@ -1316,64 +1318,68 @@ type FitTextRow = {
 
 const FIT_TEXT: FitTextRow[] = [
   // Both at default: the allowed text in every state, the box included (184).
-  { values: { fit: 'on' }, checked: true, toggle: 'preset-fit-allowed' },
-  { values: { fit: 'off' }, checked: false, toggle: 'preset-fit-allowed' },
+  { values: { fit: 'on' }, checked: true, toggle: 'model-profile-fit-allowed' },
+  {
+    values: { fit: 'off' },
+    checked: false,
+    toggle: 'model-profile-fit-allowed',
+  },
   {
     values: { fit: 'TRUE' },
     checked: false,
-    toggle: 'preset-fit-allowed',
+    toggle: 'model-profile-fit-allowed',
     error: true,
   },
   {
     values: { 'ctx-size': '', fit: 'on' },
     checked: true,
-    toggle: 'preset-fit-allowed',
+    toggle: 'model-profile-fit-allowed',
   },
   // Context size set, GPU layers at default.
   {
     values: { 'ctx-size': '8192', fit: 'on' },
     checked: true,
-    toggle: 'preset-fit-layers-only',
+    toggle: 'model-profile-fit-layers-only',
   },
   {
     values: { 'ctx-size': '8192', fit: 'off' },
     checked: false,
-    toggle: 'preset-fit-not-allowed',
+    toggle: 'model-profile-fit-not-allowed',
   },
   // GPU layers set, Context size at default.
   {
     values: { 'n-gpu-layers': '99', fit: 'on' },
     checked: true,
-    toggle: 'preset-fit-context-only',
+    toggle: 'model-profile-fit-context-only',
   },
   {
     values: { 'n-gpu-layers': '99', fit: 'off' },
     checked: false,
-    toggle: 'preset-fit-not-allowed',
+    toggle: 'model-profile-fit-not-allowed',
   },
   // An absent `fit` is the engine's on (127), so it is a checked box here.
   {
     values: { 'n-gpu-layers': '99' },
     checked: true,
-    toggle: 'preset-fit-context-only',
+    toggle: 'model-profile-fit-context-only',
   },
   // Both set: what the fit can still do once the box is checked is nothing.
   {
     values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'on' },
     checked: true,
-    toggle: 'preset-fit-nothing',
+    toggle: 'model-profile-fit-nothing',
   },
   {
     values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'off' },
     checked: false,
-    toggle: 'preset-fit-not-allowed',
+    toggle: 'model-profile-fit-not-allowed',
   },
   // 185: a refused value keeps its error beside the text the rule picks, and
   // reads unchecked, so it belongs to the unchecked row of 184.
   {
     values: { 'ctx-size': '8192', 'n-gpu-layers': '99', fit: 'TRUE' },
     checked: false,
-    toggle: 'preset-fit-not-allowed',
+    toggle: 'model-profile-fit-not-allowed',
     error: true,
   },
 ]
@@ -1413,15 +1419,17 @@ const FIT_HINT = [
 ]
 
 test('2e.129a: the opened Fit to VRAM hint shows the four lines of 129a, and says nothing about a default that is off here', async () => {
-  // The hint opens the way the other hint tests of the preset page open one
-  // (PresetCards4.test.tsx, criterion 88): the About toggle of the field, then
+  // The hint opens the way the other hint tests of the model profile page open one
+  // (ModelProfileCards4.test.tsx, criterion 88): the About toggle of the field, then
   // the element it names.
   const { main } = await page({})
   const about = within(main).getByRole('button', {
-    name: `${en('field-about')} ${en('preset-fit-to-vram')}`,
+    name: `${en('field-about')} ${en('model-profile-fit-to-vram')}`,
   })
   const hintId = about.getAttribute('aria-controls')
-  expect(hintId, 'fit: aria-controls names the hint').toBe('preset-fit-hint')
+  expect(hintId, 'fit: aria-controls names the hint').toBe(
+    'model-profile-fit-hint',
+  )
   const hint = document.getElementById(hintId!)
   expect(hint, 'fit: the hinted element is in the page').toBeTruthy()
   expect(isHidden(hint), 'fit: the hint is hidden before the click').toBe(true)

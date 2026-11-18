@@ -1,11 +1,11 @@
-// The keyed answers of a preset save (fe/briefs/02h-preset-save.md, sub-slice
-// 2h.2): 409 preset-changed-elsewhere with Reload (145), 404 no-preset-named
+// The keyed answers of a model profile save (fe/briefs/02h-model-profile-save.md, sub-slice
+// 2h.2): 409 model-profile-changed-elsewhere with Reload (145), 404 no-model-profile-named
 // (146), 403 client-not-authorized and 503 client-unavailable (147), 504
 // client-timeout and the fe's own 120 s limit of a PUT (148), and the guard's
-// keys with presets-malformed (149). The bar, the editable Embeddings
+// keys with model-profiles-malformed (149). The bar, the editable Embeddings
 // selects, the PUT, the 200 and the plain failure are 135 to 141, in
-// PresetSave1.test.tsx and PresetSave2.test.tsx, and the 422 answers are
-// 142 to 144 and 150, in PresetSave3.test.tsx, whose helpers this file
+// ModelProfileSave1.test.tsx and ModelProfileSave2.test.tsx, and the 422 answers are
+// 142 to 144 and 150, in ModelProfileSave3.test.tsx, whose helpers this file
 // repeats (a test file imports no other test file). The session (2h.3) is
 // not here.
 import {
@@ -24,7 +24,7 @@ import {
   en,
   fakeBff,
   held,
-  presetDoc,
+  modelProfileDoc,
   navigate,
   reply,
   startAt,
@@ -34,23 +34,24 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const GET = `/api/presets/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const POOLING = en('preset-pooling')
+const GET = `/api/profiles/model/${ID}`
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const POOLING = en('model-profile-pooling')
 /** What the first read gives, and what the read after a Reload gives. */
 const AS_LOADED = { embeddings: 'true', pooling: 'mean' }
 const ELSEWHERE = { embeddings: 'false', pooling: 'cls' }
 
 /** 409: the section changed since the read (api-contract.md). */
-const CONFLICT = () => reply(409, { key: 'preset-changed-elsewhere', args: [] })
+const CONFLICT = () =>
+  reply(409, { key: 'model-profile-changed-elsewhere', args: [] })
 
 /** [name, status] of the keys that keep the place's generic failure (149). */
 const GUARD_KEYS: [string, number][] = [
   ['request-cross-origin', 403],
   ['request-bad-host', 403],
   ['payload-too-large', 413],
-  ['presets-malformed', 400],
+  ['model-profiles-malformed', 400],
 ]
 
 let dialogs: ReturnType<typeof stubDialog>
@@ -68,7 +69,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave2.test.tsx and PresetSave3.test.tsx) ──────────
+// ── Helpers (as ModelProfileSave2.test.tsx and ModelProfileSave3.test.tsx) ──────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -83,22 +84,22 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The page read as `AS_LOADED` with revision `r1`, the save answered `answer`. */
-function form(answer?: BffOptions['presetSave']) {
+function form(answer?: BffOptions['modelProfileSave']) {
   return loaded({
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED })),
-    presetSave: answer,
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED })),
+    modelProfileSave: answer,
   })
 }
 
 /** The page, then dirty: Embedding mode picked off, loaded on. */
-async function dirty(answer?: BffOptions['presetSave']) {
+async function dirty(answer?: BffOptions['modelProfileSave']) {
   const { bff, main } = await form(answer)
   pick(main, MODE, 'false')
   return { bff, main }
@@ -139,13 +140,13 @@ function barButtons(main: HTMLElement): HTMLElement[] {
   )
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The whole body of the n-th recorded PUT of this preset. */
+/** The whole body of the n-th recorded PUT of this model profile. */
 function sentBody(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -158,7 +159,7 @@ function sentBody(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -244,7 +245,7 @@ async function advance(ms: number) {
   await flush()
 }
 
-/** The preset page under a fake clock, its read answered by the stub. */
+/** The model profile page under a fake clock, its read answered by the stub. */
 async function loadedOnFakeClock(options: BffOptions = {}) {
   fakeClock()
   startAt(HASH)
@@ -255,20 +256,20 @@ async function loadedOnFakeClock(options: BffOptions = {}) {
   expect(
     within(main).queryByRole('heading', {
       level: 3,
-      name: en('preset-assets'),
+      name: en('model-profile-assets'),
     }),
-    'the preset page is loaded',
+    'the model profile page is loaded',
   ).not.toBeNull()
   return { bff, main }
 }
 
-// ── 145: 409 preset-changed-elsewhere ───────────────────────────────────
+// ── 145: 409 model-profile-changed-elsewhere ───────────────────────────────────
 
-test('2h.145: a 409 preset-changed-elsewhere shows api-preset-changed-elsewhere with Reload; Keep editing does nothing and focus goes back to Reload', async () => {
+test('2h.145: a 409 model-profile-changed-elsewhere shows api-model-profile-changed-elsewhere with Reload; Keep editing does nothing and focus goes back to Reload', async () => {
   const { bff, main } = await dirty(CONFLICT)
   await save(main, bff)
-  await within(main).findByText(en('api-preset-changed-elsewhere'))
-  expectAlert(main, en('api-preset-changed-elsewhere'))
+  await within(main).findByText(en('api-model-profile-changed-elsewhere'))
+  expectAlert(main, en('api-model-profile-changed-elsewhere'))
   expect(
     selectOf(main, MODE).value,
     'the edit is kept while the answer is up',
@@ -289,23 +290,27 @@ test('2h.145: a 409 preset-changed-elsewhere shows api-preset-changed-elsewhere 
   expect(bff.to('GET', GET), 'no read while the answer stands').toHaveLength(1)
   expect(selectOf(main, MODE).value, 'the edit is kept').toBe('false')
   expect(document.activeElement, 'focus back on Reload').toBe(reload)
-  expectAlert(main, en('api-preset-changed-elsewhere'), 'the alert stays')
+  expectAlert(
+    main,
+    en('api-model-profile-changed-elsewhere'),
+    'the alert stays',
+  )
 })
 
-test('2h.145: a confirmed Reload reads the preset again: preset-loading in place of the settings, then the read values, clean, no alert, focus on the h1', async () => {
+test('2h.145: a confirmed Reload reads the model profile again: model-profile-loading in place of the settings, then the read values, clean, no alert, focus on the h1', async () => {
   let reads = 0
   const { bff, main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
-        presetDoc(
+        modelProfileDoc(
           {},
           ++reads === 1
             ? { revision: 'r1', values: AS_LOADED }
             : { revision: 'r-9', values: ELSEWHERE },
         ),
       ),
-    presetSave: CONFLICT,
+    modelProfileSave: CONFLICT,
   })
   pick(main, MODE, 'false')
   await save(main, bff)
@@ -315,13 +320,13 @@ test('2h.145: a confirmed Reload reads the preset again: preset-loading in place
   // The settings are replaced by the page's loading status (2d), then the
   // read lands: its values, clean, with no alert.
   expect(
-    within(main).queryByText(en('preset-loading')),
+    within(main).queryByText(en('model-profile-loading')),
     'the settings are replaced by the loading status',
   ).not.toBeNull()
   expect(
     within(main).queryByRole('heading', {
       level: 2,
-      name: en('preset-settings-title'),
+      name: en('model-profile-settings-title'),
     }),
     'no settings while it reads',
   ).toBeNull()
@@ -374,14 +379,14 @@ const READ_FAILURES: [string, () => Response, string][] = [
     en('api-client-unavailable'),
   ],
   [
-    '404 no-preset-named',
-    () => reply(404, { key: 'no-preset-named', args: [] }),
-    en('preset-not-found', ID),
+    '404 no-model-profile-named',
+    () => reply(404, { key: 'no-model-profile-named', args: [] }),
+    en('model-profile-not-found', ID),
   ],
   [
     '500 a key the fe does not know',
     () => reply(500, { key: 'secret-detail', args: [] }),
-    en('preset-load-failed'),
+    en('model-profile-load-failed'),
   ],
 ]
 
@@ -399,11 +404,14 @@ test('2h.145: a Reload whose read fails shows the message a first visit shows fo
   for (const [what, failure, text] of READ_FAILURES) {
     let reads = 0
     const { bff, main } = await loaded({
-      preset: () =>
+      modelProfile: () =>
         ++reads === 1
-          ? reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED }))
+          ? reply(
+              200,
+              modelProfileDoc({}, { revision: 'r1', values: AS_LOADED }),
+            )
           : failure(),
-      presetSave: CONFLICT,
+      modelProfileSave: CONFLICT,
     })
     pick(main, MODE, 'false')
     await save(main, bff)
@@ -414,7 +422,7 @@ test('2h.145: a Reload whose read fails shows the message a first visit shows fo
     expect(
       within(main).queryByRole('heading', {
         level: 2,
-        name: en('preset-settings-title'),
+        name: en('model-profile-settings-title'),
       }),
       `${what}: the failed read replaces the settings`,
     ).toBeNull()
@@ -448,18 +456,18 @@ test('2h.145: a Reload whose read fails shows the message a first visit shows fo
   }
 })
 
-/** The preset the page moves to after a Reload, as a hash change does. */
+/** The model profile the page moves to after a Reload, as a hash change does. */
 const OTHER = 'gemma-3-27b'
 const OTHER_HASH = `#/models/${OTHER}`
-const OTHER_GET = `/api/presets/${OTHER}`
+const OTHER_GET = `/api/profiles/model/${OTHER}`
 
-test('2h.145: a Reload confirmed on one preset leaves nothing behind for the next: its 404 read shows preset-not-found with the new id as a first visit does, focus on the h1', async () => {
+test('2h.145: a Reload confirmed on one model profile leaves nothing behind for the next: its 404 read shows model-profile-not-found with the new id as a first visit does, focus on the h1', async () => {
   const { bff, main } = await loaded({
-    preset: (id) =>
+    modelProfile: (id) =>
       id === ID
-        ? reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED }))
-        : reply(404, { key: 'no-preset-named', args: [] }),
-    presetSave: CONFLICT,
+        ? reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED }))
+        : reply(404, { key: 'no-model-profile-named', args: [] }),
+    modelProfileSave: CONFLICT,
   })
   pick(main, MODE, 'false')
   await save(main, bff)
@@ -467,38 +475,40 @@ test('2h.145: a Reload confirmed on one preset leaves nothing behind for the nex
   fireEvent.click(confirmButton(await discardDialog()))
   await waitFor(() => expect(bff.to('GET', GET)).toHaveLength(2))
   expectNoAlert(main, 'the reload ended the 409 alert')
-  // The hash moves to another preset, as a click on a row does.
+  // The hash moves to another model profile, as a click on a row does.
   navigate(OTHER_HASH)
-  const shown = await within(main).findByText(en('preset-not-found', OTHER))
+  const shown = await within(main).findByText(
+    en('model-profile-not-found', OTHER),
+  )
   expect(shown.tagName, 'the plain paragraph of a first visit').toBe('P')
   expect(shown.getAttribute('role'), 'not an alert').toBeNull()
   expect(within(main).queryAllByRole('alert'), 'no alert').toEqual([])
   expect(
-    within(main).queryByText(en('preset-load-failed')),
+    within(main).queryByText(en('model-profile-load-failed')),
     'not the generic load failure a Reload leaves behind',
   ).toBeNull()
   const h1 = await within(main).findByRole('heading', { level: 1, name: OTHER })
   expect(before(h1, shown), 'the sentence below the h1').toBe(true)
   expect(
     bff.to('GET', OTHER_GET),
-    'the new page read its own preset once',
+    'the new page read its own model profile once',
   ).toHaveLength(1)
   await waitFor(() => expect(document.activeElement).toBe(h1))
 })
 
-test('2h.145: a Reload confirmed on one preset leaves nothing behind for the next: its 200 read shows the other preset and its values, focus on the h1 as a plain navigation', async () => {
+test('2h.145: a Reload confirmed on one model profile leaves nothing behind for the next: its 200 read shows the other model profile and its values, focus on the h1 as a plain navigation', async () => {
   const { bff, main } = await loaded({
-    preset: (id) =>
+    modelProfile: (id) =>
       id === ID
-        ? reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED }))
+        ? reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED }))
         : reply(
             200,
-            presetDoc(
+            modelProfileDoc(
               { embeddings: 'true', pooling: 'cls' },
               { id: OTHER, revision: 'r-b' },
             ),
           ),
-    presetSave: CONFLICT,
+    modelProfileSave: CONFLICT,
   })
   pick(main, MODE, 'false')
   await save(main, bff)
@@ -508,24 +518,26 @@ test('2h.145: a Reload confirmed on one preset leaves nothing behind for the nex
   navigate(OTHER_HASH)
   const h1 = await within(main).findByRole('heading', { level: 1, name: OTHER })
   await waitFor(() => expect(selectOf(main, POOLING).value).toBe('cls'))
-  expect(selectOf(main, MODE).value, "the other preset's value").toBe('true')
+  expect(selectOf(main, MODE).value, "the other model profile's value").toBe(
+    'true',
+  )
   expect(status(main).textContent, 'the new page is clean').toBe('')
   expect(within(main).queryAllByRole('alert'), 'no alert').toEqual([])
   expect(
     bff.to('GET', OTHER_GET),
-    'the new page read its own preset once',
+    'the new page read its own model profile once',
   ).toHaveLength(1)
   await waitFor(() => expect(document.activeElement).toBe(h1))
 })
 
-// ── 146: 404 no-preset-named ────────────────────────────────────────────
+// ── 146: 404 no-model-profile-named ────────────────────────────────────────────
 
-test('2h.146: a 404 no-preset-named fills the id into api-no-preset-named; the edits stay dirty, there is no Reload and the page is not replaced', async () => {
+test('2h.146: a 404 no-model-profile-named fills the id into api-no-model-profile-named; the edits stay dirty, there is no Reload and the page is not replaced', async () => {
   const { bff, main } = await dirty(() =>
-    reply(404, { key: 'no-preset-named', args: [ID] }),
+    reply(404, { key: 'no-model-profile-named', args: [ID] }),
   )
   await save(main, bff)
-  const text = en('api-no-preset-named', ID)
+  const text = en('api-no-model-profile-named', ID)
   await within(main).findByText(text)
   expectAlert(main, text)
   expect(
@@ -543,24 +555,24 @@ test('2h.146: a 404 no-preset-named fills the id into api-no-preset-named; the e
   expect(
     within(main).getByRole('heading', {
       level: 2,
-      name: en('preset-settings-title'),
+      name: en('model-profile-settings-title'),
     }),
     'the settings are still here',
   ).toBeTruthy()
   expect(heading1(main), 'the page stays').toBeTruthy()
-  expect(bff.to('GET', GET), 'no read of the preset').toHaveLength(1)
+  expect(bff.to('GET', GET), 'no read of the model profile').toHaveLength(1)
 })
 
 test('2h.146: the 404 text is filled with the id of the page whatever the reply sends as args: no {0} is left, the reply id is not shown', async () => {
-  // The bff sends EMPTY args for an id no preset can ever carry (a section it
+  // The bff sends EMPTY args for an id no model profile can ever carry (a section it
   // refuses before it echoes anything), and an id of its own when it echoes.
   for (const args of [[], ['Qwen3-28B']] as string[][]) {
     const what = `args ${JSON.stringify(args)}`
     const { bff, main } = await dirty(() =>
-      reply(404, { key: 'no-preset-named', args }),
+      reply(404, { key: 'no-model-profile-named', args }),
     )
     await save(main, bff)
-    const text = en('api-no-preset-named', ID)
+    const text = en('api-no-model-profile-named', ID)
     await within(main).findByText(text)
     expectAlert(main, text, what)
     const alert = within(main).getByText(text).closest('[role="alert"]')
@@ -647,9 +659,9 @@ test('2h.148: a 504 client-timeout reads as save-timeout with no button; the edi
 test('2h.148: a save held to the fe 120 s limit shows save-timeout; the edits stay dirty and the next save sends the same revision', async () => {
   const h = held()
   const { bff, main } = await loadedOnFakeClock({
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: AS_LOADED })),
-    presetSave: (_body, _id, n, init) =>
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values: AS_LOADED })),
+    modelProfileSave: (_body, _id, n, init) =>
       n === 1 ? h.answer(init) : reply(200, { revision: 'r2', running: false }),
   })
   pick(main, MODE, 'false')
@@ -685,9 +697,9 @@ test('2h.148: a save held to the fe 120 s limit shows save-timeout; the edits st
   })
 })
 
-// ── 149: the guard keys and presets-malformed ───────────────────────────
+// ── 149: the guard keys and model-profiles-malformed ───────────────────────────
 
-test('2h.149: the guard keys and presets-malformed on a preset save show save-failed and keep the edits', async () => {
+test('2h.149: the guard keys and model-profiles-malformed on a model profile save show save-failed and keep the edits', async () => {
   for (const [key, status_] of GUARD_KEYS) {
     const what = `${status_} ${key}`
     const { bff, main } = await dirty(() => reply(status_, { key, args: [] }))

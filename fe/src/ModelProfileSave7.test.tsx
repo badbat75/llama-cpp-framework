@@ -1,12 +1,12 @@
-// The second half of sub-slice 2h.4 of fe/briefs/02h-preset-save.md: the input
+// The second half of sub-slice 2h.4 of fe/briefs/02h-model-profile-save.md: the input
 // mode of a number field (158: `numeric` only where the range starts at 0 or
 // above), the unit after an input as the input's description (159: id
 // `<field id>-unit`, first in `aria-describedby`, the error's id after it), the
 // focus after a 422 names a field whose default box is ticked (161, the rule of
 // 144), and the string `field-error-whole-number` (163). The card's controls,
 // its default box and its integer check are 155 to 157, in
-// PresetSave6.test.tsx, whose helpers this file repeats (a test file imports no
-// other test file); the 422 answers are 142 to 144, in PresetSave3.test.tsx.
+// ModelProfileSave6.test.tsx, whose helpers this file repeats (a test file imports no
+// other test file); the 422 answers are 142 to 144, in ModelProfileSave3.test.tsx.
 import {
   cleanup,
   fireEvent,
@@ -23,7 +23,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -33,14 +33,14 @@ import {
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
 const SERVER = '#/instances/default'
-const PUT = `/api/presets/${ID}`
-const CTX = en('preset-context-size')
-const PAR = en('preset-parallel-slots')
-const SLOT = en('preset-per-slot-context')
-const BATCH = en('preset-batch-size')
-const RAM = en('preset-cache-ram')
-const MOE = en('preset-moe-cache')
-const FITT = en('preset-fit-free-vram')
+const PUT = `/api/profiles/model/${ID}`
+const CTX = en('model-profile-context-size')
+const PAR = en('model-profile-parallel-slots')
+const SLOT = en('model-profile-per-slot-context')
+const BATCH = en('model-profile-batch-size')
+const RAM = en('model-profile-cache-ram')
+const MOE = en('model-profile-moe-cache')
+const FITT = en('model-profile-fit-free-vram')
 const DEFAULT = en('field-default')
 /** The literal unit the tables give (criterion 89), not a strings key. */
 const MIB = 'MiB'
@@ -59,15 +59,15 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave6.test.tsx) ───────────────────────────────────
+// ── Helpers (as ModelProfileSave6.test.tsx) ───────────────────────────────────
 
 /** Waits for the page read as `AS_LOADED` with revision `r1`, plus `options`. */
 async function form(options: BffOptions = {}) {
   const bff = fakeBff({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
-        presetDoc(
+        modelProfileDoc(
           {},
           {
             revision: 'r1',
@@ -87,7 +87,7 @@ async function form(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
@@ -104,11 +104,11 @@ function box(main: HTMLElement, label: string): HTMLInputElement {
   }) as HTMLInputElement
 }
 
-/** A number field's input by the key it reads: the field id is `preset-<key>`,
- * so its control is `preset-<key>-control` (a row of a group, as the
+/** A number field's input by the key it reads: the field id is `model-profile-<key>`,
+ * so its control is `model-profile-<key>-control` (a row of a group, as the
  * Speculative card's, shares its label with a sibling). */
 function boxOfKey(key: string): HTMLInputElement {
-  const el = document.getElementById(`preset-${key}-control`)
+  const el = document.getElementById(`model-profile-${key}-control`)
   expect(el, `#${key}-control exists`).not.toBe(null)
   return el as HTMLInputElement
 }
@@ -140,7 +140,7 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the PUT of this preset. */
+/** Clicks Save changes and waits for the PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(1))
@@ -150,7 +150,7 @@ async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -233,7 +233,7 @@ const CARD = [
   { key: 'parallel', label: PAR },
   { key: 'kv-unified-per-slot', label: SLOT },
   { key: 'batch-size', label: BATCH },
-  { key: 'ubatch-size', label: en('preset-u-batch-size') },
+  { key: 'ubatch-size', label: en('model-profile-u-batch-size') },
 ]
 
 test.each(CARD)(
@@ -241,7 +241,9 @@ test.each(CARD)(
   async (n) => {
     const { main } = await form()
     const el = box(main, n.label)
-    expect(el.id, `${n.key}: the field id`).toBe(`preset-${n.key}-control`)
+    expect(el.id, `${n.key}: the field id`).toBe(
+      `model-profile-${n.key}-control`,
+    )
     expect(el.getAttribute('inputmode'), `${n.key}: input mode`).toBe('numeric')
   },
 )
@@ -318,7 +320,7 @@ test('2h.159: the unit after an input takes the id <field id>-unit, stays visibl
 
 test('2h.159: with an error on a field that has a unit, the input is described by the unit first and then the error', async () => {
   const { bff, main } = await form({
-    presetSave: () =>
+    modelProfileSave: () =>
       reply(422, {
         key: 'not-a-number',
         args: ['cache-ram', '-1'],
@@ -334,7 +336,7 @@ test('2h.159: with an error on a field that has a unit, the input is described b
   expectError(el, text, RAM)
   expect(describedIds(el).slice(0, 2), 'unit first, then the error').toEqual([
     unitId(el),
-    'preset-cache-ram-error',
+    'model-profile-cache-ram-error',
   ])
   expect(
     described(el).slice(0, 2),
@@ -370,7 +372,7 @@ test('2h.159: the Server page Memory margin is described by its unit, and by the
 
 test('2h.161: a 422 naming a field whose default box is ticked marks the field and puts the focus on the box (144)', async () => {
   const { bff, main } = await form({
-    presetSave: () =>
+    modelProfileSave: () =>
       reply(422, {
         key: 'not-whole-number-in-range',
         args: ['ctx-size', '-1', '0', '2147483647'],

@@ -1,5 +1,5 @@
 // What a save answered, read the same way by both save forms (the Server
-// page's section 3, the preset page's 145 to 149): the shaped 200, the
+// page's section 3, the model profile page's 145 to 149): the shaped 200, the
 // session's answers, the keys the two pages share, the page's own keys, the
 // check refusals of a 422, and the generic failure. Each page keeps its own
 // table of check keys and its own keys: this file holds the order they are

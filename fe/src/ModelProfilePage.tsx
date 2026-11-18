@@ -1,20 +1,20 @@
-// A preset's page (#/models/<id>, signed in): the way back to the list, the id
-// as the heading, and the preset read once each time the page opens from
-// GET /api/presets/<id>, or the message saying why it is not there
-// (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
+// A model profile's page (#/models/<id>, signed in): the way back to the list,
+// the id as the heading, and the model profile read once each time the page
+// opens from GET /api/profiles/model/<id>, or the message saying why it is not
+// there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the heading, the
 // Engine field, the Assets card as text and the cards of the settings
-// (fe/briefs/02e-preset-cards.md, section 1). The Embeddings card's two
+// (fe/briefs/02e-model-profile-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
 // card's controls, the Vision card's controls and the Hardware card's rows are
 // editable (the two MoE rows of the last stay read-only), and
 // the save bar at the end of the settings writes what changed
-// (fe/briefs/02h-preset-save.md, sub-slices 2h.1, 2h.4, 2h.5, 2h.7 and 2h.8,
+// (fe/briefs/02h-model-profile-save.md, sub-slices 2h.1, 2h.4, 2h.5, 2h.7 and 2h.8,
 // criteria 130 to 149, 155 to 157, 164, 175 to 182 and 183 to 188, read by key in
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config. The jump list under the
 // h2 names the cards and moves the focus to one of them, and a save refusal
 // naming a field that takes no focus says what it is and which card it sits on
-// (fe/briefs/02h-preset-save.md, sub-slice 2h.10, criteria 194 to 198a).
+// (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
 import {
   Fragment,
   useCallback,
@@ -30,7 +30,7 @@ import Card from './Card.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
 import PageHeading from './PageHeading.tsx'
-import PresetCards, {
+import ModelProfileCards, {
   cardHeadingId,
   cardJumps,
   checkRows,
@@ -57,7 +57,7 @@ import PresetCards, {
   textRows,
   textSend,
   unlockControl,
-} from './PresetCards.tsx'
+} from './ModelProfileCards.tsx'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
@@ -68,14 +68,14 @@ import {
   useSaveBarPadding,
   useWarnOnLeave,
 } from './SaveBar.tsx'
-import { presetIdUnreadable } from './route.ts'
+import { modelProfileIdUnreadable } from './route.ts'
 import { SignInDialog, useSignInDialog } from './SignIn.tsx'
 import type { Session } from './session.ts'
 import { t } from './strings.ts'
 
-/** One preset as the read gives it, the shape of criterion 81 with the
+/** One model profile as the read gives it, the shape of criterion 81 with the
  * `revision` 2h.1's 131 adds: an opaque string the save sends back. */
-type PresetDoc = {
+type ModelProfileDoc = {
   id: string
   engine: string
   engineAvailable: boolean
@@ -85,9 +85,9 @@ type PresetDoc = {
   revision: string
 }
 
-/** What the read gave: the preset, the key of its message, signed out. */
+/** What the read gave: the model profile, the key of its message, signed out. */
 type Answer =
-  | { doc: PresetDoc }
+  | { doc: ModelProfileDoc }
   | {
       error:
         'client-not-authorized' | 'client-unavailable' | 'not-found' | 'failed'
@@ -95,7 +95,7 @@ type Answer =
   | 'signed-out'
   | 'revoked'
 
-function isPresetDoc(value: unknown): value is PresetDoc {
+function isModelProfileDoc(value: unknown): value is ModelProfileDoc {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
@@ -124,32 +124,38 @@ function specTypeNgrams(specType: string): string {
 }
 
 /** The label the option carries: the engine, marked when it is not installed. */
-function engineOption(doc: PresetDoc): string {
+function engineOption(doc: ModelProfileDoc): string {
   return doc.engineAvailable
     ? doc.engine
-    : t('presets-engine-not-available', doc.engine)
+    : t('model-profiles-engine-not-available', doc.engine)
 }
 
 /** Not a strings key: an acronym, as the GUI labels it. */
 const MMPROJ = 'MMProj'
 
 /** The Assets card's pairs, in the GUI's order, values as the file holds them. */
-function assetRows(doc: PresetDoc): { label: string; value: string }[] {
+function assetRows(doc: ModelProfileDoc): { label: string; value: string }[] {
   const values = doc.values
   const specType = values['spec-type'] ?? ''
   return [
-    { label: t('preset-model-file'), value: values['model'] ?? '' },
-    { label: t('preset-project-url'), value: doc.projectUrl },
+    { label: t('model-profile-model-file'), value: values['model'] ?? '' },
+    { label: t('model-profile-project-url'), value: doc.projectUrl },
     { label: MMPROJ, value: values['mmproj'] ?? '' },
-    { label: t('preset-draft-model'), value: values['model-draft'] ?? '' },
-    { label: t('preset-drafter'), value: specTypeDrafter(specType) },
-    { label: t('preset-ngram-drafters'), value: specTypeNgrams(specType) },
+    {
+      label: t('model-profile-draft-model'),
+      value: values['model-draft'] ?? '',
+    },
+    { label: t('model-profile-drafter'), value: specTypeDrafter(specType) },
+    {
+      label: t('model-profile-ngram-drafters'),
+      value: specTypeNgrams(specType),
+    },
   ]
 }
 
-async function readPreset(id: string): Promise<Answer> {
+async function readModelProfile(id: string): Promise<Answer> {
   try {
-    const reply = await call(`/api/presets/${encodeURIComponent(id)}`)
+    const reply = await call(`/api/profiles/model/${encodeURIComponent(id)}`)
     if (reply.status === 401) return 'signed-out'
     if (sessionRevoked(reply)) return 'revoked'
     if (!reply.ok) {
@@ -158,19 +164,21 @@ async function readPreset(id: string): Promise<Answer> {
         case 'client-not-authorized':
         case 'client-unavailable':
           return { error: key }
-        case 'no-preset-named':
+        case 'no-model-profile-named':
           return { error: 'not-found' }
         default:
           return { error: 'failed' }
       }
     }
-    return isPresetDoc(reply.body) ? { doc: reply.body } : { error: 'failed' }
+    return isModelProfileDoc(reply.body)
+      ? { doc: reply.body }
+      : { error: 'failed' }
   } catch {
     return { error: 'failed' }
   }
 }
 
-export default function PresetPage({
+export default function ModelProfilePage({
   id,
   onSignedOut,
   onRenewed,
@@ -187,12 +195,12 @@ export default function PresetPage({
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
   // Raised by the bar's Reload (145): `reads` starts the read again, `asked`
-  // holds the preset the read was asked for.
+  // holds the model profile the read was asked for.
   const [reads, setReads] = useState(0)
   const asked = useRef<string | null>(null)
   // The sign-ins in the bar's dialog (152): `rereads` remounts the form and
-  // reads the preset again for the new session, `dropped` says the edits went
-  // with it, `kept` counts the sign-ins that kept the page (ends the alert).
+  // reads the model profile again for the new session, `dropped` says the edits
+  // went with it, `kept` counts the sign-ins that kept the page (ends the alert).
   const [signIns, setSignIns] = useState({
     rereads: 0,
     dropped: false,
@@ -203,14 +211,15 @@ export default function PresetPage({
 
   useEffect(() => {
     // `.` and `..` are sent to no read at all (59a): the page says there is no
-    // such preset, as a 404 would.
-    if (presetIdUnreadable(id)) return
-    // The read a Reload asked for is the one asked for THIS preset: the mark is
-    // spent here, so it cannot outlive the preset that asked for it (145).
+    // such model profile, as a 404 would.
+    if (modelProfileIdUnreadable(id)) return
+    // The read a Reload asked for is the one asked for THIS model profile: the
+    // mark is spent here, so it cannot outlive the model profile that asked
+    // for it (145).
     const reload = asked.current === id
     asked.current = null
     let live = true
-    readPreset(id).then((a) => {
+    readModelProfile(id).then((a) => {
       if (!live) return
       if (a === 'signed-out' || a === 'revoked') {
         onSignedOut(a === 'revoked')
@@ -234,7 +243,7 @@ export default function PresetPage({
     [onDirty],
   )
 
-  /** Reads the preset again, the edits discarded: the settings give place to
+  /** Reads the model profile again, the edits discarded: the settings give place to
    * the page's loading status until the read lands (145). */
   function reload() {
     asked.current = id
@@ -243,7 +252,7 @@ export default function PresetPage({
   }
 
   /** A sign-in in the bar's dialog (152): the form stays for the same user;
-   * for another one its edits are dropped and the preset is read again, and
+   * for another one its edits are dropped and the model profile is read again, and
    * the app gives the focus to the h1. */
   function renewed(session: Session) {
     const dropped = dirty.current
@@ -268,8 +277,8 @@ export default function PresetPage({
       : id
   return (
     <>
-      <p className="preset-back">
-        <a href="#/models">{t('preset-back')}</a>
+      <p className="model-profile-back">
+        <a href="#/models">{t('model-profile-back')}</a>
       </p>
       <PageHeading text={shown} />
       <Body
@@ -286,7 +295,7 @@ export default function PresetPage({
   )
 }
 
-/** The page's content: the loaded preset, or the message. */
+/** The page's content: the loaded model profile, or the message. */
 function Body({
   id,
   answer,
@@ -306,11 +315,11 @@ function Body({
   onReload: () => void
   onRenewed: (session: Session) => boolean
 }) {
-  if (presetIdUnreadable(id)) {
-    return <p>{t('preset-not-found', id)}</p>
+  if (modelProfileIdUnreadable(id)) {
+    return <p>{t('model-profile-not-found', id)}</p>
   }
   if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
-    return <p role="status">{t('preset-loading')}</p>
+    return <p role="status">{t('model-profile-loading')}</p>
   }
   if ('doc' in answer)
     return (
@@ -330,9 +339,9 @@ function Body({
     return <p>{t('api-client-unavailable')}</p>
   }
   if (answer.error === 'not-found') {
-    return <p>{t('preset-not-found', id)}</p>
+    return <p>{t('model-profile-not-found', id)}</p>
   }
-  return <p>{t('preset-load-failed')}</p>
+  return <p>{t('model-profile-load-failed')}</p>
 }
 
 /** What a save answered: the values and the revision the form is dirty
@@ -353,8 +362,9 @@ function applied(
   return next
 }
 
-/** The check keys a preset save answers (2h's 150): the text of each, and the
- * field each names when the reply does not. One literal t() call per key. */
+/** The check keys a model profile save answers (2h's 150): the text of each,
+ * and the field each names when the reply does not. One literal t() call per
+ * key. */
 const REFUSALS: RefusalTable = {
   text: (key, args) => {
     switch (key) {
@@ -378,16 +388,16 @@ const REFUSALS: RefusalTable = {
         return t('api-load-on-startup-over-max', ...args)
       case 'load-on-startup-unlimited':
         return t('api-load-on-startup-unlimited', ...args)
-      case 'preset-no-model':
-        return t('api-preset-no-model', ...args)
+      case 'model-profile-no-model':
+        return t('api-model-profile-no-model', ...args)
       case 'override-no-pattern':
         return t('api-override-no-pattern', ...args)
       case 'override-no-device':
         return t('api-override-no-device', ...args)
-      case 'invalid-preset-id':
-        return t('api-invalid-preset-id', ...args)
-      case 'preset-name-taken':
-        return t('api-preset-name-taken', ...args)
+      case 'invalid-model-profile-id':
+        return t('api-invalid-model-profile-id', ...args)
+      case 'model-profile-name-taken':
+        return t('api-model-profile-name-taken', ...args)
       default:
         return undefined
     }
@@ -408,7 +418,7 @@ const REFUSALS: RefusalTable = {
       case 'load-on-startup-over-max':
       case 'load-on-startup-unlimited':
         return 'load-on-startup'
-      case 'preset-no-model':
+      case 'model-profile-no-model':
         return 'model'
       case 'override-no-pattern':
       case 'override-no-device':
@@ -419,29 +429,30 @@ const REFUSALS: RefusalTable = {
   },
 }
 
-/** The preset save's keys, beside the shared ones `saveAnswer` reads (145, 146).
- * The 404 text takes the id of the page: the bff sends empty `args` for an id no
- * preset can carry, and the id it echoes is not the one the user came for (146). */
-function presetKey(key: string, id: string): SaveAnswer | undefined {
+/** The model profile save's keys, beside the shared ones `saveAnswer` reads
+ * (145, 146). The 404 text takes the id of the page: the bff sends empty `args`
+ * for an id no model profile can carry, and the id it echoes is not the one the
+ * user came for (146). */
+function modelProfileKey(key: string, id: string): SaveAnswer | undefined {
   switch (key) {
-    case 'preset-changed-elsewhere':
+    case 'model-profile-changed-elsewhere':
       return { kind: 'changed-elsewhere' }
-    case 'no-preset-named':
-      return { kind: 'failed', text: t('api-no-preset-named', id) }
+    case 'no-model-profile-named':
+      return { kind: 'failed', text: t('api-no-model-profile-named', id) }
     default:
       return undefined
   }
 }
 
 /** Writes the changed keys (133) and reads the answer by key. */
-async function sendPresetSave(
+async function sendModelProfileSave(
   id: string,
   revision: string,
   values: Record<string, string | null>,
 ): Promise<SaveAnswer> {
   let reply
   try {
-    reply = await call(`/api/presets/${encodeURIComponent(id)}`, {
+    reply = await call(`/api/profiles/model/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ revision, values }),
@@ -450,7 +461,7 @@ async function sendPresetSave(
     // The fe's own 120 s limit of a PUT (148, D7).
     return { kind: 'failed', text: sendFailure(e) }
   }
-  return saveAnswer(reply, (key) => presetKey(key, id), REFUSALS)
+  return saveAnswer(reply, (key) => modelProfileKey(key, id), REFUSALS)
 }
 
 /** The control with the given id, when this page renders it. */
@@ -518,7 +529,7 @@ function focusFailure(row: CheckedRow, locked: boolean) {
   focusField(row.key)
 }
 
-/** The loaded preset as a form: the settings of 2e, the two Embeddings
+/** The loaded model profile as a form: the settings of 2e, the two Embeddings
  * controls of 2h.1, the number fields of 2h.4 and the KV cache card of 2h.5
  * editable, and the save bar of the Server page writing the changed keys
  * (criteria 130 to 141, 155 to 157, 164). */
@@ -530,13 +541,13 @@ function Content({
   onReload,
   onRenewed,
 }: {
-  doc: PresetDoc
+  doc: ModelProfileDoc
   /** The edits were dropped by a sign-in as another session (152). */
   dropped: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
   renewals: number
   onDirty: (dirty: boolean) => void
-  /** Reads the preset again, the edits discarded (145). */
+  /** Reads the model profile again, the edits discarded (145). */
   onReload: () => void
   /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
   onRenewed: (session: Session) => boolean
@@ -562,7 +573,7 @@ function Content({
   const saving = useRef(false)
   const bar = useSaveBarPadding()
   // The bar's Sign in, and the dialog it opens (151).
-  const saveId = 'preset-save'
+  const saveId = 'model-profile-save'
   const signInId = `${fid}-sign-in`
   const askSignIn = useSignInDialog(signInId)
 
@@ -729,7 +740,7 @@ function Content({
     setPhase('saving')
     alerts.setAlert(null)
     fields.set({})
-    const answer = await sendPresetSave(doc.id, loaded.revision, values)
+    const answer = await sendModelProfileSave(doc.id, loaded.revision, values)
     saving.current = false
     if (answer.kind === 'saved') {
       const next = {
@@ -758,7 +769,7 @@ function Content({
         return
       case 'changed-elsewhere':
         alerts.setAlert({
-          text: t('api-preset-changed-elsewhere'),
+          text: t('api-model-profile-changed-elsewhere'),
           action: 'reload',
         })
         return
@@ -792,7 +803,7 @@ function Content({
 
   /** A sign-in in the bar's dialog (152): the dialog closes, the alert goes,
    * focus on Save changes, the edits stay. For another session the page reads
-   * the preset again and this form goes with it. */
+   * the model profile again and this form goes with it. */
   function signedIn(session: Session) {
     if (!onRenewed(session)) return
     alerts.setAlert(null)
@@ -812,9 +823,9 @@ function Content({
 
   return (
     <>
-      {!doc.enabled && <p>{t('preset-off')}</p>}
+      {!doc.enabled && <p>{t('model-profile-off')}</p>}
       <section>
-        <h2>{t('preset-settings-title')}</h2>
+        <h2>{t('model-profile-settings-title')}</h2>
         {dropped && (
           <p role="alert" className="alert">
             {t('server-edits-dropped')}
@@ -823,10 +834,10 @@ function Content({
         {/* 196: the jump list is the page's TOC, between the heading and the
             engine Notice (or the Engine field when there is none), a list of
             buttons that move the focus. */}
-        <nav className="jump" aria-label={t('preset-jump-label')}>
+        <nav className="jump" aria-label={t('model-profile-jump-label')}>
           <ul>
             {[
-              { id: cardHeadingId('assets'), title: t('preset-assets') },
+              { id: cardHeadingId('assets'), title: t('model-profile-assets') },
               ...cardJumps(),
             ].map(({ id, title }) => (
               <li key={title}>
@@ -844,27 +855,29 @@ function Content({
         {/* 194: the Notice of 2h.1 is gone: the read-only fields say so where
             they sit; only the engine Notice of 72 stays. */}
         {!doc.engineAvailable && (
-          <p className="notice">{t('preset-engine-unavailable', doc.engine)}</p>
+          <p className="notice">
+            {t('model-profile-engine-unavailable', doc.engine)}
+          </p>
         )}
         <SelectField
-          id="preset-engine"
-          label={t('preset-engine')}
-          hint={t('preset-engine-hint')}
+          id="model-profile-engine"
+          label={t('model-profile-engine')}
+          hint={t('model-profile-engine-hint')}
           options={[{ value: doc.engine, text: engineOption(doc) }]}
           value={doc.engine}
           onChange={() => undefined}
         />
         <Card
-          title={t('preset-assets')}
+          title={t('model-profile-assets')}
           headingId={cardHeadingId('assets')}
-          intro={t('preset-assets-read-only')}
+          intro={t('model-profile-assets-read-only')}
         >
           <dl className="assets">
             {assetRows(doc).map((row) => (
               <Fragment key={row.label}>
                 <dt>{row.label}</dt>
                 <dd className={row.value === '' ? 'muted' : 'mono'}>
-                  {row.value === '' ? t('preset-value-none') : row.value}
+                  {row.value === '' ? t('model-profile-value-none') : row.value}
                 </dd>
               </Fragment>
             ))}
@@ -873,7 +886,7 @@ function Content({
         {/* 196: the jump targets are the card headings: every card of the page
             gives its heading the id a jump button reaches it by, and the
             tabindex -1 that keeps it out of the Tab path. */}
-        <PresetCards
+        <ModelProfileCards
           values={draft}
           loaded={loaded.values}
           onEdit={edit}

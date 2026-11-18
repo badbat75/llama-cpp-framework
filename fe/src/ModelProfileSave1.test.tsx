@@ -1,4 +1,4 @@
-// The smallest end-to-end save of a preset (fe/briefs/02h-preset-save.md,
+// The smallest end-to-end save of a model profile (fe/briefs/02h-model-profile-save.md,
 // sub-slice 2h.1, criteria 130 to 134): the Embeddings card's two controls
 // become editable and everything else stays disabled; the read needs
 // `revision`, and the save sends it back with only the keys the user changed
@@ -7,9 +7,9 @@
 // the body of the PUT the fake bff recorded, asked for by a click on the save
 // bar's Save changes. The bar's own DOM, Discard, the pending state, the
 // 200's messages, the answers that are not a shaped 200, the leave guard and
-// the tab order are 135 to 141, in PresetSave2.test.tsx; the keyed answers
+// the tab order are 135 to 141, in ModelProfileSave2.test.tsx; the keyed answers
 // (409, 422) are 2h.2. The cards, their fields and the reading of a value are
-// 2e (PresetCards1 to PresetCards5.test.tsx, PresetFlags.test.tsx).
+// 2e (ModelProfileCards1 to ModelProfileCards5.test.tsx, ModelProfileFlags.test.tsx).
 import {
   act,
   cleanup,
@@ -27,25 +27,25 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
 } from './test/bff.ts'
 import {
-  PRESET_CARDS,
+  MODEL_PROFILE_CARDS,
   controlEnabled,
   isEditableField,
   specGroupEnabled,
   type Field,
   type Label,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const MODE = en('preset-embedding-mode')
-const POOLING = en('preset-pooling')
+const PUT = `/api/profiles/model/${ID}`
+const MODE = en('model-profile-embedding-mode')
+const POOLING = en('model-profile-pooling')
 
 /** An unlisted Pooling value past the 20 characters a select holds: the extra
  * option of 87, so the field's loaded state is one the select does not list
@@ -76,18 +76,20 @@ const VALUES = {
 }
 
 /** 2h.9's 189 to 191: the Speculative decoding card's fields, taken from the
- * shared card table of test/presetCards.ts with their row key and their
+ * shared card table of test/modelProfileCards.ts with their row key and their
  * `boxed` flag, so `controlEnabled` answers with the group rule of 190 / 191
  * on top of the default box of 156. A row's field is named by its key, not by
  * its label (the n-gram labels repeat, 2e's 113), and its ids are
- * `preset-<key>-box` and `preset-<key>-control`. */
+ * `model-profile-<key>-box` and `model-profile-<key>-control`. */
 const SPEC_BY_ID: Record<string, Field> = Object.fromEntries(
-  PRESET_CARDS.find((c) => c.heading === 'preset-speculative-decoding')!
+  MODEL_PROFILE_CARDS.find(
+    (c) => c.heading === 'model-profile-speculative-decoding',
+  )!
     .fields.filter(
       (f): f is { label: Label; key: string; boxed?: boolean } =>
         typeof f !== 'string' && 'key' in f,
     )
-    .map((f) => [`preset-${f.key}`, f]),
+    .map((f) => [`model-profile-${f.key}`, f]),
 )
 
 /** The 2h.9 group a key belongs to (2e's 112: the key's prefix), `undefined`
@@ -118,73 +120,73 @@ function boxEnabled(field: Field, values: Record<string, string>): boolean {
 
 /** The fields 2h.1's 130, 2h.4's 155, 2h.5's 164, 2h.6's 170, 2h.7's 175 and
  * 176, 2h.8's 183 and 186 and 2h.9's 189 made editable, keyed by the id of
- * their field (`preset-<key>`: the box is `<id>-box`, the input
+ * their field (`model-profile-<key>`: the box is `<id>-box`, the input
  * `<id>-control`), so a control's id finds the field the shared table of
- * test/presetCards.ts gives the enable rules to. Most entries are the label's
+ * test/modelProfileCards.ts gives the enable rules to. Most entries are the label's
  * strings key; the Speculative decoding card's are the keyed fields of
  * `SPEC_BY_ID`. */
 const EDITABLE_BY_ID: Record<string, Field> = {
-  'preset-ctx-size': 'preset-context-size',
-  'preset-parallel': 'preset-parallel-slots',
-  'preset-kv-unified': 'preset-unified-kv',
-  'preset-kv-unified-per-slot': 'preset-per-slot-context',
-  'preset-batch-size': 'preset-batch-size',
-  'preset-ubatch-size': 'preset-u-batch-size',
-  'preset-embeddings': 'preset-embedding-mode',
-  'preset-pooling': 'preset-pooling',
-  'preset-cache-type-k': 'preset-k-cache-type',
-  'preset-cache-type-v': 'preset-v-cache-type',
-  'preset-flash-attn': 'preset-flash-attention',
-  'preset-cache-ram': 'preset-cache-ram',
-  'preset-cache-reuse': 'preset-cache-reuse',
-  'preset-ctx-checkpoints': 'preset-context-checkpoints',
-  'preset-checkpoint-min-step': 'preset-checkpoint-step',
-  'preset-temp': 'preset-temperature',
-  'preset-top-k': 'Top-K',
-  'preset-top-p': 'Top-P',
-  'preset-min-p': 'Min-P',
-  'preset-repeat-penalty': 'preset-repeat-penalty',
-  'preset-presence-penalty': 'preset-presence-penalty',
-  'preset-backend-sampling': 'preset-backend-sampling',
-  'preset-load-on-startup': 'preset-load-on-startup',
-  'preset-chat-template-kwargs': 'preset-chat-kwargs',
+  'model-profile-ctx-size': 'model-profile-context-size',
+  'model-profile-parallel': 'model-profile-parallel-slots',
+  'model-profile-kv-unified': 'model-profile-unified-kv',
+  'model-profile-kv-unified-per-slot': 'model-profile-per-slot-context',
+  'model-profile-batch-size': 'model-profile-batch-size',
+  'model-profile-ubatch-size': 'model-profile-u-batch-size',
+  'model-profile-embeddings': 'model-profile-embedding-mode',
+  'model-profile-pooling': 'model-profile-pooling',
+  'model-profile-cache-type-k': 'model-profile-k-cache-type',
+  'model-profile-cache-type-v': 'model-profile-v-cache-type',
+  'model-profile-flash-attn': 'model-profile-flash-attention',
+  'model-profile-cache-ram': 'model-profile-cache-ram',
+  'model-profile-cache-reuse': 'model-profile-cache-reuse',
+  'model-profile-ctx-checkpoints': 'model-profile-context-checkpoints',
+  'model-profile-checkpoint-min-step': 'model-profile-checkpoint-step',
+  'model-profile-temp': 'model-profile-temperature',
+  'model-profile-top-k': 'Top-K',
+  'model-profile-top-p': 'Top-P',
+  'model-profile-min-p': 'Min-P',
+  'model-profile-repeat-penalty': 'model-profile-repeat-penalty',
+  'model-profile-presence-penalty': 'model-profile-presence-penalty',
+  'model-profile-backend-sampling': 'model-profile-backend-sampling',
+  'model-profile-load-on-startup': 'model-profile-load-on-startup',
+  'model-profile-chat-template-kwargs': 'model-profile-chat-kwargs',
   // 2h.6's 170: the Chat / reasoning card, every field always enabled. The
   // two boxes of the card's boxed numbers are `<id>-box`, their inputs
   // `<id>-control`, and the two checkboxes' inputs are `<id>-control` too.
-  'preset-jinja': 'preset-chat-template',
-  'preset-prefill-assistant': 'preset-prefill-assistant',
-  'preset-reasoning': 'preset-reasoning',
-  'preset-reasoning-format': 'preset-reasoning-format',
-  'preset-reasoning-effort': 'preset-reasoning-effort',
+  'model-profile-jinja': 'model-profile-chat-template',
+  'model-profile-prefill-assistant': 'model-profile-prefill-assistant',
+  'model-profile-reasoning': 'model-profile-reasoning',
+  'model-profile-reasoning-format': 'model-profile-reasoning-format',
+  'model-profile-reasoning-effort': 'model-profile-reasoning-effort',
   // The row's key is reasoning-preserve, its label keeps-past-thinking.
-  'preset-reasoning-preserve': 'preset-keep-past-thinking',
-  'preset-reasoning-budget': 'preset-thinking-budget',
-  'preset-reasoning-budget-message': 'preset-budget-message',
-  'preset-n-predict': 'preset-max-output',
+  'model-profile-reasoning-preserve': 'model-profile-keep-past-thinking',
+  'model-profile-reasoning-budget': 'model-profile-thinking-budget',
+  'model-profile-reasoning-budget-message': 'model-profile-budget-message',
+  'model-profile-n-predict': 'model-profile-max-output',
   // 2h.7's 176: the Vision card's four, enabled while the read's `mmproj` is
   // present (Vision GPU also needs Vision on GPU checked). The checkbox's
   // input is `<id>-control`.
-  'preset-mmproj-offload': 'preset-vision-on-gpu',
-  'preset-mmproj-device': 'preset-vision-gpu',
-  'preset-image-min-tokens': 'preset-min-image-tokens',
-  'preset-image-max-tokens': 'preset-max-image-tokens',
+  'model-profile-mmproj-offload': 'model-profile-vision-on-gpu',
+  'model-profile-mmproj-device': 'model-profile-vision-gpu',
+  'model-profile-image-min-tokens': 'model-profile-min-image-tokens',
+  'model-profile-image-max-tokens': 'model-profile-max-image-tokens',
   // 2h.7's 175: the Hardware card, its seven always-on rows and the draft
   // pair (177's rule). 2h.8's 183 and 186: the Fit trio, `fit` always enabled
   // and its two dependents while its box reads checked. Only the two MoE rows
   // (178) stay out of the list, so the test demands them disabled;
   // `n-cpu-ffn`, `n-gpu-layers` and `fit-ctx` are boxed (156).
-  'preset-n-gpu-layers': 'preset-gpu-layers',
-  'preset-n-cpu-ffn': 'preset-dense-ffn-cpu-layers',
-  'preset-op-offload': 'preset-op-offload',
-  'preset-repack': 'preset-repack',
-  'preset-no-host': 'preset-no-host-buffer',
-  'preset-lazy-mode': 'preset-lazy-tensors',
-  'preset-load-mode': 'preset-load-mode',
-  'preset-fit': 'preset-fit-to-vram',
-  'preset-fit-ctx': 'preset-fit-min-context',
-  'preset-fit-target': 'preset-fit-free-vram',
-  'preset-device-draft': 'preset-draft-device',
-  'preset-n-gpu-layers-draft': 'preset-draft-gpu-layers',
+  'model-profile-n-gpu-layers': 'model-profile-gpu-layers',
+  'model-profile-n-cpu-ffn': 'model-profile-dense-ffn-cpu-layers',
+  'model-profile-op-offload': 'model-profile-op-offload',
+  'model-profile-repack': 'model-profile-repack',
+  'model-profile-no-host': 'model-profile-no-host-buffer',
+  'model-profile-lazy-mode': 'model-profile-lazy-tensors',
+  'model-profile-load-mode': 'model-profile-load-mode',
+  'model-profile-fit': 'model-profile-fit-to-vram',
+  'model-profile-fit-ctx': 'model-profile-fit-min-context',
+  'model-profile-fit-target': 'model-profile-fit-free-vram',
+  'model-profile-device-draft': 'model-profile-draft-device',
+  'model-profile-n-gpu-layers-draft': 'model-profile-draft-gpu-layers',
   // 2h.9's 189 to 191: the Speculative decoding card's sixteen fields, by
   // their row keys, each enabled by its group's rule.
   ...SPEC_BY_ID,
@@ -200,7 +202,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetFlags.test.tsx) ───────────────────────────────────
+// ── Helpers (as ModelProfileFlags.test.tsx) ───────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -215,14 +217,16 @@ async function loaded(options: BffOptions = {}) {
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main }
 }
 
 /** The loaded page with `values` holding exactly `values`. */
 function page(values: Record<string, string>) {
-  return loaded({ preset: () => reply(200, presetDoc({}, { values })) })
+  return loaded({
+    modelProfile: () => reply(200, modelProfileDoc({}, { values })),
+  })
 }
 
 /** An element's text, with the page's runs of whitespace folded. */
@@ -242,11 +246,11 @@ function pick(main: HTMLElement, label: string, value: string) {
 
 /** The written-as line of `key` (2e's 124), and the full-value line (2e's 118). */
 function writtenOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#preset-written-${key}`)
+  return main.querySelector(`#model-profile-written-${key}`)
 }
 
 function fullOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#preset-full-${key}`)
+  return main.querySelector(`#model-profile-full-${key}`)
 }
 
 /** The ids the control's `aria-describedby` names, in order (124b). */
@@ -277,7 +281,7 @@ function inactive(el: HTMLElement): boolean {
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -286,7 +290,7 @@ function status(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
@@ -336,11 +340,12 @@ function expectAlert(main: HTMLElement, text: string) {
 /** The loaded page with revision `r1`, `values`, and `answer` for the save. */
 function form(
   values: Record<string, string>,
-  answer?: BffOptions['presetSave'],
+  answer?: BffOptions['modelProfileSave'],
 ) {
   return loaded({
-    preset: () => reply(200, presetDoc({}, { revision: 'r1', values })),
-    presetSave: answer,
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { revision: 'r1', values })),
+    modelProfileSave: answer,
   })
 }
 
@@ -354,10 +359,10 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
   expect(controls.length, 'every field of 2e is on the page').toBeGreaterThan(
     20,
   )
-  const engine = selectOf(main, en('preset-engine'))
+  const engine = selectOf(main, en('model-profile-engine'))
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
-    // The 2h.4 card's fields by their ids: `preset-<key>`, its default box
+    // The 2h.4 card's fields by their ids: `model-profile-<key>`, its default box
     // `<id>-box`, its input `<id>-control`.
     const field = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
     // 155: a box is enabled in an editable card, a box of a 2h.9 group with
@@ -384,15 +389,15 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
 })
 
 // The English of the two read-only sentences the page no longer shows: 2h.1's
-// 130 removed `preset-read-only` and 2h.10's 194 removed
-// `preset-partly-editable`. Both keys are out of the strings file (pinned by
+// 130 removed `model-profile-read-only` and 2h.10's 194 removed
+// `model-profile-partly-editable`. Both keys are out of the strings file (pinned by
 // App.test.tsx's 1a), so the test names the text itself.
 const READ_ONLY_ENGLISH =
-  "Read-only for now: this page cannot change a preset's settings yet. Change them in pai-config on the server machine."
+  "Read-only for now: this page cannot change a model profile's settings yet. Change them in pai-config on the server machine."
 const PARTLY_EDITABLE_ENGLISH =
   'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.'
 
-test('2h.130 (2h.10 194): no read-only Notice on the page: preset-read-only went in 2h.1 and preset-partly-editable follows it in 2h.10, so a page with an available engine shows no bordered Notice at all', async () => {
+test('2h.130 (2h.10 194): no read-only Notice on the page: model-profile-read-only went in 2h.1 and model-profile-partly-editable follows it in 2h.10, so a page with an available engine shows no bordered Notice at all', async () => {
   const { main } = await page({})
   expect(
     main.querySelectorAll('.notice').length,
@@ -410,7 +415,7 @@ test('2h.130 (2h.10 194): no read-only Notice on the page: preset-read-only went
 
 // ── 131: the revision ───────────────────────────────────────────────────
 
-test('2h.131: a 200 read with no revision, a revision that is not a string, a number, null, shows preset-load-failed and no card', async () => {
+test('2h.131: a 200 read with no revision, a revision that is not a string, a number, null, shows model-profile-load-failed and no card', async () => {
   for (const [what, extra] of [
     ['absent', { revision: undefined }],
     ['null', { revision: null }],
@@ -418,9 +423,10 @@ test('2h.131: a 200 read with no revision, a revision that is not a string, a nu
     ['an object', { revision: { n: 1 } }],
   ] as const) {
     const { main } = open({
-      preset: () => reply(200, presetDoc({}, { values: {}, ...extra })),
+      modelProfile: () =>
+        reply(200, modelProfileDoc({}, { values: {}, ...extra })),
     })
-    const shown = await within(main).findByText(en('preset-load-failed'))
+    const shown = await within(main).findByText(en('model-profile-load-failed'))
     expect(shown, `revision ${what}: the message`).toBeTruthy()
     expect(
       within(main).queryAllByRole('heading', { level: 3 }).length,
@@ -434,10 +440,10 @@ test('2h.131: a 200 read with no revision, a revision that is not a string, a nu
 test('2h.131: the save sends the read revision back untouched: the fe never parses it', async () => {
   const opaque = 'R 9/8-∅ x'
   const { bff, main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(
         200,
-        presetDoc({}, { values: { pooling: 'mean' }, revision: opaque }),
+        modelProfileDoc({}, { values: { pooling: 'mean' }, revision: opaque }),
       ),
   })
   pick(main, POOLING, 'cls')
@@ -479,7 +485,7 @@ test('2h.132: a Pooling change to the same option it loaded in is not dirty, and
 
   // 132: hint toggles change nothing (the About of an editable and of a
   // disabled field).
-  for (const label of [MODE, en('preset-context-size')]) {
+  for (const label of [MODE, en('model-profile-context-size')]) {
     fireEvent.click(
       within(main).getByRole('button', {
         name: `${en('field-about')} ${label}`,
@@ -637,9 +643,11 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   const select = selectOf(main, MODE)
   const line = writtenOf(main, 'embeddings')
   expect(line, 'the line of 124 for the file spelling "0"').toBeTruthy()
-  expect(text(line!), 'the file spelling').toBe(en('preset-written-as', '0'))
+  expect(text(line!), 'the file spelling').toBe(
+    en('model-profile-written-as', '0'),
+  )
   expect(describedIds(select), 'the control names the line (124b)').toContain(
-    'preset-written-embeddings',
+    'model-profile-written-embeddings',
   )
   expect(isHidden(line!), 'shown').toBe(false)
 
@@ -651,7 +659,7 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
   expect(
     describedIds(selectOf(main, MODE)),
     'and the control drops its id',
-  ).not.toContain('preset-written-embeddings')
+  ).not.toContain('model-profile-written-embeddings')
 
   pick(main, MODE, 'false')
   expect(
@@ -749,11 +757,11 @@ test("2h.134 (2h.6 170, 2h.9 190): a long value the disabled control cannot show
   const line = fullOf(main, 'spec-draft-type-k')!
   expect(text(line), 'the line repeats the value as written').toBe(EXTRA_POOL)
   expect(
-    selectOf(main, en('preset-draft-k-cache-type')).disabled,
+    selectOf(main, en('model-profile-draft-k-cache-type')).disabled,
     'the field is a disabled select',
   ).toBe(true)
   expect(
-    selectOf(main, en('preset-reasoning-effort')).disabled,
+    selectOf(main, en('model-profile-reasoning-effort')).disabled,
     'Reasoning effort: 170 makes its card editable, so the select is enabled',
   ).toBe(false)
   expect(

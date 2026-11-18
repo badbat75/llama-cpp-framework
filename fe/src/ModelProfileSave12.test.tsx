@@ -1,14 +1,14 @@
 // The Vision card editable, the first part of sub-slice 2h.7 of
-// fe/briefs/02h-preset-save.md (175, 176, 179, 181, 182): every control of the
+// fe/briefs/02h-model-profile-save.md (175, 176, 179, 181, 182): every control of the
 // card enabled only while the read's `mmproj` is present and not empty, Vision
-// GPU also while Vision on GPU is checked (live), the note `preset-vision-off`
+// GPU also while Vision on GPU is checked (live), the note `model-profile-vision-off`
 // after the card's h3 while `mmproj` is missing (a plain paragraph, not a live
 // region, not in any aria-describedby), what each field of 2e's table 102 sends
 // by its kind (133: the `mmproj-offload` checkbox, the `mmproj-device` device
 // select of 179, the two 1-or-more integers of 157), and the exact text of the
 // new string (182). The Hardware card of 175 is a later task. The card's
-// read-only look is 2e's 102, in PresetCards3.test.tsx; the helpers are those
-// of PresetSave8, PresetSave9, PresetSave10 and PresetSave11.test.tsx, which
+// read-only look is 2e's 102, in ModelProfileCards3.test.tsx; the helpers are those
+// of ModelProfileSave8, ModelProfileSave9, ModelProfileSave10 and ModelProfileSave11.test.tsx, which
 // this file repeats (a test file imports no other test file).
 import {
   cleanup,
@@ -25,7 +25,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   stubDialog,
@@ -34,19 +34,19 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const HEADING = en('preset-vision')
-const NEXT = en('preset-speculative-decoding')
-const OFF_TOGGLE = en('preset-vision-offload-toggle')
-const GPU = en('preset-vision-gpu')
+const PUT = `/api/profiles/model/${ID}`
+const HEADING = en('model-profile-vision')
+const NEXT = en('model-profile-speculative-decoding')
+const OFF_TOGGLE = en('model-profile-vision-offload-toggle')
+const GPU = en('model-profile-vision-gpu')
 /** The text of the device select's empty option (2e's 102, 110). */
-const FOLLOWS = en('preset-device-follows-model')
-const MIN = en('preset-min-image-tokens')
-const MAX = en('preset-max-image-tokens')
+const FOLLOWS = en('model-profile-device-follows-model')
+const MIN = en('model-profile-min-image-tokens')
+const MAX = en('model-profile-max-image-tokens')
 const DEFAULT = en('field-default')
 /** 182: the brief's exact text of the new string, as a literal. */
 const OFF_TEXT =
-  'Used only with an MMProj file, and this preset has none (Assets).'
+  'Used only with an MMProj file, and this model profile has none (Assets).'
 /** 157's row of image-min-tokens and image-max-tokens: 1 or more. */
 const MIN_ONE = en('field-error-number-min', '1')
 const MMPROJ = 'Qwen3-VL-mmproj-BF16.gguf'
@@ -81,7 +81,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave8 to PresetSave11.test.tsx) ───────────────────
+// ── Helpers (as ModelProfileSave8 to ModelProfileSave11.test.tsx) ───────────────────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -90,8 +90,11 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
@@ -175,13 +178,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -194,7 +197,7 @@ function sentValues(
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -254,7 +257,7 @@ const NO_MMPROJ = [
 ]
 
 test.each(NO_MMPROJ)(
-  '2h.176, 2h.182: mmproj $name: every Vision control is natively disabled and the note preset-vision-off sits right after the card h3, before the first field',
+  '2h.176, 2h.182: mmproj $name: every Vision control is natively disabled and the note model-profile-vision-off sits right after the card h3, before the first field',
   async (c) => {
     const { main } = await form(c.values)
     for (const el of cardControls(main))
@@ -279,8 +282,8 @@ test.each(NO_MMPROJ)(
   },
 )
 
-test('2h.182: the new string preset-vision-off is the briefs sentence, word for word', () => {
-  expect(en('preset-vision-off')).toBe(OFF_TEXT)
+test('2h.182: the new string model-profile-vision-off is the briefs sentence, word for word', () => {
+  expect(en('model-profile-vision-off')).toBe(OFF_TEXT)
 })
 
 test('2h.181: the note is a plain paragraph: no live region, no role, not in any control of the card aria-describedby', async () => {
@@ -310,10 +313,10 @@ test('2h.176, 2h.158: with mmproj present, no note and every control enabled: th
   const off = checkBoxOf(main, OFF_TOGGLE)
   expect(off.disabled, 'Vision on GPU enabled').toBe(false)
   expect(off.checked, 'mmproj-offload = true shows checked').toBe(true)
-  expect(off.id, 'the field id').toBe('preset-mmproj-offload-control')
+  expect(off.id, 'the field id').toBe('model-profile-mmproj-offload-control')
   const gpu = selectOf(main, GPU)
   expect(gpu.disabled, 'Vision GPU enabled (offload checked)').toBe(false)
-  expect(gpu.id, 'the field id').toBe('preset-mmproj-device-control')
+  expect(gpu.id, 'the field id').toBe('model-profile-mmproj-device-control')
   expect(gpu.value, 'the file device shows').toBe('ROCm1')
   for (const [label, key] of [
     [MIN, 'image-min-tokens'],
@@ -330,7 +333,7 @@ test('2h.176, 2h.158: with mmproj present, no note and every control enabled: th
     expect(el.value, `${key}: the input holds the file text`).toBe(
       AS_LOADED[key],
     )
-    expect(el.id, `${key}: the field id`).toBe(`preset-${key}-control`)
+    expect(el.id, `${key}: the field id`).toBe(`model-profile-${key}-control`)
     expect(el.getAttribute('inputmode'), `${key}: input mode (158)`).toBe(
       'numeric',
     )
@@ -492,7 +495,7 @@ test('2h.156, 2h.133: an absent Vision number starts with its box ticked, its in
 
 /** The Pooling select of the Embeddings card: a field of another card, used
  * below as the change the user does make (nothing else on the page moves). */
-const POOLING = en('preset-pooling')
+const POOLING = en('model-profile-pooling')
 
 /** The option values of a select, in the order they are listed. */
 function optionValues(select: HTMLSelectElement): string[] {

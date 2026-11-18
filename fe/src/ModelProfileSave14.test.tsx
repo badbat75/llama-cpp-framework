@@ -1,5 +1,5 @@
 // The Fit trio of the Hardware card editable, sub-slice 2h.8 of
-// fe/briefs/02h-preset-save.md (183, 184, 185, 186, 187, 188): Fit to VRAM
+// fe/briefs/02h-model-profile-save.md (183, 184, 185, 186, 187, 188): Fit to VRAM
 // always enabled with the checked state of 2e.3c's 127, its toggle text as the
 // table of 184 (and the text that follows an untick of Context size's default
 // box, silently), an invalid `fit` of 2e's 128 that blocks the Save, what a
@@ -11,7 +11,7 @@
 // page sends, it checks", 2026-11-18), and the four new strings. The new 2h.7's
 // 182a of the layer counts (the refusal of GPU layers and Draft GPU layers
 // names `auto` and `all`) is here too, beside 157's accept of the words.
-// The card's other rows are 2h.7's 175 to 182, in PresetSave13.test.tsx, whose
+// The card's other rows are 2h.7's 175 to 182, in ModelProfileSave13.test.tsx, whose
 // helpers this file repeats (a test file imports no other test file).
 import {
   cleanup,
@@ -29,7 +29,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -37,24 +37,24 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
-const PUT = `/api/presets/${ID}`
-const FIT = en('preset-fit-to-vram')
-const FIT_CTX = en('preset-fit-min-context')
-const FIT_TARGET = en('preset-fit-free-vram')
-const CTX = en('preset-context-size')
-const OP = en('preset-op-offload')
-const GPU_LAYERS = en('preset-gpu-layers')
-const DRAFT_LAYERS = en('preset-draft-gpu-layers')
-const FFN = en('preset-dense-ffn-cpu-layers')
+const PUT = `/api/profiles/model/${ID}`
+const FIT = en('model-profile-fit-to-vram')
+const FIT_CTX = en('model-profile-fit-min-context')
+const FIT_TARGET = en('model-profile-fit-free-vram')
+const CTX = en('model-profile-context-size')
+const OP = en('model-profile-op-offload')
+const GPU_LAYERS = en('model-profile-gpu-layers')
+const DRAFT_LAYERS = en('model-profile-draft-gpu-layers')
+const FFN = en('model-profile-dense-ffn-cpu-layers')
 const DEFAULT = en('field-default')
 /** The five toggle texts of 184's table. */
-const ALLOWED = en('preset-fit-allowed')
-const NOT_ALLOWED = en('preset-fit-not-allowed')
-const LAYERS_ONLY = en('preset-fit-layers-only')
-const CONTEXT_ONLY = en('preset-fit-context-only')
-const NOTHING = en('preset-fit-nothing')
+const ALLOWED = en('model-profile-fit-allowed')
+const NOT_ALLOWED = en('model-profile-fit-not-allowed')
+const LAYERS_ONLY = en('model-profile-fit-layers-only')
+const CONTEXT_ONLY = en('model-profile-fit-context-only')
+const NOTHING = en('model-profile-fit-nothing')
 /** 128, 129: the error of a value llama-server refuses. */
-const FIT_ERR = en('preset-fit-invalid')
+const FIT_ERR = en('model-profile-fit-invalid')
 /** 157's `fit-ctx` row: 1 or more. */
 const MIN_ONE = en('field-error-number-min', '1')
 /** 186: the two texts of the Fit free VRAM check. */
@@ -67,8 +67,8 @@ const WHOLE = en('field-error-whole-number')
 /** The literal unit of 107's Fit free VRAM row (89, 159). */
 const MIB = 'MiB'
 /** 124: the written-as line's texts. */
-const as_ = (value: string) => en('preset-written-as', value)
-const EMPTY = en('preset-written-empty')
+const as_ = (value: string) => en('model-profile-written-as', value)
+const EMPTY = en('model-profile-written-empty')
 
 /** A read of the card: the Fit trio's three keys plus a row the tests change,
  * with Context size and GPU layers at default (the key absent) or set. */
@@ -94,7 +94,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetSave13.test.tsx) ─────────────────────────────────
+// ── Helpers (as ModelProfileSave13.test.tsx) ─────────────────────────────────
 
 /** Waits for the page read with revision `r1` and the card's keys as `values`. */
 async function form(
@@ -103,15 +103,18 @@ async function form(
 ) {
   const bff = fakeBff({
     ...options,
-    preset: () =>
-      reply(200, presetDoc({}, { revision: 'r1', values: { ...values } })),
+    modelProfile: () =>
+      reply(
+        200,
+        modelProfileDoc({}, { revision: 'r1', values: { ...values } }),
+      ),
   })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-hardware-config'),
+    name: en('model-profile-hardware-config'),
   })
   return { bff, main }
 }
@@ -204,11 +207,11 @@ function expectLive(main: HTMLElement, what: string) {
 }
 
 /** The save bar's status line (the only role="status" below the h2 of the
- * settings, as PresetSave1.test.tsx takes it). */
+ * settings, as ModelProfileSave1.test.tsx takes it). */
 function status(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
@@ -217,13 +220,13 @@ function status(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** Clicks Save changes and waits for the n-th PUT of this preset. */
+/** Clicks Save changes and waits for the n-th PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(n))
 }
 
-/** The `values` of the n-th recorded PUT of this preset. */
+/** The `values` of the n-th recorded PUT of this model profile. */
 function sentValues(
   bff: ReturnType<typeof fakeBff>,
   n = 1,
@@ -412,14 +415,14 @@ test.each(LOADS)(
     // 184: the toggle text is the box's accessible name.
     expect(fitNamed(main, c.text), `${c.name}: 184: the toggle text`).toBe(fit)
     // 124, 127, 128: the line and the error under the box.
-    const line = document.getElementById('preset-written-fit')
+    const line = document.getElementById('model-profile-written-fit')
     if (c.written === null)
       expect(line, `${c.name}: no written-as line (127)`).toBeNull()
     else
       expect(line!.textContent, `${c.name}: 124: the line under the box`).toBe(
         c.written,
       )
-    const error = document.getElementById('preset-fit-error')
+    const error = document.getElementById('model-profile-fit-error')
     if (c.error === null) {
       expect(error, `${c.name}: no error (128)`).toBeNull()
       expect(fit.getAttribute('aria-invalid'), `${c.name}: not marked`).toBe(
@@ -432,7 +435,7 @@ test.each(LOADS)(
       expect(
         describedIds(fit),
         `${c.name}: 128: the box names the error`,
-      ).toContain('preset-fit-error')
+      ).toContain('model-profile-fit-error')
       expect(fit.getAttribute('aria-invalid'), `${c.name}: marked`).toBe('true')
     }
     // 186: the two dependents are enabled while the box is checked.
@@ -464,7 +467,7 @@ test('2h.184: unticking Context size default box changes the toggle text silentl
   expect(fit.checked, 'fit on: checked').toBe(true)
   expect(
     fitNamed(main, ALLOWED),
-    '184: both at default: preset-fit-allowed',
+    '184: both at default: model-profile-fit-allowed',
   ).toBe(fit)
   toggle(main, CTX)
   const after = fitBox(main)
@@ -472,7 +475,7 @@ test('2h.184: unticking Context size default box changes the toggle text silentl
   expect(after.checked, '184: the box keeps its state').toBe(true)
   expect(
     fitNamed(main, LAYERS_ONLY),
-    '184: Context size set and checked: preset-fit-layers-only',
+    '184: Context size set and checked: model-profile-fit-layers-only',
   ).toBe(after)
   expect(within(main).queryByText(ALLOWED), 'the first text is gone').toBeNull()
   for (const el of within(main).getAllByText(LAYERS_ONLY)) {
@@ -510,11 +513,11 @@ test('2h.185: fit TRUE: one click checks it and sends on and clears the line and
   expect(one.checked, 'the first click checks the box').toBe(true)
   expect(one.getAttribute('aria-invalid'), 'changed: not marked').toBe(null)
   expect(
-    document.getElementById('preset-fit-error'),
+    document.getElementById('model-profile-fit-error'),
     'changed: no error',
   ).toBeNull()
   expect(
-    document.getElementById('preset-written-fit'),
+    document.getElementById('model-profile-written-fit'),
     'changed: no written-as line',
   ).toBeNull()
   await save(first.main, first.bff)
@@ -538,7 +541,7 @@ test('2h.185: fit TRUE: Discard brings the line and the error back', async () =>
   expect(back.checked, 'Discard: back to the loaded state').toBe(false)
   expectError(back, FIT_ERR, 'fit TRUE after Discard')
   expect(
-    document.getElementById('preset-written-fit')?.textContent,
+    document.getElementById('model-profile-written-fit')?.textContent,
     'Discard: the written-as line is back',
   ).toBe(as_('TRUE'))
   expectInert(third.main, 'Discard: the form is clean')
@@ -548,7 +551,7 @@ test('2h.185, 2h.134, 2h.124, 2h.132: fit TRUE: an invalid value is a state no c
   const { main } = await form(loaded('TRUE', false, false))
   // 124, 127, 128: at load the file's spelling is under the box, with the error.
   expect(
-    document.getElementById('preset-written-fit')?.textContent,
+    document.getElementById('model-profile-written-fit')?.textContent,
     '124: at load the line shows the file spelling',
   ).toBe(as_('TRUE'))
   expectError(fitBox(main), FIT_ERR, 'fit TRUE at load')
@@ -558,7 +561,7 @@ test('2h.185, 2h.134, 2h.124, 2h.132: fit TRUE: an invalid value is a state no c
   const one = fitBox(main)
   expect(one.checked, 'the first click checks the box').toBe(true)
   expect(
-    document.getElementById('preset-written-fit'),
+    document.getElementById('model-profile-written-fit'),
     '134: the first click drops the line',
   ).toBeNull()
   expectNoError(one, FIT_ERR, 'fit TRUE clicked to checked')
@@ -570,11 +573,11 @@ test('2h.185, 2h.134, 2h.124, 2h.132: fit TRUE: an invalid value is a state no c
   const two = fitBox(main)
   expect(two.checked, 'the second click unchecks it (it sends off)').toBe(false)
   expect(
-    document.getElementById('preset-written-fit'),
+    document.getElementById('model-profile-written-fit'),
     '185: the line stays away: an off is not the invalid state the file holds',
   ).toBeNull()
   expect(
-    document.getElementById('preset-fit-error'),
+    document.getElementById('model-profile-fit-error'),
     '185: no error after the second click',
   ).toBeNull()
   expectNoError(two, FIT_ERR, 'fit TRUE after two clicks')
@@ -590,7 +593,7 @@ test('2h.185, 2h.134, 2h.124, 2h.132: fit TRUE: an invalid value is a state no c
   expect(back.checked, 'Discard: back to the loaded state').toBe(false)
   expectError(back, FIT_ERR, 'fit TRUE after Discard')
   expect(
-    document.getElementById('preset-written-fit')?.textContent,
+    document.getElementById('model-profile-written-fit')?.textContent,
     '134: Discard brings the line back with the loaded state',
   ).toBe(as_('TRUE'))
   expectInert(main, 'Discard: the form is clean')
@@ -763,7 +766,7 @@ test('2h.186, 2h.157: a Fit dependent that the unchecked box locks is not checke
 
 // ── 184: the text as the user edits the two fields, live ──────────────
 
-test('2h.184: unchecking Fit to VRAM with Context size set gives preset-fit-not-allowed, re-checking gives preset-fit-layers-only back', async () => {
+test('2h.184: unchecking Fit to VRAM with Context size set gives model-profile-fit-not-allowed, re-checking gives model-profile-fit-layers-only back', async () => {
   const { main } = await form(loaded('on', true, false))
   expect(
     fitNamed(main, LAYERS_ONLY),
@@ -782,7 +785,7 @@ test('2h.184: unchecking Fit to VRAM with Context size set gives preset-fit-not-
   )
 })
 
-test('2h.184: unticking GPU layers default box changes the text to preset-fit-context-only, ticking it back gives the first text', async () => {
+test('2h.184: unticking GPU layers default box changes the text to model-profile-fit-context-only, ticking it back gives the first text', async () => {
   const { main } = await form(loaded('on', false, false))
   expect(
     checkBox(main, GPU_LAYERS).checked,
@@ -835,7 +838,7 @@ test.each(FIT_BACK)(
       `${c.name}: the first click moves the box`,
     ).toBe(!c.checked)
     expect(
-      document.getElementById('preset-written-fit'),
+      document.getElementById('model-profile-written-fit'),
       '134: a click drops the written-as line (it describes the file)',
     ).toBeNull()
     fireEvent.click(fitBox(main))
@@ -844,7 +847,7 @@ test.each(FIT_BACK)(
       c.checked,
     )
     expectInert(main, `${c.name}: two clicks back`)
-    const line = document.getElementById('preset-written-fit')
+    const line = document.getElementById('model-profile-written-fit')
     if (c.written === null)
       expect(
         line,
@@ -1043,14 +1046,14 @@ test('2h.182a: Dense FFN CPU layers typed 1.5 keeps the general whole-number err
 
 // ── 188: the four new strings ─────────────────────────────────────────
 
-test('2h.188: the new strings preset-fit-layers-only, preset-fit-context-only, preset-fit-nothing and field-error-fit-target are the briefs sentences, word for word', () => {
-  expect(en('preset-fit-layers-only')).toBe(
+test('2h.188: the new strings model-profile-fit-layers-only, model-profile-fit-context-only, model-profile-fit-nothing and field-error-fit-target are the briefs sentences, word for word', () => {
+  expect(en('model-profile-fit-layers-only')).toBe(
     'auto-fit the GPU layers only: Context size is set (-fit on)',
   )
-  expect(en('preset-fit-context-only')).toBe(
+  expect(en('model-profile-fit-context-only')).toBe(
     'auto-fit the context only: GPU layers is set, so llama.cpp keeps your layers (-fit on)',
   )
-  expect(en('preset-fit-nothing')).toBe(
+  expect(en('model-profile-fit-nothing')).toBe(
     'nothing to fit: Context size and GPU layers are both set (-fit on)',
   )
   expect(en('field-error-fit-target')).toBe(

@@ -1,11 +1,11 @@
-// The shared rules of the preset page's plain cards and the first two cards
-// (fe/briefs/02e-preset-cards.md, criteria 83 to 95): the section that holds
+// The shared rules of the model profile page's plain cards and the first two cards
+// (fe/briefs/02e-model-profile-cards.md, criteria 83 to 95): the section that holds
 // the h2 and the jump list of 2h.10, every control natively disabled, how a number
 // and a select show the strings of the file, absent keys, empty keys, values a
 // mapping does not list, the hints, and units. The cards are Resource /
 // context (92) and Embeddings (93). The route, the read and its states are
-// PresetPage.test.tsx (2d.1 to 2d.4), the Engine field and the Assets card are
-// PresetContent.test.tsx (2d.5 to 2d.9). The colours of 85, the width of 91
+// ModelProfilePage.test.tsx (2d.1 to 2d.4), the Engine field and the Assets card are
+// ModelProfileContent.test.tsx (2d.5 to 2d.9). The colours of 85, the width of 91
 // and the words a screen reader uses are checked in the designer's review,
 // not in jsdom.
 import {
@@ -23,7 +23,7 @@ import {
   en,
   fakeBff,
   isHidden,
-  presetDoc,
+  modelProfileDoc,
   reply,
   startAt,
   type BffOptions,
@@ -36,7 +36,7 @@ import {
   saveBarTabStops,
   isEditableField,
   controlEnabled,
-} from './test/presetCards.ts'
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/models/${ID}`
@@ -96,25 +96,25 @@ type Row = {
 /** The field table of 92 and 93, in the cards' and the GUI's order. */
 const FIELDS: Row[] = [
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'ctx-size',
-    label: 'preset-context-size',
+    label: 'model-profile-context-size',
     kind: 'number',
     set: '172032',
     shown: '172032',
   },
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'parallel',
-    label: 'preset-parallel-slots',
+    label: 'model-profile-parallel-slots',
     kind: 'number',
     set: '2',
     shown: '2',
   },
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'kv-unified',
-    label: 'preset-unified-kv',
+    label: 'model-profile-unified-kv',
     kind: 'select',
     options: TRISTATE,
     absentOption: en('option-default'),
@@ -122,33 +122,33 @@ const FIELDS: Row[] = [
     shown: en('option-on'),
   },
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'kv-unified-per-slot',
-    label: 'preset-per-slot-context',
+    label: 'model-profile-per-slot-context',
     kind: 'number',
     set: '32768',
     shown: '32768',
   },
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'batch-size',
-    label: 'preset-batch-size',
+    label: 'model-profile-batch-size',
     kind: 'number',
     set: '4096',
     shown: '4096',
   },
   {
-    card: 'preset-resource-context',
+    card: 'model-profile-resource-context',
     key: 'ubatch-size',
-    label: 'preset-u-batch-size',
+    label: 'model-profile-u-batch-size',
     kind: 'number',
     set: '1024',
     shown: '1024',
   },
   {
-    card: 'preset-embeddings',
+    card: 'model-profile-embeddings',
     key: 'embeddings',
-    label: 'preset-embedding-mode',
+    label: 'model-profile-embedding-mode',
     kind: 'select',
     options: OFF_ON,
     absentOption: en('option-off'),
@@ -156,9 +156,9 @@ const FIELDS: Row[] = [
     shown: en('option-on'),
   },
   {
-    card: 'preset-embeddings',
+    card: 'model-profile-embeddings',
     key: 'pooling',
-    label: 'preset-pooling',
+    label: 'model-profile-pooling',
     kind: 'select',
     options: POOLING,
     optionValues: ['default', 'none', 'mean', 'cls', 'last', 'rank'],
@@ -173,7 +173,10 @@ const CONTROLS =
   FIELDS.filter((f) => f.kind === 'number').length * 2 +
   FIELDS.filter((f) => f.kind === 'select').length
 
-const RESOURCE_CARDS = ['preset-resource-context', 'preset-embeddings']
+const RESOURCE_CARDS = [
+  'model-profile-resource-context',
+  'model-profile-embeddings',
+]
 
 beforeEach(() => startAt(HASH))
 
@@ -183,7 +186,7 @@ afterEach(() => {
   startAt('')
 })
 
-// ── Helpers (as PresetContent.test.tsx) ─────────────────────────────────
+// ── Helpers (as ModelProfileContent.test.tsx) ─────────────────────────────────
 
 /** The app at the address in the location; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -198,7 +201,7 @@ async function loaded(options: BffOptions = {}) {
   const h1 = await within(main).findByRole('heading', { level: 1, name: ID })
   const h3 = await within(main).findByRole('heading', {
     level: 3,
-    name: en('preset-assets'),
+    name: en('model-profile-assets'),
   })
   return { bff, main, h1, h3 }
 }
@@ -208,18 +211,18 @@ function docOf(
   values: Record<string, string>,
   extra: Record<string, unknown> = {},
 ) {
-  return presetDoc({ model: MODEL, ...values }, extra)
+  return modelProfileDoc({ model: MODEL, ...values }, extra)
 }
 
 /** A read whose `values` are exactly `values` (the `{}` stub of 94). */
 function exactOf(values: Record<string, string>) {
-  return presetDoc({}, { values })
+  return modelProfileDoc({}, { values })
 }
 
 function settingsTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('preset-settings-title'),
+    name: en('model-profile-settings-title'),
   })
 }
 
@@ -233,14 +236,14 @@ function notices(main: HTMLElement): Element[] {
 /** The section jump list of 2h.10's 196, found by its name. */
 function navOf(main: HTMLElement): HTMLElement {
   return within(main).getByRole('navigation', {
-    name: en('preset-jump-label'),
+    name: en('model-profile-jump-label'),
   })
 }
 
 /** The Engine select of 2d, which 2e leaves as it is (criterion 70). */
 function engineSelect(main: HTMLElement): Promise<HTMLSelectElement> {
   return within(main).findByRole('combobox', {
-    name: en('preset-engine'),
+    name: en('model-profile-engine'),
   }) as Promise<HTMLSelectElement>
 }
 
@@ -366,23 +369,26 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, the Engine field, then every card of 83 in the page order (the list of test/presetCards.ts), and the off line stays above the h2', async () => {
+test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, the Engine field, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the off line stays above the h2', async () => {
   for (const [what, extra, off] of [
-    ['a switched-on preset', {}, false],
-    ['a switched-off preset', { enabled: false }, true],
+    ['a switched-on model profile', {}, false],
+    ['a switched-off model profile', { enabled: false }, true],
   ] as [string, Record<string, unknown>, boolean][]) {
     const { main, h1 } = await loaded({
-      preset: () => reply(200, docOf(SET, extra)),
+      modelProfile: () => reply(200, docOf(SET, extra)),
     })
     const h2 = settingsTitle(main)
     const section = h2.closest('section')
     expect(section, `${what}: the h2 sits in a section`).toBeTruthy()
     const nodes: [string, Node][] = [['the h1', h1]]
     if (off)
-      nodes.push(['the off line', within(main).getByText(en('preset-off'))])
+      nodes.push([
+        'the off line',
+        within(main).getByText(en('model-profile-off')),
+      ])
     else
       expect(
-        within(main).queryByText(en('preset-off')),
+        within(main).queryByText(en('model-profile-off')),
         `${what}: no off line`,
       ).toBeNull()
     nodes.push(
@@ -414,13 +420,13 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
   // between the h2 and the engine Notice, and the Notice stays before the
   // Engine field.
   const { main } = await loaded({
-    preset: () =>
+    modelProfile: () =>
       reply(200, docOf(SET, { engine: STRATA, engineAvailable: false })),
   })
   const engine = notices(main)
   expect(engine.length, '194: the engine Notice is the only Notice').toBe(1)
   expect(text(engine[0]!), 'the engine Notice of 72').toBe(
-    en('preset-engine-unavailable', STRATA),
+    en('model-profile-engine-unavailable', STRATA),
   )
   expect(
     before(engine[0]!, await engineSelect(main)),
@@ -432,13 +438,13 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
   ).toBe(true)
 })
 
-test('2e.84 (2h.10 194, 198): the Notice preset-partly-editable is gone: no bordered paragraph and no word of its text on any loaded preset, and the key is out of the strings file', async () => {
+test('2e.84 (2h.10 194, 198): the Notice model-profile-partly-editable is gone: no bordered paragraph and no word of its text on any loaded model profile, and the key is out of the strings file', async () => {
   for (const [what, doc] of [
     ['the all-set stub', docOf(SET)],
     ['a values of {}', exactOf({})],
-    ['a switched-off preset', docOf(SET, { enabled: false })],
+    ['a switched-off model profile', docOf(SET, { enabled: false })],
   ] as [string, unknown][]) {
-    const { main } = await loaded({ preset: () => reply(200, doc) })
+    const { main } = await loaded({ modelProfile: () => reply(200, doc) })
     expect(
       notices(main).length,
       `${what}: 194, no bordered Notice paragraph`,
@@ -448,9 +454,9 @@ test('2e.84 (2h.10 194, 198): the Notice preset-partly-editable is gone: no bord
       `${what}: 198, no word of the removed string`,
     ).toBeNull()
     expect(
-      t('preset-partly-editable'),
+      t('model-profile-partly-editable'),
       `${what}: 198, the key shows as itself`,
-    ).toBe('preset-partly-editable')
+    ).toBe('model-profile-partly-editable')
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -459,7 +465,7 @@ test('2e.84 (2h.10 194, 198): the Notice preset-partly-editable is gone: no bord
 // ── The shared rules of the cards (85, 86, 89, 90) ──────────────────────
 
 test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled and the Engine select stays enabled', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const values = docOf(SET).values
   const controls = RESOURCE_CARDS.flatMap((title) => [
     ...cardOf(main, title).querySelectorAll<HTMLElement>(
@@ -471,7 +477,9 @@ test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is nativel
   // lose disabled. A number's default box is always enabled (155); its input
   // follows the box, which a key the file holds leaves unticked (156).
   const rowOf = (id: string): Row | undefined =>
-    FIELDS.find((f) => `preset-${f.key}` === id.replace(/-(box|control)$/, ''))
+    FIELDS.find(
+      (f) => `model-profile-${f.key}` === id.replace(/-(box|control)$/, ''),
+    )
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
     const f = rowOf(id)
@@ -501,7 +509,8 @@ test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is nativel
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards hold exactly the fields of 92 and 93 in the table order', async () => {
   const { main } = await loaded({
-    preset: () => reply(200, docOf({ ...SET, temp: '0.7', faqs: 'zz-secret' })),
+    modelProfile: () =>
+      reply(200, docOf({ ...SET, temp: '0.7', faqs: 'zz-secret' })),
   })
   for (const title of RESOURCE_CARDS) {
     const card = cardOf(main, title)
@@ -517,9 +526,13 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
   }
   // The fields of a card follow its table.
   const fields = [
-    ...cardOf(main, 'preset-resource-context').querySelectorAll('.field'),
+    ...cardOf(main, 'model-profile-resource-context').querySelectorAll(
+      '.field',
+    ),
   ]
-  const inOrder = FIELDS.filter((f) => f.card === 'preset-resource-context')
+  const inOrder = FIELDS.filter(
+    (f) => f.card === 'model-profile-resource-context',
+  )
   for (let i = 0; i < inOrder.length; i++)
     expect(
       fields[i]!.contains(aboutOf(main, en(inOrder[i]!.label))),
@@ -533,7 +546,7 @@ test.each(
   '2e.86: $key is the empty string so it reads as absent, and its field shows the absent form (2e.3b: a flag reads "" as on, criterion 123)',
   async (f) => {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: '' })),
     })
     if (f.kind === 'number') expectAbsentNumber(main, en(f.label))
     else expectAbsentSelect(main, f)
@@ -541,7 +554,7 @@ test.each(
 )
 
 test('2e.89, 2e.90: no 2e.1 field carries a unit and no card of 2e.1 has a note or a group, so no unit, no h4 and no role=group division in them', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const title of RESOURCE_CARDS) {
     const card = cardOf(main, title)
     for (const sel of ['.unit', 'h4', '[role="group"]'])
@@ -567,7 +580,9 @@ test('2e.89, 2e.90: no 2e.1 field carries a unit and no card of 2e.1 has a note 
 test.each(FIELDS)(
   '2e.92, 2e.93, 2e.87, 2e.85 (2h.1 130, 2h.4 155): $key is a $kind named by its label inside its card and shows the set value $set, its controls enabled in an editable card',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const label = en(f.label)
     const field = fieldOf(main, label)
     expect(
@@ -620,7 +635,9 @@ test.each(FIELDS)(
 test.each(FIELDS)(
   '2e.86, 2e.94: $key is absent from a values of {} so its field shows the absent form',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, exactOf({})) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, exactOf({})),
+    })
     if (f.kind === 'number') expectAbsentNumber(main, en(f.label))
     else expectAbsentSelect(main, f)
   },
@@ -629,9 +646,9 @@ test.each(FIELDS)(
 test.each(['0172032', 'abc', '-1', '4096.50', ' 4096 '])(
   '2e.87, 2e.94: a number shows the reply string exactly, with no parsing and no reformatting, and its default box unticked: %s',
   async (value) => {
-    const label = en('preset-context-size')
+    const label = en('model-profile-context-size')
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ 'ctx-size': value })),
+      modelProfile: () => reply(200, exactOf({ 'ctx-size': value })),
     })
     const group = groupBox(main, label)
     expect(inputOf(group, label).value, `ctx-size ${value}`).toBe(value)
@@ -646,7 +663,7 @@ test('2e.87, 2e.94: a value the mapping does not list becomes one extra last opt
     [FIELDS.find((x) => x.key === 'pooling')!, 'weird'],
   ] as [Row, string][]) {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: value })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: value })),
     })
     const select = selectOf(main, en(f.label))
     const opts = optionsOf(select)
@@ -687,7 +704,7 @@ test.each([
     const pooling = FIELDS.find((f) => f.key === 'pooling')!
     const label = en(pooling.label)
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, pooling: value })),
+      modelProfile: () => reply(200, exactOf({ ...SET, pooling: value })),
     })
     expect(selectedText(selectOf(main, label)), `pooling ${value}`).toBe(shown)
   },
@@ -699,7 +716,7 @@ test('2e.93, 2e.1.3: Embedding mode is off / on and Unified KV is the tri-state:
     FIELDS.find((x) => x.key === 'kv-unified')!,
   ]) {
     const { main } = await loaded({
-      preset: () => reply(200, exactOf({ ...SET, [f.key]: 'false' })),
+      modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: 'false' })),
     })
     const select = selectOf(main, en(f.label))
     expect(optionTexts(select), `${f.key}: the shared options of 1.3`).toEqual(
@@ -718,7 +735,9 @@ test('2e.93, 2e.1.3: Embedding mode is off / on and Unified KV is the tri-state:
 test.each(FIELDS)(
   '2e.88: $key has an About toggle named About its label, with aria-expanded and aria-controls, and its hint opens as one paragraph per line of the GUI text and closes again',
   async (f) => {
-    const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+    const { main } = await loaded({
+      modelProfile: () => reply(200, docOf(SET)),
+    })
     const label = en(f.label)
     const hintKey = `${f.label}-hint`
     const lines = en(hintKey).split('\n')
@@ -756,11 +775,11 @@ test.each(FIELDS)(
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
 test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle in card and field order, and no control of a 2e card', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('preset-engine')}`,
-    en('preset-engine'),
+    `${en('field-about')} ${en('model-profile-engine')}`,
+    en('model-profile-engine'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])
@@ -768,8 +787,8 @@ test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in
 
 // ── The strings (95) ────────────────────────────────────────────────────
 
-test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts), the Assets intro of 2h.10, every label and every option show the English of the 22 new strings of 95', async () => {
-  const { main } = await loaded({ preset: () => reply(200, docOf(SET)) })
+test('2e.95: every card of 83 in the page order (the list of test/modelProfileCards.ts), the Assets intro of 2h.10, every label and every option show the English of the 22 new strings of 95', async () => {
+  const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(
     within(main)
       .getAllByRole('heading', { level: 3 })
@@ -784,8 +803,8 @@ test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts
     '198: no word of the removed string',
   ).toBeNull()
   expect(
-    within(cardOf(main, 'preset-assets')).getByText(
-      en('preset-assets-read-only'),
+    within(cardOf(main, 'model-profile-assets')).getByText(
+      en('model-profile-assets-read-only'),
     ),
     '195: the Assets intro shows',
   ).toBeTruthy()
@@ -806,8 +825,8 @@ test('2e.95: every card of 83 in the page order (the list of test/presetCards.ts
     ).toBeTruthy()
   }
   // The option texts of 1.3 and of 93, as the brief gives them.
-  const pooling = selectOf(main, en('preset-pooling'))
+  const pooling = selectOf(main, en('model-profile-pooling'))
   expect(optionTexts(pooling)).toEqual(POOLING)
-  const mode = selectOf(main, en('preset-embedding-mode'))
+  const mode = selectOf(main, en('model-profile-embedding-mode'))
   expect(optionTexts(mode)).toEqual(OFF_ON)
 })

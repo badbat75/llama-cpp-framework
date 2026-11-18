@@ -27,17 +27,18 @@ STATE = {"session": "admin", "inst": "active", "key": "withheld"}
 # A long unbroken name: the banner has to hold it at 320 px.
 USER = "abcdefghijklmnopqrstuvwxyz012345"
 
-# GET /api/presets: rows with every engine shape the list shows.
-PRESETS = [
+# GET /api/profiles/model: rows with every engine shape the list shows.
+MODEL_PROFILES = [
     {"id": "Qwen3.6-35B-A3B-UD-Q4_K_XL", "engine": "llama.cpp", "engineAvailable": True, "enabled": True, "model": ""},
     {"id": "Qwen3-27B", "engine": "llama.cpp", "engineAvailable": True, "enabled": True, "model": "/m/qwen/Qwen3-27B-Q8_0.gguf"},
     {"id": "Swift-Flash-Next-Draft", "engine": "Strata", "engineAvailable": False, "enabled": True, "model": ""},
     {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "enabled": False, "model": ""},
 ]
 
-# GET /api/presets/<id>: the one preset page that is there. A preset with no
-# values is a real shape: every key of the preset file is unset.
-PRESET_DOC = {
+# GET /api/profiles/model/<id>: the one model profile page that is there. A model
+# profile with no values is a real shape: every key of the model profile file is
+# unset.
+MODEL_PROFILE_DOC = {
     "id": "Qwen3-27B",
     "engine": "llama.cpp",
     "engineAvailable": True,
@@ -113,13 +114,13 @@ class Handler(SimpleHTTPRequestHandler):
             if STATE["key"] == "withheld":
                 doc["withheld"] = ["OpencodeApiKey"]
             return self.json(200, doc)
-        if p == "/api/presets":
-            return self.json(200, PRESETS)
-        if p.startswith("/api/presets/") and p.count("/") == 3:
-            pid = unquote(p.split("/")[3])
-            if pid == PRESET_DOC["id"]:
-                return self.json(200, PRESET_DOC)
-            return self.json(404, {"key": "no-preset-named", "args": [pid]})
+        if p == "/api/profiles/model":
+            return self.json(200, MODEL_PROFILES)
+        if p.startswith("/api/profiles/model/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            if pid == MODEL_PROFILE_DOC["id"]:
+                return self.json(200, MODEL_PROFILE_DOC)
+            return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return super().do_GET()
 
 

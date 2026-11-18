@@ -72,7 +72,7 @@ body {
 h1 {
   font-size: 1.5rem;
   margin: 0 0 var(--space-4);
-  /* A preset id has no spaces: it breaks anywhere inside the column (2d.7). */
+  /* A model profile id has no spaces: it breaks anywhere in the column (2d.7). */
   overflow-wrap: anywhere;
 }
 
@@ -310,34 +310,34 @@ td {
   border-bottom: 1px solid var(--surface);
 }
 
-/* The presets keep three columns at 320 px: the name wraps anywhere, the engine
-   only at spaces, the headers and the status not at all. */
-.presets th,
-.presets td {
+/* The model profiles keep three columns at 320 px: the name wraps anywhere,
+   the engine only at spaces, the headers and the status not at all. */
+.model-profiles th,
+.model-profiles td {
   padding: var(--space-2);
 }
 
-.presets th {
+.model-profiles th {
   white-space: nowrap;
   overflow-wrap: normal;
 }
 
-.presets td:nth-child(2) {
+.model-profiles td:nth-child(2) {
   white-space: normal;
   overflow-wrap: normal;
 }
 
-.presets td:last-child {
+.model-profiles td:last-child {
   white-space: nowrap;
 }
 
-.presets tr.off {
+.model-profiles tr.off {
   color: var(--muted);
 }
 
 /* Each row's switch (02-models.md 2c.39): the drawn checkbox centred in a
    24 by 24 px label, its hit area, then its word. */
-.presets-switch {
+.model-profiles-switch {
   display: inline-grid;
   place-content: center;
   min-width: 24px;
@@ -350,48 +350,48 @@ td {
 /* While a write runs: focusable, drawn as the disabled checkbox; no opacity,
    which would dim the focus ring too. The type attribute is spelled so this
    outweighs the shared disabled and aria-disabled box rule below. */
-.presets-switch input[type='checkbox'][aria-disabled='true'] {
+.model-profiles-switch input[type='checkbox'][aria-disabled='true'] {
   cursor: default;
 }
 
 @media (forced-colors: active) {
-  .presets-switch input[type='checkbox'][aria-disabled='true'],
-  .presets-switch input[type='checkbox'][aria-disabled='true']::before {
+  .model-profiles-switch input[type='checkbox'][aria-disabled='true'],
+  .model-profiles-switch input[type='checkbox'][aria-disabled='true']::before {
     border-color: GrayText;
   }
 }
 
 /* The switches' feedback, at the body size (2c.50). */
-.presets-switch-status {
+.model-profiles-switch-status {
   margin: 0;
   min-height: 1lh;
 }
 
-.presets-switch-alert {
+.model-profiles-switch-alert {
   color: var(--danger);
   font-weight: 600;
 }
 
-/* The filter over the presets (02-models.md 2b): field and Clear on one line,
-   at most 24rem wide, the browser's own clear glyph hidden. */
-.presets-filter {
+/* The filter over the model profiles (02-models.md 2b): field and Clear on one
+   line, at most 24rem wide, the browser's own clear glyph hidden. */
+.model-profiles-filter {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   max-width: 24rem;
 }
 
-.presets-filter label {
+.model-profiles-filter label {
   font-weight: 600;
 }
 
-.presets-filter-row {
+.model-profiles-filter-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.presets-filter-row input {
+.model-profiles-filter-row input {
   flex: 1;
   min-width: 0;
   font: inherit;
@@ -403,28 +403,28 @@ td {
   border-radius: var(--radius);
 }
 
-.presets-filter-row input::-webkit-search-cancel-button {
+.model-profiles-filter-row input::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
 }
 
-.presets-filter-row button {
+.model-profiles-filter-row button {
   white-space: nowrap;
 }
 
-.presets-filter-hint,
-.presets-filter-status {
+.model-profiles-filter-hint,
+.model-profiles-filter-status {
   margin: 0;
   color: var(--muted);
   font-size: 0.875rem;
 }
 
-.presets-filter-status {
+.model-profiles-filter-status {
   margin: var(--space-2) 0;
   min-height: 1lh;
 }
 
-.presets-note {
+.model-profiles-note {
   margin-top: var(--space-2);
   color: var(--muted);
   font-size: 0.875rem;
@@ -487,8 +487,8 @@ td {
   transform: rotate(-45deg);
 }
 
-/* The preset page's jump list (196, DESIGN.md D5.1): the page's TOC as buttons,
- * in reading order. A row of small buttons, not a row of links. */
+/* The model profile page's jump list (196, DESIGN.md D5.1): the page's TOC as
+ * buttons, in reading order. A row of small buttons, not a row of links. */
 .jump ul {
   display: flex;
   flex-wrap: wrap;
@@ -522,7 +522,7 @@ td {
   border-radius: var(--radius);
 }
 
-/* A note between a card's fields (DESIGN.md 5.2, 02e-preset-cards.md 90): the
+/* A note between a card's fields (DESIGN.md 5.2, 02e-model-profile-cards.md 90): the
    GUI's muted text, drawn as the card's intro is, at the place the GUI gives
    it. The space above it is wider than the space below, so it sits with the
    fields it introduces: the note takes the wider space above and a little
@@ -595,7 +595,7 @@ legend.field-label {
 /* Full-value line (DESIGN.md 5.2): a disabled input or select cannot scroll,
    so a value longer than its control shows is repeated under it. Monospace,
    like the control, and wrapping anywhere: a JSON value has no space to break
-   at, and the column is ~240 px at 320 px (02e-preset-cards.md 118). */
+   at, and the column is ~240 px at 320 px (02e-model-profile-cards.md 118). */
 .full-value {
   min-width: 0;
   margin: 0;
