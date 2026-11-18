@@ -166,14 +166,16 @@ function read(
 }
 
 /** The draft group enabled by 190: `model-draft` not empty, or a `draft-`
- * entry of the 75 split. */
+ * entry of the 75 split. The emptiness is of the trimmed value: the manager's
+ * INI reader trims every value it reads (`crates/core/src/ini.rs`), so the
+ * read hands the page a `model-draft` of spaces as an empty one. */
 function draftOn(values: Record<string, string>): boolean {
   const entries = (values['spec-type'] ?? '')
     .split(',')
     .map((e) => e.trim())
     .filter((e) => e !== '' && e !== 'none')
   return (
-    (values['model-draft'] ?? '') !== '' ||
+    (values['model-draft'] ?? '').trim() !== '' ||
     entries.some((e) => e.startsWith('draft-'))
   )
 }
@@ -361,6 +363,15 @@ const DRAFT_ON = [
     name: 'spec-type " ngram-simple , draft-eagle3 "',
     values: read(' ngram-simple , draft-eagle3 '),
   },
+  {
+    // The read hands the page the file's value trimmed (the manager's INI
+    // reader, crates/core/src/ini.rs): the spaces around this name are not
+    // part of it, what is left is a file name.
+    name: 'model-draft "  Qwen3-27B-DFlash-Q8_0.gguf " (spaces around), spec-type ngram-only',
+    values: read('ngram-mod', {
+      'model-draft': '  Qwen3-27B-DFlash-Q8_0.gguf ',
+    }),
+  },
 ]
 
 const DRAFT_OFF = [
@@ -372,6 +383,13 @@ const DRAFT_OFF = [
   {
     name: 'model-draft empty and spec-type none (75 drops none)',
     values: read('none', { 'model-draft': '' }),
+  },
+  {
+    // The manager's INI reader trims every value (crates/core/src/ini.rs), so
+    // a model-draft of only spaces reaches the page as the empty value: 190
+    // has no draft, and no `draft-` entry stands in for one.
+    name: 'model-draft "   " (spaces only), spec-type ngram-mod',
+    values: read('ngram-mod', { 'model-draft': '   ' }),
   },
 ]
 

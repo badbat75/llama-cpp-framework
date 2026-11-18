@@ -1735,12 +1735,15 @@ export function specTypeEntries(specType: string): string[] {
  * model cannot use, so a file it saved names one only for a model with the
  * heads). A deliberate difference: an MTP model whose `spec-type` names no
  * drafter has the group off here, on in the GUI. Each n-gram group is enabled
- * by its own entry, matched whole on the split of 75. */
+ * by its own entry, matched whole on the split of 75. The draft file is tested
+ * on its trimmed value: the manager's INI reader trims every value it reads
+ * (`crates/core/src/ini.rs`), so a `model-draft` of only spaces reaches the
+ * page as the empty one, and 190's "not empty" is not met. */
 function specGroupOn(group: SpecGroup, loaded: Record<string, string>) {
   const entries = specTypeEntries(held(loaded, 'spec-type') ?? '')
   if (group === 'draft')
     return (
-      held(loaded, 'model-draft') !== undefined ||
+      (held(loaded, 'model-draft') ?? '').trim() !== '' ||
       entries.some((entry) => entry.startsWith('draft-'))
     )
   return entries.includes(group)
