@@ -139,9 +139,9 @@ const darkTokens = (): [string, string][] => {
           r.depth > 0 &&
           r.at > range[0] &&
           r.at < range[1] &&
-          r.compact === ':root',
+          r.compact === ":root:not([data-theme='light'])",
       ),
-      'the :root rule inside the dark block',
+      'the dark rule inside the dark block (H4.10: :root:not([data-theme=light]))',
     ).body,
   )
 }

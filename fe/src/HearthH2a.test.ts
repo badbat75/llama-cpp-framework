@@ -292,9 +292,9 @@ const darkTokens = (): [string, string][] => {
           r.depth > 0 &&
           r.at > range[0] &&
           r.at < range[1] &&
-          r.compact === ':root',
+          r.compact === ":root:not([data-theme='light'])",
       ),
-      'the :root rule inside the dark block',
+      'the dark rule inside the dark block (H4.10: :root:not([data-theme=light]))',
     ).body,
   )
 }
@@ -941,6 +941,9 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
     '.shape-failed::before',
     '.shape-failed::after',
     '.mark',
+    // The theme switch's icon: an aria-hidden svg with one path, no text, the
+    // fixed box of 07-hearth-h4-theme.md H4.11.
+    '.theme-switch svg',
     "input[type='checkbox']",
     "input[type='checkbox']::before",
     "input[role='switch']",

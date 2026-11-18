@@ -60,7 +60,7 @@ CSS cannot give one declaration block both a media-conditioned and an unconditio
 16 dark tokens are written **twice**, identical, and a test keeps them identical:
 
 ```
-:root { ...the 40 light tokens...; color-scheme: light dark; }        /* unchanged */
+:root { ...the light tokens...; color-scheme: light dark; }           /* unchanged */
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) { ...the 16 dark tokens... }        /* block A: system dark */
@@ -165,6 +165,30 @@ flash (throttled CPU, a screenshot at first paint); the native `select`, checkbo
 match the theme in effect; forced colours: the pressed button in `Highlight`; the ring on the pressed
 button (`--accent` around `--accent-soft`) whole; at 320 px the banner wraps with no sideways scroll
 (the icon-only look is H5).
+
+Measured in the review (2026-11-18, stub, local): with a stored choice against the OS, Chromium
+paints one frame of the empty page in the OS's theme before `main.tsx` runs (first paint 12 ms,
+attribute at 18 ms); Firefox and WebKit show at most one animation frame before the attribute; with
+the script delayed 300 ms, Chromium and Firefox paint the OS's background for those 300 ms, WebKit
+waits for the script. Accepted as section 0 says; if it is ever not, the fix is a small external
+classic script in `<head>` (render-blocking, no CSP hash), not an inline one.
+
+### 4a. What `fe/ux/check.js` gains (a later change to the check, not a criterion of this cycle)
+
+The check today emulates the OS scheme with nothing stored, so it never reads block B or the light
+override. Add a stored-choice axis:
+
+- `CHOICES = [null, 'opposite']`. For `'opposite'`, before `ctx.newPage()`, call
+  `ctx.addInitScript((v) => { try { localStorage.setItem('pai-theme', v) } catch {} }, other)`,
+  `other` being `'dark'` when the context's `colorScheme` is `'light'` and the reverse. Run it only
+  for the states `overview`, `instance-server` and `model-profile` (3 states x 2 widths x 2 schemes =
+  12 more per browser); the summary line counts them.
+- For each such state, besides axe and overflow: `document.documentElement.dataset.theme === other`,
+  `.theme-switch` has `aria-pressed` `String(other === 'dark')`, and
+  `getComputedStyle(document.body).backgroundColor` equals the body background of the opposite OS
+  scheme with nothing stored (`bodyBackground(browser, other)`, already computed). A mismatch is a
+  failing line `<browser> <width>px <scheme>+<other> <state>: ...`.
+- Nothing else changes: the stub, the widths, the tags.
 
 ## 5. For the tester
 

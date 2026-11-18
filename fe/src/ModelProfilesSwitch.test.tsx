@@ -978,6 +978,8 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     en('skip-to-content'),
     en('app-name'),
     en('nav-menu'),
+    // Brief 07 H4.2: the theme switch, between Menu and the session part.
+    en('theme-dark'),
     en('session-sign-out'),
     en('nav-overview'),
     'default',

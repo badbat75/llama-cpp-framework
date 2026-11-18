@@ -88,8 +88,9 @@ const atRange = (needle: string): [number, number] => {
 }
 
 // The light token block: the top-level rule whose selector is exactly :root.
-// The dark one: the rule whose selector is exactly :root inside the
-// prefers-color-scheme: dark media block (H4 later rewrites the locator).
+// The dark one: the rule whose selector is
+// `:root:not([data-theme='light'])` inside the prefers-color-scheme: dark
+// media block (brief 07 H4.10).
 const lightBody = (): string =>
   single(
     TOP.filter((r) => r.compact === ':root'),
@@ -99,9 +100,13 @@ const darkBody = (): string => {
   const [open, end] = atRange('@media (prefers-color-scheme: dark)')
   return single(
     RULES.filter(
-      (r) => r.depth > 0 && r.at > open && r.at < end && r.compact === ':root',
+      (r) =>
+        r.depth > 0 &&
+        r.at > open &&
+        r.at < end &&
+        r.compact === ":root:not([data-theme='light'])",
     ),
-    'the :root rule inside the @media (prefers-color-scheme: dark) block',
+    "the :root:not([data-theme='light']) rule inside the @media (prefers-color-scheme: dark) block",
   ).body
 }
 const lightTokens = (): [string, string][] => customProps(lightBody())
@@ -357,11 +362,19 @@ test('H1a.4: no colour literal outside the two token blocks and .dialog::backdro
         const [open, end] = atRange('@media (prefers-color-scheme: dark)')
         return RULES.filter(
           (r) =>
-            r.depth > 0 && r.at > open && r.at < end && r.compact === ':root',
+            r.depth > 0 &&
+            r.at > open &&
+            r.at < end &&
+            r.compact === ":root:not([data-theme='light'])",
         )
       })(),
-      'the :root rule inside the @media (prefers-color-scheme: dark) block',
+      "the :root:not([data-theme='light']) rule inside the @media (prefers-color-scheme: dark) block",
     ).at,
+    // The dark tokens repeated for a stored choice (brief 07 H4.10) hold the
+    // same hex values, so they are exempt too.
+    ...TOP.filter((r) => r.compact === ":root[data-theme='dark']").map(
+      (r) => r.at,
+    ),
   ])
   // A # then 3, 4, 6 or 8 hex digits, and the colour functions, each with a
   // boundary so border-color( and a -1 do not match. Selectors are not

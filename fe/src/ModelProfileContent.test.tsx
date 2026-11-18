@@ -606,6 +606,8 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     en('skip-to-content'),
     en('app-name'),
     en('nav-menu'),
+    // Brief 07 H4.2: the theme switch, between Menu and the session part.
+    en('theme-dark'),
     en('session-sign-out'),
     en('nav-overview'),
     'default',

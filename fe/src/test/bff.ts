@@ -15,6 +15,7 @@ export const EN: Record<string, string> = {
   'skip-to-content': 'Skip to content',
   'nav-label': 'Main',
   'nav-menu': 'Menu',
+  'theme-dark': 'Dark theme',
   'nav-overview': 'Overview',
   'nav-instances': 'Instances',
   loading: 'Loading…',

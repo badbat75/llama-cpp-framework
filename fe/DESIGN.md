@@ -155,7 +155,19 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 
 ## 4. Layout and responsive rules
 
-- **App shell**: a header (the mark and the product name as the home link, then the user name and Sign out, or Sign in), a nav, and the main region.
+- **App shell**: a header (the mark and the product name as the home link, the Menu button when
+  narrow, the theme button, then the user name and Sign out, or Sign in), a nav, and the main region.
+  The theme button (`fe/src/ThemeSwitch.tsx`, `fe/briefs/07-hearth-h4-theme.md`): a secondary
+  `button` with `aria-pressed` (true while the dark theme is in effect), named "Dark theme" in both
+  states ([APG, Button](https://www.w3.org/WAI/ARIA/apg/patterns/button/)), Lucide's moon before the
+  label. It shows in every session state. The choice is `localStorage` `pai-theme` (`light` or
+  `dark`), mirrored by `data-theme` on `<html>` only while it is stored; a press back to the system's
+  theme drops it, and the page follows the OS again (live, `matchMedia` change). Pressed look:
+  `--accent-soft` fill, `--accent` text and border; under forced colours `Highlight` /
+  `HighlightText`. The stored choice is applied in `main.tsx` before the first render: measured
+  2026-11-18 on the stub, one frame of the empty page's background in the OS's theme may paint
+  first (Chromium, about 6 ms; none seen in WebKit), and as long as the script takes to arrive on a
+  slow link (300 ms delay: 300 ms in Chromium and Firefox): accepted (brief 07 H4, section 0).
   The mark (`fe/src/Mark.tsx`, `fe/briefs/07-hearth-h3-mark.md`): one `svg.mark`, 2rem, in
   `--accent`, `aria-hidden`, so the link's name stays "Private AI Framework"; the same path is the
   favicon, an inline SVG data URI whose fill follows the browser's scheme. Under forced colours an
@@ -188,8 +200,12 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 
 ### 5.1 Tokens
 
-CSS custom properties on `:root`, dark values under `@media (prefers-color-scheme: dark)`. No theme
-switch yet (H4 adds one): the system setting decides. The palette is direction B "Hearth" (brief 04,
+CSS custom properties on `:root`, the 16 dark values twice, identical (pinned by a test): under
+`@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) }` (the system's dark, no
+script needed) and under `:root[data-theme='dark']` (a stored dark choice) with `color-scheme: dark`;
+`:root[data-theme='light']` sets only `color-scheme: light`, so native controls and scrollbars follow
+the theme in effect (brief 07 H4 section 1; measured 2026-11-18: every `:root` custom property
+computes identical between a forced theme and the system's same theme, in the three engines). The palette is direction B "Hearth" (brief 04,
 round 2; built by brief 06 H1a, 2026-11-18): warm paper behind everything, cards lifted off it. Every
 foreground and background pair, both themes, with its measured ratio and floor, is the table of brief
 `fe/briefs/06-hearth-h1-tokens.md` section 2, pinned by `HearthTokens.test.ts`; the floors are 4.5:1 for

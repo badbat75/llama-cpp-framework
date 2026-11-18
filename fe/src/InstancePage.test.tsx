@@ -1119,6 +1119,9 @@ const TAB_PATH = [
   en('skip-to-content'),
   en('app-name'),
   en('nav-menu'),
+  // The theme switch sits between the Menu button and the session part
+  // (brief 07 H4.2).
+  en('theme-dark'),
   en('session-sign-out'),
   en('nav-overview'),
   'default',
@@ -1168,7 +1171,7 @@ const TAB_PATH = [
   en('save-button'),
 ]
 
-test('6: Tab goes skip link, product link, Menu, Sign out, nav links, the run buttons, Start at boot, then every control of the editable form in table order', async () => {
+test('6: Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the run buttons, Start at boot, then every control of the editable form in table order', async () => {
   await loaded()
   expect(tabbable().map(nameOf)).toEqual(TAB_PATH)
   // The h1 takes focus only from the page (tabindex -1).

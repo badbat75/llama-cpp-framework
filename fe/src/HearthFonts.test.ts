@@ -101,7 +101,10 @@ const darkBody = (): string => {
   return one(
     RULES.filter(
       (r) =>
-        opened(r.at) > 0 && r.at > open && r.at < end && r.compact === ':root',
+        opened(r.at) > 0 &&
+        r.at > open &&
+        r.at < end &&
+        r.compact === ":root:not([data-theme='light'])",
     ),
     'the :root rule inside the @media (prefers-color-scheme: dark) block',
   ).body

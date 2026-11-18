@@ -27,6 +27,7 @@ import ModelProfilePage from './ModelProfilePage.tsx'
 import { instanceHref, legacyHref, parseRoute, type Route } from './route.ts'
 import { readSession, signOut, type Session } from './session.ts'
 import SignIn from './SignIn.tsx'
+import { ThemeSwitch } from './ThemeSwitch.tsx'
 import { t } from './strings.ts'
 
 /**
@@ -285,6 +286,7 @@ export default function App() {
         >
           {t('nav-menu')}
         </button>
+        <ThemeSwitch />
         <SessionBar
           session={session}
           current={route.page === 'sign-in'}

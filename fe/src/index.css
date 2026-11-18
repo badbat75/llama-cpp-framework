@@ -5,8 +5,8 @@
    the dark block. The shape tokens (--radius-check, --radius-card,
    --radius-pill, --control-h, --border-w, --ring-w, --hatch, --shadow) are
    declared here and drawn by the shape slice; --space-7, --fs-xs and --fs-md
-   by a later one. No colour literal sits outside these two blocks, the dialog
-   backdrop excepted. */
+   by a later one. No colour literal sits outside these token blocks, the
+   dialog backdrop excepted. */
 
 :root {
   --page: #f7f1e8;
@@ -62,8 +62,13 @@
   color-scheme: light dark;
 }
 
+/* The two dark schemes of fe/briefs/07-hearth-h4-theme.md section 1: the
+   system's, and the one of a stored dark choice. CSS cannot give one block a
+   media-conditioned selector and a plain one, so the 16 tokens are written
+   twice, identically, and a test keeps them identical. With no attribute on
+   <html> this block decides on its own, before any script runs. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --page: #1b1714;
     --bg: #231d19;
     --surface: #2b241f;
@@ -81,6 +86,35 @@
     --hatch: rgb(241 233 223 / 0.06);
     --shadow: 0 0 0 1px var(--line);
   }
+}
+
+/* The stored choice: the same 16 tokens, whatever the system, and the native
+   controls and scrollbars dark with it. */
+:root[data-theme='dark'] {
+  --page: #1b1714;
+  --bg: #231d19;
+  --surface: #2b241f;
+  --field: #1b1714;
+  --line: #3a3029;
+  --text: #f1e9df;
+  --muted: #b5a698;
+  --control: #8a7c6f;
+  --accent: #dcaaf0;
+  --on-accent: #1b1714;
+  --accent-soft: #3a2a44;
+  --danger: #ff9a8a;
+  --success: #7ccf8e;
+  --warning: #e8b45a;
+  --hatch: rgb(241 233 223 / 0.06);
+  --shadow: 0 0 0 1px var(--line);
+  color-scheme: dark;
+}
+
+/* A light choice on a dark system: block above is excluded by its :not() and
+   :root already holds the light tokens, so only the native controls are left
+   to say. */
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 /* ── Fonts ────────────────────────────────────────────────────────────── */
@@ -378,6 +412,31 @@ button {
   height: 2rem;
   flex: none;
   color: var(--accent);
+}
+
+/* The theme switch of the banner (07-hearth-h4-theme.md H4.11): icon and label
+   on one line at the small gap, the icon a fixed box that takes no share of the
+   free space, so pressing moves no text. Its on state is the mockup's: the soft
+   accent fill, the accent text and the accent border, calmer than the toolbar
+   toggle's full accent fill for a button that stays pressed all day. Written
+   after .secondary[aria-pressed='true'], so a switch that carries both classes
+   takes this look. */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.theme-switch svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+}
+
+.theme-switch[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .session {
@@ -1233,6 +1292,16 @@ html:has(.save-bar) {
   .secondary[aria-disabled='true'] {
     color: GrayText;
     border-color: GrayText;
+  }
+
+  /* The theme switch keeps its on state there (07-hearth-h4-theme.md H4.11):
+     the fill, the label and the border take the system highlight, and no colour
+     adjust keeps the author's pressed state. */
+  .theme-switch[aria-pressed='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
   }
 }
 
