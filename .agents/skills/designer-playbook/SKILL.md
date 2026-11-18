@@ -42,7 +42,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - The tester and coder run on a small local model: a slice of more than ~12 criteria fails. Split a
   big slice into sub-slices, the first settling every shared rule, the rest field tables (key,
   label key with toml line, hint, control, absent value, enable rule); put them in their own brief
-  file so the tester reads only that (`fe/briefs/02e-preset-cards.md`).
+  file so the tester reads only that (`fe/briefs/02e-model-profile-cards.md`).
 - GUI preset hints sometimes name a slider or a number the GUI parks a ticked default box on
   (`crates/config/src/form.rs` `HINT_*`, e.g. 32768 for Context size, invented): the web shows no
   such number, so those lines are cut from the web's hint. The GUI also reads unparseable values as

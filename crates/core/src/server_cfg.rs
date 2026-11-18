@@ -6,7 +6,7 @@
 //! optional fields are emitted as commented `; Key = example  ; help` hint
 //! lines (never omitted) so the file self-documents every available knob.
 //!
-//! ADD A SERVER FIELD, the mirror of the preset recipe (top of presets.rs): a
+//! ADD A SERVER FIELD, the mirror of the model profile recipe (top of presets.rs): a
 //! smaller schema, but a LARGER per-field fan-out; it also reaches the CLI (the
 //! server has a per-field `set`) and the launch path (steps 7-8 below). Trace an
 //! existing field like `threads` (PascalCase INI key ↔ snake_case Rust field):
@@ -261,7 +261,7 @@ pub struct ServerConfig {
 
 /// Every value `-lm` accepts, in the dropdown's order (`common/arg.cpp`'s
 /// `--load-mode` help; `enum llama_load_mode` in include/llama.h), read by the
-/// per-preset `load-mode` key. Mirrors `Options.load_modes` in
+/// per-model-profile `load-mode` key. Mirrors `Options.load_modes` in
 /// ui/components.slint after its leading "default" (the omitted key): the e2e
 /// (`src/tests/ui_bindings.rs`) asserts the two lists agree, because a value the
 /// dropdown does not contain leaves the combo showing its first entry and
@@ -986,16 +986,23 @@ mod tests {
     }
 
     /// The manager accepts the shipped defaults as they are: the server file
-    /// against the shipped (empty) presets, and the presets file as a first
-    /// write. The presets file holds no section: the instance exists from
-    /// the first install and starts once a preset is added.
+    /// against the shipped (empty) model profiles, and the model profiles file as a first
+    /// write. The model profiles file holds no section: the instance exists from
+    /// the first install and starts once a model profile is added.
     #[test]
     fn the_manager_accepts_the_shipped_defaults() {
         let server = shipped_default("server@default.ini");
-        let presets = shipped_default("models.ini");
-        assert_eq!(presets.trim(), "", "no preset shipped: {presets:?}");
-        assert_eq!(crate::checks::server_file(&server, &presets), Ok(()));
-        assert_eq!(crate::checks::presets_file(&presets, "", "", None), Ok(()));
+        let model_profiles = shipped_default("models.ini");
+        assert_eq!(
+            model_profiles.trim(),
+            "",
+            "no preset shipped: {model_profiles:?}"
+        );
+        assert_eq!(crate::checks::server_file(&server, &model_profiles), Ok(()));
+        assert_eq!(
+            crate::checks::models_file(&model_profiles, "", "", None),
+            Ok(())
+        );
     }
 
     /// `render` → parse-back through the real INI reader: the guard for steps
@@ -1327,7 +1334,7 @@ mod tests {
         }
     }
 
-    // Pure validation (no IO), the server-side mirror of presets'
+    // Pure validation (no IO), the server-side mirror of model profiles'
     // save_validation_rejects_comment_markers_in_path_fields: a `;`/`#` in
     // ModelsDir would silently reload truncated through the INI comment rule,
     // so save must refuse it.

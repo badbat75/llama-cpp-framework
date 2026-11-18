@@ -13,7 +13,7 @@
 //! weight vector typed by hand is indexed against a list the user can't see and
 //! didn't choose. The two fields only make sense together, which is what this
 //! module models: one selection, rendered into the `device` + `tensor_split`
-//! strings a preset stores in `models.ini`.
+//! strings a model profile stores in `models.ini`.
 //!
 //! ## The four states (mirroring llama.cpp exactly)
 //! | selected | `device`        | `tensor_split` | meaning                                       |
@@ -52,7 +52,7 @@
 //!
 //! The projection is one-way and re-derived on every rebuild; nothing persists a
 //! block count. The INI keeps a ratio, which is the portable thing: re-point a
-//! preset at a model with a different `block_count` and `29,5` still means 85%,
+//! model profile at a model with a different `block_count` and `29,5` still means 85%,
 //! now cut somewhere else. The number in the cell is a VIEW of the ratio under the
 //! current model, never the source of truth.
 //!
@@ -90,8 +90,8 @@
 //! there too, with one difference the share column has to state: a BLANK
 //! vector is an EVEN cut, not the free-VRAM weighting the other modes fall back
 //! to. `SplitMode` is that verdict. The whole distribution (device,
-//! tensor-split, split-mode) is per preset only: server-wide it would ride the
-//! router's own command line and shadow every preset's.
+//! tensor-split, split-mode) is per model profile only: server-wide it would ride the
+//! router's own command line and shadow every model profile's.
 
 use crate::strings;
 
@@ -146,7 +146,7 @@ pub enum SplitMode {
     /// not the free-VRAM weighting of the other modes. `main_gpu` means nothing
     /// here: there is one device. Three things the LAUNCH checks that no row can
     /// show, hence the second warning strip under the combo
-    /// (`preset_split_mode_warning`): the arch must be one upstream implements
+    /// (`model_profile_split_mode_warning`): the arch must be one upstream implements
     /// (`gguf::arch_supports_sm_tensor`), flash attention must not be `off`
     /// (`auto` is promoted to on), and with no device pinned in either scope
     /// llama.cpp pools EVERY detected device into the split, duplicate Vulkan
@@ -181,7 +181,7 @@ impl SplitMode {
 }
 
 /// The split-mode combo as label/value/index rows rather than an enum list: the
-/// old list spelled "default" and "layer" as two entries, which for a preset are
+/// old list spelled "default" and "layer" as two entries, which for a model profile are
 /// the SAME launch in every reachable configuration (an absent key falls back to
 /// layer), so the duplicate entry was pure ambiguity. One entry now carries both;
 /// picking it stores "default", which the form conversions drop from the INI.
@@ -959,7 +959,7 @@ mod tests {
         assert_eq!(SplitMode::Tensor.as_str(), "tensor");
     }
 
-    // One combo entry for default+layer: for a preset they are the same launch
+    // One combo entry for default+layer: for a model profile they are the same launch
     // in every reachable configuration, so two entries were pure ambiguity. A
     // hand-written value outside the list sits on that entry too (and keeps its
     // INI spelling; nothing here rewrites it). `tensor` has its own entry now;

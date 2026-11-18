@@ -167,7 +167,7 @@ fn no_one_way_appstate_bindings_on_self_assigning_widgets() {
 /// `accept`, with no `has-focus` guard, unlike its own `ComboBoxBase`, which
 /// rejects a scroll it isn't focused for. So wheeling the page with the pointer
 /// merely PASSING OVER a SpinBox edits the config (and eats the scroll, so the page
-/// doesn't even move): a preset silently gains a different ctx-size, and nothing in
+/// doesn't even move): a model profile silently gains a different ctx-size, and nothing in
 /// the UI says so. There is no property to disable it and no way to intercept the
 /// event from outside (the TouchArea lives inside the widget), so the fix was to
 /// stop using the widget: every numeric field is a `DefaultLineEdit` now
@@ -207,7 +207,7 @@ fn no_spinbox_widgets_anywhere() {
 
 // #11970 guard: writing `current-value` does NOT move a ComboBox's selection,
 // so a two-way `current-value <=>` binding leaves the dropdown stale on a model
-// change (a preset switch). `EnumComboBox` drives `current-index` instead;
+// change (a model profile switch). `EnumComboBox` drives `current-index` instead;
 // keep it that way: no `.slint` should BIND `current-value` at all. The one-way
 // scan above deliberately allows `<=>`, so it can't catch this two-way form;
 // a dedicated line scan can. (Reads like `self.current-value` inside an

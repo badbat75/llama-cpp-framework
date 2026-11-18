@@ -142,7 +142,7 @@ fn control_scan_flags_calls_imports_and_fn_pointers_and_leaves_the_rest() {
 const CONFIG_ALLOWED: [&str; 2] = ["runstate.rs", "server_control.rs"];
 
 /// The `paths::` functions only the seam may call.
-const CONFIG_PATHS: [&str; 3] = ["server_ini", "presets_ini", "presets_disabled_ini"];
+const CONFIG_PATHS: [&str; 3] = ["server_ini", "models_ini", "models_disabled_ini"];
 
 /// The file names only the seam may join onto `config_dir()`.
 const CONFIG_NAMES: [&str; 3] = ["server.ini", "models.ini", "models.ini.disabled"];
@@ -258,12 +258,12 @@ fn config_scan_flags_the_per_user_paths_and_leaves_the_rest() {
             vec!["paths::server_ini"],
         ),
         (
-            "    read_presets(&crate::paths::presets_ini())",
-            vec!["paths::presets_ini"],
+            "    read_presets(&crate::paths::models_ini())",
+            vec!["paths::models_ini"],
         ),
         (
-            "    listed_from(&paths::presets_ini(), &paths::presets_disabled_ini())",
-            vec!["paths::presets_ini", "paths::presets_disabled_ini"],
+            "    listed_from(&paths::models_ini(), &paths::models_disabled_ini())",
+            vec!["paths::models_ini", "paths::models_disabled_ini"],
         ),
         (
             "    strings::fill(\"wrote-file\", &[&paths::server_ini().display()])",
@@ -294,7 +294,7 @@ fn config_scan_flags_the_per_user_paths_and_leaves_the_rest() {
             "    // paths::server_ini() would be the stale per-user file",
             vec![],
         ),
-        ("/// `paths::presets_ini()` is Direct's", vec![]),
+        ("/// `paths::models_ini()` is Direct's", vec![]),
     ] {
         assert_eq!(config_hits(line), expected, "{line:?}");
     }

@@ -1,9 +1,9 @@
-//! Conversion between the Slint edit form (`PresetForm`) and the `presets::Preset`
+//! Conversion between the Slint edit form (`PresetForm`) and the `model profiles::Model profile`
 //! schema. Kept out of `gui.rs` (which only shuttles the whole `PresetForm` around,
-//! never per-field) so adding a preset field touches small files. This is step 7
+//! never per-field) so adding a model profile field touches small files. This is step 7
 //! (both directions below) of the 7-step fan-out; the full checklist (including
 //! the `ui/types.slint` and `ui/models_page.slint` edits it's easy to forget)
-//! lives at the top of `presets.rs`.
+//! lives at the top of `model profiles.rs`.
 
 use std::ops::RangeInclusive;
 
@@ -15,8 +15,8 @@ use crate::{ini, presets, server_cfg};
 pub(crate) use crate::presets::{fit_allowed, tri_bool};
 use pai_core::checks::{NGRAM_DRAFT, NGRAM_HITS, NGRAM_SIZE};
 
-/// The preset's string value, or the schema default when it's empty, so the
-/// form's text defaults track `Preset::default()` instead of being re-hardcoded.
+/// The model profile's string value, or the schema default when it's empty, so the
+/// form's text defaults track `ModelProfile::default()` instead of being re-hardcoded.
 fn str_or(val: &str, default: &str) -> SharedString {
     SharedString::from(if val.is_empty() { default } else { val })
 }
@@ -75,7 +75,7 @@ fn txt(v: Option<f64>) -> SharedString {
 /// Unlike `txt` this is never blank: an unset integer still SHOWS its hint, in a
 /// disabled field, so unticking "default" starts from a sensible number rather
 /// than an empty box. The `*_default` checkbox (not the text) is what carries
-/// "unset" back to the preset.
+/// "unset" back to the model profile.
 fn itxt(v: Option<i32>, hint: i32) -> SharedString {
     v.unwrap_or(hint).to_string().into()
 }
@@ -93,7 +93,7 @@ pub(crate) const ALL_LAYERS: i32 = 99;
 /// defaults (`common_params`, common/common.h @ b9995), so unticking a box and
 /// saving reproduces what was already running instead of quietly changing it.
 ///
-/// They can't be read off `Preset::default()` any more: a new preset now leaves
+/// They can't be read off `ModelProfile::default()` any more: a new model profile now leaves
 /// every one of these keys UNSET (that is what "the model runs on llama.cpp's
 /// defaults" means), so the schema has no number left to lend. `--ctx-size` has
 /// none to mirror in the first place: its default is `0` = "the context the model
@@ -143,13 +143,13 @@ const HINT_IMAGE_MAX_TOKENS: i32 = 2048;
 const HINT_REASONING_BUDGET: i32 = -1;
 const HINT_N_PREDICT: i32 = -1;
 
-pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
-    // String/bool domain defaults are pulled from `Preset::default()` so the form
+pub fn model_profile_to_form(p: &presets::ModelProfile) -> PresetForm {
+    // String/bool domain defaults are pulled from `ModelProfile::default()` so the form
     // and the INI can't drift apart. The literals that remain are UI-only choices
-    // with no counterpart in `Preset`: slider fallback positions while a flag is
+    // with no counterpart in `ModelProfile`: slider fallback positions while a flag is
     // "auto"/"default" (ALL_LAYERS / 0 / the HINT_* values above), and
     // empty→sentinel labels ("none" / "default").
-    let d = presets::Preset::default();
+    let d = presets::ModelProfile::default();
     PresetForm {
         id: p.id.clone().into(),
         model: p.model.clone().into(),
@@ -242,7 +242,7 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
         // above do, because here the displayed value IS the saved one. An omitted
         // cache-type-k once fell back to the schema (which then said `q8_0`), so it
         // displayed q8_0 and got WRITTEN BACK as q8_0 on the next save of any
-        // unrelated field, quietly turning llama.cpp's f16 into q8_0 on a preset
+        // unrelated field, quietly turning llama.cpp's f16 into q8_0 on a model profile
         // nobody had touched. Empty ↔ "default" here, like `split_mode`.
         cache_type_k: enum_or_default(&p.cache_type_k),
         cache_type_v: enum_or_default(&p.cache_type_v),
@@ -313,8 +313,8 @@ pub fn preset_to_form(p: &presets::Preset) -> PresetForm {
     }
 }
 
-pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
-    presets::Preset {
+pub fn form_to_model_profile(f: &PresetForm) -> presets::ModelProfile {
+    presets::ModelProfile {
         id: f.id.to_string(),
         model: f.model.to_string(),
         project_url: f.project_url.trim().to_string(),
@@ -440,7 +440,8 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         } else {
             ini::parse_int_in(
                 f.ctx_size.as_str(),
-                &pai_core::checks::preset_int_range("ctx-size").expect("a preset integer key"),
+                &pai_core::checks::model_profile_int_range("ctx-size")
+                    .expect("a preset integer key"),
             )
         },
         n_gpu_layers: if f.n_gpu_layers_auto {
@@ -475,7 +476,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
         cache_type_v: enum_or_empty(f.cache_type_v.as_str()),
         flash_attn: tri_bool(f.flash_attn.as_str()),
         // Any integer is meaningful to --cache-ram (0 disables, -1 = no
-        // limit), matching the hint and `Preset::from_keys`, so NO `> 0` filter
+        // limit), matching the hint and `ModelProfile::from_keys`, so NO `> 0` filter
         // here, and its field is the one integer taking `decimal` input (the only
         // `input_type` that lets a `-` be typed at all).
         cache_ram: if f.cache_ram_default {
@@ -536,7 +537,7 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             ini::parse_int_in(f.moe_cache_mib.as_str(), &ini::INT_NON_NEGATIVE)
         },
         // "default" → None: omit the key. Never `Some(s == "on")`: that would
-        // write `op-offload = false` into every preset left on default, and
+        // write `op-offload = false` into every model profile left on default, and
         // unlike backend-sampling's, that `false` is a real flag.
         op_offload: tri_bool(f.op_offload.as_str()),
         repack: tri_bool(f.repack.as_str()),
@@ -591,14 +592,14 @@ pub fn form_to_preset(f: &PresetForm) -> presets::Preset {
             ini::parse_float(f.presence_penalty.as_str())
         },
         // "default" → None: omit the key. Never `Some(s == "on")`: that would
-        // write `backend-sampling = false` into every preset that never asked.
+        // write `backend-sampling = false` into every model profile that never asked.
         backend_sampling: tri_bool(f.backend_sampling.as_str()),
         chat_template_kwargs: f.chat_template_kwargs.to_string(),
     }
 }
 
-/// Every INTEGER text field of the preset form, as (INI key, its "default" box,
-/// its text, the values it takes). The range is the one `form_to_preset` reads
+/// Every INTEGER text field of the model profile form, as (INI key, its "default" box,
+/// its text, the values it takes). The range is the one `form_to_model_profile` reads
 /// the same field with: `invalid_numbers_match_what_the_conversion_drops` holds
 /// the two together, and `every_integer_field_is_checked` holds this list to the
 /// `PresetForm` struct in ui/types.slint, so a new integer field that skips it
@@ -611,7 +612,7 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
         default: bool,
         text: &'a str,
     ) -> (&'static str, bool, &'a str, RangeInclusive<i32>) {
-        let range = pai_core::checks::preset_int_range(key).expect("a preset integer key");
+        let range = pai_core::checks::model_profile_int_range(key).expect("a preset integer key");
         (key, default, text, range)
     }
     [
@@ -729,7 +730,7 @@ fn int_fields(f: &PresetForm) -> [(&'static str, bool, &str, RangeInclusive<i32>
 
 /// The integer fields whose "default" box is unticked but whose text is not a
 /// number the key takes, one status-line phrase each; empty when the form can be
-/// saved. The Save button refuses on any, because `form_to_preset` would write
+/// saved. The Save button refuses on any, because `form_to_model_profile` would write
 /// each of them as an ABSENT key, and absent is an instruction of its own
 /// (`ctx-size` absent = the model's trained context; see `ini::int_problem`).
 pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
@@ -746,16 +747,16 @@ pub fn invalid_numbers(f: &PresetForm) -> Vec<String> {
 /// cannot keep a value the model can't use; see the policy's own doc comment
 /// for what "can't use" costs.
 ///
-/// The policy stays in `presets.rs` and the form conversions stay in the two
-/// functions above: this round-trips through `Preset` to reuse both. Only the
+/// The policy stays in `model profiles.rs` and the form conversions stay in the two
+/// functions above: this round-trips through `ModelProfile` to reuse both. Only the
 /// draft fields are lifted back out, deliberately: writing the whole converted
 /// form back would also normalize whatever half-typed text sits in the OTHER
 /// numeric fields, and this runs while the user is editing.
 pub fn prune_inactive_draft_fields(f: &mut PresetForm, embeds_mtp: bool) -> Vec<&'static str> {
-    let mut p = form_to_preset(f);
+    let mut p = form_to_model_profile(f);
     let dropped = presets::prune_inactive_draft_keys(&mut p, embeds_mtp);
     if !dropped.is_empty() {
-        let pruned = preset_to_form(&p);
+        let pruned = model_profile_to_form(&p);
         f.spec_type = pruned.spec_type;
         f.spec_draft_n_max = pruned.spec_draft_n_max;
         f.spec_draft_n_max_default = pruned.spec_draft_n_max_default;
@@ -779,10 +780,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
-    use crate::presets::Preset;
+    use crate::presets::ModelProfile;
 
-    fn round_trip(p: &Preset) -> Preset {
-        form_to_preset(&preset_to_form(p))
+    fn round_trip(p: &ModelProfile) -> ModelProfile {
+        form_to_model_profile(&model_profile_to_form(p))
     }
 
     // The prune's FORM spelling, which is not the schema's: an emptied
@@ -792,7 +793,7 @@ mod tests {
     // omit-the-flag companions as their `_default` / `_auto` booleans.
     #[test]
     fn prune_resets_the_draft_fields_to_their_form_spelling() {
-        let mut f = preset_to_form(&Preset {
+        let mut f = model_profile_to_form(&ModelProfile {
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
             spec_draft_type_k: "q8_0".into(),
@@ -800,11 +801,11 @@ mod tests {
             n_gpu_layers_draft: Some(99),
             device_draft: "CUDA0".into(),
             ctx_size: Some(65536),
-            ..Preset::default()
+            ..ModelProfile::default()
         });
         // Half-typed text in an unrelated field: this runs on every model /
         // mmproj / draft change, i.e. WHILE the user is editing, so the write-back
-        // must not launder the rest of the form through form_to_preset.
+        // must not launder the rest of the form through form_to_model_profile.
         f.temp = "1.".into();
 
         let dropped = prune_inactive_draft_fields(&mut f, false);
@@ -823,23 +824,23 @@ mod tests {
     }
 
     // Nothing to drop → the form must come back byte-identical, or every
-    // model-info refresh would mark a clean preset dirty.
+    // model-info refresh would mark a clean model profile dirty.
     #[test]
     fn prune_leaves_a_clean_form_untouched() {
-        let mut f = preset_to_form(&Preset::default());
+        let mut f = model_profile_to_form(&ModelProfile::default());
         f.temp = "1.".into();
         let before = f.clone();
         assert!(prune_inactive_draft_fields(&mut f, false).is_empty());
         assert_eq!(f, before);
     }
 
-    // A preset in its "saved" shape (string fields non-empty, matching
-    // `Preset::default()`) survives form ↔ preset unchanged. This is the guard
-    // for the 7-step "add a preset field" recipe: a field wired into one
+    // A model profile in its "saved" shape (string fields non-empty, matching
+    // `ModelProfile::default()`) survives form ↔ model profile unchanged. This is the guard
+    // for the 7-step "add a model profile field" recipe: a field wired into one
     // conversion but not the other drops out here.
     #[test]
-    fn default_preset_round_trips() {
-        let p = Preset::default();
+    fn default_model_profile_round_trips() {
+        let p = ModelProfile::default();
         assert_eq!(round_trip(&p), p);
     }
 
@@ -847,18 +848,18 @@ mod tests {
     // unset; with either one set by hand the form drops it, on load and on save.
     #[test]
     fn fit_needs_context_and_gpu_layers_at_default() {
-        let base = Preset {
+        let base = ModelProfile {
             id: "f".into(),
             fit: true,
             ..Default::default()
         };
         assert!(round_trip(&base).fit);
-        let ctx = Preset {
+        let ctx = ModelProfile {
             ctx_size: Some(32768),
             ..base.clone()
         };
         assert!(!round_trip(&ctx).fit);
-        let ngl = Preset {
+        let ngl = ModelProfile {
             n_gpu_layers: Some(40),
             ..base
         };
@@ -951,9 +952,9 @@ mod tests {
     #[test]
     fn invalid_numbers_match_what_the_conversion_drops() {
         for text in ["", "  ", "x", "0", "-1", "7", " 42 ", "1.5", "196608245760"] {
-            let mut f = preset_to_form(&Preset {
+            let mut f = model_profile_to_form(&ModelProfile {
                 id: "t".into(),
-                ..Preset::default()
+                ..ModelProfile::default()
             });
             set_all_int_texts(&mut f, text);
             let refused: BTreeSet<&str> = int_fields(&f)
@@ -961,7 +962,7 @@ mod tests {
                 .filter(|(key, _, t, range)| ini::int_problem(key, t, range).is_some())
                 .map(|(key, ..)| key)
                 .collect();
-            let section = presets::render_section(&form_to_preset(&f));
+            let section = presets::render_section(&form_to_model_profile(&f));
             let dropped: BTreeSet<&str> = int_fields(&f)
                 .into_iter()
                 .map(|(key, ..)| key)
@@ -974,7 +975,7 @@ mod tests {
             assert_eq!(invalid_numbers(&f).len(), refused.len(), "text {text:?}");
         }
         // A ticked box is a choice, not a mistake: nothing to refuse.
-        let f = preset_to_form(&Preset::default());
+        let f = model_profile_to_form(&ModelProfile::default());
         assert!(invalid_numbers(&f).is_empty());
     }
 
@@ -1016,14 +1017,14 @@ mod tests {
     // Some(true)/Some(false); this pins all three at once, and above all that
     // None SURVIVES. The bug it guards is the natural simplification
     // `Some(f.reasoning_preserve == "on")`, which collapses None to Some(false):
-    // every preset that never asked would silently start emitting
+    // every model profile that never asked would silently start emitting
     // --no-reasoning-preserve, i.e. turn the default OFF on every model.
     #[test]
     fn reasoning_preserve_keeps_all_three_states_apart() {
         for state in [None, Some(true), Some(false)] {
-            let p = Preset {
+            let p = ModelProfile {
                 reasoning_preserve: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).reasoning_preserve, state, "state {state:?}");
         }
@@ -1031,9 +1032,9 @@ mod tests {
         // …and the form spelling is the one the SegmentedControl's `options` list
         // uses; a mismatch here leaves the control with no segment highlighted.
         let spelling = |state| {
-            preset_to_form(&Preset {
+            model_profile_to_form(&ModelProfile {
                 reasoning_preserve: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             })
             .reasoning_preserve
             .to_string()
@@ -1045,19 +1046,19 @@ mod tests {
 
     // The KV-cache card's other three flags have an "unset" that is a real
     // instruction too, so it has to survive the form the way reasoning-preserve's
-    // does. It did not: `cache_type_k/v` fell back to `Preset::default()` (which
+    // does. It did not: `cache_type_k/v` fell back to `ModelProfile::default()` (which
     // then said q8_0) and `flash_attn` to Some(true) whenever the key was absent,
-    // so a preset that had never named a cache type DISPLAYED q8_0 and, on the next
+    // so a model profile that had never named a cache type DISPLAYED q8_0 and, on the next
     // save of any unrelated field, WROTE q8_0, quietly requantizing a KV cache
     // llama.cpp would have left at f16. The empty/None state must reach the form as
     // "default" and come back out empty/None.
     #[test]
     fn kv_cache_unset_state_survives_the_form_round_trip() {
-        let unset = Preset {
+        let unset = ModelProfile {
             cache_type_k: String::new(),
             cache_type_v: String::new(),
             flash_attn: None,
-            ..Preset::default()
+            ..ModelProfile::default()
         };
         let back = round_trip(&unset);
         assert_eq!(back.cache_type_k, "", "cache-type-k invented a value");
@@ -1067,7 +1068,7 @@ mod tests {
         // …and the form spellings are the ones the widgets' option lists use; a
         // mismatch leaves the ComboBox on its first row / the SegmentedControl with
         // no pill lit. "default" is `Options.cache_types[0]` and the first pill.
-        let f = preset_to_form(&unset);
+        let f = model_profile_to_form(&unset);
         assert_eq!(f.cache_type_k, "default");
         assert_eq!(f.cache_type_v, "default");
         assert_eq!(f.flash_attn, "default");
@@ -1076,17 +1077,17 @@ mod tests {
         // is NOT the same as unset (it passes --flash-attn off, forcing the kernel
         // away even where the backend has it).
         for state in [None, Some(true), Some(false)] {
-            let p = Preset {
+            let p = ModelProfile {
                 flash_attn: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).flash_attn, state, "flash-attn {state:?}");
         }
     }
 
     #[test]
-    fn rich_preset_round_trips() {
-        let p = Preset {
+    fn rich_model_profile_round_trips() {
+        let p = ModelProfile {
             id: "round".into(),
             model: r"E:\m\model.gguf".into(),
             project_url: "https://huggingface.co/org/repo".into(),
@@ -1155,7 +1156,7 @@ mod tests {
             no_host: true,
             lazy_mode: "off".into(),
             load_mode: "none".into(),
-            // false: this preset sets ctx-size and n-gpu-layers, which rule the fit out
+            // false: this model profile sets ctx-size and n-gpu-layers, which rule the fit out
             // (fit_needs_context_and_gpu_layers_at_default covers true).
             fit: false,
             fit_ctx: Some(8192),
@@ -1176,22 +1177,22 @@ mod tests {
     // backend-sampling is the third tri-state (after reasoning-preserve and
     // flash-attn) and the one where the collapse would be least visible: the
     // flag has no negated form, so `Some(false)` and `None` launch identically
-    // and a form that turned "default" into "off" would corrupt every preset's
+    // and a form that turned "default" into "off" would corrupt every model profile's
     // INI without changing a single argv. Pin all three states and the
     // SegmentedControl spellings.
     #[test]
     fn backend_sampling_keeps_all_three_states_apart() {
         for state in [None, Some(true), Some(false)] {
-            let p = Preset {
+            let p = ModelProfile {
                 backend_sampling: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).backend_sampling, state, "state {state:?}");
         }
         let spelling = |state| {
-            preset_to_form(&Preset {
+            model_profile_to_form(&ModelProfile {
                 backend_sampling: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             })
             .backend_sampling
             .to_string()
@@ -1203,20 +1204,20 @@ mod tests {
 
     // op-offload is the tri-state where the collapse would COST something:
     // `Some(false)` is a real flag (--no-op-offload), so a form that turned
-    // "default" into "off" would switch the offload off in every preset saved.
+    // "default" into "off" would switch the offload off in every model profile saved.
     #[test]
     fn op_offload_keeps_all_three_states_apart() {
         for state in [None, Some(true), Some(false)] {
-            let p = Preset {
+            let p = ModelProfile {
                 op_offload: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).op_offload, state, "state {state:?}");
         }
         let spelling = |state| {
-            preset_to_form(&Preset {
+            model_profile_to_form(&ModelProfile {
                 op_offload: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             })
             .op_offload
             .to_string()
@@ -1228,14 +1229,14 @@ mod tests {
 
     // kv-unified's "default" depends on `parallel` (auto forces it on, a pinned
     // count leaves it off), so neither explicit value is a stand-in for it: a
-    // collapse into "off" would write --no-kv-unified into every preset saved.
+    // collapse into "off" would write --no-kv-unified into every model profile saved.
     #[test]
     fn kv_unified_keeps_all_three_states_apart() {
         for state in [None, Some(true), Some(false)] {
-            let p = Preset {
+            let p = ModelProfile {
                 parallel: Some(2),
                 kv_unified: state,
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).kv_unified, state, "state {state:?}");
         }
@@ -1247,13 +1248,13 @@ mod tests {
     // `INT_POSITIVE` counts beside them.
     #[test]
     fn zero_survives_the_form_where_it_is_a_value() {
-        let p = Preset {
+        let p = ModelProfile {
             ctx_checkpoints: Some(0),
             checkpoint_min_step: Some(0),
             spec_draft_n_min: Some(0),
             spec_draft_n_ubatch: Some(0),
             moe_cache_mib: Some(0),
-            ..Preset::default()
+            ..ModelProfile::default()
         };
         assert_eq!(round_trip(&p), p);
     }
@@ -1264,9 +1265,9 @@ mod tests {
     #[test]
     fn cache_ram_sentinels_round_trip() {
         for v in [0, -1] {
-            let p = Preset {
+            let p = ModelProfile {
                 cache_ram: Some(v),
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             assert_eq!(round_trip(&p).cache_ram, Some(v));
         }
@@ -1280,10 +1281,10 @@ mod tests {
     #[test]
     fn reasoning_budget_and_n_predict_sentinels_round_trip() {
         for v in [0, -1, 16384] {
-            let p = Preset {
+            let p = ModelProfile {
                 reasoning_budget: Some(v),
                 n_predict: Some(v),
-                ..Preset::default()
+                ..ModelProfile::default()
             };
             let back = round_trip(&p);
             assert_eq!(back.reasoning_budget, Some(v), "reasoning-budget {v}");
@@ -1297,21 +1298,21 @@ mod tests {
     #[test]
     fn reasoning_budget_message_survives_verbatim() {
         let msg = "Budget reached. Stop analysing and write the final answer now.";
-        let p = Preset {
+        let p = ModelProfile {
             reasoning_budget_message: msg.into(),
-            ..Preset::default()
+            ..ModelProfile::default()
         };
         assert_eq!(round_trip(&p).reasoning_budget_message, msg);
     }
 
-    /// A preset made at download (pai-app's `hf::preset_from_download`, placed
+    /// A model profile made at download (pai-app's `hf::model_profile_from_download`, placed
     /// per card with the context set) goes through the form unchanged, as a
     /// GUI save does: not dirty either, and the form agrees the fit is off.
     /// The INI half of the round trip is pai-app's
     /// (`a_download_is_placed_per_card_and_survives_the_ini_and_the_form`).
     #[test]
-    fn a_download_made_preset_survives_the_form() {
-        use pai_app::hf::{preset_from_download, Downloaded, Sidecar};
+    fn a_download_made_model_profile_survives_the_form() {
+        use pai_app::hf::{model_profile_from_download, Downloaded, Sidecar};
         use pai_app::hf_fit::tests::{gguf, write_sparse, W};
         use pai_app::hf_fit::{self, Budget, Gpu};
         const MIB: u64 = 1 << 20;
@@ -1372,7 +1373,7 @@ mod tests {
             ram_total: Some(64 << 30),
         };
 
-        let p = preset_from_download(&d, &[], Some(&b));
+        let p = model_profile_from_download(&d, &[], Some(&b));
         // Placed per card, as pai-app's test pins; the context set, so no fit.
         assert_eq!(
             (p.device.as_str(), p.ctx_size, p.device_draft.as_str()),
@@ -1384,8 +1385,8 @@ mod tests {
             "a placed download carries its note"
         );
 
-        let f = preset_to_form(&p);
-        assert_eq!(form_to_preset(&f), p);
+        let f = model_profile_to_form(&p);
+        assert_eq!(form_to_model_profile(&f), p);
         assert!(!f.fit, "the form agrees the fit is off");
     }
 }

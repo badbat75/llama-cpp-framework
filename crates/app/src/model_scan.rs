@@ -264,7 +264,7 @@ pub fn build_draft_options(
     (labels, values, specs, 1)
 }
 
-/// Two preset paths name the same file: separators and ASCII case folded.
+/// Two model profile paths name the same file: separators and ASCII case folded.
 /// Shared with `linked_files`'s in-use check, where folding errs toward "in use".
 pub(crate) fn paths_eq(a: &str, b: &str) -> bool {
     fn norm(s: &str) -> String {

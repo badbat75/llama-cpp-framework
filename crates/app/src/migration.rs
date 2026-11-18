@@ -72,9 +72,9 @@ pub struct Import {
 /// the manager checks models.ini against the instances' `ModelsMax`.
 const USER_FILES: [(ConfigFile, &str, &str); 3] = [
     (ConfigFile::Server, "server.ini", "server@default.ini"),
-    (ConfigFile::Presets, "presets.ini", "models.ini"),
+    (ConfigFile::Models, "presets.ini", "models.ini"),
     (
-        ConfigFile::PresetsDisabled,
+        ConfigFile::ModelsDisabled,
         "presets.ini.disabled",
         "models.ini.disabled",
     ),
@@ -254,13 +254,13 @@ pub(crate) fn config_import_e2e() {
 
     // Written: one line per file, naming where it went, in order.
     let all = Import {
-        written: vec![ConfigFile::Server, ConfigFile::Presets],
+        written: vec![ConfigFile::Server, ConfigFile::Models],
         refused: None,
     };
     let lines = all.lines(&b);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
-    assert!(lines[1].contains(&path(ConfigFile::Presets)), "{lines:?}");
+    assert!(lines[1].contains(&path(ConfigFile::Models)), "{lines:?}");
     assert_ne!(lines[0], lines[1]);
 
     // Refused: the written lines, then one naming the file and carrying the
@@ -268,13 +268,13 @@ pub(crate) fn config_import_e2e() {
     let text = ClientError::NotAuthorized.text();
     let stopped = Import {
         written: vec![ConfigFile::Server],
-        refused: Some((ConfigFile::Presets, text.clone())),
+        refused: Some((ConfigFile::Models, text.clone())),
     };
     let lines = stopped.lines(&b);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].contains(&path(ConfigFile::Server)), "{lines:?}");
     assert!(
-        lines[1].contains(&path(ConfigFile::Presets)) && lines[1].contains(&text),
+        lines[1].contains(&path(ConfigFile::Models)) && lines[1].contains(&text),
         "{lines:?}"
     );
 
@@ -297,13 +297,13 @@ mod import_tests {
     use pai_core::client::{ClientError, InstanceState};
 
     // The user's files as the 2.4 configurator wrote them: comments, CRLF,
-    // a trailing blank line, so a rewrite of any byte shows. The preset files
+    // a trailing blank line, so a rewrite of any byte shows. The model profile files
     // carry the names that install wrote them under, and those names are what
     // stays in the per-user directory: `pai_core::migrate` moves the tree and
     // never renames a file, so the hand-over reads them there.
     const SERVER: &str = "; written by the configurator\r\n[Server]\r\nPort = 8080\r\n\
                           ModelsMax = 6\r\nModelsDir = /mnt/data/models\r\n\r\n";
-    const PRESETS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n\
+    const MODELS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n\
                            load-on-startup = true\r\n";
     const DISABLED: &str = "[Qwen3.8-Flash-Next]\r\n\
                             model = /mnt/data/models/Qwen3.8-Flash-Next-IQ3_S.gguf\r\n";
@@ -314,7 +314,7 @@ mod import_tests {
     const DISABLED_USER: &str = "presets.ini.disabled";
 
     const SERVER_SYS: &str = "server@default.ini";
-    const PRESETS_SYS: &str = "models.ini";
+    const MODELS_SYS: &str = "models.ini";
     const DISABLED_SYS: &str = "models.ini.disabled";
 
     /// A per-user config directory holding the files named.
@@ -329,7 +329,7 @@ mod import_tests {
     fn all_three() -> tempfile::TempDir {
         user_dir(&[
             ("server.ini", SERVER),
-            (PRESETS_USER, PRESETS),
+            (PRESETS_USER, MODELS),
             (DISABLED_USER, DISABLED),
         ])
     }
@@ -421,7 +421,7 @@ mod import_tests {
 
     #[test]
     fn import_is_not_offered_without_a_per_user_server_ini() {
-        let dir = user_dir(&[(PRESETS_USER, PRESETS), (DISABLED_USER, DISABLED)]);
+        let dir = user_dir(&[(PRESETS_USER, MODELS), (DISABLED_USER, DISABLED)]);
         let log = fake::log();
         let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
         assert!(!import_offered(&b, dir.path()));
@@ -447,7 +447,7 @@ mod import_tests {
         let b = fake::backend(
             FakeClient::new(&log, InstanceState::Inactive)
                 .with_file(SERVER_SYS, "[Server]\nPort = 8099\n")
-                .with_file(PRESETS_SYS, "")
+                .with_file(MODELS_SYS, "")
                 .with_file(DISABLED_SYS, ""),
         );
         assert!(!import_offered(&b, dir.path()));
@@ -455,9 +455,9 @@ mod import_tests {
 
     /// A hand-over that stopped after the server file (models.ini refused)
     /// is offered again for what is left, so a refusal never strands the
-    /// user's presets.
+    /// user's model profiles.
     #[test]
-    fn import_is_offered_again_while_a_preset_file_is_left() {
+    fn import_is_offered_again_while_a_model_profile_file_is_left() {
         let dir = all_three();
         let log = fake::log();
         let b = fake::backend(
@@ -474,11 +474,11 @@ mod import_tests {
     /// so models.ini written before any instance would be held to
     /// llama.cpp's default and a valid config with a larger `ModelsMax`
     /// refused; the server file, checked against no models.ini yet, passes
-    /// on its own rules. The disabled presets last, checked against
+    /// on its own rules. The disabled model profiles last, checked against
     /// models.ini. The user's bytes go over unchanged, and the user's files
     /// stay where they are, unchanged.
     #[test]
-    fn import_writes_server_then_presets_then_disabled_with_the_users_bytes() {
+    fn import_writes_server_then_model_profiles_then_disabled_with_the_users_bytes() {
         let dir = all_three();
         let before = snapshot(dir.path());
         let log = fake::log();
@@ -491,8 +491,8 @@ mod import_tests {
             Import {
                 written: vec![
                     ConfigFile::Server,
-                    ConfigFile::Presets,
-                    ConfigFile::PresetsDisabled
+                    ConfigFile::Models,
+                    ConfigFile::ModelsDisabled
                 ],
                 refused: None,
             }
@@ -507,7 +507,7 @@ mod import_tests {
         );
         let files = files.lock().unwrap().clone();
         assert_eq!(files.get(SERVER_SYS).map(String::as_str), Some(SERVER));
-        assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(PRESETS));
+        assert_eq!(files.get(MODELS_SYS).map(String::as_str), Some(MODELS));
         assert_eq!(files.get(DISABLED_SYS).map(String::as_str), Some(DISABLED));
         assert_eq!(snapshot(dir.path()), before, "the user's files untouched");
         assert!(
@@ -528,7 +528,7 @@ mod import_tests {
     fn import_reads_the_per_user_names_of_an_earlier_install() {
         let dir = user_dir(&[
             ("server.ini", SERVER),
-            (PRESETS_USER, PRESETS),
+            (PRESETS_USER, MODELS),
             (DISABLED_USER, DISABLED),
         ]);
         let log = fake::log();
@@ -541,8 +541,8 @@ mod import_tests {
             Import {
                 written: vec![
                     ConfigFile::Server,
-                    ConfigFile::Presets,
-                    ConfigFile::PresetsDisabled
+                    ConfigFile::Models,
+                    ConfigFile::ModelsDisabled
                 ],
                 refused: None,
             }
@@ -556,7 +556,7 @@ mod import_tests {
             ]
         );
         let files = files.lock().unwrap().clone();
-        assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(PRESETS));
+        assert_eq!(files.get(MODELS_SYS).map(String::as_str), Some(MODELS));
         assert_eq!(files.get(DISABLED_SYS).map(String::as_str), Some(DISABLED));
     }
 
@@ -566,7 +566,7 @@ mod import_tests {
     /// server file, and hands over nothing.
     #[test]
     fn import_reads_nothing_under_the_managers_own_names() {
-        let dir = user_dir(&[("server.ini", SERVER), (PRESETS_SYS, PRESETS)]);
+        let dir = user_dir(&[("server.ini", SERVER), (MODELS_SYS, MODELS)]);
         let log = fake::log();
         let c = FakeClient::new(&log, InstanceState::Inactive)
             .with_file(SERVER_SYS, "[Server]\nPort = 8099\n");
@@ -588,10 +588,10 @@ mod import_tests {
             Some("[Server]\nPort = 8099\n"),
             "the manager's server file untouched"
         );
-        assert_eq!(files.get(PRESETS_SYS), None, "models.ini not created");
+        assert_eq!(files.get(MODELS_SYS), None, "models.ini not created");
 
         // The same file with no per-user server.ini: no offer, no write.
-        let dir = user_dir(&[(PRESETS_SYS, PRESETS)]);
+        let dir = user_dir(&[(MODELS_SYS, MODELS)]);
         let log = fake::log();
         let b = fake::backend(FakeClient::new(&log, InstanceState::Inactive));
         assert!(!import_offered(&b, dir.path()));
@@ -617,15 +617,15 @@ mod import_tests {
         let dir = all_three();
         let log = fake::log();
         let c = FakeClient::new(&log, InstanceState::Inactive)
-            .with_file(PRESETS_SYS, "")
+            .with_file(MODELS_SYS, "")
             .with_file(SERVER_SYS, "[Server]\nPort = 8099\n");
         let files = c.files.clone();
         let got = import_user_config(&fake::backend(c), dir.path());
-        assert_eq!(got.written, [ConfigFile::PresetsDisabled]);
+        assert_eq!(got.written, [ConfigFile::ModelsDisabled]);
         assert_eq!(got.refused, None);
         assert_eq!(fake::writes(&log), ["write_file models.ini.disabled"]);
         let files = files.lock().unwrap().clone();
-        assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(""));
+        assert_eq!(files.get(MODELS_SYS).map(String::as_str), Some(""));
         assert_eq!(
             files.get(SERVER_SYS).map(String::as_str),
             Some("[Server]\nPort = 8099\n")
@@ -640,8 +640,8 @@ mod import_tests {
     fn a_refusal_stops_at_that_file_and_a_second_run_writes_what_is_left() {
         let order = [
             (ConfigFile::Server, SERVER_SYS),
-            (ConfigFile::Presets, PRESETS_SYS),
-            (ConfigFile::PresetsDisabled, DISABLED_SYS),
+            (ConfigFile::Models, MODELS_SYS),
+            (ConfigFile::ModelsDisabled, DISABLED_SYS),
         ];
         for at in 0..order.len() {
             for e in [ClientError::Invalid(refusal()), ClientError::NotAuthorized] {
@@ -682,7 +682,7 @@ mod import_tests {
                 assert_eq!(again.refused, None, "{label}: the second run");
                 let files = files.lock().unwrap().clone();
                 assert_eq!(files.get(SERVER_SYS).map(String::as_str), Some(SERVER));
-                assert_eq!(files.get(PRESETS_SYS).map(String::as_str), Some(PRESETS));
+                assert_eq!(files.get(MODELS_SYS).map(String::as_str), Some(MODELS));
                 assert_eq!(files.get(DISABLED_SYS).map(String::as_str), Some(DISABLED));
             }
         }
@@ -719,7 +719,7 @@ mod import_tests {
         );
         assert_eq!(got.written, [ConfigFile::Server]);
         match &got.refused {
-            Some((ConfigFile::Presets, text)) => assert!(!text.is_empty()),
+            Some((ConfigFile::Models, text)) => assert!(!text.is_empty()),
             other => panic!("stopped at models.ini with a text: {other:?}"),
         }
         assert_eq!(fake::writes(&log), ["write_file server@default.ini"]);

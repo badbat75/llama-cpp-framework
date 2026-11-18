@@ -1254,6 +1254,56 @@ Lessons only: the rules are in `AGENTS.md`.
   `*.test.tsx`), symlink `fe/node_modules` from the repo, run
   `npx vitest run --root /tmp/<x>/fe src`, then `git worktree remove --force`. It shows the count the
   tree had before the slice, which is what tells a red you caused from a red you inherited.
+- Renaming an item across crates: the ARCHITECTURE.md names table (step 10 item 13a's "Revision:
+  profiles") is the authority, and a bare word map on word-internal identifiers breaks Rust in two
+  specific ways. A `mod presets;` is the FILE name, so renaming the declaration (`mod model_profiles;`)
+  while `crates/*/src/presets.rs` keeps its name is an E0583 file-not-found; `use crate::presets;`
+  is a module path, so the map's `presets` rule must be guarded with a `(?<!use )(?<!mod )(?<!::)`
+  lookbehind. Check every `mod`/`pub mod` line by hand at the end: `grep -rn "^\s*(pub )?mod
+  [a-z_]+;" crates xtask`, and read each declaration's file, not its name. The same map applied to
+  bare `presets` renamed the `use pai_app::presets` import group of `config/src/gui.rs` (its
+  multi-line `use crate::{ ... }` has a `pub mod` line inside, so a single-line "no use/mod line"
+  guard skipped the opening line of the group and left `model_profiles,` in the list).
+- Renaming a whole vocabulary: snapshot the tree FIRST, outside the repo
+  (`cp -a crates xtask <snap>`), because the tree is shared and moves under you: in one run the
+  `read_bff_ini` extraction the coder had just landed in `crates/cli/src/cli.rs` was gone from both the
+  worktree and every commit (`grep -c bff_ini` = 0 everywhere), and a Part 1 test came back rewritten.
+  The snapshot is the only restore source (no stash, no `git checkout`).
+- A rename that lengthens identifiers breaks formatting in EVERY crate at once: after the passes, run
+  `cargo fmt -p <crate>` (it writes) for each touched crate before the final `--check` battery, and
+  count `git status --porcelain -- '*.rs'` before and after to prove fmt touched no new file (69 and
+  69: the 13 reflowed files were the slice's own).
+- Prose in a constant whose bytes are DATA (the `DISABLED_FILE_HEADER` of `app/src/presets.rs`,
+  duplicated byte-for-byte in `bff/src/presets.rs` and pinned by
+  `presets_switch::the_disabled_header_is_the_configurators_one`): a prose rename inside it reddens a
+  test in another crate. Revert it to the HEAD text with `git show HEAD:<path>`, and revert it in BOTH
+  copies. A scripted "revert the prose" rule that keys on a word inside the constant then re-corrupts
+  the fix on the next pass: keep the revert as a literal string, not a rule.
+- Comment prose in a rename: apply the word map to the comment text, NOT to the tokens the map is not
+  about. Mask the code spans first (`` `...` ``, `snake_case`, `CamelCase`, `PascalCase::`) with a
+  placeholder, rename, unmask; then drop the words that name an upstream llama.cpp key
+  (`--models-preset`, `base_preset`, `common_preset`, `common/preset.cpp`), the retired CLI names in
+  the deprecation notes (`pai preset list`), and a `.slint` name that still exists in the `.slint` file
+  (a `// .slint: on_accept_preset` note follows the `.slint`, not the Rust).
+- A rename of a name interpolated in a format string breaks the string, not the code: `format!("  {PRESETS} ")`
+  becomes `{model_profiles}`, which reads as a struct field. `xtask/src/linux/system_files.rs` had four
+  (the polkit action ids) and `{model_profiles}`/`{model_profiles_disabled}` are the E0609 messages.
+  The same shape is the test text that quotes the string; check every `{NAME}` in
+  `crates xtask` with `grep -rn "{[A-Z][A-Z_0-9]*}"`.
+- A word-internal map applied to a file with multi-line strings is unsafe: the token
+  `presets::ModelProfile::new_default` inside `crates/app/src/bench/exec.rs`'s raw string that seeds a
+  fake `presets.ini` was rewritten mid-string, and the "no multi-line string in file" guard hid it. When
+  the guard fires, rename that file with an exact-text edit, and let the red tests enumerate the sites.
+- Check the `.slint` files before renaming anything the GUI binds:
+  `grep -c model_profile crates/config/ui/*.slint` = 0, so `PresetForm`, `PresetSummary`,
+  `BenchResultRow.preset` and the whole `on_*_preset` / `.presets` / `preset_dirty` surface stay until
+  the Slint slice; the Rust keeps the bound names and adapts around them (`gui/bench_tab.rs`:
+  `preset: SharedString::from(r.model_profile)`, the shared row's field is the one that moved).
+- A rename's acceptance test can be an unrelated integration test's fixture list:
+  `crates/config/src/tests/control_lint.rs`'s `CONFIG_PATHS` names the config paths the GUI is allowed
+  to read, by the path fn's name (`server_ini`, `presets_ini`). The `paths.rs` rename silently emptied
+  the list (the lint passed with no bite); its `fn ini(path: &str)` fixtures take the new names. When a
+  rename moves a name a lint matches on, update the lint's data in the same slice and say so.
 - Web UI: a card heading that is a jump target is named by a slug carried in the card's own data, not by
   its position: `CardFields.id` + `cardHeadingId(slug)` + `cardJumps()` (order, titles, ids from one
   table), and the `tabIndex={-1}` is a prop of the shared `Card` (`headingId?`, absent means no id and no

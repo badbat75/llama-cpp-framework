@@ -22,7 +22,7 @@
 use crate::bench::db::{Gpu, Machine, Software};
 
 /// The discrete GPUs, their VRAM and driver. Integrated graphics are left
-/// out: they compute nothing a preset places, and on an AMD desktop their
+/// out: they compute nothing a model profile places, and on an AMD desktop their
 /// llama.cpp entry reports system RAM as VRAM.
 const MIN_DISCRETE_MIB: u64 = 8192;
 

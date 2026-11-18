@@ -73,9 +73,9 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a restore waits for the router to open its port after a start.
 ///
-/// The router listens only once it has measured the memory of every preset it
+/// The router listens only once it has measured the memory of every model profile it
 /// does not have a figure for (`server_run_measure`, one short-lived child per
-/// preset, run before `ctx_http.start()` in `server.cpp`), and until
+/// model profile, run before `ctx_http.start()` in `server.cpp`), and until
 /// `ctx_http.is_ready` it answers 503 to everything. Observed: a few seconds on
 /// a warm machine, long enough on 2026-10-29 that a fixed 3 s look found the
 /// port closed and threw the snapshot away. Five minutes is an order of
@@ -294,11 +294,11 @@ pub fn save_all(cfg: &crate::server_cfg::ServerConfig) -> (Vec<Transfer>, Vec<St
 /// `Ok(None)` means there was nothing to restore, which is the ordinary state on
 /// a first run and is not an error. The model name is recovered from the file
 /// name, so it must round-trip through [`state_file_name`]: the candidate list
-/// comes from the presets, and the one whose sanitized name matches wins.
+/// comes from the model profiles, and the one whose sanitized name matches wins.
 ///
 /// Called right after a start, so it first waits (up to [`LISTEN_TIMEOUT`]) for
 /// the router to open its port: sent at once, the request met a router still
-/// measuring its presets and failed with "connection refused".
+/// measuring its model profiles and failed with "connection refused".
 /// The router then loads the model as a side effect of the proxied request, so
 /// this is slow (a full model load plus a read of the whole KV cache) and belongs on a worker
 /// thread, never on the UI thread.
@@ -349,7 +349,7 @@ pub fn restore_newest_with(
 /// snapshots to the engine's `paths::instance_state_dir()`, the folder its
 /// launch passes as `--slot-save-path`; the restore after a start reads that
 /// folder, not the user's data root. On macOS it is the user's default, as
-/// before. A dump no preset matches is refused before any request, so the
+/// before. A dump no model profile matches is refused before any request, so the
 /// error names the file the restore picked.
 #[cfg(test)]
 pub(crate) fn restore_reads_the_instance_state_dir_e2e() {

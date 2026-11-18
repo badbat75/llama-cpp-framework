@@ -1,6 +1,6 @@
 //! Will this quantization run on THIS machine, and how: the placement
-//! estimate the From Hugging Face dialog and `preset download --list` show
-//! per quantization, the one quantization they recommend, and the preset keys
+//! estimate the From Hugging Face dialog and `model-profile download --list` show
+//! per quantization, the one quantization they recommend, and the model profile keys
 //! that placement becomes once the file is downloaded (`placement`).
 //!
 //! ## What is read, and how
@@ -22,7 +22,7 @@
 //! every layer offloaded; `docs/qwen3.8_flash_next.md` section 1 has a large
 //! one); the rest (the
 //! output head and norms); and the KV cache. `local_shape` reads the same
-//! headers from the downloaded files, for the preset.
+//! headers from the downloaded files, for the model profile.
 //!
 //! Why not the `gguf.rs` reader (ggml-base through FFI): it opens a FILE, so
 //! the range would have to be written to a temporary file first; it is absent
@@ -71,7 +71,7 @@
 //! ## The margin
 //!
 //! Per GPU, `GPU_RESERVE` (2 GiB) is kept free: llama.cpp's own `--fit`
-//! leaves 1 GiB per device (`--fit-target` default, which a preset left to
+//! leaves 1 GiB per device (`--fit-target` default, which a model profile left to
 //! the fit runs with), and the compute buffers plus the runtime's pools take
 //! more at the default batch sizes, which is what the second GiB covers
 //! (`docs/qwen3.8_flash_next.md`, with what the R9700 also wants left after a
@@ -177,9 +177,9 @@
 //!
 //! Each counted extra shows in the row (`extras_label`) and in the note.
 //!
-//! ## The placement (`placement`): what the preset gets
+//! ## The placement (`placement`): what the model profile gets
 //!
-//! The estimate of the downloaded quantization becomes preset keys, the ones
+//! The estimate of the downloaded quantization becomes model profile keys, the ones
 //! the Models tab already edits (`gpu_split.rs` writes the same two strings):
 //!
 //! | estimate | written |
@@ -211,7 +211,7 @@
 //! the drafter on another. The image encoder gets `mmproj-device` when it
 //! was counted on a card other than the first device, `mmproj-offload =
 //! false` when on the CPU. Every written placement carries a one-line note,
-//! the section's `; placement =` comment (`presets::Preset::placement_note`),
+//! the section's `; placement =` comment (`model profiles::ModelProfile::placement_note`),
 //! which names the extras counted and where.
 //!
 //! ## The recommendation (`recommend`)
@@ -813,8 +813,8 @@ fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> {
 }
 
 /// The `Shape` of a model on disk: `first` and the rest of its shard set
-/// (`linked_files::shard_set`), each header read locally. What the preset of a
-/// download is placed from (`hf::preset_from_download`).
+/// (`linked_files::shard_set`), each header read locally. What the model profile of a
+/// download is placed from (`hf::model_profile_from_download`).
 pub fn local_shape(first: &Path) -> Result<Shape, String> {
     let mut headers = Vec::new();
     for p in crate::linked_files::shard_set(first) {
@@ -1709,7 +1709,7 @@ fn spot_label(x: &Extra) -> String {
 }
 
 /// An extra's `what` as a row shows it. `what` itself stays English: it also goes
-/// into the comment written beside the preset (`extras_note`).
+/// into the comment written beside the model profile (`extras_note`).
 fn what_label(what: &str) -> String {
     match what.strip_suffix(" drafter") {
         Some(kind) => strings::fill("drafter-named", &[&kind]),
@@ -1873,7 +1873,7 @@ pub fn detail_line(estimate: &str, recommended: Option<&str>) -> String {
 
 // ── The placement ────────────────────────────────────────────────────────
 
-/// The preset keys an estimate becomes (module header, "The placement"): an
+/// The model profile keys an estimate becomes (module header, "The placement"): an
 /// empty string or `None` leaves the key at its default.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Placement {

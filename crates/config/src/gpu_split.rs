@@ -25,7 +25,7 @@ use crate::gui::GpuRow;
 /// hasn't been read) leaves `blocks`/`blocks_label` empty and the
 /// table falls back to editing raw weights.
 ///
-/// `mode` is the preset's split mode (`SplitMode::parse`). It bends the rows the
+/// `mode` is the model profile's split mode (`SplitMode::parse`). It bends the rows the
 /// way llama.cpp will bend the launch: `Row` and `Tensor` discard the layout
 /// (the bytes follow row fractions, or a tensor-axis cut, so a block cut would
 /// misreport the placement), `Tensor` additionally names a blank vector "even"

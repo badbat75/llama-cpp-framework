@@ -1,4 +1,4 @@
-//! pai-app: the configurator's modules that need no GUI (presets, benchmarks,
+//! pai-app: the configurator's modules that need no GUI (model profiles, benchmarks,
 //! HF, GGUF, the configuration, the server control seam), shared by the GUI
 //! and the CLI, over the shared core (`pai-core`). It links no Slint.
 

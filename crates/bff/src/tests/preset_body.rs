@@ -1,7 +1,7 @@
-//! The body of `PUT /api/profiles/model/{id}` on its own: the new text of the preset
+//! The body of `PUT /api/profiles/model/{id}` on its own: the new text of the model profile
 //! file, a 400, or a 422, out of the request body, the text of the file and the
-//! preset's id. No manager, no session, no route and no write: those belong to
-//! the rest of "Saving a preset from the web" in `ARCHITECTURE.md`. The web page
+//! model profile's id. No manager, no session, no route and no write: those belong to
+//! the rest of "Saving a model profile from the web" in `ARCHITECTURE.md`. The web page
 //! that sends the body is `fe/briefs/02h-preset-save.md`, its contract
 //! `fe/briefs/api-contract.md`.
 //!
@@ -39,15 +39,15 @@
 //! back refusing the stale edit; and the checks of one value are not pinned in
 //! their order, so a value that two checks would refuse is not tested.
 
-use crate::presets::{body_to_text, PresetBodyAnswer};
-use pai_core::checks::{PRESET_KEYS_NOT_ON_WEB, WEB_PRESET_KEYS};
+use crate::presets::{body_to_text, ModelProfileBodyAnswer};
+use pai_core::checks::{MODEL_PROFILE_KEYS_NOT_ON_WEB, WEB_MODEL_PROFILE_KEYS};
 
 /// The revision every test body carries. A real revision is a keyed hash the
 /// read model computes over the file's name and the section's text; the body
 /// only carries it through, so a plain string stands in for it.
 const REV: &str = "r1";
 
-/// The preset file the tests start from: a `[main]` section carrying the project
+/// The model profile file the tests start from: a `[main]` section carrying the project
 /// URL comment, a comment above one key, a comment between two keys and a
 /// comment after the last key, and a `[other]` section with the same keys. Every
 /// key of one section holds a value of its own, so an edit of one section is
@@ -117,7 +117,7 @@ fn body_json(revision: &str, values: &str) -> String {
 /// the body and the answer when the save was refused.
 fn text_of(body: &str, file_text: &str, id: &str, revision: &str) -> String {
     match body_to_text(body.as_bytes(), file_text, id) {
-        PresetBodyAnswer::Text {
+        ModelProfileBodyAnswer::Text {
             text,
             revision: got,
         } => {
@@ -136,7 +136,7 @@ fn text_of(body: &str, file_text: &str, id: &str, revision: &str) -> String {
 /// It panics with the body when the save was not refused.
 fn refused_of(body: &str, file_text: &str, id: &str) -> (String, Vec<String>, String) {
     match body_to_text(body.as_bytes(), file_text, id) {
-        PresetBodyAnswer::Refused { key, args, field } => (key, args, field),
+        ModelProfileBodyAnswer::Refused { key, args, field } => (key, args, field),
         answer => panic!("expected a refusal, got {answer:?} for body {body:?}"),
     }
 }
@@ -145,7 +145,7 @@ fn refused_of(body: &str, file_text: &str, id: &str) -> (String, Vec<String>, St
 fn assert_malformed(body: &str, file_text: &str, id: &str) {
     let answer = body_to_text(body.as_bytes(), file_text, id);
     assert!(
-        matches!(answer, PresetBodyAnswer::Malformed),
+        matches!(answer, ModelProfileBodyAnswer::Malformed),
         "expected 400 model-profiles-malformed, got {answer:?} for body {body:?}"
     );
 }
@@ -163,7 +163,7 @@ fn dropped(file_text: &str, nl: &str, line: &str) -> String {
 }
 
 #[test]
-fn preset_body_unchanged_is_the_file() {
+fn model_profile_body_unchanged_is_the_file() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let out = text_of(&body(Some(REV), &[]), &file_text, "main", REV);
@@ -175,7 +175,7 @@ fn preset_body_unchanged_is_the_file() {
 }
 
 #[test]
-fn preset_body_set_key_replaces_only_its_line() {
+fn model_profile_body_set_key_replaces_only_its_line() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let out = text_of(
@@ -227,7 +227,7 @@ fn preset_body_set_key_replaces_only_its_line() {
 }
 
 #[test]
-fn preset_body_null_removes_every_line_of_the_key() {
+fn model_profile_body_null_removes_every_line_of_the_key() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         for (key, line) in [
@@ -251,7 +251,7 @@ fn preset_body_null_removes_every_line_of_the_key() {
 }
 
 #[test]
-fn preset_body_applies_every_change_of_the_body() {
+fn model_profile_body_applies_every_change_of_the_body() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let body = body(
@@ -287,7 +287,7 @@ fn preset_body_applies_every_change_of_the_body() {
 }
 
 #[test]
-fn preset_body_two_changes_to_one_key_give_the_last() {
+fn model_profile_body_two_changes_to_one_key_give_the_last() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let body = body(
@@ -308,7 +308,7 @@ fn preset_body_two_changes_to_one_key_give_the_last() {
 }
 
 #[test]
-fn preset_body_edits_only_the_section_named_by_id() {
+fn model_profile_body_edits_only_the_section_named_by_id() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let body = body(
@@ -341,7 +341,7 @@ fn preset_body_edits_only_the_section_named_by_id() {
 }
 
 #[test]
-fn preset_body_key_case_and_duplicates_give_one_line() {
+fn model_profile_body_key_case_and_duplicates_give_one_line() {
     for nl in ["\n", "\r\n"] {
         // A hand-edited file: the key in another letter case, and the key twice.
         let file_text =
@@ -362,11 +362,11 @@ fn preset_body_key_case_and_duplicates_give_one_line() {
 }
 
 #[test]
-fn preset_body_accepts_every_key_of_the_web_list() {
+fn model_profile_body_accepts_every_key_of_the_web_list() {
     // The list is `pai-core`'s, pinned against the configurator's writer by the
     // `pai-app` test `web_key_lists_are_exactly_what_render_section_writes`, so
     // a key the page can write is accepted here with no list to keep in step.
-    for &key in WEB_PRESET_KEYS {
+    for &key in WEB_MODEL_PROFILE_KEYS {
         let file_text = format!("; the presets\n[main]\n{key}=old\n");
         let out = text_of(
             &body(Some(REV), &[(key, Some("12"))]),
@@ -383,12 +383,12 @@ fn preset_body_accepts_every_key_of_the_web_list() {
 }
 
 #[test]
-fn preset_body_key_in_another_case_is_malformed() {
+fn model_profile_body_key_in_another_case_is_malformed() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         // A key of the web's list, spelled in another letter case: the list is
         // matched in exact case, because llama-server knows a key only in its
-        // own case and refuses a preset that spells it otherwise.
+        // own case and refuses a model profile that spells it otherwise.
         for key in ["CTX-SIZE", "Ctx-Size", "POOLING"] {
             // The body also sets a key the list does hold in its own case: 400
             // refuses the whole body, so nothing of it is applied.
@@ -399,14 +399,17 @@ fn preset_body_key_in_another_case_is_malformed() {
 }
 
 #[test]
-fn preset_body_unknown_key_is_malformed() {
+fn model_profile_body_unknown_key_is_malformed() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
-        // The keys of `PRESET_KEYS_NOT_ON_WEB` (the configurator writes them, no
+        // The keys of `MODEL_PROFILE_KEYS_NOT_ON_WEB` (the configurator writes them, no
         // control of the page enables them yet) and a name no reader knows. The
         // body also sets a key the web list does hold: 400 refuses the whole
         // body, so nothing of it is applied.
-        for key in PRESET_KEYS_NOT_ON_WEB.iter().chain(std::iter::once(&"foo")) {
+        for key in MODEL_PROFILE_KEYS_NOT_ON_WEB
+            .iter()
+            .chain(std::iter::once(&"foo"))
+        {
             let body = body(Some(REV), &[("ctx-size", Some("16384")), (key, Some("12"))]);
             assert_malformed(&body, &file_text, "main");
         }
@@ -414,7 +417,7 @@ fn preset_body_unknown_key_is_malformed() {
 }
 
 #[test]
-fn preset_body_control_character_is_malformed() {
+fn model_profile_body_control_character_is_malformed() {
     // CR and LF would end the line, and no reader writes them; a tab is not one
     // of these, so the next test sends it.
     for value in ["8\n096", "8\r096", "8\u{0}096", "8\u{7}096", "8\u{1b}096"] {
@@ -424,7 +427,7 @@ fn preset_body_control_character_is_malformed() {
 }
 
 #[test]
-fn preset_body_tab_inside_a_value_is_written() {
+fn model_profile_body_tab_inside_a_value_is_written() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         let out = text_of(
@@ -447,7 +450,7 @@ fn preset_body_tab_inside_a_value_is_written() {
 }
 
 #[test]
-fn preset_body_empty_value_is_malformed() {
+fn model_profile_body_empty_value_is_malformed() {
     for key in ["ctx-size", "fit-target", "pooling"] {
         for value in ["", "   ", "\t ", " \n "] {
             let body = body(Some(REV), &[(key, Some(value))]);
@@ -457,7 +460,7 @@ fn preset_body_empty_value_is_malformed() {
 }
 
 #[test]
-fn preset_body_unicode_space_at_the_ends_is_malformed() {
+fn model_profile_body_unicode_space_at_the_ends_is_malformed() {
     // A value that starts or ends with a Unicode space that is not a space or a
     // tab: the writer trims only spaces and tabs, so the byte lands in the file,
     // while the reader trims the line and the value with `str::trim`, which
@@ -482,7 +485,7 @@ fn preset_body_unicode_space_at_the_ends_is_malformed() {
 }
 
 #[test]
-fn preset_body_unicode_space_inside_a_value_is_written() {
+fn model_profile_body_unicode_space_inside_a_value_is_written() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         // The rule is about the ends only: a Unicode space in the middle of a
@@ -508,7 +511,7 @@ fn preset_body_unicode_space_inside_a_value_is_written() {
 }
 
 #[test]
-fn preset_body_value_neither_a_string_nor_null_is_malformed() {
+fn model_profile_body_value_neither_a_string_nor_null_is_malformed() {
     // A `null` is a removal, so it is not in this list.
     for raw in ["12", "1.5", "true", "[]", "{}", "[\"mean\"]"] {
         let body = format!("{{\"revision\":\"{REV}\",\"values\":{{\"ctx-size\":{raw}}}}}");
@@ -517,7 +520,7 @@ fn preset_body_value_neither_a_string_nor_null_is_malformed() {
 }
 
 #[test]
-fn preset_body_revision_missing_or_not_a_string_is_malformed() {
+fn model_profile_body_revision_missing_or_not_a_string_is_malformed() {
     assert_malformed("{\"values\":{\"ctx-size\":\"16384\"}}", &file("\n"), "main");
     for raw in ["12", "1.5", "true", "null", "[]", "{}"] {
         let body = body_json(raw, "\"ctx-size\":\"16384\"");
@@ -526,7 +529,7 @@ fn preset_body_revision_missing_or_not_a_string_is_malformed() {
 }
 
 #[test]
-fn preset_body_values_missing_or_not_an_object_is_malformed() {
+fn model_profile_body_values_missing_or_not_an_object_is_malformed() {
     assert_malformed(&format!("{{\"revision\":\"{REV}\"}}"), &file("\n"), "main");
     for raw in ["[]", "[\"ctx-size\"]", "\"ctx-size\"", "12", "null"] {
         let body = body_json(&json_of(Some(REV)), raw);
@@ -535,7 +538,7 @@ fn preset_body_values_missing_or_not_an_object_is_malformed() {
 }
 
 #[test]
-fn preset_body_not_json_is_malformed() {
+fn model_profile_body_not_json_is_malformed() {
     for raw in [
         "",
         "   ",
@@ -549,7 +552,7 @@ fn preset_body_not_json_is_malformed() {
 }
 
 #[test]
-fn preset_body_value_with_a_comment_marker_is_refused() {
+fn model_profile_body_value_with_a_comment_marker_is_refused() {
     // The check runs for every key the body sets, not only for a key whose value
     // the manager checks as text, so a number key and a text key answer alike.
     for (key, value) in [
@@ -576,7 +579,7 @@ fn preset_body_value_with_a_comment_marker_is_refused() {
 }
 
 #[test]
-fn preset_body_lists_every_key_with_a_comment_marker() {
+fn model_profile_body_lists_every_key_with_a_comment_marker() {
     let body = body(
         Some(REV),
         &[
@@ -600,7 +603,7 @@ fn preset_body_lists_every_key_with_a_comment_marker() {
 }
 
 #[test]
-fn preset_body_value_is_trimmed() {
+fn model_profile_body_value_is_trimmed() {
     for nl in ["\n", "\r\n"] {
         let file_text = file(nl);
         // Spaces and tabs around the value only: a control character inside a
@@ -632,7 +635,7 @@ fn preset_body_value_is_trimmed() {
 }
 
 #[test]
-fn preset_body_two_new_keys_land_after_the_last_line() {
+fn model_profile_body_two_new_keys_land_after_the_last_line() {
     /// The file with the lines of `keys` appended to `[main]`, after its last
     /// real line and before the blank line that separates the sections: the
     /// whole change, every other byte of the file kept.
@@ -705,7 +708,7 @@ fn preset_body_two_new_keys_land_after_the_last_line() {
 }
 
 #[test]
-fn preset_body_revision_is_carried_through() {
+fn model_profile_body_revision_is_carried_through() {
     let file_text = file("\n");
     // The revision of the card is carried out unchanged, so the save goes to the
     // file that still holds it.
@@ -727,7 +730,7 @@ fn preset_body_revision_is_carried_through() {
         &file_text,
         "main",
     ) {
-        PresetBodyAnswer::Text { revision, .. } => assert_eq!(
+        ModelProfileBodyAnswer::Text { revision, .. } => assert_eq!(
             revision, "r-elsewhere",
             "the answer carries the body's revision, whoever reads it"
         ),

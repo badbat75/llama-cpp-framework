@@ -8,7 +8,7 @@
 //! **Live** (`Mode::Live`) drives the RUNNING llama-server: one
 //! `/v1/chat/completions` per repetition, with a real prompt and a temperature
 //! override, reading the `timings` block off the response. It is the only mode
-//! that measures the configuration the framework actually ships: the preset's
+//! that measures the configuration the framework actually ships: the model profile's
 //! chat template, its speculative drafter (MTP / DFlash), its KV cache, its
 //! `--parallel`. Its numbers are production numbers.
 //!
@@ -18,8 +18,8 @@
 //! llama-bench do not include the times for tokenization and for sampling").
 //! That is a stronger reproducibility guarantee than a fixed prompt at
 //! temperature 0, not a weaker one, since the result cannot depend on what the
-//! model says. The price is that it cannot load the preset's drafter, so its
-//! `tg` reads roughly HALF of what the same preset does live with MTP on, and
+//! model says. The price is that it cannot load the model profile's drafter, so its
+//! `tg` reads roughly HALF of what the same model profile does live with MTP on, and
 //! it ignores the mmproj, the chat template and every reasoning flag. The
 //! default sweep here (`DEFAULT_PROMPT_LENS` / `DEFAULT_DEPTHS` / `DEFAULT_GEN`)
 //! is carried over from the shell harness this tab replaced, so runs recorded
@@ -57,7 +57,7 @@
 //! content may hold an image: an `image_file` part naming a file beside the
 //! prompt and its sha256 (so the prompt's own digest pins the image too),
 //! resized at send time to the run's `image_size` (`resolve_images`), or an
-//! `image_url` part sent as given. An image prompt runs only on presets with
+//! `image_url` part sent as given. An image prompt runs only on model profiles with
 //! an mmproj (`prompt_has_image`).
 //!
 //! *Identity, not a copy.* The prompt was previously embedded verbatim in the
@@ -69,17 +69,17 @@
 //! the same prompt saved by Notepad (CRLF, maybe a BOM) and by the built-in
 //! editor must hash the same, because it tokenizes the same.
 //!
-//! ## The unit is the PRESET, never the model file
+//! ## The unit is the MODEL PROFILE, never the model file
 //!
-//! Two presets may point at the same `.gguf` with different placement, KV types
+//! Two model profiles may point at the same `.gguf` with different placement, KV types
 //! or drafters, and comparing exactly that pair is the most useful thing this
-//! tab does. So the selection is a list of preset ids, the results are keyed by
-//! preset id, and the ratio column is against the FIRST selected preset.
+//! tab does. So the selection is a list of model profile ids, the results are keyed by
+//! model profile id, and the ratio column is against the FIRST selected model profile.
 //!
 //! ## Three separator traps between an INI value and a llama-bench flag
 //!
 //! Every one of them is silent: llama-bench accepts the value and benchmarks
-//! something other than what the preset describes.
+//! something other than what the model profile describes.
 //!
 //!  * `--tensor-split` is `/`-separated for llama-bench, `,`-separated in the
 //!    INI. A comma there means "run these as SEPARATE configurations", so
@@ -87,15 +87,15 @@
 //!  * `--override-tensor` is `;`-separated for llama-bench, `,`-separated in the
 //!    INI (llama.cpp's own `-ot` parser splits rules on `,`). llama-bench splits
 //!    on `,` FIRST, into configuration groups, and only then on `;` into rules
-//!    (`llama-bench.cpp`), so a two-rule preset value becomes two runs with one
+//!    (`llama-bench.cpp`), so a two-rule model profile value becomes two runs with one
 //!    rule each.
 //!  * `--device` is `/`-separated for llama-bench, `,`-separated in the INI, with
 //!    the same "separate configurations" meaning for a comma.
 //!
-//! ## The placement is the preset's own
+//! ## The placement is the model profile's own
 //!
-//! `device`, `tensor-split`, `split-mode` and `override-tensor` are per-preset
-//! keys and the router's command line carries none of them, so the preset alone
+//! `device`, `tensor-split`, `split-mode` and `override-tensor` are per-model-profile
+//! keys and the router's command line carries none of them, so the model profile alone
 //! says where a model runs, here as at launch.
 
 use crate::strings;
@@ -103,7 +103,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::ini;
-use crate::presets::Preset;
+use crate::presets::ModelProfile;
 use crate::server_cfg::ServerConfig;
 
 pub mod db;
@@ -229,11 +229,11 @@ impl Mode {
     }
 }
 
-// ── Concurrency: one request per slot of the preset, at once ─────────────
+// ── Concurrency: one request per slot of the model profile, at once ─────────────
 
 /// How many requests a live repetition sends, and in what state their slots
 /// are. Every scenario but `Single` sends N requests at the same instant, N =
-/// the preset's `parallel` (absent = llama-server's auto 4 slots), each pinned
+/// the model profile's `parallel` (absent = llama-server's auto 4 slots), each pinned
 /// to its own slot with `id_slot`; N must be at least 2. A slot is WARM when it
 /// was primed with the prompt before the repetitions (`cache_prompt: true`, so
 /// its request only decodes) and COLD when its request prefills the whole
@@ -287,7 +287,7 @@ impl Concurrency {
     }
 }
 
-/// Slots of a preset: its `parallel`, or llama-server's auto 4 when absent.
+/// Slots of a model profile: its `parallel`, or llama-server's auto 4 when absent.
 pub const AUTO_PARALLEL: i32 = 4;
 
 /// Throughput of requests that ran together, from each one's client send
@@ -407,8 +407,8 @@ pub fn prompt_summary(text: &str) -> String {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub mode: Mode,
-    /// Preset ids in run order. The first is the baseline of the ratio column.
-    pub presets: Vec<String>,
+    /// Model profile ids in run order. The first is the baseline of the ratio column.
+    pub model_profiles: Vec<String>,
     pub reps: i32,
     // Live half.
     /// The text that will be sent, already resolved. Whoever builds the plan
@@ -420,11 +420,11 @@ pub struct Plan {
     /// given inline (`bench --prompt`), which is the one way to run a prompt
     /// that is not in a file.
     pub prompt_file: Option<PathBuf>,
-    /// `None` leaves the preset's own `--temp` alone. The default is `Some(0.0)`:
+    /// `None` leaves the model profile's own `--temp` alone. The default is `Some(0.0)`:
     /// greedy sampling is what makes two runs of the same prompt comparable.
     pub temp: Option<f64>,
     /// `0` = no cap: the request carries no `max_tokens`, so the model stops
-    /// on its own (or at the preset's `n-predict`); a reply the slot's context
+    /// on its own (or at the model profile's `n-predict`); a reply the slot's context
     /// cuts fails the leg (`cut_by_context`).
     /// The CLI's default; the Benchmark tab sends its field's value.
     pub max_tokens: i32,
@@ -461,7 +461,7 @@ impl Default for Plan {
     fn default() -> Self {
         Plan {
             mode: Mode::Live,
-            presets: Vec::new(),
+            model_profiles: Vec::new(),
             reps: DEFAULT_REPS,
             // Unresolved: the caller reads `prompt_file` into it. Defaulting to
             // a shipped prompt here would make a plan whose prompt disagrees with
@@ -523,7 +523,7 @@ pub fn render_int_list(v: &[i32]) -> String {
 /// Why this plan cannot run, or `None`. Checked before anything is spawned so a
 /// bad workload fails in the UI rather than as an unreadable llama-bench error.
 pub fn validate(plan: &Plan) -> Option<String> {
-    if plan.presets.is_empty() {
+    if plan.model_profiles.is_empty() {
         return Some(strings::t("select-a-preset"));
     }
     if plan.reps < 1 {
@@ -582,7 +582,7 @@ fn semicoloned(csv: &str) -> String {
 /// `blk\.<i>\.ffn_(up|down|gate)\.=CPU` for `i` in `0..N`
 /// (`llm_add_n_cpu_ffn_overrides` over `LLM_FFN_DENSE_REGEX`, common/common.h,
 /// v0.4.0). llama-bench understands `-ncmoe` but has no dense twin, so this is
-/// how the synthetic engine keeps the preset's placement instead of silently
+/// how the synthetic engine keeps the model profile's placement instead of silently
 /// benchmarking every FFN on the GPU. `None` and `0` both expand to nothing,
 /// exactly as llama.cpp's loop over `0..N` does.
 fn n_cpu_ffn_rules(n: Option<i32>) -> Vec<String> {
@@ -637,7 +637,7 @@ pub fn synthetic_sweeps(plan: &Plan) -> Vec<Sweep> {
     out
 }
 
-/// Build one `llama-bench` argument list: the preset mirrored, plus `sweep`.
+/// Build one `llama-bench` argument list: the model profile mirrored, plus `sweep`.
 ///
 /// What is deliberately NOT mapped, because llama-bench has no equivalent and a
 /// silent omission is what makes a benchmark lie about its subject:
@@ -645,7 +645,12 @@ pub fn synthetic_sweeps(plan: &Plan) -> Vec<Sweep> {
 /// `--ctx-size` (llama-bench derives `n_ctx` from `-p + -n + -d`), `--parallel`,
 /// `--cache-ram`, and every chat / reasoning / sampling key. `caveats()` is what
 /// says so in the report.
-pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep) -> Vec<String> {
+pub fn synthetic_argv(
+    p: &ModelProfile,
+    cfg: &ServerConfig,
+    plan: &Plan,
+    sweep: &Sweep,
+) -> Vec<String> {
     let mut a: Vec<String> = Vec::new();
     let mut push = |flag: &str, value: String| {
         a.push(flag.to_string());
@@ -667,7 +672,7 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     }
     // ONE `-ot`, never two: a second `-ot` flag is a second configuration GROUP
     // to llama-bench, i.e. a separate benchmark, so the `--n-cpu-ffn` expansion
-    // (llama-bench has no `-ncffn`, checked against v0.4.0) and the preset's own
+    // (llama-bench has no `-ncffn`, checked against v0.4.0) and the model profile's own
     // rules must share the value, `;`-joined. The expansion goes FIRST, which is
     // the order llama-server sees them in: `common_preset` is a `std::map`, and
     // `n-cpu-ffn` sorts before `override-tensor`; the loader takes the first
@@ -693,7 +698,7 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     if let Some(on) = p.op_offload {
         push("-nopo", if on { "0".into() } else { "1".into() });
     }
-    // Same sense as the preset's, as a 0|1 value (llama-bench's `--repack`).
+    // Same sense as the model profile's, as a 0|1 value (llama-bench's `--repack`).
     if let Some(on) = p.repack {
         push("--repack", if on { "1".into() } else { "0".into() });
     }
@@ -714,8 +719,8 @@ pub fn synthetic_argv(p: &Preset, cfg: &ServerConfig, plan: &Plan, sweep: &Sweep
     }
     // Pinned rather than left at llama-bench's `auto`, because `auto` may
     // resolve differently per backend and would confound a comparison whose
-    // whole point is that one thing moves. An unset preset key leaves it at auto, which
-    // is llama.cpp's own behaviour and so still what the preset describes.
+    // whole point is that one thing moves. An unset model profile key leaves it at auto, which
+    // is llama.cpp's own behaviour and so still what the model profile describes.
     if let Some(fa) = p.flash_attn {
         push("-fa", if fa { "on".into() } else { "off".into() });
     }
@@ -770,8 +775,8 @@ pub const LIVE_PATH: &str = "/v1/chat/completions";
 /// reasoning/answer boundary ([`parse_stream`]). The response is still read
 /// whole: the split comes from the server's cumulative timings on each event,
 /// not from when the events arrive, so nothing is timed on our side.
-pub fn live_body(preset_id: &str, plan: &Plan) -> String {
-    live_body_with(preset_id, plan, None)
+pub fn live_body(model_profile_id: &str, plan: &Plan) -> String {
+    live_body_with(model_profile_id, plan, None)
 }
 
 /// The request's `messages` and `tools` for a prompt text: a JSON object with
@@ -845,7 +850,7 @@ pub fn prompt_prefix(text: &str) -> Option<String> {
 
 /// Whether a prompt holds an image: a conversation with an `image_url`
 /// content part. Only a model loaded with an mmproj can read one, so a spec
-/// runs such a prompt on the presets that have one and skips it on the rest.
+/// runs such a prompt on the model profiles that have one and skips it on the rest.
 pub fn prompt_has_image(text: &str) -> bool {
     let (messages, _) = prompt_request(text, None);
     messages.as_array().into_iter().flatten().any(|m| {
@@ -980,7 +985,7 @@ fn image_data_url(bytes: &[u8], size: Option<(u32, u32)>) -> Result<String, Stri
 /// request only decodes). `max_tokens` overrides the plan's (1 to prime, 0 =
 /// no cap).
 pub fn live_body_slot(
-    preset_id: &str,
+    model_profile_id: &str,
     plan: &Plan,
     slot: usize,
     warm: bool,
@@ -991,7 +996,7 @@ pub fn live_body_slot(
         ..plan.clone()
     };
     let mut body: serde_json::Value =
-        serde_json::from_str(&live_body_with(preset_id, &plan, None)).unwrap_or_default();
+        serde_json::from_str(&live_body_with(model_profile_id, &plan, None)).unwrap_or_default();
     body["id_slot"] = serde_json::json!(slot);
     body["cache_prompt"] = serde_json::json!(warm);
     body.to_string()
@@ -1002,10 +1007,10 @@ pub fn live_body_slot(
 /// file can be 100k characters, and a request body nobody can read is not a
 /// preview), and routing both through here is what keeps that the only
 /// difference between them, instead of a second formatter that drifts.
-fn live_body_with(preset_id: &str, plan: &Plan, cap: Option<usize>) -> String {
+fn live_body_with(model_profile_id: &str, plan: &Plan, cap: Option<usize>) -> String {
     let (messages, tools) = prompt_request(&plan.prompt, cap);
     let mut body = serde_json::json!({
-        "model": preset_id,
+        "model": model_profile_id,
         "messages": messages,
         "stream": true,
         "timings_per_token": true,
@@ -1037,10 +1042,10 @@ fn elide(text: &str, cap: usize) -> String {
 
 /// The pasteable preview of a live request: what `curl` would send, with the
 /// prompt elided past `PREVIEW_PROMPT_CHARS`.
-pub fn live_preview(port: u16, preset_id: &str, plan: &Plan) -> String {
+pub fn live_preview(port: u16, model_profile_id: &str, plan: &Plan) -> String {
     format!(
         "POST http://127.0.0.1:{port}{LIVE_PATH}\n{}",
-        live_body_with(preset_id, plan, Some(PREVIEW_PROMPT_CHARS))
+        live_body_with(model_profile_id, plan, Some(PREVIEW_PROMPT_CHARS))
     )
 }
 
@@ -1059,7 +1064,7 @@ pub struct Timings {
     /// under `cache_prompt: false`; anything else means the prefill number below
     /// is not a prefill number.
     pub cache_n: i64,
-    /// Present only when the preset actually drafted (MTP / DFlash).
+    /// Present only when the model profile actually drafted (MTP / DFlash).
     pub draft_n: i64,
     pub draft_accepted: i64,
 }
@@ -1276,13 +1281,13 @@ pub fn parse_stream(body: &str) -> Result<Streamed, String> {
 }
 
 /// The output cap the server applied to a live request: the request's own
-/// `max_tokens`, else the preset's `n-predict` (`server-context.cpp` takes the
-/// preset's as the fallback; only `-1` means no limit there).
-pub fn output_cap(plan: &Plan, preset: &Preset) -> Option<i64> {
+/// `max_tokens`, else the model profile's `n-predict` (`server-context.cpp` takes the
+/// model profile's as the fallback; only `-1` means no limit there).
+pub fn output_cap(plan: &Plan, model_profile: &ModelProfile) -> Option<i64> {
     if plan.max_tokens > 0 {
         return Some(i64::from(plan.max_tokens));
     }
-    preset.n_predict.filter(|&n| n != -1).map(i64::from)
+    model_profile.n_predict.filter(|&n| n != -1).map(i64::from)
 }
 
 /// Whether the slot's context cut this reply short.
@@ -1341,7 +1346,7 @@ pub fn context_cut_error(s: &Streamed, cap: Option<i64>, n_ctx: Option<i64>) -> 
 /// `-r` repetitions, and what the live mode aggregates itself over ours.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Point {
-    pub preset: String,
+    pub model_profile: String,
     pub test: String,
     pub mean: f64,
     pub sd: f64,
@@ -1388,14 +1393,14 @@ pub fn bench_test_label(n_prompt: i64, n_gen: i64, n_depth: i64) -> String {
 ///
 /// llama-bench has already averaged its `-r` repetitions, so the line carries
 /// `avg_ts` / `stddev_ts` and the repetition count is ours to supply: the
-/// preset id likewise, since llama-bench knows nothing about presets.
-pub fn parse_bench_line(line: &str, preset: &str, reps: i32) -> Option<Point> {
+/// model profile id likewise, since llama-bench knows nothing about model profiles.
+pub fn parse_bench_line(line: &str, model_profile: &str, reps: i32) -> Option<Point> {
     let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     let int = |k: &str| v.get(k).and_then(serde_json::Value::as_i64).unwrap_or(0);
     let num = |k: &str| v.get(k).and_then(serde_json::Value::as_f64);
     let mean = num("avg_ts")?;
     Some(Point {
-        preset: preset.to_string(),
+        model_profile: model_profile.to_string(),
         test: bench_test_label(int("n_prompt"), int("n_gen"), int("n_depth")),
         mean,
         sd: num("stddev_ts").unwrap_or(0.0),
@@ -1414,11 +1419,11 @@ pub fn parse_bench_build(line: &str) -> Option<i64> {
 
 /// The flash-attention value llama-bench actually RESOLVED for a test.
 ///
-/// This is the one column that must be read back rather than assumed. A preset
+/// This is the one column that must be read back rather than assumed. A model profile
 /// that leaves `--flash-attn` unset runs at llama.cpp's `auto`, which resolves
 /// per backend, so a ROCm leg and a Vulkan leg of the same comparison can end up
 /// on different kernels with nothing in the rates to show it. The tab does not
-/// PIN the value, because pinning would benchmark a configuration the preset
+/// PIN the value, because pinning would benchmark a configuration the model profile
 /// does not run (the tab's whole premise is that it measures the configuration
 /// in use); it reads what happened and says so when the legs disagree.
 ///
@@ -1437,12 +1442,12 @@ pub fn parse_bench_flash_attn(line: &str) -> Option<String> {
     })
 }
 
-/// The warning to print when the compared presets did not end up on the same
-/// flash-attention setting, or `None` when they agree (or when only one preset
+/// The warning to print when the compared model profiles did not end up on the same
+/// flash-attention setting, or `None` when they agree (or when only one model profile
 /// ran, which is nothing to compare).
 ///
-/// Takes what was OBSERVED, keyed by preset, so it reports reality rather than
-/// intent: a preset pinning `on` and one resolving `on` from `auto` agree, and
+/// Takes what was OBSERVED, keyed by model profile, so it reports reality rather than
+/// intent: a model profile pinning `on` and one resolving `on` from `auto` agree, and
 /// the warning stays silent, which is correct.
 pub fn flash_attn_mismatch(seen: &BTreeMap<String, String>) -> Option<String> {
     let mut values: Vec<&String> = seen.values().collect();
@@ -1453,14 +1458,14 @@ pub fn flash_attn_mismatch(seen: &BTreeMap<String, String>) -> Option<String> {
     }
     let detail: Vec<String> = seen.iter().map(|(p, v)| format!("{p}={v}")).collect();
     Some(format!(
-        "The compared presets ran with DIFFERENT flash-attention settings ({}), so the \
+        "The compared model profiles ran with DIFFERENT flash-attention settings ({}), so the \
          rates below differ by more than the thing you are comparing. Pin `flash-attn` \
-         explicitly on every preset in the comparison and re-run.",
+         explicitly on every model_profile in the comparison and re-run.",
         detail.join(", ")
     ))
 }
 
-/// Resolve a preset's `--device` list against the probed devices, as
+/// Resolve a model profile's `--device` list against the probed devices, as
 /// `(id, name)` pairs with an empty name for an id the probe does not know.
 ///
 /// Recorded in the report because the ids are NOT stable: the same machine has
@@ -1490,27 +1495,27 @@ pub fn device_names(list: &str, devs: &[crate::devices::DeviceOption]) -> Vec<(S
 /// somewhere else.
 pub fn unknown_device_warning(resolved: &[(String, Vec<(String, String)>)]) -> Option<String> {
     let mut bad: Vec<String> = Vec::new();
-    for (preset, devs) in resolved {
+    for (model_profile, devs) in resolved {
         for (id, name) in devs {
             if name.is_empty() {
-                bad.push(format!("{preset} -> {id}"));
+                bad.push(format!("{model_profile} -> {id}"));
             }
         }
     }
     (!bad.is_empty()).then(|| {
         format!(
             "Device ids this machine's probe does not know: {}. The ids are not stable \
-             across driver states, so a preset can point at a card that is not there.",
+             across driver states, so a model profile can point at a card that is not there.",
             bad.join(", ")
         )
     })
 }
 
-/// A `Point` plus its ratio against the baseline preset, ready for the table.
+/// A `Point` plus its ratio against the baseline model profile, ready for the table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Row {
     pub test: String,
-    pub preset: String,
+    pub model_profile: String,
     pub mean: String,
     pub sd: String,
     pub samples: i32,
@@ -1521,8 +1526,8 @@ pub struct Row {
 
 /// Order the points for display and attach the ratio column.
 ///
-/// Rows are grouped by TEST (so the presets of one test sit together, which is
-/// the comparison), and within a test they follow the plan's preset order, so
+/// Rows are grouped by TEST (so the model profiles of one test sit together, which is
+/// the comparison), and within a test they follow the plan's model profile order, so
 /// the baseline is always the first row of its group.
 pub fn rows(points: &[Point], order: &[String]) -> Vec<Row> {
     let baseline = order.first().cloned().unwrap_or_default();
@@ -1540,7 +1545,7 @@ pub fn rows(points: &[Point], order: &[String]) -> Vec<Row> {
 
     let mut base_of: BTreeMap<&str, f64> = BTreeMap::new();
     for p in points {
-        if p.preset == baseline {
+        if p.model_profile == baseline {
             base_of.insert(p.test.as_str(), p.mean);
         }
     }
@@ -1548,7 +1553,7 @@ pub fn rows(points: &[Point], order: &[String]) -> Vec<Row> {
     let mut out = Vec::new();
     for test in &seen {
         let mut group: Vec<&Point> = points.iter().filter(|p| &p.test == test).collect();
-        group.sort_by_key(|p| rank(&p.preset));
+        group.sort_by_key(|p| rank(&p.model_profile));
         for p in group {
             let ratio = match base_of.get(p.test.as_str()) {
                 Some(b) if *b > 0.0 => format!("{:.2}x", p.mean / b),
@@ -1556,7 +1561,7 @@ pub fn rows(points: &[Point], order: &[String]) -> Vec<Row> {
             };
             out.push(Row {
                 test: p.test.clone(),
-                preset: p.preset.clone(),
+                model_profile: p.model_profile.clone(),
                 mean: format!("{:.1}", p.mean),
                 sd: format!("{:.1}", p.sd),
                 samples: p.n,
@@ -1595,19 +1600,19 @@ pub struct RunMeta {
 pub fn caveats(mode: Mode) -> Vec<&'static str> {
     match mode {
         Mode::Live => vec![
-            "Numbers include the preset's speculative drafter, chat template and sampler: they are production rates, not a hardware ceiling.",
+            "Numbers include the model profile's speculative drafter, chat template and sampler: they are production rates, not a hardware ceiling.",
             "Every repetition asks for `cache_prompt: false`, so each prefill is cold. A non-zero `cache` note on a row means the server reused a prefix anyway and that row's prefill rate is not one.",
-            "Presets run grouped, all repetitions of one before the next, because switching preset makes the router load another model. A card that heats up over a long run therefore charges the drift to the LAST preset: re-run with the order reversed if a difference is small.",
-            "Temperature 0 makes two runs comparable, but it is not the sampling a preset ships with; with a drafter on, acceptance (and so throughput) depends on the content being generated.",
+            "Model profiles run grouped, all repetitions of one before the next, because switching model profile makes the router load another model. A card that heats up over a long run therefore charges the drift to the LAST model profile: re-run with the order reversed if a difference is small.",
+            "Temperature 0 makes two runs comparable, but it is not the sampling a model profile ships with; with a drafter on, acceptance (and so throughput) depends on the content being generated.",
         ],
         Mode::Synthetic => vec![
-            "No speculative decoding: llama-bench cannot load the preset's drafter, so `tg` here is the unassisted rate and reads well below what the same preset does live with MTP on.",
+            "No speculative decoding: llama-bench cannot load the model profile's drafter, so `tg` here is the unassisted rate and reads well below what the same model profile does live with MTP on.",
             "No sampling at all, hence no temperature and no prompt: the results are content-independent by construction, which is the point of this mode.",
             "The mmproj, the chat template and every reasoning flag are ignored.",
             "`pp` is batch prefill throughput, not time to first token.",
             "`--ctx-size` is not honoured: llama-bench sizes the context as prompt + generated + depth.",
-            "`--n-cpu-ffn` has no llama-bench flag: it is replayed as the per-layer `blk\\.<i>\\.ffn_(up|down|gate)\\.=CPU` override-tensor rules llama.cpp expands it into, ahead of the preset's own rules.",
-            "`--moe-cache-mib` is ignored: llama-bench has no such option, so a preset carrying it runs here without the expert cache.",
+            "`--n-cpu-ffn` has no llama-bench flag: it is replayed as the per-layer `blk\\.<i>\\.ffn_(up|down|gate)\\.=CPU` override-tensor rules llama.cpp expands it into, ahead of the model profile's own rules.",
+            "`--moe-cache-mib` is ignored: llama-bench has no such option, so a model profile carrying it runs here without the expert cache.",
             "llama-server must be stopped: benching alongside it does not fail cleanly, it spills into shared memory and reads as a backend regression.",
         ],
     }
@@ -1651,7 +1656,10 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
     md.push_str(&format!("Generated {}.\n\n", meta.stamp));
 
     md.push_str("| setting | value |\n|---|---|\n");
-    md.push_str(&format!("| presets | {} |\n", plan.presets.join(", ")));
+    md.push_str(&format!(
+        "| model profiles | {} |\n",
+        plan.model_profiles.join(", ")
+    ));
     md.push_str(&format!("| repetitions | {} |\n", plan.reps));
     match plan.mode {
         Mode::Live => {
@@ -1659,7 +1667,7 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
                 "| temperature | {} |\n",
                 match plan.temp {
                     Some(t) => format!("{t}"),
-                    None => "the preset's own".to_string(),
+                    None => "the model profile's own".to_string(),
                 }
             ));
             md.push_str(&format!("| max output tokens | {} |\n", plan.max_tokens));
@@ -1701,19 +1709,19 @@ pub fn render_report(plan: &Plan, points: &[Point], meta: &RunMeta) -> String {
         }
     }
 
-    let rows = rows(points, &plan.presets);
-    let baseline = plan.presets.first().cloned().unwrap_or_default();
+    let rows = rows(points, &plan.model_profiles);
+    let baseline = plan.model_profiles.first().cloned().unwrap_or_default();
     md.push_str("## Results (tokens/s, mean +- sample stddev)\n\n");
     if rows.is_empty() {
         md.push_str("No results were collected.\n\n");
     } else {
         md.push_str(&format!(
-            "| test | preset | t/s | +- | samples | vs {baseline} | note |\n|---|---|---:|---:|---:|---:|---|\n"
+            "| test | model profile | t/s | +- | samples | vs {baseline} | note |\n|---|---|---:|---:|---:|---:|---|\n"
         ));
         for r in &rows {
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} |\n",
-                r.test, r.preset, r.mean, r.sd, r.samples, r.ratio, r.note
+                r.test, r.model_profile, r.mean, r.sd, r.samples, r.ratio, r.note
             ));
         }
         md.push('\n');
@@ -1800,7 +1808,7 @@ pub fn trace_json(trace: &[TracePoint]) -> serde_json::Value {
 /// The point one decode phase contributes, over the repetitions where the phase
 /// had a rate. The note carries the mean span length and its acceptance: a phase
 /// rate is only readable next to how much of the output the phase took.
-pub fn phase_point(preset: &str, test: &str, spans: &[(f64, Phase)]) -> Option<Point> {
+pub fn phase_point(model_profile: &str, test: &str, spans: &[(f64, Phase)]) -> Option<Point> {
     if spans.is_empty() {
         return None;
     }
@@ -1817,7 +1825,7 @@ pub fn phase_point(preset: &str, test: &str, spans: &[(f64, Phase)]) -> Option<P
         ));
     }
     Some(Point {
-        preset: preset.into(),
+        model_profile: model_profile.into(),
         test: test.into(),
         mean,
         sd,
@@ -1881,8 +1889,8 @@ mod tests {
     /// A short prompt of the user's, for what a long one would hide.
     const SHORT: &str = "Explain how a transformer decoder's key-value cache works.";
 
-    fn preset(id: &str) -> Preset {
-        Preset {
+    fn model_profile(id: &str) -> ModelProfile {
+        ModelProfile {
             id: id.into(),
             model: r"E:\models\m.gguf".into(),
             ..Default::default()
@@ -1974,7 +1982,7 @@ mod tests {
         let neither = Plan {
             prompt_lens: Vec::new(),
             n_gen: 0,
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             mode: Mode::Synthetic,
             ..Plan::default()
         };
@@ -1984,15 +1992,15 @@ mod tests {
 
     // The three separator conversions, each of which turns ONE benchmark into
     // several when it is missed (a comma is llama-bench's "run these as separate
-    // configurations"), so the preset would be benchmarked in a placement it
+    // configurations"), so the model profile would be benchmarked in a placement it
     // never runs in.
     #[test]
     fn ini_separators_become_llama_bench_separators() {
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0,CUDA0".into(),
             tensor_split: "54,12".into(),
             override_tensor: r"token_embd\.weight=ROCm0,output\.weight=CUDA0".into(),
-            ..preset("a")
+            ..model_profile("a")
         };
         let plan = Plan::default();
         let a = synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan));
@@ -2007,15 +2015,15 @@ mod tests {
 
     // llama-bench has `-ncmoe` but no `-ncffn`, so `n-cpu-ffn` rides `-ot` as
     // the per-layer rules llama.cpp expands it into, and it has to share the ONE
-    // `-ot` value with the preset's own rules: a second `-ot` flag would be a
+    // `-ot` value with the model profile's own rules: a second `-ot` flag would be a
     // second configuration group, i.e. a separate benchmark.
     #[test]
     fn n_cpu_ffn_expands_into_the_single_ot_value() {
         let plan = Plan::default();
-        let p = Preset {
+        let p = ModelProfile {
             n_cpu_ffn: Some(2),
             override_tensor: r"token_embd\.weight=ROCm0".into(),
-            ..preset("a")
+            ..model_profile("a")
         };
         let a = synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan));
         assert_eq!(a.iter().filter(|x| *x == "-ot").count(), 1);
@@ -2029,9 +2037,9 @@ mod tests {
 
         // Alone it still produces the flag; 0 and None produce nothing, like
         // llama.cpp's own `for i in 0..N`.
-        let p = Preset {
+        let p = ModelProfile {
             n_cpu_ffn: Some(1),
-            ..preset("a")
+            ..model_profile("a")
         };
         let a = synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan));
         assert_eq!(
@@ -2044,14 +2052,14 @@ mod tests {
 
     // `op-offload` reaches llama-bench as `-nopo`, whose sense is INVERTED and
     // whose value is 0|1: a straight copy of the bool would benchmark the
-    // opposite of the preset.
+    // opposite of the model profile.
     #[test]
     fn op_offload_rides_the_inverted_nopo_flag() {
         let plan = Plan::default();
         let argv = |state| {
-            let p = Preset {
+            let p = ModelProfile {
                 op_offload: state,
-                ..preset("a")
+                ..model_profile("a")
             };
             synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan))
         };
@@ -2064,9 +2072,9 @@ mod tests {
     fn repack_rides_llama_bench_repack_as_0_or_1() {
         let plan = Plan::default();
         let argv = |state| {
-            let p = Preset {
+            let p = ModelProfile {
                 repack: state,
-                ..preset("a")
+                ..model_profile("a")
             };
             synthetic_argv(&p, &ServerConfig::default(), &plan, &first_sweep(&plan))
         };
@@ -2079,10 +2087,10 @@ mod tests {
     }
 
     #[test]
-    fn an_untouched_preset_passes_only_the_workload() {
+    fn an_untouched_model_profile_passes_only_the_workload() {
         let plan = Plan::default();
         let a = synthetic_argv(
-            &preset("a"),
+            &model_profile("a"),
             &ServerConfig::default(),
             &plan,
             &first_sweep(&plan),
@@ -2188,7 +2196,7 @@ mod tests {
     fn concurrency_needs_the_live_mode() {
         let plan = Plan {
             mode: Mode::Synthetic,
-            presets: vec!["q".into()],
+            model_profiles: vec!["q".into()],
             concurrency: Concurrency::Decode,
             ..Plan::default()
         };
@@ -2215,8 +2223,8 @@ mod tests {
         assert_eq!(body["stream"], serde_json::json!(true));
         assert_eq!(body["timings_per_token"], serde_json::json!(true));
 
-        // "the preset's own" must OMIT the key: sending any number would
-        // override the preset with it.
+        // "the model profile's own" must OMIT the key: sending any number would
+        // override the model profile with it.
         let plan = Plan { temp: None, ..plan };
         let body: serde_json::Value = serde_json::from_str(&live_body("qwen", &plan)).unwrap();
         assert!(body.get("temperature").is_none());
@@ -2376,24 +2384,24 @@ mod tests {
             max_tokens: 256,
             ..Default::default()
         };
-        let cap = output_cap(&plan, &preset("a"));
+        let cap = output_cap(&plan, &model_profile("a"));
         assert_eq!(cap, Some(256));
         assert!(!cut_by_context(&reply("length", 256), cap));
 
-        // With no cap in the request, the preset's n-predict is the one applied.
+        // With no cap in the request, the model profile's n-predict is the one applied.
         let plan = Plan {
             max_tokens: 0,
             ..Default::default()
         };
-        let capped = Preset {
+        let capped = ModelProfile {
             n_predict: Some(512),
-            ..preset("a")
+            ..model_profile("a")
         };
         let cap = output_cap(&plan, &capped);
         assert_eq!(cap, Some(512));
         assert!(!cut_by_context(&reply("length", 512), cap));
 
-        // The request's cap wins over the preset's, in either direction.
+        // The request's cap wins over the model profile's, in either direction.
         let plan = Plan {
             max_tokens: 64,
             ..Default::default()
@@ -2409,9 +2417,9 @@ mod tests {
         };
         // Uncapped: any `length` stop is the context, -1 included.
         for n_predict in [None, Some(-1)] {
-            let p = Preset {
+            let p = ModelProfile {
                 n_predict,
-                ..preset("a")
+                ..model_profile("a")
             };
             assert_eq!(output_cap(&plan, &p), None);
         }
@@ -2500,7 +2508,7 @@ mod tests {
         let line = r#"{"n_prompt":0,"n_gen":128,"n_depth":8192,"avg_ts":35.5,"stddev_ts":0.5,"build_number":10566}"#;
         let p = parse_bench_line(line, "qwen", 3).unwrap();
         assert_eq!(p.test, "tg128 @ d8192");
-        assert_eq!(p.preset, "qwen");
+        assert_eq!(p.model_profile, "qwen");
         assert_eq!(p.n, 3);
         assert_eq!(parse_bench_build(line), Some(10566));
 
@@ -2512,9 +2520,9 @@ mod tests {
     }
 
     #[test]
-    fn rows_group_by_test_and_ratio_against_the_first_preset() {
-        let pt = |preset: &str, test: &str, mean: f64| Point {
-            preset: preset.into(),
+    fn rows_group_by_test_and_ratio_against_the_first_model_profile() {
+        let pt = |model_profile: &str, test: &str, mean: f64| Point {
+            model_profile: model_profile.into(),
             test: test.into(),
             mean,
             sd: 0.0,
@@ -2530,24 +2538,30 @@ mod tests {
         let order = vec!["a".to_string(), "b".to_string()];
         let r = rows(&points, &order);
         assert_eq!(r.len(), 4);
-        assert_eq!((r[0].test.as_str(), r[0].preset.as_str()), ("pp2048", "a"));
+        assert_eq!(
+            (r[0].test.as_str(), r[0].model_profile.as_str()),
+            ("pp2048", "a")
+        );
         assert_eq!(r[0].ratio, "1.00x");
         assert_eq!(r[1].ratio, "0.50x");
-        assert_eq!((r[2].test.as_str(), r[2].preset.as_str()), ("tg128", "a"));
+        assert_eq!(
+            (r[2].test.as_str(), r[2].model_profile.as_str()),
+            ("tg128", "a")
+        );
         assert_eq!(r[3].ratio, "1.50x");
 
-        // A preset that produced a test the baseline did not gets no invented
+        // A model profile that produced a test the baseline did not gets no invented
         // ratio.
         let r = rows(&[pt("b", "pp4096", 10.0)], &order);
         assert_eq!(r[0].ratio, "-");
     }
 
-    // The confound this exists to catch, in the exact shape it took: two presets
+    // The confound this exists to catch, in the exact shape it took: two model profiles
     // that differ only by device, NEITHER pinning flash-attn, so both ran at
     // `auto` and `auto` resolved differently per backend. Nothing in the rates
     // shows it.
     #[test]
-    fn a_flash_attn_difference_between_compared_presets_is_reported() {
+    fn a_flash_attn_difference_between_compared_model_profiles_is_reported() {
         let seen = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
             pairs
                 .iter()
@@ -2557,13 +2571,13 @@ mod tests {
         let w = flash_attn_mismatch(&seen(&[("vk", "off"), ("rocm", "on")])).expect("warned");
         assert!(w.contains("vk=off") && w.contains("rocm=on"), "{w}");
 
-        // Agreement is silence, however it was reached: a preset pinning `on`
+        // Agreement is silence, however it was reached: a model profile pinning `on`
         // and one resolving `on` from auto are the same configuration.
         assert_eq!(
             flash_attn_mismatch(&seen(&[("a", "on"), ("b", "on")])),
             None
         );
-        // One preset is nothing to compare, and an empty map is a run that
+        // One model profile is nothing to compare, and an empty map is a run that
         // produced no rows.
         assert_eq!(flash_attn_mismatch(&seen(&[("a", "on")])), None);
         assert_eq!(flash_attn_mismatch(&BTreeMap::new()), None);
@@ -2628,7 +2642,7 @@ mod tests {
     #[test]
     fn warnings_precede_the_results_and_the_environment_is_recorded() {
         let plan = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             ..Plan::default()
         };
         let meta = RunMeta {
@@ -2655,13 +2669,16 @@ mod tests {
 
     #[test]
     fn validate_refuses_the_plans_that_would_benchmark_nothing() {
-        assert!(validate(&Plan::default()).is_some(), "no preset selected");
+        assert!(
+            validate(&Plan::default()).is_some(),
+            "no model profile selected"
+        );
         // A default plan carries a prompt FILE and no text: the caller reads
         // one into the other at Run. So it must NOT validate, or a forgotten
         // read would benchmark the model answering nothing, and the message
         // has to name the file the text was supposed to come from.
         let unresolved = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             ..Plan::default()
         };
         let problem = validate(&unresolved).expect("an unresolved prompt is not a plan");
@@ -2815,7 +2832,7 @@ mod tests {
         })
         .to_string();
         let plan = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             prompt: conv,
             ..Plan::default()
         };
@@ -2955,7 +2972,7 @@ mod tests {
     fn the_preview_elides_the_prompt_and_the_request_does_not() {
         let long: String = "x".repeat(PREVIEW_PROMPT_CHARS * 3);
         let plan = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             prompt: long.clone(),
             ..Plan::default()
         };
@@ -2974,7 +2991,7 @@ mod tests {
     #[test]
     fn the_report_identifies_the_prompt_by_path_and_digest() {
         let plan = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             prompt: SHORT.into(),
             prompt_file: Some(PathBuf::from(r"D:\prompts\short.txt")),
             ..Plan::default()
@@ -3018,7 +3035,7 @@ mod tests {
     #[test]
     fn the_report_names_what_the_mode_cannot_measure() {
         let plan = Plan {
-            presets: vec!["a".into()],
+            model_profiles: vec!["a".into()],
             mode: Mode::Synthetic,
             ..Plan::default()
         };

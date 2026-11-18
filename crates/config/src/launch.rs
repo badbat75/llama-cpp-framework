@@ -65,7 +65,7 @@ mod tests {
             &["model-profile", "list"][..],
             &["control", "stop-and-close"],
             &["server"],
-            &["bench", "run", "--preset", "p"],
+            &["bench", "run", "--model-profile", "p"],
             &["--help"],
             &["-h"],
             &["--minimized"],

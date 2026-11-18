@@ -33,22 +33,22 @@ fn data_root_e2e() {
     crate::cli::cli_import_e2e();
 
     // ── `model-profile delete|disable|enable` on the test backend ────────
-    preset_commands_e2e();
+    model_profile_commands_e2e();
 
     // ── `model-profile delete --delete-files` on disk (cli.rs, linked_files)
-    preset_delete_files_e2e();
+    model_profile_delete_files_e2e();
 }
 
 /// `model-profile delete <typo>` errors instead of a false "Removed", and
 /// `model-profile disable|enable` is the same move the Models tab's switch makes: a
 /// case-insensitive lookup acting on the STORED id, opencode.json untouched
 /// (only the Integrations tab's Save writes it). The default test backend keeps
-/// the preset files at the per-user paths, under the redirect.
-fn preset_commands_e2e() {
+/// the model profile files at the per-user paths, under the redirect.
+fn model_profile_commands_e2e() {
     use pai_app::presets;
     let dir = tempfile::tempdir().expect("tempdir");
     paths::redirect_for_tests(dir.path());
-    let ini = paths::presets_ini();
+    let ini = paths::models_ini();
     std::fs::create_dir_all(ini.parent().expect("config dir")).expect("config dir");
     std::fs::write(&ini, "[e2e]\nmodel = /models/e2e-Q8_0.gguf\n").expect("models.ini");
     let opencode = paths::opencode_user_config();
@@ -79,7 +79,7 @@ fn preset_commands_e2e() {
     assert!(presets::load_all().iter().all(|p| p.id != "e2e"));
     assert!(presets::load_listed()
         .iter()
-        .any(|l| l.preset.id == "e2e" && !l.enabled));
+        .any(|l| l.model_profile.id == "e2e" && !l.enabled));
     assert_eq!(
         std::fs::read_to_string(&opencode).expect("opencode.json"),
         opencode_text,
@@ -95,11 +95,11 @@ fn preset_commands_e2e() {
 }
 
 /// `model-profile delete --delete-files` follows the Models tab's delete dialog: a
-/// file another preset links is refused before anything changes, unless
+/// file another model profile links is refused before anything changes, unless
 /// `--even-if-shared`; the picked files go with the Hugging Face repo folders
 /// they leave empty under ModelsDir; without the flag every file stays.
-fn preset_delete_files_e2e() {
-    use pai_app::presets::{self, Preset};
+fn model_profile_delete_files_e2e() {
+    use pai_app::presets::{self, ModelProfile};
     let dir = tempfile::tempdir().expect("tempdir");
     paths::redirect_for_tests(dir.path());
     let models_dir = dir.path().join("models-root");
@@ -119,18 +119,18 @@ fn preset_delete_files_e2e() {
     touch(&cli_model, 2);
     touch(&cli_draft, 1);
     touch(&other_model, 3);
-    presets::save(&Preset {
+    presets::save(&ModelProfile {
         id: "cli-del".into(),
         model: path(&cli_model),
         model_draft: path(&cli_draft),
-        ..Preset::default()
+        ..ModelProfile::default()
     })
     .expect("save cli-del");
-    presets::save(&Preset {
+    presets::save(&ModelProfile {
         id: "cli-other".into(),
         model: path(&other_model),
         model_draft: path(&cli_draft),
-        ..Preset::default()
+        ..ModelProfile::default()
     })
     .expect("save cli-other");
 
@@ -140,7 +140,11 @@ fn preset_delete_files_e2e() {
             .unwrap_or_else(|e| panic!("pai {}: {e}", args.join(" ")));
         crate::cli::run(cli)
     };
-    let listed = |id: &str| presets::load_listed().iter().any(|l| l.preset.id == id);
+    let listed = |id: &str| {
+        presets::load_listed()
+            .iter()
+            .any(|l| l.model_profile.id == id)
+    };
 
     let err = pai(&[
         "model-profile",

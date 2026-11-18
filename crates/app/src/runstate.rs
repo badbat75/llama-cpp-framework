@@ -32,7 +32,7 @@ use std::io;
 // The launch itself (args, env, the process) is the core's, shared with
 // `pai-manager run-instance`.
 pub use pai_core::launch::env_vars;
-use pai_core::launch::{has_presets_in, launch_command, server_args};
+use pai_core::launch::{has_model_profiles_in, launch_command, server_args};
 
 // ── Run detection (is_running + tasklist) ────────────────────────────────
 
@@ -132,14 +132,14 @@ fn running_from_tasklist(stdout: &str, probe_pids: &[u32]) -> bool {
     })
 }
 
-/// `true` if the presets file has at least one section (reusing the real INI
+/// `true` if the model profiles file has at least one section (reusing the real INI
 /// parser instead of a hand-rolled header scan).
-fn has_presets() -> bool {
-    has_presets_in(&crate::paths::presets_ini())
+fn has_model_profiles() -> bool {
+    has_model_profiles_in(&crate::paths::models_ini())
 }
 
 /// How long `start()` watches a freshly spawned llama-server before declaring
-/// success: long enough to catch a launch that dies on a bad preset, a taken
+/// success: long enough to catch a launch that dies on a bad model profile, a taken
 /// port, or a missing model (those exit at once), short enough that a
 /// healthy server (still alive while it loads the model) isn't held up.
 const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
@@ -156,7 +156,7 @@ const LAUNCH_GRACE: std::time::Duration = std::time::Duration::from_millis(2500)
 /// config, or not GUI-launched at all.
 ///
 /// After spawning, it watches the child for `LAUNCH_GRACE`: a process that
-/// exits in that window (bad preset, port already bound, model load failure)
+/// exits in that window (bad model profile, port already bound, model load failure)
 /// returns an `Err` pointing at the log, so the caller reports the failure NOW
 /// instead of an optimistic "started" that the 5 s status tick later contradicts
 /// with "no longer running". A process still alive after the window is reported
@@ -166,8 +166,8 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         return Ok(None); // already running; we launched nothing
     }
 
-    if !has_presets() {
-        // Two different cures: the switched-off presets are still there, in the
+    if !has_model_profiles() {
+        // Two different cures: the switched-off model profiles are still there, in the
         // file llama-server does not read.
         let msg = if crate::presets::load_listed().is_empty() {
             strings::t("presets-none-configured")
@@ -188,7 +188,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
     })?;
 
     let cfg = crate::server_cfg::load();
-    let presets_path = crate::paths::presets_ini();
+    let models_path = crate::paths::models_ini();
 
     let log_path = crate::paths::server_log();
     if let Some(log_dir) = log_path.parent() {
@@ -215,7 +215,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         crate::slot_state::ensure_dir(&cfg)?;
     }
 
-    let mut cmd = launch_command(&exe, &cfg, &presets_path);
+    let mut cmd = launch_command(&exe, &cfg, &models_path);
     // llama-server writes most of its logging (model load, request logs,
     // GGML asserts, crash traces) to stderr; capture both streams in the
     // same log file so the log isn't empty and crashes leave a trail.
@@ -484,10 +484,10 @@ const LINE_CONTINUATION: char = '\\';
 pub fn command_line() -> Option<String> {
     let cfg = crate::server_cfg::load();
     let exe = crate::paths::llama_server_exe()?;
-    let presets_path = crate::paths::presets_ini();
+    let models_path = crate::paths::models_ini();
     Some(render_command_line(
         &exe.to_string_lossy(),
-        &server_args(&cfg, &presets_path),
+        &server_args(&cfg, &models_path),
         &env_vars(&cfg),
     ))
 }

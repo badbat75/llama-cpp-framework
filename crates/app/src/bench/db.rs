@@ -9,15 +9,15 @@
 //! ## The unit is the run, inside a campaign
 //!
 //! A campaign is the question a set of runs answers (a tab run with several
-//! presets, a sweep with its legs); a run is one model load with one
+//! model profiles, a sweep with its legs); a run is one model load with one
 //! configuration; its results are the requests (live) or the llama-bench
 //! repetitions (synthetic) sent to it. Every parameter of the run is stored,
-//! not only the varied ones: the preset's whole section, server.ini's
+//! not only the varied ones: the model profile's whole section, server.ini's
 //! `[Server]`, the environment llama-server gets, the plan.
 //!
 //! ## Only finished runs
 //!
-//! A run is written in ONE transaction, when its preset has been measured to
+//! A run is written in ONE transaction, when its model profile has been measured to
 //! the end (`record::Recorder::commit`). A run that failed or was cancelled is
 //! dropped, and a process that dies mid-run leaves nothing: the database holds
 //! measurements, not attempts. (`status` is therefore always `ok` here.)
@@ -432,7 +432,7 @@ pub struct NewRun<'a> {
 }
 
 /// Insert a finished run. A label the campaign
-/// already has gets ` (2)`, ` (3)`...: running the same preset twice in one
+/// already has gets ` (2)`, ` (3)`...: running the same model profile twice in one
 /// campaign is a repetition, not a conflict.
 pub fn insert_run(conn: &Connection, r: &NewRun) -> rusqlite::Result<i64> {
     let mut label = r.label.to_string();

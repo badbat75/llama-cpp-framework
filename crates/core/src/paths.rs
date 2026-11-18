@@ -256,10 +256,10 @@ pub fn instance_ini(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| engine_config_dir().join(format!("server@{id}.ini")))
 }
 
-/// `models@<id>.ini` in `engine_config_dir()`, the presets the instance `id`
+/// `models@<id>.ini` in `engine_config_dir()`, the model profiles the instance `id`
 /// reads: the pool cut by the instance's section of `assignments.ini`. The
 /// manager writes it, the instance's launch reads it. None for an invalid id.
-pub fn instance_presets(id: &str) -> Option<PathBuf> {
+pub fn instance_models(id: &str) -> Option<PathBuf> {
     valid_instance_id(id).then(|| engine_config_dir().join(format!("models@{id}.ini")))
 }
 
@@ -287,16 +287,16 @@ pub fn server_ini() -> PathBuf {
     config_dir().join("server.ini")
 }
 
-pub fn presets_ini() -> PathBuf {
+pub fn models_ini() -> PathBuf {
     config_dir().join("models.ini")
 }
 
-/// The presets switched OFF: same INI format as `presets_ini()`, sections moved
+/// The model profiles switched OFF: same INI format as `models_ini()`, sections moved
 /// here verbatim by `presets::set_enabled`. A different EXTENSION on purpose:
-/// llama-server only ever reads the file `--models-preset` names, so a preset
+/// llama-server only ever reads the file `--models-preset` names, so a model profile
 /// parked here is simply not offered, while a `*.ini` glob (the user's own, or a
 /// backup tool's) cannot mistake it for a live config.
-pub fn presets_disabled_ini() -> PathBuf {
+pub fn models_disabled_ini() -> PathBuf {
     config_dir().join("models.ini.disabled")
 }
 
@@ -795,22 +795,22 @@ pub(crate) fn instance_paths_e2e() {
     // The file names themselves: the pool's pair, per user (macOS), and the
     // render the instance reads, in the engine's directory.
     assert_eq!(
-        presets_ini(),
+        models_ini(),
         config_dir().join("models.ini"),
         "the pool's switched-on file"
     );
     assert_eq!(
-        presets_disabled_ini(),
+        models_disabled_ini(),
         config_dir().join("models.ini.disabled"),
         "the pool's switched-off file"
     );
     assert_eq!(
-        instance_presets("default"),
+        instance_models("default"),
         Some(engine.join("models@default.ini")),
         "the render is the engine's file, named after the instance"
     );
     assert_eq!(
-        instance_presets("lan-2"),
+        instance_models("lan-2"),
         Some(engine.join("models@lan-2.ini")),
         "one render per instance"
     );

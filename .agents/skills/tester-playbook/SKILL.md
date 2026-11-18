@@ -1860,6 +1860,25 @@ Lessons only: the rules are in `AGENTS.md`.
   the text rename is a grep of the two strings files for the old word: the residue that stays is DATA, so
   report it as such, not as a miss (`hf-preset-repo` names the file `preset.ini`, `spec-temp` names the
   token a parser accepts, "a number or `preset`").
+- Auditing a rename slice for a LOST test, without any checkout: compare per changed file
+  (`git show HEAD:<f> | grep -cE '#\[(test|tokio::test)\]'` vs the worktree file). The repo-wide totals are
+  not comparable (HEAD has every file, the worktree grep covers only the diff's), so a total read as
+  "2193 vs 1301" is the script's bug, not a loss. The stronger check is the set of test-fn NAMES
+  (`#[test]\n...fn <name>` in HEAD vs worktree) normalized over the rename vocabulary (`model[_-]?profile`,
+  `preset`, `profile`, `model` → `@`, non-alphanumerics stripped): the verdict is "N lost, M new", and the
+  `^\+.*#\[test\]` grep counts alone cannot tell a rename from a deletion.
+- Auditing the same slice for a WEAKENED assertion: extract each assert statement from the diff's removed
+  lines by a balanced-paren scan, per file, normalize with the same vocabulary plus ALL whitespace, and
+  require it as a substring of that file's added blob. Two artifacts to read by hand, never to "fix":
+  rustfmt re-wrapping (a longer name pushes the args one per line; the whitespace strip absorbs it), and a
+  RAW STRING (`r"C:\models\m.gguf"`: a scanner that treats `\` as an escape never closes the string, swallows
+  the statements after it, and reports one merged "unmatched" for two renames).
+- `nohup <script> &` started with `background: true`: the wrapper returns at once and the completion
+  notification says nothing about the script. Give the script a log per command, an `exit=$?` line per
+  command in one exits file and an `ALLDONE` sentinel, and read them when resumed; do the static git audit
+  while it runs. Clean-rerun cost of the whole configurator side on 24 cores: `cargo clean -p` of the seven
+  crates removes 5.6 GiB, then core 5 s, manager 1.6 s, `app --lib` 15 s, cli 1.3 s, config 57 s compile +
+  19 s tests, bff 16 targets, xtask 0.1 s: about 2.5 min.
 
 ## Mutation runs (fe/, proving a test has teeth)
 
@@ -1887,6 +1906,51 @@ Lessons only: the rules are in `AGENTS.md`.
 - A patch that only changes a value nothing reads is no test at all: making a checkbox row
   `editable: true` adds no save row while the page's `boxed` map holds no entry for it. Design the
   mutant where a real decision is reached, and say in the report which ones cannot be reached.
+
+## Vitest mount budget (fe/, suite timeouts)
+
+- A suite timeout in `fe` is a mount-count problem: every `render(<App />)` of the page costs
+  0.15-0.25 s, so a case with a loop that mounts per iteration (10-30 mounts) passes solo and times
+  out under the full suite. Count mounts per test as (render call sites) x (loop iterations), and keep
+  it at 3: a `for` over data with a mount inside becomes `test.each` over that data (one mount per
+  generated test); N sequential mounts with no loop become N `test(...)` blocks; a nested loop becomes
+  a cross-product list built with `.flatMap`. Keep every assertion and fixture, split, never merge.
+- The mount count of a test is the number of MOUNTS IT MAKES, not the number of mount call sites in
+  its text: a block whose text holds one `loaded(` inside a 9-case loop mounts 9 times. A checker that
+  counts call sites (a regex over the balanced block) is blind to that, and blind to the file-local
+  wrappers of `render` (per file: `open`, `loaded`, `page`, `loadedAfterNavigation`,
+  `loadedAfterSignOutOnOverview`; NOT `form`, which in some files only queries). So: run the site scan
+  over every `test(`/`test.each(` line to find the multi-mount bodies, then READ every body that holds
+  a loop with a mount inside and count its iterations. A 2-3 iteration loop is inside the budget:
+  splitting it into 2-3 `test.each` cases buys nothing and the analyzer's "6" on it is noise.
+- A `.flatMap` that builds a `test.each` table of tuples needs the tuple spelled twice
+  (`flatMap<[boolean, boolean, string, string]>(..)` and `(x): [..] => [..]`): the inner `map` widens
+  to `(string | boolean)[][]` and `tsc` reds `Target requires 4 element(s) but source may have fewer`.
+- Two files' mount helpers behave differently under the same name; `form(` in `SignIn.test.tsx` mounts
+  nothing (the `render(<App />)` is written out beside it), in `fe/src/test/bff.ts` it does. Read the
+  helper.
+- `test.each` over an array of ARRAYS spreads the elements as POSITIONAL arguments: the callback is
+  `(key, value)`, not `([key, value])` (destructuring the first arg is `undefined`). Object items
+  allow `$prop` in the title; array items do not, use `%s`.
+- Titles: a `%s` in a printf title consumes one argument IN ORDER, so a `%s` typed into the prose
+  eats a case value, and a literal `%` must be escaped (`%%`). An apostrophe in the case value forces
+  a double-quoted title.
+- `globalThis.fetch = vi.fn().mockImplementation(fakeBff(...))` is an ASSIGNMENT, not a stub: it
+  survives `vi.unstubAllGlobals()` and it is not a mount, so it stays in the each-body (a
+  `test.each` title cannot inject a value into a callback body).
+- Drop the loop's per-iteration `cleanup()` / `vi.unstubAllGlobals()` in a single-mount each-body
+  when the file's `afterEach` already does cleanup + `vi.unstubAllGlobals()` + the state reset. They
+  MUST stay between the mounts of a multi-mount case, else Testing Library fails
+  `Found multiple elements with the role main`.
+- Splitting raises the file's test count (one case per value) and per-case `expect(` counts are
+  unchanged, because the body travels verbatim. Report the counts.
+- A slow test with <= 3 mounts is NOT this problem: many sequential fetches/timers (a 60 s polling
+  simulation) run their own clock. Such a test is left alone and named in the report.
+- A script that counts mounts per test (heuristic loop lengths) over-counts: read the block it
+  flags. The block's real mount and `expect(` counts come from a balanced-block read at the
+  `test(` line.
+- Vitest runs from `fe/`, one run at a time (`npm --prefix fe test` / `npx vitest run` inside `fe`).
+  `npx vitest` from the repo root resolves a different config and lies about the files it ran.
 
 ## Wire renames (routes, error keys, strings keys)
 
@@ -1917,3 +1981,32 @@ Lessons only: the rules are in `AGENTS.md`.
   go red on their own today: report them as blocked, and name the phases that DO prove the mechanism
   (core's `a_refusal_round_trips_through_its_wire_form` for the wire encode, the manager's
   `every_error_has_its_name_and_reads_back` for the D-Bus name).
+
+## CLI flag renames (`pai`)
+
+- clap derives a long flag from the FIELD name (`#[arg(long)] pub preset` is `--preset`), so the coder
+  can rename the user-facing name with one attribute (`#[arg(long = "model-profile")]`) and keep the
+  internal name, the way `Command::Preset` carries `#[command(name = "model-profile")]`. So write the
+  parse tests from the ARGUMENT STRINGS only (`Cli::try_parse_from([..]).is_ok()`), never through the
+  Rust field: the test then holds for either way the coder picks.
+- Pin a retired flag in the crate's inline `Cli::try_parse_from` tests, NOT in `tests/pai_binary.rs`: a
+  `pai bench run` that PARSES takes the machine-wide GPU lock and blocks ("Waiting: another process
+  uses the GPUs (...)", it never exits, exit 124 under `timeout 60`), so a binary-level run of that
+  form is a 60 s deadline panic and touches the real lock. In the binary test pin `bench run --help`
+  only (clap prints and exits 0, nothing runs).
+- clap 4.6's refusal wording is learnable BEFORE the rename: run the built binary with a made-up flag
+  (`pai bench run --zzz P`) and read `error: unexpected argument '--zzz' found`. Pin that line
+  (`contains("unexpected argument '--preset' found")`), never the `tip: a similar argument exists:`
+  line that follows (its content depends on the edit distance to the real flags).
+- A help pin bans the FLAG, not the WORD: `bench run --help` legitimately keeps `preset` as the value of
+  `--temp preset` and as the placeholder `<PRESET>`. Assert `contains("--model-profile")` and
+  `!contains("--preset")`.
+- Non-test places carrying a bench flag name, report-only: the shipped prompts
+  (`benchmarks/prompts/bench-prompt-43k-1.0.txt`, `-110k-1.0.txt`) embed the release-2.4 snippet
+  `llama-cpp-config bench sweep --preset <id> ...` and are sha256-pinned by the spec's `Prompts =
+  <file>@<sha>` lines, so editing one breaks the digest (a new file and a new spec version, the
+  spec-reviewer). The same snippet travels in the campaign reports stored in `benchmarks/bench.db`
+  (`grep -a 'bench run --preset'` finds none: the flag is prompt text, not a recorded command line).
+- `bench run` has ONE preset-named flag (the `BenchRun` struct; Query/Answer/Publish have none). The
+  preset-named option VALUE is `--temp preset` (`cli.rs`, `eq_ignore_ascii_case("preset")`) and the
+  spec's `Temp = preset`, and the spec line is inside the published version's digest.

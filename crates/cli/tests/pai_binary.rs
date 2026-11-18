@@ -119,7 +119,7 @@ fn the_gui_arguments_are_not_pai_commands() {
 /// name is gone, not a hidden alias, so it is clap's unknown-subcommand
 /// error and the usage exit code, 2.
 #[test]
-fn the_retired_preset_command_is_unknown() {
+fn the_retired_model_profile_command_is_unknown() {
     let dir = tempfile::tempdir().expect("tempdir");
     for args in [
         &["preset"][..],
@@ -142,6 +142,23 @@ fn the_retired_preset_command_is_unknown() {
             r.stderr
         );
     }
+}
+
+/// `bench run`'s own help names the profile flag: `--model-profile`, with the
+/// retired `--preset` gone from the usage and from the options list. The word
+/// `preset` does stay in the help as the value of `--temp preset` (leave the
+/// model profile's temperature alone), so the pin is the flag, not the word.
+#[test]
+fn bench_run_help_names_the_model_profile_flag() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let r = pai(dir.path(), &["bench", "run", "--help"]);
+    assert_eq!(r.code, Some(0), "stderr: {}", r.stderr);
+    assert!(r.stdout.contains("--model-profile"), "{}", r.stdout);
+    assert!(
+        !r.stdout.contains("--preset"),
+        "the retired flag must not appear: {}",
+        r.stdout
+    );
 }
 
 /// `pai` moves a 2.4 config tree at start, before it parses (so even

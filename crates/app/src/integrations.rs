@@ -5,14 +5,14 @@
 //! custom providers natively; an env-var snippet is generated for the GUI's
 //! Claude Code card instead (copy-paste only, never written to disk).
 //!
-//! The model list is not a selection of its own: it is every ENABLED preset
+//! The model list is not a selection of its own: it is every ENABLED model profile
 //! (`presets::load_all`, i.e. models.ini), the same set llama-server serves,
-//! so switching a preset off in the Models tab is also how it leaves OpenCode.
+//! so switching a model profile off in the Models tab is also how it leaves OpenCode.
 //! It used to be a second checkbox list here, which could offer OpenCode a model
-//! llama-server had no preset for, or hide one it did.
+//! llama-server had no model profile for, or hide one it did.
 //!
 //! **opencode.json is written by the Integrations tab's Save and nothing else**:
-//! no preset change, server.ini save or CLI command touches it, so a preset can
+//! no model profile change, server.ini save or CLI command touches it, so a model profile can
 //! be tuned without its OpenCode entry moving under a running session. The tab's
 //! status line names what is out of step, and Save first shows the change per
 //! model (`opencode_plan`), each with a tick: an unticked model's entry is left
@@ -20,13 +20,13 @@
 //! that never set OpenCode up is never written to unless its user saves.
 //!
 //! The one non-mechanical field is a model's `limit.context`, and it is not a
-//! copy of the preset's `ctx-size`: opencode fills a prompt to whatever ceiling it
+//! copy of the model profile's `ctx-size`: opencode fills a prompt to whatever ceiling it
 //! is given, so the number has to be the context ONE request can actually use,
 //! which llama.cpp derives from `ctx-size`, `parallel` and the model's trained
 //! context TOGETHER. The whole derivation, and the three upstream rules behind it,
 //! lives in `effective_ctx`; it is the reason this module reads GGUF headers.
 //!
-//! **A preset whose context llama.cpp's fit may cut has NO number at all**
+//! **A model profile whose context llama.cpp's fit may cut has NO number at all**
 //! (`fit_may_cut_ctx`, the single rule, used by every path that advertises a
 //! context: `advertised`). With the fit on and the context automatic, the fit's
 //! step 2 shrinks the context at LOAD time until the model fits the free memory
@@ -52,7 +52,7 @@
 //!   such a model does not linger: every rewrite rebuilds the model entries from
 //!   scratch (`fill_models`), while everything outside `provider.llama.cpp.models`
 //!   is left as it was.
-//! - **Claude Code snippet**: its example is the first enabled preset that HAS a
+//! - **Claude Code snippet**: its example is the first enabled model profile that HAS a
 //!   context (`claude_code_example`); when none has, the example names the model
 //!   only, and a comment says why there is no context or compaction line.
 //! - The Integrations tab shows the advertised context nowhere but in that
@@ -76,7 +76,7 @@ const PROVIDER_NPM: &str = "@ai-sdk/openai-compatible";
 const PROVIDER_NAME: &str = "llama-server (local)";
 
 /// Advertised context when the model's trained context can't be read (no
-/// `ggml-base.dll` beside the app, or an unreadable GGUF) AND the preset names no
+/// `ggml-base.dll` beside the app, or an unreadable GGUF) AND the model profile names no
 /// `ctx-size`. A guess, and the only one left; `effective_ctx` derives every
 /// other case.
 const CTX_FALLBACK: i64 = 131_072;
@@ -98,7 +98,7 @@ const OPENCODE_COMPACTION_BUFFER: i64 = 20_000;
 
 // ── opencode.json ──────────────────────────────────────────────────────
 
-/// Returns the preset IDs currently registered as models in opencode.json.
+/// Returns the model profile IDs currently registered as models in opencode.json.
 #[cfg(any(test, feature = "test-support"))]
 pub fn opencode_model_ids() -> Vec<String> {
     let cfg = read_opencode();
@@ -137,11 +137,11 @@ pub struct FieldDiff {
 /// What Save would do to one model entry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChangeKind {
-    /// An enabled preset the file does not list.
+    /// An enabled model profile the file does not list.
     Add,
-    /// A listed model that is no enabled preset (switched off, renamed, deleted).
+    /// A listed model that is no enabled model profile (switched off, renamed, deleted).
     Remove,
-    /// A listed enabled preset whose entry would change.
+    /// A listed enabled model profile whose entry would change.
     Update,
 }
 
@@ -229,7 +229,7 @@ pub fn opencode_plan(base_url: &str, api_key: ApiKey) -> Result<OpencodePlan> {
 }
 
 /// Writes the provider entry (created when absent) and its models list: one
-/// entry per ENABLED preset (see the module header), except the ids in `keep`,
+/// entry per ENABLED model profile (see the module header), except the ids in `keep`,
 /// whose entry is left exactly as the file holds it: kept when listed, still
 /// absent when not (the preview's unticked rows, `opencode_plan`).
 /// `base_url` comes from the current server.ini (e.g. "http://127.0.0.1:9931/v1").
@@ -261,14 +261,14 @@ pub fn save_opencode_models(base_url: &str, api_key: ApiKey, keep: &[String]) ->
     Ok(())
 }
 
-/// The entries Save writes, one per ENABLED preset, in models.ini order.
+/// The entries Save writes, one per ENABLED model profile, in models.ini order.
 fn desired_models() -> Vec<(String, Value)> {
-    let sections = server_control::read_sections(ConfigFile::Presets);
+    let sections = server_control::read_sections(ConfigFile::Models);
     presets::load_all()
         .into_iter()
         .map(|p| {
             let context = advertised(&p, fit_on(&sections, &p.id), trained_ctx(&p));
-            let entry = preset_to_opencode_model(&p, context);
+            let entry = model_profile_to_opencode_model(&p, context);
             (p.id, entry)
         })
         .collect()
@@ -276,7 +276,7 @@ fn desired_models() -> Vec<(String, Value)> {
 
 /// `desired`, except that every id in `keep` stays as `current` has it: its old
 /// entry when it has one (in the desired position, or after the others when it is
-/// no enabled preset any more), nothing when it has none.
+/// no enabled model profile any more), nothing when it has none.
 fn merge_models(
     current: &serde_json::Map<String, Value>,
     desired: Vec<(String, Value)>,
@@ -387,13 +387,13 @@ pub fn detect_opencode_provider() -> bool {
 
 /// Generates a snippet, for this OS's shell, that sets the env vars needed for
 /// Claude Code to use llama-server as a custom model provider. `example` is
-/// a preset id to show in the commented model line, with its advertised context,
+/// a model profile id to show in the commented model line, with its advertised context,
 /// `None` when the fit decides it at load time (`claude_code_example` picks it;
-/// the caller already holds the loaded presets, so this stays a pure string
+/// the caller already holds the loaded model profiles, so this stays a pure string
 /// builder, no hidden disk IO).
 /// `api_key` is the optional API key for proxy/gateway authentication.
 ///
-/// Claude Code does not know a preset id, so it assumes a 200k window and compacts
+/// Claude Code does not know a model profile id, so it assumes a 200k window and compacts
 /// there: `CLAUDE_CODE_MAX_CONTEXT_TOKENS` gives it the real one (it applies on its
 /// own to an unrecognized id that does not start with `claude-`), and
 /// `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the compaction to `compact_at` (it takes a
@@ -499,12 +499,12 @@ fn env_script(
     out.iter().map(|l| format!("{l}{eol}")).collect()
 }
 
-/// The Claude Code snippet's example among `enabled`: the first preset with an
+/// The Claude Code snippet's example among `enabled`: the first model profile with an
 /// advertised context, so the snippet can show the context and compaction lines,
-/// else the first preset, without a context (see `claude_code_env_script`).
+/// else the first model profile, without a context (see `claude_code_env_script`).
 /// Reads models.ini (the raw `fit` key, `fit_on`) and the GGUF headers.
-pub fn claude_code_example(enabled: &[presets::Preset]) -> Option<(&str, Option<i64>)> {
-    let sections = server_control::read_sections(ConfigFile::Presets);
+pub fn claude_code_example(enabled: &[presets::ModelProfile]) -> Option<(&str, Option<i64>)> {
+    let sections = server_control::read_sections(ConfigFile::Models);
     let mut first = None;
     for p in enabled {
         let ctx = advertised(p, fit_on(&sections, &p.id), trained_ctx(p));
@@ -602,7 +602,7 @@ fn ensure_provider_section(v: &mut Value, base_url: &str, api_key: ApiKey) -> Re
 /// One opencode model entry. `context` is `advertised`'s: `None` (the fit sizes
 /// the context at load time) leaves the `limit` object out entirely (module
 /// header: opencode then compacts on llama-server's rejection).
-fn preset_to_opencode_model(p: &presets::Preset, context: Option<i64>) -> Value {
+fn model_profile_to_opencode_model(p: &presets::ModelProfile, context: Option<i64>) -> Value {
     let name = friendly_model_name(&p.id, &p.model);
     let mut entry = json!({ "name": name });
 
@@ -645,11 +645,11 @@ fn compact_pct(context: i64) -> i64 {
     std::cmp::max(1, compact_at(context) * 100 / context)
 }
 
-/// The model's TRAINED context: the only source for what a preset that names no
+/// The model's TRAINED context: the only source for what a model profile that names no
 /// `ctx-size` will actually load (see `effective_ctx`). A header read, so it costs
 /// nothing next to the file it describes; `None` when the GGUF (or ggml-base.dll)
 /// can't be read, and then the fallback bites.
-fn trained_ctx(p: &presets::Preset) -> Option<u32> {
+fn trained_ctx(p: &presets::ModelProfile) -> Option<u32> {
     gguf::read_model_info(Path::new(&p.model))
         .map(|i| i.n_ctx_train)
         .filter(|c| *c > 0)
@@ -660,7 +660,7 @@ fn trained_ctx(p: &presets::Preset) -> Option<u32> {
 /// both derive it from: `effective_ctx`, unless the fit may cut it at load time
 /// (`fit_may_cut_ctx`), in which case `None`, no number to publish. `fit_on` is
 /// the raw key's verdict (`fit_on`), `n_ctx_train` the GGUF header's.
-fn advertised(p: &presets::Preset, fit_on: bool, n_ctx_train: Option<u32>) -> Option<i64> {
+fn advertised(p: &presets::ModelProfile, fit_on: bool, n_ctx_train: Option<u32>) -> Option<i64> {
     if fit_may_cut_ctx(p, fit_on, n_ctx_train) {
         None
     } else {
@@ -668,12 +668,12 @@ fn advertised(p: &presets::Preset, fit_on: bool, n_ctx_train: Option<u32>) -> Op
     }
 }
 
-/// Whether llama-server runs the fit for preset `id`, as llama.cpp resolves the
+/// Whether llama-server runs the fit for model profile `id`, as llama.cpp resolves the
 /// `fit` key: the section's own, else the `[*]` section's (`common/preset.cpp`
-/// cascades the global preset onto every one; the router's own command line
+/// cascades the global model profile onto every one; the router's own command line
 /// never carries `-fit`, `pai_core::launch::server_args`), else upstream's default ON
 /// (`common_params::fit_params = true`, common/common.h). Read from the RAW
-/// section because `Preset::fit` reads an absent key as off, the framework's
+/// section because `ModelProfile::fit` reads an absent key as off, the framework's
 /// own default that it always writes; a hand-written section without the key is
 /// fit ON for llama-server. Only `is_falsey` values (`off`, `disabled`, `false`,
 /// `0`; common/arg.cpp) turn it off; anything else is on, or a launch error.
@@ -691,15 +691,15 @@ fn fit_on(sections: &[ini::Section], id: &str) -> bool {
     }
 }
 
-/// `fit_params_min_ctx` as the child ends up with it: `fit-ctx` when the preset
+/// `fit_params_min_ctx` as the child ends up with it: `fit-ctx` when the model profile
 /// names one, else `UINT32_MAX` for an explicit `ctx-size = 0` (common/arg.cpp:
 /// "disable context reduction in llama_params_fit if the user explicitly requests
 /// the full context size"), else 4096 (common/common.h). `fit-ctx` wins over
-/// `ctx-size = 0` because the router renders a preset's options sorted by their
+/// `ctx-size = 0` because the router renders a model profile's options sorted by their
 /// first spelling (`common_preset::to_args`, `common_arg::operator<`), so `-c`
 /// is parsed before `-fitc`, which overwrites the sentinel. The int32 is read as
 /// `uint32_t` upstream, hence the wrapping cast (`fit-ctx = -1` is the sentinel).
-fn fit_min_ctx(p: &presets::Preset) -> u32 {
+fn fit_min_ctx(p: &presets::ModelProfile) -> u32 {
     match p.fit_ctx {
         Some(n) => n as u32,
         None if p.ctx_size == Some(0) => u32::MAX,
@@ -734,7 +734,7 @@ fn fit_min_ctx(p: &presets::Preset) -> u32 {
 /// when everything fits), which no static reading can know, hence "may".
 /// `n-gpu-layers` set by hand does not exclude it: step 2 runs before step 3's
 /// "n_gpu_layers already set by user, abort", and its context cut stays.
-fn fit_may_cut_ctx(p: &presets::Preset, fit_on: bool, n_ctx_train: Option<u32>) -> bool {
+fn fit_may_cut_ctx(p: &presets::ModelProfile, fit_on: bool, n_ctx_train: Option<u32>) -> bool {
     if !fit_on || p.split_mode.trim().eq_ignore_ascii_case("tensor") {
         return false;
     }
@@ -755,7 +755,7 @@ fn fit_may_cut_ctx(p: &presets::Preset, fit_on: bool, n_ctx_train: Option<u32>) 
 /// tools/server/server.cpp sizes the KV pool to `n_parallel * kv-unified-per-slot`
 /// (`ctx_pool_auto_sized`: a cap above 0, `n_ctx == 0` and `fit_params_min_ctx
 /// != UINT32_MAX`; independent of whether the fit itself runs).
-fn pool_sized_per_slot(p: &presets::Preset) -> bool {
+fn pool_sized_per_slot(p: &presets::ModelProfile) -> bool {
     p.kv_unified_per_slot.is_some_and(|n| n > 0)
         && p.ctx_size.unwrap_or(0) == 0
         && fit_min_ctx(p) != u32::MAX
@@ -784,7 +784,7 @@ fn pool_sized_per_slot(p: &presets::Preset) -> bool {
 ///    unified KV cache* (tools/server/server.cpp), under which `n_ctx_seq = n_ctx`,
 ///    i.e. every slot sees the whole context. Omitting the key is thus the way to
 ///    get the model's full trained context per request, and pinning `parallel` is
-///    what silently divides it, unless the preset also sets `kv-unified = true`.
+///    what silently divides it, unless the model profile also sets `kv-unified = true`.
 ///    (`kv-unified = false` under auto parallel changes nothing: the server
 ///    overwrites it.)
 /// 4. **`kv-unified-per-slot N` caps a slot at N** (`n_ctx_slot()`), and with
@@ -793,7 +793,7 @@ fn pool_sized_per_slot(p: &presets::Preset) -> bool {
 ///    that sizing (it sets `fit_params_min_ctx = UINT32_MAX`, which the sizing
 ///    checks; `pool_sized_per_slot`).
 ///
-/// All of this is the context the preset loads when nothing shrinks it. With
+/// All of this is the context the model profile loads when nothing shrinks it. With
 /// the fit free to cut it at load time, the caller publishes nothing instead
 /// (`advertised`, `fit_may_cut_ctx`).
 ///
@@ -802,19 +802,19 @@ fn pool_sized_per_slot(p: &presets::Preset) -> bool {
 /// so a `ctx-size` above what the model was trained for buys nothing here either.
 ///
 /// One v0.4.0 cap this deliberately does NOT model, because it has no field to
-/// read from: a preset pinning custom YaRN scaling (`rope-scaling yarn` + a
+/// read from: a model profile pinning custom YaRN scaling (`rope-scaling yarn` + a
 /// `rope-freq-scale` off the trained one) makes llama.cpp REWRITE `n_ctx_train`
 /// to `n_ctx_orig_yarn / freq_scale` at context creation (#28030), which raises
 /// the cap this function reads from the header. Add the field first, then the
 /// rule, in that order.
-fn effective_ctx(p: &presets::Preset, n_ctx_train: Option<u32>) -> i64 {
+fn effective_ctx(p: &presets::ModelProfile, n_ctx_train: Option<u32>) -> i64 {
     let trained = n_ctx_train.map(i64::from);
     let pinned = p.parallel.filter(|n| *n > 0).map(i64::from);
     // Auto parallel is 4 slots (tools/server/server.cpp).
     let n_parallel = pinned.unwrap_or(4);
     let per_slot_cap = p.kv_unified_per_slot.filter(|n| *n > 0).map(i64::from);
     // Rules 1 and 4. `ctx-size = 0` is llama.cpp's own spelling of "from the
-    // model", and `Preset::from_keys` keeps it as Some(0); it loads like the
+    // model", and `ModelProfile::from_keys` keeps it as Some(0); it loads like the
     // absent key, but only the ABSENT key lets the per-slot cap size the pool
     // (unless a `fit-ctx` overwrites the sentinel `0` set: `pool_sized_per_slot`).
     let n_ctx = match (p.ctx_size.map(i64::from), per_slot_cap) {
@@ -838,7 +838,7 @@ fn effective_ctx(p: &presets::Preset, n_ctx_train: Option<u32>) -> i64 {
     // Rule 4's cap.
     let per_slot = per_slot_cap.map_or(per_slot, |n| per_slot.min(n));
 
-    // The server's own cap. Only bites when a preset asks for more context than the
+    // The server's own cap. Only bites when a model profile asks for more context than the
     // model was trained on, which llama.cpp honours for the KV cache but not per slot.
     match trained {
         Some(t) => std::cmp::min(per_slot, t),
@@ -847,7 +847,7 @@ fn effective_ctx(p: &presets::Preset, n_ctx_train: Option<u32>) -> i64 {
 }
 
 /// `GGML_PAD(x, 256)`: llama.cpp rounds both `n_ctx` and the per-sequence slice
-/// up to a 256-token boundary (llama-context.cpp), so a preset asking for 100,000
+/// up to a 256-token boundary (llama-context.cpp), so a model profile asking for 100,000
 /// really gets 100,096. Mirrored rather than ignored because the advertised number
 /// is compared against by a client that will happily fill it to the last token.
 fn pad_256(v: i64) -> i64 {
@@ -855,7 +855,7 @@ fn pad_256(v: i64) -> i64 {
 }
 
 /// Human-readable title-cased label derived from the model filename,
-/// falling back to the preset id. Shared by the Integrations tab and
+/// falling back to the model profile id. Shared by the Integrations tab and
 /// the opencode model entries.
 pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
     let stem = PathBuf::from(model_path)
@@ -1040,34 +1040,39 @@ mod tests {
 
     #[test]
     fn opencode_model_reasoning_emitted_only_when_not_auto() {
-        let mut p = presets::Preset {
+        let mut p = presets::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
         };
         p.reasoning = "auto".into();
-        assert!(preset_to_opencode_model(&p, None)
+        assert!(model_profile_to_opencode_model(&p, None)
             .get("reasoning")
             .is_none());
         p.reasoning = "on".into();
-        assert_eq!(preset_to_opencode_model(&p, None)["reasoning"], json!(true));
+        assert_eq!(
+            model_profile_to_opencode_model(&p, None)["reasoning"],
+            json!(true)
+        );
         p.reasoning = "off".into();
         assert_eq!(
-            preset_to_opencode_model(&p, None)["reasoning"],
+            model_profile_to_opencode_model(&p, None)["reasoning"],
             json!(false)
         );
     }
 
     #[test]
     fn opencode_model_limit_math() {
-        let mut p = presets::Preset {
+        let mut p = presets::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             parallel: Some(1),
             ..Default::default()
         };
         // An explicit ctx-size: the fit cannot cut it, so a number is advertised.
-        let entry = |p: &presets::Preset| preset_to_opencode_model(p, advertised(p, true, None));
+        let entry = |p: &presets::ModelProfile| {
+            model_profile_to_opencode_model(p, advertised(p, true, None))
+        };
         // Output is a quarter of the advertised context…
         p.ctx_size = Some(131_072);
         let e = entry(&p);
@@ -1093,17 +1098,17 @@ mod tests {
     /// one an earlier write left, while the rest of the file stays.
     #[test]
     fn autofit_model_has_no_limit_and_a_rewrite_drops_the_stale_one() {
-        let p = presets::Preset {
+        let p = presets::ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             reasoning: "on".into(),
             ..Default::default()
         };
-        let e = preset_to_opencode_model(&p, advertised(&p, true, Some(262_144)));
+        let e = model_profile_to_opencode_model(&p, advertised(&p, true, Some(262_144)));
         assert!(e.get("limit").is_none());
         assert_eq!(e["reasoning"], json!(true));
-        // The same preset with the fit off loads its trained context: a number.
-        let e = preset_to_opencode_model(&p, advertised(&p, false, Some(262_144)));
+        // The same model profile with the fit off loads its trained context: a number.
+        let e = model_profile_to_opencode_model(&p, advertised(&p, false, Some(262_144)));
         assert_eq!(e["limit"]["context"], 262_144);
 
         let mut v = json!({
@@ -1119,7 +1124,7 @@ mod tests {
                 }
             }
         });
-        let fresh = preset_to_opencode_model(&p, None);
+        let fresh = model_profile_to_opencode_model(&p, None);
         fill_models(&mut v, vec![("m".into(), fresh.clone())]).unwrap();
         let models = &v["provider"][PROVIDER_KEY]["models"];
         assert_eq!(models["m"], fresh);
@@ -1135,65 +1140,65 @@ mod tests {
     #[test]
     fn fit_may_cut_ctx_follows_upstream() {
         const TRAINED: Option<u32> = Some(262_144);
-        let base = presets::Preset::default();
-        let cut = |p: &presets::Preset, fit: bool, t: Option<u32>| fit_may_cut_ctx(p, fit, t);
+        let base = presets::ModelProfile::default();
+        let cut = |p: &presets::ModelProfile, fit: bool, t: Option<u32>| fit_may_cut_ctx(p, fit, t);
 
-        // The plain autofit preset: fit on, no ctx-size.
+        // The plain autofit model profile: fit on, no ctx-size.
         assert!(cut(&base, true, TRAINED));
         // 1. Fit off: the context is exactly what effective_ctx derives.
         assert!(!cut(&base, false, TRAINED));
         // 2. split-mode tensor: the fit throws before doing anything.
-        let tensor = presets::Preset {
+        let tensor = presets::ModelProfile {
             split_mode: "tensor".into(),
             ..Default::default()
         };
         assert!(!cut(&tensor, true, TRAINED));
-        let layer = presets::Preset {
+        let layer = presets::ModelProfile {
             split_mode: "layer".into(),
             ..Default::default()
         };
         assert!(cut(&layer, true, TRAINED));
         // 3. An explicit ctx-size is "set by user -> no change".
-        let explicit = presets::Preset {
+        let explicit = presets::ModelProfile {
             ctx_size: Some(65_536),
             ..Default::default()
         };
         assert!(!cut(&explicit, true, TRAINED));
         // 3/5. ctx-size = 0 is automatic but sets the full-context sentinel...
-        let zero = presets::Preset {
+        let zero = presets::ModelProfile {
             ctx_size: Some(0),
             ..Default::default()
         };
         assert!(!cut(&zero, true, TRAINED));
         assert!(!cut(&zero, true, None));
         // ...which a fit-ctx overwrites (`-fitc` is parsed after `-c`).
-        let zero_floor = presets::Preset {
+        let zero_floor = presets::ModelProfile {
             ctx_size: Some(0),
             fit_ctx: Some(8192),
             ..Default::default()
         };
         assert!(cut(&zero_floor, true, TRAINED));
         // fit-ctx = -1 is the sentinel itself.
-        let sentinel = presets::Preset {
+        let sentinel = presets::ModelProfile {
             fit_ctx: Some(-1),
             ..Default::default()
         };
         assert!(!cut(&sentinel, true, TRAINED));
         // 4. kv-unified-per-slot with ctx-size absent sizes the pool first.
-        let per_slot = presets::Preset {
+        let per_slot = presets::ModelProfile {
             kv_unified_per_slot: Some(32_768),
             ..Default::default()
         };
         assert!(!cut(&per_slot, true, TRAINED));
         // Under ctx-size = 0 the pool is not sized, but the sentinel stops the cut.
-        let per_slot_zero = presets::Preset {
+        let per_slot_zero = presets::ModelProfile {
             ctx_size: Some(0),
             kv_unified_per_slot: Some(32_768),
             ..Default::default()
         };
         assert!(!cut(&per_slot_zero, true, TRAINED));
         // ...and with a fit-ctx beside ctx-size = 0 the pool is sized again.
-        let per_slot_floor = presets::Preset {
+        let per_slot_floor = presets::ModelProfile {
             ctx_size: Some(0),
             fit_ctx: Some(8192),
             kv_unified_per_slot: Some(32_768),
@@ -1203,7 +1208,7 @@ mod tests {
         // 5. A trained context at or below the floor leaves nothing to cut.
         assert!(!cut(&base, true, Some(4096)));
         assert!(cut(&base, true, Some(4097)));
-        let floor = presets::Preset {
+        let floor = presets::ModelProfile {
             fit_ctx: Some(300_000),
             ..Default::default()
         };
@@ -1211,7 +1216,7 @@ mod tests {
         // An unreadable header counts as above the floor.
         assert!(cut(&base, true, None));
         // n-gpu-layers by hand does not stop the context cut (step 2 runs first).
-        let ngl = presets::Preset {
+        let ngl = presets::ModelProfile {
             n_gpu_layers: Some(99),
             ..Default::default()
         };
@@ -1221,7 +1226,7 @@ mod tests {
     /// The pool sizing follows the same sentinel the fit reads.
     #[test]
     fn per_slot_pool_sizing_honours_a_fit_ctx_beside_ctx_size_zero() {
-        let p = presets::Preset {
+        let p = presets::ModelProfile {
             ctx_size: Some(0),
             parallel: Some(2),
             fit_ctx: Some(8192),
@@ -1267,7 +1272,7 @@ mod tests {
         assert!(!without.contains("CLAUDE_CODE_MAX_CONTEXT_TOKENS=\""));
         assert!(!without.contains("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
         assert!(without.contains("fit sizes its context at load"));
-        // No preset at all: placeholders, both lines.
+        // No model profile at all: placeholders, both lines.
         let none = script(None);
         assert!(none.contains("\"<context>\"") && none.contains("\"<percent>\""));
     }
@@ -1296,7 +1301,7 @@ mod tests {
         const NONE: Option<u32> = None;
         let effective_ctx = |ctx_size, parallel, trained| {
             effective_ctx(
-                &presets::Preset {
+                &presets::ModelProfile {
                     ctx_size,
                     parallel,
                     ..Default::default()
@@ -1333,7 +1338,7 @@ mod tests {
         const TRAINED: Option<u32> = Some(262_144);
         let ctx = |ctx_size, parallel, kv_unified, per_slot| {
             effective_ctx(
-                &presets::Preset {
+                &presets::ModelProfile {
                     ctx_size,
                     parallel,
                     kv_unified,
@@ -1367,7 +1372,7 @@ mod tests {
 
     /// An unticked id keeps the file's state for that model: its old entry
     /// (listed and changed, or listed and no longer enabled) or its absence (a new
-    /// preset); every other id takes the rebuilt entry or goes.
+    /// model profile); every other id takes the rebuilt entry or goes.
     #[test]
     fn merge_models_leaves_kept_ids_as_the_file_has_them() {
         let current = json!({
@@ -1458,7 +1463,7 @@ mod tests {
             friendly_model_name("id", &crate::paths::os_path(r"C:\m\a-b-c-d-e-f-g-h.gguf")),
             "A B C D E F"
         );
-        // No usable stem falls back to the preset id.
+        // No usable stem falls back to the model profile id.
         assert_eq!(friendly_model_name("fallback-id", ""), "Fallback Id");
     }
 }

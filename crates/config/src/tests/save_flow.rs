@@ -2,7 +2,7 @@
 //! Models-tab wiring, plus the Integrations tab's rebuild invariant.
 //!
 //! `ui_bindings.rs` covers binding *direction*; this covers the callback
-//! *funnel*: save → `preset_written` → reload → reselect → re-baseline, the
+//! *funnel*: save → `model_profile_written` → reload → reselect → re-baseline, the
 //! Revert path, delete's deliberate clear-selection sequence, the New…
 //! dialog's id de-conflict guard, the rename + clone funnels, the
 //! discard-confirm guard on a dirty form (the wiring in `gui/models_tab.rs`
@@ -10,12 +10,12 @@
 //! contract (in-place toggle from the widget itself, full model rebuild for
 //! everything else), and the Hugging Face dialog's network-free wiring (its
 //! refusals, the hand-over at Download to the background downloads and their
-//! window, a landed download creating its preset without disturbing a dirty
-//! editor, cancel, failure, Show preset, Quit asking first), and the Delete
+//! window, a landed download creating its model profile without disturbing a dirty
+//! editor, cancel, failure, Show model profile, Quit asking first), and the Delete
 //! dialog's linked files
 //! (`delete_with_files_phase`: the rows, the in-use lock, the ticks the
 //! confirm acts on, the folder cleanup, a failed delete reported) with the
-//! CLI's `preset delete --delete-files` under the same rules.
+//! CLI's `model-profile delete --delete-files` under the same rules.
 //!
 //! Config IO is redirected at a temp dir through `PRIVATE_AI_DATA_ROOT`
 //! (see `paths::data_root`), set here BEFORE the tabs are wired, so the flow
@@ -63,7 +63,7 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_save_preset();
     assert!(st.get_status_is_error(), "empty-id save must set an error");
     assert!(
-        !crate::paths::presets_ini().exists(),
+        !crate::paths::models_ini().exists(),
         "a rejected save must not create models.ini"
     );
 
@@ -73,10 +73,10 @@ pub(super) fn run(app: &AppWindow) {
     // either call used to pass the whole suite, silently regressing the
     // v1.2.11 reload-truncated guard.
     //
-    // From a NEW preset's form, not the blank editor's: the blank struct has every
+    // From a NEW model profile's form, not the blank editor's: the blank struct has every
     // "default" box unticked over empty text, which the numeric refusal (tested
     // below) would reject before `presets::save` is ever reached.
-    let mut form = crate::form::preset_to_form(&crate::presets::Preset::default());
+    let mut form = crate::form::model_profile_to_form(&crate::presets::ModelProfile::default());
     form.id = "hostile".into();
     form.model = r"C:\Models #1\m.gguf".into();
     st.set_form(form);
@@ -87,7 +87,7 @@ pub(super) fn run(app: &AppWindow) {
         st.get_status_text()
     );
     assert!(
-        !crate::paths::presets_ini().exists(),
+        !crate::paths::models_ini().exists(),
         "a path-rejected save must not create models.ini"
     );
     let hostile_server = crate::server_cfg::ServerConfig {
@@ -105,7 +105,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Save: reload + reselect + re-baseline ────────────────────────────
     let model_path = dir.path().join("models").join("e2e.gguf");
-    let mut form = crate::form::preset_to_form(&crate::presets::Preset::default());
+    let mut form = crate::form::model_profile_to_form(&crate::presets::ModelProfile::default());
     form.id = "e2e".into();
     form.model = model_path.to_string_lossy().as_ref().into();
     st.set_form(form);
@@ -115,7 +115,7 @@ pub(super) fn run(app: &AppWindow) {
         "save failed: {}",
         st.get_status_text()
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini written");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini written");
     assert!(ini.contains("[e2e]"), "saved section missing:\n{ini}");
     assert_eq!(
         st.get_selected_preset_index(),
@@ -147,7 +147,7 @@ pub(super) fn run(app: &AppWindow) {
     st.set_form(form);
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let saved = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         saved.contains("spec-type = ngram-mod"),
         "an n-gram spec-type needs no draft and must be saved:\n{saved}"
@@ -164,7 +164,7 @@ pub(super) fn run(app: &AppWindow) {
         !saved.contains("\nspec-ngram-simple-size-n ="),
         "an unselected n-gram type's tuning is dropped:\n{saved}"
     );
-    // The save reselects the preset, and its model (no file here) cannot be
+    // The save reselects the model profile, and its model (no file here) cannot be
     // read, which clears `model_info_ready`: stand in for the header again.
     st.set_model_info_ready(true);
     st.set_model_info_embeds_mtp(false);
@@ -173,7 +173,7 @@ pub(super) fn run(app: &AppWindow) {
     st.set_form(form);
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let saved = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let saved = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         !saved.contains("\nspec-type ="),
         "draft-mtp without MTP heads must not reach the INI:\n{saved}"
@@ -186,8 +186,8 @@ pub(super) fn run(app: &AppWindow) {
     let ini = saved;
 
     // ── A mistyped integer refuses the save instead of dropping the key ──
-    // `form_to_preset` reads unparseable text as unset, and an unset ctx-size is
-    // the model's TRAINED context: a preset saved that way loads at 262144 and
+    // `form_to_model_profile` reads unparseable text as unset, and an unset ctx-size is
+    // the model's TRAINED context: a model profile saved that way loads at 262144 and
     // pages. 245760 typed next to the old value overflows i32.
     let mut form = st.get_form();
     form.ctx_size = "196608245760".into();
@@ -200,7 +200,7 @@ pub(super) fn run(app: &AppWindow) {
         st.get_status_text()
     );
     assert_eq!(
-        std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini"),
+        std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini"),
         ini,
         "a refused save must leave models.ini untouched"
     );
@@ -225,7 +225,7 @@ pub(super) fn run(app: &AppWindow) {
 
     // ── Delete clears the file, the selection, and the editor ────────────
     st.invoke_delete_preset("e2e".into());
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).unwrap_or_default();
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).unwrap_or_default();
     assert!(!ini.contains("[e2e]"), "deleted section still on disk");
     assert_eq!(
         st.get_selected_preset_index(),
@@ -238,7 +238,7 @@ pub(super) fn run(app: &AppWindow) {
         "delete must blank the editor"
     );
 
-    // ── New… twice on the same model must NOT overwrite the first preset ──
+    // ── New… twice on the same model must NOT overwrite the first model profile ──
     // Drive the real dialog funnel: New… scans models_dir for the picker, the
     // pick derives the id from the file name, so the second pass hits a live
     // id and must save under the first free suffix instead of clobbering.
@@ -263,7 +263,7 @@ pub(super) fn run(app: &AppWindow) {
             st.get_status_text()
         );
     }
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         ini.contains("[e2e]") && ini.contains("[e2e-2]"),
         "second New… must de-conflict to e2e-2, not overwrite:\n{ini}"
@@ -276,7 +276,7 @@ pub(super) fn run(app: &AppWindow) {
         "rename failed: {}",
         st.get_status_text()
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         !ini.contains("[e2e]\n") && !ini.contains("[e2e]\r\n"),
         "old section must be gone:\n{ini}"
@@ -619,7 +619,7 @@ pub(super) fn run(app: &AppWindow) {
 
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         ini.contains("device = ROCm1,CUDA0") && ini.contains("tensor-split = 3,1"),
         "the table's selection must reach the INI:\n{ini}"
@@ -712,7 +712,7 @@ pub(super) fn run(app: &AppWindow) {
 
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         ini.contains(r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU"),
         "the table's rules must reach the INI:\n{ini}"
@@ -749,13 +749,13 @@ pub(super) fn run(app: &AppWindow) {
     // throws on it during arg parsing; the model just never loads. So write it the
     // way it really arrives (into the file, then reload) and pin both halves of the
     // answer: the table explains it, and the save refuses to write it back.
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     let hand_edited = ini.replace(
         r"override-tensor = ^token_embd\.weight=CUDA0,blk\.{12}\.attnx=CPU",
         r"override-tensor = token_embd\.weight",
     );
     assert_ne!(hand_edited, ini, "the line to hand-edit must be there");
-    std::fs::write(crate::paths::presets_ini(), &hand_edited).expect("hand-edit models.ini");
+    std::fs::write(crate::paths::models_ini(), &hand_edited).expect("hand-edit models.ini");
     st.invoke_revert_preset(); // reloads from disk → rebuilds the table
     assert!(
         st.get_preset_tensor_warning().contains("token_embd"),
@@ -773,7 +773,7 @@ pub(super) fn run(app: &AppWindow) {
     );
 
     // Repair it through the table (which is the cure the warning implies) and
-    // leave the preset saved and clean for the phases below.
+    // leave the model profile saved and clean for the phases below.
     st.invoke_preset_tensor_device(0, "CUDA0".into());
     assert!(st.get_preset_tensor_warning().is_empty());
     st.invoke_save_preset();
@@ -875,13 +875,13 @@ pub(super) fn run(app: &AppWindow) {
     );
     st.set_show_rename_dialog(false);
 
-    // ── The on/off switch: the preset MOVES between two files, the form stays ──
-    // Switching a preset off moves its section, verbatim, from models.ini (the
+    // ── The on/off switch: the model profile MOVES between two files, the form stays ──
+    // Switching a model profile off moves its section, verbatim, from models.ini (the
     // file llama-server reads) to models.ini.disabled. It is not a navigation:
     // an unsaved edit must survive it, and the Save that follows must land in
-    // whichever file now holds the preset, or saving would switch it back on.
-    let presets_ini = crate::paths::presets_ini();
-    let parked_ini = crate::paths::presets_disabled_ini();
+    // whichever file now holds the model profile, or saving would switch it back on.
+    let models_ini = crate::paths::models_ini();
+    let parked_ini = crate::paths::models_disabled_ini();
     let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
     let switch = |id: &str| {
         ElementHandle::find_by_accessible_label(app, format!("enabled-{id}").as_str())
@@ -911,13 +911,13 @@ pub(super) fn run(app: &AppWindow) {
         Some(true),
         "presets start on"
     );
-    let section_before = crate::ini::section_text(&presets_ini, "e2e").expect("[e2e] on disk");
+    let section_before = crate::ini::section_text(&models_ini, "e2e").expect("[e2e] on disk");
 
     switch("e2e").invoke_accessible_default_action(); // the user's click: off
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(
-        !read(&presets_ini).contains("[e2e]"),
+        !read(&models_ini).contains("[e2e]"),
         "llama-server's file must no longer carry it"
     );
     assert_eq!(
@@ -955,11 +955,11 @@ pub(super) fn run(app: &AppWindow) {
         "a preset llama-server does not offer cannot be benchmarked"
     );
 
-    // Saving a switched-off preset edits it where it is parked.
+    // Saving a switched-off model profile edits it where it is parked.
     st.invoke_save_preset();
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
     assert!(
-        read(&parked_ini).contains("ctx-size = 65536") && !read(&presets_ini).contains("[e2e]"),
+        read(&parked_ini).contains("ctx-size = 65536") && !read(&models_ini).contains("[e2e]"),
         "the save must not switch the preset back on"
     );
     assert!(!listed_enabled("e2e"));
@@ -996,7 +996,7 @@ pub(super) fn run(app: &AppWindow) {
     switch("e2e").invoke_accessible_default_action();
     itest::mock_elapsed_time(std::time::Duration::from_millis(1));
     assert!(!st.get_status_is_error(), "{}", st.get_status_text());
-    assert!(read(&presets_ini).contains("ctx-size = 65536"));
+    assert!(read(&models_ini).contains("ctx-size = 65536"));
     assert!(!read(&parked_ini).contains("[e2e]"));
     assert!(listed_enabled("e2e"));
     assert!(st
@@ -1017,8 +1017,8 @@ pub(super) fn run(app: &AppWindow) {
     st.invoke_reload_all();
     assert_eq!(switch("e2e").accessible_checked(), Some(true));
 
-    // ── Integrations: OpenCode lists the ENABLED presets, on Save only ──────
-    // No preset change above touched opencode.json: only the Integrations tab's
+    // ── Integrations: OpenCode lists the ENABLED model profiles, on Save only ──────
+    // No model profile change above touched opencode.json: only the Integrations tab's
     // Save writes it. Under the redirect even the parent dir (<tmp>\opencode\)
     // is missing, the exact "OpenCode never ran here" shape the v1.2.13
     // create_dir_all fix is for.
@@ -1053,7 +1053,7 @@ pub(super) fn run(app: &AppWindow) {
             .map(|i| rows.row_data(i).unwrap().label.to_string())
             .collect::<Vec<_>>()
     };
-    // Save previews first: every enabled preset added, all ticked, the provider
+    // Save previews first: every enabled model profile added, all ticked, the provider
     // line saying it is created. Cancel writes nothing.
     st.invoke_save_integrations();
     assert!(st.get_show_opencode_dialog(), "{}", st.get_status_text());
@@ -1190,7 +1190,7 @@ pub(super) fn run(app: &AppWindow) {
     // builds the real command: a preview that stopped tracking the mode would
     // show a llama-bench line for a run that sends HTTP, or the reverse.
     for id in ["bench-a", "bench-b"] {
-        crate::presets::save(&crate::presets::Preset {
+        crate::presets::save(&crate::presets::ModelProfile {
             id: id.into(),
             model: format!(r"E:\models\{id}.gguf"),
             ..Default::default()
@@ -1396,10 +1396,10 @@ pub(super) fn run(app: &AppWindow) {
         "cleared = default again"
     );
 
-    // `preset delete|disable|enable` from the command line: pai-cli's
-    // `preset_commands_e2e`.
+    // `model-profile delete|disable|enable` from the command line: pai-cli's
+    // `model_profile_commands_e2e`.
 
-    // ── New preset from Hugging Face: the dialog wiring that needs no network ──
+    // ── New model profile from Hugging Face: the dialog wiring that needs no network ──
     // gui/hf_dialog.rs. The search, the listing and the transfer need Hugging
     // Face and a llama-server, so this drives everything around them (under
     // cfg(test) the request workers and the child are not even spawned): the
@@ -1408,8 +1408,8 @@ pub(super) fn run(app: &AppWindow) {
     // listing and Back, and the hand-over to the background downloads
     // (gui/downloads.rs): the modal closing at Download, the Downloads
     // window's rows (progress, cancel, resume, failure, a second download of
-    // the same repository refused), the preset created without touching a
-    // dirty editor, Show preset through the discard guard, and Quit asking
+    // the same repository refused), the model profile created without touching a
+    // dirty editor, Show model profile through the discard guard, and Quit asking
     // first.
     // The New dialog's "From Hugging Face" button hides the picker, then opens
     // this one: mirror both (an earlier phase may have left the picker up).
@@ -2032,7 +2032,7 @@ pub(super) fn run(app: &AppWindow) {
     );
     assert!(st.get_status_is_error());
     editor_kept("a cancel and a failure");
-    // A finished one creates and lists the preset WITHOUT selecting it,
+    // A finished one creates and lists the model profile WITHOUT selecting it,
     // placed per card against the budget the listing was estimated with: a
     // 4-block MoE of 80 MiB on cards of 48 and 24 MiB usable keeps block 0's
     // experts in RAM and cuts the rest 3 + 2 (hf.rs has the same fixture,
@@ -2136,7 +2136,7 @@ pub(super) fn run(app: &AppWindow) {
             .any(|p| p.id.as_str() == "hfmodel-Q4_K_M"),
         "the new preset is listed"
     );
-    let ini = std::fs::read_to_string(crate::paths::presets_ini()).expect("models.ini");
+    let ini = std::fs::read_to_string(crate::paths::models_ini()).expect("models.ini");
     assert!(
         ini.contains("[hfmodel-Q4_K_M]") && ini.contains("https://huggingface.co/org/Hf-GGUF"),
         "the derived preset is saved with its project URL:\n{ini}"
@@ -2159,7 +2159,7 @@ pub(super) fn run(app: &AppWindow) {
             .any(|l| l.contains("hfmodel-Q4_K_M")),
         "the pickers were rescanned and list the new file"
     );
-    // Show preset: refused (with a note) while a dialog is open in the main
+    // Show model profile: refused (with a note) while a dialog is open in the main
     // window; else on the Models tab, through the discard guard.
     st.invoke_hf_open();
     win.invoke_show_preset(hf_job);
@@ -2256,9 +2256,9 @@ fn load_on_startup_phase() {
     let mut cfg = saved_cfg.clone();
     cfg.models_max = Some(1);
     server_cfg::save(&cfg).expect("ModelsMax = 1");
-    let p = |id: &str| presets::Preset {
+    let p = |id: &str| presets::ModelProfile {
         load_on_startup: true,
-        ..presets::Preset::new_default(id.into(), "m.gguf".into())
+        ..presets::ModelProfile::new_default(id.into(), "m.gguf".into())
     };
     presets::save(&p("los-a")).expect("one fits ModelsMax = 1");
     presets::save(&p("los-a")).expect("re-saving the same preset still counts once");
@@ -2270,7 +2270,7 @@ fn load_on_startup_phase() {
     );
 
     // Parked, then switched on: the switch is refused, the section stays parked.
-    presets::save(&presets::Preset {
+    presets::save(&presets::ModelProfile {
         load_on_startup: false,
         ..p("los-b")
     })
@@ -2283,7 +2283,7 @@ fn load_on_startup_phase() {
     );
     assert!(presets::load_listed()
         .iter()
-        .any(|l| l.preset.id == "los-b" && !l.enabled));
+        .any(|l| l.model_profile.id == "los-b" && !l.enabled));
 
     // server.ini: ModelsMax = 0 is not unlimited for the startup check.
     cfg.models_max = Some(0);
@@ -2304,20 +2304,20 @@ fn load_on_startup_phase() {
     server_cfg::save(&saved_cfg).expect("restore server.ini");
 }
 
-/// Deleting a preset together with the model files it links (gui/models_tab.rs
+/// Deleting a model profile together with the model files it links (gui/models_tab.rs
 /// `DeleteDialog` over src/linked_files.rs):
 /// the rows list what is on disk, every tick starts cleared, a file another
-/// preset uses (in either INI file) cannot be ticked, the confirm removes the
+/// model profile uses (in either INI file) cannot be ticked, the confirm removes the
 /// section and then the ticked files and their emptied repo folders, the
 /// pickers are rescanned, and a file that fails to delete is reported without
-/// blocking the preset's deletion. The CLI's leg is pai-cli's
-/// `preset_delete_files_e2e`.
+/// blocking the model profile's deletion. The CLI's leg is pai-cli's
+/// `model_profile_delete_files_e2e`.
 fn delete_with_files_phase(
     app: &AppWindow,
     models_dir: &std::path::Path,
     hf_model: &std::path::Path,
 ) {
-    use crate::presets::Preset;
+    use crate::presets::ModelProfile;
     let st = app.global::<AppState>();
     let mut cfg = crate::server_cfg::load();
     cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
@@ -2335,21 +2335,21 @@ fn delete_with_files_phase(
     for (f, n) in [(&shard1, 3), (&shard2, 4), (&mmproj, 2), (&drafter, 1)] {
         touch(f, n);
     }
-    crate::presets::save(&Preset {
+    crate::presets::save(&ModelProfile {
         id: "split".into(),
         model: path(&shard1),
         mmproj: path(&mmproj),
         model_draft: path(&drafter),
         spec_type: "draft-mtp".into(),
-        ..Preset::default()
+        ..ModelProfile::default()
     })
     .expect("save split");
     // Shares the mmproj, and is switched OFF: the in-use check reads both files.
-    crate::presets::save(&Preset {
+    crate::presets::save(&ModelProfile {
         id: "sharer".into(),
         model: path(hf_model),
         mmproj: path(&mmproj),
-        ..Preset::default()
+        ..ModelProfile::default()
     })
     .expect("save sharer");
     crate::presets::set_enabled("sharer", false).expect("park sharer");
@@ -2442,7 +2442,7 @@ fn delete_with_files_phase(
     );
     assert!(crate::presets::load_listed()
         .iter()
-        .all(|l| l.preset.id != "split"));
+        .all(|l| l.model_profile.id != "split"));
     assert!(!shard1.exists() && !shard2.exists() && !drafter.exists());
     assert!(mmproj.exists(), "the shared mmproj stays");
     assert!(!repo("models", "Split-GGUF").exists() && !repo("mtps", "Split-GGUF").exists());
@@ -2467,8 +2467,8 @@ fn delete_with_files_phase(
     );
 
     // A file that fails to delete (a folder now stands at its path) is
-    // reported, and the preset is deleted anyway. `sharer` is parked, and its
-    // model is in use by the Hugging Face preset, its mmproj no longer.
+    // reported, and the model profile is deleted anyway. `sharer` is parked, and its
+    // model is in use by the Hugging Face model profile, its mmproj no longer.
     select("sharer");
     st.invoke_request_delete();
     assert_eq!(st.get_delete_target_file().as_str(), "models.ini.disabled");
@@ -2492,11 +2492,11 @@ fn delete_with_files_phase(
     assert!(st.get_status_text().starts_with("Deleted [sharer]"));
     assert!(crate::presets::load_listed()
         .iter()
-        .all(|l| l.preset.id != "sharer"));
+        .all(|l| l.model_profile.id != "sharer"));
     assert!(hf_model.exists(), "the in-use model was never offered");
     assert!(mmproj.is_dir(), "the folder that refused is still there");
     std::fs::remove_dir(&mmproj).expect("tidy up");
 
-    // `preset delete --delete-files` from the command line, the same rules:
-    // pai-cli's `preset_delete_files_e2e`.
+    // `model-profile delete --delete-files` from the command line, the same rules:
+    // pai-cli's `model_profile_delete_files_e2e`.
 }

@@ -1,18 +1,18 @@
-//! `GET /api/presets`: the preset list of the web UI's Models page, read
+//! `GET /api/profiles/model`: the model-profile list of the web UI's Models page, read
 //! through the manager as the signed-in user.
 //!
-//! The list is the engine's two preset files, read over one connect made for
+//! The list is the engine's two model profile files, read over one connect made for
 //! the session's user, so the manager re-checks their membership of `pai` at
 //! every call: the sections of `models.ini` (switched on, the file
 //! llama-server reads) then the sections of `models.ini.disabled` (switched
 //! off), each group in its file order, and an id present in both files listed
 //! once, as enabled, with the copy `models.ini` holds: the id matched without
 //! case, as the configurator's list does. A file the manager says is not there
-//! is an empty group, so a machine with no preset file answers an empty list
+//! is an empty group, so a machine with no model profile file answers an empty list
 //! and not an error.
 //!
-//! llama-server's global `[*]` section is not a preset: it is the defaults
-//! every preset starts from, so it is never a row, and the switch moves
+//! llama-server's global `[*]` section is not a model profile: it is the defaults
+//! every model profile starts from, so it is never a row, and the switch moves
 //! nothing for it ([`switch`]): moved to the disabled file it would stop
 //! applying to every model with no row left in the list to bring it back.
 //!
@@ -20,7 +20,7 @@
 //! "engineAvailable", "enabled", "model"}`. `id` is the section as the file
 //! spells it, `model` the section's `model` key as the file holds it (the
 //! inline comment ended by the file's parser, `""` when the section has no
-//! such key), `engine` the engine whose preset file holds the section and
+//! such key), `engine` the engine whose model profile file holds the section and
 //! `engineAvailable` that engine in `GET /api/instances`: llama.cpp, the only
 //! engine there is.
 //!
@@ -32,10 +32,10 @@
 //! when there is no manager or it answers later than `timeout`, and 502
 //! `client-other` for anything else.
 //!
-//! `PUT /api/presets/{id}` is the save of one preset, the body
+//! `PUT /api/profiles/model/{id}` is the save of one model profile, the body
 //! `{"revision", "values"}`: the section's keys are rewritten in place in the
 //! file that holds it; see [`save`].
-//! `PUT /api/presets/{id}/enabled` is the switch of one preset, the body
+//! `PUT /api/profiles/model/{id}/enabled` is the switch of one model profile, the body
 //! `{"enabled": <bool>}`. The section moves, unchanged, between the two files,
 //! the file it LANDS IN written first; see [`set_enabled`].
 
@@ -53,11 +53,11 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The engine's file of switched-on presets, the one llama-server reads.
-const PRESETS: &str = "models.ini";
+/// The engine's file of switched-on model profiles, the one llama-server reads.
+const MODELS: &str = "models.ini";
 
-/// The engine's file of switched-off presets, never read by llama-server.
-const PRESETS_DISABLED: &str = "models.ini.disabled";
+/// The engine's file of switched-off model profiles, never read by llama-server.
+const MODELS_DISABLED: &str = "models.ini.disabled";
 
 /// The header a `models.ini.disabled` the configurator never wrote is created
 /// with, so a file the switch off makes reads like one it wrote. The text is
@@ -70,7 +70,7 @@ const DISABLED_FILE_HEADER: &str = "\
 ; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n";
 
-/// The answer to `GET /api/presets`: the list as a JSON array, or
+/// The answer to `GET /api/profiles/model`: the list as a JSON array, or
 /// `{"key", "args": []}`. The two files are read over one connect, as the
 /// session's user, inside one blocking task, so the manager is asked once and
 /// a refusal on the first file stops the read.
@@ -86,8 +86,8 @@ pub(crate) async fn list(
     let user = identity.user;
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
         let client = connect(Some(user.as_str()))?;
-        let on = client.read_file(PRESETS)?;
-        let off = client.read_file(PRESETS_DISABLED)?;
+        let on = client.read_file(MODELS)?;
+        let off = client.read_file(MODELS_DISABLED)?;
         Ok(rows(&on, &off))
     });
     read_answer(
@@ -150,7 +150,7 @@ fn rows(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<Value> {
 }
 
 /// Whether a section id is llama-server's global `[*]`, the defaults every
-/// preset starts from. It is not a preset: the list has no row for it, and the
+/// model profile starts from. It is not a model profile: the list has no row for it, and the
 /// switch has nothing to move.
 fn is_global(id: &str) -> bool {
     id == "*"
@@ -179,41 +179,41 @@ fn row(section: &ini::Section, enabled: bool) -> Value {
 
 /// The answer of one switch.
 enum Answer {
-    /// The move is made, or the preset was already where it is asked for and
-    /// nothing was written: the preset's state, and whether an instance is up.
+    /// The move is made, or the model profile was already where it is asked for and
+    /// nothing was written: the model profile's state, and whether an instance is up.
     Moved { enabled: bool, running: bool },
-    /// Neither preset file has a section named by the id.
+    /// Neither model profile file has a section named by the id.
     NotFound,
 }
 
-/// `PUT /api/presets/{id}/enabled` `{"enabled": <bool>}`: the on/off switch of
-/// one preset, as the signed-in user. The answer is exactly `{"enabled",
+/// `PUT /api/profiles/model/{id}/enabled` `{"enabled": <bool>}`: the on/off switch of
+/// one model profile, as the signed-in user. The answer is exactly `{"enabled",
 /// "running"}`; the session is read first, so with no session the manager is
 /// not even connected to (401), and only a signed-in request sees a body over
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
 /// The session and the body answer first, so a body nothing can be made of (400
 /// `presets-malformed`) reaches no manager. The two files are then read once
-/// each, and after the writes the file that makes a preset enabled is read
+/// each, and after the writes the file that makes a model profile enabled is read
 /// again, so the `enabled` the page gets is the text on the machine. The writes
 /// and the instances' states are asked on the SAME
 /// connect, made for the session's user, all of it in one blocking task. The id
 /// is a section name, matched in any letter case as the list's ids are, never a
 /// path: the two file names are the fixed ones. A name neither file holds is 404
 /// `no-preset-named` ([`not_found`]), and nothing is written; so is
-/// llama-server's global `[*]`, which is not a preset.
+/// llama-server's global `[*]`, which is not a model profile.
 ///
 /// The section moves, unchanged, from the file that holds it to the other one,
 /// and the file it LANDS IN is written FIRST: a section in both files reads as
-/// enabled, so a move cut short leaves the preset in both, never in none. Each
+/// enabled, so a move cut short leaves the model profile in both, never in none. Each
 /// write is the compare and swap, expecting the text this request read. A
 /// disabled file that is not there is created with [`DISABLED_FILE_HEADER`] by
 /// the plain write, because the compare and swap refuses a missing file. A
-/// preset already where it is asked for answers 200 and writes nothing.
+/// model profile already where it is asked for answers 200 and writes nothing.
 ///
 /// 409 `preset-changed-elsewhere` is the compare and swap's refusal. When it
-/// answers the second write the preset sits in both files, which the next
-/// switch of that preset mends. The manager's check of the moved section is 422
+/// answers the second write the model profile sits in both files, which the next
+/// switch of that model profile mends. The manager's check of the moved section is 422
 /// ([`field_of`]). A refusal of the signed-in user, at the connect, a read or a
 /// write, is 403 and ends that session; the other answers keep it ([`switch_failure`]).
 /// The 503 and the 504 follow the server file's rule, on the same shared state
@@ -284,7 +284,7 @@ pub(crate) async fn set_enabled(
 
 /// The switch through the manager: one connect for `user`, both files read, the
 /// section moved, the instances' states asked for `running`. The two files are
-/// read once each for the move; the one that makes a preset enabled is read
+/// read once each for the move; the one that makes a model profile enabled is read
 /// once more after the writes, because the answer is the text on the machine
 /// and not what the bff computed. llama-server's global section is answered
 /// [`Answer::NotFound`] with nothing written, as the list has no row for it.
@@ -296,10 +296,10 @@ fn switch(
     state: &WriteState,
 ) -> Result<Answer, ClientError> {
     let client = connect(Some(user))?;
-    let on = client.read_file(PRESETS)?.map(|file| file.text);
-    let off = client.read_file(PRESETS_DISABLED)?.map(|file| file.text);
+    let on = client.read_file(MODELS)?.map(|file| file.text);
+    let off = client.read_file(MODELS_DISABLED)?.map(|file| file.text);
     if is_global(id) {
-        // llama-server's global section: not a preset, no row in the list, and
+        // llama-server's global section: not a model profile, no row in the list, and
         // nothing to move: switched off it would stop applying to every model.
         return Ok(Answer::NotFound);
     }
@@ -317,9 +317,9 @@ fn switch(
         });
     }
     let (source, destination, source_text, destination_text, section) = if enabled {
-        (PRESETS_DISABLED, PRESETS, &off, &on, section_off)
+        (MODELS_DISABLED, MODELS, &off, &on, section_off)
     } else {
-        (PRESETS, PRESETS_DISABLED, &on, &off, section_on)
+        (MODELS, MODELS_DISABLED, &on, &off, section_on)
     };
     let Some(section) = section else {
         // Unreachable: the source is the file that holds the section.
@@ -342,7 +342,7 @@ fn switch(
         // plain write creates it. A new disabled file carries the
         // configurator's header; a new `models.ini` needs none.
         None => {
-            let base = if destination == PRESETS_DISABLED {
+            let base = if destination == MODELS_DISABLED {
                 DISABLED_FILE_HEADER
             } else {
                 ""
@@ -351,7 +351,7 @@ fn switch(
             client.write_file(destination, &created, false)?;
         }
     }
-    // Then the file the preset leaves, with its section taken out.
+    // Then the file the model profile leaves, with its section taken out.
     let left = ini::text::delete_section(current, id).unwrap_or_else(|| current.to_string());
     // No time-limit check here: the state is Cancelled only when no write was
     // asked, and the destination write was asked, so the handler that ran out
@@ -362,12 +362,12 @@ fn switch(
     // the read back that follows finds the switch done, and answers its 200.
     state.landed();
     // The move is not reported as the bff computed it: the file that makes a
-    // preset enabled is read back after the writes, so `enabled` is the text
+    // model profile enabled is read back after the writes, so `enabled` is the text
     // that is on the machine. A read back that fails is not the move failing:
     // the files carry it, so the answer is the value the move produced and
     // `running` true, never the 503 of a manager that was never reached. A
     // refusal of the signed-in user is the one answer that ends the session.
-    let on = match client.read_file(PRESETS) {
+    let on = match client.read_file(MODELS) {
         Ok(file) => file.map(|file| file.text).unwrap_or_default(),
         Err(ClientError::NotAuthorized) => return Err(ClientError::NotAuthorized),
         Err(_) => {
@@ -396,7 +396,7 @@ fn running(client: &Client) -> bool {
     }
 }
 
-/// The answer to a preset write the manager could not do, `write_asked` the
+/// The answer to a model profile write the manager could not do, `write_asked` the
 /// shared state's: a write sent, so a stream that died there leaves its outcome
 /// unknown, is 504 `client-timeout`, and not 503 `client-unavailable`. The
 /// compare and swap found its file changed: 409 `preset-changed-elsewhere`. The
@@ -434,16 +434,16 @@ fn switch_failure(
     }
 }
 
-/// The field of a 422: the preset key the form marks, beside the check's key and
+/// The field of a 422: the model profile key the form marks, beside the check's key and
 /// values. One rule per check, so a refusal names the card's field whoever asks.
 /// A check that names the key it is about marks it, as its `args[0]`. The checks
 /// that name a VALUE and not a key, the load-on-startup pair (its `args` are the
-/// total and `ModelsMax`) and `preset-no-model` (its `args` are the preset's
+/// total and `ModelsMax`) and `preset-no-model` (its `args` are the model profile's
 /// name), name the key their value belongs to: `load-on-startup` and `model`.
 /// So does the pair `override-no-pattern` and `override-no-device`, whose
 /// `args[0]` is the position of the rule inside the value, and
 /// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
-/// its own value. A refusal about the preset's name (`invalid-preset-id`,
+/// its own value. A refusal about the model profile's name (`invalid-preset-id`,
 /// `preset-name-taken`) has no key of the section to mark, so the answer carries
 /// no field at all.
 fn field_of(key: &str, args: &[String]) -> Option<String> {
@@ -470,13 +470,13 @@ fn refused(key: &str, args: &[String], field: Option<&str>) -> Response {
     (StatusCode::UNPROCESSABLE_ENTITY, axum::Json(doc)).into_response()
 }
 
-/// The 404 answer: no preset file has a section named `id`. The id comes back as
-/// the only arg when it is a name a preset can carry at all; a name that cannot
+/// The 404 answer: no model profile file has a section named `id`. The id comes back as
+/// the only arg when it is a name a model profile can carry at all; a name that cannot
 /// be a section header (a newline, a bracket, a path) is echoed nowhere, as the
 /// id check refuses it. A run of dots is the one name the check allows and no
-/// preset carries, `.` and `..` naming no preset, so it is not echoed either.
+/// model profile carries, `.` and `..` naming no model profile, so it is not echoed either.
 fn not_found(id: &str) -> Response {
-    let echo = checks::preset_id(id).is_ok() && !id.chars().all(|c| c == '.');
+    let echo = checks::model_profile_id(id).is_ok() && !id.chars().all(|c| c == '.');
     let args: Vec<&str> = if echo { vec![id] } else { Vec::new() };
     (
         StatusCode::NOT_FOUND,
@@ -493,8 +493,8 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
         .and_then(Value::as_bool)
 }
 
-/// `GET /api/presets/{id}`: the document of one preset, the entry of the
-/// contract (`fe/briefs/api-contract.md`, "the preset page"). The page shows
+/// `GET /api/profiles/model/{id}`: the document of one model profile, the entry of the
+/// contract (`fe/briefs/api-contract.md`, "the model profile page"). The page shows
 /// the keys and the values as the file holds them and runs no check of its own,
 /// so this only reads, over one connect made for the session's user:
 /// `models.ini` first, then `models.ini.disabled`, as the list reads them.
@@ -502,7 +502,7 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// A section is matched in any letter case, as the list's ids are, and
 /// llama-server's global `[*]` is never an answer: nothing in either file of
 /// that name is 404 `no-preset-named` ([`not_found`]), the id echoed only when
-/// it is a name a preset can carry. The failures are the list's, on the same
+/// it is a name a model profile can carry. The failures are the list's, on the same
 /// rule as the server read: 401 `session-required` with the manager not even
 /// connected to, 403 `session-not-administrator` when the manager refuses the
 /// signed-in user, which ends that session and stops the read, 503
@@ -524,8 +524,8 @@ pub(crate) async fn read(
     let name = id.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
         let client = connect(Some(user.as_str()))?;
-        let on = client.read_file(PRESETS)?;
-        let off = client.read_file(PRESETS_DISABLED)?;
+        let on = client.read_file(MODELS)?;
+        let off = client.read_file(MODELS_DISABLED)?;
         Ok(document(&on, &off, &name, &key))
     });
     read_answer(
@@ -533,7 +533,7 @@ pub(crate) async fn read(
         &session,
         tokio::time::timeout(timeout, ask).await,
         |document| match document {
-            // Neither file has a section of that name: no preset, nothing to read.
+            // Neither file has a section of that name: no model profile, nothing to read.
             None => not_found(&id),
             Some(document) => axum::Json(document).into_response(),
         },
@@ -545,7 +545,7 @@ pub(crate) async fn read(
 /// the page reads: `id` as the file spells it, the list row's engine pair,
 /// `enabled` for the file the section was found in, `values` the section's keys
 /// and values as that file's parser reads them (verbatim: no canonicalization
-/// and no check, so a preset the manager would refuse today is one the page can
+/// and no check, so a model profile the manager would refuse today is one the page can
 /// still show), `projectUrl` the section's `; url = ` comment, read by the
 /// configurator's reader in `pai-core` (`ini::project_url_of`), empty when the
 /// section has none, and `revision` ([`section_revision`]).
@@ -555,7 +555,7 @@ fn document(
     id: &str,
     key: &[u8; 16],
 ) -> Option<Value> {
-    for (file, name, enabled) in [(on, PRESETS, true), (off, PRESETS_DISABLED, false)] {
+    for (file, name, enabled) in [(on, MODELS, true), (off, MODELS_DISABLED, false)] {
         let Some(text) = file.as_ref().map(|file| file.text.as_str()) else {
             continue;
         };
@@ -583,14 +583,14 @@ fn document(
 /// line's own ending (`\n` or `\r\n`). The endings BETWEEN the lines are the
 /// file's.
 ///
-/// The file's name is in it, so the same text in the other file, the preset
-/// switched off, is another preset to the page. The section's text alone is in
+/// The file's name is in it, so the same text in the other file, the model profile
+/// switched off, is another model profile to the page. The section's text alone is in
 /// it, keys, values and comments in the file's spelling and order: a neighbour
 /// added to the file leaves it where it was, and a key added to the section
 /// moves it at once. The blank lines and the last line's ending are cut because
 /// they belong to no section: a file whose last section has no final break, the
 /// same file with that break added, and that file with a section appended below,
-/// all are the same preset to the page.
+/// all are the same model profile to the page.
 fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String {
     let section = ini::text::section_text(text, id).unwrap_or_default();
     let mut end = section.len();
@@ -609,7 +609,7 @@ fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String 
 /// The section a save starts from: the file that holds it, the text of that
 /// file as the manager read it (the compare and swap expects it), and the
 /// connect made for the signed-in user, reused for the write. `NotFound` when
-/// neither preset file has a section of that name.
+/// neither model profile file has a section of that name.
 enum Read {
     Found {
         client: Client,
@@ -622,10 +622,10 @@ enum Read {
 /// The file that holds the section `id`, read as the signed-in user over one
 /// connect: `models.ini` first, so a section in both files is the enabled one,
 /// as the list and the section read answer the same id. A file the manager says
-/// is not there holds nothing, and llama-server's global `[*]` is not a preset.
+/// is not there holds nothing, and llama-server's global `[*]` is not a model profile.
 fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientError> {
     let client = connect(Some(user))?;
-    for file in [PRESETS, PRESETS_DISABLED] {
+    for file in [MODELS, MODELS_DISABLED] {
         let Some(text) = client.read_file(file)?.map(|file| file.text) else {
             continue;
         };
@@ -640,12 +640,12 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
     Ok(Read::NotFound)
 }
 
-/// `PUT /api/presets/{id}`: the save of one preset, as the signed-in user. The
+/// `PUT /api/profiles/model/{id}`: the save of one model profile, as the signed-in user. The
 /// body is the object [`parse_body`] reads, the answer is exactly `{"revision",
 /// "running"}`: `revision` the revision of the section as it now stands in the
 /// file, so the card can go on editing, and `running` whether any instance is
 /// up ([`running`]), asked only when the section lives in the file llama-server
-/// reads: a preset saved in the disabled file is not offered, so it is not
+/// reads: a model profile saved in the disabled file is not offered, so it is not
 /// running. The session is read first, so with no session the manager is not
 /// even connected to (401), and only a signed-in request sees a body over
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
@@ -674,7 +674,7 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// write was sent its outcome is unknown, and the answer is 504
 /// `client-timeout`, within `write_timeout`. A write only starts while the
 /// answer is still wanted, so a task left behind by a deadline writes nothing.
-/// Once the write landed the preset is the one the body asked for, so a limit
+/// Once the write landed the model profile is the one the body asked for, so a limit
 /// that runs out on the states that follow, and a state read that fails, are the
 /// 200 with `running` true: the safe answer for a state the bff cannot read. A
 /// body that changes nothing has no write to ask, so the state is settled as
@@ -731,7 +731,7 @@ pub(crate) async fn save(
     let new_text = apply(&edits, &text, &id);
     let written = section_revision(&file, &new_text, &id, &key);
     let changed = new_text != text;
-    let enabled = file == PRESETS;
+    let enabled = file == MODELS;
     let state = Arc::new(WriteState::new());
     let mine = state.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
@@ -762,7 +762,7 @@ pub(crate) async fn save(
             }
             TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
             // The write landed, or the body asked for the text the file
-            // already holds and nothing was written: the preset is the one the
+            // already holds and nothing was written: the model profile is the one the
             // body asked for and only the instances' state stayed unknown.
             TimedOut::Done => saved(&written, true),
         },
@@ -779,11 +779,11 @@ fn saved(revision: &str, running: bool) -> Response {
         .into_response()
 }
 
-/// Why [`parse_body`] refuses the body of `PUT /api/presets/{id}`: the two
+/// Why [`parse_body`] refuses the body of `PUT /api/profiles/model/{id}`: the two
 /// answers the save gives before it reads a file, as the server save's
 /// [`crate::server::BodyAnswer`] answers them.
 enum BodyError {
-    /// The body is not a preset save at all: 400 `presets-malformed`.
+    /// The body is not a model profile save at all: 400 `presets-malformed`.
     Malformed,
     /// A value was refused: 422 `{key, args, field}`, the check's key and
     /// values, and the INI key the form marks (the table of one rule per key).
@@ -809,12 +809,12 @@ type Edits = Vec<(String, Option<String>)>;
 /// own tests in `src/tests/preset_body.rs` read.
 #[cfg(test)]
 #[derive(Debug)]
-pub(crate) enum PresetBodyAnswer {
-    /// The new text of the preset file, and the revision the body carried: the
+pub(crate) enum ModelProfileBodyAnswer {
+    /// The new text of the model profile file, and the revision the body carried: the
     /// save goes to the file that still holds it, and a body that changed the
     /// revision of the card is not written at all.
     Text { text: String, revision: String },
-    /// The body is not a preset save at all: 400 `presets-malformed`.
+    /// The body is not a model profile save at all: 400 `presets-malformed`.
     Malformed,
     /// A value was refused: 422 `{key, args, field}`, the check's key and
     /// values, and the INI key the form marks (the table of one rule per key).
@@ -825,36 +825,36 @@ pub(crate) enum PresetBodyAnswer {
     },
 }
 
-/// The body of `PUT /api/presets/{id}`, applied to `file_text`, the text of the
-/// preset file that holds the section named by `id`: the object
+/// The body of `PUT /api/profiles/model/{id}`, applied to `file_text`, the text of the
+/// model profile file that holds the section named by `id`: the object
 /// `{"revision": <the revision of the card the edit started from>, "values":
 /// {"<key>": <value>, ...}}`, a `null` value removing that key. The checks of
 /// [`parse_body`] answer first, then [`apply`] writes the edits: every check
 /// answers before the first edit is applied, so a refused body writes nothing.
 ///
 /// The save calls [`parse_body`] and [`apply`] with the file's text in between,
-/// so a body nothing can be made of is answered before a preset file is read.
+/// so a body nothing can be made of is answered before a model profile file is read.
 /// This is the whole of it, the tests' entry to it: it is built only under
 /// `cfg(test)`, because no route calls it, only the body's own tests in
 /// `src/tests/preset_body.rs` do.
 #[cfg(test)]
-pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> PresetBodyAnswer {
+pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> ModelProfileBodyAnswer {
     let Ok(body) = serde_json::from_slice::<Value>(body) else {
-        return PresetBodyAnswer::Malformed;
+        return ModelProfileBodyAnswer::Malformed;
     };
     match parse_body(&body) {
-        Ok((revision, edits)) => PresetBodyAnswer::Text {
+        Ok((revision, edits)) => ModelProfileBodyAnswer::Text {
             text: apply(&edits, file_text, id),
             revision,
         },
-        Err(BodyError::Malformed) => PresetBodyAnswer::Malformed,
+        Err(BodyError::Malformed) => ModelProfileBodyAnswer::Malformed,
         Err(BodyError::Refused { key, args, field }) => {
-            PresetBodyAnswer::Refused { key, args, field }
+            ModelProfileBodyAnswer::Refused { key, args, field }
         }
     }
 }
 
-/// The body of `PUT /api/presets/{id}`, read and checked, the file it edits
+/// The body of `PUT /api/profiles/model/{id}`, read and checked, the file it edits
 /// looked at nowhere: the revision it carries and its edits, sorted by key
 /// ([`Edits`]) whatever the order the body's `values` map came in.
 ///
@@ -884,7 +884,7 @@ fn parse_body(body: &Value) -> Result<(String, Edits), BodyError> {
     // The keys first: one name the web may not write refuses the whole body.
     if !values
         .keys()
-        .all(|key| checks::WEB_PRESET_KEYS.contains(&key.as_str()))
+        .all(|key| checks::WEB_MODEL_PROFILE_KEYS.contains(&key.as_str()))
     {
         return Err(BodyError::Malformed);
     }

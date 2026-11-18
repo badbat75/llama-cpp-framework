@@ -3,7 +3,7 @@
 //! Guards the "editable widget goes stale after an edit" class of bug that
 //! shipped in v1.1.1 and was fixed in v1.1.2: a one-way binding on an editable
 //! widget (`text: AppState.x`) breaks the instant the user edits the field
-//! (Slint's "overwritten bindings" rule), so a later model change (preset switch
+//! (Slint's "overwritten bindings" rule), so a later model change (model profile switch
 //! or Revert) never reaches the widget. The fix is a two-way binding (`<=>`).
 //!
 //! Pure-Rust tests (form.rs round-trips) can't see this bug: it lives entirely in
@@ -182,7 +182,7 @@ fn by_label(app: &AppWindow, label: &str) -> ElementHandle {
 /// The core invariant: after a simulated user edit, a *fresh* model value must
 /// still reach the widget. `read` returns the widget's currently displayed value,
 /// `edit` performs the imperative self-write that would break a one-way binding,
-/// and `set_model` pushes a value from the Rust side (as a preset switch / Revert
+/// and `set_model` pushes a value from the Rust side (as a model profile switch / Revert
 /// does). With a one-way binding the widget freezes on the edited value and the
 /// final assert fails; with `<=>` it tracks `reload`.
 ///
@@ -400,11 +400,11 @@ fn editable_widgets_track_model_after_edit() {
         "Options.log_levels (ui/components.slint) drifted from server_form::LOG_LEVELS"
     );
 
-    // Same drift guard for the preset's load-mode dropdown, where the stakes
+    // Same drift guard for the model profile's load-mode dropdown, where the stakes
     // are one step higher: its entries after "default" (the omitted key) are
     // passed to llama-server VERBATIM, so a mode the Rust list has and the combo
     // doesn't leaves the combo on "default" and drops the user's choice on the
-    // next save, while the reverse is canonicalized away by `form_to_preset`.
+    // next save, while the reverse is canonicalized away by `form_to_model_profile`.
     let slint_modes: Vec<String> = app
         .global::<crate::gui::Options>()
         .get_load_modes()

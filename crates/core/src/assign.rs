@@ -1,5 +1,5 @@
 // The render of one instance's `models@<id>.ini`: the pool (the pair
-// `models.ini` and `models.ini.disabled`) cut to the presets one instance is
+// `models.ini` and `models.ini.disabled`) cut to the model profiles one instance is
 // given by its section of `assignments.ini`.
 //
 // The manager owns that file: it renders it after every write of a pool file,
@@ -11,25 +11,25 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The text of one instance's `models@<id>.ini`.
 ///
-/// - `enabled`: the text of `models.ini`, the pool's switched-on presets
+/// - `enabled`: the text of `models.ini`, the pool's switched-on model profiles
 /// - `disabled`: the text of `models.ini.disabled`, the switched-off ones
 /// - `assignment`: the instance's section of `assignments.ini` as
 ///   `ini::text::section_text` hands it (its `[<id>]` header line included),
-///   or `None` when the instance has no section. One key per assigned preset
+///   or `None` when the instance has no section. One key per assigned model profile
 ///   id: `inherit` follows the global switch, `on` and `off` are the explicit
-///   override. The key `*` assigns every preset of the pool, and an explicit
+///   override. The key `*` assigns every model profile of the pool, and an explicit
 ///   key wins over it. A header of its own is optional: a bare list of key
 ///   lines is the assignment. A key whose value is none of those three words
 ///   (a hand-edited `none`) is an absent key.
 ///
 /// The pool's global `[*]` section comes first, always (assigned or not, and
-/// taken from the file that holds it), then every assigned preset that is in
+/// taken from the file that holds it), then every assigned model profile that is in
 /// effect on, in the pool's own order (`enabled` first, then `disabled`), each
-/// section copied byte for byte from the file that holds it. A preset with no
+/// section copied byte for byte from the file that holds it. A model profile with no
 /// key and no `*` is not assigned, so it is not rendered; an assigned id the
 /// pool does not hold renders nothing, so an instance with no assignment
-/// section is given `[*]` alone. `*` is never a preset id, so it never becomes
-/// a section of its own. One id is one preset, so an id the two pool files
+/// section is given `[*]` alone. `*` is never a model profile id, so it never becomes
+/// a section of its own. One id is one model profile, so an id the two pool files
 /// both hold, or written twice in one file, in any letter case, is rendered
 /// once, from the first copy: `models.ini` before `models.ini.disabled`.
 ///
@@ -57,13 +57,13 @@ pub fn render(enabled: &str, disabled: &str, assignment: Option<&str>) -> String
         }
     }
     // The ids rendered so far, lowered: the reader finds a section ignoring the
-    // letter case, so a second copy of an id is the same preset and renders
+    // letter case, so a second copy of an id is the same model profile and renders
     // nothing.
     let mut rendered: BTreeSet<String> = BTreeSet::new();
     for (in_enabled, pool) in [(true, enabled), (false, disabled)] {
-        // The global switch of this file's presets: the file that holds them
+        // The global switch of this file's model profiles: the file that holds them
         // (`enabled` is the switched-on half of the pool), with `on` and `off`
-        // under `*` replacing it for every preset of the pool.
+        // under `*` replacing it for every model profile of the pool.
         let global = match star {
             Some("on") => true,
             Some("off") => false,
@@ -71,7 +71,7 @@ pub fn render(enabled: &str, disabled: &str, assignment: Option<&str>) -> String
         };
         for id in pool_ids(pool) {
             let on = match keys.get(&id) {
-                // The preset's own key wins over `*`; `inherit` follows the
+                // The model profile's own key wins over `*`; `inherit` follows the
                 // global switch.
                 Some(value) => is_on(value, global),
                 None => keys.contains_key("*") && global,
@@ -132,7 +132,7 @@ fn assigned(assignment: Option<&str>) -> BTreeMap<String, String> {
     keys
 }
 
-/// The preset ids of a pool file, in the file's own order, `[*]` aside.
+/// The model profile ids of a pool file, in the file's own order, `[*]` aside.
 fn pool_ids(pool: &str) -> Vec<String> {
     ini::parse_sections(pool)
         .into_iter()
@@ -402,7 +402,7 @@ mod tests {
         );
     }
 
-    /// `* = inherit`: the pool's `[*]` section and every preset the global
+    /// `* = inherit`: the pool's `[*]` section and every model profile the global
     /// switch has on, nothing switched off.
     #[test]
     fn the_render_star_inherit_follows_the_global_switch() {
@@ -415,7 +415,7 @@ mod tests {
         }
     }
 
-    /// `* = off` drops every globally-on preset; the explicit `on` survives.
+    /// `* = off` drops every globally-on model profile; the explicit `on` survives.
     #[test]
     fn the_render_star_off_keeps_only_the_explicit_on() {
         for eol in EOLS {
@@ -440,10 +440,10 @@ mod tests {
         }
     }
 
-    /// `on` renders a preset that sits only in `models.ini.disabled`, copied
+    /// `on` renders a model profile that sits only in `models.ini.disabled`, copied
     /// byte for byte from that file.
     #[test]
-    fn the_render_override_on_renders_a_preset_only_in_the_disabled_file() {
+    fn the_render_override_on_renders_a_model_profile_only_in_the_disabled_file() {
         for eol in EOLS {
             let (on, off) = (pool_on(eol), pool_off(eol));
             let assignment = file_of(&["* = inherit", "gamma = on"], eol);
@@ -494,7 +494,7 @@ mod tests {
     }
 
     /// No assignment section, an empty one, one holding only a comment, one
-    /// switching a preset off: the instance is given `[*]` alone.
+    /// switching a model profile off: the instance is given `[*]` alone.
     #[test]
     fn the_render_no_assignment_section_renders_only_the_global_section() {
         for eol in EOLS {
@@ -579,7 +579,7 @@ mod tests {
         }
     }
 
-    /// A pool with no `[*]` section: the render is the assigned presets, in the
+    /// A pool with no `[*]` section: the render is the assigned model profiles, in the
     /// pool's order (`enabled` first, then `disabled`), not sorted.
     #[test]
     fn the_render_follows_the_pool_order_not_the_key_order() {
@@ -599,11 +599,11 @@ mod tests {
         }
     }
 
-    /// `*` is never a preset id, so it never becomes a section: on a pool that
-    /// holds no preset it renders no section at all, and on a pool that has a
+    /// `*` is never a model profile id, so it never becomes a section: on a pool that
+    /// holds no model profile it renders no section at all, and on a pool that has a
     /// `[*]` section it renders that one, once.
     #[test]
-    fn the_render_star_never_becomes_a_preset_section() {
+    fn the_render_star_never_becomes_a_model_profile_section() {
         for eol in EOLS {
             let off = pool_off(eol);
             let empty = String::new();
@@ -660,7 +660,7 @@ mod tests {
         }
     }
 
-    /// One id in both files of the pool is ONE preset: when it is on it is
+    /// One id in both files of the pool is ONE model profile: when it is on it is
     /// rendered once, from `models.ini` (the file that holds it on), under its
     /// own `on`, under `* = on` and under `inherit`.
     #[test]
@@ -690,7 +690,7 @@ mod tests {
         }
     }
 
-    /// The same id in both files, switched off: the preset is off, so it is
+    /// The same id in both files, switched off: the model profile is off, so it is
     /// rendered not at all, from neither file, and `* = on` does not reach it.
     #[test]
     fn the_render_an_id_in_both_pool_files_switched_off_renders_not_at_all() {
@@ -762,7 +762,7 @@ mod tests {
     }
 
     /// `[*]` as the LAST section of its file, with no final line break: it is
-    /// rendered first, before the preset that follows it in the file, so the
+    /// rendered first, before the model profile that follows it in the file, so the
     /// render breaks the line the global section ends in.
     #[test]
     fn the_render_the_global_section_last_with_no_final_break_does_not_glue_the_next_one() {
@@ -790,7 +790,7 @@ mod tests {
     }
 
     /// One pool file holding the same section twice: llama-server knows one
-    /// preset with that name, so the render gives one section, the first, once.
+    /// model profile with that name, so the render gives one section, the first, once.
     #[test]
     fn the_render_a_duplicate_section_in_one_pool_file_renders_once() {
         for eol in EOLS {
@@ -880,7 +880,7 @@ mod tests {
     }
 
     /// An assignment value that is not `inherit`, `on` or `off` (a hand-edited
-    /// `none`) is read as an absent key: only the pool's `[*]` and the presets
+    /// `none`) is read as an absent key: only the pool's `[*]` and the model profiles
     /// the assignment really assigns are rendered.
     #[test]
     fn the_render_an_assignment_value_that_is_not_inherit_on_or_off_reads_as_absent() {
@@ -908,7 +908,7 @@ mod tests {
             );
             assert_generated_header(&head, eol);
 
-            // Under a real `* = on` the preset has no key of its own to fall
+            // Under a real `* = on` the model profile has no key of its own to fall
             // back on, so the `*` assigns it: the nonsense value changes nothing.
             let assignment = file_of(&["* = on", "alpha = none"], eol);
             let (head, body) = parts(&render(&on, &off, Some(&assignment)));
@@ -947,7 +947,7 @@ mod tests {
             assert_sections(&body, &[(&off, "*"), (&off, "gamma"), (&off, "delta")], eol);
             assert_generated_header(&head, eol);
 
-            // No `*` in the assignment: only the preset the keys assign.
+            // No `*` in the assignment: only the model profile the keys assign.
             let assignment = file_of(&["gamma = on"], eol);
             let (head, body) = parts(&render(&empty, &off, Some(&assignment)));
             assert_sections(&body, &[(&off, "*"), (&off, "gamma")], eol);

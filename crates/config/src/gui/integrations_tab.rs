@@ -3,9 +3,9 @@
 //! initial seed (`refresh_integrations`) runs in `gui::run()` alongside the other
 //! tabs' seeds; `wire()` here is pure callback attachment.
 //!
-//! There is no model list to edit here: OpenCode lists every ENABLED preset (the
+//! There is no model list to edit here: OpenCode lists every ENABLED model profile (the
 //! switch beside each one in the Models tab), see the `integrations` module
-//! header. opencode.json is written by this tab's Save alone, never by a preset
+//! header. opencode.json is written by this tab's Save alone, never by a model profile
 //! change, and Save first shows a preview (`integrations::opencode_plan`): one
 //! ticked row per model whose entry would change. Unticking a row leaves that
 //! model's entry as the file holds it.

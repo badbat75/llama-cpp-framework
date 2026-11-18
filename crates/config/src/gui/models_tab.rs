@@ -1,24 +1,24 @@
-//! Models-tab callback wiring (the preset editor + New / Clone / Rename / Delete dialogs).
+//! Models-tab callback wiring (the model profile editor + New / Clone / Rename / Delete dialogs).
 //!
-//! Shared state, generated Slint types, and the `refresh_*` / `reload_presets` /
+//! Shared state, generated Slint types, and the `refresh_*` / `reload_model_profiles` /
 //! `apply_form` helpers live in the parent `gui` module; `use super::*` pulls
 //! them in. The Models-tab-only helper families live HERE next to their callers
 //! instead of in the shared hub:
 //! - `update_model_info`: the GGUF "Model info" box;
-//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_preset`;
-//!   the Hugging Face source ends elsewhere: its preset is created in the
+//! - the New / Clone dialog funnel (`populate_dialog_models` … `commit_new_model_profile`;
+//!   the Hugging Face source ends elsewhere: its model profile is created in the
 //!   background by `gui/downloads.rs`, which leaves the editor alone and only
-//!   refreshes the list, the pickers and `presets_moved`);
-//! - the discard-guarded navigation bodies (`do_select_preset`,
+//!   refreshes the list, the pickers and `model_profiles_moved`);
+//! - the discard-guarded navigation bodies (`do_select_model_profile`,
 //!   `open_new_dialog`, `open_clone_dialog`, and the Rename seed behind
 //!   `request_rename`): the actions `confirm_discard_then` parks;
-//! - `preset_written`: the reload + reselect + re-baseline invariant every
+//! - `model_profile_written`: the reload + reselect + re-baseline invariant every
 //!   write path (save / rename / clone / New…) funnels through;
 //! - the Delete dialog (`DeleteDialog`, `open_delete_dialog`,
-//!   `delete_ticked_files`): the preset's linked model files, each with a
-//!   tick that starts cleared and cannot be set on a file another preset
+//!   `delete_ticked_files`): the model profile's linked model files, each with a
+//!   tick that starts cleared and cannot be set on a file another model profile
 //!   uses; the confirm removes the section FIRST, then the ticked files
-//!   (in-use re-checked against the presets as they stand then) and the
+//!   (in-use re-checked against the model profiles as they stand then) and the
 //!   folders they leave empty, through `linked_files.rs`;
 //! - `apply_draft_pick`: the merged MTP/DFlash draft-pick policy (incl. the
 //!   gemma4 auto-pin), unit-tested below.
@@ -41,17 +41,24 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // Switching presets replaces the form; unsaved edits need the
+            // Switching model profiles replaces the form; unsaved edits need the
             // discard confirmation first.
             let dirty = app.global::<AppState>().get_preset_dirty();
             // The action may run later (after the discard dialog), and the
             // list can be re-read meanwhile (a background download creating
-            // its preset, gui/downloads.rs): park the preset's ID, not its
+            // its model profile, gui/downloads.rs): park the model profile's ID, not its
             // index, and resolve it when the action runs.
-            let Some(id) = usize::try_from(index)
-                .ok()
-                .and_then(|i| Some(state.borrow().presets.get(i)?.preset.id.clone()))
-            else {
+            let Some(id) = usize::try_from(index).ok().and_then(|i| {
+                Some(
+                    state
+                        .borrow()
+                        .model_profiles
+                        .get(i)?
+                        .model_profile
+                        .id
+                        .clone(),
+                )
+            }) else {
                 return;
             };
             let action: Box<dyn Fn()> = {
@@ -63,11 +70,11 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                     };
                     let index = state
                         .borrow()
-                        .presets
+                        .model_profiles
                         .iter()
-                        .position(|l| l.preset.id == id);
+                        .position(|l| l.model_profile.id == id);
                     if let Some(index) = index {
-                        do_select_preset(&app, &state, i32::try_from(index).unwrap_or(-1));
+                        do_select_model_profile(&app, &state, i32::try_from(index).unwrap_or(-1));
                     }
                 })
             };
@@ -78,12 +85,12 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
     // `model_info_serial`) changes; see `moe_cache_floor_hint` in state.slint.
     app.global::<AppState>()
         .on_moe_cache_floor_hint(|form, _serial| {
-            preset_moe_floor(&form_to_preset(&form))
+            model_profile_moe_floor(&form_to_model_profile(&form))
                 .map(|f| f.hint())
                 .unwrap_or_default()
                 .into()
         });
-    // The drafter widgets' view of the `--spec-type` list (presets.rs), pure
+    // The drafter widgets' view of the `--spec-type` list (model profiles.rs), pure
     // over `form.spec_type` so Slint re-reads them on every change of it.
     {
         let s = app.global::<AppState>();
@@ -105,9 +112,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             let s = app.global::<AppState>();
-            let mut p = form_to_preset(&s.get_form());
+            let mut p = form_to_model_profile(&s.get_form());
             // Belt and braces: `update_model_info` already pruned the FORM, but
-            // the save is the boundary that reaches DISK, and a preset that
+            // the save is the boundary that reaches DISK, and a model profile that
             // llama-server then refuses to load is the failure being prevented.
             // Gated on `model_info_ready`: false means the GGUF could not be
             // read, where "no MTP metadata" is not evidence of no MTP.
@@ -119,8 +126,8 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // never loads. The LOAD floor is a true lower bound
                 // (`moe_cache::floor`), so this never refuses a value that could
                 // have worked. 0 is "no cache" and passes.
-                let floor =
-                    preset_moe_floor(&p).map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
+                let floor = model_profile_moe_floor(&p)
+                    .map_or(0, |f| crate::moe_cache::mib(f.load_bytes()));
                 if let Some(v) = p.moe_cache_mib.filter(|&v| v > 0 && (v as u64) < floor) {
                     set_status(
                         &app,
@@ -155,9 +162,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             match presets::save(&p) {
                 Ok(()) => {
                     set_status(&app, strings::fill("preset-saved", &[&p.id]), false);
-                    // Rebuild + re-select the just-saved preset (re-baselining the
+                    // Rebuild + re-select the just-saved model profile (re-baselining the
                     // form so Save/Revert go disabled) and refresh the dependents.
-                    preset_written(&app, &state, Some(&p.id));
+                    model_profile_written(&app, &state, Some(&p.id));
                 }
                 Err(e) => set_status(&app, strings::fill("save-failed", &[&e]), true),
             }
@@ -170,9 +177,9 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // Reload from disk keeping the current selection; reload_presets
+            // Reload from disk keeping the current selection; reload_model_profiles
             // re-applies (and re-baselines) the form, so no second apply here.
-            reload_presets(&app, &state, None);
+            reload_model_profiles(&app, &state, None);
             refresh_file_options(&app, &state);
             let label = app.global::<AppState>().get_form().id;
             set_status(&app, strings::fill("preset-reloaded", &[&label]), false);
@@ -223,7 +230,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             if id.is_empty() {
                 return;
             }
-            // The section first: a preset that cannot be removed keeps its
+            // The section first: a model profile that cannot be removed keeps its
             // files too (they would be the files it still loads).
             if let Err(e) = presets::delete(id.as_str()) {
                 set_status(&app, strings::fill("delete-failed", &[&e]), true);
@@ -232,23 +239,24 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let outcome = delete_ticked_files(&dialog, id.as_str());
             let (text, is_error) = crate::linked_files::report(id.as_str(), &outcome);
             set_status(&app, text, is_error);
-            // Not preset_written(): after a delete we clear the selection
+            // Not model_profile_written(): after a delete we clear the selection
             // and show an empty editor, so the file/integration refreshes
             // must run AFTER the form is blanked, not against the neighbour
-            // reload_presets would otherwise select. refresh_file_options is
+            // reload_model_profiles would otherwise select. refresh_file_options is
             // also the rescan that drops deleted files from the pickers.
-            reload_presets(&app, &state, None);
+            reload_model_profiles(&app, &state, None);
             app.global::<AppState>().set_selected_preset_index(-1);
             apply_form(&app, PresetForm::default());
             refresh_file_options(&app, &state);
-            presets_moved(&app, &state);
+            model_profiles_moved(&app, &state);
         });
     }
 
-    // Holds the preset a Clone is based on, between opening the picker and the
+    // Holds the model profile a Clone is based on, between opening the picker and the
     // user confirming a target model. `new_dialog_source_id == ""` means the
-    // picker is in plain "New" (empty-preset) mode; non-empty means Clone.
-    let pending_clone_base: Rc<RefCell<Option<presets::Preset>>> = Rc::new(RefCell::new(None));
+    // picker is in plain "New" (empty-model-profile) mode; non-empty means Clone.
+    let pending_clone_base: Rc<RefCell<Option<presets::ModelProfile>>> =
+        Rc::new(RefCell::new(None));
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -257,7 +265,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            // Committing the new preset will replace the form (preset_written
+            // Committing the new model profile will replace the form (model_profile_written
             // reloads + reselects), so guard dirty edits at the entry point:
             // a discard dialog can't stack on the picker modal later.
             let dirty = app.global::<AppState>().get_preset_dirty();
@@ -342,7 +350,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             // Same entry-point guard as New…/Clone…: committing the rename
-            // reloads the form from disk (preset_written), discarding edits.
+            // reloads the form from disk (model_profile_written), discarding edits.
             let dirty = app.global::<AppState>().get_preset_dirty();
             let action: Box<dyn Fn()> = {
                 let app_weak = app_weak.clone();
@@ -375,7 +383,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                             strings::fill("preset-renamed", &[&old_id, &new_id]),
                             false,
                         );
-                        preset_written(&app, &state, Some(new_id.as_str()));
+                        model_profile_written(&app, &state, Some(new_id.as_str()));
                     }
                     Err(e) => set_status(&app, strings::fill("rename-failed", &[&e]), true),
                 }
@@ -392,7 +400,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // Not behind the discard guard, and not a form reload: the switch
                 // moves the section between the two files without changing a
                 // word of it, so an unsaved edit stays in the form and its Save
-                // follows the preset into whichever file now holds it.
+                // follows the model profile into whichever file now holds it.
                 match presets::set_enabled(id.as_str(), enabled) {
                     Ok(()) => {
                         // The router reads models.ini once, at launch.
@@ -413,8 +421,8 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 // Rebuilt on failure too: the click already flipped the switch
                 // and broke its one-way binding, and only a fresh row puts it
                 // back to what the files say.
-                refresh_preset_list(&app, &state);
-                presets_moved(&app, &state);
+                refresh_model_profile_list(&app, &state);
+                model_profiles_moved(&app, &state);
             });
     }
     {
@@ -425,7 +433,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                 return;
             };
             let st = state.borrow();
-            let summaries = preset_summaries(&st.presets, q.as_str());
+            let summaries = model_profile_summaries(&st.model_profiles, q.as_str());
             app.global::<AppState>().set_presets(model(summaries));
         });
     }
@@ -517,8 +525,8 @@ fn wire_tensor_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let rules = tensor_override::add(&preset_overrides(&app), &devices::probed());
-            set_preset_overrides(&app, &rules);
+            let rules = tensor_override::add(&model_profile_overrides(&app), &devices::probed());
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_rows(&app);
         });
     }
@@ -528,8 +536,8 @@ fn wire_tensor_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let rules = tensor_override::remove(&preset_overrides(&app), row_index(index));
-            set_preset_overrides(&app, &rules);
+            let rules = tensor_override::remove(&model_profile_overrides(&app), row_index(index));
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_rows(&app);
         });
     }
@@ -539,9 +547,12 @@ fn wire_tensor_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let rules =
-                tensor_override::set_kind(&preset_overrides(&app), row_index(index), kind.as_str());
-            set_preset_overrides(&app, &rules);
+            let rules = tensor_override::set_kind(
+                &model_profile_overrides(&app),
+                row_index(index),
+                kind.as_str(),
+            );
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_rows(&app);
         });
     }
@@ -552,11 +563,11 @@ fn wire_tensor_table(app: &AppWindow) {
                 return;
             };
             let rules = tensor_override::set_device(
-                &preset_overrides(&app),
+                &model_profile_overrides(&app),
                 row_index(index),
                 device.as_str(),
             );
-            set_preset_overrides(&app, &rules);
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_rows(&app);
         });
     }
@@ -567,11 +578,11 @@ fn wire_tensor_table(app: &AppWindow) {
                 return;
             };
             let rules = tensor_override::set_pattern(
-                &preset_overrides(&app),
+                &model_profile_overrides(&app),
                 row_index(index),
                 pattern.as_str(),
             );
-            set_preset_overrides(&app, &rules);
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_scalars(&app);
         });
     }
@@ -582,11 +593,11 @@ fn wire_tensor_table(app: &AppWindow) {
                 return;
             };
             let rules = tensor_override::set_layers(
-                &preset_overrides(&app),
+                &model_profile_overrides(&app),
                 row_index(index),
                 layers.as_str(),
             );
-            set_preset_overrides(&app, &rules);
+            set_model_profile_overrides(&app, &rules);
             refresh_tensor_scalars(&app);
         });
     }
@@ -609,8 +620,11 @@ fn wire_tensor_picker(app: &AppWindow) {
             if tensors.is_empty() {
                 return;
             }
-            let picker =
-                tensor_picker::Picker::open(&preset_overrides(&app), row_index(index), tensors);
+            let picker = tensor_picker::Picker::open(
+                &model_profile_overrides(&app),
+                row_index(index),
+                tensors,
+            );
             TENSOR_PICKER.with(|p| *p.borrow_mut() = Some(picker));
             refresh_tensor_picker(&app);
         });
@@ -667,9 +681,12 @@ fn wire_tensor_picker(app: &AppWindow) {
             };
             let pattern = picker.pattern();
             if !pattern.is_empty() {
-                let rules =
-                    tensor_override::set_pattern(&preset_overrides(&app), picker.rule, &pattern);
-                set_preset_overrides(&app, &rules);
+                let rules = tensor_override::set_pattern(
+                    &model_profile_overrides(&app),
+                    picker.rule,
+                    &pattern,
+                );
+                set_model_profile_overrides(&app, &rules);
             }
             refresh_tensor_picker(&app);
             refresh_tensor_rows(&app);
@@ -687,7 +704,7 @@ fn wire_tensor_picker(app: &AppWindow) {
     }
 }
 
-/// The per-preset GPU distribution table's four callbacks: the twin of
+/// The per-model-profile GPU distribution table's four callbacks: the twin of
 /// `server_tab::wire_gpu_table`, over `form.device` + `form.tensor_split`. The
 /// rebuild-vs-scalars-only distinction is documented there.
 fn wire_gpu_table(app: &AppWindow) {
@@ -698,8 +715,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::toggle(&preset_selection(&app), id.as_str());
-            set_preset_selection(&app, &sel);
+            let sel = gpu_split::toggle(&model_profile_selection(&app), id.as_str());
+            set_model_profile_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
     }
@@ -709,8 +726,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::move_by(&preset_selection(&app), id.as_str(), delta);
-            set_preset_selection(&app, &sel);
+            let sel = gpu_split::move_by(&model_profile_selection(&app), id.as_str(), delta);
+            set_model_profile_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
     }
@@ -720,8 +737,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_weight(&preset_selection(&app), id.as_str(), weight);
-            set_preset_selection(&app, &sel);
+            let sel = gpu_split::set_weight(&model_profile_selection(&app), id.as_str(), weight);
+            set_model_profile_selection(&app, &sel);
             refresh_gpu_scalars(&app);
         });
     }
@@ -731,10 +748,10 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let Some(layout) = preset_split_layout(&app) else {
+            let Some(layout) = model_profile_split_layout(&app) else {
                 return;
             };
-            let current = preset_selection(&app);
+            let current = model_profile_selection(&app);
             let sel = gpu_split::set_blocks(&current, id.as_str(), blocks, layout);
             // Committing the same count again (which leaving the field after an
             // Enter does) must not rebuild: the rebuild recreates the delegate,
@@ -742,7 +759,7 @@ fn wire_gpu_table(app: &AppWindow) {
             if sel == current {
                 return;
             }
-            set_preset_selection(&app, &sel);
+            set_model_profile_selection(&app, &sel);
             // Unlike a weight edit this DOES rebuild: the count that was typed is
             // paid for by the other rows, so their cells and ranges are stale until
             // the model is rebuilt. That is affordable only because the callback is
@@ -756,8 +773,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_auto(&preset_selection(&app));
-            set_preset_selection(&app, &sel);
+            let sel = gpu_split::set_auto(&model_profile_selection(&app));
+            set_model_profile_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
     }
@@ -767,8 +784,8 @@ fn wire_gpu_table(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let sel = gpu_split::set_even(&preset_selection(&app));
-            set_preset_selection(&app, &sel);
+            let sel = gpu_split::set_even(&model_profile_selection(&app));
+            set_model_profile_selection(&app, &sel);
             refresh_gpu_rows(&app);
         });
     }
@@ -791,13 +808,16 @@ fn wire_gpu_table(app: &AppWindow) {
 
 // ── Discard-guarded navigation (select / New / Clone) ─────────────────
 
-/// The actual preset switch (the guarded body of `on_select_preset`): load the
-/// indexed preset into the editor and refresh its dependent dropdowns.
-fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
+/// The actual model profile switch (the guarded body of `on_select_preset`): load the
+/// indexed model profile into the editor and refresh its dependent dropdowns.
+fn do_select_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
     let st = state.borrow();
-    if let Some(l) = usize::try_from(index).ok().and_then(|i| st.presets.get(i)) {
+    if let Some(l) = usize::try_from(index)
+        .ok()
+        .and_then(|i| st.model_profiles.get(i))
+    {
         app.global::<AppState>().set_selected_preset_index(index);
-        apply_form(app, preset_to_form(&l.preset));
+        apply_form(app, model_profile_to_form(&l.model_profile));
         drop(st);
         refresh_file_options(app, state);
     }
@@ -809,7 +829,7 @@ fn do_select_preset(app: &AppWindow, state: &Rc<RefCell<State>>, index: i32) {
 fn open_new_dialog(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    pending_clone_base: &Rc<RefCell<Option<presets::Preset>>>,
+    pending_clone_base: &Rc<RefCell<Option<presets::ModelProfile>>>,
 ) {
     *pending_clone_base.borrow_mut() = None;
     populate_dialog_models(app, state);
@@ -819,13 +839,13 @@ fn open_new_dialog(
 }
 
 /// Open the model picker in Clone mode (the guarded body of `on_clone_preset`).
-/// The clone source is always the selected preset (the button is disabled
+/// The clone source is always the selected model profile (the button is disabled
 /// otherwise): stash it and surface its id in the dialog so it's clear what is
 /// being copied.
 fn open_clone_dialog(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    pending_clone_base: &Rc<RefCell<Option<presets::Preset>>>,
+    pending_clone_base: &Rc<RefCell<Option<presets::ModelProfile>>>,
 ) {
     let s = app.global::<AppState>();
     let selected = {
@@ -833,8 +853,8 @@ fn open_clone_dialog(
         let idx = s.get_selected_preset_index();
         usize::try_from(idx)
             .ok()
-            .and_then(|i| st.presets.get(i))
-            .map(|l| l.preset.clone())
+            .and_then(|i| st.model_profiles.get(i))
+            .map(|l| l.model_profile.clone())
     };
     let Some(p) = selected else {
         set_status(app, strings::t("select-preset-to-clone"), true);
@@ -850,7 +870,7 @@ fn open_clone_dialog(
 // fallbacks that share it (and its Slint mirror is test-asserted there).
 use crate::form::ALL_LAYERS;
 
-/// A `--spec-type` list in the form's spelling: empty is "none" (`preset_to_form`).
+/// A `--spec-type` list in the form's spelling: empty is "none" (`model_profile_to_form`).
 fn form_spec_type(spec_type: String) -> SharedString {
     if spec_type.is_empty() {
         "none".into()
@@ -868,7 +888,7 @@ fn form_spec_type(spec_type: String) -> SharedString {
 /// from the context, whatever the draft file. Then
 /// auto-pin an unconfigured draft to ONE device: the multi-device "auto" split
 /// crashes gemma4 MTP heads. Pin to the SAME GPU the
-/// model runs on so both land together: the preset's own `device` selection
+/// model runs on so both land together: the model profile's own `device` selection
 /// (all layers on it); otherwise fall back to CPU, which always works. A draft the user already
 /// configured (auto off or a device pinned) is left alone.
 ///
@@ -897,7 +917,7 @@ fn apply_draft_pick(form: &mut PresetForm, value: &str, spec: &str) {
 }
 
 /// The one device `apply_draft_pick` pins a draft file to, `None` when the
-/// preset names none. Normally the FIRST of `device`: the one llama.cpp's split
+/// model profile names none. Normally the FIRST of `device`: the one llama.cpp's split
 /// starts from, and the only one that runs under split-mode none.
 ///
 /// A DFlash / DSpark drafter is the exception under a layer split: with the
@@ -928,34 +948,34 @@ fn draft_pin_device(form: &PresetForm, spec: &str) -> Option<String> {
 
 // ── Write invariant: reload + reselect + re-baseline ──────────────────
 
-/// Refresh everything that depends on the preset set after a models.ini write:
-/// the (re-selected) preset list (`reload_presets`), the file/device dropdowns,
-/// and the tabs that read the enabled set (`presets_moved`). `want` picks the
-/// selection like `reload_presets`. The invariant every write path follows:
+/// Refresh everything that depends on the model profile set after a models.ini write:
+/// the (re-selected) model profile list (`reload_model_profiles`), the file/device dropdowns,
+/// and the tabs that read the enabled set (`model_profiles_moved`). `want` picks the
+/// selection like `reload_model_profiles`. The invariant every write path follows:
 /// save / rename / clone all funnel through here. (select/revert do NOT: they
 /// don't mutate disk; delete keeps its own sequence because it clears the
 /// selection, and the on/off switch its own because it must keep the form.)
-fn preset_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
-    reload_presets(app, state, want);
+fn model_profile_written(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
+    reload_model_profiles(app, state, want);
     refresh_file_options(app, state);
-    presets_moved(app, state);
+    model_profiles_moved(app, state);
 }
 
-/// The tail every preset write shares: the consumers of the ENABLED set, which
+/// The tail every model profile write shares: the consumers of the ENABLED set, which
 /// a save can change (a `ctx-size` moves an opencode entry's `limit.context`)
 /// as surely as a switch or a delete can. The Integrations tab re-derives its
 /// status line, which then names what its Save would change (opencode.json
 /// itself is written only by that Save), and the Benchmark tab re-lists, since a
-/// preset that is off, renamed or gone can no longer be run (its refresh also
+/// model profile that is off, renamed or gone can no longer be run (its refresh also
 /// drops it from the selection).
-pub(super) fn presets_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
+pub(super) fn model_profiles_moved(app: &AppWindow, state: &Rc<RefCell<State>>) {
     refresh_integrations(app);
     bench_tab::refresh(app, state);
 }
 
-// ── Delete dialog: the preset, and the files it links ─────────────────
+// ── Delete dialog: the model profile, and the files it links ─────────────────
 
-/// The Delete dialog's Rust half (`State.delete_dialog`): the preset it is
+/// The Delete dialog's Rust half (`State.delete_dialog`): the model profile it is
 /// about, the files it links (`linked_files::linked_files`, in-use check
 /// included) and one tick per file, all cleared at open. The Slint rows are
 /// rebuilt from this on every change (`push_delete_rows`).
@@ -988,7 +1008,7 @@ impl DeleteDialog {
     }
 }
 
-/// Open the Delete dialog on the selected preset: look it up in both INI files,
+/// Open the Delete dialog on the selected model profile: look it up in both INI files,
 /// list the files it links that are on disk, every tick cleared.
 fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
@@ -999,15 +1019,15 @@ fn open_delete_dialog(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let listed = presets::load_listed();
     let Some(target) = listed
         .iter()
-        .find(|l| l.preset.id.eq_ignore_ascii_case(&id))
+        .find(|l| l.model_profile.id.eq_ignore_ascii_case(&id))
     else {
         set_status(app, strings::fill("preset-not-on-disk", &[&id]), true);
         return;
     };
-    let all: Vec<presets::Preset> = listed.iter().map(|l| l.preset.clone()).collect();
-    let files = crate::linked_files::linked_files(&target.preset, &all);
+    let all: Vec<presets::ModelProfile> = listed.iter().map(|l| l.model_profile.clone()).collect();
+    let files = crate::linked_files::linked_files(&target.model_profile, &all);
     let dialog = DeleteDialog {
-        id: target.preset.id.clone(),
+        id: target.model_profile.id.clone(),
         ticked: vec![false; files.len()],
         files,
     };
@@ -1047,7 +1067,7 @@ fn push_delete_rows(app: &AppWindow, dialog: &DeleteDialog) {
 }
 
 /// After the section is gone: delete the files ticked in `dialog`, when it was
-/// opened on `id`. The in-use check is run AGAIN against the presets as they
+/// opened on `id`. The in-use check is run AGAIN against the model profiles as they
 /// stand now, so a file that became shared since the dialog opened (by a hand
 /// edit or the CLI) is kept, not deleted. The empty-folder cleanup is bounded
 /// by the SAVED ModelsDir, the one the pickers scan.
@@ -1055,9 +1075,9 @@ fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::
     if !dialog.id.eq_ignore_ascii_case(id) {
         return Default::default();
     }
-    let all: Vec<presets::Preset> = presets::load_listed()
+    let all: Vec<presets::ModelProfile> = presets::load_listed()
         .into_iter()
-        .map(|l| l.preset)
+        .map(|l| l.model_profile)
         .collect();
     let chosen: Vec<crate::linked_files::LinkedFile> = dialog
         .files
@@ -1080,9 +1100,9 @@ fn delete_ticked_files(dialog: &DeleteDialog, id: &str) -> crate::linked_files::
 
 /// Fill the read-only "Model info" box from the selected model's GGUF header
 /// (read via `ggml-base.dll`), enriched with the headers of the mmproj and the
-/// draft file this preset SELECTS, and nothing that it doesn't (see
+/// draft file this model profile SELECTS, and nothing that it doesn't (see
 /// `gguf::draft_line`). Called whenever the model/mmproj/draft field changes
-/// (combo pick, preset load).
+/// (combo pick, model profile load).
 /// `pub(super)` so the shared `refresh_file_options` in gui.rs can drive it.
 pub(super) fn update_model_info(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -1158,7 +1178,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_moe(SharedString::from(info.moe_offload_line()));
     s.set_model_info_arch_quant(SharedString::from(info.arch_quant_line()));
     // Feeds the GPU table's mode strip under split mode `tensor` (state.slint
-    // `preset_split_mode_warning`): an arch llama.cpp's tensor parallelism
+    // `model_profile_split_mode_warning`): an arch llama.cpp's tensor parallelism
     // refuses at load, read once here rather than on every mode pick.
     s.set_model_info_tensor_arch_warning(SharedString::from(info.sm_tensor_warning()));
     s.set_model_info_embd(SharedString::from(info.embd_line()));
@@ -1169,8 +1189,8 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_layers_ctx(SharedString::from(info.layers_ctx_line()));
     s.set_model_info_attn(SharedString::from(info.attn_line()));
     s.set_model_info_memory(SharedString::from(info.memory_line()));
-    // The row reports only what this preset LOADS: the model's own MTP heads
-    // plus the picked draft file, hence the preset's `--model-draft` here. It
+    // The row reports only what this model profile LOADS: the model's own MTP heads
+    // plus the picked draft file, hence the model profile's `--model-draft` here. It
     // used to also advertise the best filename match in `mtps\`, which is what
     // made it read the same whether a draft was selected or not (see
     // `draft_line`).
@@ -1192,11 +1212,11 @@ pub(super) fn update_model_info(app: &AppWindow) {
     s.set_model_info_embeds_mtp(embeds_mtp);
     // …and, now that the model is known, drop any speculative keys it cannot act
     // on. The widgets that hold them are `enabled: draft_active`, so a value the
-    // user never typed (a Clone's, or the model this preset used to point at)
+    // user never typed (a Clone's, or the model this model profile used to point at)
     // would otherwise sit there greyed out and unreadable until llama-server
     // failed on it. Pruning the form makes the change visible AND leaves the
-    // preset dirty, so Save is reachable: the file on disk is where the damage
-    // lives, and a preset the user only OPENS is never re-saved otherwise.
+    // model profile dirty, so Save is reachable: the file on disk is where the damage
+    // lives, and a model profile the user only OPENS is never re-saved otherwise.
     let mut pruned_form = form.clone();
     let dropped = prune_inactive_draft_fields(&mut pruned_form, embeds_mtp);
     // Same reasoning for the MoE cache, whose widget is disabled on a dense
@@ -1259,7 +1279,7 @@ pub(super) fn update_model_info(app: &AppWindow) {
 // ── New / Clone dialog funnel ─────────────────────────────────────────
 // The picker dialog → save path, used only by the wiring above. Moved here from
 // `gui.rs` so the whole flow sits next to its callers. Reaches `gui`'s shared
-// helpers (`model`, `reload_presets`, `refresh_*`, `set_status`) via `use super::*`.
+// helpers (`model`, `reload_model_profiles`, `refresh_*`, `set_status`) via `use super::*`.
 
 fn populate_dialog_models(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
@@ -1301,46 +1321,46 @@ fn picked_dialog_model_path(app: &AppWindow, state: &Rc<RefCell<State>>) -> Opti
         .map(PathBuf::from)
 }
 
-/// Preset id for a newly picked model file, de-conflicted against every preset,
+/// Model profile id for a newly picked model file, de-conflicted against every model profile,
 /// the switched-off ones included (a namesake parked in the disabled file would
 /// collide the day it is switched back on). The id derives from the file name,
-/// so picking a model that already has a preset (or a different file that
+/// so picking a model that already has a model profile (or a different file that
 /// sanitizes to the same id) would otherwise make `presets::save`
 /// wholesale-replace the tuned section. Both New and Clone must route through
 /// this: first free `<id>`, `<id>-2`, …, compared ignoring case, with the
-/// `preset` fallback for a name that sanitizes to nothing (an empty id would
+/// `model profile` fallback for a name that sanitizes to nothing (an empty id would
 /// also be undeletable: on_delete_preset early-returns on one). The rule
-/// itself is `presets::new_preset_id`, shared with the Hugging Face download.
+/// itself is `presets::new_model_profile_id`, shared with the Hugging Face download.
 fn deconflicted_id(path_str: &str) -> String {
     let existing: Vec<String> = presets::load_listed()
         .into_iter()
-        .map(|l| l.preset.id)
+        .map(|l| l.model_profile.id)
         .collect();
-    presets::new_preset_id(path_str, &existing)
+    presets::new_model_profile_id(path_str, &existing)
 }
 
 fn run_new_empty(app: &AppWindow, state: &Rc<RefCell<State>>, path: PathBuf) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
-    let p = presets::Preset::new_default(id.clone(), path_str);
-    commit_new_preset(app, state, p, strings::fill("preset-added", &[&id]));
+    let p = presets::ModelProfile::new_default(id.clone(), path_str);
+    commit_new_model_profile(app, state, p, strings::fill("preset-added", &[&id]));
 }
 
 fn run_new_clone(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    base: presets::Preset,
+    base: presets::ModelProfile,
     path: PathBuf,
 ) {
     let path_str = path.to_string_lossy().into_owned();
     let id = deconflicted_id(&path_str);
-    let mut cloned = presets::Preset {
+    let mut cloned = presets::ModelProfile {
         id: id.clone(),
         model: path_str,
         ..base.clone()
     };
     // A clone keeps every field of its base, including the speculative ones,
-    // which belong to the base's MODEL, not to the preset. Cloning an MTP preset
+    // which belong to the base's MODEL, not to the model profile. Cloning an MTP model profile
     // onto a model without MTP heads writes `spec-type = draft-mtp` straight to
     // disk, where the UI greys it out instead of showing it and llama-server
     // refuses to load the model at all. This path never passes through the form,
@@ -1382,7 +1402,7 @@ fn run_new_clone(
     } else {
         strings::fill("clone-dropped", &[&dropped.join(", ")])
     };
-    commit_new_preset(
+    commit_new_model_profile(
         app,
         state,
         cloned,
@@ -1390,31 +1410,31 @@ fn run_new_clone(
     );
 }
 
-fn commit_new_preset(
+fn commit_new_model_profile(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    p: presets::Preset,
+    p: presets::ModelProfile,
     success_status: String,
 ) {
     let saved = presets::save(&p);
-    finish_new_preset(app, state, &p, saved, success_status);
+    finish_new_model_profile(app, state, &p, saved, success_status);
 }
 
-/// The shared end of every new preset: the status, then `preset_written`
+/// The shared end of every new model profile: the status, then `model_profile_written`
 /// (reload + select the new id + rescan the pickers + the integrations).
-fn finish_new_preset(
+fn finish_new_model_profile(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
-    p: &presets::Preset,
+    p: &presets::ModelProfile,
     saved: std::io::Result<()>,
     success_status: String,
 ) {
     match saved {
         Ok(()) => {
             // Status first, like the other write paths, so a failed opencode.json
-            // follow-up inside preset_written is not papered over by the success.
+            // follow-up inside model_profile_written is not papered over by the success.
             set_status(app, success_status, false);
-            preset_written(app, state, Some(&p.id));
+            model_profile_written(app, state, Some(&p.id));
         }
         Err(e) => set_status(app, strings::fill("save-failed", &[&e]), true),
     }
@@ -1435,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn pick_pins_the_draft_to_the_presets_first_device() {
+    fn pick_pins_the_draft_to_the_model_profiles_first_device() {
         // The model runs on CUDA1 then CUDA0; the draft must land on the head
         // of that list: model and draft must share ONE device.
         let mut f = PresetForm {
@@ -1560,7 +1580,7 @@ mod tests {
         assert_eq!(d.ticked_count(), 1);
         d.toggle(0);
         assert_eq!(d.ticked_count(), 0, "a second click unticks");
-        // A dialog opened on another preset deletes nothing.
+        // A dialog opened on another model profile deletes nothing.
         d.toggle(0);
         assert_eq!(delete_ticked_files(&d, "someone-else"), Default::default());
     }

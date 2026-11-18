@@ -85,10 +85,10 @@ pub(crate) fn manager_pipe_client_e2e() {
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
     let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
@@ -125,16 +125,19 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(calls(&c), vec![]);
         assert_eq!(asked(&c), vec![]);
-        // The preset files, list and status need no caller.
+        // The model profile files, list and status need no caller.
         assert_eq!(
             client.list_instances(),
             Ok(vec!["broken".to_string(), "default".to_string()])
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
-        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            client.read_file("models.ini"),
+            Ok(Some(plain(model_profiles)))
+        );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets,
+            model_profiles,
             "a refused write leaves the file"
         );
         // Start at boot: the change needs an identity, the read none.
@@ -175,7 +178,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             );
             assert_eq!(
                 client.read_file("models.ini"),
-                Ok(Some(plain(presets))),
+                Ok(Some(plain(model_profiles))),
                 "a preset file is never withheld"
             );
             hang_up(server, client);
@@ -238,7 +241,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets
+            model_profiles
         );
         // Start at boot: refused under configure, nothing changed.
         assert_eq!(
@@ -297,7 +300,10 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(asked(&c), vec![(alice.clone(), Action::Control); 3]);
 
-        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            client.read_file("models.ini"),
+            Ok(Some(plain(model_profiles)))
+        );
         assert_eq!(
             client.read_file("models.ini.disabled"),
             Ok(None),
@@ -401,7 +407,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             client.write_file(
                 "models.ini",
                 &format!(
-                    "{presets}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"
+                    "{model_profiles}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"
                 ), false
             ),
             Err(ClientError::Invalid(Refusal {
@@ -419,7 +425,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets
+            model_profiles
         );
 
         // A read that fails for another reason than a missing file.
@@ -524,7 +530,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(calls(&c), vec![], "a file write touches no unit");
         hang_up(server, client);
-        std::fs::write(sys.join("models.ini"), presets).expect("restore presets");
+        std::fs::write(sys.join("models.ini"), model_profiles).expect("restore presets");
     }
 }
 

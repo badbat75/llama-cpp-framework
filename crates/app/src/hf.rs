@@ -1,7 +1,7 @@
-//! Create a preset from a Hugging Face repository: find GGUF repositories by
+//! Create a model profile from a Hugging Face repository: find GGUF repositories by
 //! name, list the GGUFs a repo offers, download one with llama.cpp's OWN
 //! downloader, file it into the ModelsDir subfolders the Models tab already
-//! scans, and derive the preset's fields from the downloaded headers.
+//! scans, and derive the model profile's fields from the downloaded headers.
 //!
 //! ## The steps, and who calls them
 //!
@@ -20,18 +20,18 @@
 //!    chosen files, reporting `Progress`, cancellable through the returned
 //!    `DownloadHandle`, ending in `Downloaded` (the final paths) or an `HfError`
 //!    whose `Display` is the status line.
-//! 4. `preset_from_download` (impure: reads the headers) over `derive_preset`
-//!    (pure): the `Preset` to save.
+//! 4. `model_profile_from_download` (impure: reads the headers) over `derive_model_profile`
+//!    (pure): the `ModelProfile` to save.
 //!
 //! Everything slow is meant to run on a `std::thread` (steps 0 and 2 by the
 //! caller, step 3 by `spawn_download` itself), its result posted back with
 //! `slint::invoke_from_event_loop`: the GUI's threading rule (`gui.rs`
 //! header). Nothing here touches Slint. The two callers are the CLI's
-//! `preset download` (`cli.rs`) and the Models tab's From Hugging Face dialog
+//! `model-profile download` (`cli.rs`) and the Models tab's From Hugging Face dialog
 //! (`gui/hf_dialog.rs`), which asks `has_partial` whether its button should
 //! read "Resume download" and hands the job to the GUI's background downloads
 //! (`gui/downloads.rs`), which read `Progress`'s per-file bytes and run
-//! `preset_from_download` off the event loop.
+//! `model_profile_from_download` off the event loop.
 //!
 //! ## The search: one request, every row's file names included
 //!
@@ -192,7 +192,7 @@
 //! below) instead of storing a copy per quant. Drafters (MTP, DFlash, DSpark)
 //! are left alone: they are models in their own right, published under names
 //! of their own that the drafter picker shows as they are. Everything
-//! downstream (the preset's `mmproj` key, the status line, the delete
+//! downstream (the model profile's `mmproj` key, the status line, the delete
 //! dialog's linked files, the skip/conflict rule) reads the placement's
 //! target, so it sees the new name.
 //!
@@ -244,7 +244,7 @@
 //! `token_from_env`) reaches curl through its stdin config and the child
 //! through `HF_TOKEN` in its environment, never an argv. Its `Debug` prints
 //! `***`, it has no `Display`, and every stderr line kept for an error message
-//! passes through `redact` first. Nothing here writes it to a preset, a log or
+//! passes through `redact` first. Nothing here writes it to a model profile, a log or
 //! bench.db.
 
 use crate::strings;
@@ -261,7 +261,7 @@ use serde_json::Value;
 
 use crate::gguf;
 use crate::hf_fit;
-use crate::presets::{self, Preset};
+use crate::presets::{self, ModelProfile};
 
 /// `CMD_CHILD_TO_ROUTER_STATE` in llama.cpp's `tools/server/server-models.cpp`:
 /// the prefix of every protocol line a router child prints. Re-check on a bump.
@@ -314,9 +314,9 @@ pub enum HfError {
         repo: String,
         wanted: String,
     },
-    /// A preset repo (`preset.ini` at its root): llama.cpp would fetch only that
-    /// file and run it as a router preset, which is not a model.
-    PresetRepo {
+    /// A model profile repo (`preset.ini` at its root): llama.cpp would fetch only that
+    /// file and run it as a router model profile, which is not a model.
+    ModelProfileRepo {
         repo: String,
     },
     /// A sidecar was requested that the chosen candidate does not have.
@@ -364,7 +364,9 @@ impl fmt::Display for HfError {
             HfError::NoMatch { repo, wanted } => {
                 f.write_str(&strings::fill("hf-no-match", &[&repo, &wanted]))
             }
-            HfError::PresetRepo { repo } => f.write_str(&strings::fill("hf-preset-repo", &[&repo])),
+            HfError::ModelProfileRepo { repo } => {
+                f.write_str(&strings::fill("hf-preset-repo", &[&repo]))
+            }
             HfError::SidecarMissing { what } => {
                 f.write_str(&strings::fill("hf-sidecar-missing", &[&what]))
             }
@@ -967,7 +969,7 @@ pub struct Listing {
     pub repo: String,
     /// The commit the tree was listed at (the `main` branch, else the first).
     pub commit: String,
-    /// The model page, what a derived preset's `project_url` holds.
+    /// The model page, what a derived model profile's `project_url` holds.
     pub project_url: String,
     pub candidates: Vec<Candidate>,
     /// The candidate `llama-server -hf <spec>` would pick: the spec's file or
@@ -1079,7 +1081,7 @@ fn build_listing(
         .filter(|f| safe_repo_path(&f.path))
         .collect();
     if files.iter().any(|f| f.path == "preset.ini") {
-        return Err(HfError::PresetRepo { repo: repo.into() });
+        return Err(HfError::ModelProfileRepo { repo: repo.into() });
     }
     let mut candidates = Vec::new();
     for f in files.iter().filter(|f| is_model_file(&f.path)) {
@@ -1982,7 +1984,7 @@ pub struct Progress {
 pub struct Downloaded {
     pub repo: String,
     pub project_url: String,
-    /// The model's first shard: what a preset's `model` names.
+    /// The model's first shard: what a model profile's `model` names.
     pub model: PathBuf,
     pub mmproj: Option<PathBuf>,
     pub draft: Option<(Sidecar, PathBuf)>,
@@ -2748,27 +2750,27 @@ where
     DownloadHandle { cancel }
 }
 
-// ── The preset ───────────────────────────────────────────────────────────
+// ── The model profile ───────────────────────────────────────────────────────────
 
-/// The preset a download becomes (pure: the headers are the caller's to read,
-/// `preset_from_download` does it). `model` is the model's header, `None` when
+/// The model profile a download becomes (pure: the headers are the caller's to read,
+/// `model_profile_from_download` does it). `model` is the model's header, `None` when
 /// it could not be read (no ggml-base), in which case only the paths and the
 /// URL are filled and every key the header would justify stays at its default.
 /// `draft_header_spec` is `gguf::draft_spec_type` of the drafter.
 ///
-/// What it sets, and why (everything else stays `Preset::default()`, the New
-/// dialog's preset: a new preset pins only what has a reason, README "A new
-/// preset leaves every tunable at default"):
+/// What it sets, and why (everything else stays `ModelProfile::default()`, the New
+/// dialog's model profile: a new model profile pins only what has a reason, README "A new
+/// model profile leaves every tunable at default"):
 ///
 /// | field | from | reason |
 /// |---|---|---|
-/// | `model` | the first shard's final path | what the preset loads |
+/// | `model` | the first shard's final path | what the model profile loads |
 /// | `project_url` | the listing's model page | the Models tab's Open button |
 /// | `mmproj` | the mmproj's final path, when fetched | `llama-server -hf` would load it |
 /// | `model_draft` + `spec_type` | the drafter's path; its HEADER's verdict, else the sidecar's prefix | the user asked for it; the header tells DSpark from DFlash, which a name cannot (`gguf::draft_spec_type`) |
 /// | `temp`, `top_k`, `top_p`, `min_p`, `repeat_penalty` | `general.sampling.*` | llama-server already applies these from the file (`common_init_sampler_from_model`); written, they show in the form as the values in force instead of "default" |
 /// | `jinja` | `off` for an embedded NON-Jinja template, else `on` | `--jinja` is upstream's default, and with it a legacy template string would be rendered as Jinja text; only the legacy route reads it |
-/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned preset load: context and GPU layers stay unset (`presets::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
+/// | `fit` | `on` unless the placement sets the context | llama.cpp's own default, and the one setting that makes an untuned model profile load: context and GPU layers stay unset (`presets::fit_allowed`), so without it the model's TRAINED context (often 128k-256k) and every layer would be allocated on whatever card this is |
 /// | `device`, `tensor_split`, `n_cpu_moe`, `n_gpu_layers`, `ctx_size`, `device_draft`, `mmproj_device`, `mmproj_offload`, `placement_note` | `placement`: `hf_fit::placement` of the downloaded files' estimate on this machine, the mmproj and the drafter fetched counted (`local_extras`), `None` without a GPU estimate | the split per card, or the CPU part, the dialog showed for this quantization with these extras (the table in `hf_fit`'s header says which keys in which case); `fit` turns off with `ctx_size` set, as the form would make it, so the cut is not resized against the TOTAL memory (`common/fit.cpp`); the mmproj keys only with an mmproj, `device_draft` only with a drafter |
 ///
 /// And what the header could justify but is left alone, on purpose:
@@ -2798,15 +2800,15 @@ where
 /// The result passes `prune_inactive_draft_keys` / `prune_inactive_moe_cache`
 /// unchanged (they run here too, against the header, so a future field cannot
 /// slip past them).
-pub fn derive_preset(
+pub fn derive_model_profile(
     id: String,
     d: &Downloaded,
     model: Option<&gguf::ModelInfo>,
     draft_header_spec: Option<&str>,
     placement: Option<&hf_fit::Placement>,
-) -> Preset {
+) -> ModelProfile {
     let s = |p: &Path| p.to_string_lossy().into_owned();
-    let mut p = Preset::new_default(id, s(&d.model));
+    let mut p = ModelProfile::new_default(id, s(&d.model));
     p.project_url = d.project_url.clone();
     p.mmproj = d.mmproj.as_deref().map(s).unwrap_or_default();
     if let Some((kind, path)) = &d.draft {
@@ -2847,26 +2849,26 @@ pub fn derive_preset(
     p
 }
 
-/// `derive_preset` over the downloaded files' own headers, with the id the
-/// Models tab's New would give the file (`presets::new_preset_id`: the file
+/// `derive_model_profile` over the downloaded files' own headers, with the id the
+/// Models tab's New would give the file (`presets::new_model_profile_id`: the file
 /// name, `preset` when it sanitizes to nothing, made unique ignoring case
-/// against `existing_ids`; pass every listed preset, the parked ones included).
+/// against `existing_ids`; pass every listed model profile, the parked ones included).
 /// `budget` is the machine the dialog or `--list` estimated against
 /// (`hf_fit::budget`), `None` without a GPU: the placement is then left out,
 /// as it is when the downloaded header cannot be read.
-pub fn preset_from_download(
+pub fn model_profile_from_download(
     d: &Downloaded,
     existing_ids: &[String],
     budget: Option<&hf_fit::Budget>,
-) -> Preset {
-    let id = presets::new_preset_id(&d.model.to_string_lossy(), existing_ids);
+) -> ModelProfile {
+    let id = presets::new_model_profile_id(&d.model.to_string_lossy(), existing_ids);
     let info = gguf::read_model_info(&d.model);
     let spec = d.draft.as_ref().and_then(|(_, p)| gguf::draft_spec_type(p));
     let placement = budget.and_then(|b| {
         let shape = hf_fit::local_shape(&d.model).ok()?;
         hf_fit::placement(&hf_fit::estimate_with(&shape, b, &local_extras(d)), &shape)
     });
-    derive_preset(id, d, info.as_ref(), spec, placement.as_ref())
+    derive_model_profile(id, d, info.as_ref(), spec, placement.as_ref())
 }
 
 /// The extras of a download as the estimate counts them (`hf_fit::Extras`):
@@ -2884,15 +2886,15 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
     }
 }
 
-/// Save a derived preset, first pinning server.ini's ModelsDir to the one the
+/// Save a derived model profile, first pinning server.ini's ModelsDir to the one the
 /// files were placed under when it is unset. `presets::save` would otherwise
 /// seed it from the model path (`infer_models_dir`), and the per-repo folder
 /// (`models\<org>\<repo>\`) makes that guess a folder below the real root, which
 /// the pickers would then scan for a `models` subfolder that is not there. The
-/// preset is validated FIRST, so a preset that cannot be saved changes nothing
+/// model profile is validated FIRST, so a model profile that cannot be saved changes nothing
 /// in server.ini either. Touches `paths::`, so it has no unit test (README,
-/// Tests); `derive_preset` is the tested part.
-pub fn save_preset(p: &Preset, models_dir: &Path) -> std::io::Result<()> {
+/// Tests); `derive_model_profile` is the tested part.
+pub fn save_model_profile(p: &ModelProfile, models_dir: &Path) -> std::io::Result<()> {
     presets::validate_for_save(p)?;
     let cfg = crate::server_cfg::load();
     let kind = crate::server_control::backend().kind();
@@ -3378,16 +3380,19 @@ mod tests {
     }
 
     #[test]
-    fn listing_refuses_preset_and_empty_repos_and_maps_api_errors() {
+    fn listing_refuses_model_profile_and_empty_repos_and_maps_api_errors() {
         let s = spec("o/r", None);
-        let preset = build_listing(
+        let model_profile = build_listing(
             "o/r",
             COMMIT,
             vec![f("preset.ini", 1), f("m-Q4_K_M.gguf", 1)],
             &s,
             "e/",
         );
-        assert_eq!(preset, Err(HfError::PresetRepo { repo: "o/r".into() }));
+        assert_eq!(
+            model_profile,
+            Err(HfError::ModelProfileRepo { repo: "o/r".into() })
+        );
         let empty = build_listing(
             "o/r",
             COMMIT,
@@ -3805,7 +3810,7 @@ mod tests {
     }
 
     /// The refusal is text the user reads, in both strings files (the GUI's
-    /// dialog and `pai preset download`), with the folder's slot.
+    /// dialog and `pai model-profile download`), with the folder's slot.
     #[test]
     fn the_unwritable_folder_refusal_is_in_both_strings_files() {
         for (name, text) in [
@@ -4544,9 +4549,9 @@ mod tests {
     }
 
     #[test]
-    fn derived_preset_fills_paths_url_sampling_and_fit() {
+    fn derived_model_profile_fills_paths_url_sampling_and_fit() {
         let d = downloaded(true, None);
-        let p = derive_preset(
+        let p = derive_model_profile(
             "m-Q4_K_M".into(),
             &d,
             Some(&info(Some("{% if x %}{{ y }}{% endif %}"), 0, false)),
@@ -4572,8 +4577,8 @@ mod tests {
             ("", ""),
             "embedded-MTP-free and no drafter"
         );
-        // Everything the derivation does not own is the New dialog's preset.
-        let base = Preset {
+        // Everything the derivation does not own is the New dialog's model profile.
+        let base = ModelProfile {
             model: p.model.clone(),
             project_url: p.project_url.clone(),
             mmproj: p.mmproj.clone(),
@@ -4582,7 +4587,7 @@ mod tests {
             top_p: p.top_p,
             min_p: p.min_p,
             fit: true,
-            ..Preset::new_default("m-Q4_K_M".into(), String::new())
+            ..ModelProfile::new_default("m-Q4_K_M".into(), String::new())
         };
         assert_eq!(p, base);
     }
@@ -4591,12 +4596,12 @@ mod tests {
     fn derived_drafter_takes_the_header_verdict_over_the_prefix() {
         let d = downloaded(false, Some(Sidecar::Dflash));
         let m = info(None, 0, true);
-        let header = derive_preset("x".into(), &d, Some(&m), Some("draft-dspark"), None);
+        let header = derive_model_profile("x".into(), &d, Some(&m), Some("draft-dspark"), None);
         assert_eq!(header.spec_type, "draft-dspark");
         assert_eq!(header.model_draft, "M/dflashs/r/dflash-Q4_K_M.gguf");
-        let silent = derive_preset("x".into(), &d, Some(&m), None, None);
+        let silent = derive_model_profile("x".into(), &d, Some(&m), None, None);
         assert_eq!(silent.spec_type, "draft-dflash");
-        // The prunes leave a drafter-backed preset alone (they are idempotent here).
+        // The prunes leave a drafter-backed model profile alone (they are idempotent here).
         let mut again = silent.clone();
         assert!(presets::prune_inactive_draft_keys(&mut again, false).is_empty());
         assert!(!presets::prune_inactive_moe_cache(&mut again, true));
@@ -4606,7 +4611,7 @@ mod tests {
     #[test]
     fn derived_jinja_and_the_unreadable_header() {
         let d = downloaded(false, None);
-        let legacy = derive_preset(
+        let legacy = derive_model_profile(
             "x".into(),
             &d,
             Some(&info(Some("chatml"), 0, false)),
@@ -4614,11 +4619,11 @@ mod tests {
             None,
         );
         assert_eq!(legacy.jinja, Some(false));
-        let none = derive_preset("x".into(), &d, Some(&info(None, 2, false)), None, None);
+        let none = derive_model_profile("x".into(), &d, Some(&info(None, 2, false)), None, None);
         assert_eq!(none.jinja, Some(true));
         assert_eq!(none.spec_type, "", "embedded MTP heads are not switched on");
         // No header: paths, URL and fit only.
-        let blind = derive_preset("x".into(), &d, None, None, None);
+        let blind = derive_model_profile("x".into(), &d, None, None, None);
         assert_eq!(
             (blind.temp, blind.top_k, blind.jinja),
             (None, None, Some(true))
@@ -4695,7 +4700,7 @@ mod tests {
     fn a_download_is_placed_per_card_and_survives_the_ini_and_the_form() {
         let dir = tempfile::tempdir().unwrap();
         let (d, b) = placed_download(dir.path(), true);
-        let p = preset_from_download(&d, &[], Some(&b));
+        let p = model_profile_from_download(&d, &[], Some(&b));
         // Block 0's experts in RAM; blocks 0-2 on the R9700 (41 of 48 MiB),
         // block 3 and the output head on the 4070 (23 of 24 MiB).
         assert_eq!(
@@ -4748,17 +4753,17 @@ mod tests {
                 && text.contains("\r\ndevice-draft = CUDA0\r\n"),
             "{text}"
         );
-        let back = presets::read_presets(&path);
+        let back = presets::read_model_profiles(&path);
         assert_eq!(back, std::slice::from_ref(&p));
         // The form half of this round trip is pai-config's (the form is a
-        // Slint struct): `form::tests::rich_preset_round_trips`.
+        // Slint struct): `form::tests::rich_model_profile_round_trips`.
     }
 
     #[test]
     fn without_a_gpu_estimate_the_download_keeps_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let (d, b) = placed_download(dir.path(), false);
-        let p = preset_from_download(&d, &[], None);
+        let p = model_profile_from_download(&d, &[], None);
         assert_eq!(
             (
                 p.device.as_str(),
@@ -4778,12 +4783,12 @@ mod tests {
             }],
             ..b
         };
-        let one = preset_from_download(&d, &[], Some(&big));
+        let one = model_profile_from_download(&d, &[], Some(&big));
         assert_eq!(one, p);
         // An unreadable file: no placement, no failure.
         let mut gone = d.clone();
         gone.model = dir.path().join("missing.gguf");
-        assert!(preset_from_download(&gone, &[], Some(&big))
+        assert!(model_profile_from_download(&gone, &[], Some(&big))
             .placement_note
             .is_empty());
     }

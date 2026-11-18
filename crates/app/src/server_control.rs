@@ -135,25 +135,25 @@ pub enum ConfigFile {
     /// `server@default.ini` (`server.ini` per user).
     Server,
     /// `models.ini`.
-    Presets,
+    Models,
     /// `models.ini.disabled`.
-    PresetsDisabled,
+    ModelsDisabled,
 }
 
 impl ConfigFile {
     #[cfg(any(test, feature = "test-support"))]
     pub const ALL: [ConfigFile; 3] = [
         ConfigFile::Server,
-        ConfigFile::Presets,
-        ConfigFile::PresetsDisabled,
+        ConfigFile::Models,
+        ConfigFile::ModelsDisabled,
     ];
 
     /// The file's name among the manager's files.
     pub fn manager_name(self) -> String {
         match self {
             ConfigFile::Server => format!("server@{INSTANCE}.ini"),
-            ConfigFile::Presets => "models.ini".into(),
-            ConfigFile::PresetsDisabled => "models.ini.disabled".into(),
+            ConfigFile::Models => "models.ini".into(),
+            ConfigFile::ModelsDisabled => "models.ini.disabled".into(),
         }
     }
 
@@ -161,8 +161,8 @@ impl ConfigFile {
     fn user_path(self) -> PathBuf {
         match self {
             ConfigFile::Server => crate::paths::server_ini(),
-            ConfigFile::Presets => crate::paths::presets_ini(),
-            ConfigFile::PresetsDisabled => crate::paths::presets_disabled_ini(),
+            ConfigFile::Models => crate::paths::models_ini(),
+            ConfigFile::ModelsDisabled => crate::paths::models_disabled_ini(),
         }
     }
 }
@@ -936,8 +936,8 @@ pub mod fake {
         fn path(name: &str) -> Result<std::path::PathBuf, ClientError> {
             match name {
                 "server@default.ini" => Ok(crate::paths::server_ini()),
-                "models.ini" => Ok(crate::paths::presets_ini()),
-                "models.ini.disabled" => Ok(crate::paths::presets_disabled_ini()),
+                "models.ini" => Ok(crate::paths::models_ini()),
+                "models.ini.disabled" => Ok(crate::paths::models_disabled_ini()),
                 _ => Err(ClientError::BadFileName),
             }
         }
@@ -1170,7 +1170,7 @@ pub(crate) fn api_key_kept_e2e() {
 
 /// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
 /// `Manager` backend's start and restart, which load server.ini, and that it
-/// leaves the per-user tree to the manager (no presets or binary check, no log
+/// leaves the per-user tree to the manager (no model profiles or binary check, no log
 /// rotation).
 #[cfg(test)]
 pub(crate) fn server_control_e2e() {
@@ -1244,7 +1244,7 @@ pub(crate) fn server_control_e2e() {
     const MANAGED: &str = "[Server]\nPort = 8099\n";
     // No models.ini and no llama-server binary: those are the manager's to
     // check under this backend, not the configurator's.
-    assert!(!crate::paths::presets_ini().exists());
+    assert!(!crate::paths::models_ini().exists());
 
     // Started from Inactive: one start of default, the config read back from
     // the manager.
@@ -1329,7 +1329,7 @@ pub(crate) fn server_control_e2e() {
 #[cfg(test)]
 pub(crate) fn config_seam_e2e() {
     use crate::paths;
-    use crate::presets::{self, Preset};
+    use crate::presets::{self, ModelProfile};
     use crate::server_cfg::{self, ServerConfig};
     use fake::FakeClient;
     use pai_core::client::InstanceState;
@@ -1341,8 +1341,8 @@ pub(crate) fn config_seam_e2e() {
     let d = Backend::Direct;
     for (file, path) in [
         (ConfigFile::Server, paths::server_ini()),
-        (ConfigFile::Presets, paths::presets_ini()),
-        (ConfigFile::PresetsDisabled, paths::presets_disabled_ini()),
+        (ConfigFile::Models, paths::models_ini()),
+        (ConfigFile::ModelsDisabled, paths::models_disabled_ini()),
     ] {
         assert_eq!(d.config_path(file), path, "{file:?}");
         assert_eq!(d.read_config(file), Ok(None), "{file:?}: no file yet");
@@ -1388,13 +1388,13 @@ pub(crate) fn config_seam_e2e() {
 
     // A file that cannot be read is an error, not "no file": a directory
     // in its place.
-    std::fs::remove_file(paths::presets_disabled_ini()).expect("remove");
-    std::fs::create_dir(paths::presets_disabled_ini()).expect("dir in its place");
+    std::fs::remove_file(paths::models_disabled_ini()).expect("remove");
+    std::fs::create_dir(paths::models_disabled_ini()).expect("dir in its place");
     assert!(
-        d.read_config(ConfigFile::PresetsDisabled).is_err(),
+        d.read_config(ConfigFile::ModelsDisabled).is_err(),
         "an unreadable file is not none"
     );
-    std::fs::remove_dir(paths::presets_disabled_ini()).expect("remove dir");
+    std::fs::remove_dir(paths::models_disabled_ini()).expect("remove dir");
 
     // ── Manager: the manager's files, shown where the manager keeps them ──
     let log = fake::log();
@@ -1408,7 +1408,7 @@ pub(crate) fn config_seam_e2e() {
     }
     // The engine's directory, not the framework's (bff.ini's).
     assert_ne!(
-        m.config_path(ConfigFile::Presets).parent(),
+        m.config_path(ConfigFile::Models).parent(),
         Some(paths::system_config_dir().as_path()),
         "the instance files are the engine's"
     );
@@ -1417,7 +1417,7 @@ pub(crate) fn config_seam_e2e() {
     // something else here.
     std::fs::write(paths::server_ini(), "[Server]\nPort = 9999\n").expect("user server.ini");
     std::fs::write(
-        paths::presets_ini(),
+        paths::models_ini(),
         "[user-only]\nmodel = /models/user-only.gguf\n",
     )
     .expect("user models.ini");
@@ -1439,7 +1439,7 @@ pub(crate) fn config_seam_e2e() {
         assert_eq!(enabled, ["Qwen3.8-27B"], "models.ini");
         let listed: Vec<(String, bool)> = presets::load_listed()
             .into_iter()
-            .map(|l| (l.preset.id, l.enabled))
+            .map(|l| (l.model_profile.id, l.enabled))
             .collect();
         assert_eq!(
             listed,
@@ -1475,7 +1475,7 @@ pub(crate) fn config_seam_e2e() {
         state_dir: Some(dir.path().join("state").display().to_string()),
         ..Default::default()
     };
-    let q8 = Preset::new_default(
+    let q8 = ModelProfile::new_default(
         "Qwen3.8-27B-Q8".into(),
         "/models/Qwen3.8-27B-Q8_0.gguf".into(),
     );
@@ -1569,7 +1569,7 @@ pub(crate) fn config_seam_e2e() {
         }
         assert_eq!(server_cfg::from_text(&written).port, Some(8101));
 
-        // The first preset saved with no ModelsDir seeds it in the server
+        // The first model profile saved with no ModelsDir seeds it in the server
         // file only where the folders are not left unset (above).
         files.lock().unwrap().insert(
             "server@default.ini".into(),
@@ -1577,7 +1577,7 @@ pub(crate) fn config_seam_e2e() {
         );
         let llm = dir.path().join("llm");
         let model = llm.join("models").join("Qwen3.8-4B-Q4_K_M.gguf");
-        presets::save(&Preset::new_default(
+        presets::save(&ModelProfile::new_default(
             "Qwen3.8-4B".into(),
             model.display().to_string(),
         ))
@@ -1587,14 +1587,14 @@ pub(crate) fn config_seam_e2e() {
             seeded_dir(&llm)
         );
 
-        // A download's preset pins ModelsDir to where its files went, again
+        // A download's model profile pins ModelsDir to where its files went, again
         // only where the folders are not left unset.
         files.lock().unwrap().insert(
             "server@default.ini".into(),
             "[Server]\nPort = 8099\n".into(),
         );
         let hf_root = dir.path().join("hf-models");
-        let downloaded = Preset::new_default(
+        let downloaded = ModelProfile::new_default(
             "Qwen3.8-8B".into(),
             hf_root
                 .join("models")
@@ -1604,7 +1604,7 @@ pub(crate) fn config_seam_e2e() {
                 .display()
                 .to_string(),
         );
-        crate::hf::save_preset(&downloaded, &hf_root).expect("download's preset");
+        crate::hf::save_model_profile(&downloaded, &hf_root).expect("download's model profile");
         assert_eq!(
             server_cfg::from_text(&file("server@default.ini")).models_dir,
             seeded_dir(&hf_root)
@@ -1641,7 +1641,7 @@ pub(crate) fn config_seam_e2e() {
 
     // ── A read that fails stops the write ────────────────────────────────
     // Writing what an empty read leaves would replace the manager's file
-    // with one section, or none: every other preset lost.
+    // with one section, or none: every other model profile lost.
     let e = ClientError::Io("PermissionDenied".into());
     let mut c = seeded();
     c.fail_read = Some(e.clone());
@@ -1662,8 +1662,8 @@ pub(crate) fn config_seam_e2e() {
             ("rename", presets::rename("Qwen3.8-27B", "Qwen3.8-27B-Q8_0")),
             ("delete", presets::delete("Qwen3.8-27B")),
             (
-                "hf::save_preset",
-                crate::hf::save_preset(&q8, &dir.path().join("hf-models")),
+                "hf::save_model_profile",
+                crate::hf::save_model_profile(&q8, &dir.path().join("hf-models")),
             ),
         ] {
             let err = result.expect_err(what);
@@ -2244,9 +2244,9 @@ mod tests {
     #[test]
     fn config_files_have_the_manager_names() {
         assert_eq!(ConfigFile::Server.manager_name(), "server@default.ini");
-        assert_eq!(ConfigFile::Presets.manager_name(), "models.ini");
+        assert_eq!(ConfigFile::Models.manager_name(), "models.ini");
         assert_eq!(
-            ConfigFile::PresetsDisabled.manager_name(),
+            ConfigFile::ModelsDisabled.manager_name(),
             "models.ini.disabled"
         );
     }
@@ -2263,11 +2263,11 @@ mod tests {
             Ok(Some("[Server]\nPort = 8099\n".to_string()))
         );
         assert_eq!(
-            b.read_config(ConfigFile::Presets),
+            b.read_config(ConfigFile::Models),
             Ok(Some("[Qwen3.8-27B]\nctx-size = 8192\n".to_string()))
         );
         assert_eq!(
-            b.read_config(ConfigFile::PresetsDisabled),
+            b.read_config(ConfigFile::ModelsDisabled),
             Ok(None),
             "a file the manager does not have is none, not an error"
         );
@@ -2302,7 +2302,7 @@ mod tests {
     /// unset: a blank `OpencodeApiKey =`, or only the commented hint a
     /// rendering of an unset key writes) asks the manager to keep its own.
     /// A key the user typed is sent as typed, nothing kept. A read of the
-    /// preset files in between (a save reads them first) changes nothing.
+    /// model profile files in between (a save reads them first) changes nothing.
     #[test]
     fn a_server_write_after_a_withheld_read_keeps_the_managers_key() {
         let blanked = "[Server]\nPort = 8080\nOpencodeApiKey =\n";
@@ -2318,7 +2318,7 @@ mod tests {
             Ok(Some(blanked.to_string()))
         );
         assert!(b.api_key_withheld(), "the last server read was withheld");
-        assert!(b.read_config(ConfigFile::Presets).is_ok());
+        assert!(b.read_config(ConfigFile::Models).is_ok());
         assert!(b.api_key_withheld(), "a preset read changes nothing");
         let kept = format!("write_file server@default.ini {}", fake::KEEP_API_KEY);
         for text in [
@@ -2343,7 +2343,7 @@ mod tests {
             "a typed key is sent, nothing kept"
         );
         log.lock().unwrap().clear();
-        assert_eq!(b.write_config(ConfigFile::Presets, "[m]\n"), Ok(()));
+        assert_eq!(b.write_config(ConfigFile::Models, "[m]\n"), Ok(()));
         assert_eq!(
             fake::writes(&log),
             ["write_file models.ini"],
@@ -2492,7 +2492,7 @@ mod tests {
                 FakeClient::new(&log, InstanceState::Inactive).with_file("models.ini", "[m]\n");
             c.fail_read = Some(e.clone());
             let b = fake::backend(c);
-            assert_eq!(b.read_config(ConfigFile::Presets), Err(e.text()), "{e:?}");
+            assert_eq!(b.read_config(ConfigFile::Models), Err(e.text()), "{e:?}");
         }
         let b = Backend::Manager(ManagerBackend::new(Box::new(|| {
             Err(ClientError::Unavailable)

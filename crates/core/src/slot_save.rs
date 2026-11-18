@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn the_last_slot_save_path_wins() {
-        // A launch argument list can carry the flag twice (a preset, then a
+        // A launch argument list can carry the flag twice (a model profile, then a
         // later section): the engine keeps the last, so the snapshot machinery
         // must look at the same one.
         let argv = args(&[

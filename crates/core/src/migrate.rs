@@ -281,8 +281,8 @@ pub(crate) fn migrate_e2e() {
     let read = |p: PathBuf| std::fs::read(&p).unwrap_or_else(|e| panic!("{p:?}: {e}"));
     assert_eq!(read(paths::server_ini()), b"[Server]\nPort = 8080\n");
     // The tree move carries every file under the name the old program wrote:
-    // the preset file of a 2.4 tree stays `presets.ini`, the name 2.4 used. It
-    // is pinned by its literal path on purpose, `paths::presets_ini` is the
+    // the model profile file of a 2.4 tree stays `presets.ini`, the name 2.4 used. It
+    // is pinned by its literal path on purpose, `paths::models_ini` is the
     // current name and says nothing about a 2.4 tree.
     assert_eq!(
         read(paths::config_dir().join("presets.ini")),

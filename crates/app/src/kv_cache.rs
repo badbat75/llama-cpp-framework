@@ -119,7 +119,7 @@ fn has_native_vec_kernel(k: &str, v: &str) -> bool {
 
 /// What the warning looks at, gathered by the GUI from the form.
 pub struct Input<'a> {
-    /// The preset's `device` list (comma-separated ids, empty = not pinned).
+    /// The model profile's `device` list (comma-separated ids, empty = not pinned).
     pub device: &'a str,
     /// `--list-devices`, standing in for "every device" when nothing is pinned.
     pub probed: &'a [DeviceOption],
@@ -127,12 +127,12 @@ pub struct Input<'a> {
     pub cache_type_v: &'a str,
     /// "", "default", "on" or "off".
     pub flash_attn: &'a str,
-    /// The draft context's types, when the preset has one (a draft file or
+    /// The draft context's types, when the model profile has one (a draft file or
     /// embedded MTP heads); `None` otherwise.
     pub draft: Option<(&'a str, &'a str)>,
 }
 
-/// The backends the model will run on: the preset's pin, else every probed GPU
+/// The backends the model will run on: the model profile's pin, else every probed GPU
 /// (llama.cpp's own default).
 fn backends(input: &Input) -> Vec<Backend> {
     let pinned = input.device;
@@ -199,7 +199,7 @@ fn check(label: &str, backends: &[Backend], k: &str, v: &str, flash_attn: &str) 
     None
 }
 
-/// The Models tab's KV-cache strip: empty when every cache the preset builds has
+/// The Models tab's KV-cache strip: empty when every cache the model profile builds has
 /// a kernel where it runs. The model's own cache is checked before the draft's,
 /// and each reports at most its most serious problem.
 pub fn warning(input: &Input) -> String {

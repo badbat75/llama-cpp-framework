@@ -535,13 +535,13 @@ fn start_recorded_instances(indent: &str) -> String {
 /// Copies each shipped default into [`ENGINE_ETC`] when it is missing, never
 /// over an existing file: the server file 0640 with the group private-ai
 /// once that group exists (the core package creates it), else 0644 root:root
-/// until the manager's first write; the presets and the assignment 0644, as
+/// until the manager's first write; the model profiles and the assignment 0644, as
 /// neither holds a secret. With `chroot` (the
 /// `.deb`), every path is under `$DPKG_ROOT` and a chroot install asks the
 /// host for no group: the server file is copied 0644 there.
 fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
     let server = "server@default.ini";
-    let presets = "models.ini";
+    let model_profiles = "models.ini";
     let assignments = "assignments.ini";
     let (root, host) = if chroot {
         ("$DPKG_ROOT", r#"[ -z "$DPKG_ROOT" ] && "#)
@@ -559,8 +559,8 @@ fn copy_missing_defaults(indent: &str, chroot: bool) -> String {
          {indent}\t\tinstall -m 0644 {share}/{server} {etc}/{server}\n\
          {indent}\tfi\n\
          {indent}fi\n\
-         {indent}if [ ! -e {etc}/{presets} ]; then\n\
-         {indent}\tinstall -m 0644 {share}/{presets} {etc}/{presets}\n\
+         {indent}if [ ! -e {etc}/{model_profiles} ]; then\n\
+         {indent}\tinstall -m 0644 {share}/{model_profiles} {etc}/{model_profiles}\n\
          {indent}fi\n\
          {indent}if [ ! -e {etc}/{assignments} ]; then\n\
          {indent}\tinstall -m 0644 {share}/{assignments} {etc}/{assignments}\n\
@@ -799,7 +799,7 @@ mod tests {
     const BFF_UNIT: &str = "usr/lib/systemd/system/private-ai-bff.service";
     const BFF_SYSUSERS: &str = "usr/lib/sysusers.d/private-ai-bff.conf";
     const DEFAULT_SERVER: &str = "usr/share/private-ai/llama.cpp/server@default.ini";
-    const DEFAULT_PRESETS: &str = "usr/share/private-ai/llama.cpp/models.ini";
+    const DEFAULT_MODELS: &str = "usr/share/private-ai/llama.cpp/models.ini";
     const DEFAULT_ASSIGNMENTS: &str = "usr/share/private-ai/llama.cpp/assignments.ini";
 
     /// The text of the generated file at `path`, from [`files`].
@@ -878,7 +878,7 @@ mod tests {
                 BFF_UNIT,
                 BFF_SYSUSERS,
                 DEFAULT_SERVER,
-                DEFAULT_PRESETS,
+                DEFAULT_MODELS,
                 DEFAULT_ASSIGNMENTS,
                 TMPFILES
             ]
@@ -886,7 +886,7 @@ mod tests {
         for (path, text) in &got {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
-                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_PRESETS | DEFAULT_ASSIGNMENTS
+                INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS
                 | TMPFILES => Component::Llama,
                 _ => Component::Core,
             };
@@ -898,8 +898,9 @@ mod tests {
                 POLKIT_POLICY => polkit_policy(),
                 POLKIT_RULES => polkit_rules(),
                 BFF_UNIT => bff_unit(),
-                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_PRESETS | DEFAULT_ASSIGNMENTS
-                | TMPFILES => text.clone(),
+                BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS | TMPFILES => {
+                    text.clone()
+                }
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -2408,7 +2409,7 @@ mod tests {
                     BFF_SYSUSERS,
                     INSTANCE_UNIT,
                     DEFAULT_SERVER,
-                    DEFAULT_PRESETS,
+                    DEFAULT_MODELS,
                     DEFAULT_ASSIGNMENTS,
                     TMPFILES,
                 ]
@@ -3149,8 +3150,8 @@ exit 0
         let server = file(DEFAULT_SERVER);
         assert_eq!(server, want);
         assert!(server.contains("[Server]"), "{server}");
-        assert_eq!(file(DEFAULT_PRESETS), "");
-        for path in [DEFAULT_SERVER, DEFAULT_PRESETS] {
+        assert_eq!(file(DEFAULT_MODELS), "");
+        for path in [DEFAULT_SERVER, DEFAULT_MODELS] {
             assert_eq!(components::of(path), Component::Llama, "{path}");
         }
     }

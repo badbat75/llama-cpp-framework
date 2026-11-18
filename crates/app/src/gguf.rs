@@ -4,7 +4,7 @@
 //! the selected mmproj (clip) and draft/DFlash headers. Also classifies a draft
 //! GGUF into the `--spec-type` it calls for (`draft_spec_type`).
 //!
-//! Every line here describes a file the preset actually LOADS. That is a rule,
+//! Every line here describes a file the model profile actually LOADS. That is a rule,
 //! not an accident: the box used to also advertise the drafter whose filename
 //! best matched the model, and a row that names a file nobody loaded is read as
 //! a claim about the running config (see `draft_line`).
@@ -113,10 +113,10 @@ pub struct ModelInfo {
     pub sampling: Sampling,
 }
 
-/// The `general.sampling.*` values a GGUF carries that a preset has a field
+/// The `general.sampling.*` values a GGUF carries that a model profile has a field
 /// for (`gguf-py/gguf/metadata.py` writes them; `common_init_sampler_from_model`
 /// applies them). The rest of that family (`penalty_last_n`, `xtc_*`,
-/// `mirostat*`, `sequence`) has no preset key, and needs none to take effect:
+/// `mirostat*`, `sequence`) has no model profile key, and needs none to take effect:
 /// llama-server reads them from the file whenever the launch leaves them unset.
 /// `None` = the file does not say.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -125,7 +125,7 @@ pub struct Sampling {
     pub top_k: Option<i32>,
     pub top_p: Option<f64>,
     pub min_p: Option<f64>,
-    /// `general.sampling.penalty_repeat`, the preset's `repeat-penalty`.
+    /// `general.sampling.penalty_repeat`, the model profile's `repeat-penalty`.
     pub penalty_repeat: Option<f64>,
 }
 
@@ -267,7 +267,7 @@ impl ModelInfo {
     /// Whether the embedded chat template is Jinja (`Some(true)`), a legacy
     /// non-Jinja one (`Some(false)`), or absent (`None`). The `{%`/`{{`
     /// heuristic mirrors llama.cpp's own `common_chat_verify_template`; the
-    /// "Chat template" row and the preset derivation (`hf::derive_preset`) share
+    /// "Chat template" row and the model profile derivation (`hf::derive_model_profile`) share
     /// it so they cannot disagree.
     pub fn chat_template_is_jinja(&self) -> Option<bool> {
         self.chat_template
@@ -297,7 +297,7 @@ impl ModelInfo {
     /// How many transformer layers actually carry MoE expert weights: the count
     /// that sizes the `--n-cpu-moe` lever (which keeps the first N layers' experts
     /// on CPU, trading VRAM for speed). Empty for dense models, where the lever is
-    /// a no-op and the FFN lever is `--n-cpu-ffn` instead (`Preset::n_cpu_ffn`,
+    /// a no-op and the FFN lever is `--n-cpu-ffn` instead (`ModelProfile::n_cpu_ffn`,
     /// sized by the plain layer count, so it needs no row of its own).
     pub fn moe_offload_line(&self) -> String {
         if !self.is_moe || self.n_layer == 0 {
@@ -583,17 +583,17 @@ impl MmprojInfo {
     }
 }
 
-/// One-line summary of this preset's drafting situation, for the "Draft" row of
+/// One-line summary of this model profile's drafting situation, for the "Draft" row of
 /// the info box: the MTP/next-n layers the MODEL embeds, plus the draft file the
-/// preset points at (`selected_draft`, its `--model-draft`, empty when none).
+/// model profile points at (`selected_draft`, its `--model-draft`, empty when none).
 ///
 /// Everything here is something that is actually LOADED, and that rule is the
 /// whole design of the row. It used to also advertise the drafter whose filename
 /// best matched the model in `mtps\` / `dflashs\`, which read as state and was
-/// not: the same answer whether or not the preset used that file, unchanged by
+/// not: the same answer whether or not the model profile used that file, unchanged by
 /// picking or dropping one, and identical after a restart (reported twice
 /// against v1.11.2). Worse, the match was a token overlap, so a
-/// `Qwen3.8-27B-UD` preset was offered the `Qwen3.8-27B-Uncensored-…-FastMTP`
+/// `Qwen3.8-27B-UD` model profile was offered the `Qwen3.8-27B-Uncensored-…-FastMTP`
 /// head on `qwen3` + `27b` alone: a drafter for a different fine-tune, which
 /// llama.cpp would happily load and then reject nearly every token of. The
 /// picker in the Assets card lists every drafter on disk anyway, so nothing was
@@ -680,7 +680,7 @@ pub fn read_tensors(path: &Path) -> Option<Vec<TensorInfo>> {
 /// (`common/speculative.cpp`, added in b10406 and extended to MTP in b10428),
 /// which llama-server now runs itself on `--model-draft` when no `--spec-type`
 /// was given. Two reasons this exists anyway: the framework always WRITES
-/// `spec-type` into the preset, so upstream's auto-detect never fires; and the
+/// `spec-type` into the model profile, so upstream's auto-detect never fires; and the
 /// FOLDER a drafter was dropped in (the picker's other source of truth) cannot
 /// tell `draft-dspark` from `draft-dflash`, since both live in `dflashs\` and
 /// only a tensor inside the file separates them.
@@ -727,7 +727,7 @@ fn spec_type_from_kv<S: KvSource>(s: &S) -> Option<&'static str> {
 // The filename cross-reference that used to live here (scan `mtps\` /
 // `dflashs\`, score each drafter by shared "family" tokens with the model, feed
 // the winner to the Draft row) is GONE, in v1.11.3, and is not to come back in
-// that shape: it put a drafter the preset does not load in a box that otherwise
+// that shape: it put a drafter the model profile does not load in a box that otherwise
 // only reports loaded things, and the score was loose enough to offer
 // `Qwen3.8-27B-UD` the head built for `Qwen3.8-27B-Uncensored-…` on `qwen3` +
 // `27b` alone. The Assets card's picker already lists every drafter on disk,
@@ -973,7 +973,7 @@ mod tests {
 
     /// The `general.sampling.*` block: floats come back as the decimal the
     /// converter wrote (not the float32's binary expansion), integers of any
-    /// width are read, and an absent key stays `None` so the preset leaves
+    /// width are read, and an absent key stays `None` so the model profile leaves
     /// that sampler to llama.cpp.
     #[test]
     fn sampling_block_reads_the_converter_values() {
@@ -1245,9 +1245,9 @@ mod tests {
     /// The v1.11.2 report, in two halves. The row said the same thing whether a
     /// drafter was picked or not (and after a restart with none picked), because
     /// it described what a `mtps\` filename scan FOUND rather than what the
-    /// preset loads. So: a pick is NAMED, and no pick leaves nothing behind but
+    /// model profile loads. So: a pick is NAMED, and no pick leaves nothing behind but
     /// what the model itself embeds. Nothing in this row may be a file the
-    /// preset does not load.
+    /// model profile does not load.
     #[test]
     fn draft_line_names_the_picked_file_and_nothing_else() {
         let m = map(vec![

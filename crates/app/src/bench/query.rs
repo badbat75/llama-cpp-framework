@@ -1317,7 +1317,10 @@ mod tests {
         let (runs, report) = db::campaign_runs(&c, "camp").unwrap();
         assert_eq!(report, None);
         let points = crate::bench::record::points_from_json(&runs[1].0, &runs[1].2);
-        assert_eq!((points[0].preset.as_str(), points[0].mean), ("B", 35.2));
+        assert_eq!(
+            (points[0].model_profile.as_str(), points[0].mean),
+            ("B", 35.2)
+        );
         drop(c);
         assert!(publish(&from, &to, &["camp".into()])
             .unwrap_err()

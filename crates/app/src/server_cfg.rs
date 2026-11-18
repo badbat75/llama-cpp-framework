@@ -1,7 +1,7 @@
 //! server.ini's read and write through the seam (`server_control`): `load()`
 //! and `save()`, beside the schema and the rest of the IO in the core
 //! (`pai_core::server_cfg`), which it re-exports. `save` stays here because it
-//! checks the presets (`presets::check_startup_count`).
+//! checks the model profiles (`presets::check_startup_count`).
 
 use std::fs;
 use std::io;
@@ -30,7 +30,7 @@ pub fn save(cfg: &ServerConfig) -> io::Result<()> {
     let cpus = std::thread::available_parallelism().map_or(usize::MAX, |n| n.get());
     check(cfg, cpus).map_err(|r| io::Error::other(r.text()))?;
     validate_for_save(cfg)?;
-    // A lower ModelsMax can strand the presets already set to load on startup:
+    // A lower ModelsMax can strand the model profiles already set to load on startup:
     // the router would refuse to start (`presets::check_startup_count`).
     let startup = crate::presets::load_all()
         .iter()
@@ -89,7 +89,7 @@ pub fn effective_state_dir(
     crate::slot_state::state_dir(cfg)
 }
 
-/// Whether a preset save or a download may seed an unset ModelsDir into the
+/// Whether a model profile save or a download may seed an unset ModelsDir into the
 /// server file (pure): only when it is unset or blank, and never where a
 /// save leaves the folders unset (the instance default is in force there).
 pub fn seeds_models_dir(cfg: &ServerConfig, kind: server_control::Kind, os: Os) -> bool {
@@ -346,15 +346,15 @@ mod tests {
         }
     }
 
-    /// The two places that seed ModelsDir (a Hugging Face download's preset
-    /// and the first preset save) ask `seeds_models_dir` for the real
+    /// The two places that seed ModelsDir (a Hugging Face download's model profile
+    /// and the first model profile save) ask `seeds_models_dir` for the real
     /// backend and OS, instead of seeding whenever it is unset.
     #[test]
-    fn preset_saves_seed_models_dir_through_the_rule() {
+    fn model_profile_saves_seed_models_dir_through_the_rule() {
         for (file, code) in [
             (
-                "hf.rs save_preset",
-                fn_body(include_str!("hf.rs"), "save_preset"),
+                "hf.rs save_model_profile",
+                fn_body(include_str!("hf.rs"), "save_model_profile"),
             ),
             (
                 "presets.rs save",

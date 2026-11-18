@@ -2,14 +2,14 @@
 //! the run changed, then exit.
 //!
 //! A run edits models.ini and owns llama-server for hours; left alone, the
-//! signal ends the process with the preset on a leg's value, and the next
+//! signal ends the process with the model profile on a leg's value, and the next
 //! restart serves that. Every key a run changes is registered here beside its
 //! pending marker. The handler restores them newest first, removes their
 //! markers and leaves llama-server as the run found it. A kill -9 or a power cut
 //! never gets here: the markers are still what tells the next run.
 //!
 //! The one mutex is also the gate for whatever the main thread does to the
-//! preset and the server. The handler takes it and never lets go, so the main
+//! model profile and the server. The handler takes it and never lets go, so the main
 //! thread, still running a leg, stops at its next edit or restart and cannot
 //! undo the restore.
 
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 struct Held {
-    preset: String,
+    model_profile: String,
     key: String,
     restore: String,
     marker: PathBuf,
@@ -43,9 +43,9 @@ pub fn gate() -> MutexGuard<'static, State> {
 }
 
 /// Call before the key changes, once its marker is on disk.
-pub fn hold(preset: &str, key: &str, restore: &str, marker: PathBuf) {
+pub fn hold(model_profile: &str, key: &str, restore: &str, marker: PathBuf) {
     gate().held.push(Held {
-        preset: preset.to_string(),
+        model_profile: model_profile.to_string(),
         key: key.to_string(),
         restore: restore.to_string(),
         marker,
@@ -79,7 +79,7 @@ pub fn install() -> Result<(), String> {
 fn restore(state: &mut State) -> i32 {
     let mut code = 130;
     for h in state.held.iter().rev() {
-        match super::sweep::write_key(&h.preset, &h.key, &h.restore) {
+        match super::sweep::write_key(&h.model_profile, &h.key, &h.restore) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&h.marker);
                 println!("{} = {} (models.ini).", h.key, h.restore);

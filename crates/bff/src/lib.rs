@@ -29,8 +29,8 @@ const ENGINE_LLAMA_CPP: &str = "llama.cpp";
 pub const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How long the manager's calls of a WRITE are given: the server file's save
-/// (a read, the write, the state that answers `running`), the preset save (its
-/// write and the state after it, its read keeping `timeout`) and the preset
+/// (a read, the write, the state that answers `running`), the model profile save (its
+/// write and the state after it, its read keeping `timeout`) and the model profile
 /// switch (every call of the move). Longer than a read's
 /// [`MANAGER_TIMEOUT`], because a write goes through the manager's checks
 /// before the file, and its address check may resolve a host name. An
@@ -42,8 +42,8 @@ pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
 /// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its
-/// files under `/assets/`, the preset list at `GET /api/presets`, and the
-/// preset switch at `PUT /api/presets/{id}/enabled`. The revision secret is
+/// files under `/assets/`, the model-profile list at `GET /api/profiles/model`, and the
+/// model profile switch at `PUT /api/profiles/model/{id}/enabled`. The revision secret is
 /// drawn from the OS, and a bff that cannot draw one has no
 /// revision to hand out: the service builds itself with [`try_router_at`], which
 /// answers that as an error.
@@ -122,9 +122,9 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// session: `GET /api/instances/{id}/server` and its save
 /// `PUT /api/instances/{id}/server`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
-/// `PUT /api/instances/{id}/boot`, the preset list
-/// `GET /api/presets`, the preset save `PUT /api/presets/{id}` and the preset
-/// switch `PUT /api/presets/{id}/enabled`. The boot read
+/// `PUT /api/instances/{id}/boot`, the model-profile list
+/// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}` and the model profile
+/// switch `PUT /api/profiles/model/{id}/enabled`. The boot read
 /// `GET /api/instances/{id}/boot` needs none, so it is served beside them.
 /// One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
@@ -154,7 +154,7 @@ pub fn router_with_session(
 }
 
 /// `router_with_session` with the manager's calls of a WRITE given their own,
-/// longer limit: the server file's save, the preset save and the preset switch
+/// longer limit: the server file's save, the model profile save and the model profile switch
 /// run under `write_timeout`, every read keeps `timeout`, and so does the boot
 /// write and the control verbs (the control routes are handed `timeout`). A
 /// manager busy writing is not cut off at the limit that is right for a read.
@@ -215,7 +215,7 @@ fn router_with_policy(
             )
         }
     };
-    let presets = {
+    let model_profiles = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |headers: axum::http::HeaderMap| {
             presets::list(connect.clone(), timeout, sessions.clone(), headers)
@@ -236,13 +236,13 @@ fn router_with_policy(
             )
         }
     };
-    let read_preset = {
+    let read_model_profile = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
             presets::read(connect.clone(), timeout, sessions.clone(), id, headers, key)
         }
     };
-    let save_preset = {
+    let save_model_profile = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>,
               headers: axum::http::HeaderMap,
@@ -265,10 +265,10 @@ fn router_with_policy(
             "/api/instances/{id}/server",
             axum::routing::get(read).put(save),
         )
-        .route("/api/profiles/model", axum::routing::get(presets))
+        .route("/api/profiles/model", axum::routing::get(model_profiles))
         .route(
             "/api/profiles/model/{id}",
-            axum::routing::get(read_preset).put(save_preset),
+            axum::routing::get(read_model_profile).put(save_model_profile),
         )
         .route(
             "/api/profiles/model/{id}/enabled",

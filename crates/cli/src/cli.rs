@@ -26,7 +26,7 @@ pub enum Command {
     Server(ServerCmd),
     /// Per-model profiles (models.ini).
     #[command(name = "model-profile", subcommand)]
-    Preset(PresetCmd),
+    ModelProfile(ModelProfileCmd),
     /// Control the llama-server process.
     #[command(subcommand)]
     Control(ControlCmd),
@@ -155,7 +155,7 @@ pub enum QueryWhat {
 pub struct BenchRun {
     /// Model profile id to benchmark (as in `model-profile list`).
     #[arg(long)]
-    pub preset: String,
+    pub model_profile: String,
     /// The models.ini key to vary, e.g. spec-draft-n-max. Omitted (with
     /// --values) = the model profile as it is, one leg.
     #[arg(long, requires = "values")]
@@ -459,7 +459,7 @@ impl ServerSet {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum PresetCmd {
+pub enum ModelProfileCmd {
     /// List model profile ids and the resolved model path for each, switched-off
     /// ones included (marked).
     List,
@@ -497,7 +497,7 @@ pub enum PresetCmd {
     /// row per GGUF repository, most downloaded first, with its downloads and
     /// the quantizations it offers, and exits; run it again with the chosen
     /// `org/repo`.
-    Download(Box<PresetDownload>),
+    Download(Box<ModelProfileDownload>),
 }
 
 /// Which linked files `model-profile delete --delete-files` takes (`linked_files::Role`).
@@ -539,7 +539,7 @@ fn pick_files(
 }
 
 /// The refusal `model-profile delete` stops on when a picked file is in use, naming
-/// each such file and the presets holding it; `None` when nothing is shared.
+/// each such file and the model profiles holding it; `None` when nothing is shared.
 fn shared_refusal(chosen: &[crate::linked_files::LinkedFile]) -> Option<String> {
     let shared: Vec<String> = chosen
         .iter()
@@ -553,7 +553,7 @@ fn shared_refusal(chosen: &[crate::linked_files::LinkedFile]) -> Option<String> 
 }
 
 #[derive(Args, Debug)]
-pub struct PresetDownload {
+pub struct ModelProfileDownload {
     /// `org/repo`, `org/repo:QUANT`, the repo's huggingface.co URL, or words
     /// to search for (`"qwen3 8b"`: anything that is not a repository spec).
     pub spec: String,
@@ -588,7 +588,7 @@ pub struct PresetDownload {
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Server(c) => run_server(c),
-        Command::Preset(c) => run_preset(c),
+        Command::ModelProfile(c) => run_model_profile(c),
         Command::Control(c) => run_control(c),
         Command::Bench(c) => run_bench(c),
         Command::Config(c) => run_config(c),
@@ -723,7 +723,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
             .map(|_| (!concurrency_all).then_some(plan.concurrency)),
     };
     let opts = bench::sweep::Opts {
-        preset: a.preset,
+        model_profile: a.model_profile,
         key: a.key,
         values,
         plan,
@@ -758,7 +758,7 @@ fn run_bench(c: BenchCmd) -> Result<()> {
         opts.campaign.clone()
     };
     let mut problems = Vec::new();
-    for c in bench::sweep::all_scenarios(&opts.preset).map_err(|e| anyhow::anyhow!(e))? {
+    for c in bench::sweep::all_scenarios(&opts.model_profile).map_err(|e| anyhow::anyhow!(e))? {
         let o = bench::sweep::Opts {
             plan: bench::Plan {
                 concurrency: c,
@@ -1005,28 +1005,28 @@ fn run_server_boot_with(
     })
 }
 
-/// Look a preset up in BOTH files, case-insensitively like the whole INI section
+/// Look a model profile up in BOTH files, case-insensitively like the whole INI section
 /// layer (read_section, rename_section, delete_section all use
 /// eq_ignore_ascii_case). The writers below act on the STORED id so the header
 /// is hit whatever case the user typed.
 fn find_listed(id: &str) -> Result<presets::Listed> {
     presets::load_listed()
         .into_iter()
-        .find(|l| l.preset.id.eq_ignore_ascii_case(id))
+        .find(|l| l.model_profile.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| anyhow::anyhow!(strings::fill("preset-not-listed", &[&id])))
 }
 
-fn run_preset(c: PresetCmd) -> Result<()> {
+fn run_model_profile(c: ModelProfileCmd) -> Result<()> {
     match c {
-        PresetCmd::List => {
+        ModelProfileCmd::List => {
             let listed = presets::load_listed();
-            println!("models.ini: {}", config_path(ConfigFile::Presets).display());
+            println!("models.ini: {}", config_path(ConfigFile::Models).display());
             if listed.iter().any(|l| !l.enabled) {
                 println!(
                     "{}",
                     strings::fill(
                         "switched-off-file",
-                        &[&config_path(ConfigFile::PresetsDisabled).display()]
+                        &[&config_path(ConfigFile::ModelsDisabled).display()]
                     )
                 );
             }
@@ -1039,44 +1039,47 @@ fn run_preset(c: PresetCmd) -> Result<()> {
                 } else {
                     strings::t("preset-off-mark")
                 };
-                println!("  [{}]{off}  model={}", l.preset.id, l.preset.model);
+                println!(
+                    "  [{}]{off}  model={}",
+                    l.model_profile.id, l.model_profile.model
+                );
             }
             Ok(())
         }
-        PresetCmd::Show { id } => {
+        ModelProfileCmd::Show { id } => {
             let l = find_listed(&id)?;
             if !l.enabled {
                 println!("{}", strings::t("preset-parked"));
             }
-            println!("{}", presets::render_section(&l.preset));
+            println!("{}", presets::render_section(&l.model_profile));
             Ok(())
         }
-        PresetCmd::Delete {
+        ModelProfileCmd::Delete {
             id,
             delete_files,
             even_if_shared,
-        } => run_preset_delete(&id, &delete_files, even_if_shared),
-        PresetCmd::Enable { id } => set_preset_enabled(&id, true),
-        PresetCmd::Disable { id } => set_preset_enabled(&id, false),
-        PresetCmd::Download(a) => run_preset_download(*a),
+        } => run_model_profile_delete(&id, &delete_files, even_if_shared),
+        ModelProfileCmd::Enable { id } => set_model_profile_enabled(&id, true),
+        ModelProfileCmd::Disable { id } => set_model_profile_enabled(&id, false),
+        ModelProfileCmd::Download(a) => run_model_profile_download(*a),
     }
 }
 
 /// `model-profile delete`: the section, then the linked files `which` names (none by
 /// default). Everything that can refuse is checked BEFORE the section goes: an
-/// unknown id, and a picked file another preset references (`shared_refusal`,
+/// unknown id, and a picked file another model profile references (`shared_refusal`,
 /// lifted by `even_if_shared`). A file that then fails to delete does not undo
 /// the rest; it is reported and the command exits with an error.
-fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Result<()> {
+fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Result<()> {
     use crate::linked_files;
     // ini::delete_section is a documented no-op for a missing section,
     // so look the id up first (mirroring Show), or a typo'd id gets a
-    // "Removed" message for a preset that never existed.
+    // "Removed" message for a model profile that never existed.
     let listed = presets::load_listed();
     let l = find_listed(id)?;
-    let real_id = l.preset.id.clone();
-    let all: Vec<presets::Preset> = listed.into_iter().map(|l| l.preset).collect();
-    let linked = linked_files::linked_files(&l.preset, &all);
+    let real_id = l.model_profile.id.clone();
+    let all: Vec<presets::ModelProfile> = listed.into_iter().map(|l| l.model_profile).collect();
+    let linked = linked_files::linked_files(&l.model_profile, &all);
     let chosen = pick_files(&linked, which);
     for kind in which.iter().filter(|k| **k != FileKind::All) {
         if !linked.iter().any(|f| kind.covers(f.role)) {
@@ -1093,9 +1096,9 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
     }
     presets::delete(&real_id).with_context(|| strings::t("delete-preset-failed"))?;
     let file = if l.enabled {
-        config_path(ConfigFile::Presets)
+        config_path(ConfigFile::Models)
     } else {
-        config_path(ConfigFile::PresetsDisabled)
+        config_path(ConfigFile::ModelsDisabled)
     };
     println!(
         "{}",
@@ -1134,7 +1137,7 @@ fn run_preset_delete(id: &str, which: &[FileKind], even_if_shared: bool) -> Resu
 }
 
 /// A `--id` for `model-profile download`, checked before anything is fetched: a
-/// valid section name (`presets::valid_id`) that no preset holds in ANY case
+/// valid section name (`presets::valid_id`) that no model profile holds in ANY case
 /// (`presets::id_taken`; headers match case-insensitively, so a namesake
 /// would be replaced wholesale).
 fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
@@ -1149,11 +1152,11 @@ fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
 
 /// `model-profile download`: words are a search (`search_report`, then exit);
 /// a repository is listed, picked, downloaded (progress on stderr, one line
-/// rewritten in place), derive the preset, save it. Ctrl+C ends this process;
+/// rewritten in place), derive the model profile, save it. Ctrl+C ends this process;
 /// the child, which has no console of its own (`CREATE_NO_WINDOW`), then reads
 /// EOF on its stdin pipe and exits, leaving its partial in the staging tree,
 /// so the next run of the same download resumes it.
-fn run_preset_download(a: PresetDownload) -> Result<()> {
+fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
     use crate::hf;
     let token = hf::token_from_env();
     // The dialog's rule (`hf::classify_input`): a spec lists, words search.
@@ -1174,7 +1177,7 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
     };
     let existing: Vec<String> = presets::load_listed()
         .into_iter()
-        .map(|l| l.preset.id)
+        .map(|l| l.model_profile.id)
         .collect();
     if let Some(id) = &a.id {
         check_download_id(id, &existing)?;
@@ -1334,37 +1337,41 @@ fn run_preset_download(a: PresetDownload) -> Result<()> {
         println!("{}: {}", k.label(), p.display());
     }
 
-    // Re-read: another process may have added a preset during the transfer.
+    // Re-read: another process may have added a model profile during the transfer.
     let existing: Vec<String> = presets::load_listed()
         .into_iter()
-        .map(|l| l.preset.id)
+        .map(|l| l.model_profile.id)
         .collect();
     // The placement the --list rows show, from the downloaded headers on this
     // machine (`hf_fit::placement`); left to the fit without a GPU estimate.
     let budget = crate::hf_fit::budget(&crate::devices::list(), crate::hf_fit::system_ram_total());
-    let mut preset = hf::preset_from_download(&d, &existing, budget.as_ref());
+    let mut model_profile = hf::model_profile_from_download(&d, &existing, budget.as_ref());
     if let Some(id) = a.id {
         check_download_id(&id, &existing)?;
-        preset.id = id;
+        model_profile.id = id;
     }
-    hf::save_preset(&preset, &models_dir).with_context(|| strings::t("save-preset-failed"))?;
+    hf::save_model_profile(&model_profile, &models_dir)
+        .with_context(|| strings::t("save-preset-failed"))?;
     println!(
         "{}",
         strings::fill(
             "created-preset-in",
-            &[&preset.id, &config_path(ConfigFile::Presets).display()]
+            &[
+                &model_profile.id,
+                &config_path(ConfigFile::Models).display()
+            ]
         )
     );
-    if let Some(line) = placement_line(&preset) {
+    if let Some(line) = placement_line(&model_profile) {
         println!("{line}");
     }
     Ok(())
 }
 
 /// `Placement: device = ROCm1,CUDA0, tensor-split = 26,23, ctx-size = 32768
-/// (estimated at download ...)`: the placement keys a derived preset got, and
+/// (estimated at download ...)`: the placement keys a derived model profile got, and
 /// its note (pure); `None` when the download left them to the fit.
-fn placement_line(p: &presets::Preset) -> Option<String> {
+fn placement_line(p: &presets::ModelProfile) -> Option<String> {
     if p.placement_note.is_empty() {
         return None;
     }
@@ -1541,9 +1548,9 @@ fn search_report(query: &str, hits: &[crate::hf::SearchHit]) -> Vec<String> {
     out
 }
 
-fn set_preset_enabled(id: &str, enabled: bool) -> Result<()> {
+fn set_model_profile_enabled(id: &str, enabled: bool) -> Result<()> {
     let l = find_listed(id)?;
-    let real_id = l.preset.id;
+    let real_id = l.model_profile.id;
     if l.enabled == enabled {
         let already = if enabled {
             strings::fill("preset-already-on", &[&real_id])
@@ -1715,7 +1722,7 @@ mod tests {
     // spot (server_cfg load/save, the form conversions) has a round-trip test,
     // but `apply` is the CLI-only copy; an omitted field here is silent.
 
-    /// `pai preset download` and `pai preset rm --delete-files` resolve
+    /// `pai model-profile download` and `pai model-profile delete --delete-files` resolve
     /// ModelsDir through pai-app's resolver (`models_dir` in its server_cfg),
     /// so under the Windows manager an unset one is the instance's folder (and the
     /// download writes no `~\.llama.cpp` into the manager's file). Checked on
@@ -1914,15 +1921,15 @@ mod tests {
         assert_eq!(name, "\"pai\"");
     }
 
-    /// `preset delete` keeps every file unless asked, takes the files as a
+    /// `model-profile delete` keeps every file unless asked, takes the files as a
     /// comma list, and the shared override only beside a file list.
     #[test]
-    fn preset_delete_parses_its_file_flags() {
+    fn model_profile_delete_parses_its_file_flags() {
         let parse = |args: &[&str]| {
             let mut argv = vec!["pai", "model-profile", "delete", "p"];
             argv.extend_from_slice(args);
             Cli::try_parse_from(argv).map(|c| match c.command {
-                Command::Preset(PresetCmd::Delete {
+                Command::ModelProfile(ModelProfileCmd::Delete {
                     delete_files,
                     even_if_shared,
                     ..
@@ -1950,7 +1957,7 @@ mod tests {
     }
 
     #[test]
-    fn preset_delete_picks_by_kind_and_refuses_shared_files() {
+    fn model_profile_delete_picks_by_kind_and_refuses_shared_files() {
         use crate::linked_files::{LinkedFile, Role};
         let lf = |role: Role, name: &str, used: &[&str]| LinkedFile {
             role,
@@ -1988,10 +1995,10 @@ mod tests {
         );
     }
 
-    /// `preset download` takes the spec positionally and every choice as a
+    /// `model-profile download` takes the spec positionally and every choice as a
     /// flag, so a script can run it end to end without a prompt.
     #[test]
-    fn preset_download_parses_its_flags() {
+    fn model_profile_download_parses_its_flags() {
         let cli = Cli::try_parse_from([
             "pai",
             "model-profile",
@@ -2004,7 +2011,7 @@ mod tests {
             "q3",
         ])
         .unwrap();
-        let Command::Preset(PresetCmd::Download(a)) = cli.command else {
+        let Command::ModelProfile(ModelProfileCmd::Download(a)) = cli.command else {
             panic!("not a preset download");
         };
         assert_eq!(a.spec, "unsloth/Qwen3-8B-GGUF:Q4_K_M");
@@ -2026,7 +2033,7 @@ mod tests {
             "5",
         ])
         .unwrap();
-        let Command::Preset(PresetCmd::Download(a)) = cli.command else {
+        let Command::ModelProfile(ModelProfileCmd::Download(a)) = cli.command else {
             panic!("not a preset download");
         };
         assert!(a.search && a.limit == 5 && a.spec == "unsloth/Qwen3");
@@ -2256,8 +2263,8 @@ mod tests {
         );
         assert!(lines[7].starts_with("Estimated for 2 GPUs in split order, AMD Radeon AI PRO R9700 (ROCm1, 7.0 GiB usable) then "), "{}", lines[7]);
 
-        // What a download prints once the preset is saved.
-        let mut p = presets::Preset::new_default("m".into(), "m.gguf".into());
+        // What a download prints once the model profile is saved.
+        let mut p = presets::ModelProfile::new_default("m".into(), "m.gguf".into());
         assert_eq!(placement_line(&p), None, "left to the fit: nothing to say");
         p.device = "ROCm1,CUDA0".into();
         p.tensor_split = "2,3".into();
@@ -2295,7 +2302,7 @@ mod tests {
     }
 
     /// A `--id` is refused BEFORE the download when it is not a valid section
-    /// name or names an existing preset in any case (headers match
+    /// name or names an existing model profile in any case (headers match
     /// case-insensitively): a multi-GB transfer must not end in a save error.
     #[test]
     fn download_id_is_checked_up_front() {
@@ -2319,7 +2326,7 @@ mod tests {
             "pai",
             "bench",
             "run",
-            "--preset",
+            "--model-profile",
             "P",
             "--key",
             "spec-draft-n-max",
@@ -2336,10 +2343,10 @@ mod tests {
     }
 
     /// `--key` and `--values` come together or not at all: neither is the
-    /// preset as it is, one without the other is a sweep with half its axis.
+    /// model profile as it is, one without the other is a sweep with half its axis.
     #[test]
     fn key_and_values_come_together() {
-        let base = ["pai", "bench", "run", "--preset", "P"];
+        let base = ["pai", "bench", "run", "--model-profile", "P"];
         assert!(Cli::try_parse_from(base).is_ok());
         let mut key_only = base.to_vec();
         key_only.extend(["--key", "spec-draft-n-max"]);
@@ -2350,6 +2357,27 @@ mod tests {
         let mut restore_only = base.to_vec();
         restore_only.extend(["--restore-to", "3"]);
         assert!(Cli::try_parse_from(restore_only).is_err());
+    }
+
+    /// The profile `bench run` measures is named by `--model-profile`. The
+    /// flag's old name is not kept as a hidden alias, the way the retired
+    /// `pai preset` subcommand is not: clap's own refusal is what tells the
+    /// user the name changed, and it must name the flag it refused.
+    #[test]
+    fn bench_run_names_the_model_profile_flag() {
+        let accepted = Cli::try_parse_from(["pai", "bench", "run", "--model-profile", "P"]);
+        assert!(
+            accepted.is_ok(),
+            "--model-profile must parse: {:?}",
+            accepted.err().map(|e| e.to_string())
+        );
+        let refused = Cli::try_parse_from(["pai", "bench", "run", "--preset", "P"])
+            .expect_err("--preset is the retired name: clap must refuse it");
+        let text = refused.to_string();
+        assert!(
+            text.contains("unexpected argument '--preset' found"),
+            "the refusal must name the retired flag: {text}"
+        );
     }
 
     #[test]
@@ -2794,7 +2822,7 @@ pub(crate) fn cli_control_e2e() {
     std::fs::create_dir_all(server_ini.parent().unwrap()).expect("config dir");
     std::fs::write(&server_ini, &server_text).expect("server.ini");
     std::fs::write(
-        crate::paths::presets_ini(),
+        crate::paths::models_ini(),
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
     )
     .expect("models.ini");
@@ -2928,7 +2956,7 @@ pub(crate) fn cli_control_e2e() {
 }
 
 /// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): `server
-/// set` and `preset enable` / `disable` write the manager's files through the
+/// set` and `model-profile enable` / `disable` write the manager's files through the
 /// seam and nothing under the per-user config directory, and a write the
 /// manager refuses fails the command with the refusal's own text, which
 /// `main` prints on stderr before exiting non-zero.
@@ -3265,7 +3293,7 @@ pub(crate) fn cli_import_e2e() {
     let user = crate::paths::config_dir();
     let import = || run(Cli::try_parse_from(["x", "config", "import"]).expect("parses"));
     const SERVER: &str = "[Server]\r\nPort = 8080\r\nModelsMax = 6\r\n";
-    const PRESETS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n";
+    const MODELS: &str = "[Qwen3.8-27B]\r\nmodel = /mnt/data/models/Qwen3.8-27B-Q8_0.gguf\r\n";
 
     // Nothing per user: nothing to import, success, even with no manager.
     let log = fake::log();
@@ -3277,9 +3305,9 @@ pub(crate) fn cli_import_e2e() {
 
     std::fs::create_dir_all(&user).expect("config dir");
     std::fs::write(user.join("server.ini"), SERVER).expect("server.ini");
-    // The presets file of an earlier install, under the name that install
+    // The model profiles file of an earlier install, under the name that install
     // wrote it under: the hand-over reads that name, never the manager's.
-    std::fs::write(user.join("presets.ini"), PRESETS).expect("presets.ini");
+    std::fs::write(user.join("presets.ini"), MODELS).expect("presets.ini");
 
     // No manager, with files to import: the client's text, nothing written.
     let log = fake::log();
@@ -3330,7 +3358,7 @@ pub(crate) fn cli_import_e2e() {
     assert_eq!(fake::writes(&log), ["write_file models.ini"]);
     assert_eq!(
         files.lock().unwrap().get("models.ini").map(String::as_str),
-        Some(PRESETS)
+        Some(MODELS)
     );
 
     // Once more: nothing to import, a success, nothing written.
@@ -3347,6 +3375,6 @@ pub(crate) fn cli_import_e2e() {
     );
     assert_eq!(
         std::fs::read_to_string(user.join("presets.ini")).unwrap(),
-        PRESETS
+        MODELS
     );
 }

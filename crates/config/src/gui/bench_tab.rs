@@ -19,7 +19,7 @@
 //! list of rows for exactly that), and the prompts worth putting in a file are the
 //! long ones.
 //!
-//! **The selection is an ORDERED list of preset ids, kept Rust-side**
+//! **The selection is an ORDERED list of model profile ids, kept Rust-side**
 //! (`State.bench_selection`), not a set derived from the row model. Order is
 //! meaning: position 1 is the baseline every ratio in the results table is
 //! measured against, so checking a box APPENDS and unchecking closes the gap.
@@ -438,7 +438,7 @@ fn persist_db_path(app: &AppWindow) -> bool {
     }
 }
 
-/// Seed / re-seed everything the tab reads from disk: the preset rows, the list
+/// Seed / re-seed everything the tab reads from disk: the model profile rows, the list
 /// of past runs, and the derived preview. Part of the `reload_all_from_disk` hub
 /// (startup seed + Refresh/F5).
 pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
@@ -468,7 +468,7 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
         s.set_bench_ab_keys(string_model(keys));
         s.set_bench_spec(SharedString::from(SPEC_CUSTOM));
     }
-    // A preset can be renamed or deleted under us; a selection naming one that
+    // A model profile can be renamed or deleted under us; a selection naming one that
     // is gone would fail the run's preflight, so prune it here instead.
     let known: Vec<String> = presets::load_all().into_iter().map(|p| p.id).collect();
     state
@@ -482,7 +482,7 @@ pub(super) fn refresh(app: &AppWindow, state: &Rc<RefCell<State>>) {
     refresh_runs(app);
 }
 
-/// Rebuild the preset row model from disk crossed with the selection, then
+/// Rebuild the model profile row model from disk crossed with the selection, then
 /// re-derive everything downstream of it (the preview, the baseline).
 fn refresh_rows(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
@@ -540,8 +540,8 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
 
     let cfg = server_cfg::load();
     let all = presets::load_all();
-    let chosen: Vec<presets::Preset> = plan
-        .presets
+    let chosen: Vec<presets::ModelProfile> = plan
+        .model_profiles
         .iter()
         .filter_map(|id| all.iter().find(|p| &p.id == id).cloned())
         .collect();
@@ -555,7 +555,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
             Some(exe) => {
                 let env = runstate::env_vars(&cfg);
                 let sweeps = bench::synthetic_sweeps(&plan);
-                // One block per (preset, sweep): the prefill and decode halves
+                // One block per (model profile, sweep): the prefill and decode halves
                 // are separate invocations, and the preview has to show that or
                 // it would misrepresent both the runtime and the test count.
                 let mut blocks = Vec::new();
@@ -584,7 +584,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
         Mode::Live => {
             let port = u16::try_from(cfg.port_or_default())
                 .unwrap_or(crate::server_cfg::DEFAULT_PORT as u16);
-            let head = match steps_preview(&s, state, &plan.presets) {
+            let head = match steps_preview(&s, state, &plan.model_profiles) {
                 Some(Ok(text)) => strings::fill("then-first-request", &[&text]),
                 Some(Err(e)) => {
                     s.set_bench_preview(SharedString::from(strings::fill(
@@ -664,7 +664,7 @@ fn refresh_runs(app: &AppWindow) {
 }
 
 /// A campaign's table: every run's points under the run's label, in run
-/// order (a tab run's labels are its preset ids, a sweep's `key=value`).
+/// order (a tab run's labels are its model profile ids, a sweep's `key=value`).
 fn load_campaign(db: &Path, name: &str) -> Result<(Vec<bench::Point>, Vec<String>, bool), String> {
     let conn = bench::db::open_ro(db)?;
     let (runs, report) = bench::db::campaign_runs(&conn, name).map_err(|e| e.to_string())?;
@@ -740,7 +740,7 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
     let mode = Mode::from_str(s.get_bench_mode().as_str());
     Plan {
         mode,
-        presets: state.borrow().bench_selection.clone(),
+        model_profiles: state.borrow().bench_selection.clone(),
         reps: int(s.get_bench_reps(), bench::DEFAULT_REPS).max(1),
         // The CACHED text, which is what the preview needs. `on_bench_run`
         // re-reads the files into the plan it actually runs: the preview may
@@ -761,7 +761,7 @@ fn plan_from_ui(app: &AppWindow, state: &Rc<RefCell<State>>) -> Plan {
                 .cloned()
                 .unwrap_or_else(paths::bench_prompt_file),
         ),
-        // Checked = "leave the preset's own --temp alone", which is a third
+        // Checked = "leave the model profile's own --temp alone", which is a third
         // instruction and not a missing one, so it must send NO temperature
         // rather than a number.
         temp: if s.get_bench_temp_default() {
@@ -1079,14 +1079,14 @@ fn job_from_ui(
         Job::Steps(steps, name)
     };
     let explicit = s.get_bench_campaign().trim().to_string();
-    let ab = ab_from_ui(s, &plan.presets)?;
+    let ab = ab_from_ui(s, &plan.model_profiles)?;
     let ab_key = ab.as_ref().map(|(k, _)| k.as_str());
     let expand = |steps: Vec<exec::Step>| match &ab {
         Some((k, vs)) => bench::spec::ab_expand(steps, k, vs),
         None => steps,
     };
     if let Some(spec) = chosen_spec(s) {
-        if plan.presets.is_empty() {
+        if plan.model_profiles.is_empty() {
             return Err(strings::t("select-presets"));
         }
         let spec = spec?;
@@ -1117,7 +1117,7 @@ fn job_from_ui(
     }
     let all = s.get_bench_concurrency() == "all";
     let scenarios = if all {
-        common_scenarios(&plan.presets)?
+        common_scenarios(&plan.model_profiles)?
     } else {
         vec![plan.concurrency]
     };
@@ -1154,9 +1154,12 @@ fn job_from_ui(
     Ok(into(name, expand(steps)))
 }
 
-/// The A/B key and its values, each checked against every selected preset.
+/// The A/B key and its values, each checked against every selected model profile.
 /// None for `none`.
-fn ab_from_ui(s: &AppState, presets: &[String]) -> Result<Option<(String, Vec<String>)>, String> {
+fn ab_from_ui(
+    s: &AppState,
+    model_profiles: &[String],
+) -> Result<Option<(String, Vec<String>)>, String> {
     let key = s.get_bench_ab_key().to_string();
     if key.is_empty() || key == "none" {
         return Ok(None);
@@ -1169,16 +1172,16 @@ fn ab_from_ui(s: &AppState, presets: &[String]) -> Result<Option<(String, Vec<St
     if values.len() < 2 {
         return Err(strings::fill("ab-needs-values", &[&key]));
     }
-    for p in presets {
+    for p in model_profiles {
         bench::sweep::check_values(p, &key, &values)?;
     }
     Ok(Some((key, values)))
 }
 
-/// The concurrency scenarios every one of `presets` supports.
-fn common_scenarios(presets: &[String]) -> Result<Vec<bench::Concurrency>, String> {
+/// The concurrency scenarios every one of `model profiles` supports.
+fn common_scenarios(model_profiles: &[String]) -> Result<Vec<bench::Concurrency>, String> {
     let mut all = bench::Concurrency::ALL.to_vec();
-    for p in presets {
+    for p in model_profiles {
         let mine = bench::sweep::all_scenarios(p)?;
         all.retain(|c| mine.contains(c));
     }
@@ -1197,10 +1200,10 @@ fn path_name(p: &Path) -> String {
 fn steps_preview(
     s: &AppState,
     state: &Rc<RefCell<State>>,
-    presets: &[String],
+    model_profiles: &[String],
 ) -> Option<Result<String, String>> {
-    let head = runs_preview(s, state, presets);
-    let ab = match ab_from_ui(s, presets) {
+    let head = runs_preview(s, state, model_profiles);
+    let ab = match ab_from_ui(s, model_profiles) {
         Ok(None) => return head,
         Ok(Some((k, vs))) => strings::fill("ab-preview", &[&k, &vs.join(" | ")]),
         Err(e) => return Some(Err(e)),
@@ -1215,12 +1218,12 @@ fn steps_preview(
 fn runs_preview(
     s: &AppState,
     state: &Rc<RefCell<State>>,
-    presets: &[String],
+    model_profiles: &[String],
 ) -> Option<Result<String, String>> {
     let ticked: Vec<String> = ticked_paths(state).iter().map(|p| path_name(p)).collect();
     if let Some(spec) = chosen_spec(s) {
         return Some(spec.and_then(|spec| {
-            let scenarios = common_scenarios(presets)?;
+            let scenarios = common_scenarios(model_profiles)?;
             let changed = overridden(s, state);
             let cap = if changed.contains(&"max-tokens") {
                 s.get_bench_max_tokens().trim().parse::<i32>().unwrap_or(0)
@@ -1303,7 +1306,7 @@ fn runs_preview(
             parts.push(strings::fill("preview-prompts", &[&ticked.join(", ")]));
         }
         if all {
-            let cs: Vec<&str> = common_scenarios(presets)?
+            let cs: Vec<&str> = common_scenarios(model_profiles)?
                 .iter()
                 .map(|c| c.as_str())
                 .collect();
@@ -1319,7 +1322,7 @@ fn apply_points(app: &AppWindow, points: &[bench::Point], order: &[String]) {
         .into_iter()
         .map(|r| BenchResultRow {
             test: SharedString::from(r.test),
-            preset: SharedString::from(r.preset),
+            preset: SharedString::from(r.model_profile),
             mean: SharedString::from(r.mean),
             sd: SharedString::from(r.sd),
             samples: r.samples,
@@ -1353,11 +1356,11 @@ fn start_run(app: &AppWindow, state: &Rc<RefCell<State>>, job: Job) {
         }
     };
     let (order, mode) = match &job {
-        Job::One(plan) => (plan.presets.clone(), plan.mode),
+        Job::One(plan) => (plan.model_profiles.clone(), plan.mode),
         Job::Steps(steps, _) => (
             steps
                 .first()
-                .map(|s| s.plan.presets.clone())
+                .map(|s| s.plan.model_profiles.clone())
                 .unwrap_or_default(),
             Mode::Live,
         ),

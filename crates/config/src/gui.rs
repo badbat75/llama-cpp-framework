@@ -8,8 +8,8 @@
 //! Slint types through `use super::*`. All shared UI state lives in the Slint
 //! `AppState` global (ui/state.slint), reached with
 //! `let s = app.global::<AppState>()`. `State` (below) is the small Rust-side
-//! cache the callbacks share via `Rc<RefCell<…>>`: the loaded presets vector,
-//! the new-preset dialog's model scan, the draft dropdown's (value, spec)
+//! cache the callbacks share via `Rc<RefCell<…>>`: the loaded model profiles vector,
+//! the new-model-profile dialog's model scan, the draft dropdown's (value, spec)
 //! rows, and the discard dialog's parked action (`pending_discard`: the
 //! continuation `confirm_discard_then` stashes until the user's verdict).
 //! (The GPU-device probe result is cached in `devices::probed()`; it is
@@ -17,9 +17,9 @@
 //!
 //! ## Helper verb taxonomy (so a grep lands in the right family)
 //! - `load_*`            : server.ini ↔ UI (through `server_form::config_to_form`
-//!   / `form_to_config`; the preset side is `form.rs`).
+//!   / `form_to_config`; the model profile side is `form.rs`).
 //! - `refresh_*` / `reload_*` : rebuild a list/section from disk or the device
-//!   cache (`reload_presets`, `refresh_file_options`, `refresh_device_options`,
+//!   cache (`reload_model_profiles`, `refresh_file_options`, `refresh_device_options`,
 //!   `refresh_integrations`, `refresh_run_status`, `refresh_server_snapshot`;
 //!   `reload_all_from_disk` is the everything-at-once hub shared by startup and
 //!   Refresh/F5).
@@ -36,16 +36,16 @@
 //!   result via `invoke_from_event_loop` (`spawn_version_probe`, `spawn_device_probe`).
 //!
 //! Tab-specific helpers live next to their only callers in `gui/`: the New / Clone
-//! dialog funnel (`populate_dialog_models` … `commit_new_preset`) and the
+//! dialog funnel (`populate_dialog_models` … `commit_new_model_profile`) and the
 //! Model-info box (`update_model_info`) are in `gui/models_tab.rs`; the New
 //! dialog's Hugging Face source (search, list, pick) is `gui/hf_dialog.rs`,
 //! its search results and listing in `State.hf`; the downloads it hands to
-//! the background (transfer, preset creation, the Downloads window, Quit
+//! the background (transfer, model profile creation, the Downloads window, Quit
 //! asking first) are `gui/downloads.rs`, in `State.downloads`.
 //!
 //! ## Dirty tracking
 //! Save/Revert enable off `*_dirty` in state.slint, each computed as
-//! `form != form_base` (presets) / `server_form != server_form_base` (server).
+//! `form != form_base` (model profiles) / `server_form != server_form_base` (server).
 //! Rust keeps the baseline in sync: `apply_form` sets form + base together; the
 //! server tab re-baselines its form after a save (`server_tab::snapshot_server_base`).
 //!
@@ -73,7 +73,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::form::{form_to_preset, preset_to_form, prune_inactive_draft_fields};
+use crate::form::{form_to_model_profile, model_profile_to_form, prune_inactive_draft_fields};
 use crate::{
     devices, gguf, gpu_split, integrations, kv_cache, model_scan, net_ifaces, paths, presets,
     runstate, server_cfg, server_form, server_version, settings, startup, tensor_override,
@@ -108,11 +108,11 @@ mod tray;
 
 #[derive(Default)]
 struct State {
-    // Every preset the Models tab lists, BOTH files: the enabled ones, then the
+    // Every model profile the Models tab lists, BOTH files: the enabled ones, then the
     // switched-off ones (`presets::load_listed`). `PresetSummary.orig_index`
     // points in here.
-    presets: Vec<presets::Listed>,
-    // Full (unfiltered) model scan backing the new-preset dialog, so the search
+    model_profiles: Vec<presets::Listed>,
+    // Full (unfiltered) model scan backing the new-model-profile dialog, so the search
     // box can filter without re-hitting disk on every keystroke.
     dialog_models_all: Vec<model_scan::FileOption>,
     // Paths of the currently filtered dialog rows, parallel to
@@ -127,7 +127,7 @@ struct State {
     // Action parked by `confirm_discard_then` while the discard-confirm dialog
     // is up; `confirm_discard` runs it, `cancel_discard` drops it.
     pending_discard: Option<Box<dyn Fn()>>,
-    // The Benchmark tab's selection, as an ORDERED list of preset ids: position
+    // The Benchmark tab's selection, as an ORDERED list of model profile ids: position
     // 1 is the baseline every ratio is measured against, so this is a list and
     // not a set, and it cannot be derived from the row model (which is rebuilt
     // from it). Rust-only, like `draft_rows` above.
@@ -152,13 +152,13 @@ struct State {
     // The Hugging Face downloads handed to the background: their jobs, the
     // transfers' handles and the Downloads window (gui/downloads.rs).
     downloads: downloads::Downloads,
-    // The Delete dialog's preset, the files it links and their ticks
+    // The Delete dialog's model profile, the files it links and their ticks
     // (gui/models_tab.rs); the Slint rows are a projection of it.
     delete_dialog: models_tab::DeleteDialog,
 }
 
 /// TEST-ONLY seam for the e2e flow test (src/tests/save_flow.rs): build the
-/// shared `State`, seed the preset list from disk, and wire the Models +
+/// shared `State`, seed the model profile list from disk, and wire the Models +
 /// Integrations tabs plus the discard dialog, and nothing else (no tray, no
 /// probes, no single-instance, no event loop). The caller must have redirected
 /// config IO first (see `paths::data_root`).
@@ -170,7 +170,7 @@ struct State {
 #[cfg(test)]
 pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     let state = Rc::new(RefCell::new(State::default()));
-    reload_presets(app, &state, None);
+    reload_model_profiles(app, &state, None);
     server_tab::wire_tables(app);
     models_tab::wire(app, &state);
     hf_dialog::wire(app, &state);
@@ -183,7 +183,7 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
     bench_tab::wire(app, &state, None);
     bench_tab::refresh(app, &state);
     // A cut-down `reload_all`: the disk re-reads the flow test needs after it
-    // writes a preset (or opencode.json) behind the UI's back, without the
+    // writes a model profile (or opencode.json) behind the UI's back, without the
     // discard guard, the device/version probes or the tray that the real one
     // drives.
     {
@@ -191,7 +191,7 @@ pub(crate) fn wire_tabs_for_tests(app: &AppWindow) {
         let state = state.clone();
         app.global::<AppState>().on_reload_all(move || {
             if let Some(app) = app_weak.upgrade() {
-                reload_presets(&app, &state, None);
+                reload_model_profiles(&app, &state, None);
                 refresh_integrations(&app);
                 bench_tab::refresh(&app, &state);
             }
@@ -334,7 +334,7 @@ pub fn run(start_minimized: bool) -> anyhow::Result<()> {
 
     s.set_presets_path(SharedString::from(
         crate::server_control::backend()
-            .config_path(crate::server_control::ConfigFile::Presets)
+            .config_path(crate::server_control::ConfigFile::Models)
             .to_string_lossy()
             .into_owned(),
     ));
@@ -812,7 +812,7 @@ pub(crate) fn populate_bind_options(app: &AppWindow, current: &str) {
 /// `State.pending_discard` and raise the discard-confirm dialog instead. The
 /// dialog's Confirm runs the parked action, Cancel drops it (keeping the
 /// edits). The guard shared by every navigation that replaces a dirty form:
-/// preset switch, Refresh/`reload_all`, and the New…/Clone… entry points.
+/// model profile switch, Refresh/`reload_all`, and the New…/Clone… entry points.
 fn confirm_discard_then(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
@@ -840,7 +840,7 @@ fn wire_discard_confirm(app: &AppWindow, state: &Rc<RefCell<State>>) {
             };
             app.global::<AppState>().set_show_discard_dialog(false);
             // Take the action out of the RefCell BEFORE running it: it will
-            // borrow `state` itself (reload_presets & co.).
+            // borrow `state` itself (reload_model_profiles & co.).
             let action = state.borrow_mut().pending_discard.take();
             if let Some(action) = action {
                 action();
@@ -903,10 +903,10 @@ fn wire_import(app: &AppWindow) {
     }
 }
 
-// ── Preset helpers ───────────────────────────────────────────────────
+// ── Model profile helpers ───────────────────────────────────────────────────
 
-/// `true` if the preset matches the (case-insensitive) filter on id or model.
-fn preset_matches(p: &presets::Preset, filter: &str) -> bool {
+/// `true` if the model profile matches the (case-insensitive) filter on id or model.
+fn model_profile_matches(p: &presets::ModelProfile, filter: &str) -> bool {
     if filter.is_empty() {
         return true;
     }
@@ -915,16 +915,16 @@ fn preset_matches(p: &presets::Preset, filter: &str) -> bool {
 }
 
 /// Build the `[PresetSummary]` list model, dropping rows that don't match the
-/// filter. Each surviving row carries its `orig_index` into `state.presets` so
+/// filter. Each surviving row carries its `orig_index` into `state.model profiles` so
 /// `select_preset()` and the selection highlight stay correct under a filter
 /// (the list `for` index is NOT stable once rows are removed).
-fn preset_summaries(presets: &[presets::Listed], filter: &str) -> Vec<PresetSummary> {
-    presets
+fn model_profile_summaries(model_profiles: &[presets::Listed], filter: &str) -> Vec<PresetSummary> {
+    model_profiles
         .iter()
         .enumerate()
-        .filter(|(_, l)| preset_matches(&l.preset, filter))
+        .filter(|(_, l)| model_profile_matches(&l.model_profile, filter))
         .map(|(i, l)| PresetSummary {
-            id: l.preset.id.clone().into(),
+            id: l.model_profile.id.clone().into(),
             orig_index: i as i32,
             enabled: l.enabled,
         })
@@ -943,11 +943,11 @@ fn reload_all_from_disk(
     tray_weak: slint::Weak<AppTray>,
 ) {
     load_server_into_ui(app);
-    reload_presets(app, state, None);
+    reload_model_profiles(app, state, None);
     refresh_file_options(app, state);
     // Read-only: F5 reports a drifted opencode.json, it never rewrites it.
     refresh_integrations(app);
-    // Re-lists the presets and the saved runs; the workload fields are left
+    // Re-lists the model profiles and the saved runs; the workload fields are left
     // alone (they are this session's, not a projection of any file).
     bench_tab::refresh(app, state);
     settings_tab::refresh(app);
@@ -958,63 +958,69 @@ fn reload_all_from_disk(
 
 /// Reload `models.ini` into `state`, rebuild the (filtered) list model, then
 /// pick the selection and apply its form:
-/// - `want = Some(id)` selects that preset if it exists (used after save/clone/rename);
-/// - `want = None` keeps the current preset, matched by the loaded form's ID
+/// - `want = Some(id)` selects that model profile if it exists (used after save/clone/rename);
+/// - `want = None` keeps the current model profile, matched by the loaded form's ID
 ///   first (a hand-edited models.ini may have shifted the indices), falling
 ///   back to the old index when the id is gone;
-/// - either way it falls back to the first preset, or `-1` + a blank form when
+/// - either way it falls back to the first model profile, or `-1` + a blank form when
 ///   the list is empty.
 ///
 /// Callers that also need to refresh the file/device dropdowns or integrations
-/// do so themselves afterward; this only owns the preset list + selection.
-fn reload_presets(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
+/// do so themselves afterward; this only owns the model profile list + selection.
+fn reload_model_profiles(app: &AppWindow, state: &Rc<RefCell<State>>, want: Option<&str>) {
     let s = app.global::<AppState>();
     let all = presets::load_listed();
-    let summaries = preset_summaries(&all, s.get_presets_filter().as_str());
+    let summaries = model_profile_summaries(&all, s.get_presets_filter().as_str());
     s.set_presets(model(summaries));
 
     let prev_sel = s.get_selected_preset_index();
     let cur_id = s.get_form().id;
     let idx = match want {
-        Some(id) => all.iter().position(|l| l.preset.id == id).map(|i| i as i32),
+        Some(id) => all
+            .iter()
+            .position(|l| l.model_profile.id == id)
+            .map(|i| i as i32),
         None => all
             .iter()
-            .position(|l| !cur_id.is_empty() && l.preset.id == cur_id.as_str())
+            .position(|l| !cur_id.is_empty() && l.model_profile.id == cur_id.as_str())
             .map(|i| i as i32)
             .or_else(|| (prev_sel >= 0 && (prev_sel as usize) < all.len()).then_some(prev_sel)),
     }
     .unwrap_or(if all.is_empty() { -1 } else { 0 });
 
-    state.borrow_mut().presets = all;
+    state.borrow_mut().model_profiles = all;
     s.set_selected_preset_index(idx);
 
     let st = state.borrow();
-    match usize::try_from(idx).ok().and_then(|i| st.presets.get(i)) {
-        Some(l) => apply_form(app, preset_to_form(&l.preset)),
+    match usize::try_from(idx)
+        .ok()
+        .and_then(|i| st.model_profiles.get(i))
+    {
+        Some(l) => apply_form(app, model_profile_to_form(&l.model_profile)),
         None => apply_form(app, PresetForm::default()),
     }
 }
 
-/// `reload_presets` without the form: re-read both files, rebuild the list and
-/// point the selection back at the preset being edited, by id. For the one
-/// write that changes where a preset LIVES but not what it says, the on/off
+/// `reload_model_profiles` without the form: re-read both files, rebuild the list and
+/// point the selection back at the model profile being edited, by id. For the one
+/// write that changes where a model profile LIVES but not what it says, the on/off
 /// switch: it must neither discard an unsaved edit (the form stays, and its next
-/// Save lands in whichever file now holds the preset) nor wait on the discard
+/// Save lands in whichever file now holds the model profile) nor wait on the discard
 /// dialog for something that discards nothing. Replacing the list model is also
 /// what gives every row's switch a fresh binding (see models_page.slint).
-fn refresh_preset_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
+fn refresh_model_profile_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     let all = presets::load_listed();
-    s.set_presets(model(preset_summaries(
+    s.set_presets(model(model_profile_summaries(
         &all,
         s.get_presets_filter().as_str(),
     )));
     let cur_id = s.get_form().id;
     let idx = all
         .iter()
-        .position(|l| !cur_id.is_empty() && l.preset.id == cur_id.as_str())
+        .position(|l| !cur_id.is_empty() && l.model_profile.id == cur_id.as_str())
         .map_or(-1, |i| i as i32);
-    state.borrow_mut().presets = all;
+    state.borrow_mut().model_profiles = all;
     s.set_selected_preset_index(idx);
 }
 
@@ -1022,7 +1028,7 @@ fn refresh_preset_list(app: &AppWindow, state: &Rc<RefCell<State>>) {
 /// picker) from a fresh `ModelsDir` scan, then cascade into the device dropdowns
 /// (`refresh_device_options`) and the Model-info box (`models_tab::update_model_info`).
 /// Call after anything that changes `models_dir`, a form file field, or the
-/// selected preset; this is the hub a newly-added file-backed dropdown extends.
+/// selected model profile; this is the hub a newly-added file-backed dropdown extends.
 fn refresh_file_options(app: &AppWindow, state: &Rc<RefCell<State>>) {
     let s = app.global::<AppState>();
     // SAVED config, not the live form: like every other client-facing
@@ -1143,13 +1149,13 @@ fn refresh_device_options(app: &AppWindow) {
 /// weight edit changes no other row (see GpuSplitTable's binding note), so its
 /// handler updates the derived scalars and leaves the model alone.
 fn refresh_gpu_rows(app: &AppWindow) {
-    // Every path that re-projects the device pins (preset load, the probe
+    // Every path that re-projects the device pins (model profile load, the probe
     // landing, a GPU-table edit on either tab) passes through here, and the KV
     // verdict depends on exactly those pins.
     refresh_kv_cache_warning(app);
     let s = app.global::<AppState>();
     let devs = devices::probed();
-    let preset_mode = preset_mode(app);
+    let model_profile_mode = model_profile_mode(app);
     // The combo model is static, but pushed from here rather than kept in the
     // .slint so the labels/values pair has ONE owner next to the code that
     // interprets a pick (gpu_split::MODE_*).
@@ -1164,27 +1170,27 @@ fn refresh_gpu_rows(app: &AppWindow) {
     ));
     s.set_preset_gpu_rows(model(gpu_split::build_rows(
         &devs,
-        &preset_selection(app),
-        preset_split_layout(app),
-        preset_mode,
+        &model_profile_selection(app),
+        model_profile_split_layout(app),
+        model_profile_mode,
     )));
     // Feeds the mode strip under split mode `tensor` (state.slint
-    // `preset_split_mode_warning`).
+    // `model_profile_split_mode_warning`).
     s.set_preset_mixes_cuda_rocm(gpu_split::mixes_cuda_and_rocm(s.get_form().device.as_str()));
     refresh_gpu_scalars(app);
     refresh_tensor_rows(app);
 }
 
-/// The preset table's split mode. Per preset only: nothing server-wide can
+/// The model profile table's split mode. Per model profile only: nothing server-wide can
 /// shadow it, since the router's command line carries no `--split-mode`.
-fn preset_mode(app: &AppWindow) -> gpu_split::SplitMode {
+fn model_profile_mode(app: &AppWindow) -> gpu_split::SplitMode {
     gpu_split::SplitMode::parse(app.global::<AppState>().get_form().split_mode.as_str())
 }
 
-/// The per-preset split's `Layout`: the selected model's block count crossed with
+/// The per-model-profile split's `Layout`: the selected model's block count crossed with
 /// its GPU-layers setting. `None` (no model, an unreadable header, or nothing
 /// offloaded) is what puts the table back into raw-weight mode.
-pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> {
+pub(crate) fn model_profile_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> {
     let s = app.global::<AppState>();
     let f = s.get_form();
     // The form carries ALL_LAYERS as its "auto" placeholder, which is a real 99
@@ -1199,8 +1205,8 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
 }
 
 /// Rebuild the tensor-placement table from the device probe crossed with the
-/// preset's `override_tensor` string: rows, the dropdown models, and the derived
-/// strings. The twin of `refresh_gpu_rows` (and called from it, so a preset
+/// model profile's `override_tensor` string: rows, the dropdown models, and the derived
+/// strings. The twin of `refresh_gpu_rows` (and called from it, so a model profile
 /// switch / Revert / probe landing re-projects both tables in one go).
 ///
 /// Always a full rebuild, for the same reason: the delegates bind one-way
@@ -1211,13 +1217,13 @@ pub(crate) fn preset_split_layout(app: &AppWindow) -> Option<gpu_split::Layout> 
 fn refresh_tensor_rows(app: &AppWindow) {
     let s = app.global::<AppState>();
     let devs = devices::probed();
-    let preset = preset_overrides(app);
+    let model_profile = model_profile_overrides(app);
 
     // The KIND dropdown is a static list; the DEVICE one is built from the rules:
     // `device_options` appends a `(custom)` entry for every device id the probe
     // doesn't know, so its length, and hence every row's `device_index`, depends
-    // on this preset's rules.
-    let (labels, values) = tensor_override::device_options(&devs, &preset);
+    // on this model profile's rules.
+    let (labels, values) = tensor_override::device_options(&devs, &model_profile);
     s.set_preset_tensor_dev_labels(string_model(labels));
     s.set_preset_tensor_dev_values(string_model(values));
 
@@ -1231,7 +1237,7 @@ fn refresh_tensor_rows(app: &AppWindow) {
         tensor_override::KINDS.iter().map(|k| k.id.into()).collect(),
     ));
 
-    s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &preset)));
+    s.set_preset_tensor_rows(model(tensor_override::build_rows(&devs, &model_profile)));
     s.set_preset_tensor_can_pick(MODEL_TENSORS.with(|t| !t.borrow().is_empty()));
     refresh_tensor_scalars(app);
 }
@@ -1263,7 +1269,7 @@ fn set_model_experts(expert_count: u32, expert_used: u32, n_layer: u32) {
 
 /// The `--moe-cache-mib` floor of `p` on the selected model
 /// (`moe_cache::floor`), `None` when it has no experts or was not read.
-fn preset_moe_floor(p: &presets::Preset) -> Option<crate::moe_cache::Floor> {
+fn model_profile_moe_floor(p: &presets::ModelProfile) -> Option<crate::moe_cache::Floor> {
     let (expert_count, expert_used, n_layer) = MODEL_EXPERTS.with(|e| e.get());
     MODEL_TENSORS.with(|t| {
         crate::moe_cache::floor(
@@ -1332,11 +1338,11 @@ fn refresh_tensor_picker(app: &AppWindow) {
 fn refresh_tensor_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
 
-    let preset = preset_overrides(app);
-    s.set_preset_tensor_summary(tensor_override::summary(&preset).into());
+    let model_profile = model_profile_overrides(app);
+    s.set_preset_tensor_summary(tensor_override::summary(&model_profile).into());
     // Per rule, what it places on this model. A separate model from the rows,
     // so a regex keystroke refreshes it without recreating the field.
-    let coverage = MODEL_TENSORS.with(|t| tensor_picker::coverage(&preset, &t.borrow()));
+    let coverage = MODEL_TENSORS.with(|t| tensor_picker::coverage(&model_profile, &t.borrow()));
     s.set_preset_tensor_coverage(string_model(coverage));
     // Two warnings share this strip, and the order is deliberate. `validate`'s is
     // a value llama-server would REFUSE (no device after the `=`), so it outranks
@@ -1349,10 +1355,12 @@ fn refresh_tensor_scalars(app: &AppWindow) {
     // re-opening the GGUF) is what keeps this callable on every pattern keystroke.
     // It is empty unless the type is known AND unpinnable, so an unreadable GGUF
     // stays silent instead of warning about a type nobody could read.
-    let refused = tensor_override::validate(&preset).err().unwrap_or_default();
+    let refused = tensor_override::validate(&model_profile)
+        .err()
+        .unwrap_or_default();
     let warning = if !refused.is_empty() {
         refused
-    } else if tensor_override::pins_embeddings_to_gpu(&preset) {
+    } else if tensor_override::pins_embeddings_to_gpu(&model_profile) {
         s.get_model_info_embd_warning().to_string()
     } else {
         String::new()
@@ -1366,20 +1374,20 @@ fn refresh_tensor_scalars(app: &AppWindow) {
 /// without the row rebuild that would recreate the SpinBox being typed into.
 fn refresh_gpu_scalars(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let preset_mode = preset_mode(app);
+    let model_profile_mode = model_profile_mode(app);
 
-    let preset = preset_selection(app);
-    s.set_preset_gpu_selected(gpu_count(&preset));
-    s.set_preset_gpu_total(gpu_weight_total(&preset));
-    s.set_preset_gpu_mode(preset_mode.as_str().into());
+    let model_profile = model_profile_selection(app);
+    s.set_preset_gpu_selected(gpu_count(&model_profile));
+    s.set_preset_gpu_total(gpu_weight_total(&model_profile));
+    s.set_preset_gpu_mode(model_profile_mode.as_str().into());
     s.set_preset_split_mode_index(gpu_split::mode_index(s.get_form().split_mode.as_str()));
     // 0 = "no model to project onto", which is what switches the table's editable
     // column back from blocks to raw weights, and any mode but layer counts as
     // that too: under `row` the bytes follow row fractions, under `tensor` a
     // tensor-axis cut, under `none` the vector is dead, so a block cut would
     // misreport all three.
-    s.set_preset_split_positions(if preset_mode == gpu_split::SplitMode::Layer {
-        preset_split_layout(app).map_or(0, |l| l.count)
+    s.set_preset_split_positions(if model_profile_mode == gpu_split::SplitMode::Layer {
+        model_profile_split_layout(app).map_or(0, |l| l.count)
     } else {
         0
     });
@@ -1396,9 +1404,9 @@ fn gpu_weight_total(sel: &gpu_split::GpuSelection) -> i32 {
 // The selection IS the form's `device` + `tensor_split` pair; there is no third
 // copy of it, so a hand-edited INI stays authoritative and nothing can desync.
 // The `preset_gpu_*` callbacks all follow the same two steps: derive the new
-// selection with `gpu_split`, then `set_preset_selection` + a refresh.
+// selection with `gpu_split`, then `set_model_profile_selection` + a refresh.
 
-pub(crate) fn preset_selection(app: &AppWindow) -> gpu_split::GpuSelection {
+pub(crate) fn model_profile_selection(app: &AppWindow) -> gpu_split::GpuSelection {
     let f = app.global::<AppState>().get_form();
     gpu_split::GpuSelection {
         device: f.device.to_string(),
@@ -1406,7 +1414,7 @@ pub(crate) fn preset_selection(app: &AppWindow) -> gpu_split::GpuSelection {
     }
 }
 
-pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
+pub(crate) fn set_model_profile_selection(app: &AppWindow, sel: &gpu_split::GpuSelection) {
     let s = app.global::<AppState>();
     let mut f = s.get_form();
     f.device = sel.device.clone().into();
@@ -1414,7 +1422,7 @@ pub(crate) fn set_preset_selection(app: &AppWindow, sel: &gpu_split::GpuSelectio
     s.set_form(f);
 }
 
-// Same contract for the tensor-placement table: the rules ARE the preset's
+// Same contract for the tensor-placement table: the rules ARE the model profile's
 // `override_tensor` string, with no second copy, so a hand-edited INI stays
 // authoritative. Every `preset_tensor_*` callback derives the new string with
 // `tensor_override`, writes it back here, then refreshes.
@@ -1426,14 +1434,14 @@ pub(crate) fn row_index(i: i32) -> usize {
     usize::try_from(i).unwrap_or(usize::MAX)
 }
 
-pub(crate) fn preset_overrides(app: &AppWindow) -> String {
+pub(crate) fn model_profile_overrides(app: &AppWindow) -> String {
     app.global::<AppState>()
         .get_form()
         .override_tensor
         .to_string()
 }
 
-pub(crate) fn set_preset_overrides(app: &AppWindow, rules: &str) {
+pub(crate) fn set_model_profile_overrides(app: &AppWindow, rules: &str) {
     let s = app.global::<AppState>();
     let mut f = s.get_form();
     f.override_tensor = rules.into();
@@ -1858,7 +1866,7 @@ fn refresh_run_status(
                 // status line still saying "llama-server started.". Neutral
                 // wording: a crash and an external taskkill look the same here.
                 // A benchmark restarts the server itself (a spec pass that
-                // overrides a preset key): not a crash.
+                // overrides a model profile key): not a crash.
                 if was_running
                     && !running
                     && !s.get_server_starting()
@@ -1922,9 +1930,9 @@ fn push_tray_status(
     }
 }
 
-// ── Form <-> Preset conversion ───────────────────────────────────────
+// ── Form <-> Model profile conversion ───────────────────────────────────────
 
-/// Set the editable form AND its baseline together, so the UI's `preset_dirty`
+/// Set the editable form AND its baseline together, so the UI's `model_profile_dirty`
 /// (`form != form_base`) reads false right after a (re)load or save and only
 /// turns true once the user actually edits a field.
 fn apply_form(app: &AppWindow, form: PresetForm) {
@@ -1932,7 +1940,7 @@ fn apply_form(app: &AppWindow, form: PresetForm) {
     s.set_form_base(form.clone());
     s.set_form(form);
     // The GPU table is a projection of form.device / form.tensor_split, so a form
-    // it didn't write (preset switch, Revert, reload) has to be re-projected,
+    // it didn't write (model profile switch, Revert, reload) has to be re-projected,
     // and as a full rebuild, since the delegates' one-way bindings don't survive
     // a click. Same reason load_server_into_ui rebuilds after seeding its form.
     refresh_gpu_rows(app);
@@ -1953,11 +1961,11 @@ fn opencode_api_key(cfg: &server_cfg::ServerConfig) -> integrations::ApiKey<'_> 
 }
 
 /// Re-derive the Integrations tab from disk: the Claude Code env snippet
-/// (server.ini's base URL + API key, an enabled preset as the example id) and
+/// (server.ini's base URL + API key, an enabled model profile as the example id) and
 /// the OpenCode status line, which says whether opencode.json carries the
 /// provider and, when it does, what the tab's Save would change
 /// (`integrations::opencode_plan`). Read-only: opencode.json is written by the
-/// tab's Save alone. Every preset write and server.ini save calls this, so the
+/// tab's Save alone. Every model profile write and server.ini save calls this, so the
 /// line names a change as soon as it is made.
 pub(super) fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
@@ -2003,8 +2011,8 @@ pub(super) fn refresh_integrations(app: &AppWindow) {
 }
 
 /// What the OpenCode status line names when opencode.json is out of step: the
-/// enabled presets it does not list, the listed models that are no enabled
-/// preset, the listed ones whose entry would change, and whether the provider's
+/// enabled model profiles it does not list, the listed models that are no enabled
+/// model profile, the listed ones whose entry would change, and whether the provider's
 /// own fields (base URL, API key) would.
 #[derive(Default)]
 struct Drift {
@@ -2065,7 +2073,7 @@ mod tests {
 
     fn p(id: &str, model: &str) -> presets::Listed {
         presets::Listed {
-            preset: presets::Preset {
+            model_profile: presets::ModelProfile {
                 id: id.into(),
                 model: model.into(),
                 ..Default::default()
@@ -2075,10 +2083,10 @@ mod tests {
     }
 
     // The invariant select_preset() depends on: a filtered row's `orig_index`
-    // points into the UNFILTERED presets vector (the list `for` index is not a
+    // points into the UNFILTERED model profiles vector (the list `for` index is not a
     // stable handle once rows are dropped).
     #[test]
-    fn preset_summaries_keep_orig_index_under_filter() {
+    fn model_profile_summaries_keep_orig_index_under_filter() {
         let all = vec![
             p("alpha", r"C:\m\models\a.gguf"),
             p("bravo", r"C:\m\models\qwen3.gguf"),
@@ -2086,18 +2094,18 @@ mod tests {
         ];
 
         // Filter matches case-insensitively on the id OR the model path.
-        let rows = preset_summaries(&all, "QWEN");
+        let rows = model_profile_summaries(&all, "QWEN");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id.as_str(), "bravo");
         assert_eq!(rows[0].orig_index, 1, "index into the unfiltered vector");
         assert!(!rows[0].enabled, "the row carries the switch's state");
 
-        let rows = preset_summaries(&all, "charlie");
+        let rows = model_profile_summaries(&all, "charlie");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].orig_index, 2);
 
         // No filter: everything, in order, indices dense.
-        let rows = preset_summaries(&all, "");
+        let rows = model_profile_summaries(&all, "");
         assert_eq!(rows.len(), 3);
         assert!(rows
             .iter()
@@ -2105,7 +2113,7 @@ mod tests {
             .all(|(i, r)| r.orig_index == i as i32));
 
         // No match: empty list (the UI then shows -1 / a blank form).
-        assert!(preset_summaries(&all, "zzz").is_empty());
+        assert!(model_profile_summaries(&all, "zzz").is_empty());
     }
 
     #[test]

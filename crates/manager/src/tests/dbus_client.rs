@@ -162,10 +162,10 @@ pub(crate) fn manager_dbus_client_e2e() {
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
     let alice = Caller(":1.42".into());
 
     // ── No sender: every change refused, nobody asked ────────────────────
@@ -199,13 +199,16 @@ pub(crate) fn manager_dbus_client_e2e() {
         );
         assert_eq!(calls(&c), vec![]);
         assert_eq!(asked(&c), vec![]);
-        // The preset files, list and status need no caller.
+        // The model profile files, list and status need no caller.
         assert_eq!(
             client.list_instances(),
             Ok(vec!["broken".to_string(), "default".to_string()])
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
-        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            client.read_file("models.ini"),
+            Ok(Some(plain(model_profiles)))
+        );
         // Start at boot: the change needs a caller, the read none.
         assert_eq!(
             client.set_boot_enabled("default", true),
@@ -243,7 +246,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             );
             assert_eq!(
                 client.read_file("models.ini"),
-                Ok(Some(plain(presets))),
+                Ok(Some(plain(model_profiles))),
                 "a preset file is never withheld"
             );
         }
@@ -304,7 +307,7 @@ pub(crate) fn manager_dbus_client_e2e() {
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets,
+            model_profiles,
             "a refused write leaves the file"
         );
         // Start at boot: refused under configure, nothing changed.
@@ -334,7 +337,10 @@ pub(crate) fn manager_dbus_client_e2e() {
             ]
         );
 
-        assert_eq!(client.read_file("models.ini"), Ok(Some(plain(presets))));
+        assert_eq!(
+            client.read_file("models.ini"),
+            Ok(Some(plain(model_profiles)))
+        );
         assert_eq!(
             client.read_file("models.ini.disabled"),
             Ok(None),
@@ -449,7 +455,7 @@ pub(crate) fn manager_dbus_client_e2e() {
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets
+            model_profiles
         );
 
         // Start at boot, both ways, and its refusals.
@@ -542,7 +548,7 @@ pub(crate) fn manager_dbus_client_e2e() {
             "the guarded call the plain write is, at every call"
         );
         assert_eq!(calls(&c), vec![], "a file write touches no unit");
-        std::fs::write(sys.join("models.ini"), presets).expect("restore presets");
+        std::fs::write(sys.join("models.ini"), model_profiles).expect("restore presets");
     }
 }
 
@@ -715,10 +721,10 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
-    let more = format!("{presets}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let more = format!("{model_profiles}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
     std::fs::write(sys.join("server@default.ini"), ini).expect("write default");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // polkit refuses this caller everything, and would challenge it for

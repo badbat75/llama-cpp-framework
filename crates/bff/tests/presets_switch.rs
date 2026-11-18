@@ -1,4 +1,4 @@
-//! `PUT /api/profiles/model/{id}/enabled`: the preset on/off switch of the Models
+//! `PUT /api/profiles/model/{id}/enabled`: the model profile on/off switch of the Models
 //! page (PLAN.md step 10, item 11b; ARCHITECTURE.md "The switch on and off
 //! (item 11b)"; `fe/briefs/api-contract.md`), through
 //! `pai_bff::router_with_session` with a fake manager client and a fake
@@ -28,15 +28,15 @@
 //! - the id is a section name, matched in any letter case, never a path: the
 //!   two file names are fixed, so nothing comes from the URL. An id neither
 //!   file holds is 404 `no-model-profile-named` with `args: [id]`.
-//! - llama-server's global `[*]` section is not a preset: it is the defaults
-//!   every preset starts from, it is never a row of the list, and a switch
+//! - llama-server's global `[*]` section is not a model profile: it is the defaults
+//!   every model profile starts from, it is never a row of the list, and a switch
 //!   naming it is 404 `no-model-profile-named` (the id check refuses `*`, so with
 //!   `args: []`) with the files untouched. Moved to the disabled file it would
 //!   silently stop applying to every model, and no list row would be left to
 //!   switch it back.
-//! - the preset moves, unchanged, between `models.ini` and
-//!   `models.ini.disabled`: the file the preset LANDS IN is written FIRST,
-//!   because a preset in both files reads as enabled. Switching off writes the
+//! - the model profile moves, unchanged, between `models.ini` and
+//!   `models.ini.disabled`: the file the model profile LANDS IN is written FIRST,
+//!   because a model profile in both files reads as enabled. Switching off writes the
 //!   disabled file, then `models.ini`; switching on writes `models.ini`,
 //!   then the disabled one. Each write is a compare and swap expecting the
 //!   text the bff read in this request.
@@ -46,8 +46,8 @@
 //! - an id that is already where it is asked for answers 200 and writes
 //!   nothing.
 //! - 409 `model-profile-changed-elsewhere` (args: none) when a compare and swap
-//!   found its file changed. When it answers the SECOND write the preset is
-//!   in both files: it reads enabled, and the next switch of that preset
+//!   found its file changed. When it answers the SECOND write the model profile is
+//!   in both files: it reads enabled, and the next switch of that model profile
 //!   mends it.
 //! - 422 `{"key", "args", "field"}` for the manager's refusal of the moved
 //!   section, `field` by the design's table (`load-on-startup` for both
@@ -125,8 +125,8 @@ const CLIENT: &str = "127.0.0.1:51000";
 /// router just needs one.
 const KEY: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-/// The names the manager knows the engine's preset files by.
-const PRESETS: &str = "models.ini";
+/// The names the manager knows the engine's model profile files by.
+const MODELS: &str = "models.ini";
 const DISABLED: &str = "models.ini.disabled";
 
 /// The ids these tests switch. `Qwen` is spelled as the file spells it, so a
@@ -137,7 +137,7 @@ const QWEN: &str = "Qwen";
 const ALPHA: &str = "alpha";
 const MISTRAL: &str = "mistral-7b";
 
-/// A `models.ini` with two switched-on presets, in a file order that is
+/// A `models.ini` with two switched-on model profiles, in a file order that is
 /// neither alphabetical nor reversed.
 const FILE_ON: &str = "\
 ; The presets llama-server is offered (--models-preset).\r\n\
@@ -149,7 +149,7 @@ model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
 load-on-startup = 1\r\n\
 ";
 
-/// A `models.ini.disabled` with one switched-off preset, written as the
+/// A `models.ini.disabled` with one switched-off model profile, written as the
 /// configurator writes it (its header, then the sections).
 const FILE_OFF: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
@@ -179,14 +179,14 @@ fn section_of(source: &str, id: &str) -> String {
 }
 
 /// The text of `destination` once the section of `source` is put into it: the
-/// text of the file the preset lands in (`ini::text::replace_section`, the
+/// text of the file the model profile lands in (`ini::text::replace_section`, the
 /// transform the GUI's move uses).
 fn landed(destination: &str, source: &str, id: &str) -> String {
     pai_core::ini::text::replace_section(destination, id, &section_of(source, id))
 }
 
 /// The text of `source` once its section is taken out of it: the text of the
-/// file the preset leaves (`ini::text::delete_section`).
+/// file the model profile leaves (`ini::text::delete_section`).
 fn left(source: &str, id: &str) -> String {
     pai_core::ini::text::delete_section(source, id)
         .unwrap_or_else(|| panic!("[{id}] in {source:?}"))
@@ -767,7 +767,7 @@ fn app_for_timeouts(
     }
 }
 
-/// A router over a manager that keeps the preset files live, with the
+/// A router over a manager that keeps the model profile files live, with the
 /// manager's call log, the number of connects and the principal of each.
 struct App {
     router: Router,
@@ -778,36 +778,31 @@ struct App {
 }
 
 /// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`:
-/// the pair that shows a preset on and a preset off.
+/// the pair that shows a model profile on and a model profile off.
 fn app_holding(on: &str, off: &str) -> App {
-    app_for(&[(PRESETS, on), (DISABLED, off)], &[], Ok(()))
+    app_for(&[(MODELS, on), (DISABLED, off)], &[], Ok(()))
 }
 
 /// The same pair, with the manager's calls of a write bound by
 /// `write_timeout` and the reads left at `TIMEOUT`.
 fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> App {
-    app_for_timeouts(
-        &[(PRESETS, on), (DISABLED, off)],
-        &[],
-        Ok(()),
-        write_timeout,
-    )
+    app_for_timeouts(&[(MODELS, on), (DISABLED, off)], &[], Ok(()), write_timeout)
 }
 
 /// A manager holding `on` as `models.ini` and no `models.ini.disabled`: the
 /// state of a machine where nothing was ever switched off, the one the switch
 /// off has to create.
 fn app_holding_no_disabled(on: &str) -> App {
-    app_for(&[(PRESETS, on)], &[], Ok(()))
+    app_for(&[(MODELS, on)], &[], Ok(()))
 }
 
 /// A manager holding `on` as `models.ini`, refusing the reads of the named
 /// principals: the member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
-    app_for(&[(PRESETS, on), (DISABLED, off)], refuse, Ok(()))
+    app_for(&[(MODELS, on), (DISABLED, off)], refuse, Ok(()))
 }
 
-/// The manager of no preset file at all: neither file exists, so no id is
+/// The manager of no model profile file at all: neither file exists, so no id is
 /// named by any switch.
 fn app_no_files() -> App {
     app_for(&[], &[], Ok(()))
@@ -816,7 +811,7 @@ fn app_no_files() -> App {
 /// The app that cannot reach the manager at all.
 fn app_no_manager() -> App {
     app_for(
-        &[(PRESETS, FILE_ON), (DISABLED, FILE_OFF)],
+        &[(MODELS, FILE_ON), (DISABLED, FILE_OFF)],
         &[],
         Err(ClientError::Unavailable),
     )
@@ -915,7 +910,7 @@ impl Reply {
             .clone()
     }
 
-    /// The list's row of `id`, case-insensitively. A preset the list does not
+    /// The list's row of `id`, case-insensitively. A model profile the list does not
     /// show is a failure of these tests: the switch just moved it.
     fn row_of(&self, id: &str) -> Value {
         self.rows()
@@ -971,7 +966,7 @@ impl App {
         self.writes().is_empty() && self.plain_writes().is_empty()
     }
 
-    /// The text of one preset file, as the manager holds it now: `None` for a
+    /// The text of one model profile file, as the manager holds it now: `None` for a
     /// file that is not there.
     fn file_text(&self, name: &str) -> Option<String> {
         self.live
@@ -1239,11 +1234,11 @@ impl App {
 // The contract's body, and who may ask
 // ---------------------------------------------------------------------------
 
-/// The route at work: `{"enabled": false}` on a preset that is on answers 200
-/// `{"enabled": false, "running": false}`, and the preset is off in the files:
+/// The route at work: `{"enabled": false}` on a model profile that is on answers 200
+/// `{"enabled": false, "running": false}`, and the model profile is off in the files:
 /// its bytes sit in `models.ini.disabled`, gone from `models.ini`.
 #[tokio::test]
-async fn switch_signed_in_moves_the_preset_off_and_answers_its_state() {
+async fn switch_signed_in_moves_the_model_profile_off_and_answers_its_state() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
     rep.assert_switched(false, false);
@@ -1256,7 +1251,7 @@ async fn switch_signed_in_moves_the_preset_off_and_answers_its_state() {
                 FILE_OFF.to_string()
             ),
             (
-                PRESETS.to_string(),
+                MODELS.to_string(),
                 file_on_without_qwen(),
                 FILE_ON.to_string()
             ),
@@ -1356,7 +1351,7 @@ async fn switch_body_that_is_no_json_is_400() {
     assert!(app.no_write_asked(), "nothing written");
 }
 
-/// The contract's answer for a name no preset has, in either file: 404
+/// The contract's answer for a name no model profile has, in either file: 404
 /// `no-model-profile-named` with the id as its only arg, and no write.
 #[tokio::test]
 async fn switch_unknown_name_is_404_no_file_is_written() {
@@ -1364,7 +1359,7 @@ async fn switch_unknown_name_is_404_no_file_is_written() {
     let rep = app.switch_on("nope", false).await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &["nope"]);
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
@@ -1376,14 +1371,14 @@ async fn switch_unknown_name_is_404_no_file_is_written() {
     assert!(app.no_write_asked(), "nothing written");
 }
 
-/// A machine with no preset file at all answers the same 404: no id is named by
+/// A machine with no model profile file at all answers the same 404: no id is named by
 /// any switch, and no file is created.
 #[tokio::test]
-async fn switch_with_no_preset_file_is_404_and_creates_nothing() {
+async fn switch_with_no_model_profile_file_is_404_and_creates_nothing() {
     let app = app_no_files();
     let rep = app.switch_on(QWEN, false).await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[QWEN]);
-    assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
+    assert_eq!(app.file_text(MODELS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
         None,
@@ -1392,8 +1387,8 @@ async fn switch_with_no_preset_file_is_404_and_creates_nothing() {
     assert!(app.no_write_asked(), "nothing written");
 }
 
-/// llama-server's global `[*]` section is not a preset: naming it, raw or
-/// url-encoded, is the 404 of a name no preset carries, and its args carry
+/// llama-server's global `[*]` section is not a model profile: naming it, raw or
+/// url-encoded, is the 404 of a name no model profile carries, and its args carry
 /// nothing (the id check refuses `*`, so the id is echoed nowhere). The section
 /// stays where it is: switched off it would stop applying to every model with
 /// no row left in the list to bring it back.
@@ -1413,7 +1408,7 @@ model = /models/alpha.gguf\r\n\
         rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
     }
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(on),
         "the global section is where it was"
     );
@@ -1423,7 +1418,7 @@ model = /models/alpha.gguf\r\n\
         "the disabled file is as it was"
     );
     assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
-    // The lookup of a name no preset carries: the two files, nothing else.
+    // The lookup of a name no model profile carries: the two files, nothing else.
     assert_eq!(
         app.calls(),
         [
@@ -1453,7 +1448,7 @@ async fn switch_matches_the_name_ignoring_case() {
                 FILE_OFF.to_string()
             ),
             (
-                PRESETS.to_string(),
+                MODELS.to_string(),
                 file_on_without_qwen(),
                 FILE_ON.to_string()
             ),
@@ -1461,7 +1456,7 @@ async fn switch_matches_the_name_ignoring_case() {
         "the section of [Qwen] moved, spelled as the file spells it"
     );
     assert!(
-        !holds(&app.file_text(PRESETS).unwrap(), QWEN),
+        !holds(&app.file_text(MODELS).unwrap(), QWEN),
         "gone from models.ini"
     );
     assert!(
@@ -1471,7 +1466,7 @@ async fn switch_matches_the_name_ignoring_case() {
 }
 
 /// Every signed-in administrator is served the switch, and the manager is asked
-/// for them: `root` moves the preset as `root`.
+/// for them: `root` moves the model profile as `root`.
 #[tokio::test]
 async fn switch_is_served_to_every_signed_in_administrator() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -1545,11 +1540,11 @@ async fn switch_a_name_in_the_request_is_never_the_principal() {
     );
 }
 
-/// Off: the destination first. The preset has to appear in
+/// Off: the destination first. The model profile has to appear in
 /// `models.ini.disabled` before it disappears from `models.ini`, so a process
 /// that stops in the middle leaves it in both files, never in none.
 #[tokio::test]
-async fn switch_off_writes_the_disabled_file_first_then_presets_ini() {
+async fn switch_off_writes_the_disabled_file_first_then_model_profiles_ini() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
     rep.assert_switched(false, false);
@@ -1560,7 +1555,7 @@ async fn switch_off_writes_the_disabled_file_first_then_presets_ini() {
         .collect();
     assert_eq!(
         names,
-        vec![DISABLED.to_string(), PRESETS.to_string()],
+        vec![DISABLED.to_string(), MODELS.to_string()],
         "{:?}",
         names
     );
@@ -1583,7 +1578,7 @@ async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
         Some(&file_off_with_qwen()[..])
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..])
     );
     assert_eq!(
@@ -1597,7 +1592,7 @@ async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
 /// and is written first, and the section that lands is the bytes the disabled
 /// file held.
 #[tokio::test]
-async fn switch_on_writes_presets_ini_first_then_the_disabled_file() {
+async fn switch_on_writes_model_profiles_ini_first_then_the_disabled_file() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(MISTRAL, true).await;
     rep.assert_switched(true, false);
@@ -1605,7 +1600,7 @@ async fn switch_on_writes_presets_ini_first_then_the_disabled_file() {
         app.writes(),
         vec![
             (
-                PRESETS.to_string(),
+                MODELS.to_string(),
                 file_on_with_mistral(),
                 FILE_ON.to_string()
             ),
@@ -1618,7 +1613,7 @@ async fn switch_on_writes_presets_ini_first_then_the_disabled_file() {
         "the destination first, each write expecting the text the switch read"
     );
     assert_eq!(
-        section_of(&app.file_text(PRESETS).unwrap(), MISTRAL),
+        section_of(&app.file_text(MODELS).unwrap(), MISTRAL),
         section_of(FILE_OFF, MISTRAL),
         "the section that lands is the bytes the disabled file held"
     );
@@ -1626,7 +1621,7 @@ async fn switch_on_writes_presets_ini_first_then_the_disabled_file() {
 
 /// No `models.ini.disabled` at all (a machine where nothing was ever switched
 /// off): the switch creates it, with the configurator's header, through the
-/// plain write, because the compare and swap refuses a missing file. The preset
+/// plain write, because the compare and swap refuses a missing file. The model profile
 /// follows the header, and `models.ini` is then written as the source.
 #[tokio::test]
 async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
@@ -1643,7 +1638,7 @@ async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
             .iter()
             .map(|(name, ..)| name.clone())
             .collect::<Vec<String>>(),
-        vec![PRESETS.to_string()],
+        vec![MODELS.to_string()],
         "the compare and swap is asked only for the file that exists"
     );
     let text = app
@@ -1655,7 +1650,7 @@ async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
     );
     assert_eq!(section_of(&text, QWEN), section_of(FILE_ON, QWEN));
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..])
     );
 }
@@ -1686,7 +1681,7 @@ async fn switch_a_moved_file_is_read_again_after_the_last_write() {
 /// The web UI shows the switch's state and the list's side by side: the two must
 /// agree. The list, a separate request, reads what the switch wrote.
 #[tokio::test]
-async fn switch_then_list_agree_on_which_presets_are_on() {
+async fn switch_then_list_agree_on_which_model_profiles_are_on() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
     rep.assert_switched(false, false);
@@ -1710,9 +1705,9 @@ async fn switch_then_list_agree_on_which_presets_are_on() {
 /// The state a half-finished move leaves: the section sits in `models.ini` and
 /// in `models.ini.disabled`, so it reads enabled. Asking for on is already the
 /// state, so nothing moves; asking for off takes it out of `models.ini` and
-/// leaves the disabled file's copy alone, and the preset ends up off.
+/// leaves the disabled file's copy alone, and the model profile ends up off.
 #[tokio::test]
-async fn switch_mends_a_preset_the_files_hold_in_both_places() {
+async fn switch_mends_a_model_profile_the_files_hold_in_both_places() {
     let app = app_holding(FILE_ON, &file_off_with_qwen());
     let rep = app.switch_on(QWEN, true).await;
     rep.assert_switched(true, false);
@@ -1730,11 +1725,11 @@ async fn switch_mends_a_preset_the_files_hold_in_both_places() {
         Some(&file_off_with_qwen()[..])
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..])
     );
     assert!(
-        !holds(&app.file_text(PRESETS).unwrap(), QWEN),
+        !holds(&app.file_text(MODELS).unwrap(), QWEN),
         "the mend leaves the section in the disabled file only"
     );
 }
@@ -1838,7 +1833,7 @@ fn unescape(raw: &str) -> String {
 
 /// The id is matched against section headers, and the two file names are the
 /// fixed ones, so a URL carrying a path, a newline or a bracket is a name no
-/// preset has: the same 404, no write of any kind, and no file created.
+/// model profile has: the same 404, no write of any kind, and no file created.
 #[tokio::test]
 async fn switch_a_name_that_cannot_be_a_section_is_404_and_creates_no_file() {
     for id in [
@@ -1862,7 +1857,7 @@ async fn switch_a_name_that_cannot_be_a_section_is_404_and_creates_no_file() {
         rep.assert_error(StatusCode::NOT_FOUND, "no-model-profile-named");
         assert!(app.no_write_asked(), "{id}: {:?}", app.calls());
         assert_eq!(
-            app.file_text(PRESETS),
+            app.file_text(MODELS),
             None,
             "{id}: no models.ini was created"
         );
@@ -1899,7 +1894,7 @@ async fn switch_changed_on_the_first_write_is_409_and_moves_nothing() {
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
@@ -1914,10 +1909,10 @@ async fn switch_changed_on_the_first_write_is_409_and_moves_nothing() {
 }
 
 /// The compare and swap of the SOURCE found its file changed, after the
-/// destination write landed: 409 with the preset in BOTH files, which the list
-/// reads as enabled. The next switch of that preset mends it.
+/// destination write landed: 409 with the model profile in BOTH files, which the list
+/// reads as enabled. The next switch of that model profile mends it.
 #[tokio::test]
-async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_the_next_switch_mends_it(
+async fn switch_changed_on_the_second_write_leaves_the_model_profile_in_both_files_and_the_next_switch_mends_it(
 ) {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.set_write_outcome_at(2, Outcome::Changed);
@@ -1932,7 +1927,7 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
         app.writes()
     );
     assert!(
-        holds(&app.file_text(PRESETS).unwrap(), QWEN),
+        holds(&app.file_text(MODELS).unwrap(), QWEN),
         "the source write was the refused one, so models.ini still holds it"
     );
     assert!(
@@ -1946,7 +1941,7 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
         .await
         .assert_switched(false, false);
     assert!(
-        !holds(&app.file_text(PRESETS).unwrap(), QWEN),
+        !holds(&app.file_text(MODELS).unwrap(), QWEN),
         "the next switch took the section out of models.ini"
     );
     assert!(
@@ -1955,8 +1950,8 @@ async fn switch_changed_on_the_second_write_leaves_the_preset_in_both_files_and_
     );
 }
 
-/// Switching on a preset that carries `load-on-startup` is the manager's count
-/// of those presets against the lowest `ModelsMax`, a check the bff cannot make
+/// Switching on a model profile that carries `load-on-startup` is the manager's count
+/// of those model profiles against the lowest `ModelsMax`, a check the bff cannot make
 /// itself. Its key, its values `[count, max]` and the field the form marks pass
 /// through, and the refused file stays as it was.
 #[tokio::test]
@@ -1980,7 +1975,7 @@ async fn switch_refused_for_the_load_on_startup_count_is_422_with_the_field_and_
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..]),
         "nothing moved"
     );
@@ -2010,7 +2005,7 @@ async fn switch_refused_for_a_key_of_the_moved_section_is_422_on_that_field() {
         "n-gpu-layers",
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "nothing moved"
     );
@@ -2030,7 +2025,7 @@ async fn switch_refused_without_a_key_to_mark_is_422_with_no_field() {
         .await
         .assert_refused_without_field("invalid-model-profile-id", &[QWEN]);
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "nothing moved"
     );
@@ -2060,14 +2055,14 @@ async fn switch_refused_at_the_read_is_403_and_ends_the_session() {
     );
     assert!(app.no_write_asked(), "nothing written");
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
 }
 
 /// The refusal is at the read, and it stops the switch there: the manager
-/// answers the preset files with a refusal and would take the write. The write
+/// answers the model profile files with a refusal and would take the write. The write
 /// is never asked, so the switch cannot report a state it did not read.
 #[tokio::test]
 async fn switch_refused_at_the_read_never_asks_for_a_write() {
@@ -2113,7 +2108,7 @@ async fn switch_refused_at_the_write_is_403_and_ends_the_session() {
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "a refused write moves nothing"
     );
@@ -2164,7 +2159,7 @@ async fn switch_with_no_manager_or_an_unavailable_read_is_503_and_keeps_the_sess
             .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
         assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
         assert_eq!(
-            app.file_text(PRESETS).as_deref(),
+            app.file_text(MODELS).as_deref(),
             Some(FILE_ON),
             "the files are as they were"
         );
@@ -2176,7 +2171,7 @@ async fn switch_with_no_manager_or_an_unavailable_read_is_503_and_keeps_the_sess
 
 /// The manager is reached for the write and the stream dies there: the write may
 /// have landed, so the answer is 504 `client-timeout`, never 503. That is the
-/// server file's rule, carried over to the two preset files.
+/// server file's rule, carried over to the two model profile files.
 #[tokio::test]
 async fn switch_when_the_write_answers_unavailable_is_504() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -2218,7 +2213,7 @@ async fn switch_when_the_manager_answers_another_error_is_502() {
             rep.body
         );
         assert_eq!(
-            app.file_text(PRESETS).as_deref(),
+            app.file_text(MODELS).as_deref(),
             Some(FILE_ON),
             "{stop}: nothing moved"
         );
@@ -2253,7 +2248,7 @@ async fn switch_with_a_read_that_is_too_slow_is_503_and_writes_nothing() {
         app.calls()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
@@ -2308,7 +2303,7 @@ async fn switch_with_a_status_read_that_is_too_slow_is_200_after_the_move_landed
         "the move landed"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..]),
         "the move landed"
     );
@@ -2339,7 +2334,7 @@ async fn switch_with_a_read_back_that_is_too_slow_is_200_with_the_value_the_move
         "the move landed"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..]),
         "the move landed"
     );
@@ -2373,7 +2368,7 @@ async fn switch_whose_writes_outlive_the_read_limit_is_answered_under_the_write_
         "the move landed"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(&file_on_without_qwen()[..]),
         "the move landed"
     );
@@ -2416,7 +2411,7 @@ async fn switch_time_limit_at_the_read_writes_nothing_after_the_503() {
         app.calls()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
@@ -2469,7 +2464,7 @@ async fn switch_time_limit_at_the_connect_writes_nothing_after_the_503() {
         app.calls()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the files are as they were"
     );
@@ -2559,7 +2554,7 @@ async fn switch_answers_running_false_for_an_instance_that_is_not_up() {
     }
 }
 
-/// Every instance serves the one preset file, so any instance that is up makes
+/// Every instance serves the one model profile file, so any instance that is up makes
 /// the switch's answer `running: true`: the states are asked in the list's
 /// order, and the asking stops at the first instance that is up.
 #[tokio::test]

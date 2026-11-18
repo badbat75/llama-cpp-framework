@@ -1,11 +1,11 @@
 //! models.ini schema and IO for the Private AI Framework.
 //!
-//! ADD A PRESET FIELD. The recurring change fans out to all of these (trace an
+//! ADD A MODEL PROFILE FIELD. The recurring change fans out to all of these (trace an
 //! existing field like `ctx-size` as the template; kebab-case INI key ↔
 //! snake_case Rust field):
-//!   1. `Preset` struct field (+ doc)      : below
-//!   2. `impl Default for Preset`          : below
-//!   3. `Preset::from_keys`                : INI read, below
+//!   1. `ModelProfile` struct field (+ doc)      : below
+//!   2. `impl Default for ModelProfile`          : below
+//!   3. `ModelProfile::from_keys`                : INI read, below
 //!   4. `render_section` + `emit_*` (+ `;` comment) : INI write, below
 //!   5. `PresetForm` struct                : ui/types.slint (a NUMERIC field rides
 //!      as a `string`, integers included, plus a paired `<field>_default: bool`,
@@ -16,7 +16,7 @@
 //!      and `default`; EnumComboBox for string dropdowns. Never a SpinBox: it edits
 //!      itself on a stray mouse-wheel over the page, and a test now bans it
 //!      (src\tests\binding_lint.rs `no_spinbox_widgets_anywhere`).
-//!   7. `preset_to_form` + `form_to_preset` : src/form.rs (BOTH directions; a
+//!   7. `model_profile_to_form` + `form_to_model_profile` : src/form.rs (BOTH directions; a
 //!      numeric goes out through `itxt`/`txt` and comes back through
 //!      `ini::parse_int_in`/`parse_float`, deriving `<field>_default` via
 //!      `is_none()` one way and `if <field>_default { None } else { … }` the
@@ -37,8 +37,8 @@
 //!      --key <it>` can measure it. Nothing fails if you skip this either: the
 //!      key is simply refused, naming the ones that do work.
 //!
-//! Guards: the INI round-trip test in this file (`full_preset_round_trips_through_ini`)
-//! and the form round-trip test in form.rs (`form_to_preset(preset_to_form(p)) == p`);
+//! Guards: the INI round-trip test in this file (`full_model_profile_round_trips_through_ini`)
+//! and the form round-trip test in form.rs (`form_to_model_profile(model_profile_to_form(p)) == p`);
 //! a field wired into one side only drops out of one of them. Give the new
 //! field a NON-DEFAULT value when extending the rich fixtures: `None`/empty
 //! satisfies the compiler but makes the round-trips vacuous for that field.
@@ -46,21 +46,21 @@
 //! clean paths), same for its widget (step 6: a forgotten widget just never
 //! appears in the UI).
 //!
-//! ENABLED vs DISABLED. A preset lives in exactly one of two files of the same
+//! ENABLED vs DISABLED. A model profile lives in exactly one of two files of the same
 //! format: `models.ini`, the file `llama-server --models-preset` reads, which
-//! makes it the set of ENABLED presets, and `models.ini.disabled`
-//! (`paths::presets_disabled_ini`), the ones switched off in the Models tab.
+//! makes it the set of ENABLED model profiles, and `models.ini.disabled`
+//! (`paths::models_disabled_ini`), the ones switched off in the Models tab.
 //! `load_all` is the enabled set, and it is what everything that talks to
 //! llama-server reads (the Benchmark tab, the snapshot restore, `bench run`,
-//! the opencode.json model list); only the Models tab and the CLI's `preset`
+//! the opencode.json model list); only the Models tab and the CLI's `model-profile`
 //! commands see both (`load_listed`). The switch MOVES the section's raw text
 //! (`set_enabled`), comments and hand-edits included, instead of re-rendering
 //! it. Commenting the lines out in place was the other option, and it loses on
 //! the way back: the file would hold two kinds of `;` line (the user's own notes
 //! and parked keys) that no reader can tell apart. Every write resolves the id's
-//! file first (`home_of`), so Save edits a disabled preset where it is parked,
+//! file first (`home_of`), so Save edits a disabled model profile where it is parked,
 //! and ids stay unique ACROSS both files (Rename; New/Clone de-conflict against
-//! `load_listed`), so switching a preset back on can never land on a namesake.
+//! `load_listed`), so switching a model profile back on can never land on a namesake.
 
 use crate::strings;
 #[cfg(test)]
@@ -80,16 +80,16 @@ use pai_core::ini::project_url_of;
 #[cfg(test)]
 use pai_core::checks::LLAMA_MODELS_MAX_DEFAULT;
 
-// ── Schema: Preset + Default ─────────────────────────────────────────────
+// ── Schema: Model profile + Default ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Preset {
+pub struct ModelProfile {
     pub id: String,
     pub model: String,
     /// The model's project page (e.g. its Hugging Face repository), for the
     /// Models tab's Open button. Empty = no line. It is stored as a COMMENT
     /// (`; url = <value>`, `PROJECT_URL_MARKER`), never as a key: llama-server
-    /// has no such option and refuses to start on a preset holding an unknown
+    /// has no such option and refuses to start on a model profile holding an unknown
     /// key (`common_preset_context::load`). Being a comment, the value is taken
     /// verbatim to the end of the line, so a `#` fragment survives; it rides the
     /// section's raw text through enable/disable and rename like any comment.
@@ -103,9 +103,9 @@ pub struct Preset {
     pub placement_note: String,
     /// Load this model as soon as the router starts (`load-on-startup`, a
     /// preset-only key: no command-line flag, the router reads it from the
-    /// preset). Only at startup: a preset added by a later reload of the file
+    /// model profile). Only at startup: a model profile added by a later reload of the file
     /// is listed but not loaded. false = omit the key, llama.cpp's default (load
-    /// on the first request). The router refuses to start when more presets
+    /// on the first request). The router refuses to start when more model profiles
     /// carry it than `--models-max` allows, and with `--models-max 0`
     /// (unlimited) whenever any does (`server-models.cpp`, `load_models`); Save
     /// and the on switch refuse that in advance (`check_startup_count`).
@@ -163,8 +163,8 @@ pub struct Preset {
     // token. A SEPARATE MTP head file (e.g. gemma4-assistant, n_layer=0) is the
     // case where they do apply, and there, pin to ONE device: the multi-device
     // "auto" split crashes those heads. Since v0.4.1 (#28390) an EMPTY
-    // `device_draft` inherits the preset's own `device` list instead of meaning
-    // "every device" (`common_base_params_to_speculative`), so a preset pinned to
+    // `device_draft` inherits the model profile's own `device` list instead of meaning
+    // "every device" (`common_base_params_to_speculative`), so a model profile pinned to
     // one GPU pins its draft file with it, and a draft on exactly one device is
     // forced to the layer split even under an inherited `split-mode = tensor`.
     // Up to v0.4.0 the key had to be written for the pin to reach the draft.
@@ -210,7 +210,7 @@ pub struct Preset {
     /// `result = params`, so the draft context inherits the model's
     /// `cache_type_k`/`_v`, and then unconditionally overwrites both with
     /// `params.speculative.draft.cache_type_k/_v`, whose own default is
-    /// `GGML_TYPE_F16` (common/common.h). So a preset that runs the model on a
+    /// `GGML_TYPE_F16` (common/common.h). So a model profile that runs the model on a
     /// q8_0 KV cache still drafts against an **f16** one: these two flags are
     /// the only way to reach it, and "leave them alone and it follows the model"
     /// is exactly the wrong guess.
@@ -250,8 +250,8 @@ pub struct Preset {
     pub n_gpu_layers_draft: Option<i32>,
     pub device_draft: String,
     /// The GPUs THIS model runs on (--device): one id ("ROCm1") or a comma-
-    /// separated list in split order ("ROCm1,CUDA0"). Per preset only: set on
-    /// the router's command line it would override every preset's. Empty = every
+    /// separated list in split order ("ROCm1,CUDA0"). Per model profile only: set on
+    /// the router's command line it would override every model profile's. Empty = every
     /// detected device. Written by the GPU distribution table (src/gpu_split.rs),
     /// never typed by hand.
     pub device: String,
@@ -268,7 +268,7 @@ pub struct Preset {
     /// positional over the `device` list ABOVE, in that order. Empty tensor_split
     /// with 2+ devices = llama.cpp splits by free VRAM at load (NOT evenly),
     /// except under `tensor`, where empty IS an even cut.
-    /// Empty = layer. Identical on CUDA and HIP. All three are per preset only.
+    /// Empty = layer. Identical on CUDA and HIP. All three are per model profile only.
     pub split_mode: String,
     pub tensor_split: String,
     /// Per-tensor placement (--override-tensor): `<regex>=<buffer type>` rules,
@@ -399,7 +399,7 @@ pub struct Preset {
     ///
     /// Needs llama.cpp **b10434** or newer. On an older llama-server the key is
     /// not merely ignored: `common_preset_context::load` throws "option
-    /// 'reasoning-effort' not recognized in preset '<id>'" (`ignore_unknown_keys`
+    /// 'reasoning-effort' not recognized in model profile '<id>'" (`ignore_unknown_keys`
     /// is true only for the shared user config.ini, never for --models-preset),
     /// so the whole server refuses to start.
     pub reasoning_effort: String,
@@ -490,7 +490,7 @@ pub struct Preset {
     ///
     /// llama-bench has NO `-ncffn` (checked against v0.4.0), so the synthetic
     /// benchmark reproduces this key by expanding it into the same per-layer
-    /// `-ot` rules llama.cpp would (`bench::synthetic_argv`), where a preset
+    /// `-ot` rules llama.cpp would (`bench::synthetic_argv`), where a model profile
     /// carrying `n_cpu_moe` rides the tool's own `-ncmoe`.
     pub n_cpu_ffn: Option<i32>,
     /// VRAM cache, in MiB, for the MoE experts kept in HOST memory
@@ -579,7 +579,7 @@ pub struct Preset {
     /// `mmap+mlock` and `auto`, `llama-model-loader.cpp`), and the old `--mlock`
     /// / `--no-mmap` flags are gone upstream since v0.4.1. Before framework 2.0.0
     /// this was server.ini `LoadMode`, always on the router's command line and
-    /// so overriding every preset.
+    /// so overriding every model profile.
     pub load_mode: String,
     /// Let llama.cpp auto-shrink the arguments left unset to fit device memory
     /// (`fit = on|off`, the `-fit` flag). ALWAYS written, as `off` unless turned
@@ -615,7 +615,7 @@ pub struct Preset {
     ///
     /// A tri-state for shape, not for the launch line: the flag has NO negated
     /// form (`--no-backend-sampling` does not exist, unlike the draft-side
-    /// `--no-spec-draft-backend-sampling`), and llama.cpp's preset reader drops a
+    /// `--no-spec-draft-backend-sampling`), and llama.cpp's model profile reader drops a
     /// value-less flag whose value is falsey (`common_preset::to_args`), so
     /// `false` and `None` reach the child as the same argv. `Some(false)` is kept
     /// so the INI can say "considered and declined" and so a future negated flag
@@ -646,7 +646,7 @@ pub struct Preset {
     /// (`prefill-assistant`, --prefill-assistant / --no-prefill-assistant).
     /// `None` = omit the key, llama.cpp's default (on): when a request's last
     /// message is an assistant message, it is the START of the reply and the model
-    /// continues it. `Some(false)` is the one value written: the preset reader
+    /// continues it. `Some(false)` is the one value written: the model profile reader
     /// turns `prefill-assistant = false` into `--no-prefill-assistant`
     /// (`common_preset::to_args` takes a bool arg's negated form). Turn it off
     /// when a client legitimately ends on an assistant turn and the model resumes
@@ -654,7 +654,7 @@ pub struct Preset {
     pub prefill_assistant: Option<bool>,
 }
 
-/// A new preset (`new_default`) leaves EVERY tunable unset, so the model runs on
+/// A new model profile (`new_default`) leaves EVERY tunable unset, so the model runs on
 /// llama.cpp's own defaults until the user overrides something on purpose; each
 /// `None`/`""` below is a key `render_section` omits, which is what the GUI shows
 /// as a ticked **default** box. The framework used to seed its own opinions here
@@ -674,7 +674,7 @@ pub struct Preset {
 /// `fit` is the exception that is NOT llama.cpp's own value: it is always
 /// written as `off` (see the field), because llama.cpp's default `on` would cut
 /// the "every layer" that an omitted n-gpu-layers stands for.
-impl Default for Preset {
+impl Default for ModelProfile {
     fn default() -> Self {
         Self {
             id: String::new(),
@@ -761,7 +761,7 @@ impl Default for Preset {
 
 // ── Construct & parse (from_keys = INI read) ─────────────────────────────
 
-impl Preset {
+impl ModelProfile {
     pub fn new_default(id: String, model: String) -> Self {
         Self {
             id,
@@ -886,7 +886,7 @@ impl Preset {
         }
     }
 
-    /// A preset as a section of the file holds it: the keys plus the
+    /// A model profile as a section of the file holds it: the keys plus the
     /// comment-borne `project_url` and `placement_note`.
     fn from_section(s: &ini::Section) -> Self {
         Self {
@@ -897,9 +897,9 @@ impl Preset {
     }
 }
 
-/// The comment line that carries `Preset::project_url`, up to the value.
+/// The comment line that carries `ModelProfile::project_url`, up to the value.
 const PROJECT_URL_MARKER: &str = "; url = ";
-/// The comment line that carries `Preset::placement_note`, up to the value.
+/// The comment line that carries `ModelProfile::placement_note`, up to the value.
 const PLACEMENT_MARKER: &str = "; placement = ";
 
 // ── Dead speculative keys (prune at the write boundary) ──────────────────
@@ -996,10 +996,10 @@ pub fn spec_type_with_ngram(spec_type: &str, entry: &str, on: bool) -> String {
 /// the widgets are `enabled: draft_active`, i.e. DISABLED, not cleared. A value
 /// that arrives from somewhere other than those widgets stays in the form,
 /// greyed out and unreadable, and is written back on the next save. Two ways in,
-/// both ordinary: cloning a preset copies every field of its base onto a
-/// different model, and re-pointing a preset at another model keeps the old
+/// both ordinary: cloning a model profile copies every field of its base onto a
+/// different model, and re-pointing a model profile at another model keeps the old
 /// one's keys.
-pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'static str> {
+pub fn prune_inactive_draft_keys(p: &mut ModelProfile, embeds_mtp: bool) -> Vec<&'static str> {
     let mut dropped = Vec::new();
     // A draft file makes all four live; nothing to prune.
     if !p.model_draft.is_empty() {
@@ -1052,7 +1052,7 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
     dropped
 }
 
-/// Drop `moe-cache-mib` from a preset whose model has no experts, returning
+/// Drop `moe-cache-mib` from a model profile whose model has no experts, returning
 /// whether it was there. Same contract as `prune_inactive_draft_keys`: `is_moe`
 /// must have been READ from the GGUF (`<arch>.expert_count > 0`), so callers
 /// skip the prune on an unreadable file. Same reason for existing too: the
@@ -1060,7 +1060,7 @@ pub fn prune_inactive_draft_keys(p: &mut Preset, embeds_mtp: bool) -> Vec<&'stat
 /// is not inert: `llama_moe_cache` throws "MoE cache requires a MoE model" at
 /// context creation and the model fails to load. A 0 is llama.cpp's own
 /// "disabled", harmless, but dead on a dense model all the same, so it goes too.
-pub fn prune_inactive_moe_cache(p: &mut Preset, is_moe: bool) -> bool {
+pub fn prune_inactive_moe_cache(p: &mut ModelProfile, is_moe: bool) -> bool {
     !is_moe && p.moe_cache_mib.take().is_some()
 }
 
@@ -1069,7 +1069,7 @@ pub fn prune_inactive_moe_cache(p: &mut Preset, is_moe: bool) -> bool {
 /// so with the type off they are inert, and the form greys out every other
 /// type's group: a value left behind by a type switch would sit dead in the
 /// INI. Needs no GGUF, unlike `prune_inactive_draft_keys`: it runs on every save.
-pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
+pub fn prune_unused_ngram_keys(p: &mut ModelProfile) -> Vec<&'static str> {
     let types: Vec<String> = p
         .spec_type
         .split(',')
@@ -1137,35 +1137,35 @@ pub fn prune_unused_ngram_keys(p: &mut Preset) -> Vec<&'static str> {
 
 // ── File IO (load / save / delete / rename / id) ─────────────────────────
 
-/// The ENABLED presets: every section of models.ini, in file order, i.e.
+/// The ENABLED model profiles: every section of models.ini, in file order, i.e.
 /// exactly what `llama-server --models-preset` serves. Everything that talks to
 /// llama-server reads this and only this; the switched-off ones are
 /// `load_listed`'s (see the module header).
-pub fn load_all() -> Vec<Preset> {
-    presets_in(server_control::backend(), ConfigFile::Presets)
+pub fn load_all() -> Vec<ModelProfile> {
+    model_profiles_in(server_control::backend(), ConfigFile::Models)
 }
 
 #[cfg(test)]
-pub(crate) fn read_presets(path: &Path) -> Vec<Preset> {
-    presets_from_text(&fs::read_to_string(path).unwrap_or_default())
+pub(crate) fn read_model_profiles(path: &Path) -> Vec<ModelProfile> {
+    model_profiles_from_text(&fs::read_to_string(path).unwrap_or_default())
 }
 
-fn presets_from_text(text: &str) -> Vec<Preset> {
+fn model_profiles_from_text(text: &str) -> Vec<ModelProfile> {
     ini::parse_sections(text)
         .into_iter()
-        .map(|s| Preset::from_section(&s))
+        .map(|s| ModelProfile::from_section(&s))
         .collect()
 }
 
-/// Where the two preset files are read and written: the seam
+/// Where the two model profile files are read and written: the seam
 /// (`server_control::Backend`) in the program, two paths in the unit tests.
-trait PresetFiles {
+trait ModelProfileFiles {
     /// The file's text, `None` when it does not exist.
     fn read(&self, file: ConfigFile) -> io::Result<Option<String>>;
     fn write(&self, file: ConfigFile, text: &str) -> io::Result<()>;
 }
 
-impl PresetFiles for server_control::Backend {
+impl ModelProfileFiles for server_control::Backend {
     fn read(&self, file: ConfigFile) -> io::Result<Option<String>> {
         self.read_config(file).map_err(io::Error::other)
     }
@@ -1174,13 +1174,13 @@ impl PresetFiles for server_control::Backend {
     }
 }
 
-/// The presets of one file, in file order; none when it is missing or cannot
+/// The model profiles of one file, in file order; none when it is missing or cannot
 /// be read.
-fn presets_in(files: &impl PresetFiles, file: ConfigFile) -> Vec<Preset> {
-    presets_from_text(&files.read(file).ok().flatten().unwrap_or_default())
+fn model_profiles_in(files: &impl ModelProfileFiles, file: ConfigFile) -> Vec<ModelProfile> {
+    model_profiles_from_text(&files.read(file).ok().flatten().unwrap_or_default())
 }
 
-fn has_section_in(files: &impl PresetFiles, file: ConfigFile, id: &str) -> bool {
+fn has_section_in(files: &impl ModelProfileFiles, file: ConfigFile, id: &str) -> bool {
     files.read(file).ok().flatten().is_some_and(|t| {
         ini::parse_sections(&t)
             .iter()
@@ -1197,9 +1197,9 @@ struct PathFiles<'a> {
 }
 
 #[cfg(test)]
-impl PresetFiles for PathFiles<'_> {
+impl ModelProfileFiles for PathFiles<'_> {
     fn read(&self, file: ConfigFile) -> io::Result<Option<String>> {
-        let path = if file == ConfigFile::Presets {
+        let path = if file == ConfigFile::Models {
             self.on
         } else {
             self.off
@@ -1211,7 +1211,7 @@ impl PresetFiles for PathFiles<'_> {
         }
     }
     fn write(&self, file: ConfigFile, text: &str) -> io::Result<()> {
-        let path = if file == ConfigFile::Presets {
+        let path = if file == ConfigFile::Models {
             self.on
         } else {
             self.off
@@ -1223,14 +1223,14 @@ impl PresetFiles for PathFiles<'_> {
     }
 }
 
-/// A preset as the Models tab lists it: the preset, and whether it is on.
+/// A model profile as the Models tab lists it: the model profile, and whether it is on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listed {
-    pub preset: Preset,
+    pub model_profile: ModelProfile,
     pub enabled: bool,
 }
 
-/// Every preset in both files: the enabled ones first, then the disabled ones,
+/// Every model profile in both files: the enabled ones first, then the disabled ones,
 /// each group in file order.
 pub fn load_listed() -> Vec<Listed> {
     listed_in(server_control::backend())
@@ -1248,19 +1248,19 @@ fn listed_from(enabled: &Path, parked: &Path) -> Vec<Listed> {
 /// `load_listed` over `files`. An id present in BOTH files is listed once, as
 /// enabled: that is what a `set_enabled` interrupted between its two writes
 /// leaves behind, and models.ini is the copy llama-server actually serves.
-fn listed_in(files: &impl PresetFiles) -> Vec<Listed> {
-    let on = presets_in(files, ConfigFile::Presets);
-    let off: Vec<Preset> = presets_in(files, ConfigFile::PresetsDisabled)
+fn listed_in(files: &impl ModelProfileFiles) -> Vec<Listed> {
+    let on = model_profiles_in(files, ConfigFile::Models);
+    let off: Vec<ModelProfile> = model_profiles_in(files, ConfigFile::ModelsDisabled)
         .into_iter()
         .filter(|p| !on.iter().any(|q| q.id.eq_ignore_ascii_case(&p.id)))
         .collect();
     on.into_iter()
-        .map(|preset| Listed {
-            preset,
+        .map(|model_profile| Listed {
+            model_profile,
             enabled: true,
         })
-        .chain(off.into_iter().map(|preset| Listed {
-            preset,
+        .chain(off.into_iter().map(|model_profile| Listed {
+            model_profile,
             enabled: false,
         }))
         .collect()
@@ -1281,21 +1281,21 @@ fn home_in(id: &str, enabled: PathBuf, parked: PathBuf) -> PathBuf {
         off: &parked,
     };
     match home(&files, id) {
-        ConfigFile::Presets => enabled.clone(),
+        ConfigFile::Models => enabled.clone(),
         _ => parked.clone(),
     }
 }
 
-/// The file a preset's section lives in: models.ini when the id is there
+/// The file a model profile's section lives in: models.ini when the id is there
 /// (enabled wins, as in `listed_in`), the disabled file when it is parked
-/// there, and models.ini for an id in neither: a NEW preset starts switched on.
-fn home(files: &impl PresetFiles, id: &str) -> ConfigFile {
-    if !has_section_in(files, ConfigFile::Presets, id)
-        && has_section_in(files, ConfigFile::PresetsDisabled, id)
+/// there, and models.ini for an id in neither: a NEW model profile starts switched on.
+fn home(files: &impl ModelProfileFiles, id: &str) -> ConfigFile {
+    if !has_section_in(files, ConfigFile::Models, id)
+        && has_section_in(files, ConfigFile::ModelsDisabled, id)
     {
-        ConfigFile::PresetsDisabled
+        ConfigFile::ModelsDisabled
     } else {
-        ConfigFile::Presets
+        ConfigFile::Models
     }
 }
 
@@ -1307,14 +1307,14 @@ const DISABLED_FILE_HEADER: &str = "\
 ; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n";
 
-/// Switch a preset on (`enabled`) or off by moving its section between
+/// Switch a model profile on (`enabled`) or off by moving its section between
 /// models.ini and the disabled file (`move_section`). A running llama-server
 /// keeps the set it was started with: the router reads models.ini at launch.
 pub fn set_enabled(id: &str, enabled: bool) -> io::Result<()> {
     let files = server_control::backend();
-    let (on, off) = (ConfigFile::Presets, ConfigFile::PresetsDisabled);
+    let (on, off) = (ConfigFile::Models, ConfigFile::ModelsDisabled);
     if enabled {
-        if let Some(p) = presets_in(files, off)
+        if let Some(p) = model_profiles_in(files, off)
             .iter()
             .find(|p| p.id.eq_ignore_ascii_case(id))
         {
@@ -1333,20 +1333,20 @@ fn move_section(id: &str, from: &Path, to: &Path, new_file_header: Option<&str>)
     move_between(
         &files,
         id,
-        ConfigFile::PresetsDisabled,
-        ConfigFile::Presets,
+        ConfigFile::ModelsDisabled,
+        ConfigFile::Models,
         new_file_header,
     )
 }
 
 /// Move one section, as raw text, from `from` to `to`. The destination is
-/// written FIRST: an interruption between the two writes leaves the preset in
+/// written FIRST: an interruption between the two writes leaves the model profile in
 /// both files (read as enabled, see `listed_in`), never in neither, and the
 /// next move replaces that stale twin rather than adding a second one. A section
 /// already gone from `from` but present in `to` is success: the switch is
 /// already where it was asked to go.
 fn move_between(
-    files: &impl PresetFiles,
+    files: &impl ModelProfileFiles,
     id: &str,
     from: ConfigFile,
     to: ConfigFile,
@@ -1380,28 +1380,31 @@ fn move_between(
     Ok(())
 }
 
-/// Write (replace) the preset's section in the file it lives in (`home_of`):
-/// models.ini, or the disabled file for a preset that is switched off, so an
+/// Write (replace) the model profile's section in the file it lives in (`home_of`):
+/// models.ini, or the disabled file for a model profile that is switched off, so an
 /// edit never switches it back on as a side effect.
 ///
 /// Side effect: on the FIRST save, when server.ini has no `ModelsDir` yet, this
 /// also seeds it, inferred from the model's path (its `models\` grandparent),
 /// so the file pickers have a root to scan without a separate setup step. The
-/// seeding error is intentionally ignored: a preset save must still succeed even
+/// seeding error is intentionally ignored: a model profile save must still succeed even
 /// if server.ini can't be touched.
-pub fn save(preset: &Preset) -> io::Result<()> {
-    validate_for_save(preset)?;
+pub fn save(model_profile: &ModelProfile) -> io::Result<()> {
+    validate_for_save(model_profile)?;
     let files = server_control::backend();
-    let file = home(files, &preset.id);
-    if file == ConfigFile::Presets {
-        check_startup_for(preset)?;
+    let file = home(files, &model_profile.id);
+    if file == ConfigFile::Models {
+        check_startup_for(model_profile)?;
     }
-    let body = render_section(preset);
+    let body = render_section(model_profile);
     let text = files.read(file)?.unwrap_or_default();
-    files.write(file, &ini::text::replace_section(&text, &preset.id, &body))?;
+    files.write(
+        file,
+        &ini::text::replace_section(&text, &model_profile.id, &body),
+    )?;
     // Never where the instance default is in force (`seeds_models_dir`).
     if server_cfg::seeds_models_dir(&server_cfg::load(), files.kind(), Os::current()) {
-        if let Some(models_dir) = infer_models_dir(&preset.model) {
+        if let Some(models_dir) = infer_models_dir(&model_profile.model) {
             let _ = set_server_key("ModelsDir", &models_dir);
         }
     }
@@ -1421,20 +1424,20 @@ pub(crate) fn set_server_key(key: &str, value: &str) -> io::Result<()> {
 
 /// True if `id` uses only the models.ini section-header charset (letters,
 /// digits, `.`, `-`, `_`). `[`/`]`/newline break the section structure; `;`/`#`
-/// get misread as an inline comment (here and by llama-server's preset reader).
+/// get misread as an inline comment (here and by llama-server's model profile reader).
 /// Enforced at BOTH free-text ways into a header (`rename` and the save
-/// boundary), so a hand-authored id (a future `preset set`/import, or an
+/// boundary), so a hand-authored id (a future `model-profile set`/import, or an
 /// editable-id GUI change) can't corrupt the file. Emptiness is a separate
 /// check so `rename` can keep its own "…is empty" message.
 pub fn valid_id(id: &str) -> bool {
-    checks::valid_preset_id(id)
+    checks::valid_model_profile_id(id)
 }
 
 /// Save-boundary validation, pure so the unit test never touches `paths::`:
 /// the id becomes a section header and the free-text fields must survive the
 /// INI comment rule: a `;`/`#` in a GGUF path OR in the raw-JSON
 /// `chat-template-kwargs` would silently reload truncated (here AND in
-/// llama-server's own preset reader), so refuse it with the field name (the
+/// llama-server's own model profile reader), so refuse it with the field name (the
 /// cure is renaming the file / fixing the JSON). See `ini::reject_comment_markers`.
 ///
 /// `override-tensor` gets a SECOND check on top of that one: its own grammar.
@@ -1443,47 +1446,52 @@ pub fn valid_id(id: &str) -> bool {
 /// `throw` during arg parsing; the model simply never loads, and the reason is
 /// buried in a child process's log. The table can't produce one; a hand-edited
 /// INI can, which is exactly why the check lives at the save boundary too.
-pub(crate) fn validate_for_save(preset: &Preset) -> io::Result<()> {
-    checks::preset_id(&preset.id).map_err(refused)?;
-    checks::preset_model(&preset.id, &preset.model).map_err(refused)?;
+pub(crate) fn validate_for_save(model_profile: &ModelProfile) -> io::Result<()> {
+    checks::model_profile_id(&model_profile.id).map_err(refused)?;
+    checks::model_profile_model(&model_profile.id, &model_profile.model).map_err(refused)?;
     for (field, value) in [
-        ("model", &preset.model),
-        ("mmproj", &preset.mmproj),
-        ("model-draft", &preset.model_draft),
-        ("chat-template-kwargs", &preset.chat_template_kwargs),
-        ("override-tensor", &preset.override_tensor),
-        ("reasoning-budget-message", &preset.reasoning_budget_message),
-        ("fit-target", &preset.fit_target),
+        ("model", &model_profile.model),
+        ("mmproj", &model_profile.mmproj),
+        ("model-draft", &model_profile.model_draft),
+        ("chat-template-kwargs", &model_profile.chat_template_kwargs),
+        ("override-tensor", &model_profile.override_tensor),
+        (
+            "reasoning-budget-message",
+            &model_profile.reasoning_budget_message,
+        ),
+        ("fit-target", &model_profile.fit_target),
     ] {
         checks::comment_markers(field, value).map_err(refused)?;
     }
     // A comment line, so `;`/`#` are fine; a line break would end it and spill
     // the rest into the section as a key llama-server refuses.
-    if preset.project_url.contains(['\r', '\n']) {
+    if model_profile.project_url.contains(['\r', '\n']) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             strings::t("project-url-one-line"),
         ));
     }
-    if preset.placement_note.contains(['\r', '\n']) {
+    if model_profile.placement_note.contains(['\r', '\n']) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             strings::t("placement-note-one-line"),
         ));
     }
-    checks::fit_target(&preset.fit_target).map_err(refused)?;
-    checks::override_tensor(&preset.override_tensor).map_err(refused)?;
-    validate_moe_cache_split(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    validate_moe_cache_floor(preset).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    checks::fit_target(&model_profile.fit_target).map_err(refused)?;
+    checks::override_tensor(&model_profile.override_tensor).map_err(refused)?;
+    validate_moe_cache_split(model_profile)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    validate_moe_cache_floor(model_profile)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     // Every integer key in its range and the other value rules, read from the
     // text the save writes so no field is left out of the checks' key lists.
-    if let Some(section) = ini::parse_sections(&render_section(preset)).first() {
-        for (key, range) in &checks::PRESET_INT_KEYS {
+    if let Some(section) = ini::parse_sections(&render_section(model_profile)).first() {
+        for (key, range) in &checks::MODEL_PROFILE_INT_KEYS {
             if let Some(v) = section.keys.get(*key) {
                 checks::whole_number(key, v, range).map_err(refused)?;
             }
         }
-        checks::preset_values(|key| section.keys.get(key).cloned()).map_err(refused)?;
+        checks::model_profile_values(|key| section.keys.get(key).cloned()).map_err(refused)?;
     }
     Ok(())
 }
@@ -1494,7 +1502,7 @@ fn refused(r: checks::Refusal) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, r.text())
 }
 
-/// Refuse a models.ini whose `load-on-startup` presets (`count`) the router
+/// Refuse a models.ini whose `load-on-startup` model profiles (`count`) the router
 /// would not start with: more than `models_max` (server.ini `ModelsMax`, `None`
 /// = llama.cpp's default), or any at all under `ModelsMax = 0`, which the
 /// router's startup check compares literally instead of reading it as
@@ -1503,9 +1511,9 @@ pub(crate) fn check_startup_count(count: usize, models_max: Option<i32>) -> io::
     checks::startup_count(count, models_max).map_err(refused)
 }
 
-/// How many presets in `enabled` would carry `load-on-startup` once `id` is
+/// How many model profiles in `enabled` would carry `load-on-startup` once `id` is
 /// written (or switched on) with `on`: the others' flags plus its own.
-fn startup_count_with(enabled: &[Preset], id: &str, on: bool) -> usize {
+fn startup_count_with(enabled: &[ModelProfile], id: &str, on: bool) -> usize {
     enabled
         .iter()
         .filter(|p| p.load_on_startup && !p.id.eq_ignore_ascii_case(id))
@@ -1513,15 +1521,15 @@ fn startup_count_with(enabled: &[Preset], id: &str, on: bool) -> usize {
         + usize::from(on)
 }
 
-/// `check_startup_count` for `preset` about to land in models.ini. Only a
-/// preset that carries the key can push the count over, so any other save or
-/// switch is never blocked by presets already on disk.
-fn check_startup_for(preset: &Preset) -> io::Result<()> {
-    if !preset.load_on_startup {
+/// `check_startup_count` for `model_profile` about to land in models.ini. Only a
+/// model profile that carries the key can push the count over, so any other save or
+/// switch is never blocked by model profiles already on disk.
+fn check_startup_for(model_profile: &ModelProfile) -> io::Result<()> {
+    if !model_profile.load_on_startup {
         return Ok(());
     }
     check_startup_count(
-        startup_count_with(&load_all(), &preset.id, true),
+        startup_count_with(&load_all(), &model_profile.id, true),
         server_cfg::load().models_max,
     )
 }
@@ -1531,7 +1539,7 @@ fn check_startup_for(preset: &Preset) -> io::Result<()> {
 /// parallelism" at context creation. Model-independent, unlike the cache's other
 /// two refusals (a dense model, a budget below one token's experts), so it lives
 /// at the save boundary every writer goes through. 0 is "no cache" and passes.
-pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
+pub fn validate_moe_cache_split(p: &ModelProfile) -> Result<(), String> {
     checks::moe_cache_split(p.moe_cache_mib, &p.split_mode).map_err(|r| r.text())
 }
 
@@ -1540,7 +1548,7 @@ pub fn validate_moe_cache_split(p: &Preset) -> Result<(), String> {
 /// model that never loads: the context throws. The load floor is a true lower
 /// bound, so no value that could have worked is refused. 0 is "no cache", and
 /// a model whose header cannot be read (nothing known) passes.
-pub fn validate_moe_cache_floor(p: &Preset) -> Result<(), String> {
+pub fn validate_moe_cache_floor(p: &ModelProfile) -> Result<(), String> {
     let Some(v) = p.moe_cache_mib.filter(|&v| v > 0) else {
         return Ok(());
     };
@@ -1572,11 +1580,11 @@ pub fn validate_fit_target(v: &str) -> Result<(), String> {
     checks::fit_target(v).map_err(|r| r.text())
 }
 
-/// Remove a preset from whichever file holds it (both, for the twin an
+/// Remove a model profile from whichever file holds it (both, for the twin an
 /// interrupted `set_enabled` leaves behind).
 pub fn delete(id: &str) -> io::Result<()> {
     let files = server_control::backend();
-    for file in [ConfigFile::Presets, ConfigFile::PresetsDisabled] {
+    for file in [ConfigFile::Models, ConfigFile::ModelsDisabled] {
         let Some(text) = files.read(file)? else {
             continue;
         };
@@ -1627,14 +1635,14 @@ fn rename_in(enabled: &Path, parked: &Path, old_id: &str, new: &str) -> io::Resu
 /// The section is renamed in the file it lives in (`home`), and the new id
 /// must be free in the OTHER file too. `rename_section` only guards its own
 /// file, and a namesake parked in the disabled one would be overwritten the day
-/// this preset is switched off (or would overwrite it the day that one is
+/// this model profile is switched off (or would overwrite it the day that one is
 /// switched on).
-fn rename_with(files: &impl PresetFiles, old_id: &str, new: &str) -> io::Result<()> {
+fn rename_with(files: &impl ModelProfileFiles, old_id: &str, new: &str) -> io::Result<()> {
     let home = home(files, old_id);
-    let other = if home == ConfigFile::Presets {
-        ConfigFile::PresetsDisabled
+    let other = if home == ConfigFile::Models {
+        ConfigFile::ModelsDisabled
     } else {
-        ConfigFile::Presets
+        ConfigFile::Models
     };
     if !new.eq_ignore_ascii_case(old_id) && has_section_in(files, other, new) {
         return Err(io::Error::new(
@@ -1649,7 +1657,7 @@ fn rename_with(files: &impl PresetFiles, old_id: &str, new: &str) -> io::Result<
 
 /// First of `base`, `base-2`, `base-3`, … that isn't already in `existing`.
 /// De-conflicts an id derived by `make_id`: Clone must never overwrite an
-/// existing preset when the picked model already has one. "Already in" is
+/// existing model profile when the picked model already has one. "Already in" is
 /// `id_taken`, case-insensitive like the section lookup itself.
 pub(crate) fn unique_id(base: &str, existing: &[String]) -> String {
     if !id_taken(base, existing) {
@@ -1669,12 +1677,12 @@ pub fn id_taken(id: &str, existing: &[String]) -> bool {
     existing.iter().any(|e| e.eq_ignore_ascii_case(id))
 }
 
-/// The id a NEW preset for `model_path` gets: `make_id`'s stem, `preset` when
+/// The id a NEW model profile for `model_path` gets: `make_id`'s stem, `preset` when
 /// that sanitizes to nothing (a file named entirely in a non-ASCII script;
 /// an empty id is a `[]` section `save` refuses), de-conflicted by `unique_id`.
 /// Shared by the Models tab's New / Clone and the Hugging Face download, so
 /// the three can never disagree on it.
-pub fn new_preset_id(model_path: &str, existing: &[String]) -> String {
+pub fn new_model_profile_id(model_path: &str, existing: &[String]) -> String {
     let base = make_id(model_path);
     let base = if base.is_empty() {
         "preset".to_string()
@@ -1732,7 +1740,7 @@ fn infer_models_dir(model_path: &str) -> Option<String> {
 
 // ── INI write (render_section + emit_*) ──────────────────────────────────
 
-pub fn render_section(p: &Preset) -> String {
+pub fn render_section(p: &ModelProfile) -> String {
     let mut out = String::new();
     out.push_str(&format!("[{}]\r\n", p.id));
     out.push_str("; Generated by pai-config.\r\n");
@@ -2116,8 +2124,8 @@ pub fn render_section(p: &Preset) -> String {
 
 fn emit_str(out: &mut String, key: &str, val: &str) {
     // Write trimmed: the reader (ini::read_all) trims values on parse, so
-    // emitting padding would break the round-trip identity (in-memory preset
-    // != reloaded preset) for e.g. a path pasted with a trailing space.
+    // emitting padding would break the round-trip identity (in-memory model profile
+    // != reloaded model profile) for e.g. a path pasted with a trailing space.
     let val = val.trim();
     if !val.is_empty() {
         out.push_str(&format!("{key} = {val}\r\n"));
@@ -2168,7 +2176,7 @@ pub fn tri_bool(s: &str) -> Option<bool> {
 /// no manager to check anything) and the manager (a fake that writes what
 /// it is given, as an old manager would), and writes nothing then.
 #[cfg(test)]
-pub(crate) fn preset_checks_every_backend_e2e() {
+pub(crate) fn model_profile_checks_every_backend_e2e() {
     use crate::paths;
     use crate::server_control::{fake, Backend};
     use pai_core::client::InstanceState;
@@ -2176,14 +2184,14 @@ pub(crate) fn preset_checks_every_backend_e2e() {
     paths::redirect_for_tests(dir.path());
 
     let model = "/models/Qwen3.8-27B-Q8_0.gguf";
-    let no_model = Preset::new_default("Qwen3.8-27B".into(), String::new());
-    let negative_ctx = Preset {
+    let no_model = ModelProfile::new_default("Qwen3.8-27B".into(), String::new());
+    let negative_ctx = ModelProfile {
         ctx_size: Some(-1),
-        ..Preset::new_default("Qwen3.8-27B".into(), model.into())
+        ..ModelProfile::new_default("Qwen3.8-27B".into(), model.into())
     };
-    let zero_ctx = Preset {
+    let zero_ctx = ModelProfile {
         ctx_size: Some(0),
-        ..Preset::new_default("Qwen3.8-27B".into(), model.into())
+        ..ModelProfile::new_default("Qwen3.8-27B".into(), model.into())
     };
     let text = |key: &'static str, values: &[&str]| {
         checks::Refusal {
@@ -2200,7 +2208,7 @@ pub(crate) fn preset_checks_every_backend_e2e() {
         ("manager", fake::backend(manager)),
     ] {
         fake::scoped(backend, || {
-            let read = || server_control::backend().read_config(ConfigFile::Presets);
+            let read = || server_control::backend().read_config(ConfigFile::Models);
             let err = save(&no_model).expect_err("no model");
             assert_eq!(
                 err.to_string(),
@@ -2238,9 +2246,9 @@ mod tests {
     /// configurator's new name.
     #[test]
     fn the_written_headers_name_pai_config() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "Qwen3.8-27B".into(),
-            ..Preset::default()
+            ..ModelProfile::default()
         };
         let text = render_section(&p);
         let lines: Vec<&str> = text.lines().collect();
@@ -2258,12 +2266,12 @@ mod tests {
 
     /// The disabled file's header points at files by name: the file it is
     /// shaped like, the file llama-server reads, and the file a section moves
-    /// back to. Those are the names the manager knows the preset files under,
+    /// back to. Those are the names the manager knows the model profile files under,
     /// so the header has to carry them: a name the files no longer wear sends
     /// whoever opens the file by hand to a file that is not there.
     #[test]
     fn the_disabled_header_names_the_files_it_points_at() {
-        let on = ConfigFile::Presets.manager_name();
+        let on = ConfigFile::Models.manager_name();
         assert!(
             DISABLED_FILE_HEADER.contains(&on),
             "the header names the file {on}: {DISABLED_FILE_HEADER}"
@@ -2276,8 +2284,8 @@ mod tests {
 
     // All seven speculative keys set, with no draft FILE: the shape a Clone (or a
     // re-pointed model) leaves behind on a model that can't use them.
-    fn preset_with_dead_draft_keys() -> Preset {
-        Preset {
+    fn model_profile_with_dead_draft_keys() -> ModelProfile {
+        ModelProfile {
             model_draft: String::new(),
             spec_type: "draft-mtp".into(),
             spec_draft_n_max: Some(2),
@@ -2295,7 +2303,7 @@ mod tests {
     // the INI key names in file order.
     #[test]
     fn prune_drops_every_speculative_key_without_a_draft() {
-        let mut p = preset_with_dead_draft_keys();
+        let mut p = model_profile_with_dead_draft_keys();
         let dropped = prune_inactive_draft_keys(&mut p, false);
         assert_eq!(
             dropped,
@@ -2326,7 +2334,7 @@ mod tests {
     // pin a draft that runs on the model's device.
     #[test]
     fn prune_keeps_the_speculator_for_embedded_mtp_heads() {
-        let mut p = preset_with_dead_draft_keys();
+        let mut p = model_profile_with_dead_draft_keys();
         let dropped = prune_inactive_draft_keys(&mut p, true);
         assert_eq!(dropped, vec!["n-gpu-layers-draft", "device-draft"]);
         assert_eq!(p.spec_type, "draft-mtp");
@@ -2345,7 +2353,7 @@ mod tests {
     #[test]
     fn moe_cache_is_pruned_on_a_dense_model_only() {
         for v in [0, 4096] {
-            let mut p = Preset {
+            let mut p = ModelProfile {
                 moe_cache_mib: Some(v),
                 ..Default::default()
             };
@@ -2354,14 +2362,17 @@ mod tests {
             assert!(prune_inactive_moe_cache(&mut p, false));
             assert_eq!(p.moe_cache_mib, None);
         }
-        assert!(!prune_inactive_moe_cache(&mut Preset::default(), false));
+        assert!(!prune_inactive_moe_cache(
+            &mut ModelProfile::default(),
+            false
+        ));
     }
 
     // Tensor parallelism refuses the cache at load; 0 (no cache) and every other
     // split mode pass.
     #[test]
     fn moe_cache_is_refused_under_split_mode_tensor() {
-        let p = |mib, mode: &str| Preset {
+        let p = |mib, mode: &str| ModelProfile {
             moe_cache_mib: mib,
             split_mode: mode.into(),
             ..Default::default()
@@ -2377,7 +2388,7 @@ mod tests {
         }
     }
 
-    // The router's startup check: at most ModelsMax presets load on startup,
+    // The router's startup check: at most ModelsMax model profiles load on startup,
     // none under ModelsMax = 0, llama.cpp's default when server.ini sets none.
     #[test]
     fn load_on_startup_count_is_held_to_models_max() {
@@ -2390,11 +2401,11 @@ mod tests {
         assert!(check_startup_count(d + 1, None).is_err());
     }
 
-    // The preset being written counts once, with its NEW flag, whatever the
+    // The model profile being written counts once, with its NEW flag, whatever the
     // file held for it (any letter case of its id).
     #[test]
-    fn startup_count_replaces_the_written_preset() {
-        let p = |id: &str, on| Preset {
+    fn startup_count_replaces_the_written_model_profile() {
+        let p = |id: &str, on| ModelProfile {
             id: id.into(),
             load_on_startup: on,
             ..Default::default()
@@ -2409,7 +2420,7 @@ mod tests {
     // Written only when true: the key has no negative form to mean anything.
     #[test]
     fn load_on_startup_is_written_only_when_on() {
-        let mut p = Preset::new_default("x".into(), "m.gguf".into());
+        let mut p = ModelProfile::new_default("x".into(), "m.gguf".into());
         assert!(!render_section(&p).contains("\nload-on-startup"));
         p.load_on_startup = true;
         assert!(render_section(&p).contains("\r\nload-on-startup = true\r\n"));
@@ -2417,10 +2428,10 @@ mod tests {
 
     // A draft FILE makes all four live, on any model; prune must not touch them.
     #[test]
-    fn prune_leaves_a_preset_with_a_draft_file_alone() {
-        let mut p = Preset {
+    fn prune_leaves_a_model_profile_with_a_draft_file_alone() {
+        let mut p = ModelProfile {
             model_draft: r"E:\mtps\head.gguf".into(),
-            ..preset_with_dead_draft_keys()
+            ..model_profile_with_dead_draft_keys()
         };
         let before = p.clone();
         assert!(prune_inactive_draft_keys(&mut p, false).is_empty());
@@ -2431,9 +2442,9 @@ mod tests {
     // heads it stays, while the draft-model keys around it still go.
     #[test]
     fn prune_keeps_an_ngram_speculator_without_a_draft() {
-        let mut p = Preset {
+        let mut p = ModelProfile {
             spec_type: "ngram-mod".into(),
-            ..preset_with_dead_draft_keys()
+            ..model_profile_with_dead_draft_keys()
         };
         let dropped = prune_inactive_draft_keys(&mut p, false);
         assert!(!dropped.contains(&"spec-type"), "{dropped:?}");
@@ -2444,7 +2455,7 @@ mod tests {
     // A list mixing both kinds loses only the entries that need a draft.
     #[test]
     fn prune_keeps_the_ngram_entries_of_a_mixed_list() {
-        let mut p = Preset {
+        let mut p = ModelProfile {
             spec_type: "draft-mtp,ngram-mod".into(),
             ..Default::default()
         };
@@ -2518,7 +2529,7 @@ mod tests {
     // dropped, and a list naming two types keeps both groups.
     #[test]
     fn prune_drops_the_ngram_keys_of_unselected_types() {
-        let mut p = Preset {
+        let mut p = ModelProfile {
             spec_type: "ngram-mod".into(),
             spec_ngram_mod_n_match: Some(32),
             spec_ngram_simple_size_n: Some(8),
@@ -2531,7 +2542,7 @@ mod tests {
         );
         assert_eq!(p.spec_ngram_mod_n_match, Some(32));
         assert_eq!(p.spec_ngram_simple_size_n, None);
-        let mut p = Preset {
+        let mut p = ModelProfile {
             spec_type: "ngram-simple, ngram-mod".into(),
             spec_ngram_mod_n_match: Some(32),
             spec_ngram_simple_size_n: Some(8),
@@ -2545,7 +2556,7 @@ mod tests {
     // ngram-map-k) are not read, so a hand-written one is not written back.
     #[test]
     fn ngram_keys_round_trip() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "n".into(),
             spec_type: "ngram-map-k4v".into(),
             spec_ngram_map_k4v_size_n: Some(16),
@@ -2561,7 +2572,7 @@ mod tests {
         k.insert("spec-ngram-map-k-min-hits".to_string(), "3".to_string());
         k.insert("spec-ngram-simple-min-hits".to_string(), "4".to_string());
         k.insert("spec-ngram-mod-n-max".to_string(), "80".to_string());
-        let back = Preset::from_keys("n", &k);
+        let back = ModelProfile::from_keys("n", &k);
         assert_eq!(back.spec_ngram_map_k4v_min_hits, Some(2));
         assert_eq!(back.spec_ngram_mod_n_max, Some(80));
         let ini = render_section(&back);
@@ -2570,12 +2581,12 @@ mod tests {
     }
 
     // Nothing set = nothing dropped: the status line must stay silent on the
-    // overwhelmingly common preset, not announce a no-op on every save.
+    // overwhelmingly common model profile, not announce a no-op on every save.
     #[test]
-    fn prune_reports_nothing_on_a_clean_preset() {
-        let mut p = Preset::default();
+    fn prune_reports_nothing_on_a_clean_model_profile() {
+        let mut p = ModelProfile::default();
         assert!(prune_inactive_draft_keys(&mut p, false).is_empty());
-        assert_eq!(p, Preset::default());
+        assert_eq!(p, ModelProfile::default());
     }
 
     // Validation only: both shapes must reject BEFORE any file IO (so this
@@ -2602,7 +2613,7 @@ mod tests {
     // INI comment rule, so save must refuse it.
     #[test]
     fn save_validation_rejects_comment_markers_in_free_text_fields() {
-        let clean = Preset {
+        let clean = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             mmproj: r"C:\models\m-mmproj.gguf".into(),
@@ -2656,12 +2667,12 @@ mod tests {
         assert!(!valid_id("a;b"));
         assert!(!valid_id("a]b"));
 
-        let base = Preset {
+        let base = ModelProfile {
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
         };
         for bad in ["", "has space", "a;b", "sec]tion"] {
-            let p = Preset {
+            let p = ModelProfile {
                 id: bad.into(),
                 ..base.clone()
             };
@@ -2674,7 +2685,7 @@ mod tests {
 
     #[test]
     fn render_emits_mtp_keys_when_set() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             model_draft: r"C:\dflash\m-dflash.gguf".into(),
@@ -2702,7 +2713,7 @@ mod tests {
 
     #[test]
     fn render_omits_mtp_keys_when_empty() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
@@ -2734,7 +2745,7 @@ mod tests {
     // below (which populates split_mode/tensor_split), so no hand-rolled reparse.
     #[test]
     fn render_emits_split_keys_when_set() {
-        let original = Preset {
+        let original = ModelProfile {
             id: "split".into(),
             model: r"E:\m\model.gguf".into(),
             split_mode: "row".into(),
@@ -2748,7 +2759,7 @@ mod tests {
 
     #[test]
     fn render_omits_split_keys_when_empty() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
@@ -2772,7 +2783,7 @@ mod tests {
         k.insert("spec-draft-p-min".into(), "0.4".into());
         k.insert("spec-draft-type-k".into(), "q8_0".into());
         k.insert("spec-draft-type-v".into(), "q5_0".into());
-        let p = Preset::from_keys("m", &k);
+        let p = ModelProfile::from_keys("m", &k);
         assert_eq!(p.model_draft, r"C:\dflash\m-dflash.gguf");
         assert_eq!(p.spec_type, "draft-dflash");
         assert_eq!(p.spec_draft_n_max, Some(15));
@@ -2781,16 +2792,16 @@ mod tests {
         assert_eq!(p.spec_draft_type_v, "q5_0");
     }
 
-    // The guard for step 4 of the "add a preset field" recipe: a fully-populated
-    // preset must survive render_section -> (write) -> ini::read_all -> from_keys
+    // The guard for step 4 of the "add a model profile field" recipe: a fully-populated
+    // model profile must survive render_section -> (write) -> ini::read_all -> from_keys
     // unchanged. Runs through the REAL read path (ini::read_all, which strips
     // inline comments) rather than a hand-rolled `split_once('=')`, so a field
     // added to the struct/Default/from_keys but forgotten in render_section (or
     // vice-versa) fails here instead of silently not persisting.
-    /// A preset with every field set, shared by the round trip below and the
+    /// A model profile with every field set, shared by the round trip below and the
     /// manager's checks' agreement with `validate_for_save`.
-    fn full_preset() -> Preset {
-        Preset {
+    fn full_model_profile() -> ModelProfile {
+        ModelProfile {
             id: "full".into(),
             model: r"E:\m\model.gguf".into(),
             // A `#` fragment and a `;`: a key's value would lose both to the
@@ -2903,47 +2914,50 @@ mod tests {
         }
     }
 
-    // The two key lists of "Saving a preset from the web" in `ARCHITECTURE.md`,
+    // The two key lists of "Saving a model profile from the web" in `ARCHITECTURE.md`,
     // pinned against the configurator's own writer: every key a fully populated
-    // preset renders is in one of the two, and no key is in both. A name that is
+    // model profile renders is in one of the two, and no key is in both. A name that is
     // not a key at all, a key the configurator stops writing, and a new key
     // nobody classified each fail here; the writer is the source of the list, so
-    // the lists travel with it. `full_preset` sets every field, which is what
+    // the lists travel with it. `full_model_profile` sets every field, which is what
     // makes the render hold every key the writer can emit.
     #[test]
     fn web_key_lists_are_exactly_what_render_section_writes() {
-        let section = ini::parse_sections(&render_section(&full_preset()))
+        let section = ini::parse_sections(&render_section(&full_model_profile()))
             .first()
             .cloned()
             .expect("the rendered section of the full preset");
         // `keys` is a BTreeMap: the keys come out sorted.
         let rendered: Vec<&str> = section.keys.keys().map(String::as_str).collect();
-        let union: Vec<&str> = checks::WEB_PRESET_KEYS
+        let union: Vec<&str> = checks::WEB_MODEL_PROFILE_KEYS
             .iter()
-            .chain(checks::PRESET_KEYS_NOT_ON_WEB.iter())
+            .chain(checks::MODEL_PROFILE_KEYS_NOT_ON_WEB.iter())
             .copied()
             .collect();
         let mut sorted_union = union.clone();
         sorted_union.sort_unstable();
         assert_eq!(
             rendered, sorted_union,
-            "the keys of a full preset are the union of the web's list and the \
+            "the keys of a full model_profile are the union of the web's list and the \
              configurator-only list"
         );
 
         // No key in both lists: a key the web writes and does not write at the
         // same time makes the union's count lie.
-        for key in checks::WEB_PRESET_KEYS {
+        for key in checks::WEB_MODEL_PROFILE_KEYS {
             assert!(
-                !checks::PRESET_KEYS_NOT_ON_WEB.contains(key),
+                !checks::MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(key),
                 "{key} is in both web lists"
             );
         }
 
         // Each list free of duplicates.
         for (name, list) in [
-            ("WEB_PRESET_KEYS", checks::WEB_PRESET_KEYS),
-            ("PRESET_KEYS_NOT_ON_WEB", checks::PRESET_KEYS_NOT_ON_WEB),
+            ("WEB_PRESET_KEYS", checks::WEB_MODEL_PROFILE_KEYS),
+            (
+                "PRESET_KEYS_NOT_ON_WEB",
+                checks::MODEL_PROFILE_KEYS_NOT_ON_WEB,
+            ),
         ] {
             let mut sorted = list.to_vec();
             let count = sorted.len();
@@ -2954,8 +2968,8 @@ mod tests {
     }
 
     #[test]
-    fn full_preset_round_trips_through_ini() {
-        let original = full_preset();
+    fn full_model_profile_round_trips_through_ini() {
+        let original = full_model_profile();
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("models.ini");
@@ -2963,7 +2977,7 @@ mod tests {
 
         let sections = ini::read_all(&path);
         assert_eq!(sections.len(), 1, "one section written");
-        let parsed = Preset::from_section(&sections[0]);
+        let parsed = ModelProfile::from_section(&sections[0]);
         assert_eq!(parsed, original);
         assert!(
             !sections[0].keys.keys().any(|k| k.contains("url") || k.contains("placement")),
@@ -2971,25 +2985,25 @@ mod tests {
         );
     }
 
-    /// The manager's checks (`pai_core::checks::presets_file`, run on the text
+    /// The manager's checks (`pai_core::checks::models_file`, run on the text
     /// `render_section` writes) give the verdict `validate_for_save` gives
     /// today, on every case its own tests hold. Not covered: the project URL
     /// and the placement note, whose line break makes ordinary lines once
     /// written, so only the configurator can see it.
     #[test]
     fn the_manager_checks_agree_with_validate_for_save() {
-        let base = Preset {
+        let base = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
         };
-        let with = |f: &dyn Fn(&mut Preset)| {
+        let with = |f: &dyn Fn(&mut ModelProfile)| {
             let mut p = base.clone();
             f(&mut p);
             p
         };
         let mut cases = vec![
-            full_preset(),
+            full_model_profile(),
             base.clone(),
             with(&|p| p.model = r"C:\Models #1\m.gguf".into()),
             with(&|p| p.mmproj = r"C:\a;b\m-mmproj.gguf".into()),
@@ -3014,7 +3028,7 @@ mod tests {
         for id in ["", "has space", "a;b", "sec]tion", "qwen3-coder.q8_0"] {
             cases.push(with(&|p| p.id = id.into()));
         }
-        // A preset needs a model; the integer keys hold their ranges, and
+        // A model profile needs a model; the integer keys hold their ranges, and
         // ctx-size 0 (the context from the model) passes.
         cases.push(with(&|p| p.model = String::new()));
         cases.push(with(&|p| p.model = "   ".into()));
@@ -3024,7 +3038,7 @@ mod tests {
         cases.push(with(&|p| p.spec_ngram_map_k4v_min_hits = Some(65536)));
         for p in cases {
             let today = validate_for_save(&p);
-            let manager = pai_core::checks::presets_file(&render_section(&p), "", "", None);
+            let manager = pai_core::checks::models_file(&render_section(&p), "", "", None);
             assert_eq!(
                 manager.is_err(),
                 today.is_err(),
@@ -3087,13 +3101,13 @@ mod tests {
 
     #[test]
     fn empty_project_url_writes_no_line_and_a_multiline_one_is_refused() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "u".into(),
             model: r"E:\m\model.gguf".into(),
             ..Default::default()
         };
         assert!(!render_section(&p).contains(PROJECT_URL_MARKER));
-        let bad = Preset {
+        let bad = ModelProfile {
             project_url: "https://a.b\nctx-size = 1".into(),
             ..p
         };
@@ -3102,12 +3116,12 @@ mod tests {
 
     // The key name is pinned here (the round-trip above proves it parses back).
     // `override-tensor` is llama.cpp's own long-arg spelling minus the dashes,
-    // which is what its preset reader matches on (common/preset.cpp,
+    // which is what its model profile reader matches on (common/preset.cpp,
     // `get_map_key_opt`); any other spelling makes llama-server refuse the whole
     // file with "option not recognized".
     #[test]
     fn render_emits_the_override_tensor_key_when_set_and_omits_it_when_empty() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "ot".into(),
             model: r"E:\m\model.gguf".into(),
             override_tensor: r"token_embd\.weight=ROCm0".into(),
@@ -3115,7 +3129,7 @@ mod tests {
         };
         assert!(render_section(&p).contains("override-tensor = token_embd\\.weight=ROCm0\r\n"));
 
-        let empty = Preset {
+        let empty = ModelProfile {
             override_tensor: String::new(),
             ..p
         };
@@ -3129,15 +3143,15 @@ mod tests {
             .any(|l| l.starts_with("override-tensor =")));
     }
 
-    // `fit` is always written because llama.cpp's own default is ON: a preset
+    // `fit` is always written because llama.cpp's own default is ON: a model profile
     // without the key would launch with the fit cutting a "default" (all
     // layers) n-gpu-layers. So a missing key reads as off, and off is written
     // out. `prefill-assistant` is the opposite: omitted at llama.cpp's default,
-    // written only as `false`, which the preset reader turns into
+    // written only as `false`, which the model profile reader turns into
     // --no-prefill-assistant.
     #[test]
     fn fit_is_always_written_and_prefill_assistant_only_when_off() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "f".into(),
             model: r"E:\m\model.gguf".into(),
             ..Default::default()
@@ -3146,7 +3160,7 @@ mod tests {
         assert!(ini.contains("\r\nfit = off\r\n"), "{ini}");
         assert!(!ini.lines().any(|l| l.starts_with("prefill-assistant =")));
 
-        let on = Preset {
+        let on = ModelProfile {
             fit: true,
             prefill_assistant: Some(false),
             ..p
@@ -3160,7 +3174,7 @@ mod tests {
             if let Some(v) = v {
                 k.insert("fit".to_string(), v.to_string());
             }
-            Preset::from_keys("f", &k).fit
+            ModelProfile::from_keys("f", &k).fit
         };
         assert!(!read(None), "a missing key is the framework default, off");
         assert!(read(Some("on")) && read(Some("true")) && read(Some("ON")));
@@ -3171,12 +3185,12 @@ mod tests {
     // llama.cpp's long flags minus the dashes, which is what `get_map_key_opt`
     // matches on. `reasoning-budget` and `reasoning-budget-message` are
     // registered for LLAMA_EXAMPLE_SERVER and `n-predict` for every example, so
-    // all three are legal in a router preset; any OTHER spelling makes
+    // all three are legal in a router model profile; any OTHER spelling makes
     // llama-server reject the whole models.ini with "option not recognized",
     // taking every other model down with it.
     #[test]
     fn render_emits_the_output_budget_keys_with_llama_cpps_own_spelling() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "budget".into(),
             model: r"E:\m\model.gguf".into(),
             reasoning_budget: Some(16384),
@@ -3190,7 +3204,7 @@ mod tests {
         assert!(ini.contains("reasoning-budget-message = Wrap up now.\r\n"));
         assert!(ini.contains("n-predict = -1\r\n"));
 
-        let unset = Preset {
+        let unset = ModelProfile {
             reasoning_budget: None,
             reasoning_budget_message: String::new(),
             n_predict: None,
@@ -3216,19 +3230,19 @@ mod tests {
     // the symptom is only "the model didn't load".
     #[test]
     fn save_validation_rejects_a_malformed_override_tensor_rule() {
-        let base = Preset {
+        let base = ModelProfile {
             id: "ot".into(),
             model: r"C:\models\m.gguf".into(),
             ..Default::default()
         };
-        let ok = Preset {
+        let ok = ModelProfile {
             override_tensor: r"token_embd\.weight=ROCm0".into(),
             ..base.clone()
         };
         assert!(validate_for_save(&ok).is_ok());
 
         // A pattern with no `=<device>`: llama.cpp's parse throws "invalid value".
-        let dangling = Preset {
+        let dangling = ModelProfile {
             override_tensor: r"token_embd\.weight".into(),
             ..base
         };
@@ -3236,7 +3250,7 @@ mod tests {
         assert!(err.to_string().contains("token_embd"), "quotes the rule");
     }
 
-    // make_id feeds every generated preset id from an arbitrary filename:
+    // make_id feeds every generated model profile id from an arbitrary filename:
     // shard-suffix strip → char whitelist (alnum . - _) → collapse runs of
     // anything else to one underscore → trim edge underscores.
     #[test]
@@ -3296,18 +3310,18 @@ mod tests {
         assert!(id_taken("Qwen3-8B-Q4_K_M", &existing));
         assert_eq!(unique_id("Qwen3-8B-Q4_K_M", &existing), "Qwen3-8B-Q4_K_M-3");
         assert_eq!(
-            new_preset_id(
+            new_model_profile_id(
                 &crate::paths::os_path(r"E:\m\Qwen3-8B-Q4_K_M.gguf"),
                 &existing
             ),
             "Qwen3-8B-Q4_K_M-3"
         );
         assert_eq!(
-            new_preset_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &[]),
+            new_model_profile_id(&crate::paths::os_path(r"E:\m\模型.gguf"), &[]),
             "preset"
         );
         assert_eq!(
-            new_preset_id(
+            new_model_profile_id(
                 &crate::paths::os_path(r"E:\m\模型.gguf"),
                 &["Preset".into()]
             ),
@@ -3317,10 +3331,10 @@ mod tests {
 
     // The writer trims (emit_str + the model line) because the reader trims on
     // parse: padded input must still round-trip to the TRIMMED value, not
-    // diverge between the in-memory preset and the reloaded one.
+    // diverge between the in-memory model profile and the reloaded one.
     #[test]
     fn padded_values_round_trip_trimmed() {
-        let p = Preset {
+        let p = ModelProfile {
             id: "pad".into(),
             model: "  E:\\m\\model.gguf ".into(),
             project_url: " https://x.y/z  ".into(),
@@ -3332,14 +3346,14 @@ mod tests {
         fs::write(&path, render_section(&p)).unwrap();
 
         let sections = ini::read_all(&path);
-        let parsed = Preset::from_section(&sections[0]);
+        let parsed = ModelProfile::from_section(&sections[0]);
         assert_eq!(parsed.model, "E:\\m\\model.gguf");
         assert_eq!(parsed.device, "CUDA0");
         assert_eq!(parsed.project_url, "https://x.y/z");
     }
 
     /// The two files of the on/off switch, in a temp dir: `(dir, enabled, parked)`.
-    fn preset_files(enabled: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    fn model_profile_files(enabled: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let on = dir.path().join("models.ini");
         fs::write(&on, enabled).unwrap();
@@ -3350,7 +3364,7 @@ mod tests {
     fn listed_ids(on: &Path, off: &Path) -> Vec<(String, bool)> {
         listed_from(on, off)
             .into_iter()
-            .map(|l| (l.preset.id, l.enabled))
+            .map(|l| (l.model_profile.id, l.enabled))
             .collect()
     }
 
@@ -3358,8 +3372,8 @@ mod tests {
     // user's comment and a key this schema does not know both survive the round
     // trip, and so does everything else in either file.
     #[test]
-    fn switching_a_preset_off_and_on_moves_its_section_verbatim() {
-        let (_d, on, off) = preset_files(
+    fn switching_a_model_profile_off_and_on_moves_its_section_verbatim() {
+        let (_d, on, off) = model_profile_files(
             "[a]\r\n; my note\r\nmodel = a.gguf\r\nfuture-key = 1\r\n\r\n[b]\r\nmodel = b.gguf\r\n",
         );
         move_section("a", &on, &off, Some(DISABLED_FILE_HEADER)).unwrap();
@@ -3401,29 +3415,29 @@ mod tests {
         );
     }
 
-    // What a switch interrupted between its two writes leaves: the preset in BOTH
+    // What a switch interrupted between its two writes leaves: the model profile in BOTH
     // files. It is listed once, as enabled (what llama-server serves), writes go
     // to models.ini, and the next switch replaces the stale twin.
     #[test]
-    fn a_preset_left_in_both_files_reads_as_enabled() {
-        let (_d, on, off) = preset_files("[a]\r\nmodel = new.gguf\r\n");
+    fn a_model_profile_left_in_both_files_reads_as_enabled() {
+        let (_d, on, off) = model_profile_files("[a]\r\nmodel = new.gguf\r\n");
         fs::write(&off, "[A]\r\nmodel = old.gguf\r\n").unwrap();
         let listed = listed_from(&on, &off);
         assert_eq!(listed.len(), 1);
         assert!(listed[0].enabled);
-        assert_eq!(listed[0].preset.model, "new.gguf");
+        assert_eq!(listed[0].model_profile.model, "new.gguf");
         assert_eq!(home_in("a", on.clone(), off.clone()), on);
 
         move_section("a", &on, &off, None).unwrap();
         assert_eq!(listed_ids(&on, &off), [("a".into(), false)]);
-        assert_eq!(listed_from(&on, &off)[0].preset.model, "new.gguf");
+        assert_eq!(listed_from(&on, &off)[0].model_profile.model, "new.gguf");
     }
 
-    // An edit to a switched-off preset must stay switched off, and a new preset
+    // An edit to a switched-off model profile must stay switched off, and a new model profile
     // (in neither file) starts on.
     #[test]
-    fn a_preset_is_written_where_it_lives() {
-        let (_d, on, off) = preset_files("[a]\r\nmodel = a.gguf\r\n");
+    fn a_model_profile_is_written_where_it_lives() {
+        let (_d, on, off) = model_profile_files("[a]\r\nmodel = a.gguf\r\n");
         fs::write(&off, "[b]\r\nmodel = b.gguf\r\n").unwrap();
         assert_eq!(home_in("a", on.clone(), off.clone()), on);
         assert_eq!(home_in("B", on.clone(), off.clone()), off);
@@ -3434,7 +3448,7 @@ mod tests {
     // the day either one is switched.
     #[test]
     fn rename_checks_the_other_file_too() {
-        let (_d, on, off) = preset_files("[a]\r\nmodel = a.gguf\r\n");
+        let (_d, on, off) = model_profile_files("[a]\r\nmodel = a.gguf\r\n");
         fs::write(&off, "[b]\r\nmodel = b.gguf\r\n").unwrap();
         assert_eq!(
             rename_in(&on, &off, "a", "b").unwrap_err().kind(),
@@ -3444,7 +3458,7 @@ mod tests {
             rename_in(&on, &off, "b", "a").unwrap_err().kind(),
             io::ErrorKind::AlreadyExists
         );
-        // A parked preset is renamed where it is parked.
+        // A parked model profile is renamed where it is parked.
         rename_in(&on, &off, "b", "c").unwrap();
         assert_eq!(
             listed_ids(&on, &off),
@@ -3469,13 +3483,13 @@ mod tests {
         .text()
     }
 
-    /// The Models tab refuses a preset with no model file ("Pick a model
+    /// The Models tab refuses a model profile with no model file ("Pick a model
     /// file before saving."); every other writer (pai, the bff, macOS with
     /// no manager) gets the manager's refusal from the save itself.
     #[test]
-    fn a_preset_needs_a_model_at_the_save() {
+    fn a_model_profile_needs_a_model_at_the_save() {
         for model in ["", "   "] {
-            let p = Preset::new_default("Qwen3.8-27B".into(), model.into());
+            let p = ModelProfile::new_default("Qwen3.8-27B".into(), model.into());
             let err = validate_for_save(&p).expect_err("no model");
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{model:?}");
             assert_eq!(
@@ -3484,7 +3498,8 @@ mod tests {
                 "{model:?}"
             );
         }
-        let p = Preset::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into());
+        let p =
+            ModelProfile::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into());
         assert!(validate_for_save(&p).is_ok());
     }
 
@@ -3495,13 +3510,13 @@ mod tests {
     /// key the reader does not fill shows as "not read".
     #[test]
     fn the_save_holds_every_integer_key_to_its_range() {
-        for (key, r) in checks::PRESET_INT_KEYS.iter() {
+        for (key, r) in checks::MODEL_PROFILE_INT_KEYS.iter() {
             let (lo, hi) = (*r.start(), *r.end());
             let with = |v: i64| {
                 let mut k = BTreeMap::new();
                 k.insert("model".to_string(), "/models/m.gguf".to_string());
                 k.insert(key.to_string(), v.to_string());
-                let p = Preset::from_keys("m", &k);
+                let p = ModelProfile::from_keys("m", &k);
                 assert!(
                     render_section(&p).contains(&format!("{key} = {v}\r\n")),
                     "{key} = {v}: not read"
@@ -3539,13 +3554,13 @@ mod tests {
     /// with", the spelling the integrations read: the save writes it.
     #[test]
     fn ctx_size_zero_passes_the_save() {
-        let p = Preset {
+        let p = ModelProfile {
             ctx_size: Some(0),
-            ..Preset::new_default("m".into(), "/models/m.gguf".into())
+            ..ModelProfile::new_default("m".into(), "/models/m.gguf".into())
         };
         assert!(validate_for_save(&p).is_ok());
         assert!(render_section(&p).contains("ctx-size = 0\r\n"));
-        let negative = Preset {
+        let negative = ModelProfile {
             ctx_size: Some(-1),
             ..p
         };
@@ -3554,9 +3569,9 @@ mod tests {
 
     // ── Second cut: floats, enums, JSON, min <= max, the MoE cache floor ──
 
-    /// A preset that passes every check, to break one field of.
-    fn valid() -> Preset {
-        Preset::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into())
+    /// A model profile that passes every check, to break one field of.
+    fn valid() -> ModelProfile {
+        ModelProfile::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into())
     }
 
     /// A float field set to an infinity or NaN (the GUI's `ini::parse_float`
@@ -3564,7 +3579,7 @@ mod tests {
     /// the value as the file would hold it; a finite value passes.
     #[test]
     fn the_save_refuses_non_finite_floats() {
-        type Set = fn(&mut Preset, Option<f64>);
+        type Set = fn(&mut ModelProfile, Option<f64>);
         let fields: [(&str, Set); 6] = [
             ("temp", |p, v| p.temp = v),
             ("top-p", |p, v| p.top_p = v),
@@ -3592,11 +3607,11 @@ mod tests {
     }
 
     /// Every enum field holding a word llama.cpp does not take is refused at
-    /// the save, naming the key and the word; `full_preset`'s values (one of
+    /// the save, naming the key and the word; `full_model_profile`'s values (one of
     /// each combo's entries) pass.
     #[test]
     fn the_save_refuses_enum_values_outside_their_set() {
-        type Set = fn(&mut Preset, &str);
+        type Set = fn(&mut ModelProfile, &str);
         let fields: [(&str, Set); 11] = [
             ("split-mode", |p, v| p.split_mode = v.into()),
             ("pooling", |p, v| p.pooling = v.into()),
@@ -3622,7 +3637,7 @@ mod tests {
                 "{key}: {text}"
             );
         }
-        assert!(validate_for_save(&full_preset()).is_ok());
+        assert!(validate_for_save(&full_model_profile()).is_ok());
     }
 
     /// `chat-template-kwargs` must be a JSON object at the save, as at the
@@ -3630,7 +3645,7 @@ mod tests {
     #[test]
     fn the_save_refuses_chat_template_kwargs_that_are_not_a_json_object() {
         for bad in ["[1,2]", "true", "{bad", "enable_thinking=true"] {
-            let p = Preset {
+            let p = ModelProfile {
                 chat_template_kwargs: bad.into(),
                 ..valid()
             };
@@ -3643,7 +3658,7 @@ mod tests {
             );
         }
         for good in ["", r#"{"enable_thinking":false}"#] {
-            let p = Preset {
+            let p = ModelProfile {
                 chat_template_kwargs: good.into(),
                 ..valid()
             };
@@ -3655,7 +3670,7 @@ mod tests {
     /// refused at the save; equal, or only one set, passes.
     #[test]
     fn the_save_refuses_a_minimum_above_its_maximum() {
-        type Set = fn(&mut Preset, Option<i32>, Option<i32>);
+        type Set = fn(&mut ModelProfile, Option<i32>, Option<i32>);
         let pairs: [(&str, &str, Set); 3] = [
             ("image-min-tokens", "image-max-tokens", |p, lo, hi| {
                 p.image_min_tokens = lo;
@@ -3731,11 +3746,11 @@ mod tests {
     fn the_save_refuses_a_moe_cache_below_the_floor() {
         let dir = tempfile::tempdir().expect("tempdir");
         let model = moe_gguf(dir.path());
-        let with = |mib: i32, model: &Path| Preset {
+        let with = |mib: i32, model: &Path| ModelProfile {
             device: "ROCm0".into(),
             n_cpu_moe: Some(99),
             moe_cache_mib: Some(mib),
-            ..Preset::new_default("Qwen3-MoE".into(), model.display().to_string())
+            ..ModelProfile::new_default("Qwen3-MoE".into(), model.display().to_string())
         };
         let err = validate_for_save(&with(26, &model)).expect_err("26 MiB < 27 MiB");
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);

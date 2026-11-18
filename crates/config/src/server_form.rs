@@ -137,7 +137,7 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // Driven by the tensor-placement table, which reads and rewrites this one
         // string; no second copy of the rules exists (see src/tensor_override.rs).
         // The SDK tuning card's ROCm knob: a TRI-state through the same helper
-        // pair as the preset tab's flash-attn, because "never export
+        // pair as the model profile tab's flash-attn, because "never export
         // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
         // default. Shown as a dropdown (Options.tri_states).
         rocblas_use_hipblaslt: crate::form::tri_state(cfg.rocblas_use_hipblaslt),

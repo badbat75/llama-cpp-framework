@@ -6,10 +6,10 @@
 //! HIP devices vanish without it). Process control and the log stay in the
 //! configurator (`runstate.rs`).
 
-/// `true` if the presets file at `path` has at least one preset section. The
-/// render's global `[*]` holds defaults for every preset, not a preset of its
+/// `true` if the model profiles file at `path` has at least one model profile section. The
+/// render's global `[*]` holds defaults for every model profile, not a model profile of its
 /// own, so a file with only that section loads nothing.
-pub fn has_presets_in(path: &std::path::Path) -> bool {
+pub fn has_model_profiles_in(path: &std::path::Path) -> bool {
     crate::ini::read_all(path).iter().any(|s| s.id != "*")
 }
 
@@ -19,13 +19,13 @@ pub fn has_presets_in(path: &std::path::Path) -> bool {
 /// Single source of truth for both `start()` and `command_line()`.
 pub fn server_args(
     cfg: &crate::server_cfg::ServerConfig,
-    presets_path: &std::path::Path,
+    models_path: &std::path::Path,
 ) -> Vec<String> {
     let hostname = cfg.hostname_or_default();
 
     let mut args: Vec<String> = vec![
         "--models-preset".into(),
-        presets_path.to_string_lossy().into_owned(),
+        models_path.to_string_lossy().into_owned(),
     ];
 
     // --port / --models-max are omitted when unset (the UI's "default" checkbox
@@ -96,10 +96,10 @@ pub fn server_args(
     //   (nor its --fit-ctx / --fit-target), --prefill-assistant, --cache-reuse,
     //   --ctx-checkpoints, --checkpoint-min-step, --kv-unified,
     //   --kv-unified-per-slot, --moe-cache-mib, --repack, --no-host, --spec-draft-n-ubatch
-    //   or --mmproj-device here: those are per-preset keys (the GPU
+    //   or --mmproj-device here: those are per-model-profile keys (the GPU
     //   distribution, the tensor placement, load-mode, fit, prefill-assistant,
     //   the prompt cache, the KV layout, the expert cache and repacking, the
-    //   drafter, mmproj-device). The router copies its own args over every preset (`preset.merge(base_preset)`), so any of them on this
+    //   drafter, mmproj-device). The router copies its own args over every model profile (`preset.merge(base_preset)`), so any of them on this
     //   line would override each model's own value.
     // --slot-save-path DIR : turns on the /slots save|restore endpoints, which is
     //   what `slot_state` calls around a stop and a start. Emitted only when the
@@ -111,7 +111,7 @@ pub fn server_args(
     //
     //   It reaches the per-model CHILDREN even though it is the ROUTER's flag,
     //   and by an unusual route: the option has no env name, so it cannot ride a
-    //   preset key, but `get_map_key_opt` (common/preset.cpp) also maps every
+    //   model profile key, but `get_map_key_opt` (common/preset.cpp) also maps every
     //   option by its flag name with the dashes stripped. The router therefore
     //   parses its own argv into `base_preset` and merges that onto every model
     //   (`preset.merge(base_preset)`), and `unset_reserved_args` does not prune
@@ -172,20 +172,20 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
 
 // ── Launch command ──────────────────────────────────────────────────────
 
-/// The llama-server process of `cfg` and `presets_path`, before its stdio:
+/// The llama-server process of `cfg` and `models_path`, before its stdio:
 /// args, cwd and env, shared by `start()` and `instance_command()`.
 pub fn launch_command(
     exe: &std::path::Path,
     cfg: &crate::server_cfg::ServerConfig,
-    presets_path: &std::path::Path,
+    models_path: &std::path::Path,
 ) -> std::process::Command {
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(server_args(cfg, presets_path));
+    cmd.args(server_args(cfg, models_path));
 
     cmd.current_dir(crate::paths::data_root());
     cmd.env("LLAMA_CACHE", cfg.models_dir_or_default());
     // Settings llama.cpp exposes only as env vars; inherited by the router's
-    // per-model children, so they cover every preset.
+    // per-model children, so they cover every model profile.
     for dev in env_vars(cfg) {
         cmd.env(dev.0, dev.1);
     }
@@ -204,16 +204,16 @@ pub enum LaunchError {
     InvalidId,
     /// No `server@<id>.ini` at this path.
     NoConfig(std::path::PathBuf),
-    /// The instance's `models@<id>.ini` has no preset section
-    /// (`start()`'s `has_presets`).
-    NoPresets,
+    /// The instance's `models@<id>.ini` has no model profile section
+    /// (`start()`'s `has_model_profiles`).
+    NoModelProfiles,
     /// SaveStateOnShutdown is on and this slot-state directory could not be
     /// created, for this reason.
     StateDir(std::path::PathBuf, std::io::ErrorKind),
 }
 
 /// The llama-server launch of instance `id`: `exe` with `server_args()` of
-/// `server@<id>.ini` and the presets render `models@<id>.ini`, the cwd and
+/// `server@<id>.ini` and the model profiles render `models@<id>.ini`, the cwd and
 /// env `start()` sets. No log, no rotation: the service manager captures the
 /// output.
 pub fn instance_command(
@@ -224,9 +224,9 @@ pub fn instance_command(
     if !ini.is_file() {
         return Err(LaunchError::NoConfig(ini));
     }
-    let presets_path = crate::paths::instance_presets(id).ok_or(LaunchError::InvalidId)?;
-    if !has_presets_in(&presets_path) {
-        return Err(LaunchError::NoPresets);
+    let models_path = crate::paths::instance_models(id).ok_or(LaunchError::InvalidId)?;
+    if !has_model_profiles_in(&models_path) {
+        return Err(LaunchError::NoModelProfiles);
     }
     let cfg = with_instance_defaults(
         crate::server_cfg::load_from(&ini),
@@ -240,7 +240,7 @@ pub fn instance_command(
         crate::slot_state::ensure_dir(&cfg)
             .map_err(|e| LaunchError::StateDir(crate::slot_state::state_dir(&cfg), e.kind()))?;
     }
-    let mut cmd = launch_command(exe, &cfg, &presets_path);
+    let mut cmd = launch_command(exe, &cfg, &models_path);
     cmd.current_dir(instance_current_dir(
         cfg!(windows),
         &crate::paths::data_root(),
@@ -378,33 +378,34 @@ pub(crate) fn instance_launch_e2e() {
         "the framework's directory holds no instance file"
     );
 
-    // ── Refused for want of presets, as start() refuses (`has_presets`) ──
+    // ── Refused for want of model profiles, as start() refuses (`has_model_profiles`) ──
     // The instance file exists from here on; the instance reads the render
     // of its id (models@default.ini), never the pool.
     std::fs::write(sys.join("server@default.ini"), "[Server]\nPort = 8081\n")
         .expect("server@default.ini");
     // The per-user models.ini has a section: it must not count.
-    let user_presets = crate::paths::presets_ini();
-    std::fs::write(&user_presets, "[user-model]\nmodel = /m/user.gguf\n").expect("user presets");
-    let sys_presets = sys.join("models.ini");
+    let user_model_profiles = crate::paths::models_ini();
+    std::fs::write(&user_model_profiles, "[user-model]\nmodel = /m/user.gguf\n")
+        .expect("user presets");
+    let sys_model_profiles = sys.join("models.ini");
     let render = sys.join("models@default.ini");
     std::fs::write(
-        &sys_presets,
+        &sys_model_profiles,
         "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
     )
     .expect("pool");
     assert_eq!(
         instance_command("default", &exe).err(),
-        Some(LaunchError::NoPresets),
+        Some(LaunchError::NoModelProfiles),
         "the pool has presets, the render of the instance does not exist (the framework's directory does not count)"
     );
     std::fs::write(&render, "[*]\ntemp = 0.7\n").expect("render");
     assert_eq!(
         instance_command("default", &exe).err(),
-        Some(LaunchError::NoPresets),
+        Some(LaunchError::NoModelProfiles),
         "a render with only the global section"
     );
-    // Every preset switched off: the sections are in the file llama-server
+    // Every model profile switched off: the sections are in the file llama-server
     // does not read.
     std::fs::write(
         sys.join("models.ini.disabled"),
@@ -413,7 +414,7 @@ pub(crate) fn instance_launch_e2e() {
     .expect("models.ini.disabled");
     assert_eq!(
         instance_command("default", &exe).err(),
-        Some(LaunchError::NoPresets),
+        Some(LaunchError::NoModelProfiles),
         "only switched-off presets"
     );
     std::fs::write(
@@ -538,7 +539,7 @@ pub(crate) fn instance_launch_e2e() {
         Some("8090"),
         "port of server@lan-2.ini"
     );
-    let lan_preset = sys.join("models@lan-2.ini").to_string_lossy().into_owned();
+    let lan_model_profile = sys.join("models@lan-2.ini").to_string_lossy().into_owned();
     let lan_args: Vec<String> = cmd
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
@@ -546,7 +547,7 @@ pub(crate) fn instance_launch_e2e() {
     assert!(
         lan_args
             .windows(2)
-            .any(|w| w == ["--models-preset", lan_preset.as_str()]),
+            .any(|w| w == ["--models-preset", lan_model_profile.as_str()]),
         "lan-2 reads its own render: {lan_args:?}"
     );
 
@@ -702,21 +703,21 @@ mod tests {
         server_args(cfg, Path::new("models.ini"))
     }
 
-    // The render's global section `[*]` holds defaults for every preset, not
-    // a preset of its own: a render with only that section loads nothing.
+    // The render's global section `[*]` holds defaults for every model profile, not
+    // a model profile of its own: a render with only that section loads nothing.
     #[test]
-    fn has_presets_in_ignores_the_global_section() {
+    fn has_model_profiles_in_ignores_the_global_section() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("models@default.ini");
-        assert!(!has_presets_in(&path), "the file does not exist");
+        assert!(!has_model_profiles_in(&path), "the file does not exist");
         std::fs::write(&path, "[*]\ntemp = 0.7\n").expect("write render");
         assert!(
-            !has_presets_in(&path),
+            !has_model_profiles_in(&path),
             "a render with only the global section loads no preset"
         );
         std::fs::write(&path, "[*]\ntemp = 0.7\n\n[a]\nmodel = a.gguf\n").expect("write render");
         assert!(
-            has_presets_in(&path),
+            has_model_profiles_in(&path),
             "a preset section beside the global one counts"
         );
     }
@@ -744,8 +745,8 @@ mod tests {
         for flag in ["--mlock", "--no-mmap", "--mmap", "-dio"] {
             assert!(!a.contains(&flag.to_string()), "{flag} is deprecated");
         }
-        // Per-preset keys never ride the router's line: the router would copy
-        // them over every preset's own value.
+        // Per-model profile keys never ride the router's line: the router would copy
+        // them over every model profile's own value.
         for flag in [
             "--device",
             "--tensor-split",

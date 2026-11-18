@@ -1,4 +1,4 @@
-//! `GET /api/profiles/model`: the preset list of the Models page, read through the
+//! `GET /api/profiles/model`: the model-profile list of the Models page, read through the
 //! manager as the signed-in user, through `pai_bff::router_with_session` with
 //! a fake manager client and a fake authenticator (never the real bus, pipe,
 //! PAM or LogonUser). Each request runs under a deadline, so a bff that waits
@@ -9,24 +9,24 @@
 //! section of the engine's `models.ini` (enabled true) and
 //! `models.ini.disabled` (enabled false), read as the session's user:
 //! - `id` as the file spells it, `model` the section's `model` key as the
-//!   preset file holds it (no path resolution, no existence check, the
+//!   model profile file holds it (no path resolution, no existence check, the
 //!   server machine's separators kept), `""` when the section has no `model`
 //!   key or it is empty. Every row carries a string `model`: a row without
 //!   one is a malformed reply for the web UI.
-//! - `engine` is the id of the engine whose preset file holds the section:
+//! - `engine` is the id of the engine whose model profile file holds the section:
 //!   llama.cpp for both files, the only engine today. `engineAvailable` is
 //!   true for every row while llama.cpp is the only engine: there is no
 //!   engines route to check it against, so the row simply says the engine
-//!   that owns the preset file is installed.
+//!   that owns the model profile file is installed.
 //! - The order is the GUI's (`presets::load_listed`): the switched-on
-//!   presets, then the switched-off ones, each group in file order; an id in
+//!   model profiles, then the switched-off ones, each group in file order; an id in
 //!   both files is listed once, as on (the id matched without case, the row
 //!   the copy from `models.ini`). The web UI does not sort.
-//! - llama-server's global `[*]` section is not a preset: it is the defaults
-//!   every preset starts from, and it is never a row. The page switches
-//!   presets, and the global section is nothing a user switches off.
+//! - llama-server's global `[*]` section is not a model profile: it is the defaults
+//!   every model profile starts from, and it is never a row. The page switches
+//!   model profiles, and the global section is nothing a user switches off.
 //! - A missing file is an empty group, not an error: no `models.ini.disabled`
-//!   means no switched-off preset, no `models.ini` means no preset at all.
+//!   means no switched-off model profile, no `models.ini` means no model profile at all.
 //! - Errors `{"key", "args": []}`, never the manager's detail: 401
 //!   `session-required` (the manager not asked), 403
 //!   `session-not-administrator` when the manager refused the call for the
@@ -63,15 +63,15 @@ const DEADLINE: Duration = Duration::from_secs(5);
 
 const CLIENT: &str = "127.0.0.1:51000";
 
-/// The revision secret the router is built with. The preset list carries no
+/// The revision secret the router is built with. The model-profile list carries no
 /// revision, so it is inert here; the route just needs one.
 const KEY: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-/// The names the manager knows the engine's preset files by.
+/// The names the manager knows the engine's model profile files by.
 const ON: &str = "models.ini";
 const OFF: &str = "models.ini.disabled";
 
-/// A `models.ini` with three switched-on presets, in an order that is
+/// A `models.ini` with three switched-on model profiles, in an order that is
 /// neither alphabetical nor reversed, so a bff that sorts the list is caught.
 /// `alpha`'s model has an inline comment after it: the file's parser ends the
 /// value at the marker, and that is the value llama-server reads.
@@ -91,7 +91,7 @@ model = C:\\Models\\alpha.gguf ; kept short for now\r\n\
 n-gpu-layers = 99\r\n\
 ";
 
-/// A `models.ini.disabled` with two switched-off presets, again in file
+/// A `models.ini.disabled` with two switched-off model profiles, again in file
 /// order and with ids whose case the file spells.
 const FILE_OFF: &str = "\
 ; Presets switched OFF (llama-server never reads this file).\r\n\
@@ -363,7 +363,7 @@ fn app_read_failing(failure: Failure) -> App {
     app
 }
 
-/// The manager of no preset file at all: neither file exists.
+/// The manager of no model profile file at all: neither file exists.
 fn app_no_files() -> App {
     app_for(&[], &[], Ok(()))
 }
@@ -580,7 +580,7 @@ async fn an_unknown_session_is_session_required() {
 /// The connect is asked with the session's user as the principal, so the
 /// manager re-checks that user's membership of `pai`: the session-free routes
 /// connect with none (`tests/instances.rs`), this one names the user. Both
-/// preset files are read over that one connection.
+/// model profile files are read over that one connection.
 #[tokio::test]
 async fn the_read_connects_as_the_signed_in_user() {
     for user in ["alice", "root"] {
@@ -596,7 +596,7 @@ async fn the_read_connects_as_the_signed_in_user() {
 }
 
 /// The list is served to every signed-in user, with no more rights than the
-/// read of the preset files the manager already gives any caller.
+/// read of the model profile files the manager already gives any caller.
 #[tokio::test]
 async fn every_signed_in_user_is_served_the_same_list() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -632,10 +632,10 @@ async fn a_name_in_the_request_is_never_the_principal() {
     );
 }
 
-/// The read asks the manager nothing beside the two preset files: no instance
+/// The read asks the manager nothing beside the two model profile files: no instance
 /// list, no status, no write.
 #[tokio::test]
-async fn the_read_asks_only_the_two_preset_files() {
+async fn the_read_asks_only_the_two_model_profile_files() {
     let app = app_holding(FILE_ON, FILE_OFF);
     assert_eq!(app.list().await.rows().len(), 5);
     assert_eq!(
@@ -773,7 +773,7 @@ async fn a_failure_that_is_not_a_refusal_keeps_the_session() {
 /// The route is read-only: another method is 405 and asks the manager nothing
 /// (not even a connection), signed in or not.
 #[tokio::test]
-async fn presets_refuse_another_method_without_asking_the_manager() {
+async fn model_profiles_refuse_another_method_without_asking_the_manager() {
     for method in [Method::POST, Method::PUT, Method::DELETE] {
         let app = app_holding(FILE_ON, FILE_OFF);
         let cookie = app.sign_in().await;
@@ -799,12 +799,12 @@ async fn presets_refuse_another_method_without_asking_the_manager() {
     }
 }
 
-/// The routes moved to `/api/profiles/model...`, so the preset paths are paths
+/// The routes moved to `/api/profiles/model...`, so the model profile paths are paths
 /// the router does not route: its own 404, with no body, no content type and no
 /// manager call, signed in like anywhere else. A reply of the app (`{"key",
-/// "args"}`) here would mean a preset route is still served.
+/// "args"}`) here would mean a model profile route is still served.
 #[tokio::test]
-async fn the_old_preset_paths_are_the_routers_404_with_no_body() {
+async fn the_old_model_profile_paths_are_the_routers_404_with_no_body() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let cookie = app.sign_in().await;
     for (method, uri) in [
@@ -835,7 +835,7 @@ async fn the_old_preset_paths_are_the_routers_404_with_no_body() {
 // ── What it answers ─────────────────────────────────────────────────────
 
 /// Both files, every row with its five fields, in the GUI's order: the
-/// switched-on presets in their file order, then the switched-off ones in
+/// switched-on model profiles in their file order, then the switched-off ones in
 /// theirs, each id as the file spells it and each model as the file holds it.
 #[tokio::test]
 async fn both_files_answer_the_list_in_the_guis_order() {
@@ -954,11 +954,11 @@ async fn an_id_in_both_files_is_listed_once_as_enabled() {
     );
 }
 
-/// llama-server's global `[*]` section, the defaults every preset starts from,
-/// is not a preset: it is never a row, in either file, and the presets beside
+/// llama-server's global `[*]` section, the defaults every model profile starts from,
+/// is not a model profile: it is never a row, in either file, and the model profiles beside
 /// it keep their place and their order.
 #[tokio::test]
-async fn the_global_section_is_not_a_preset() {
+async fn the_global_section_is_not_a_model_profile() {
     let on = "\
 [*]\r\n\
 model = /models/global.gguf\r\n\
@@ -984,7 +984,7 @@ model = /models/Mistral-7B-Q5_K_M.gguf\r\n\
     );
 }
 
-/// No `models.ini.disabled` is not an error: the switched-on presets alone,
+/// No `models.ini.disabled` is not an error: the switched-on model profiles alone,
 /// and the bff still asked the manager for the file (it answers it is not
 /// there).
 #[tokio::test]
@@ -1004,7 +1004,7 @@ async fn a_missing_disabled_file_is_not_an_error() {
 /// Neither file exists: 200 and an empty list (the page's empty state), not an
 /// error: a missing file is an empty group.
 #[tokio::test]
-async fn no_preset_file_at_all_is_an_empty_list() {
+async fn no_model_profile_file_at_all_is_an_empty_list() {
     let app = app_no_files();
     assert_eq!(app.list().await.rows(), Vec::<Value>::new());
     assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
@@ -1020,7 +1020,7 @@ async fn files_with_no_sections_answer_an_empty_list() {
 
 /// The other routes are unchanged beside the new one.
 #[tokio::test]
-async fn version_is_still_served_beside_the_presets() {
+async fn version_is_still_served_beside_the_model_profiles() {
     let app = app_no_manager();
     let r = app.get("/api/version", None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);

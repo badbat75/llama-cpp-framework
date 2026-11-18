@@ -1,4 +1,4 @@
-//! The Models tab's "New preset from Hugging Face" dialog: the New preset
+//! The Models tab's "New model profile from Hugging Face" dialog: the New model profile
 //! dialog's second source, beside picking a file already in ModelsDir.
 //!
 //! The user types a model name and searches (`hf::search`: GGUF repositories
@@ -6,7 +6,7 @@
 //! types one directly (a spec or its URL); its GGUF quantizations are listed
 //! (`hf::list_repo`), the user picks one with its sidecars and the token, and
 //! Download hands the job to the background (`downloads::start`) and closes
-//! the dialog: the transfer, the preset's creation from the files and the
+//! the dialog: the transfer, the model profile's creation from the files and the
 //! progress all live in `gui/downloads.rs` and its window, so the main window
 //! is usable again at once.
 //!
@@ -50,8 +50,8 @@
 //! disk; with several cards, the card or the per-card cut and its
 //! `tensor-split`), and a basis line under the title says what that is
 //! measured against (each card in split order, the RAM, the margins). The
-//! download's preset gets that placement as keys (`hf_fit::placement`,
-//! against the same `Session::budget`, so the preset holds the cut the picked
+//! download's model profile gets that placement as keys (`hf_fit::placement`,
+//! against the same `Session::budget`, so the model profile holds the cut the picked
 //! row showed) and the status line says it is an estimate. The estimates come
 //! from each candidate's GGUF header, read remotely by `hf_fit::fetch_shapes`
 //! on its own threads (`spawn_estimates`), so the listing is usable at once:
@@ -78,7 +78,7 @@
 //! ## No transfer runs IN the dialog
 //! Esc, the backdrop and Close go to `hf_dismiss`, which closes the dialog in
 //! every phase: once Download is clicked the job belongs to `gui/downloads.rs`
-//! (Cancel, Resume, the progress, the preset, Quit asking first), so closing
+//! (Cancel, Resume, the progress, the model profile, Quit asking first), so closing
 //! the dialog can never drop gigabytes. The dialog's Downloads button opens
 //! that window (the modal backdrop covers the footer's indicator).
 //!
@@ -87,7 +87,7 @@
 //! the environment's token (`hf::token_from_env`), read here at request time
 //! and never copied into the UI; the field's placeholder only says that one
 //! exists. Neither form reaches settings.ini, a log, a status line or a
-//! preset: `hf::Token` has no `Display` and `HfError` never carries it.
+//! model profile: `hf::Token` has no `Display` and `HfError` never carries it.
 //!
 //! ## Threading
 //! The slow calls (search, listing, header reads) run on their own threads
@@ -1190,7 +1190,7 @@ fn download(app: &AppWindow, state: &Rc<RefCell<State>>) {
             return;
         }
     };
-    // Against the budget the rows were estimated with, so the preset gets the
+    // Against the budget the rows were estimated with, so the model profile gets the
     // split the picked row showed.
     let budget = state.borrow().hf.budget.clone();
     set_status(

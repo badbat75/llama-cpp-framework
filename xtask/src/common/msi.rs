@@ -1526,7 +1526,7 @@ mod tests {
 
     /// The removal dialog names what the per-user tree holds under the
     /// manager (settings, benchmark results, logs and an earlier install's
-    /// server settings and presets), never that the configuration lives
+    /// server settings and model profiles), never that the configuration lives
     /// there, and keeps the folder and the "kept unless ticked" promise.
     #[test]
     fn the_user_data_text_names_what_the_tree_holds_under_the_manager() {

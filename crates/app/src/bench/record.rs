@@ -2,9 +2,9 @@
 //! measures) and `db` (which stores).
 //!
 //! One `Recorder` per tab run or sweep leg. It detects the machine and the
-//! software once, then holds one run per preset as the engine reaches it and
-//! writes it when that preset is done, so the order of the runs in the
-//! campaign is the order the presets were measured in (the tab's baseline is
+//! software once, then holds one run per model profile as the engine reaches it and
+//! writes it when that model profile is done, so the order of the runs in the
+//! campaign is the order the model profiles were measured in (the tab's baseline is
 //! the first). A run that fails or is cancelled is never written, and neither
 //! is a campaign with no finished run (`db` module header).
 //!
@@ -27,8 +27,8 @@ use crate::{gguf, presets, runstate, server_cfg};
 pub struct Campaign {
     pub name: String,
     pub question: String,
-    /// The run's label when the plan has ONE preset (a sweep leg's
-    /// `key=value`); the preset id otherwise.
+    /// The run's label when the plan has ONE model profile (a sweep leg's
+    /// `key=value`); the model profile id otherwise.
     pub label: Option<String>,
 }
 
@@ -44,7 +44,7 @@ pub struct Recorder {
 
 /// The run being measured, held in memory until it is committed or dropped.
 struct Pending {
-    preset: String,
+    model_profile: String,
     label: String,
     started_utc: String,
     /// When the last sample landed: the run's end, read off the clock.
@@ -54,7 +54,7 @@ struct Pending {
     gpus: Vec<(String, String)>,
     samples: Vec<Sample>,
     log: Arc<Mutex<String>>,
-    /// The preset's `device` ids: recorded in `run_device` even when no
+    /// The model profile's `device` ids: recorded in `run_device` even when no
     /// buffer line names them.
     pinned: Vec<String>,
     /// `run_device`, read once after the first measured prompt (`read_memory`).
@@ -72,7 +72,7 @@ impl Recorder {
             question: default_question(plan),
             label: None,
         });
-        if plan.presets.len() != 1 {
+        if plan.model_profiles.len() != 1 {
             spec.label = None;
         }
         Ok(Recorder {
@@ -86,11 +86,11 @@ impl Recorder {
         })
     }
 
-    /// Hold a new run for one preset, with every parameter it runs with. Read
-    /// NOW, not at commit: a sweep rewrites the preset between legs.
+    /// Hold a new run for one model profile, with every parameter it runs with. Read
+    /// NOW, not at commit: a sweep rewrites the model profile between legs.
     pub fn start(
         &mut self,
-        preset: &presets::Preset,
+        model_profile: &presets::ModelProfile,
         cfg: &server_cfg::ServerConfig,
         devices: &[(String, String)],
         started_utc: &str,
@@ -109,17 +109,21 @@ impl Recorder {
             devices.to_vec()
         };
         self.current = Some(Pending {
-            preset: preset.id.clone(),
-            label: self.spec.label.clone().unwrap_or_else(|| preset.id.clone()),
+            model_profile: model_profile.id.clone(),
+            label: self
+                .spec
+                .label
+                .clone()
+                .unwrap_or_else(|| model_profile.id.clone()),
             started_utc: started_utc.to_string(),
             ended_utc: String::new(),
-            model: model_row(Path::new(&preset.model)),
+            model: model_row(Path::new(&model_profile.model)),
             params: vec![
                 (
                     "preset",
                     pairs(server_control::read_section(
-                        ConfigFile::Presets,
-                        &preset.id,
+                        ConfigFile::Models,
+                        &model_profile.id,
                     )),
                 ),
                 (
@@ -137,9 +141,9 @@ impl Recorder {
         });
     }
 
-    /// The preset being measured, if a run is held.
-    pub fn current_preset(&self) -> Option<&str> {
-        self.current.as_ref().map(|p| p.preset.as_str())
+    /// The model profile being measured, if a run is held.
+    pub fn current_model_profile(&self) -> Option<&str> {
+        self.current.as_ref().map(|p| p.model_profile.as_str())
     }
 
     pub fn sample(&mut self, s: Sample) {
@@ -161,7 +165,7 @@ impl Recorder {
     }
 
     /// The held run's memory per device, read once, after its first measured
-    /// prompt: the buffers of the preset's latest load off llama-server's log
+    /// prompt: the buffers of the model profile's latest load off llama-server's log
     /// (`buffer_sizes`), and the free memory a fresh device probe reports now,
     /// a real prefill after the load. The live engine calls it; llama-bench
     /// is its own process and its output carries no load lines to read.
@@ -172,9 +176,9 @@ impl Recorder {
         if !p.devices.is_empty() {
             return;
         }
-        let buffers = preset_buffers(
+        let buffers = model_profile_buffers(
             &|since, max| server_control::backend().log_text(since, max),
-            &p.preset,
+            &p.model_profile,
         );
         #[cfg(windows)]
         let adapters = Some(crate::hwmon::adapters_free());
@@ -262,9 +266,9 @@ impl Recorder {
     }
 }
 
-/// The buffers the preset's LATEST load allocated, per backend, off
+/// The buffers the model profile's LATEST load allocated, per backend, off
 /// llama-server's log. The router logs `spawning server instance with
-/// name=<preset> on port <port>` and hands the child's lines back prefixed
+/// name=<model profile> on port <port>` and hands the child's lines back prefixed
 /// `[<port>] `; the load ends at the child's `llama_server: model loaded`, so
 /// the reserves a request triggers later are not read. Per device:
 ///
@@ -279,8 +283,8 @@ impl Recorder {
 ///   earlier one: it reports the same scheduler's buffer again.
 ///
 /// `output buffer` (the logits, a few MiB of host memory) is left out.
-pub fn buffer_sizes(log: &str, preset: &str) -> Vec<db::DeviceMemory> {
-    let spawn = format!("spawning server instance with name={preset} on port ");
+pub fn buffer_sizes(log: &str, model_profile: &str) -> Vec<db::DeviceMemory> {
+    let spawn = format!("spawning server instance with name={model_profile} on port ");
     let mut prefix = String::new();
     let mut done = true;
     let mut ctx = 0usize;
@@ -353,18 +357,18 @@ pub fn buffer_sizes(log: &str, preset: &str) -> Vec<db::DeviceMemory> {
 }
 
 /// The most of the instance's log `read_memory` reads, from its end: the
-/// preset's latest load lines are in it.
+/// model profile's latest load lines are in it.
 pub const MEMORY_LOG_MAX: usize = 4 << 20;
 
 /// `buffer_sizes` of the end of the instance's log, read through `read`
 /// (`server_control::Backend::log_text`) with no time window and bounded by
 /// `MEMORY_LOG_MAX`; none when the log cannot be read.
-pub fn preset_buffers(
+pub fn model_profile_buffers(
     read: &dyn Fn(Option<std::time::SystemTime>, usize) -> Result<String, String>,
-    preset: &str,
+    model_profile: &str,
 ) -> Vec<db::DeviceMemory> {
     match read(None, MEMORY_LOG_MAX) {
-        Ok(log) => buffer_sizes(&log, preset),
+        Ok(log) => buffer_sizes(&log, model_profile),
         Err(_) => Vec::new(),
     }
 }
@@ -384,7 +388,7 @@ fn row<'a>(rows: &'a mut Vec<db::DeviceMemory>, device: &str) -> &'a mut db::Dev
     &mut rows[i]
 }
 
-/// `run_device`'s rows: the devices the buffers name, then the preset's pinned
+/// `run_device`'s rows: the devices the buffers name, then the model profile's pinned
 /// ones no buffer line named, each with the free memory the probe reports for
 /// that id (none for a host buffer such as `CPU_Mapped` or `ROCm_Host`, which
 /// the probe does not list).
@@ -443,7 +447,7 @@ pub fn device_rows(
     rows
 }
 
-/// The tab's means of one run, as stored in `run.points`; the preset is the
+/// The tab's means of one run, as stored in `run.points`; the model profile is the
 /// run itself, so it is not repeated.
 pub fn points_json(points: &[Point]) -> String {
     serde_json::Value::Array(
@@ -459,14 +463,14 @@ pub fn points_json(points: &[Point]) -> String {
     .to_string()
 }
 
-/// `run.points` back into points, under the run's label as their preset.
+/// `run.points` back into points, under the run's label as their model profile.
 pub fn points_from_json(label: &str, json: &str) -> Vec<Point> {
     let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
     };
     a.iter()
         .map(|v| Point {
-            preset: label.to_string(),
+            model_profile: label.to_string(),
             test: v["test"].as_str().unwrap_or_default().to_string(),
             mean: v["mean"].as_f64().unwrap_or(0.0),
             sd: v["sd"].as_f64().unwrap_or(0.0),
@@ -490,7 +494,7 @@ fn default_question(plan: &Plan) -> String {
             Mode::Live => "Live",
             Mode::Synthetic => "Synthetic",
         },
-        plan.presets.join(", ")
+        plan.model_profiles.join(", ")
     )
 }
 
@@ -746,7 +750,7 @@ mod tests {
     }
 
     /// Real lines (llama.cpp v0.7.0, Qwen3.8-27B with MTP heads and an mmproj),
-    /// trimmed: an earlier load of the same preset, another model's child, the
+    /// trimmed: an earlier load of the same model profile, another model's child, the
     /// draft context's re-reserve and a request's reserve after the load.
     const LOAD_LOG: &str = "\
 0.00.200.000 I srv          load: spawning server instance with name=Qwen3.8-27B on port 40001
@@ -811,19 +815,19 @@ mod tests {
 
     type Asked = std::sync::Mutex<Vec<(Option<std::time::SystemTime>, usize)>>;
 
-    /// No time window: the preset's model may have been loaded before its
+    /// No time window: the model profile's model may have been loaded before its
     /// run started (already loaded when a live run without a restart begins,
     /// or by an earlier step), and `buffer_sizes` keeps only its latest load
     /// anyway. The bound is `MEMORY_LOG_MAX`; the buffers are those of the
     /// log read.
     #[test]
-    fn preset_buffers_read_the_end_of_the_instances_log_without_a_window() {
+    fn model_profile_buffers_read_the_end_of_the_instances_log_without_a_window() {
         let asked = Asked::default();
         let read = |since, max| {
             asked.lock().unwrap().push((since, max));
             Ok(LOAD_LOG.to_string())
         };
-        let rows = preset_buffers(&read, "Qwen3.8-27B");
+        let rows = model_profile_buffers(&read, "Qwen3.8-27B");
         assert_eq!(rows, buffer_sizes(LOAD_LOG, "Qwen3.8-27B"));
         assert!(!rows.is_empty());
         assert_eq!(*asked.lock().unwrap(), [(None, MEMORY_LOG_MAX)]);
@@ -834,7 +838,7 @@ mod tests {
     #[test]
     fn a_log_that_cannot_be_read_gives_no_buffers() {
         let read = |_, _| Err(crate::strings::t("log-journal-denied"));
-        assert!(preset_buffers(&read, "Qwen3.8-27B").is_empty());
+        assert!(model_profile_buffers(&read, "Qwen3.8-27B").is_empty());
     }
 
     #[test]

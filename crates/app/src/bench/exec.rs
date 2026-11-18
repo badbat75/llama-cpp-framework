@@ -10,25 +10,25 @@
 //! shared memory over PCIe and the numbers read as a backend regression rather
 //! than as a mistake, which is why this is a hard stop and not a warning.
 //!
-//! ## A preset is written when it is done, and only then
+//! ## A model profile is written when it is done, and only then
 //!
 //! Everything a run produces goes into bench.db (`db` module header): each
-//! preset's run is committed, points, samples, parameters and the engine's log
+//! model profile's run is committed, points, samples, parameters and the engine's log
 //! together, when the engine moves past it, so a run that dies at its third
-//! preset keeps the first two. A preset that fails or is cancelled is dropped
+//! model profile keeps the first two. A model profile that fails or is cancelled is dropped
 //! (the database holds measurements, not attempts); its error message carries
 //! the tail of the engine's output instead. The markdown report is rendered at
 //! the end of a successful run and stored with its campaign.
 //!
-//! ## Why the live mode warms up, and why it groups by preset
+//! ## Why the live mode warms up, and why it groups by model profile
 //!
 //! llama-server's router loads a model on demand, so the FIRST request for a
-//! preset pays a model load of tens of seconds; measuring that would put a disk
+//! model profile pays a model load of tens of seconds; measuring that would put a disk
 //! read in a tokens-per-second column. A throwaway request with a two-word
 //! prompt loads it without prefilling anything worth timing. And the reps of one
-//! preset run together rather than interleaved, because switching preset is
+//! model profile run together rather than interleaved, because switching model profile is
 //! another model load: the cost of interleaving is minutes per switch, the cost
-//! of grouping is that a thermal drift is charged to the last preset, which the
+//! of grouping is that a thermal drift is charged to the last model profile, which the
 //! report says out loud.
 
 use crate::strings;
@@ -90,11 +90,11 @@ pub fn spawn(plan: Plan, emit: impl Fn(Event) + Send + 'static) -> Handle {
 }
 
 /// One plan of a run made of several (a spec's prompt x pass x scenario, or
-/// `concurrency all`), with the preset keys it needs written for its length.
+/// `concurrency all`), with the model profile keys it needs written for its length.
 pub struct Step {
     /// Prefixed to every result row of the step, so the table tells them apart.
     pub label: String,
-    /// Written to every preset of the plan before the step, put back after it.
+    /// Written to every model profile of the plan before the step, put back after it.
     pub overrides: Vec<(String, String)>,
     pub plan: Plan,
 }
@@ -142,9 +142,9 @@ fn run_steps(
             &[&(i + 1), &total, &step.label],
         )));
         let mut held = Vec::new();
-        for preset in &step.plan.presets {
-            match super::spec::apply_overrides(preset, &step.overrides) {
-                Ok(r) => held.push((preset.clone(), r)),
+        for model_profile in &step.plan.model_profiles {
+            match super::spec::apply_overrides(model_profile, &step.overrides) {
+                Ok(r) => held.push((model_profile.clone(), r)),
                 Err(e) => problems.push(e),
             }
         }
@@ -185,9 +185,9 @@ fn run_steps(
         if let Err(e) = ran {
             problems.push(format!("{}: {e}", step.label));
         }
-        for (preset, restore) in held {
-            if let Err(e) = super::spec::restore_overrides(&preset, restore) {
-                // A key not put back is a preset left measuring something
+        for (model_profile, restore) in held {
+            if let Err(e) = super::spec::restore_overrides(&model_profile, restore) {
+                // A key not put back is a model profile left measuring something
                 // else: stop rather than run the next step on top of it.
                 problems.push(e);
                 return Err(problems.join("; "));
@@ -217,16 +217,16 @@ struct Run {
     plan: Plan,
     meta: RunMeta,
     points: Vec<Point>,
-    /// The flash-attention setting each preset RESOLVED to, read back off
-    /// llama-bench's rows. A preset that pins nothing runs at `auto`, which
+    /// The flash-attention setting each model profile RESOLVED to, read back off
+    /// llama-bench's rows. A model profile that pins nothing runs at `auto`, which
     /// resolves per backend, so two legs of a comparison can silently land on
     /// different kernels; `flash_attn_mismatch` turns that into a warning at the
     /// top of the report.
     flash_attn: std::collections::BTreeMap<String, String>,
-    /// bench.db: where every finished preset goes. An `Option` only so a
-    /// failed preset can be dropped through the same path.
+    /// bench.db: where every finished model profile goes. An `Option` only so a
+    /// failed model profile can be dropped through the same path.
     rec: Option<Recorder>,
-    /// What each preset's device ids resolved to, for its db run.
+    /// What each model profile's device ids resolved to, for its db run.
     resolved: Vec<(String, Vec<(String, String)>)>,
 }
 
@@ -236,7 +236,7 @@ impl Run {
         match self
             .points
             .iter_mut()
-            .find(|p| p.preset == point.preset && p.test == point.test)
+            .find(|p| p.model_profile == point.model_profile && p.test == point.test)
         {
             Some(slot) => *slot = point,
             None => self.points.push(point),
@@ -250,35 +250,39 @@ impl Run {
         }
     }
 
-    /// Hold the db run for the preset about to be measured, committing the one
-    /// before it: the engine only moves on after a preset is done.
-    fn begin_preset(&mut self, preset: &presets::Preset, cfg: &server_cfg::ServerConfig) {
-        self.commit_preset();
+    /// Hold the db run for the model profile about to be measured, committing the one
+    /// before it: the engine only moves on after a model profile is done.
+    fn begin_model_profile(
+        &mut self,
+        model_profile: &presets::ModelProfile,
+        cfg: &server_cfg::ServerConfig,
+    ) {
+        self.commit_model_profile();
         let devices = self
             .resolved
             .iter()
-            .find(|(id, _)| *id == preset.id)
+            .find(|(id, _)| *id == model_profile.id)
             .map(|(_, d)| d.clone())
             .unwrap_or_default();
         let started = super::stamp_human(super::now_secs());
         if let Some(rec) = &mut self.rec {
-            rec.start(preset, cfg, &devices, &started);
+            rec.start(model_profile, cfg, &devices, &started);
         }
     }
 
-    fn commit_preset(&mut self) {
-        let Some(preset) = self
+    fn commit_model_profile(&mut self) {
+        let Some(model_profile) = self
             .rec
             .as_ref()
-            .and_then(|r| r.current_preset().map(str::to_string))
+            .and_then(|r| r.current_model_profile().map(str::to_string))
         else {
             return;
         };
-        let notes = self.db_notes(&preset);
+        let notes = self.db_notes(&model_profile);
         let points: Vec<Point> = self
             .points
             .iter()
-            .filter(|p| p.preset == preset)
+            .filter(|p| p.model_profile == model_profile)
             .cloned()
             .collect();
         if let Some(Err(e)) = self.rec.as_mut().map(|r| r.commit(&notes, &points)) {
@@ -296,24 +300,24 @@ impl Run {
 
     /// A db run's notes: the run's warnings, the machine state the report's
     /// Environment table carries, and what flash-attention resolved to.
-    fn db_notes(&self, preset: &str) -> String {
+    fn db_notes(&self, model_profile: &str) -> String {
         let mut lines: Vec<String> = self.meta.warnings.clone();
         for (label, value) in &self.meta.env {
             if !label.starts_with("devices (") {
                 lines.push(format!("{label}: {value}"));
             }
         }
-        if let Some(fa) = self.flash_attn.get(preset) {
+        if let Some(fa) = self.flash_attn.get(model_profile) {
             lines.push(format!("flash-attn: {fa}"));
         }
         lines.join("\n")
     }
 
-    /// The last preset is committed only when the run as a whole succeeded;
+    /// The last model profile is committed only when the run as a whole succeeded;
     /// a failed or cancelled one is dropped (`db` module header).
     fn close_db(&mut self, outcome: &Result<(), String>) {
         match outcome {
-            Ok(()) => self.commit_preset(),
+            Ok(()) => self.commit_model_profile(),
             Err(_) => {
                 if let Some(rec) = &mut self.rec {
                     rec.discard();
@@ -324,7 +328,7 @@ impl Run {
 }
 
 /// The last lines of the held run's log, for an error message: a failed
-/// preset is not recorded, so this is where its evidence goes.
+/// model profile is not recorded, so this is where its evidence goes.
 fn log_tail(run: &Run, lines: usize) -> String {
     let Some(sink) = run.rec.as_ref().and_then(Recorder::log_sink) else {
         return String::new();
@@ -385,14 +389,14 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     }
 
     let all = presets::load_all();
-    let chosen: Vec<presets::Preset> = plan
-        .presets
+    let chosen: Vec<presets::ModelProfile> = plan
+        .model_profiles
         .iter()
         .filter_map(|id| all.iter().find(|p| &p.id == id).cloned())
         .collect();
-    if chosen.len() != plan.presets.len() {
+    if chosen.len() != plan.model_profiles.len() {
         return Err(
-            "A selected preset is no longer in models.ini. Refresh (F5) and \
+            "A selected model profile is no longer in models.ini. Refresh (F5) and \
                     re-select."
                 .into(),
         );
@@ -407,7 +411,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     let rec = Recorder::begin(&super::db::work_path(), as_pinned, &stamp)
         .map_err(|e| format!("bench.db: {e}"))?;
 
-    // What each preset's device ids point at RIGHT NOW. Recorded because the ids
+    // What each model profile's device ids point at RIGHT NOW. Recorded because the ids
     // move with driver state, so "ROCm0" in a six-week-old report is not
     // necessarily the card you are comparing against today.
     let devs = crate::devices::probed();
@@ -422,7 +426,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
 
     let now = super::now_secs();
     let mut env = super::env::stamp(now);
-    for (preset, ids) in &resolved {
+    for (model_profile, ids) in &resolved {
         if ids.is_empty() {
             continue;
         }
@@ -436,7 +440,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
                 }
             })
             .collect();
-        env.push((format!("devices ({preset})"), listed.join(", ")));
+        env.push((format!("devices ({model_profile})"), listed.join(", ")));
     }
 
     let meta = RunMeta {
@@ -468,17 +472,17 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
         Mode::Synthetic => run_synthetic(&mut run, &cfg, &chosen, cancel, emit),
     };
 
-    // Read back off the rows rather than assumed from the presets: a preset that
+    // Read back off the rows rather than assumed from the model profiles: a model profile that
     // pins nothing runs at `auto`, and what `auto` became is a property of the
     // backend, not of the INI.
     if let Some(w) = super::flash_attn_mismatch(&run.flash_attn) {
         run.meta.warnings.push(w);
     }
     run.close_db(&outcome);
-    for (preset, fa) in &run.flash_attn {
+    for (model_profile, fa) in &run.flash_attn {
         run.meta
             .env
-            .push((format!("flash-attn ({preset})"), fa.clone()));
+            .push((format!("flash-attn ({model_profile})"), fa.clone()));
     }
 
     outcome?;
@@ -500,30 +504,30 @@ fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
 fn run_live(
     run: &mut Run,
     cfg: &server_cfg::ServerConfig,
-    chosen: &[presets::Preset],
+    chosen: &[presets::ModelProfile],
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
     let port = u16::try_from(cfg.port_or_default()).map_err(|_| strings::t("invalid-port"))?;
     let plan = run.plan.clone();
 
-    for preset in chosen {
+    for model_profile in chosen {
         if cancelled(cancel) {
             return Err("Cancelled.".into());
         }
-        run.begin_preset(preset, cfg);
+        run.begin_model_profile(model_profile, cfg);
         emit(Event::Progress(strings::fill(
             "loading-warm-up",
-            &[&preset.id],
+            &[&model_profile.id],
         )));
         // Discarded on purpose, INCLUDING its error: a router that cannot warm
         // the model will fail the first real repetition too, with a message
         // about the actual request rather than about a warm-up.
-        let warm = warmup_body(&preset.id);
+        let warm = warmup_body(&model_profile.id);
         let _ = http::request(port, "POST", super::LIVE_PATH, Some(&warm), LIVE_TIMEOUT);
 
         if plan.concurrency != super::Concurrency::Single {
-            run_concurrent(run, port, preset, &plan, cancel, emit)?;
+            run_concurrent(run, port, model_profile, &plan, cancel, emit)?;
             continue;
         }
 
@@ -532,9 +536,9 @@ fn run_live(
         // with the cache on and pinned to that slot.
         let prefix = if plan.warm_prefix {
             let text = super::prompt_prefix(&plan.prompt)
-                .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
+                .ok_or_else(|| strings::fill("warm-needs-assistant", &[&model_profile.id]))?;
             Some(super::live_body_slot(
-                &preset.id,
+                &model_profile.id,
                 &Plan {
                     prompt: text,
                     ..plan.clone()
@@ -547,9 +551,9 @@ fn run_live(
             None
         };
         let body = if plan.warm_prefix {
-            super::live_body_slot(&preset.id, &plan, 0, true, plan.max_tokens)
+            super::live_body_slot(&model_profile.id, &plan, 0, true, plan.max_tokens)
         } else {
-            super::live_body(&preset.id, &plan)
+            super::live_body(&model_profile.id, &plan)
         };
         let mut first_token: Vec<f64> = Vec::new();
         let mut turn: Vec<f64> = Vec::new();
@@ -569,7 +573,7 @@ fn run_live(
             }
             emit(Event::Progress(strings::fill(
                 "repetition",
-                &[&preset.id, &rep, &plan.reps],
+                &[&model_profile.id, &rep, &plan.reps],
             )));
             if let Some(prime) = &prefix {
                 let res = http::request(
@@ -579,12 +583,12 @@ fn run_live(
                     Some(prime),
                     live_timeout(&plan),
                 )
-                .map_err(|e| strings::fill("priming-failed", &[&preset.id, &e]))?;
+                .map_err(|e| strings::fill("priming-failed", &[&model_profile.id, &e]))?;
                 if res.status != 200 {
                     let body: String = res.body.chars().take(600).collect();
                     return Err(strings::fill(
                         "priming-http",
-                        &[&preset.id, &res.status, &body],
+                        &[&model_profile.id, &res.status, &body],
                     ));
                 }
             }
@@ -596,17 +600,18 @@ fn run_live(
                 Some(&body),
                 live_timeout(&plan),
             )
-            .map_err(|e| format!("{}: {e}", preset.id))?;
+            .map_err(|e| format!("{}: {e}", model_profile.id))?;
             if res.status != 200 {
                 let body: String = res.body.chars().take(600).collect();
                 return Err(strings::fill(
                     "server-http",
-                    &[&preset.id, &res.status, &body],
+                    &[&model_profile.id, &res.status, &body],
                 ));
             }
             let wall = sent.elapsed().as_secs_f64();
-            let s = super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))?;
-            fail_if_cut(port, preset, &plan, &s)?;
+            let s =
+                super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", model_profile.id))?;
+            fail_if_cut(port, model_profile, &plan, &s)?;
             let t = &s.timings;
             prefill.push(t.prompt_tps);
             decode.push(t.predicted_tps);
@@ -664,7 +669,7 @@ fn run_live(
             let (mean, sd) = super::mean_sd(&prefill);
             run.put(
                 Point {
-                    preset: preset.id.clone(),
+                    model_profile: model_profile.id.clone(),
                     test: super::LIVE_PREFILL.into(),
                     mean,
                     sd,
@@ -683,7 +688,7 @@ fn run_live(
             let (mean, sd) = super::mean_sd(&decode);
             run.put(
                 Point {
-                    preset: preset.id.clone(),
+                    model_profile: model_profile.id.clone(),
                     test: super::LIVE_DECODE.into(),
                     mean,
                     sd,
@@ -703,7 +708,7 @@ fn run_live(
                 (super::LIVE_DECODE_REASONING, &reasoning),
                 (super::LIVE_DECODE_ANSWER, &answer),
             ] {
-                if let Some(point) = super::phase_point(&preset.id, test, spans) {
+                if let Some(point) = super::phase_point(&model_profile.id, test, spans) {
                     run.put(point, emit);
                 }
             }
@@ -717,7 +722,7 @@ fn run_live(
                 let (mean, sd) = super::mean_sd(values);
                 run.put(
                     Point {
-                        preset: preset.id.clone(),
+                        model_profile: model_profile.id.clone(),
                         test: test.into(),
                         mean,
                         sd,
@@ -750,22 +755,25 @@ fn live_timeout(plan: &Plan) -> Duration {
 /// slot size is asked for only here, so a normal repetition sends nothing extra.
 fn fail_if_cut(
     port: u16,
-    preset: &presets::Preset,
+    model_profile: &presets::ModelProfile,
     plan: &Plan,
     s: &super::Streamed,
 ) -> Result<(), String> {
-    let cap = super::output_cap(plan, preset);
+    let cap = super::output_cap(plan, model_profile);
     if !super::cut_by_context(s, cap) {
         return Ok(());
     }
-    let path = format!("/props?model={}", crate::hf::percent_encode(&preset.id));
+    let path = format!(
+        "/props?model={}",
+        crate::hf::percent_encode(&model_profile.id)
+    );
     let n_ctx = http::request(port, "GET", &path, None, http::CONNECT_TIMEOUT)
         .ok()
         .filter(|r| r.status == 200)
         .and_then(|r| super::props_n_ctx(&r.body));
     Err(format!(
         "{}: {}",
-        preset.id,
+        model_profile.id,
         super::context_cut_error(s, cap, n_ctx)
     ))
 }
@@ -781,7 +789,7 @@ struct SlotReply {
     streamed: super::Streamed,
 }
 
-/// The repetitions of a `--concurrency` scenario on one preset: the warm slots
+/// The repetitions of a `--concurrency` scenario on one model profile: the warm slots
 /// are primed once (the prompt, 1 token out, cache on), then every repetition
 /// sends one request per slot from its own thread at the same instant. Each
 /// reply is a sample of its own (`detail` names slot, role and timing); the
@@ -791,33 +799,33 @@ struct SlotReply {
 fn run_concurrent(
     run: &mut Run,
     port: u16,
-    preset: &presets::Preset,
+    model_profile: &presets::ModelProfile,
     plan: &Plan,
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
     let scenario = plan.concurrency;
     // One request per slot: with a single slot nothing runs concurrently.
-    let n = preset.parallel.unwrap_or(super::AUTO_PARALLEL);
+    let n = model_profile.parallel.unwrap_or(super::AUTO_PARALLEL);
     if n < 2 {
         return Err(strings::fill(
             "concurrency-needs-parallel",
-            &[&preset.id, &scenario.as_str(), &n],
+            &[&model_profile.id, &scenario.as_str(), &n],
         ));
     }
     let warm = scenario.warm_slots(n as usize);
     let timeout = live_timeout(plan);
     let post = |body: &str| -> Result<super::Streamed, String> {
         let res = http::request(port, "POST", super::LIVE_PATH, Some(body), timeout)
-            .map_err(|e| format!("{}: {e}", preset.id))?;
+            .map_err(|e| format!("{}: {e}", model_profile.id))?;
         if res.status != 200 {
             let body: String = res.body.chars().take(600).collect();
             return Err(strings::fill(
                 "server-http",
-                &[&preset.id, &res.status, &body],
+                &[&model_profile.id, &res.status, &body],
             ));
         }
-        super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", preset.id))
+        super::parse_stream(&res.body).map_err(|e| format!("{}: {e}", model_profile.id))
     };
 
     // Warm slots hold the prompt (primed once, every repetition then hits
@@ -825,7 +833,7 @@ fn run_concurrent(
     // since the last one left the whole turn in the slot.
     let prime_plan = if plan.warm_prefix {
         let text = super::prompt_prefix(&plan.prompt)
-            .ok_or_else(|| strings::fill("warm-needs-assistant", &[&preset.id]))?;
+            .ok_or_else(|| strings::fill("warm-needs-assistant", &[&model_profile.id]))?;
         Plan {
             prompt: text,
             ..plan.clone()
@@ -838,10 +846,10 @@ fn run_concurrent(
             if w {
                 emit(Event::Progress(strings::fill(
                     "priming-slot",
-                    &[&preset.id, &slot, &what],
+                    &[&model_profile.id, &slot, &what],
                 )));
                 post(&super::live_body_slot(
-                    &preset.id,
+                    &model_profile.id,
                     &prime_plan,
                     slot,
                     true,
@@ -873,7 +881,7 @@ fn run_concurrent(
         emit(Event::Progress(strings::fill(
             "repetition-concurrent",
             &[
-                &preset.id,
+                &model_profile.id,
                 &rep,
                 &plan.reps,
                 &scenario.as_str(),
@@ -886,7 +894,8 @@ fn run_concurrent(
                 .iter()
                 .enumerate()
                 .map(|(slot, &w)| {
-                    let body = super::live_body_slot(&preset.id, plan, slot, w, plan.max_tokens);
+                    let body =
+                        super::live_body_slot(&model_profile.id, plan, slot, w, plan.max_tokens);
                     let post = &post;
                     sc.spawn(move || {
                         let sent = t0.elapsed().as_secs_f64();
@@ -911,7 +920,7 @@ fn run_concurrent(
         });
         let replies: Vec<SlotReply> = replies.into_iter().collect::<Result<_, _>>()?;
         for r in &replies {
-            fail_if_cut(port, preset, plan, &r.streamed)?;
+            fail_if_cut(port, model_profile, plan, &r.streamed)?;
         }
 
         for r in &replies {
@@ -1008,7 +1017,7 @@ fn run_concurrent(
             let (mean, sd) = super::mean_sd(values);
             run.put(
                 Point {
-                    preset: preset.id.clone(),
+                    model_profile: model_profile.id.clone(),
                     test: test.into(),
                     mean,
                     sd,
@@ -1025,9 +1034,9 @@ fn run_concurrent(
 /// The throwaway request that loads the model. A two-word prompt on purpose:
 /// what needs warming is the model load, and prefilling the real prompt here
 /// would double the run's cost for a number nobody reads.
-fn warmup_body(preset_id: &str) -> String {
+fn warmup_body(model_profile_id: &str) -> String {
     serde_json::json!({
-        "model": preset_id,
+        "model": model_profile_id,
         "messages": [{ "role": "user", "content": "hi" }],
         "max_tokens": 1,
         "stream": false,
@@ -1041,7 +1050,7 @@ fn warmup_body(preset_id: &str) -> String {
 fn run_synthetic(
     run: &mut Run,
     cfg: &server_cfg::ServerConfig,
-    chosen: &[presets::Preset],
+    chosen: &[presets::ModelProfile],
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
@@ -1054,28 +1063,28 @@ fn run_synthetic(
     })?;
     let plan = run.plan.clone();
 
-    // Two invocations per preset (prefill, then decode): see
+    // Two invocations per model profile (prefill, then decode): see
     // `bench::synthetic_sweeps` for why they are not one.
     let sweeps = super::synthetic_sweeps(&plan);
-    for preset in chosen {
-        run.begin_preset(preset, cfg);
+    for model_profile in chosen {
+        run.begin_model_profile(model_profile, cfg);
         for sweep in &sweeps {
             if cancelled(cancel) {
                 return Err("Cancelled.".into());
             }
             emit(Event::Progress(strings::fill(
                 "llama-bench-sweep",
-                &[&preset.id, &sweep.name],
+                &[&model_profile.id, &sweep.name],
             )));
-            let argv = super::synthetic_argv(preset, cfg, &plan, sweep);
+            let argv = super::synthetic_argv(model_profile, cfg, &plan, sweep);
             run.note(&format!(
                 "\n--- {} / {} ---\n{} {}",
-                preset.id,
+                model_profile.id,
                 sweep.name,
                 exe.display(),
                 argv.join(" ")
             ));
-            run_one(run, &exe, &argv, cfg, preset, cancel, emit)?;
+            run_one(run, &exe, &argv, cfg, model_profile, cancel, emit)?;
         }
     }
     Ok(())
@@ -1088,7 +1097,7 @@ fn run_one(
     exe: &std::path::Path,
     argv: &[String],
     cfg: &server_cfg::ServerConfig,
-    preset: &presets::Preset,
+    model_profile: &presets::ModelProfile,
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<(), String> {
@@ -1146,7 +1155,7 @@ fn run_one(
                 if run.meta.bench_build.is_none() {
                     run.meta.bench_build = super::parse_bench_build(&line);
                 }
-                if let Some(point) = super::parse_bench_line(&line, &preset.id, reps) {
+                if let Some(point) = super::parse_bench_line(&line, &model_profile.id, reps) {
                     // The row goes into bench.db VERBATIM beside the point
                     // derived from it (`record::bench_samples`): everything
                     // llama-bench measured that the point drops (flash_attn,
@@ -1156,9 +1165,12 @@ fn run_one(
                         run.sample(sample);
                     }
                     if let Some(fa) = super::parse_bench_flash_attn(&line) {
-                        run.flash_attn.insert(preset.id.clone(), fa);
+                        run.flash_attn.insert(model_profile.id.clone(), fa);
                     }
-                    emit(Event::Progress(format!("{}: {}", preset.id, point.test)));
+                    emit(Event::Progress(format!(
+                        "{}: {}",
+                        model_profile.id, point.test
+                    )));
                     run.put(point, emit);
                 }
             }
@@ -1179,7 +1191,7 @@ fn run_one(
     if !status.success() {
         return Err(strings::fill(
             "llama-bench-exited",
-            &[&status, &preset.id, &log_tail(run, 8)],
+            &[&status, &model_profile.id, &log_tail(run, 8)],
         ));
     }
     Ok(())

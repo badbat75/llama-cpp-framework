@@ -1,10 +1,10 @@
 //! The Hugging Face downloads running in the background, and their window.
 //!
-//! The New preset dialog's Hugging Face source (`gui/hf_dialog.rs`) keeps the
+//! The New model profile dialog's Hugging Face source (`gui/hf_dialog.rs`) keeps the
 //! job up to the choice: search, listing, estimates, the pick, its sidecars and
 //! the token. Its Download hands the job HERE (`start`) and closes, so the main
 //! window is usable again at once: the transfer (`hf::spawn_download`), the
-//! preset's derivation from the downloaded headers (`hf::preset_from_download`,
+//! model profile's derivation from the downloaded headers (`hf::model_profile_from_download`,
 //! on a worker thread too) and its save all happen behind it.
 //!
 //! ## The window
@@ -12,9 +12,9 @@
 //! `LogWindow` and `HwWindow`: non-modal, hidden on close (closing it cancels
 //! nothing), its size remembered (`DownloadsWindowSize`). One card per job,
 //! newest first: the repository and the quantization, what it fetches, the
-//! state (Downloading, Cancelling, Creating the preset, Done, Failed,
+//! state (Downloading, Cancelling, Creating the model profile, Done, Failed,
 //! Cancelled), the overall and per-file progress while bytes flow, the outcome,
-//! and Cancel download / Resume / Show preset / Dismiss, each acting on the
+//! and Cancel download / Resume / Show model profile / Dismiss, each acting on the
 //! job's id. It opens by itself when a download starts, and comes back from
 //! the footer of the main window (`AppState.downloads_summary`, shown while
 //! the window has a row; the click is `AppState.open_downloads`), from the
@@ -27,21 +27,21 @@
 //! (`<ModelsDir>/.hf-staging/models--org--repo`), and two children writing it
 //! would race. `Jobs::busy_with` refuses the second (the dialog shows why, and
 //! a Resume says so in its row) while the first is downloading, cancelling or
-//! creating its preset.
+//! creating its model profile.
 //!
 //! ## A finished download never disturbs the editor
-//! The preset is saved (`hf::save_preset`) and the Models tab refreshed the way
-//! the on/off switch refreshes it: `refresh_preset_list` (the list, the
-//! selection kept on the preset being edited, by id; the form untouched, dirty
+//! The model profile is saved (`hf::save_model_profile`) and the Models tab refreshed the way
+//! the on/off switch refreshes it: `refresh_model_profile_list` (the list, the
+//! selection kept on the model profile being edited, by id; the form untouched, dirty
 //! or not), the pickers rescanned (`refresh_file_options`, so the new files are
 //! listed), and the Integrations status line and the Benchmark tab re-derived
-//! (`models_tab::presets_moved`). The selection never jumps: the footer says
-//! the preset was created, and the row's **Show preset** goes to it. Show
-//! raises the main window on the Models tab and selects the preset through the
+//! (`models_tab::model_profiles_moved`). The selection never jumps: the footer says
+//! the model profile was created, and the row's **Show model profile** goes to it. Show
+//! raises the main window on the Models tab and selects the model profile through the
 //! same discard guard a click in the list takes (a dirty form asks first); a
 //! dialog open in the main window makes it refuse with a note in the row
 //! instead, and a list filter that would hide the row is cleared. The id is
-//! re-derived against the presets as they stand at save time, since another
+//! re-derived against the model profiles as they stand at save time, since another
 //! one may have taken it while the headers were read.
 //!
 //! ## Quit and hide
@@ -63,11 +63,11 @@
 //! every file boundary and the last byte), and the rows are rewritten in place
 //! (`sync_rows`), so a click on a button is never lost to a rebuilt row. The
 //! token stays inside the `hf::DownloadJob` kept for a Resume: no row, status
-//! line, title or preset carries it (`hf::Token` has no `Display`).
+//! line, title or model profile carries it (`hf::Token` has no `Display`).
 //!
 //! Under `cfg(test)` no child and no thread is started: the e2e flow lands
 //! the progress and the transfer's result itself (`land_progress_for_tests`,
-//! `land_transfer_for_tests`), and the preset derivation runs inline. The pure
+//! `land_transfer_for_tests`), and the model profile derivation runs inline. The pure
 //! job list (`Jobs`) and the progress text are unit-tested below.
 
 use super::*;
@@ -182,8 +182,8 @@ impl Coalescer {
     }
 }
 
-/// The footer line for a created preset (no token, no path: the id and what
-/// came with it). The preset is NOT selected: Show preset goes to it.
+/// The footer line for a created model profile (no token, no path: the id and what
+/// came with it). The model profile is NOT selected: Show model profile goes to it.
 fn created_status(d: &hf::Downloaded, id: &str, placed: bool) -> String {
     let mut with: Vec<&str> = Vec::new();
     if d.mmproj.is_some() {
@@ -219,10 +219,10 @@ pub(super) enum JobState {
     Downloading,
     /// Cancel was asked; the child has not stopped yet.
     Cancelling,
-    /// The files are in place; the preset is being derived and saved.
+    /// The files are in place; the model profile is being derived and saved.
     Configuring,
-    /// The preset `preset` was created; `placed`: with the estimated split.
-    Done { preset: String, placed: bool },
+    /// The model profile `model profile` was created; `placed`: with the estimated split.
+    Done { model_profile: String, placed: bool },
     /// The transfer or the save failed: the error, as the row shows it.
     Failed(String),
     /// Cancelled; the partial files are kept for a resume.
@@ -230,7 +230,7 @@ pub(super) enum JobState {
 }
 
 impl JobState {
-    /// A child runs, or its preset is still being made: the repository is
+    /// A child runs, or its model profile is still being made: the repository is
     /// busy, and Quit asks first.
     fn active(&self) -> bool {
         matches!(
@@ -327,7 +327,7 @@ impl Jobs {
         }
     }
 
-    /// The transfer ended: on to the preset, or the cancel, or the error.
+    /// The transfer ended: on to the model profile, or the cancel, or the error.
     fn transfer_ended(&mut self, id: u64, result: Result<(), &hf::HfError>) -> bool {
         let Some(j) = self.get_mut(id) else {
             return false;
@@ -336,7 +336,7 @@ impl Jobs {
             return false;
         }
         j.state = match result {
-            // A cancel that came too late to stop it still gets its preset.
+            // A cancel that came too late to stop it still gets its model profile.
             Ok(()) => JobState::Configuring,
             Err(hf::HfError::Cancelled) => JobState::Cancelled,
             Err(e) => JobState::Failed(hf_dialog::sentence(&e.to_string())),
@@ -345,7 +345,7 @@ impl Jobs {
         true
     }
 
-    /// The preset was saved (its id, and whether it carries the estimated
+    /// The model profile was saved (its id, and whether it carries the estimated
     /// placement), or could not be.
     fn configured(&mut self, id: u64, result: Result<(String, bool), String>) -> bool {
         let Some(j) = self.get_mut(id) else {
@@ -355,7 +355,10 @@ impl Jobs {
             return false;
         }
         j.state = match result {
-            Ok((preset, placed)) => JobState::Done { preset, placed },
+            Ok((model_profile, placed)) => JobState::Done {
+                model_profile,
+                placed,
+            },
             Err(e) => JobState::Failed(e),
         };
         true
@@ -421,9 +424,9 @@ impl Jobs {
             .collect()
     }
 
-    fn preset_of(&self, id: u64) -> Option<String> {
+    fn model_profile_of(&self, id: u64) -> Option<String> {
         match &self.get(id)?.state {
-            JobState::Done { preset, .. } => Some(preset.clone()),
+            JobState::Done { model_profile, .. } => Some(model_profile.clone()),
             _ => None,
         }
     }
@@ -489,13 +492,16 @@ fn row(j: &Job) -> DownloadRow {
     };
     let (message, is_error) = match &j.state {
         JobState::Done {
-            preset,
+            model_profile,
             placed: true,
-        } => (strings::fill("created-preset-placed", &[&preset]), false),
+        } => (
+            strings::fill("created-preset-placed", &[&model_profile]),
+            false,
+        ),
         JobState::Done {
-            preset,
+            model_profile,
             placed: false,
-        } => (strings::fill("created-preset", &[&preset]), false),
+        } => (strings::fill("created-preset", &[&model_profile]), false),
         JobState::Failed(e) => (e.clone(), true),
         JobState::Cancelled => (strings::t("download-cancelled-kept"), false),
         _ => (String::new(), false),
@@ -524,7 +530,7 @@ fn row(j: &Job) -> DownloadRow {
 
 /// What a job needs beyond its row: the job itself (kept for a Resume, the
 /// token inside it), the transfer's handle while it runs, and the budget the
-/// dialog estimated against (the preset gets the placement its row showed).
+/// dialog estimated against (the model profile gets the placement its row showed).
 struct Run {
     job: hf::DownloadJob,
     handle: Option<hf::DownloadHandle>,
@@ -735,14 +741,14 @@ fn transfer_ended(
     maybe_quit(state);
 }
 
-/// Derive the preset from the downloaded files' headers, off the event loop
+/// Derive the model profile from the downloaded files' headers, off the event loop
 /// (inline under `cfg(test)`), then land it in `configured`.
 fn configure(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downloaded) {
     let existing: Vec<String> = state
         .borrow()
-        .presets
+        .model_profiles
         .iter()
-        .map(|l| l.preset.id.clone())
+        .map(|l| l.model_profile.id.clone())
         .collect();
     let budget = state
         .borrow()
@@ -751,7 +757,7 @@ fn configure(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downlo
         .get(&id)
         .and_then(|r| r.budget.clone());
     let work = move || {
-        let p = hf::preset_from_download(&d, &existing, budget.as_ref());
+        let p = hf::model_profile_from_download(&d, &existing, budget.as_ref());
         (d, p)
     };
     #[cfg(not(test))]
@@ -775,14 +781,14 @@ fn configure(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64, d: hf::Downlo
     }
 }
 
-/// The derived preset landed: save it and refresh what lists presets and
+/// The derived model profile landed: save it and refresh what lists model profiles and
 /// files, without touching the editor (module header).
 fn configured(
     app: &AppWindow,
     state: &Rc<RefCell<State>>,
     id: u64,
     d: hf::Downloaded,
-    mut p: presets::Preset,
+    mut p: presets::ModelProfile,
 ) {
     let Some(models_dir) = state
         .borrow()
@@ -793,14 +799,14 @@ fn configured(
     else {
         return;
     };
-    // Another preset may have taken the id while the headers were read.
+    // Another model profile may have taken the id while the headers were read.
     let ids: Vec<String> = presets::load_listed()
         .into_iter()
-        .map(|l| l.preset.id)
+        .map(|l| l.model_profile.id)
         .collect();
-    p.id = presets::new_preset_id(&d.model.to_string_lossy(), &ids);
+    p.id = presets::new_model_profile_id(&d.model.to_string_lossy(), &ids);
     let placed = !p.placement_note.is_empty();
-    match hf::save_preset(&p, &models_dir) {
+    match hf::save_model_profile(&p, &models_dir) {
         Ok(()) => {
             {
                 let mut st = state.borrow_mut();
@@ -808,9 +814,9 @@ fn configured(
                 st.downloads.runs.remove(&id);
             }
             set_status(app, created_status(&d, &p.id, placed), false);
-            refresh_preset_list(app, state);
+            refresh_model_profile_list(app, state);
             refresh_file_options(app, state);
-            models_tab::presets_moved(app, state);
+            models_tab::model_profiles_moved(app, state);
         }
         Err(e) => {
             state
@@ -852,10 +858,10 @@ fn resume(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     push(app, state);
 }
 
-/// Show preset: the main window up on the Models tab, the preset selected
+/// Show model profile: the main window up on the Models tab, the model profile selected
 /// through the discard guard (module header).
-fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
-    let Some(target) = state.borrow().downloads.jobs.preset_of(id) else {
+fn show_model_profile(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
+    let Some(target) = state.borrow().downloads.jobs.model_profile_of(id) else {
         return;
     };
     raise_window(app.window());
@@ -869,9 +875,9 @@ fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     let position = |state: &Rc<RefCell<State>>| {
         state
             .borrow()
-            .presets
+            .model_profiles
             .iter()
-            .position(|l| l.preset.id == target)
+            .position(|l| l.model_profile.id == target)
     };
     let note = match (note.is_empty(), position(state)) {
         (false, _) => note,
@@ -881,18 +887,18 @@ fn show_preset(app: &AppWindow, state: &Rc<RefCell<State>>, id: u64) {
     state.borrow_mut().downloads.jobs.set_note(id, &note);
     push(app, state);
     if !note.is_empty() || s.get_form().id.as_str() == target {
-        return; // refused, or already the preset in the editor
+        return; // refused, or already the model profile in the editor
     }
     // A filter that hides the row would leave the selection invisible.
     let hidden = state
         .borrow()
-        .presets
+        .model_profiles
         .iter()
-        .find(|l| l.preset.id == target)
-        .is_some_and(|l| !preset_matches(&l.preset, s.get_presets_filter().as_str()));
+        .find(|l| l.model_profile.id == target)
+        .is_some_and(|l| !model_profile_matches(&l.model_profile, s.get_presets_filter().as_str()));
     if hidden {
         s.set_presets_filter(SharedString::default());
-        refresh_preset_list(app, state);
+        refresh_model_profile_list(app, state);
     }
     if let Some(index) = position(state) {
         s.invoke_select_preset(i32::try_from(index).unwrap_or(-1));
@@ -1059,7 +1065,7 @@ pub(super) fn wire(
     }
     win.on_cancel(by_id(app, state, cancel));
     win.on_resume(by_id(app, state, resume));
-    win.on_show_preset(by_id(app, state, show_preset));
+    win.on_show_preset(by_id(app, state, show_model_profile));
     win.on_dismiss(by_id(app, state, dismiss));
     win.on_clear_finished(plain(app, state, clear_finished));
     win.on_confirm_quit(plain(app, state, confirm_quit));
@@ -1353,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_runs_to_its_preset() {
+    fn a_job_runs_to_its_model_profile() {
         let (mut j, id) = jobs_with("org/Repo-GGUF");
         assert_eq!(state_of(&j, id), JobState::Downloading);
         let r = &j.rows()[0];
@@ -1406,7 +1412,7 @@ mod tests {
             r.message
         );
         assert!(r.can_show && r.can_dismiss && !r.can_resume && !r.is_error);
-        assert_eq!(j.preset_of(id).as_deref(), Some("m-Q4_K_M"));
+        assert_eq!(j.model_profile_of(id).as_deref(), Some("m-Q4_K_M"));
         assert_eq!(j.summary(), "Downloads: 1 done");
         assert_eq!(j.active(), 0);
     }

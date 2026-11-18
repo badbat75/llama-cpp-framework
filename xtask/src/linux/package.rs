@@ -55,7 +55,7 @@
 //! against and refuses any other, because a backend that cannot resolve a symbol
 //! is skipped at start with nothing but a log line.
 //!
-//! No config file is in the package. The server and preset files
+//! No config file is in the package. The server and model profile files
 //! (server@<id>.ini, models.ini, models.ini.disabled) live in
 //! /etc/llama.cpp, the engine's, which its maintainer scripts fill from the
 //! defaults it ships in /usr/share/private-ai/llama.cpp (each only when

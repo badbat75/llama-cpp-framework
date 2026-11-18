@@ -1,4 +1,4 @@
-//! The `--moe-cache-mib` floor: the smallest budget a preset can load with, and
+//! The `--moe-cache-mib` floor: the smallest budget a model profile can load with, and
 //! the larger one at which every group of layers actually caches. Pure logic
 //! (no IO, no Slint state); the Models tab quotes it in the MoE cache hint and
 //! refuses a Save below the first number.
@@ -40,7 +40,7 @@
 //! `make_cpu_buft_list` (`src/llama-model.cpp`) puts the first GPU's pinned
 //! host type (`ROCm_Host`, `CUDA_Host`) ahead of the repack types, and that
 //! pinned type is host memory to the cache (its `is_host` is the CPU type's,
-//! `ggml-cuda.cu`). Only `--no-host` (the preset's `no-host`) drops it. Without
+//! `ggml-cuda.cu`). Only `--no-host` (the model profile's `no-host`) drops it. Without
 //! it every host layer counts, whatever `repack` says (the cache needs a GPU
 //! anyway). With it, which layers repack depends on the HOST CPU's kernels and
 //! each tensor's type, which a header read here cannot settle, so the floor
@@ -64,14 +64,14 @@ use regex::Regex;
 
 use crate::gguf::TensorInfo;
 use crate::gpu_split::{self, Layout};
-use crate::presets::Preset;
+use crate::presets::ModelProfile;
 use crate::tensor_override;
 
 /// A group's key: its device index and its expert layout (each tensor's kind
 /// and bytes), llama.cpp's `same_layout` test as far as a header can tell.
 type GroupKey = (usize, Vec<(String, u64)>);
 
-/// Block index → index into the preset's device list.
+/// Block index → index into the model profile's device list.
 type DeviceOf = Box<dyn Fn(u32) -> usize>;
 
 /// The expert weights the cache copies, as llama.cpp lists them
@@ -93,7 +93,7 @@ pub struct Model<'a> {
     pub n_layer: u32,
 }
 
-/// The verdict for one preset on one model, in bytes.
+/// The verdict for one model profile on one model, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Floor {
     /// No GPU-assigned layer keeps all of its experts in host memory, so
@@ -145,7 +145,7 @@ pub fn mib(bytes: u64) -> u64 {
 
 /// The floor of `p` on `m`; `None` when the model has no experts to cache
 /// (not MoE, or no `_exps` tensor in the list, e.g. an unread GGUF).
-pub fn floor(m: &Model, p: &Preset) -> Option<Floor> {
+pub fn floor(m: &Model, p: &ModelProfile) -> Option<Floor> {
     if m.expert_count == 0 || m.expert_used == 0 {
         return None;
     }
@@ -250,7 +250,7 @@ fn kind(name: &str) -> &str {
         .map_or(name, |(_, k)| k)
 }
 
-/// The preset's `override-tensor` rules, compiled in order, each with whether
+/// The model profile's `override-tensor` rules, compiled in order, each with whether
 /// it sends to the CPU. A rule the `regex` crate cannot read is kept as one
 /// that matches nothing: guessing would be worse than a missed host layer.
 fn host_rules(override_tensor: &str) -> Vec<(Option<Regex>, bool)> {
@@ -274,9 +274,9 @@ fn first_rule_is_cpu(rules: &[(Option<Regex>, bool)], name: &str) -> bool {
         .is_some_and(|(_, cpu)| *cpu)
 }
 
-/// The per-device weights and the block → device index map, when the preset
+/// The per-device weights and the block → device index map, when the model profile
 /// pins them; `None` when llama.cpp weighs the devices by free VRAM at load.
-fn device_map(p: &Preset, layout: Layout) -> Option<(Vec<i32>, DeviceOf)> {
+fn device_map(p: &ModelProfile, layout: Layout) -> Option<(Vec<i32>, DeviceOf)> {
     let devices = gpu_split::parse_device_list(&p.device);
     if p.split_mode.trim() == "none" || devices.len() == 1 {
         return Some((vec![1], Box::new(|_| 0)));
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn one_gpu_floor_is_one_tokens_experts_plus_the_spare_slot() {
         let ts = tensors(8);
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0".into(),
             n_cpu_moe: Some(99),
             ..Default::default()
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn a_pinned_split_gives_a_load_floor_and_an_every_group_floor() {
         let ts = tensors(8);
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0,ROCm1".into(),
             tensor_split: "3,1".into(),
             n_cpu_moe: Some(99),
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn a_free_vram_split_only_knows_the_load_floor() {
         let ts = tensors(8);
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0,ROCm1".into(),
             n_cpu_moe: Some(99),
             ..Default::default()
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn no_host_with_repack_falls_back_to_the_cheapest_layer() {
         let ts = tensors(8);
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0".into(),
             n_cpu_moe: Some(99),
             no_host: true,
@@ -397,7 +397,7 @@ mod tests {
         };
         let full = floor(
             &model(&ts, 9),
-            &Preset {
+            &ModelProfile {
                 no_host: false,
                 ..p.clone()
             },
@@ -406,7 +406,7 @@ mod tests {
         let repack = floor(&model(&ts, 9), &p).unwrap();
         assert!(matches!(repack, Floor::Repack(_)), "{repack:?}");
         assert_eq!(repack.load_bytes(), full.load_bytes());
-        let kept = Preset {
+        let kept = ModelProfile {
             repack: Some(false),
             ..p
         };
@@ -418,17 +418,17 @@ mod tests {
     #[test]
     fn no_host_experts_means_no_floor() {
         let ts = tensors(8);
-        let gpu = Preset {
+        let gpu = ModelProfile {
             device: "ROCm0".into(),
             ..Default::default()
         };
         assert_eq!(floor(&model(&ts, 9), &gpu), Some(Floor::NoHostExperts));
-        let shadowed = Preset {
+        let shadowed = ModelProfile {
             override_tensor: r"exps=ROCm0,\.ffn_(up|down|gate)_exps=CPU".into(),
             ..gpu.clone()
         };
         assert_eq!(floor(&model(&ts, 9), &shadowed), Some(Floor::NoHostExperts));
-        let cpu_rule = Preset {
+        let cpu_rule = ModelProfile {
             override_tensor: r"\.ffn_(up|down|gate)_exps=CPU".into(),
             ..gpu
         };
@@ -447,7 +447,7 @@ mod tests {
         ts.push(t("blk.2.ffn_gate_up_exps.weight".into(), 256 * MIB));
         ts.push(t("blk.2.ffn_down_exps.weight".into(), 256 * MIB));
         ts.push(t("blk.2.ffn_gate_inp.weight".into(), MIB));
-        let p = Preset {
+        let p = ModelProfile {
             n_cpu_moe: Some(99),
             ..Default::default()
         };
@@ -467,7 +467,7 @@ mod tests {
             let name = format!("blk.{il}.ffn_down_exps.weight");
             ts.iter_mut().find(|t| t.name == name).unwrap().bytes = 192 * MIB;
         }
-        let p = Preset {
+        let p = ModelProfile {
             device: "ROCm0".into(),
             n_cpu_moe: Some(99),
             ..Default::default()
@@ -478,7 +478,7 @@ mod tests {
         };
         assert_eq!((mib(load), mib(every)), (59, 59));
         for repack in [Some(true), Some(false)] {
-            let r = Preset {
+            let r = ModelProfile {
                 repack,
                 ..p.clone()
             };
@@ -494,7 +494,7 @@ mod tests {
             expert_count: 0,
             ..model(&ts, 9)
         };
-        assert_eq!(floor(&m, &Preset::default()), None);
-        assert_eq!(floor(&model(&ts[..1], 9), &Preset::default()), None);
+        assert_eq!(floor(&m, &ModelProfile::default()), None);
+        assert_eq!(floor(&model(&ts[..1], 9), &ModelProfile::default()), None);
     }
 }

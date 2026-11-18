@@ -1,4 +1,4 @@
-//! `GET /api/profiles/model/{id}`: one preset section of the engine's `models.ini`
+//! `GET /api/profiles/model/{id}`: one model profile section of the engine's `models.ini`
 //! / `models.ini.disabled`, read through the manager as the signed-in user,
 //! through `pai_bff::router_with_session` with a fake manager client and a
 //! fake authenticator (never the real bus, pipe, PAM or LogonUser). Each
@@ -6,12 +6,12 @@
 //! instead of hanging.
 //!
 //! The answer (`fe/briefs/api-contract.md`, `GET /api/profiles/model/{id}`, and the
-//! section revision of ARCHITECTURE.md "Saving a preset from the web"): 200
+//! section revision of ARCHITECTURE.md "Saving a model profile from the web"): 200
 //! and
 //! `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl",
 //! "revision"}`.
 //! - `id` as the file spells it: the id in the path is matched without case.
-//! - `engine` is the engine whose preset file holds the section (llama.cpp,
+//! - `engine` is the engine whose model profile file holds the section (llama.cpp,
 //!   the only engine) and `engineAvailable` is true for it: the same two
 //!   fields as the list's row (`tests/presets.rs`), so the page shows one
 //!   engine cell in both.
@@ -38,9 +38,9 @@
 //!   (`tests/server.rs`), over a section instead of a whole file, keyed on
 //!   the file the section sits in. It does not move when another section of
 //!   the file changes, and it is another for another file and for another key.
-//! - llama-server's global `[*]` section is not a preset, and an id that is
+//! - llama-server's global `[*]` section is not a model profile, and an id that is
 //!   no section is nothing to read: 404 `no-model-profile-named`, the id echoed as
-//!   the only arg when it is a name a preset can carry at all, as the list's
+//!   the only arg when it is a name a model profile can carry at all, as the list's
 //!   404 answers it.
 //! - A path with a segment below the section, `/api/profiles/model/alpha/*` (a raw
 //!   `*` or its percent form), is not this read: it is no path of this API, so
@@ -53,7 +53,7 @@
 //!   the manager is not there, went away, or is too slow, 502 `client-other`
 //!   for anything else, which keeps the session.
 //! - One connect per request, asked for the signed-in user, and the two
-//!   preset files are read over it: no instance list, no status, no write. A
+//!   model profile files are read over it: no instance list, no status, no write. A
 //!   name in the request never becomes the principal.
 //! - `POST` and `DELETE` on the section path are not served.
 
@@ -90,7 +90,7 @@ const KEY_B: [u8; 16] = [
     16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
 ];
 
-/// The names the manager knows the engine's preset files by. The revision is
+/// The names the manager knows the engine's model profile files by. The revision is
 /// keyed on the name, so these strings are part of the answer: the read sends
 /// exactly these names to the manager.
 const ON: &str = "models.ini";
@@ -318,7 +318,7 @@ fn alpha_document(file: &str, enabled: bool) -> Value {
 // ── Fakes ───────────────────────────────────────────────────────────────
 
 /// The failure a test makes the manager answer every read with: the ones a
-/// preset read can meet.
+/// model profile read can meet.
 #[derive(Clone)]
 enum Failure {
     /// No manager: not running, no bus, no pipe, or gone in the middle.
@@ -336,7 +336,7 @@ impl Failure {
     }
 }
 
-/// The preset files the manager holds, by name: a name that is not there is a
+/// The model profile files the manager holds, by name: a name that is not there is a
 /// file that does not exist, and `read_file` answers `None` for it.
 type Files = Arc<Mutex<Vec<(String, String)>>>;
 
@@ -548,7 +548,7 @@ fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
     app_for(&[(ON, on), (OFF, off)], refuse, Ok(()), KEY_A)
 }
 
-/// The manager of no preset file at all: neither file exists.
+/// The manager of no model profile file at all: neither file exists.
 fn app_no_files() -> App {
     app_for(&[], &[], Ok(()), KEY_A)
 }
@@ -774,7 +774,7 @@ impl Reply {
 // ── Failure paths first: the session ────────────────────────────────────
 
 /// No session cookie: 401 `session-required`, and the manager is not even
-/// connected to: the preset files of a stranger are not read.
+/// connected to: the model profile files of a stranger are not read.
 #[tokio::test]
 async fn without_a_session_the_manager_is_not_asked() {
     let app = app_holding(FILE_ALPHA, "");
@@ -789,7 +789,7 @@ async fn without_a_session_the_manager_is_not_asked() {
 // ── The document ────────────────────────────────────────────────────────
 
 /// A section of `models.ini`: the whole document, field for field, read over
-/// one connect as the signed-in user, from both preset files and nothing
+/// one connect as the signed-in user, from both model profile files and nothing
 /// else.
 #[tokio::test]
 async fn a_section_of_the_enabled_file_answers_the_document() {
@@ -829,7 +829,7 @@ async fn the_document_has_the_pinned_fields() {
 }
 
 /// The id in the path is matched without case; the document answers the
-/// spelling the file holds, so the page shows the preset's own name.
+/// spelling the file holds, so the page shows the model profile's own name.
 #[tokio::test]
 async fn the_id_is_matched_without_case_and_answered_as_the_file_spells_it() {
     let app = app_holding("[Alpha]\nmodel = /models/a.gguf\n", "");
@@ -905,7 +905,7 @@ async fn values_are_the_strings_the_file_holds() {
     assert_eq!(doc["projectUrl"], "", "no `; url = ` comment");
 }
 
-/// A section with no keys is a preset the file declares with its header
+/// A section with no keys is a model profile the file declares with its header
 /// alone: the document answers an empty `values` object.
 #[tokio::test]
 async fn a_section_with_no_keys_answers_empty_values() {
@@ -956,13 +956,13 @@ async fn the_project_url_comes_from_the_url_comment() {
 
 // ── The section is not there ────────────────────────────────────────────
 
-/// llama-server's global `[*]` section is not a preset: the read of `*`, of
+/// llama-server's global `[*]` section is not a model profile: the read of `*`, of
 /// its percent form and of the whole bracketed form is 404 `no-model-profile-named`,
-/// with nothing echoed: `*` is not a name a preset can carry. A path with a
+/// with nothing echoed: `*` is not a name a model profile can carry. A path with a
 /// segment below the section is a different path, pinned in
 /// `a_path_below_the_section_is_the_routers_own_not_found`.
 #[tokio::test]
-async fn the_global_section_is_not_a_preset() {
+async fn the_global_section_is_not_a_model_profile() {
     let app = app_holding(
         "[*]\nmodel = /models/global.gguf\n\n[alpha]\nmodel = /models/a.gguf\n",
         "",
@@ -982,7 +982,7 @@ async fn the_global_section_is_not_a_preset() {
 }
 
 /// A path with a segment below the section is not this read: the only path of
-/// this API with a segment below a preset is the switch,
+/// this API with a segment below a model profile is the switch,
 /// `PUT /api/profiles/model/{id}/enabled`, so the router answers its own 404, with no
 /// body and no JSON, and the read never starts. A percent-encoded `*` is the
 /// same path: the router matches the raw path, so the id `alpha/*` is never
@@ -1006,7 +1006,7 @@ async fn a_path_below_the_section_is_the_routers_own_not_found() {
 }
 
 /// An id that is no section is 404 `no-model-profile-named`, with the id echoed as
-/// the only arg so the page can say which preset it could not find.
+/// the only arg so the page can say which model profile it could not find.
 #[tokio::test]
 async fn an_unknown_id_is_not_found() {
     let app = app_holding(FILE_ALPHA, "");
@@ -1021,7 +1021,7 @@ async fn an_unknown_id_is_not_found() {
     );
 }
 
-/// An id of dots is a name the checks allow and no preset carries, so it is
+/// An id of dots is a name the checks allow and no model profile carries, so it is
 /// not echoed: 404 with no args.
 #[tokio::test]
 async fn ids_of_dots_are_not_found() {
@@ -1033,9 +1033,9 @@ async fn ids_of_dots_are_not_found() {
     }
 }
 
-/// No preset file at all is not an error: no file, no preset, 404.
+/// No model profile file at all is not an error: no file, no model profile, 404.
 #[tokio::test]
-async fn no_preset_file_answers_not_found() {
+async fn no_model_profile_file_answers_not_found() {
     let app = app_no_files();
     let reply = app.read("alpha").await;
     let args = reply.assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");

@@ -5,7 +5,7 @@
 //! `spec = custom`, derived from it (`Spec::published`).
 //!
 //! A spec is the method of a measurement written down: which prompts, which
-//! passes (temperature, repetitions, concurrency, the preset keys a pass
+//! passes (temperature, repetitions, concurrency, the model profile keys a pass
 //! overrides for every leg), whether the output is capped. A sweep run under
 //! one records the spec's `Name`, `Version` and its digest with every run
 //! (`spec`, `spec-version`, `spec-sha256`, `spec-pass`), so two runs
@@ -42,10 +42,10 @@
 //! refused before anything restarts, and changing one means a new spec
 //! version pinning the new digest.
 //! `Override` is a `;`-separated list of `key=value` (a value may hold commas),
-//! each written to the preset for the pass and put back after it, with a
+//! each written to the model profile for the pass and put back after it, with a
 //! pending marker like a sweep's own key. `Concurrency = all` is single, then
-//! every concurrent scenario when the preset has two slots or more. A prompt
-//! with an image (`bench::prompt_has_image`) runs only on presets that load an
+//! every concurrent scenario when the model profile has two slots or more. A prompt
+//! with an image (`bench::prompt_has_image`) runs only on model profiles that load an
 //! mmproj and is skipped on the rest, so one spec covers text-only models too.
 
 use crate::strings;
@@ -81,7 +81,7 @@ pub type Prompt = (Option<PathBuf>, String);
 pub struct Derive {
     /// Prompts in place of the spec's list.
     pub prompt: Option<Vec<Prompt>>,
-    /// `Some(None)` = the preset's own temperature.
+    /// `Some(None)` = the model profile's own temperature.
     pub temp: Option<Option<f64>>,
     pub max_tokens: Option<i32>,
     /// `Some(None)` = the image file as is.
@@ -116,7 +116,7 @@ impl Derive {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pass {
     pub name: String,
-    /// `None` = the preset's own temperature.
+    /// `None` = the model profile's own temperature.
     pub temp: Option<f64>,
     pub reps: i32,
     /// `None` = `all`.
@@ -490,7 +490,7 @@ pub fn published_versions(text: &str) -> Vec<(String, String)> {
 }
 
 /// The sweep, once per prompt, pass and scenario, all into one campaign.
-/// `base` carries the preset, key, values, apply, campaign and question; its
+/// `base` carries the model profile, key, values, apply, campaign and question; its
 /// plan's method fields are replaced by the spec's.
 /// `only`: the file names of the spec's prompts to run, empty = all; a
 /// selection of its legs, not a change of method (each leg is recorded as the
@@ -531,12 +531,12 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
     };
     let mut problems = Vec::new();
     for prompt in &prompts {
-        if super::prompt_has_image(&prompt.1) && !sweep::has_mmproj(&base.preset)? {
+        if super::prompt_has_image(&prompt.1) && !sweep::has_mmproj(&base.model_profile)? {
             println!(
                 "\n{}",
                 strings::fill(
                     "image-prompt-skipped",
-                    &[&prompt_name(prompt), &base.preset]
+                    &[&prompt_name(prompt), &base.model_profile]
                 )
             );
             continue;
@@ -549,9 +549,9 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
                 pass,
                 &prompt.1,
                 derive.concurrency.unwrap_or(pass.concurrency),
-                sweep::all_scenarios(&base.preset)?,
+                sweep::all_scenarios(&base.model_profile)?,
             )?;
-            let restore = apply_overrides(&base.preset, &pass.overrides)?;
+            let restore = apply_overrides(&base.model_profile, &pass.overrides)?;
             for c in scenarios {
                 println!(
                     "\n{}",
@@ -578,9 +578,9 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
                     ));
                 }
             }
-            if let Err(e) = restore_overrides(&base.preset, restore) {
+            if let Err(e) = restore_overrides(&base.model_profile, restore) {
                 problems.push(e);
-                // A key not put back is a preset left measuring something
+                // A key not put back is a model profile left measuring something
                 // else: stop rather than run the next pass on top of it.
                 return Err(problems.join("; "));
             }
@@ -594,7 +594,7 @@ pub fn run(spec: &Spec, base: &Opts, derive: &Derive, only: &[String]) -> Result
 }
 
 /// The scenarios a pass runs on a prompt: its own (`chosen`), or `all` (the
-/// preset's). A warm-prefix pass needs a prompt with an agent turn to cache up
+/// model profile's). A warm-prefix pass needs a prompt with an agent turn to cache up
 /// to, and has nothing to measure in `prefill` (no slot is warm), so `all`
 /// leaves that one out.
 fn pass_scenarios(
@@ -701,11 +701,11 @@ fn prompt_name(p: &Prompt) -> String {
 }
 
 /// The Benchmark tab's spec run: one step per prompt x pass x scenario over the
-/// tab's presets (`base.presets`, its live mode and campaign), each pass's
-/// overrides written to every preset for its steps. `Concurrency = all` runs the
-/// scenarios every selected preset supports (single alone when one has
-/// `parallel` < 2). An image prompt's steps run only the selected presets
-/// that load an mmproj, and none when no preset does. `derive` replaces spec
+/// tab's model profiles (`base.model_profiles`, its live mode and campaign), each pass's
+/// overrides written to every model profile for its steps. `Concurrency = all` runs the
+/// scenarios every selected model profile supports (single alone when one has
+/// `parallel` < 2). An image prompt's steps run only the selected model profiles
+/// that load an mmproj, and none when no model profile does. `derive` replaces spec
 /// values in every step (Override); any at all makes every run custom, derived
 /// from the spec.
 pub fn tab_steps(
@@ -721,24 +721,24 @@ pub fn tab_steps(
     let mut steps = Vec::new();
     for prompt in &prompts {
         let name = prompt_name(prompt);
-        // An image prompt runs on the presets with an mmproj, and not at all
+        // An image prompt runs on the model profiles with an mmproj, and not at all
         // when none has one.
         let mut base = base.clone();
         if super::prompt_has_image(&prompt.1) {
             let mut with = Vec::new();
-            for p in &base.presets {
+            for p in &base.model_profiles {
                 if sweep::has_mmproj(p)? {
                     with.push(p.clone());
                 }
             }
-            base.presets = with;
-            if base.presets.is_empty() {
+            base.model_profiles = with;
+            if base.model_profiles.is_empty() {
                 continue;
             }
         }
         let base = &base;
         let mut all = Concurrency::ALL.to_vec();
-        for p in &base.presets {
+        for p in &base.model_profiles {
             let mine = sweep::all_scenarios(p)?;
             all.retain(|c| mine.contains(c));
         }
@@ -765,7 +765,7 @@ pub fn tab_steps(
 }
 
 /// The Benchmark tab's A/B: every step once per value of `key`, that value
-/// written to the presets for it (over a pass's own override of the same key,
+/// written to the model profiles for it (over a pass's own override of the same key,
 /// which `tab_steps` then records as derived), value first in the label.
 pub fn ab_expand(
     steps: Vec<super::exec::Step>,
@@ -818,7 +818,7 @@ fn checked_prompts(spec: &Spec) -> Result<Vec<(PathBuf, String)>, String> {
 /// `model-draft`, unless the same list sets it. llama-server loads a draft file
 /// whatever the speculator is, and without `draft-mtp` an MTP head takes a KV
 /// cache for every attention layer of the context, far more than with it, so a pass meant to measure no drafter
-/// can fail to load on a preset that fits with one.
+/// can fail to load on a model profile that fits with one.
 fn effective_overrides(overrides: &[(String, String)]) -> Vec<(String, String)> {
     let mut out = overrides.to_vec();
     let draft_off = overrides
@@ -833,14 +833,14 @@ fn effective_overrides(overrides: &[(String, String)]) -> Vec<(String, String)> 
 /// Write each override, a pending marker first, so an interrupted run is
 /// reported like an interrupted sweep. Returns what to put back.
 pub(super) fn apply_overrides(
-    preset: &str,
+    model_profile: &str,
     overrides: &[(String, String)],
 ) -> Result<Vec<(String, String, PathBuf)>, String> {
     let mut restore = Vec::new();
     for (key, value) in &effective_overrides(overrides) {
-        let (original, marker) = sweep::hold_key(preset, key)?;
-        if let Err(e) = sweep::set_key(preset, key, value) {
-            let _ = restore_overrides(preset, restore);
+        let (original, marker) = sweep::hold_key(model_profile, key)?;
+        if let Err(e) = sweep::set_key(model_profile, key, value) {
+            let _ = restore_overrides(model_profile, restore);
             super::interrupt::release(&marker);
             return Err(strings::fill("override-failed", &[&key, &value, &e]));
         }
@@ -854,11 +854,11 @@ pub(super) fn apply_overrides(
 }
 
 pub(super) fn restore_overrides(
-    preset: &str,
+    model_profile: &str,
     restore: Vec<(String, String, PathBuf)>,
 ) -> Result<(), String> {
     for (key, original, marker) in restore.into_iter().rev() {
-        sweep::set_key(preset, &key, &original)
+        sweep::set_key(model_profile, &key, &original)
             .map_err(|e| strings::fill("override-not-restored", &[&key, &original, &e]))?;
         super::interrupt::release(&marker);
     }
@@ -1198,10 +1198,10 @@ mod tests {
         );
     }
 
-    /// An image prompt runs only on presets with an mmproj: with none
+    /// An image prompt runs only on model profiles with an mmproj: with none
     /// selected, its steps are left out and the text prompt's stay.
     #[test]
-    fn an_image_prompt_needs_a_preset_with_an_mmproj() {
+    fn an_image_prompt_needs_a_model_profile_with_an_mmproj() {
         let dir = tempfile::tempdir().unwrap();
         let image = r#"{"messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
@@ -1232,7 +1232,7 @@ mod tests {
         let spec = load("standard").unwrap();
         let base = Plan {
             mode: super::super::Mode::Live,
-            presets: vec![],
+            model_profiles: vec![],
             ..Plan::default()
         };
         let derive = Derive {

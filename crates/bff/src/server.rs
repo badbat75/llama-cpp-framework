@@ -406,7 +406,7 @@ pub(crate) fn revision(text: &str, key: &[u8; 16]) -> String {
 /// and exchange, so the pair settles the write once: a task that finds the
 /// state Cancelled sends no write, a handler that finds it Asked answers 504,
 /// the outcome of the sent write unknown, and a handler that finds it Done
-/// answers its own 200, the file saved. The server file's save and the preset
+/// answers its own 200, the file saved. The server file's save and the model profile
 /// switch share it.
 pub(crate) struct WriteState(AtomicU8);
 
@@ -640,7 +640,7 @@ pub(crate) async fn save(
 }
 
 /// Whether the instance's process runs in this state, the one the save's and
-/// the preset switch's `running` answers with.
+/// the model profile switch's `running` answers with.
 pub(crate) fn runs(state: InstanceState) -> bool {
     matches!(state, InstanceState::Active | InstanceState::Activating)
 }

@@ -115,9 +115,9 @@ pub const NGRAM_SIZE: RangeInclusive<i32> = 1..=1024;
 pub const NGRAM_DRAFT: RangeInclusive<i32> = 0..=1024;
 pub const NGRAM_HITS: RangeInclusive<i32> = 1..=u16::MAX as i32;
 
-/// Every integer key of a preset with the values it takes: the Models tab's
+/// Every integer key of a model profile with the values it takes: the Models tab's
 /// form reads each field with the same range (`form::int_fields`).
-pub const PRESET_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
+pub const MODEL_PROFILE_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
     ("image-min-tokens", INT_POSITIVE),
     ("image-max-tokens", INT_POSITIVE),
     ("spec-draft-n-max", INT_POSITIVE),
@@ -150,8 +150,8 @@ pub const PRESET_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
     ("spec-ngram-map-k4v-min-hits", NGRAM_HITS),
 ];
 
-/// The float keys of a preset: llama.cpp reads each with `std::stof`.
-pub const PRESET_FLOAT_KEYS: [&str; 6] = [
+/// The float keys of a model profile: llama.cpp reads each with `std::stof`.
+pub const MODEL_PROFILE_FLOAT_KEYS: [&str; 6] = [
     "temp",
     "top-p",
     "min-p",
@@ -172,10 +172,10 @@ const REASONING: &[&str] = &[
     "on", "enabled", "true", "1", "off", "disabled", "false", "0", "auto", "-1",
 ];
 
-/// The enum keys of a preset with every value llama.cpp takes for each: it
+/// The enum keys of a model profile with every value llama.cpp takes for each: it
 /// throws on any other and the model never loads (common/arg.cpp,
 /// `common_reasoning_format_from_name` in common/chat.cpp).
-pub const PRESET_ENUM_KEYS: [(&str, &[&str]); 10] = [
+pub const MODEL_PROFILE_ENUM_KEYS: [(&str, &[&str]); 10] = [
     ("split-mode", &["none", "layer", "row", "tensor"]),
     ("pooling", &["none", "mean", "cls", "last", "rank"]),
     ("cache-type-k", KV_CACHE_TYPES),
@@ -207,25 +207,25 @@ pub const SPEC_TYPES: &[&str] = &[
     "ngram-cache",
 ];
 
-/// The preset keys that bound a value from both sides: (minimum, maximum).
-pub const PRESET_MIN_MAX_KEYS: [(&str, &str); 3] = [
+/// The model profile keys that bound a value from both sides: (minimum, maximum).
+pub const MODEL_PROFILE_MIN_MAX_KEYS: [(&str, &str); 3] = [
     ("image-min-tokens", "image-max-tokens"),
     ("spec-draft-n-min", "spec-draft-n-max"),
     ("spec-ngram-mod-n-min", "spec-ngram-mod-n-max"),
 ];
 
-/// The preset keys the web may write, the table of "Saving a preset from the
+/// The model profile keys the web may write, the table of "Saving a model profile from the
 /// web" in `ARCHITECTURE.md`: every key `pai-app` `presets::render_section` can
-/// write that a control the preset page enables sends. The bff's
-/// `PUT /api/presets/{id}` accepts a body key only when it is one of these, in
+/// write that a control the model profile page enables sends. The bff's
+/// `PUT /api/profiles/model/{id}` accepts a body key only when it is one of these, in
 /// this exact spelling: llama-server knows a key only in its own case, so an
 /// unlisted name is refused rather than written.
 ///
 /// The `pai-app` test `web_key_lists_are_exactly_what_render_section_writes`
-/// pins this list and [`PRESET_KEYS_NOT_ON_WEB`] against the writer: the keys of
-/// a fully populated preset, read by `ini::parse_sections`, are the union of
+/// pins this list and [`MODEL_PROFILE_KEYS_NOT_ON_WEB`] against the writer: the keys of
+/// a fully populated model profile, read by `ini::parse_sections`, are the union of
 /// the two, and the two share no key.
-pub const WEB_PRESET_KEYS: &[&str] = &[
+pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
     // Resource and context card.
     "ctx-size",
     "parallel",
@@ -270,7 +270,7 @@ pub const WEB_PRESET_KEYS: &[&str] = &[
     "mmproj-device",
     "image-min-tokens",
     "image-max-tokens",
-    // Hardware card, the MoE keys of it in `PRESET_KEYS_NOT_ON_WEB`.
+    // Hardware card, the MoE keys of it in `MODEL_PROFILE_KEYS_NOT_ON_WEB`.
     "n-gpu-layers",
     "n-cpu-ffn",
     "op-offload",
@@ -302,13 +302,13 @@ pub const WEB_PRESET_KEYS: &[&str] = &[
     "spec-ngram-map-k4v-min-hits",
 ];
 
-/// The preset keys `pai-app` `presets::render_section` writes that no control of
-/// the preset page enables yet, each with the slice that enables it in the
+/// The model profile keys `pai-app` `presets::render_section` writes that no control of
+/// the model profile page enables yet, each with the slice that enables it in the
 /// design's table: the Assets card's file picks, the MoE keys that need the
 /// model's facts, the GPU distribution and the tensor placement. A body key
 /// here is refused like an unknown one. A slice that enables one moves the key
-/// to [`WEB_PRESET_KEYS`], in the same commit as its control.
-pub const PRESET_KEYS_NOT_ON_WEB: &[&str] = &[
+/// to [`WEB_MODEL_PROFILE_KEYS`], in the same commit as its control.
+pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     // The Assets card's file picks, until it exists.
     "model",
     "mmproj",
@@ -350,17 +350,17 @@ pub fn server_int_range(key: &str) -> Option<RangeInclusive<i32>> {
         .map(|(_, r)| r.clone())
 }
 
-/// The range of the preset integer key `key` in [`PRESET_INT_KEYS`].
-pub fn preset_int_range(key: &str) -> Option<RangeInclusive<i32>> {
-    PRESET_INT_KEYS
+/// The range of the model profile integer key `key` in [`MODEL_PROFILE_INT_KEYS`].
+pub fn model_profile_int_range(key: &str) -> Option<RangeInclusive<i32>> {
+    MODEL_PROFILE_INT_KEYS
         .iter()
         .find(|(k, _)| *k == key)
         .map(|(_, r)| r.clone())
 }
 
-/// The preset keys whose value is free text: a `;` or `#` in one would be cut
+/// The model profile keys whose value is free text: a `;` or `#` in one would be cut
 /// off as an inline comment on reload, here and by llama-server alike.
-const PRESET_TEXT_KEYS: [&str; 7] = [
+const MODEL_PROFILE_TEXT_KEYS: [&str; 7] = [
     "model",
     "mmproj",
     "model-draft",
@@ -396,22 +396,22 @@ pub fn comment_markers(field: &str, value: &str) -> Result<(), Refusal> {
 /// True if `id` uses only the section-header charset (letters, digits, `.`,
 /// `-`, `_`): `[`/`]`/newline break the section structure; `;`/`#` read as a
 /// comment.
-pub fn valid_preset_id(id: &str) -> bool {
+pub fn valid_model_profile_id(id: &str) -> bool {
     id.chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
-/// A preset id that can be a section name, not empty.
-pub fn preset_id(id: &str) -> Result<(), Refusal> {
-    if id.is_empty() || !valid_preset_id(id) {
+/// A model profile id that can be a section name, not empty.
+pub fn model_profile_id(id: &str) -> Result<(), Refusal> {
+    if id.is_empty() || !valid_model_profile_id(id) {
         Err(Refusal::new("invalid-model-profile-id", &[&id]))
     } else {
         Ok(())
     }
 }
 
-/// A preset names a model file: `model`, the value as read, not blank.
-pub fn preset_model(id: &str, model: &str) -> Result<(), Refusal> {
+/// A model profile names a model file: `model`, the value as read, not blank.
+pub fn model_profile_model(id: &str, model: &str) -> Result<(), Refusal> {
     if model.trim().is_empty() {
         Err(Refusal::new("model-profile-no-model", &[&id]))
     } else {
@@ -480,7 +480,7 @@ pub fn bind_list(hostname: &str) -> Result<(), Refusal> {
     }
 }
 
-/// The router does not start with more `load-on-startup` presets (`count`)
+/// The router does not start with more `load-on-startup` model profiles (`count`)
 /// than `models_max` (`None` = llama.cpp's default), nor with any at all under
 /// `ModelsMax = 0`, which its startup check compares literally instead of
 /// reading it as unlimited (`server_models::load_models`).
@@ -530,17 +530,17 @@ pub fn json_object(key: &str, value: &str) -> Result<(), Refusal> {
     }
 }
 
-/// The value rules of one preset with no GUI field of their own: the float,
+/// The value rules of one model profile with no GUI field of their own: the float,
 /// enum and JSON keys and the min <= max pairs. `get` is the section's value
 /// of a key; an empty enum or JSON value is the omitted key.
-pub fn preset_values(get: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
+pub fn model_profile_values(get: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
     let set = |key: &str| get(key).filter(|v| !v.is_empty());
-    for key in PRESET_FLOAT_KEYS {
+    for key in MODEL_PROFILE_FLOAT_KEYS {
         if let Some(v) = get(key) {
             finite_number(key, &v)?;
         }
     }
-    for (key, allowed) in &PRESET_ENUM_KEYS {
+    for (key, allowed) in &MODEL_PROFILE_ENUM_KEYS {
         if let Some(v) = set(key) {
             one_of(key, &v, allowed)?;
         }
@@ -551,7 +551,7 @@ pub fn preset_values(get: impl Fn(&str) -> Option<String>) -> Result<(), Refusal
     if let Some(v) = set("chat-template-kwargs") {
         json_object("chat-template-kwargs", &v)?;
     }
-    for (min_key, max_key) in PRESET_MIN_MAX_KEYS {
+    for (min_key, max_key) in MODEL_PROFILE_MIN_MAX_KEYS {
         let (Some(min), Some(max)) = (get(min_key), get(max_key)) else {
             continue;
         };
@@ -636,7 +636,7 @@ fn unchanged_in(s: &RawSection, sections: &[RawSection]) -> bool {
     sections.iter().any(|o| o.id == s.id && o.lines == s.lines)
 }
 
-/// `a` and `b` end to end: the sections of the two preset files as they are
+/// `a` and `b` end to end: the sections of the two model profile files as they are
 /// now, the text a key line can already be known from.
 fn known_sections(a: &[RawSection], b: &[RawSection]) -> Vec<RawSection> {
     let mut out = a.to_vec();
@@ -647,7 +647,7 @@ fn known_sections(a: &[RawSection], b: &[RawSection]) -> Vec<RawSection> {
 /// True when a section of `sections` with the id `id` holds the key line `key`
 /// with the raw value `raw` exactly (id, key and value byte for byte, as
 /// `raw_sections` stores them): a line no write of this text introduced, the
-/// inline comment a byte-for-byte save moves whole ("Saving a preset from the
+/// inline comment a byte-for-byte save moves whole ("Saving a model profile from the
 /// web", decision c1).
 fn known_key_line(sections: &[RawSection], id: &str, key: &str, raw: &str) -> bool {
     sections
@@ -655,34 +655,36 @@ fn known_key_line(sections: &[RawSection], id: &str, key: &str, raw: &str) -> bo
         .any(|o| o.id == id && o.keys.iter().any(|(k, v)| k == key && v == raw))
 }
 
-/// The rules of one preset section. `known` are the sections of the preset
+/// The rules of one model profile section. `known` are the sections of the model profile
 /// files as they are now: a key line one of them holds identically in the
 /// section of the same id takes no `comment_markers`, every other rule runs on
 /// the whole section.
-fn preset_section(s: &RawSection, known: &[RawSection]) -> Result<(), Refusal> {
-    preset_id(&s.id)?;
-    preset_model(&s.id, &s.get("model").unwrap_or_default())?;
+fn model_profile_section(s: &RawSection, known: &[RawSection]) -> Result<(), Refusal> {
+    model_profile_id(&s.id)?;
+    model_profile_model(&s.id, &s.get("model").unwrap_or_default())?;
     for (key, raw) in &s.keys {
-        if PRESET_TEXT_KEYS.contains(&key.as_str()) && !known_key_line(known, &s.id, key, raw) {
+        if MODEL_PROFILE_TEXT_KEYS.contains(&key.as_str())
+            && !known_key_line(known, &s.id, key, raw)
+        {
             comment_markers(key, raw)?;
         }
     }
     fit_target(&s.get("fit-target").unwrap_or_default())?;
     override_tensor(&s.get("override-tensor").unwrap_or_default())?;
-    for (key, range) in &PRESET_INT_KEYS {
+    for (key, range) in &MODEL_PROFILE_INT_KEYS {
         if let Some(v) = s.get(key) {
             whole_number(key, &v, range)?;
         }
     }
-    preset_values(|key| s.get(key))?;
+    model_profile_values(|key| s.get(key))?;
     let moe = s.get("moe-cache-mib").and_then(|v| ini::parse_int(&v));
     moe_cache_split(moe, &s.get("split-mode").unwrap_or_default())
 }
 
-/// The preset rules on the sections of `new` that `changed` picks, the id
+/// The model profile rules on the sections of `new` that `changed` picks, the id
 /// taken once in any letter case included, `known` the sections the key lines
 /// can be known from. Returns whether a changed section loads on startup.
-fn preset_sections(
+fn model_profile_sections(
     new: &[RawSection],
     known: &[RawSection],
     changed: impl Fn(&RawSection) -> bool,
@@ -691,7 +693,7 @@ fn preset_sections(
     for (j, s) in new.iter().enumerate() {
         let mine = changed(s);
         if mine {
-            preset_section(s, known)?;
+            model_profile_section(s, known)?;
             flagged |= s.loads_on_startup();
         }
         let earlier = new[..j].iter().find(|o| o.id.eq_ignore_ascii_case(&s.id));
@@ -714,16 +716,16 @@ pub fn startup_loads(text: &str) -> usize {
     startup_flagged(&raw_sections(text))
 }
 
-/// Check the text of a `server@<id>.ini`. `presets` is `models.ini` as it
-/// is now (empty when there is none): its `load-on-startup` presets must fit
+/// Check the text of a `server@<id>.ini`. `model_profiles` is `models.ini` as it
+/// is now (empty when there is none): its `load-on-startup` model profiles must fit
 /// the new `ModelsMax`.
-pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
+pub fn server_file(text: &str, model_profiles: &str) -> Result<(), Refusal> {
     let sections = raw_sections(text);
     let Some(s) = sections
         .iter()
         .find(|s| s.id.eq_ignore_ascii_case("Server"))
     else {
-        return startup_count(startup_flagged(&raw_sections(presets)), None);
+        return startup_count(startup_flagged(&raw_sections(model_profiles)), None);
     };
     for (key, range) in &SERVER_INT_KEYS {
         if let Some(v) = s.get(key) {
@@ -737,18 +739,18 @@ pub fn server_file(text: &str, presets: &str) -> Result<(), Refusal> {
     }
     bind_list(&s.get("Hostname").unwrap_or_default())?;
     let models_max = s.get("ModelsMax").and_then(|v| ini::parse_int(&v));
-    startup_count(startup_flagged(&raw_sections(presets)), models_max)
+    startup_count(startup_flagged(&raw_sections(model_profiles)), models_max)
 }
 
 /// Check the new text of `models.ini` against `old`, the file as it is now
-/// (empty when there is none): the preset rules on every section that is not
+/// (empty when there is none): the model profile rules on every section that is not
 /// in `old` unchanged, and the `load-on-startup` count against `models_max`
 /// (an instance's `ModelsMax`, None = llama.cpp's default). `other` is
 /// `models.ini.disabled` as it is now: a key line that a section of the same
 /// id (header exact) holds identically in `old` or in `other` is exempt from
 /// `comment_markers`, the inline comment a byte-for-byte save moves whole
-/// ("Saving a preset from the web", decision c1).
-pub fn presets_file(
+/// ("Saving a model profile from the web", decision c1).
+pub fn models_file(
     new: &str,
     old: &str,
     other: &str,
@@ -757,35 +759,35 @@ pub fn presets_file(
     let new = raw_sections(new);
     let old = raw_sections(old);
     let known = known_sections(&old, &raw_sections(other));
-    if preset_sections(&new, &known, |s| !unchanged_in(s, &old))? {
+    if model_profile_sections(&new, &known, |s| !unchanged_in(s, &old))? {
         startup_count(startup_flagged(&new), models_max)?;
     }
     Ok(())
 }
 
-/// Check the new text of `models.ini.disabled`: the preset rules on every
+/// Check the new text of `models.ini.disabled`: the model profile rules on every
 /// section found unchanged neither in `old` (this file now) nor in `enabled`
-/// (`models.ini` now), so switching off a preset is never refused; no
+/// (`models.ini` now), so switching off a model profile is never refused; no
 /// `load-on-startup` count, llama-server never reads this file. A key line a
 /// section of the same id (header exact) holds identically in `old` or in
-/// `enabled` is exempt from `comment_markers`, as in [`presets_file`].
-pub fn presets_disabled_file(new: &str, old: &str, enabled: &str) -> Result<(), Refusal> {
+/// `enabled` is exempt from `comment_markers`, as in [`models_file`].
+pub fn models_disabled_file(new: &str, old: &str, enabled: &str) -> Result<(), Refusal> {
     let new = raw_sections(new);
     let old = raw_sections(old);
     let enabled = raw_sections(enabled);
     let known = known_sections(&old, &enabled);
-    preset_sections(&new, &known, |s| {
+    model_profile_sections(&new, &known, |s| {
         !unchanged_in(s, &old) && !unchanged_in(s, &enabled)
     })
     .map(|_| ())
 }
 
-/// Check the new text of one preset file (`new`, the file now `old`) against
-/// `other`, the other preset file now: a section whose id `old` does not
+/// Check the new text of one model profile file (`new`, the file now `old`) against
+/// `other`, the other model profile file now: a section whose id `old` does not
 /// hold (in any letter case) takes no id `other` holds, unless `other` holds
 /// that very section unchanged (a switch writes the destination first).
 /// Ids stay unique across `models.ini` and `models.ini.disabled`.
-pub fn preset_ids_free(new: &str, old: &str, other: &str) -> Result<(), Refusal> {
+pub fn model_profile_ids_free(new: &str, old: &str, other: &str) -> Result<(), Refusal> {
     let old = raw_sections(old);
     let other = raw_sections(other);
     for s in raw_sections(new) {
@@ -842,7 +844,7 @@ mod tests {
         format!("[Server]\n{lines}")
     }
 
-    /// A preset section as the configurator writes it, from a real one
+    /// A model profile section as the configurator writes it, from a real one
     /// (Swift-1.5-Qwen3.8-27B), the paths made generic.
     const REAL_SECTION: &str = "\
 [Swift-1.5-Qwen3.8-27B]\r\n\
@@ -873,13 +875,13 @@ temp = 1\r\n\
 top-k = 20\r\n\
 top-p = 0.95\r\n";
 
-    /// One preset section `[id]` with `model` and the extra lines.
+    /// One model profile section `[id]` with `model` and the extra lines.
     fn section(id: &str, lines: &str) -> String {
         format!("[{id}]\nmodel = /models/{id}.gguf\n{lines}")
     }
 
-    fn presets(new: &str) -> Result<(), Refusal> {
-        presets_file(new, "", "", None)
+    fn model_profiles(new: &str) -> Result<(), Refusal> {
+        models_file(new, "", "", None)
     }
 
     /// Every `{N}` of `text` has a value: N < `n`, and the highest is n - 1.
@@ -1246,7 +1248,7 @@ top-p = 0.95\r\n";
     }
 
     #[test]
-    fn server_models_max_must_hold_the_presets_that_load_on_startup() {
+    fn server_models_max_must_hold_the_model_profiles_that_load_on_startup() {
         let two = format!(
             "{}{}{}",
             section("a", "load-on-startup = true\n"),
@@ -1286,50 +1288,50 @@ top-p = 0.95\r\n";
     // ── models.ini: one test per rule ──────────────────────────────────
 
     #[test]
-    fn presets_as_the_configurator_writes_them_pass() {
-        assert_eq!(presets(REAL_SECTION), Ok(()));
+    fn model_profiles_as_the_configurator_writes_them_pass() {
+        assert_eq!(model_profiles(REAL_SECTION), Ok(()));
         let header = "; Reconstructed by hand: a comment before any section.\n\n";
-        assert_eq!(presets(&format!("{header}{REAL_SECTION}")), Ok(()));
-        assert_eq!(presets(""), Ok(()));
+        assert_eq!(model_profiles(&format!("{header}{REAL_SECTION}")), Ok(()));
+        assert_eq!(model_profiles(""), Ok(()));
     }
 
     #[test]
-    fn a_preset_id_must_be_a_section_name() {
+    fn a_model_profile_id_must_be_a_section_name() {
         for bad in ["", "has space", "a;b", "sec]tion"] {
             assert_eq!(
-                presets(&section(bad, "")),
+                model_profiles(&section(bad, "")),
                 Err(refusal("invalid-model-profile-id", &[bad])),
                 "[{bad}]"
             );
         }
         for good in ["qwen3-coder.q8_0", "Swift-1.5-Qwen3.8-27B", "a_b"] {
-            assert_eq!(presets(&section(good, "")), Ok(()), "[{good}]");
+            assert_eq!(model_profiles(&section(good, "")), Ok(()), "[{good}]");
         }
     }
 
     #[test]
-    fn a_preset_must_name_its_model() {
+    fn a_model_profile_must_name_its_model() {
         assert_eq!(
-            presets("[m]\nctx-size = 8192\n"),
+            model_profiles("[m]\nctx-size = 8192\n"),
             Err(refusal("model-profile-no-model", &["m"]))
         );
         assert_eq!(
-            presets("[m]\nmodel =\nctx-size = 8192\n"),
+            model_profiles("[m]\nmodel =\nctx-size = 8192\n"),
             Err(refusal("model-profile-no-model", &["m"]))
         );
     }
 
     #[test]
-    fn a_preset_id_is_taken_once_in_any_letter_case() {
+    fn a_model_profile_id_is_taken_once_in_any_letter_case() {
         let text = format!("{}{}", section("Qwen3-8B", ""), section("qwen3-8b", ""));
         assert_eq!(
-            presets(&text),
+            model_profiles(&text),
             Err(refusal("model-profile-name-taken", &["qwen3-8b"]))
         );
     }
 
     #[test]
-    fn preset_free_text_fields_must_hold_no_comment_marker() {
+    fn model_profile_free_text_fields_must_hold_no_comment_marker() {
         for (field, hostile) in [
             ("model", r"C:\Models #1\m.gguf"),
             ("mmproj", r"C:\a;b\m-mmproj.gguf"),
@@ -1349,7 +1351,7 @@ top-p = 0.95\r\n";
                 section("m", &format!("{field} = {hostile}\n"))
             };
             assert_eq!(
-                presets(&text),
+                model_profiles(&text),
                 Err(refusal("comment-markers", &[field])),
                 "{field} = {hostile:?}"
             );
@@ -1362,21 +1364,21 @@ top-p = 0.95\r\n";
              override-tensor = token_embd\\.weight=ROCm0\n\
              fit-target = 2048,1024\n",
         );
-        assert_eq!(presets(&clean), Ok(()));
+        assert_eq!(model_profiles(&clean), Ok(()));
     }
 
     #[test]
     fn fit_target_is_whole_mib_per_device() {
         for bad in ["1,x", "2048MiB", "1,,2", "-1"] {
             assert_eq!(
-                presets(&section("m", &format!("fit-target = {bad}\n"))),
+                model_profiles(&section("m", &format!("fit-target = {bad}\n"))),
                 Err(refusal("fit-target-format", &[bad, "MiB"])),
                 "fit-target = {bad:?}"
             );
         }
         for good in ["", "2048", "2048,1024", "2048 , 1024"] {
             assert_eq!(
-                presets(&section("m", &format!("fit-target = {good}\n"))),
+                model_profiles(&section("m", &format!("fit-target = {good}\n"))),
                 Ok(()),
                 "fit-target = {good:?}"
             );
@@ -1386,21 +1388,21 @@ top-p = 0.95\r\n";
     #[test]
     fn every_override_tensor_rule_names_a_pattern_and_a_device() {
         assert_eq!(
-            presets(&section("m", "override-tensor = blk\\.0\\.ffn_up_exps\n")),
+            model_profiles(&section("m", "override-tensor = blk\\.0\\.ffn_up_exps\n")),
             Err(refusal(
                 "override-no-device",
                 &["1", r"blk\.0\.ffn_up_exps"]
             ))
         );
         assert_eq!(
-            presets(&section(
+            model_profiles(&section(
                 "m",
                 "override-tensor = blk\\.1\\.attn=CPU,=ROCm0\n"
             )),
             Err(refusal("override-no-pattern", &["2"]))
         );
         assert_eq!(
-            presets(&section(
+            model_profiles(&section(
                 "m",
                 "override-tensor = blk\\.1\\.attn=CPU, ffn_.*_exps=ROCm1\n"
             )),
@@ -1411,16 +1413,16 @@ top-p = 0.95\r\n";
     #[test]
     fn the_moe_cache_is_refused_under_split_mode_tensor() {
         assert_eq!(
-            presets(&section("m", "moe-cache-mib = 4096\nsplit-mode = tensor\n")),
+            model_profiles(&section("m", "moe-cache-mib = 4096\nsplit-mode = tensor\n")),
             Err(refusal(MOE_TENSOR, &[]))
         );
         assert_eq!(
-            presets(&section("m", "moe-cache-mib = 0\nsplit-mode = tensor\n")),
+            model_profiles(&section("m", "moe-cache-mib = 0\nsplit-mode = tensor\n")),
             Ok(())
         );
         for mode in ["", "layer", "row", "none"] {
             assert_eq!(
-                presets(&section(
+                model_profiles(&section(
                     "m",
                     &format!("moe-cache-mib = 4096\nsplit-mode = {mode}\n")
                 )),
@@ -1431,26 +1433,26 @@ top-p = 0.95\r\n";
     }
 
     #[test]
-    fn the_presets_that_load_on_startup_fit_models_max() {
+    fn the_model_profiles_that_load_on_startup_fit_models_max() {
         let flagged = |ids: &[&str]| -> String {
             ids.iter()
                 .map(|id| section(id, "load-on-startup = true\n"))
                 .collect()
         };
         assert_eq!(
-            presets_file(&flagged(&["a", "b", "c"]), "", "", Some(2)),
+            models_file(&flagged(&["a", "b", "c"]), "", "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["3", "2"]))
         );
-        assert_eq!(presets_file(&flagged(&["a", "b"]), "", "", Some(2)), Ok(()));
+        assert_eq!(models_file(&flagged(&["a", "b"]), "", "", Some(2)), Ok(()));
         assert_eq!(
-            presets_file(&flagged(&["a"]), "", "", Some(0)),
+            models_file(&flagged(&["a"]), "", "", Some(0)),
             Err(refusal("load-on-startup-unlimited", &["1"]))
         );
-        assert_eq!(presets_file(&section("a", ""), "", "", Some(0)), Ok(()));
+        assert_eq!(models_file(&section("a", ""), "", "", Some(0)), Ok(()));
         let d = flagged(&["a", "b", "c", "d"]);
-        assert_eq!(presets_file(&d, "", "", None), Ok(()));
+        assert_eq!(models_file(&d, "", "", None), Ok(()));
         assert_eq!(
-            presets_file(&flagged(&["a", "b", "c", "d", "e"]), "", "", None),
+            models_file(&flagged(&["a", "b", "c", "d", "e"]), "", "", None),
             Err(refusal("load-on-startup-over-max", &["5", "4"]))
         );
         // Only `true` loads on startup.
@@ -1459,13 +1461,13 @@ top-p = 0.95\r\n";
             flagged(&["a"]),
             section("b", "load-on-startup = false\n")
         );
-        assert_eq!(presets_file(&off, "", "", Some(1)), Ok(()));
+        assert_eq!(models_file(&off, "", "", Some(1)), Ok(()));
     }
 
-    /// The integer keys of a preset, with the values each takes: the same
+    /// The integer keys of a model profile, with the values each takes: the same
     /// ranges the Models tab's form reads them with.
     #[test]
-    fn preset_integer_keys_hold_whole_numbers_in_their_range() {
+    fn model_profile_integer_keys_hold_whole_numbers_in_their_range() {
         use crate::ini::{INT_ANY, INT_NON_NEGATIVE, INT_POSITIVE};
         let ngram_size = 1..=1024;
         let ngram_draft = 0..=1024;
@@ -1513,14 +1515,14 @@ top-p = 0.95\r\n";
             }
             for text in &bad {
                 assert_eq!(
-                    presets(&section("m", &format!("{key} = {text}\n"))),
+                    model_profiles(&section("m", &format!("{key} = {text}\n"))),
                     Err(not_int(key, text, &r)),
                     "{key} = {text:?}"
                 );
             }
             for good in [*r.start(), *r.end()] {
                 assert_eq!(
-                    presets(&section("m", &format!("{key} = {good}\n"))),
+                    model_profiles(&section("m", &format!("{key} = {good}\n"))),
                     Ok(()),
                     "{key} = {good}"
                 );
@@ -1531,12 +1533,12 @@ top-p = 0.95\r\n";
     /// Keys the Models tab does not refuse stay lenient: a bool, and the
     /// reasoning level llama.cpp hands to the template as is.
     #[test]
-    fn preset_keys_with_no_check_today_pass() {
+    fn model_profile_keys_with_no_check_today_pass() {
         let text = section("m", "load-on-startup = yes\nreasoning-effort = thorough\n");
-        assert_eq!(presets(&text), Ok(()));
+        assert_eq!(model_profiles(&text), Ok(()));
     }
 
-    // The web's key list of "Saving a preset from the web" in
+    // The web's key list of "Saving a model profile from the web" in
     // `ARCHITECTURE.md`, pinned WITHOUT repeating it: the keys no web control
     // writes must be absent from it, and two real keys of the design's table
     // must be present. An empty list, a list of names no reader knows, and a
@@ -1544,7 +1546,7 @@ top-p = 0.95\r\n";
     // pinned against the configurator's writer by `pai-app`'s
     // `web_key_lists_are_exactly_what_render_section_writes`.
     #[test]
-    fn web_preset_keys_exclude_the_ten_and_hold_the_named_ones() {
+    fn web_model_profile_keys_exclude_the_ten_and_hold_the_named_ones() {
         // The ten the design keeps off the web until the slice it names.
         for key in [
             "model",
@@ -1559,7 +1561,7 @@ top-p = 0.95\r\n";
             "override-tensor",
         ] {
             assert!(
-                !WEB_PRESET_KEYS.contains(&key),
+                !WEB_MODEL_PROFILE_KEYS.contains(&key),
                 "{key} is the configurator's to write, not the web's"
             );
         }
@@ -1567,7 +1569,7 @@ top-p = 0.95\r\n";
         // holds none of the table's keys is no list.
         for key in ["min-p", "ctx-size"] {
             assert!(
-                WEB_PRESET_KEYS.contains(&key),
+                WEB_MODEL_PROFILE_KEYS.contains(&key),
                 "{key} is a key of the design's table, so the web's list must hold it"
             );
         }
@@ -1576,39 +1578,39 @@ top-p = 0.95\r\n";
     // ── models.ini: only what the write changes is checked ────────────
 
     /// A hand-edited section already on disk does not block saving another:
-    /// today a save checks only the preset it writes.
+    /// today a save checks only the model profile it writes.
     #[test]
     fn a_section_unchanged_from_the_file_on_disk_is_not_checked() {
         let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
         let added = format!("{broken}{}", section("new", "ctx-size = 8192\n"));
-        assert_eq!(presets_file(&added, broken, "", None), Ok(()));
+        assert_eq!(models_file(&added, broken, "", None), Ok(()));
         // The same section edited, still broken: checked.
         let edited = "[old]\nmodel = /models/old.gguf\nctx-size = abc\nparallel = 2\n";
         assert_eq!(
-            presets_file(edited, broken, "", None),
+            models_file(edited, broken, "", None),
             Err(not_int("ctx-size", "abc", &crate::ini::INT_NON_NEGATIVE))
         );
         // A new section with a problem: checked.
         let bad_new = format!("{broken}{}", section("new", "parallel = 0\n"));
         assert_eq!(
-            presets_file(&bad_new, broken, "", None),
+            models_file(&bad_new, broken, "", None),
             Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
     }
 
-    /// Only a preset that loads on startup and is written now can push the
+    /// Only a model profile that loads on startup and is written now can push the
     /// count over: a save of another is never blocked by the ones on disk.
     #[test]
-    fn the_startup_count_blocks_only_a_changed_preset_that_loads_on_startup() {
+    fn the_startup_count_blocks_only_a_changed_model_profile_that_loads_on_startup() {
         let over: String = ["a", "b", "c"]
             .iter()
             .map(|id| section(id, "load-on-startup = true\n"))
             .collect();
         let plus_plain = format!("{over}{}", section("d", ""));
-        assert_eq!(presets_file(&plus_plain, &over, "", Some(2)), Ok(()));
+        assert_eq!(models_file(&plus_plain, &over, "", Some(2)), Ok(()));
         let plus_flagged = format!("{over}{}", section("d", "load-on-startup = true\n"));
         assert_eq!(
-            presets_file(&plus_flagged, &over, "", Some(2)),
+            models_file(&plus_flagged, &over, "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["4", "2"]))
         );
         // Switching one on: new in models.ini, so checked.
@@ -1617,7 +1619,7 @@ top-p = 0.95\r\n";
             .map(|id| section(id, "load-on-startup = true\n"))
             .collect();
         assert_eq!(
-            presets_file(&over, &two, "", Some(2)),
+            models_file(&over, &two, "", Some(2)),
             Err(refusal("load-on-startup-over-max", &["3", "2"]))
         );
     }
@@ -1625,42 +1627,42 @@ top-p = 0.95\r\n";
     // ── models.ini.disabled ────────────────────────────────────────────
 
     #[test]
-    fn a_disabled_preset_written_now_gets_the_preset_rules() {
+    fn a_disabled_model_profile_written_now_gets_the_model_profile_rules() {
         let bad = "[m]\nmodel = C:\\Models #1\\m.gguf\n";
         assert_eq!(
-            presets_disabled_file(bad, "", ""),
+            models_disabled_file(bad, "", ""),
             Err(refusal("comment-markers", &["model"]))
         );
         assert_eq!(
-            presets_disabled_file(&section("m", "parallel = 0\n"), "", ""),
+            models_disabled_file(&section("m", "parallel = 0\n"), "", ""),
             Err(not_int("parallel", "0", &crate::ini::INT_POSITIVE))
         );
         let header = "; Presets switched OFF in pai-config.\r\n";
         assert_eq!(
-            presets_disabled_file(&format!("{header}{REAL_SECTION}"), "", ""),
+            models_disabled_file(&format!("{header}{REAL_SECTION}"), "", ""),
             Ok(())
         );
     }
 
     #[test]
-    fn disabled_presets_have_no_startup_count() {
+    fn disabled_model_profiles_have_no_startup_count() {
         let five: String = ["a", "b", "c", "d", "e"]
             .iter()
             .map(|id| section(id, "load-on-startup = true\n"))
             .collect();
-        assert_eq!(presets_disabled_file(&five, "", ""), Ok(()));
+        assert_eq!(models_disabled_file(&five, "", ""), Ok(()));
     }
 
-    /// Switching off a hand-edited preset llama-server refuses is how the
+    /// Switching off a hand-edited model profile llama-server refuses is how the
     /// server gets to start again: never refused.
     #[test]
-    fn switching_off_a_broken_preset_is_never_refused() {
+    fn switching_off_a_broken_model_profile_is_never_refused() {
         let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
-        assert_eq!(presets_disabled_file(broken, "", broken), Ok(()));
-        assert_eq!(presets_disabled_file(broken, broken, ""), Ok(()));
+        assert_eq!(models_disabled_file(broken, "", broken), Ok(()));
+        assert_eq!(models_disabled_file(broken, broken, ""), Ok(()));
         let edited = "[old]\nmodel = /models/old.gguf\nctx-size = abc\nparallel = 2\n";
         assert_eq!(
-            presets_disabled_file(edited, broken, broken),
+            models_disabled_file(edited, broken, broken),
             Err(not_int("ctx-size", "abc", &crate::ini::INT_NON_NEGATIVE))
         );
     }
@@ -1670,7 +1672,7 @@ top-p = 0.95\r\n";
     // The manager's `comment_markers` of a checked section skips a key line
     // that `old` or the disabled file holds identically in the section of
     // the same id: that line is the one a byte-for-byte save moves whole,
-    // and no web save can introduce it ("Saving a preset from the web",
+    // and no web save can introduce it ("Saving a model profile from the web",
     // decision c1).
 
     /// `[a]` with an inline comment on its `model` line, as a hand edit
@@ -1682,7 +1684,7 @@ top-p = 0.95\r\n";
     #[test]
     fn inline_comment_untouched_in_the_edited_section_passes() {
         let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
-        assert_eq!(presets_file(edited, COMMENTED, "", None), Ok(()));
+        assert_eq!(models_file(edited, COMMENTED, "", None), Ok(()));
     }
 
     /// The exemption is per key line: a comment on the line the save changes
@@ -1691,7 +1693,7 @@ top-p = 0.95\r\n";
     fn inline_comment_changed_by_the_save_is_refused() {
         let edited = "[a]\nmodel = b.gguf ; Q8\nctx-size = 8192\n";
         assert_eq!(
-            presets_file(edited, COMMENTED, "", None),
+            models_file(edited, COMMENTED, "", None),
             Err(refusal("comment-markers", &["model"]))
         );
     }
@@ -1702,7 +1704,7 @@ top-p = 0.95\r\n";
     fn inline_comment_on_an_added_line_is_refused() {
         let added = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\nreasoning-budget-message = a;b\n";
         assert_eq!(
-            presets_file(added, COMMENTED, "", None),
+            models_file(added, COMMENTED, "", None),
             Err(refusal("comment-markers", &["reasoning-budget-message"]))
         );
     }
@@ -1714,7 +1716,7 @@ top-p = 0.95\r\n";
         let other_id = "[b]\nmodel = a.gguf ; Q8\nctx-size = 4096\n";
         let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
         assert_eq!(
-            presets_file(edited, other_id, "", None),
+            models_file(edited, other_id, "", None),
             Err(refusal("comment-markers", &["model"]))
         );
     }
@@ -1725,19 +1727,19 @@ top-p = 0.95\r\n";
     fn inline_comment_known_from_the_disabled_file_switches_on_ok() {
         let kept = "[kept]\nmodel = /models/kept.gguf\n";
         assert_eq!(
-            presets_file(&format!("{kept}{COMMENTED}"), kept, COMMENTED, None),
+            models_file(&format!("{kept}{COMMENTED}"), kept, COMMENTED, None),
             Ok(())
         );
     }
 
     /// The same in the disabled file, from `old` (this file now) and from
-    /// `enabled` (`models.ini` now): a disabled preset edited on its own
+    /// `enabled` (`models.ini` now): a disabled model profile edited on its own
     /// page keeps the commented line the file already holds.
     #[test]
     fn inline_comment_known_in_disabled_file_from_old_and_enabled_passes() {
         let edited = "[a]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
-        assert_eq!(presets_disabled_file(edited, COMMENTED, ""), Ok(()));
-        assert_eq!(presets_disabled_file(edited, "", COMMENTED), Ok(()));
+        assert_eq!(models_disabled_file(edited, COMMENTED, ""), Ok(()));
+        assert_eq!(models_disabled_file(edited, "", COMMENTED), Ok(()));
     }
 
     /// A section new to both files is checked whole: the `other` file opens
@@ -1746,12 +1748,12 @@ top-p = 0.95\r\n";
     fn inline_comment_new_in_both_files_is_refused() {
         let fresh = "[a]\nmodel = a;b.gguf\n";
         assert_eq!(
-            presets_file(fresh, "", "", None),
+            models_file(fresh, "", "", None),
             Err(refusal("comment-markers", &["model"]))
         );
         let kept = "[kept]\nmodel = /models/kept.gguf\n";
         assert_eq!(
-            presets_file(fresh, "", kept, None),
+            models_file(fresh, "", kept, None),
             Err(refusal("comment-markers", &["model"]))
         );
     }
@@ -1763,12 +1765,12 @@ top-p = 0.95\r\n";
     fn inline_comment_known_in_another_letter_case_is_refused() {
         let header_case = "[A]\nmodel = a.gguf ; Q8\nctx-size = 8192\n";
         assert_eq!(
-            presets_file(header_case, COMMENTED, "", None),
+            models_file(header_case, COMMENTED, "", None),
             Err(refusal("comment-markers", &["model"]))
         );
         let key_case = "[a]\nMODEL = a.gguf ; Q8\nctx-size = 8192\n";
         assert_eq!(
-            presets_file(key_case, COMMENTED, "", None),
+            models_file(key_case, COMMENTED, "", None),
             Err(refusal("model-profile-no-model", &["a"]))
         );
     }
@@ -1777,43 +1779,43 @@ top-p = 0.95\r\n";
 
     /// llama.cpp reads `ctx-size = 0` as "the context the model was trained
     /// with" (common/arg.cpp), and the integrations treat it so: the checks
-    /// take it, in both preset files; a negative context is still refused.
+    /// take it, in both model profile files; a negative context is still refused.
     #[test]
     fn ctx_size_zero_is_the_context_from_the_model_and_writable() {
-        let r = preset_int_range("ctx-size").expect("ctx-size is an integer key");
+        let r = model_profile_int_range("ctx-size").expect("ctx-size is an integer key");
         assert!(r.contains(&0), "0 in {r:?}");
         assert!(!r.contains(&-1), "-1 in {r:?}");
         let zero = section("m", "ctx-size = 0\n");
-        assert_eq!(presets_file(&zero, "", "", None), Ok(()));
-        assert_eq!(presets_disabled_file(&zero, "", ""), Ok(()));
+        assert_eq!(models_file(&zero, "", "", None), Ok(()));
+        assert_eq!(models_disabled_file(&zero, "", ""), Ok(()));
         assert_eq!(
-            presets(&section("m", "ctx-size = -1\n")),
+            model_profiles(&section("m", "ctx-size = -1\n")),
             Err(not_int("ctx-size", "-1", &crate::ini::INT_NON_NEGATIVE))
         );
     }
 
     // ── One id across models.ini and models.ini.disabled ───────────────
 
-    /// A preset written into one file under an id the other file holds, in
+    /// A model profile written into one file under an id the other file holds, in
     /// any letter case, is refused with the id as written: switching either
     /// back would land on the namesake.
     #[test]
-    fn a_new_preset_under_an_id_the_other_file_holds_is_refused() {
+    fn a_new_model_profile_under_an_id_the_other_file_holds_is_refused() {
         let parked = section("Qwen3.8-27B", "ctx-size = 8192\n");
         let enabled = section("Qwen3.8-27B", "ctx-size = 16384\n");
         assert_eq!(
-            preset_ids_free(&enabled, "", &parked),
+            model_profile_ids_free(&enabled, "", &parked),
             Err(refusal("model-profile-name-taken", &["Qwen3.8-27B"]))
         );
         let other_case = section("qwen3.8-27b", "ctx-size = 16384\n");
         assert_eq!(
-            preset_ids_free(&other_case, "", &parked),
+            model_profile_ids_free(&other_case, "", &parked),
             Err(refusal("model-profile-name-taken", &["qwen3.8-27b"]))
         );
-        // Beside the presets already in the file.
+        // Beside the model profiles already in the file.
         let kept = section("Qwen3.8-Flash-Next", "");
         assert_eq!(
-            preset_ids_free(&format!("{kept}{enabled}"), &kept, &parked),
+            model_profile_ids_free(&format!("{kept}{enabled}"), &kept, &parked),
             Err(refusal("model-profile-name-taken", &["Qwen3.8-27B"]))
         );
     }
@@ -1826,7 +1828,7 @@ top-p = 0.95\r\n";
         let renamed = section("b", "");
         let other = section("B", "ctx-size = 8192\n");
         assert_eq!(
-            preset_ids_free(&renamed, &old, &other),
+            model_profile_ids_free(&renamed, &old, &other),
             Err(refusal("model-profile-name-taken", &["b"]))
         );
     }
@@ -1834,27 +1836,27 @@ top-p = 0.95\r\n";
     /// The switch writes the destination before it removes the source, so
     /// for a moment both files hold the section: unchanged, it is a move.
     #[test]
-    fn a_switch_moving_a_preset_unchanged_is_not_a_namesake() {
+    fn a_switch_moving_a_model_profile_unchanged_is_not_a_namesake() {
         let moved = REAL_SECTION;
         let kept = section("Qwen3.8-Flash-Next", "");
-        assert_eq!(preset_ids_free(moved, "", moved), Ok(()));
+        assert_eq!(model_profile_ids_free(moved, "", moved), Ok(()));
         assert_eq!(
-            preset_ids_free(&format!("{kept}{moved}"), &kept, moved),
+            model_profile_ids_free(&format!("{kept}{moved}"), &kept, moved),
             Ok(())
         );
     }
 
-    /// A preset in both files already (the twin an interrupted switch
-    /// leaves) can still be saved where it is, and blocks no other preset.
+    /// A model profile in both files already (the twin an interrupted switch
+    /// leaves) can still be saved where it is, and blocks no other model profile.
     #[test]
-    fn a_preset_already_in_both_files_still_saves() {
+    fn a_model_profile_already_in_both_files_still_saves() {
         let twin = section("m", "ctx-size = 8192\n");
         let edited = section("m", "ctx-size = 16384\n");
-        assert_eq!(preset_ids_free(&edited, &twin, &twin), Ok(()));
+        assert_eq!(model_profile_ids_free(&edited, &twin, &twin), Ok(()));
         let added = format!("{twin}{}", section("n", ""));
-        assert_eq!(preset_ids_free(&added, &twin, &twin), Ok(()));
+        assert_eq!(model_profile_ids_free(&added, &twin, &twin), Ok(()));
         // Nothing in the other file: nothing to collide with.
-        assert_eq!(preset_ids_free(&edited, "", ""), Ok(()));
+        assert_eq!(model_profile_ids_free(&edited, "", ""), Ok(()));
     }
 
     // ── Second cut: floats, enums, JSON, min <= max ──────────────────────
@@ -1897,10 +1899,10 @@ top-p = 0.95\r\n";
         }
     }
 
-    /// The float keys of a preset (the Models tab's sampling fields and the
+    /// The float keys of a model profile (the Models tab's sampling fields and the
     /// draft confidence floor). `ini::parse_float` takes `inf` and `NaN`, which
     /// llama.cpp's `std::stof` reads as a sampler that never works; a word is
-    /// no number at all. Refused in either preset file, with the key and the
+    /// no number at all. Refused in either model profile file, with the key and the
     /// value as written; a plain number of any sign passes (no GUI range).
     #[test]
     fn float_keys_refuse_infinities_nan_and_words() {
@@ -1927,12 +1929,12 @@ top-p = 0.95\r\n";
             ] {
                 let text = section("m", &format!("{key} = {bad}\n"));
                 let want = Err(refusal("not-a-number", &[key, bad]));
-                assert_eq!(presets(&text), want, "{key} = {bad}");
-                assert_eq!(presets_disabled_file(&text, "", ""), want, "{key} = {bad}");
+                assert_eq!(model_profiles(&text), want, "{key} = {bad}");
+                assert_eq!(models_disabled_file(&text, "", ""), want, "{key} = {bad}");
             }
             for good in ["0", "0.95", "1", "1.1", "-1", "2.0"] {
                 let text = section("m", &format!("{key} = {good}\n"));
-                assert_eq!(presets(&text), Ok(()), "{key} = {good}");
+                assert_eq!(model_profiles(&text), Ok(()), "{key} = {good}");
             }
         }
     }
@@ -2002,13 +2004,13 @@ top-p = 0.95\r\n";
         for (key, good, bad) in &cases {
             for v in good {
                 let text = section("m", &format!("{key} = {v}\n"));
-                assert_eq!(presets(&text), Ok(()), "{key} = {v}");
+                assert_eq!(model_profiles(&text), Ok(()), "{key} = {v}");
             }
             for v in bad {
                 let text = section("m", &format!("{key} = {v}\n"));
                 for (file, got) in [
-                    ("models.ini", presets(&text)),
-                    ("models.ini.disabled", presets_disabled_file(&text, "", "")),
+                    ("models.ini", model_profiles(&text)),
+                    ("models.ini.disabled", models_disabled_file(&text, "", "")),
                 ] {
                     let r = got.expect_err(&format!("{file}: {key} = {v}"));
                     assert_eq!(r.key, "not-one-of", "{file}: {key} = {v}: {r:?}");
@@ -2029,7 +2031,7 @@ top-p = 0.95\r\n";
     fn reasoning_effort_takes_every_level_the_gui_offers() {
         for v in ["minimal", "low", "medium", "high", "xhigh", "max"] {
             let text = section("m", &format!("reasoning-effort = {v}\n"));
-            assert_eq!(presets(&text), Ok(()), "reasoning-effort = {v}");
+            assert_eq!(model_profiles(&text), Ok(()), "reasoning-effort = {v}");
         }
     }
 
@@ -2052,7 +2054,7 @@ top-p = 0.95\r\n";
             "ngram-mod,draft-mtp",
         ] {
             let text = section("m", &format!("spec-type = {v}\n"));
-            assert_eq!(presets(&text), Ok(()), "spec-type = {v}");
+            assert_eq!(model_profiles(&text), Ok(()), "spec-type = {v}");
         }
         for (v, entry) in [
             ("draft-banana", "draft-banana"),
@@ -2060,7 +2062,7 @@ top-p = 0.95\r\n";
             ("ngram-map-k4v,draft-bogus", "draft-bogus"),
         ] {
             let text = section("m", &format!("spec-type = {v}\n"));
-            let r = presets(&text).expect_err(v);
+            let r = model_profiles(&text).expect_err(v);
             assert_eq!(r.key, "not-one-of", "{v}: {r:?}");
             assert_eq!(r.values.first().map(String::as_str), Some("spec-type"));
             assert_eq!(r.values.get(1).map(String::as_str), Some(entry), "{r:?}");
@@ -2079,7 +2081,7 @@ top-p = 0.95\r\n";
             "{}",
         ] {
             let text = section("m", &format!("chat-template-kwargs = {good}\n"));
-            assert_eq!(presets(&text), Ok(()), "{good}");
+            assert_eq!(model_profiles(&text), Ok(()), "{good}");
         }
         for bad in [
             "[1,2]",
@@ -2091,8 +2093,8 @@ top-p = 0.95\r\n";
         ] {
             let text = section("m", &format!("chat-template-kwargs = {bad}\n"));
             let want = Err(refusal("not-json-object", &["chat-template-kwargs"]));
-            assert_eq!(presets(&text), want, "{bad}");
-            assert_eq!(presets_disabled_file(&text, "", ""), want, "{bad}");
+            assert_eq!(model_profiles(&text), want, "{bad}");
+            assert_eq!(models_disabled_file(&text, "", ""), want, "{bad}");
         }
     }
 
@@ -2108,26 +2110,32 @@ top-p = 0.95\r\n";
         ] {
             let both = |lo: &str, hi: &str| section("m", &format!("{min} = {lo}\n{max} = {hi}\n"));
             assert_eq!(
-                presets(&both("5", "4")),
+                model_profiles(&both("5", "4")),
                 Err(refusal("min-above-max", &[min, "5", max, "4"])),
                 "{min} > {max}"
             );
             // The order of the lines does not matter.
             let reversed = section("m", &format!("{max} = 4\n{min} = 5\n"));
             assert_eq!(
-                presets(&reversed),
+                model_profiles(&reversed),
                 Err(refusal("min-above-max", &[min, "5", max, "4"])),
                 "{max} first"
             );
             assert_eq!(
-                presets_disabled_file(&both("5", "4"), "", ""),
+                models_disabled_file(&both("5", "4"), "", ""),
                 Err(refusal("min-above-max", &[min, "5", max, "4"])),
                 "disabled {min} > {max}"
             );
-            assert_eq!(presets(&both("4", "4")), Ok(()), "{min} = {max}");
-            assert_eq!(presets(&both("3", "4")), Ok(()), "{min} < {max}");
-            assert_eq!(presets(&section("m", &format!("{min} = 5\n"))), Ok(()));
-            assert_eq!(presets(&section("m", &format!("{max} = 4\n"))), Ok(()));
+            assert_eq!(model_profiles(&both("4", "4")), Ok(()), "{min} = {max}");
+            assert_eq!(model_profiles(&both("3", "4")), Ok(()), "{min} < {max}");
+            assert_eq!(
+                model_profiles(&section("m", &format!("{min} = 5\n"))),
+                Ok(())
+            );
+            assert_eq!(
+                model_profiles(&section("m", &format!("{max} = 4\n"))),
+                Ok(())
+            );
         }
     }
 }

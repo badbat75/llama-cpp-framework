@@ -1,4 +1,4 @@
-//! Unattended parameter sweeps: one benchmark leg per value of ONE preset key.
+//! Unattended parameter sweeps: one benchmark leg per value of ONE model profile key.
 //!
 //! The Benchmark tab measures a configuration; a sweep measures a QUESTION
 //! about one ("how far does raising `spec-draft-n-max` keep paying?"). The
@@ -16,7 +16,7 @@
 //!
 //! ## The key rides the CHILD's launch args, so a live leg must restart
 //!
-//! llama-server's router spawns one child per model and hands it the preset's
+//! llama-server's router spawns one child per model and hands it the model profile's
 //! keys at spawn time; nothing re-reads models.ini afterwards. A live sweep
 //! therefore restarts the server between values, and the restart is deliberately
 //! the bare `stop()` + `start()` pair of `server_control` rather than the one `control
@@ -34,19 +34,19 @@
 //! `device = Vulkan1,CUDA0` and `tensor-split = 60,6` are single values that
 //! contain commas, so a comma-separated `--values` could never sweep them. A `;`
 //! cannot appear in an INI value at all (`ini::reject_comment_markers`:
-//! llama-server's preset reader cuts a value at the first `;` or `#`), which
+//! llama-server's model profile reader cuts a value at the first `;` or `#`), which
 //! makes it the one separator guaranteed not to collide with the data. So
 //! `--values` splits on `;` when it sees one, and on `,` otherwise.
 //!
 //! ## models.ini is edited, and says so before it is
 //!
-//! A sweep writes the key it sweeps, so an interrupted sweep leaves the preset
+//! A sweep writes the key it sweeps, so an interrupted sweep leaves the model profile
 //! on whatever value it was measuring. The original is written into the
 //! sweep's PENDING marker (`bench/sweep-pending-<stamp>.json`) before any leg
 //! runs, and the marker is deleted only once the key is put back: a machine
 //! that reboots mid-sweep still has the value to restore on disk, and the next
-//! sweep of the same preset and key warns about it. The marker is the one file
-//! a sweep writes, and it exists only while the preset is not as it was. Ctrl-C
+//! sweep of the same model profile and key warns about it. The marker is the one file
+//! a sweep writes, and it exists only while the model profile is not as it was. Ctrl-C
 //! puts the key back as well (`interrupt.rs`), so the marker is left only by what
 //! no handler survives: a kill -9, a crash, a power cut.
 
@@ -65,7 +65,7 @@ use crate::{http, ini, presets, server_cfg, server_control};
 /// and reads as a deliberate choice in the summary table.
 pub const UNSET: &str = "unset";
 
-/// The one leg's value when no key is varied: the preset as models.ini has it.
+/// The one leg's value when no key is varied: the model profile as models.ini has it.
 pub const AS_IS: &str = "as is";
 
 /// How long to wait for llama-server to vanish after a stop, and to answer after
@@ -99,12 +99,12 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ── What may be swept ────────────────────────────────────────────────────
 
-type Setter = fn(&mut presets::Preset, &str) -> Result<(), String>;
+type Setter = fn(&mut presets::ModelProfile, &str) -> Result<(), String>;
 
-/// The preset keys a sweep may vary, each with the typed field it writes.
+/// The model profile keys a sweep may vary, each with the typed field it writes.
 ///
 /// A table and not a raw `ini::replace_key` for two reasons. A typo would
-/// otherwise silently add a key llama-server does not know (its preset reader
+/// otherwise silently add a key llama-server does not know (its model profile reader
 /// only warns), and the leg would then measure the unchanged configuration and
 /// report it as a data point. And going through the typed field means the value
 /// is parsed HERE, before the sweep spends an hour of GPU time, and the section
@@ -335,11 +335,11 @@ pub fn setter(key: &str) -> Result<Setter, String> {
         .ok_or_else(|| strings::fill("not-sweepable", &[&key, &keys()]))
 }
 
-/// Every value of `key` applied to a throwaway copy of `preset`: the Benchmark
+/// Every value of `key` applied to a throwaway copy of `model_profile`: the Benchmark
 /// tab's A/B check, the same one `run` makes before its first leg.
-pub fn check_values(preset: &str, key: &str, values: &[String]) -> Result<(), String> {
+pub fn check_values(model_profile: &str, key: &str, values: &[String]) -> Result<(), String> {
     let set = setter(key)?;
-    let base = load_one(preset)?;
+    let base = load_one(model_profile)?;
     for v in values {
         let mut probe = base.clone();
         set(&mut probe, v).map_err(|e| strings::fill("key-value-refused", &[&key, &v, &e]))?;
@@ -450,10 +450,10 @@ fn expand(token: &str, out: &mut Vec<String>) -> Result<(), String> {
 
 // ── Plan ─────────────────────────────────────────────────────────────────
 
-/// What the preset is left on when the sweep finishes.
+/// What the model profile is left on when the sweep finishes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Apply {
-    /// Put back the value the preset had before the sweep (the default: a
+    /// Put back the value the model profile had before the sweep (the default: a
     /// measurement should not silently reconfigure the machine).
     Original,
     /// Keep the value that won on the primary test.
@@ -483,12 +483,12 @@ impl Apply {
     }
 }
 
-/// One sweep as the CLI describes it. `plan.presets` is ignored: a sweep varies
-/// one key of ONE preset, so the leg's plan is built from `preset` here.
+/// One sweep as the CLI describes it. `plan.model_profiles` is ignored: a sweep varies
+/// one key of ONE model profile, so the leg's plan is built from `model_profile` here.
 #[derive(Clone, Debug)]
 pub struct Opts {
-    pub preset: String,
-    /// The key to vary; `None` measures the preset as it is: one leg, and
+    pub model_profile: String,
+    /// The key to vary; `None` measures the model profile as it is: one leg, and
     /// models.ini is not touched (no write, no marker, nothing to restore).
     pub key: Option<String>,
     /// The key's values; ignored without a key.
@@ -502,7 +502,7 @@ pub struct Opts {
     pub restore_to: Option<String>,
     /// The bench.db campaign; empty for `sweep-<stamp>`.
     pub campaign: String,
-    /// What the sweep asks; empty for one spelled from the key and preset.
+    /// What the sweep asks; empty for one spelled from the key and model profile.
     pub question: String,
 }
 
@@ -599,16 +599,16 @@ pub fn render_summary(s: &Summary) -> String {
     let mut md = match &opts.key {
         Some(key) => format!(
             "# Benchmark sweep: {key} on {}\n\nGenerated {}.\n\n",
-            opts.preset, s.stamp
+            opts.model_profile, s.stamp
         ),
         None => format!(
             "# Benchmark: {} as it is\n\nGenerated {}.\n\n",
-            opts.preset, s.stamp
+            opts.model_profile, s.stamp
         ),
     };
 
     md.push_str("| setting | value |\n|---|---|\n");
-    md.push_str(&format!("| preset | {} |\n", opts.preset));
+    md.push_str(&format!("| model profile | {} |\n", opts.model_profile));
     if let Some(key) = &opts.key {
         md.push_str(&format!("| key | {key} |\n"));
         md.push_str(&format!("| values | {} |\n", opts.values.join(", ")));
@@ -620,7 +620,7 @@ pub fn render_summary(s: &Summary) -> String {
             "| temperature | {} |\n",
             match opts.plan.temp {
                 Some(t) => format!("{t}"),
-                None => "the preset's own".to_string(),
+                None => "the model profile's own".to_string(),
             }
         ));
         md.push_str(&format!(
@@ -671,7 +671,7 @@ pub fn render_summary(s: &Summary) -> String {
         .and_then(|l| l.point(&primary))
         .map(|p| p.mean);
 
-    let mut head = format!("| {} |", opts.key.as_deref().unwrap_or("preset"));
+    let mut head = format!("| {} |", opts.key.as_deref().unwrap_or("model profile"));
     let mut sep = String::from("|---|");
     for (i, label) in labels.iter().enumerate() {
         head.push_str(&format!(" {label} | +- |"));
@@ -774,7 +774,7 @@ pub fn header_json(opts: &Opts, original: &str, stamp: &str) -> String {
         "kind": "sweep",
         "stamp": stamp,
         "mode": opts.plan.mode.as_str(),
-        "preset": opts.preset,
+        "preset": opts.model_profile,
         "key": opts.key,
         "values": opts.values,
         "restore": original,
@@ -786,7 +786,7 @@ pub fn header_json(opts: &Opts, original: &str, stamp: &str) -> String {
 
 /// What a marker says about its sweep.
 pub struct State {
-    pub preset: String,
+    pub model_profile: String,
     pub key: String,
     pub restore: String,
 }
@@ -799,14 +799,14 @@ pub fn sweep_state(content: &str) -> Option<State> {
         return None;
     }
     Some(State {
-        preset: header["preset"].as_str().unwrap_or_default().to_string(),
+        model_profile: header["preset"].as_str().unwrap_or_default().to_string(),
         key: header["key"].as_str().unwrap_or_default().to_string(),
         restore: header["restore"].as_str().unwrap_or_default().to_string(),
     })
 }
 
-/// The markers left for this preset and key, oldest first.
-fn markers(preset: &str, key: &str) -> Vec<(PathBuf, State)> {
+/// The markers left for this model profile and key, oldest first.
+fn markers(model_profile: &str, key: &str) -> Vec<(PathBuf, State)> {
     let Ok(dir) = std::fs::read_dir(super::bench_dir()) else {
         return Vec::new();
     };
@@ -825,15 +825,15 @@ fn markers(preset: &str, key: &str) -> Vec<(PathBuf, State)> {
         .into_iter()
         .filter_map(|p| {
             let state = sweep_state(&std::fs::read_to_string(&p).ok()?)?;
-            (state.preset == preset && state.key == key).then_some((p, state))
+            (state.model_profile == model_profile && state.key == key).then_some((p, state))
         })
         .collect()
 }
 
-/// The newest unfinished sweep of this preset and key: its marker and the
+/// The newest unfinished sweep of this model profile and key: its marker and the
 /// value it recorded to restore.
-fn interrupted(preset: &str, key: &str) -> Option<(PathBuf, String)> {
-    markers(preset, key)
+fn interrupted(model_profile: &str, key: &str) -> Option<(PathBuf, String)> {
+    markers(model_profile, key)
         .pop()
         .map(|(path, state)| (path, state.restore))
 }
@@ -846,7 +846,7 @@ fn interrupted(preset: &str, key: &str) -> Option<(PathBuf, String)> {
 /// the same).
 pub fn run(opts: &Opts) -> Result<String, String> {
     let set = opts.key.as_deref().map(setter).transpose()?;
-    let base = load_one(&opts.preset)?;
+    let base = load_one(&opts.model_profile)?;
     // Every value is applied to a throwaway copy up front: a typo in the last of
     // seven values is worth catching now, not forty minutes from now.
     if let Some(set) = set {
@@ -857,14 +857,14 @@ pub fn run(opts: &Opts) -> Result<String, String> {
                 .map_err(|e| strings::fill("value-refused", &[&v, &e]))?;
         }
     }
-    if let Some(problem) = super::validate(&leg_plan(opts, &opts.preset)) {
+    if let Some(problem) = super::validate(&leg_plan(opts, &opts.model_profile)) {
         return Err(problem);
     }
 
     let original = match (&opts.key, &opts.restore_to) {
         (None, _) => String::new(),
         (Some(_), Some(v)) => v.clone(),
-        (Some(key), None) => current_value(&opts.preset, key),
+        (Some(key), None) => current_value(&opts.model_profile, key),
     };
     let was_running = server_control::backend().is_running();
     super::interrupt::note_server(was_running);
@@ -873,11 +873,11 @@ pub fn run(opts: &Opts) -> Result<String, String> {
 
     // BEFORE this sweep's own marker exists, and that ordering is the whole
     // correctness of the check: `interrupted` answers with the NEWEST marker of
-    // this preset and key, which the moment the one below is created is this
+    // this model profile and key, which the moment the one below is created is this
     // sweep's. Scanning after creating it therefore reports every sweep as
     // interrupted (v1.13.0 did) and, worse, hides a real leftover.
     let leftover = match (&opts.key, &opts.restore_to) {
-        (Some(key), None) => interrupted(&opts.preset, key),
+        (Some(key), None) => interrupted(&opts.model_profile, key),
         _ => None,
     };
 
@@ -891,15 +891,15 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         question: match (&opts.key, opts.question.is_empty()) {
             (_, false) => opts.question.clone(),
             (Some(key), true) => format!(
-                "How does `{key}` change {} on preset {}? Values: {}.",
+                "How does `{key}` change {} on model profile {}? Values: {}.",
                 primary_label(opts.plan.mode),
-                opts.preset,
+                opts.model_profile,
                 opts.values.join(", ")
             ),
             (None, true) => format!(
-                "What {} does preset {} reach as it is?",
+                "What {} does model profile {} reach as it is?",
                 primary_label(opts.plan.mode),
-                opts.preset
+                opts.model_profile
             ),
         },
         label: None,
@@ -922,12 +922,12 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         let marker = pending_path(&stamp);
         std::fs::write(&marker, header_json(opts, &original, &stamp))
             .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
-        super::interrupt::hold(&opts.preset, key, &original, marker.clone());
+        super::interrupt::hold(&opts.model_profile, key, &original, marker.clone());
         println!(
             "{}",
             strings::fill(
                 "sweeping-key",
-                &[&key, &opts.values.join(", "), &opts.preset, &reps]
+                &[&key, &opts.values.join(", "), &opts.model_profile, &reps]
             )
         );
         println!(
@@ -940,7 +940,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     } else {
         println!(
             "{}",
-            strings::fill("measuring-preset", &[&opts.preset, &reps])
+            strings::fill("measuring-preset", &[&opts.model_profile, &reps])
         );
     }
     // An interrupted sweep left the key on one of ITS leg values, so the value
@@ -957,13 +957,13 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         );
     }
 
-    // The engine resolves the preset's device ids to card names through the
+    // The engine resolves the model profile's device ids to card names through the
     // probe cache, which only the GUI fills on its own; without this every leg
     // records the ids as unknown. Once, before the first leg: the ids name the
     // same cards for the whole sweep.
     crate::devices::set_probed(crate::devices::list());
 
-    // Without a key there is one leg, on the preset as it is.
+    // Without a key there is one leg, on the model profile as it is.
     let as_is = [AS_IS.to_string()];
     let values: &[String] = match set {
         Some(_) => &opts.values,
@@ -976,7 +976,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         }
         let started = Instant::now();
         let written = match set {
-            Some(set) => write_value(&opts.preset, set, value),
+            Some(set) => write_value(&opts.model_profile, set, value),
             None => Ok(()),
         };
         let leg = match written.and_then(|()| prepare_server(opts.plan.mode, port)) {
@@ -998,7 +998,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
         legs.push(leg);
     }
 
-    // Restore: the preset first, then the process, so a running llama-server is
+    // Restore: the model profile first, then the process, so a running llama-server is
     // never left on a value models.ini no longer names.
     let primary = primary_test(opts.plan.mode, &legs);
     let applied = match opts.apply {
@@ -1013,18 +1013,18 @@ pub fn run(opts: &Opts) -> Result<String, String> {
             .unwrap_or_else(|| original.clone()),
     };
     let restore = match set {
-        Some(set) => write_value(&opts.preset, set, &applied),
+        Some(set) => write_value(&opts.model_profile, set, &applied),
         None => Ok(()),
     };
     let server = restore_server(was_running);
     // The key is back: this sweep's marker goes, and so do older ones of the
-    // same preset and key, whose leftover this restore has overwritten (the
+    // same model profile and key, whose leftover this restore has overwritten (the
     // newest sweep of a pair decides). Only after the restore, so a sweep that
     // died putting the key back still reads as interrupted.
     if let Some(key) = &opts.key {
         if restore.is_ok() {
             super::interrupt::release(&pending_path(&stamp));
-            for (path, _) in markers(&opts.preset, key) {
+            for (path, _) in markers(&opts.model_profile, key) {
                 let _ = std::fs::remove_file(path);
             }
         }
@@ -1074,7 +1074,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
 /// A leg's run label: `key=value`, the spec pass, and the concurrency scenario
 /// when it is not `single`, so one campaign can hold the same value under
 /// several. `None` when there is nothing to tell (no key, no spec, single):
-/// the run is then labelled by its preset.
+/// the run is then labelled by its model profile.
 fn leg_label(opts: &Opts, value: &str) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(key) = &opts.key {
@@ -1089,13 +1089,13 @@ fn leg_label(opts: &Opts, value: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-/// Hold `key` of `preset` for a temporary write (a spec pass's override): a
+/// Hold `key` of `model_profile` for a temporary write (a spec pass's override): a
 /// pending marker carrying the value to put back, written BEFORE the change,
 /// so an interrupted run is reported (and restorable) like an interrupted
 /// sweep of that key. Returns the current value and the marker.
-pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
+pub fn hold_key(model_profile: &str, key: &str) -> Result<(String, PathBuf), String> {
     setter(key)?;
-    let original = current_value(preset, key);
+    let original = current_value(model_profile, key);
     let stamp = format!("{}-{key}", super::stamp(super::now_secs()));
     let dir = super::bench_dir();
     std::fs::create_dir_all(&dir)
@@ -1104,46 +1104,48 @@ pub fn hold_key(preset: &str, key: &str) -> Result<(String, PathBuf), String> {
     let header = serde_json::json!({
         "kind": "sweep",
         "stamp": stamp,
-        "preset": preset,
+        "preset": model_profile,
         "key": key,
         "restore": original,
         "override": true,
     });
     std::fs::write(&marker, header.to_string())
         .map_err(|e| strings::fill("cannot-write", &[&marker.display(), &e]))?;
-    super::interrupt::hold(preset, key, &original, marker.clone());
+    super::interrupt::hold(model_profile, key, &original, marker.clone());
     Ok((original, marker))
 }
 
-/// Write one key of `preset` (`unset` removes it).
-pub fn set_key(preset: &str, key: &str, value: &str) -> Result<(), String> {
-    write_value(preset, setter(key)?, value)
+/// Write one key of `model_profile` (`unset` removes it).
+pub fn set_key(model_profile: &str, key: &str, value: &str) -> Result<(), String> {
+    write_value(model_profile, setter(key)?, value)
 }
 
 /// `set_key` for the interrupt handler, which already holds the gate.
-pub(super) fn write_key(preset: &str, key: &str, value: &str) -> Result<(), String> {
-    write_unlocked(preset, setter(key)?, value)
+pub(super) fn write_key(model_profile: &str, key: &str, value: &str) -> Result<(), String> {
+    write_unlocked(model_profile, setter(key)?, value)
 }
 
-/// The plan one leg runs: the caller's, pinned to the swept preset.
-fn leg_plan(opts: &Opts, preset: &str) -> Plan {
+/// The plan one leg runs: the caller's, pinned to the swept model profile.
+fn leg_plan(opts: &Opts, model_profile: &str) -> Plan {
     Plan {
-        presets: vec![preset.to_string()],
+        model_profiles: vec![model_profile.to_string()],
         ..opts.plan.clone()
     }
 }
 
-/// What `--concurrency all` runs for `preset`: one request, then, when the
-/// preset has two slots or more (absent `parallel` = llama-server's auto 4),
+/// What `--concurrency all` runs for `model_profile`: one request, then, when the
+/// model profile has two slots or more (absent `parallel` = llama-server's auto 4),
 /// every concurrent scenario at N = its `parallel`.
-pub fn all_scenarios(preset: &str) -> Result<Vec<Concurrency>, String> {
-    let n = load_one(preset)?.parallel.unwrap_or(super::AUTO_PARALLEL);
+pub fn all_scenarios(model_profile: &str) -> Result<Vec<Concurrency>, String> {
+    let n = load_one(model_profile)?
+        .parallel
+        .unwrap_or(super::AUTO_PARALLEL);
     Ok(scenarios_for(n))
 }
 
-/// Whether the preset loads an mmproj, so it can read an image prompt.
-pub fn has_mmproj(preset: &str) -> Result<bool, String> {
-    Ok(!load_one(preset)?.mmproj.trim().is_empty())
+/// Whether the model profile loads an mmproj, so it can read an image prompt.
+pub fn has_mmproj(model_profile: &str) -> Result<bool, String> {
+    Ok(!load_one(model_profile)?.mmproj.trim().is_empty())
 }
 
 fn scenarios_for(parallel: i32) -> Vec<Concurrency> {
@@ -1154,14 +1156,14 @@ fn scenarios_for(parallel: i32) -> Vec<Concurrency> {
     }
 }
 
-fn load_one(id: &str) -> Result<presets::Preset, String> {
+fn load_one(id: &str) -> Result<presets::ModelProfile, String> {
     let all = presets::load_all();
     all.iter().find(|p| p.id == id).cloned().ok_or_else(|| {
-        // A switched-off preset is still listed everywhere else, so say why
+        // A switched-off model profile is still listed everywhere else, so say why
         // this one cannot be swept rather than pretend it does not exist.
         if presets::load_listed()
             .iter()
-            .any(|l| !l.enabled && l.preset.id == id)
+            .any(|l| !l.enabled && l.model_profile.id == id)
         {
             return strings::fill("preset-off-cannot-run", &[&id]);
         }
@@ -1171,25 +1173,25 @@ fn load_one(id: &str) -> Result<presets::Preset, String> {
 }
 
 /// The key's value as the file has it right now, or `unset` when the section
-/// does not carry it. Read from the INI rather than from the parsed preset so
+/// does not carry it. Read from the INI rather than from the parsed model profile so
 /// the restore puts back exactly what was there.
-fn current_value(preset: &str, key: &str) -> String {
-    server_control::read_section(ConfigFile::Presets, preset)
+fn current_value(model_profile: &str, key: &str) -> String {
+    server_control::read_section(ConfigFile::Models, model_profile)
         .get(key)
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| UNSET.to_string())
 }
 
-fn write_value(preset: &str, set: Setter, value: &str) -> Result<(), String> {
+fn write_value(model_profile: &str, set: Setter, value: &str) -> Result<(), String> {
     let _gate = super::interrupt::gate();
-    write_unlocked(preset, set, value)
+    write_unlocked(model_profile, set, value)
 }
 
-fn write_unlocked(preset: &str, set: Setter, value: &str) -> Result<(), String> {
+fn write_unlocked(model_profile: &str, set: Setter, value: &str) -> Result<(), String> {
     // Re-read rather than mutate one cached copy: the sweep may run for an hour
     // and the rest of the section belongs to whoever edited it last.
-    let mut p = load_one(preset)?;
+    let mut p = load_one(model_profile)?;
     set(&mut p, value)?;
     presets::save(&p).map_err(|e| format!("cannot write models.ini: {e}"))
 }
@@ -1292,7 +1294,7 @@ fn primary_label(mode: Mode) -> &'static str {
     }
 }
 
-/// The campaign's notes in bench.db: what was swept, what the preset was left
+/// The campaign's notes in bench.db: what was swept, what the model profile was left
 /// on, and the values that did not finish, which have no run of their own
 /// (only finished runs are recorded) but are a result all the same.
 pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) -> String {
@@ -1304,8 +1306,8 @@ pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) 
     );
     let Some(key) = &opts.key else {
         let mut out = format!(
-            "run of preset {} as it is ({reps}); models.ini not changed",
-            opts.preset
+            "run of model profile {} as it is ({reps}); models.ini not changed",
+            opts.model_profile
         );
         for leg in legs.iter().filter(|l| !l.error.is_empty()) {
             out.push_str(&format!("\nnot finished: {}", leg.error));
@@ -1313,9 +1315,9 @@ pub fn campaign_notes(opts: &Opts, legs: &[Leg], original: &str, applied: &str) 
         return out;
     };
     let mut out = format!(
-        "sweep of `{key}` on preset {} ({reps}): {}\n\
+        "sweep of `{key}` on model profile {} ({reps}): {}\n\
          before: {original}; left on: {applied} (--apply {})",
-        opts.preset,
+        opts.model_profile,
         opts.values.join(", "),
         opts.apply.as_str()
     );
@@ -1348,7 +1350,7 @@ fn measure(opts: &Opts, value: &str, campaign: &super::record::Campaign) -> Leg 
             label: leg_label(opts, value),
             ..campaign.clone()
         }),
-        ..leg_plan(opts, &opts.preset)
+        ..leg_plan(opts, &opts.model_profile)
     };
     let _handle = super::exec::spawn(plan, move |ev| {
         let _ = tx.send(ev);
@@ -1419,9 +1421,10 @@ pub(crate) fn sweep_config_e2e() {
     use pai_core::client::InstanceState;
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let user_presets = crate::paths::presets_ini();
-    std::fs::create_dir_all(user_presets.parent().unwrap()).expect("config dir");
-    std::fs::write(&user_presets, "[Qwen3.8-27B]\nctx-size = 4096\n").expect("user models.ini");
+    let user_model_profiles = crate::paths::models_ini();
+    std::fs::create_dir_all(user_model_profiles.parent().unwrap()).expect("config dir");
+    std::fs::write(&user_model_profiles, "[Qwen3.8-27B]\nctx-size = 4096\n")
+        .expect("user models.ini");
     let log = fake::log();
     let c = FakeClient::new(&log, InstanceState::Inactive).with_file(
         "models.ini",
@@ -1510,7 +1513,7 @@ mod tests {
         }
         .text();
         let opts = Opts {
-            preset: "Qwen3.8-27B".into(),
+            model_profile: "Qwen3.8-27B".into(),
             key: Some("parallel".into()),
             values: vec!["2".into(), "0".into()],
             plan: Plan {
@@ -1532,7 +1535,7 @@ mod tests {
         Leg {
             value: value.into(),
             points: vec![Point {
-                preset: "P".into(),
+                model_profile: "P".into(),
                 test: super::super::LIVE_DECODE.into(),
                 mean: decode,
                 sd: 0.5,
@@ -1559,7 +1562,7 @@ mod tests {
 
     fn opts(values: &[&str]) -> Opts {
         Opts {
-            preset: "Qwen".into(),
+            model_profile: "Qwen".into(),
             key: Some("spec-draft-n-max".into()),
             values: values.iter().map(|v| (*v).to_string()).collect(),
             plan: Plan::default(),
@@ -1614,11 +1617,11 @@ mod tests {
 
     /// Every entry in the table writes a key `render_section` actually emits.
     /// A key that only existed here would sweep nothing: the leg would measure
-    /// the unchanged preset and report it as a data point.
+    /// the unchanged model profile and report it as a data point.
     #[test]
     fn every_sweepable_key_reaches_the_ini() {
         for (key, set) in SWEEPABLE {
-            let mut p = presets::Preset {
+            let mut p = presets::ModelProfile {
                 id: "T".into(),
                 model: "C:\\m.gguf".into(),
                 ..Default::default()
@@ -1649,7 +1652,7 @@ mod tests {
 
     #[test]
     fn unset_clears_a_key() {
-        let mut p = presets::Preset {
+        let mut p = presets::ModelProfile {
             id: "T".into(),
             model: "C:\\m.gguf".into(),
             spec_draft_n_max: Some(6),
@@ -1668,12 +1671,17 @@ mod tests {
     #[test]
     fn bad_values_fail_before_the_gpu_time() {
         assert!(
-            setter("spec-draft-n-max").unwrap()(&mut presets::Preset::default(), "six").is_err()
+            setter("spec-draft-n-max").unwrap()(&mut presets::ModelProfile::default(), "six")
+                .is_err()
         );
-        assert!(setter("flash-attn").unwrap()(&mut presets::Preset::default(), "maybe").is_err());
+        assert!(
+            setter("flash-attn").unwrap()(&mut presets::ModelProfile::default(), "maybe").is_err()
+        );
         // A `;` or `#` in a text value reloads truncated, so it is refused here
         // exactly as `presets::save` refuses it.
-        assert!(setter("device").unwrap()(&mut presets::Preset::default(), "CUDA0;x").is_err());
+        assert!(
+            setter("device").unwrap()(&mut presets::ModelProfile::default(), "CUDA0;x").is_err()
+        );
     }
 
     #[test]
@@ -1749,7 +1757,7 @@ mod tests {
         let state = sweep_state(&header_json(&o, "6", "20260901-192445")).unwrap();
         assert_eq!(state.restore, "6");
         assert_eq!(state.key, "spec-draft-n-max");
-        assert_eq!(state.preset, "Qwen");
+        assert_eq!(state.model_profile, "Qwen");
         assert!(sweep_state("").is_none());
         assert!(sweep_state("{\"kind\":\"run\",\"mode\":\"live\"}").is_none());
         assert!(sweep_state("not json at all").is_none());
@@ -1760,13 +1768,13 @@ mod tests {
         let mut l = leg("2", 0.0, "");
         l.points = vec![
             Point {
-                preset: "P".into(),
+                model_profile: "P".into(),
                 test: "pp2048".into(),
                 mean: 900.0,
                 ..Default::default()
             },
             Point {
-                preset: "P".into(),
+                model_profile: "P".into(),
                 test: "tg128".into(),
                 mean: 21.0,
                 ..Default::default()

@@ -11,7 +11,7 @@
 //!   key case-insensitively and rewrites the line in canonical case.
 //! - Values are TRIMMED on parse, and everything from the FIRST `;` or `#` on
 //!   is stripped as an inline comment, spaced or not ("a;b" reads as "a").
-//!   This mirrors llama-server's own preset parser (common/preset.cpp PEG:
+//!   This mirrors llama-server's own model profile parser (common/preset.cpp PEG:
 //!   `eol-start ::= ws ([;#] / newline / EOF)`), which models.ini must obey:
 //!   `;`/`#` simply cannot occur inside a value, and a writer that emits one
 //!   produces a value llama-server would truncate anyway. Writers must also
@@ -49,7 +49,7 @@ pub struct Section {
     pub keys: BTreeMap<String, String>,
     /// The section's whole-line comments, trimmed, marker included, in file
     /// order. They carry data llama-server must never see as a key (it refuses
-    /// a preset holding an unknown one): `presets::project_url_of` reads one.
+    /// a model profile holding an unknown one): `presets::project_url_of` reads one.
     pub comments: Vec<String>,
 }
 
@@ -102,7 +102,7 @@ pub fn parse_sections(text: &str) -> Vec<Section> {
 }
 
 // Everything from the first `;` or `#` is comment, spaced or not: the exact
-// rule of llama-server's preset PEG (see the header contract). Being MORE
+// rule of llama-server's model profile PEG (see the header contract). Being MORE
 // lenient here (e.g. requiring whitespace around the marker) would make the
 // GUI show a value llama-server truncates.
 fn strip_inline_comment(val: &str) -> &str {
@@ -122,7 +122,7 @@ fn value_of_line(line: &str) -> Option<&str> {
 /// Save-boundary guard for the comment rule above: the format has NO escaping,
 /// so a value containing `;` or `#` (legal in Windows paths, e.g.
 /// `C:\Models #1`) would write fine and silently reload truncated, by this
-/// parser and by llama-server's own preset reader alike. Callers that persist
+/// parser and by llama-server's own model profile reader alike. Callers that persist
 /// path-valued fields (`server_cfg::save`, `presets::save`) reject such values
 /// here instead, so the user gets an error naming the field rather than a
 /// config that quietly points somewhere else.
@@ -433,7 +433,7 @@ pub mod text {
 
     /// `content` with `key` set to `value` inside the named section. The named
     /// section must exist: an absent one leaves the text equal (the caller
-    /// answers a preset that is not there, it does not create one).
+    /// answers a model profile that is not there, it does not create one).
     ///
     /// A key the section holds exactly once, spelled in the exact case given,
     /// whose value read the way `parse_sections` reads it (the text after the
@@ -443,8 +443,8 @@ pub mod text {
     /// its inline comment, and an unterminated final line stays unterminated. A
     /// line that spells the key in ANOTHER case is rewritten even when its
     /// value is equal: llama-server knows a key only in its own case and
-    /// refuses a preset that spells it otherwise (`common/preset.cpp`), so
-    /// leaving such a line alone would answer a save with success over a preset
+    /// refuses a model profile that spells it otherwise (`common/preset.cpp`), so
+    /// leaving such a line alone would answer a save with success over a model profile
     /// that does not start. When the value differs the line is rewritten whole
     /// as `key = value`, the value as given, and keeps its own line ending: an
     /// unterminated final line stays unterminated. A key occurring more than
@@ -534,8 +534,8 @@ pub fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     //
     // That is not hypothetical. On 2026-09-02 a 0x116 bugcheck (the AMD driver
     // fault this machine is prone to) landed while a sweep was restoring one
-    // preset key, and models.ini came back as 27,669 bytes of NUL: every model
-    // preset on the machine, gone, while server.ini and settings.ini (not being
+    // model profile key, and models.ini came back as 27,669 bytes of NUL: every model
+    // model profile on the machine, gone, while server.ini and settings.ini (not being
     // written at that moment) were untouched. `fs::write` + `rename` had made
     // the update atomic, which was never the property at risk.
     {
@@ -565,7 +565,7 @@ fn line_starts_with_key(line: &str, key: &str) -> bool {
 /// and tabs of an indented line aside), where `line_starts_with_key` accepts
 /// any letter case. Every reader of the line takes it as the key; the writer
 /// that leaves an equal value alone must not, because the engine refuses a
-/// preset holding a key in a case of its own.
+/// model profile holding a key in a case of its own.
 fn line_spells_key(line: &str, key: &str) -> bool {
     line.trim_start().starts_with(key)
 }
@@ -666,7 +666,7 @@ pub fn parse_int_in(s: &str, range: &RangeInclusive<i32>) -> Option<i32> {
 /// when it is one. Every form that writes a config or starts a run asks this of
 /// each integer field it reads BEFORE converting, because the conversions are
 /// lenient on purpose (an unparseable field reads as unset, or as a default) and
-/// "unset" is a real instruction: a preset saved with an unparseable context
+/// "unset" is a real instruction: a model profile saved with an unparseable context
 /// has no `ctx-size` at all, and llama-server then loads the model's TRAINED
 /// context. Met on 2026-09-17: a context edit saved from the Models tab reached
 /// disk with no `ctx-size`, and the card paged at that context. The field is
@@ -953,7 +953,7 @@ mod tests {
         delete_section(Path::new("does/not/exist.ini"), "a").unwrap();
     }
 
-    // The move primitive behind a preset's on/off switch: the text must come out
+    // The move primitive behind a model profile's on/off switch: the text must come out
     // exactly as written (a hand comment and an unknown key included), stop at
     // the next header, and splice into another file as that same section.
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
         assert_eq!(project_url_of(&[]), "");
     }
 
-    /// The reader takes the comments `read_all` collects, so a preset file
+    /// The reader takes the comments `read_all` collects, so a model profile file
     /// read end to end answers its URL: the plumbing the section read uses.
     #[test]
     fn project_url_of_takes_the_comments_the_parser_collects() {
@@ -1112,7 +1112,7 @@ mod tests {
         );
     }
 
-    // ── The preset save's in-place edits (text::set_key / text::remove_key) ──
+    // ── The model profile save's in-place edits (text::set_key / text::remove_key) ──
     //
     // The web's save changes only the edited lines and keeps the rest of the
     // file byte for byte: `set_key` rewrites one line, `remove_key` drops the
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn set_key_leaves_an_absent_section_untouched() {
-        // The route answers a preset that is in neither file before it edits
+        // The route answers a model profile that is in neither file before it edits
         // anything, so this transform creates no section (`replace_key` does).
         let text = file_of(&["[alpha]", "k = 1"], "\r\n");
         assert_eq!(
@@ -1525,7 +1525,7 @@ mod tests {
     // spacing and inline comment all stay. A line spelling the key in ANOTHER
     // case is rewritten, because llama-server refuses that spelling
     // (common/preset.cpp): leaving it would answer a save with 200 over a
-    // preset that does not start.
+    // model profile that does not start.
     #[test]
     fn set_key_of_an_equal_value_returns_the_text_byte_for_byte() {
         for eol in ["\n", "\r\n"] {
@@ -1574,8 +1574,8 @@ mod tests {
     // key AS IT IS GIVEN: `CTX-SIZE = 4096` set to `ctx-size` `4096` is
     // rewritten as `ctx-size = 4096`, at the same place, with the line's own
     // ending. llama-server knows a key only in its own case and refuses a
-    // preset holding another spelling, so an untouched line here is a save that
-    // answers 200 over a preset that will not start.
+    // model profile holding another spelling, so an untouched line here is a save that
+    // answers 200 over a model profile that will not start.
     #[test]
     fn set_key_of_an_equal_value_rewrites_a_key_spelled_in_another_case() {
         for eol in ["\n", "\r\n"] {

@@ -1,5 +1,5 @@
-//! `PUT /api/profiles/model/{id}`: the save of one preset's page (ARCHITECTURE.md
-//! "Saving a preset from the web", slice 4; `fe/briefs/api-contract.md`),
+//! `PUT /api/profiles/model/{id}`: the save of one model profile's page (ARCHITECTURE.md
+//! "Saving a model profile from the web", slice 4; `fe/briefs/api-contract.md`),
 //! through `pai_bff::router_with_session_and_write_timeout` with a fake manager
 //! client and a fake authenticator (never the real bus, pipe, PAM or LogonUser).
 //! Every request runs under a deadline, so a bff that waits on the manager
@@ -8,7 +8,7 @@
 //! The file is a file of its own beside `tests/presets_switch.rs` (the switch)
 //! and `tests/preset_read.rs` (the read), because the save asks the manager for
 //! a compare-and-swap write of the file that HOLDS the section, and answers the
-//! revision of the section as written. The fake here keeps the two preset files
+//! revision of the section as written. The fake here keeps the two model profile files
 //! live: a compare and swap lands only when `expected` is the text the fake
 //! answered for that file in this very test, and every write is recorded as
 //! `(name, contents, expected)` so a test pins the whole text the save computed,
@@ -32,8 +32,8 @@
 //!   `payload-too-large`, also with no manager call;
 //! - the section: `models.ini` read as the signed-in user, and the section
 //!   matched in any letter case; else `models.ini.disabled`; else 404
-//!   `no-model-profile-named`, the id echoed only when it is a name a preset can carry.
-//!   llama-server's global `[*]` is not a preset: the same 404 with no args;
+//!   `no-model-profile-named`, the id echoed only when it is a name a model profile can carry.
+//!   llama-server's global `[*]` is not a model profile: the same 404 with no args;
 //! - the section revision: the digest of `<file name> LF <section text>` under
 //!   the bff's key. A body carrying another one is 409 `model-profile-changed-elsewhere`
 //!   with no write, and that includes the revision of the same section in the
@@ -113,8 +113,8 @@ const CLIENT: &str = "127.0.0.1:51000";
 const KEY_A: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const KEY_B: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
 
-/// The names the manager knows the engine's preset files by.
-const PRESETS: &str = "models.ini";
+/// The names the manager knows the engine's model profile files by.
+const MODELS: &str = "models.ini";
 const DISABLED: &str = "models.ini.disabled";
 
 /// The body cap of `origin::MAX_BODY`, copied here (it is private to the bff):
@@ -127,7 +127,7 @@ const ALPHA: &str = "alpha";
 const QWEN: &str = "Qwen";
 const MISTRAL: &str = "mistral-7b";
 
-/// A `models.ini` with two switched-on presets. `[alpha]` carries an inline
+/// A `models.ini` with two switched-on model profiles. `[alpha]` carries an inline
 /// comment on a line the tests edit, a key to remove, and a blank line before
 /// the next section, so the save's in-place edit has bytes to leave alone.
 const FILE_ON: &str = "\
@@ -143,7 +143,7 @@ load-on-startup = 1\r\n\
 temp = 0.7\r\n\
 ";
 
-/// A `models.ini.disabled` with one switched-off preset, written as the
+/// A `models.ini.disabled` with one switched-off model profile, written as the
 /// configurator writes it (its header, then the section).
 const FILE_OFF: &str = "\
 ; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
@@ -342,7 +342,7 @@ fn the_helper_is_the_published_siphash_2_4() {
 /// The revision of `[alpha]` of `FILE_ON` under this router's key: the one a
 /// page read from these fixtures sends back.
 fn alpha_revision() -> String {
-    rev(&KEY_A, PRESETS, FILE_ON, ALPHA)
+    rev(&KEY_A, MODELS, FILE_ON, ALPHA)
 }
 
 /// The body of a save: `{revision, values}`, the contract's shape.
@@ -676,7 +676,7 @@ impl ManagerClient for FakeManager {
         }
     }
 
-    /// The unguarded write: a preset save has no reason to ask for it.
+    /// The unguarded write: a model profile save has no reason to ask for it.
     fn write_file(
         &self,
         name: &str,
@@ -862,7 +862,7 @@ fn app_for_full(
     }
 }
 
-/// A router over a manager that keeps the preset files live, with the manager's
+/// A router over a manager that keeps the model profile files live, with the manager's
 /// call log, the number of connects, the principal of each, and this router's
 /// revision key.
 struct App {
@@ -875,10 +875,10 @@ struct App {
     tick: Arc<AtomicU64>,
 }
 
-/// The manager of the two preset files, as `FILE_ON` and `FILE_OFF`.
+/// The manager of the two model profile files, as `FILE_ON` and `FILE_OFF`.
 fn app_holding(on: &str, off: &str) -> App {
     app_for_full(
-        &[(PRESETS, on), (DISABLED, off)],
+        &[(MODELS, on), (DISABLED, off)],
         &[],
         Ok(()),
         TIMEOUT,
@@ -890,7 +890,7 @@ fn app_holding(on: &str, off: &str) -> App {
 /// `TIMEOUT`: the seam a test of the write's own limit uses.
 fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> App {
     app_for_full(
-        &[(PRESETS, on), (DISABLED, off)],
+        &[(MODELS, on), (DISABLED, off)],
         &[],
         Ok(()),
         write_timeout,
@@ -902,7 +902,7 @@ fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> Ap
 /// bff.
 fn app_holding_key_b(on: &str, off: &str) -> App {
     app_for_full(
-        &[(PRESETS, on), (DISABLED, off)],
+        &[(MODELS, on), (DISABLED, off)],
         &[],
         Ok(()),
         TIMEOUT,
@@ -914,7 +914,7 @@ fn app_holding_key_b(on: &str, off: &str) -> App {
 /// principals: the member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
     app_for_full(
-        &[(PRESETS, on), (DISABLED, off)],
+        &[(MODELS, on), (DISABLED, off)],
         refuse,
         Ok(()),
         TIMEOUT,
@@ -922,7 +922,7 @@ fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
     )
 }
 
-/// The manager of no preset file at all: neither file exists, so no id is named.
+/// The manager of no model profile file at all: neither file exists, so no id is named.
 fn app_no_files() -> App {
     app_for_full(&[], &[], Ok(()), TIMEOUT, KEY_A)
 }
@@ -930,7 +930,7 @@ fn app_no_files() -> App {
 /// The app that cannot reach the manager at all.
 fn app_no_manager() -> App {
     app_for_full(
-        &[(PRESETS, FILE_ON), (DISABLED, FILE_OFF)],
+        &[(MODELS, FILE_ON), (DISABLED, FILE_OFF)],
         &[],
         Err(ClientError::Unavailable),
         TIMEOUT,
@@ -1048,7 +1048,7 @@ impl App {
     }
 
     /// The `write_file` calls the manager was asked for, in order. The save has
-    /// no reason to ask for one: both preset files exist.
+    /// no reason to ask for one: both model profile files exist.
     fn plain_writes(&self) -> Vec<(String, String)> {
         self.live
             .plain_writes
@@ -1062,7 +1062,7 @@ impl App {
         self.writes().is_empty() && self.plain_writes().is_empty()
     }
 
-    /// The text of one preset file, as the manager holds it now: `None` for a
+    /// The text of one model profile file, as the manager holds it now: `None` for a
     /// file that is not there.
     fn file_text(&self, name: &str) -> Option<String> {
         self.live
@@ -1268,7 +1268,7 @@ impl App {
     /// Signed in as `alice`, the save of `id` with `values` and the fresh
     /// revision of the section `id` of `FILE_ON`.
     async fn save_on(&self, id: &str, values: Value) -> Reply {
-        let revision = rev(&KEY_A, PRESETS, FILE_ON, id);
+        let revision = rev(&KEY_A, MODELS, FILE_ON, id);
         self.save_on_revision(id, &revision, values).await
     }
 
@@ -1337,11 +1337,11 @@ async fn save_without_a_session_is_401_and_the_manager_is_not_asked() {
     assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// Every signed-in administrator is served the save, and the manager is asked
-/// for them: `root` saves the preset as `root`.
+/// for them: `root` saves the model profile as `root`.
 #[tokio::test]
 async fn save_is_served_to_every_signed_in_administrator() {
     let app = app_holding(FILE_ON, FILE_OFF);
@@ -1349,7 +1349,7 @@ async fn save_is_served_to_every_signed_in_administrator() {
     let body = save_body(&alpha_revision(), json!({ "ctx-size": "8192" }));
     app.save(ALPHA, &body, Some(&cookie))
         .await
-        .assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("root".to_string())],
@@ -1371,7 +1371,7 @@ async fn save_a_name_in_the_request_is_never_the_principal() {
         &[("x-user", "root")],
     )
     .await
-    .assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
+    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("alice".to_string())],
@@ -1405,10 +1405,10 @@ async fn save_with_a_foreign_origin_is_refused_before_the_manager_is_read() {
 // ---------------------------------------------------------------------------
 
 /// The bodies, each built from the well-typed one with one thing broken, that
-/// are no preset save at all: 400 `model-profiles-malformed`, and no manager call of
+/// are no model profile save at all: 400 `model-profiles-malformed`, and no manager call of
 /// any kind. The design answers the body before it reads a file.
 #[tokio::test]
-async fn save_body_that_is_no_preset_save_is_400_and_reaches_no_manager() {
+async fn save_body_that_is_no_model_profile_save_is_400_and_reaches_no_manager() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let cookie = app.sign_in().await;
     let fresh = alpha_revision();
@@ -1449,7 +1449,7 @@ async fn save_body_that_is_no_preset_save_is_400_and_reaches_no_manager() {
         );
     }
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// The content type the body must carry: the route reads the raw bytes, so the
@@ -1483,7 +1483,7 @@ async fn save_a_body_whose_content_type_is_not_json_is_400_and_reaches_no_manage
         assert!(app.calls().is_empty(), "{case}: {:?}", app.calls());
     }
     assert!(app.no_write_asked(), "nothing written: {:?}", app.writes());
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// The essence of the type is what counts, not the whole header: the type the
@@ -1501,9 +1501,9 @@ async fn save_a_json_content_type_with_a_charset_is_served() {
         Some("application/json; charset=utf-8"),
     )
     .await
-    .assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
+    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
         "the save landed"
     );
@@ -1530,7 +1530,7 @@ async fn save_key_outside_the_web_list_is_400_and_reaches_no_manager() {
     }
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// A value that is no one-line text: neither a string nor `null`, empty after
@@ -1559,7 +1559,7 @@ async fn save_value_that_is_no_one_line_text_is_400_and_reaches_no_manager() {
         );
     }
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// `;` and `#` end a value for every reader of the file, so the bff refuses
@@ -1584,7 +1584,7 @@ async fn save_value_with_a_comment_marker_is_422_from_the_bff_with_the_field() {
     );
     assert!(app.calls().is_empty(), "{:?}", app.calls());
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// A body over the extractor's cap is 413 `payload-too-large`, answered before
@@ -1611,7 +1611,7 @@ async fn save_body_over_the_size_limit_is_413_and_reaches_no_manager() {
 /// The method the contract does not list is the router's 405, and asks the
 /// manager nothing. The save and the read are the methods of that path.
 #[tokio::test]
-async fn save_is_the_only_write_method_the_preset_path_serves() {
+async fn save_is_the_only_write_method_the_model_profile_path_serves() {
     for method in [Method::POST, Method::DELETE, Method::PATCH] {
         let app = app_holding(FILE_ON, FILE_OFF);
         let cookie = app.sign_in().await;
@@ -1659,17 +1659,17 @@ async fn save_of_a_path_below_the_section_is_the_routers_own_answer() {
 // The section: where it is, and which id is one
 // ---------------------------------------------------------------------------
 
-/// The contract's answer for a name no preset has, in either file: 404
+/// The contract's answer for a name no model profile has, in either file: 404
 /// `no-model-profile-named` with the id as its only arg, and nothing written.
 #[tokio::test]
 async fn save_unknown_id_is_404_with_the_id_and_writes_nothing() {
     let app = app_holding(FILE_ON, FILE_OFF);
-    let revision = rev(&KEY_A, PRESETS, FILE_ON, ALPHA);
+    let revision = rev(&KEY_A, MODELS, FILE_ON, ALPHA);
     let rep = app
         .save_on_revision("nope", &revision, json!({ "ctx-size": "8192" }))
         .await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &["nope"]);
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
     assert_eq!(app.file_text(DISABLED).as_deref(), Some(FILE_OFF));
     assert!(app.no_write_asked(), "nothing written");
     assert_eq!(
@@ -1679,16 +1679,16 @@ async fn save_unknown_id_is_404_with_the_id_and_writes_nothing() {
     );
 }
 
-/// A machine with no preset file at all answers the same 404, and no file is
+/// A machine with no model profile file at all answers the same 404, and no file is
 /// created by a save.
 #[tokio::test]
-async fn save_with_no_preset_file_is_404_and_creates_nothing() {
+async fn save_with_no_model_profile_file_is_404_and_creates_nothing() {
     let app = app_no_files();
     let rep = app
         .save_on_revision(ALPHA, "0000000000000000", json!({ "ctx-size": "8192" }))
         .await;
     rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[ALPHA]);
-    assert_eq!(app.file_text(PRESETS), None, "no models.ini was created");
+    assert_eq!(app.file_text(MODELS), None, "no models.ini was created");
     assert_eq!(
         app.file_text(DISABLED),
         None,
@@ -1697,8 +1697,8 @@ async fn save_with_no_preset_file_is_404_and_creates_nothing() {
     assert!(app.no_write_asked(), "nothing written");
 }
 
-/// llama-server's global `[*]` section is not a preset: naming it, raw,
-/// url-encoded or bracketed, is the 404 of a name no preset carries, with no
+/// llama-server's global `[*]` section is not a model profile: naming it, raw,
+/// url-encoded or bracketed, is the 404 of a name no model profile carries, with no
 /// args (the id check refuses `*`, so the id is echoed nowhere). The section
 /// stays where it is.
 #[tokio::test]
@@ -1719,7 +1719,7 @@ model = /models/alpha.gguf\r\n\
         rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
     }
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(on),
         "the global section is where it was"
     );
@@ -1728,10 +1728,10 @@ model = /models/alpha.gguf\r\n\
 
 /// The id is matched against section headers, and the two file names are the
 /// fixed ones, so a URL carrying a path, a newline or a bracket, and a run of
-/// dots no preset carries, is a name no preset has: the same 404 with no args,
+/// dots no model profile carries, is a name no model profile has: the same 404 with no args,
 /// no write of any kind, and no file created.
 #[tokio::test]
-async fn save_a_name_no_preset_can_carry_is_404_with_no_args() {
+async fn save_a_name_no_model_profile_can_carry_is_404_with_no_args() {
     for id in [
         "two%0Alines",
         "two%0Dlines",
@@ -1747,7 +1747,7 @@ async fn save_a_name_no_preset_can_carry_is_404_with_no_args() {
             .await;
         rep.assert_error_with_args(StatusCode::NOT_FOUND, "no-model-profile-named", &[]);
         assert!(app.no_write_asked(), "{id}: {:?}", app.calls());
-        assert_eq!(app.file_text(PRESETS), None, "{id}: no file created");
+        assert_eq!(app.file_text(MODELS), None, "{id}: no file created");
         assert_eq!(app.file_text(DISABLED), None, "{id}: no file created");
     }
 }
@@ -1757,7 +1757,8 @@ async fn save_a_name_no_preset_can_carry_is_404_with_no_args() {
 /// byte, and answers `running: false` without asking the manager for a single
 /// instance state (the engine never reads that file).
 #[tokio::test]
-async fn save_a_switched_off_preset_is_written_to_the_disabled_file_and_answers_running_false() {
+async fn save_a_switched_off_model_profile_is_written_to_the_disabled_file_and_answers_running_false(
+) {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.set_state("default", InstanceState::Active);
     let revision = rev(&KEY_A, DISABLED, FILE_OFF, MISTRAL);
@@ -1780,7 +1781,7 @@ async fn save_a_switched_off_preset_is_written_to_the_disabled_file_and_answers_
         "the disabled file carries the edit"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "models.ini is byte for byte what it was"
     );
@@ -1801,7 +1802,7 @@ async fn save_a_switched_off_preset_is_written_to_the_disabled_file_and_answers_
 #[tokio::test]
 async fn save_matches_the_id_ignoring_case() {
     let app = app_holding(FILE_ON, FILE_OFF);
-    let revision = rev(&KEY_A, PRESETS, FILE_ON, QWEN);
+    let revision = rev(&KEY_A, MODELS, FILE_ON, QWEN);
     let rep = app
         .save_on_revision("qwen", &revision, json!({ "temp": "0.2" }))
         .await;
@@ -1817,14 +1818,14 @@ model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
 load-on-startup = 1\r\n\
 temp = 0.2\r\n\
 ";
-    rep.assert_saved(&rev(&KEY_A, PRESETS, wanted, QWEN), false);
+    rep.assert_saved(&rev(&KEY_A, MODELS, wanted, QWEN), false);
     assert_eq!(
         app.writes(),
-        vec![(PRESETS.to_string(), wanted.to_string(), FILE_ON.to_string())],
+        vec![(MODELS.to_string(), wanted.to_string(), FILE_ON.to_string())],
         "the section of [Qwen] edited, spelled as the file spells it"
     );
     assert_eq!(
-        section_of(&app.file_text(PRESETS).unwrap(), ALPHA),
+        section_of(&app.file_text(MODELS).unwrap(), ALPHA),
         section_of(FILE_ON, ALPHA),
         "the section the save did not touch is byte for byte as it was"
     );
@@ -1844,12 +1845,12 @@ temp = 0.2\r\n\
 async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_returns() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    let written = rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA);
+    let written = rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA);
     rep.assert_saved(&written, false);
     assert_eq!(
         app.writes(),
         vec![(
-            PRESETS.to_string(),
+            MODELS.to_string(),
             ON_CTX_8192.to_string(),
             FILE_ON.to_string()
         )],
@@ -1876,7 +1877,7 @@ async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_r
          call beyond the save, the write as the signed-in user, then the state"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
         "the file carries what the save wrote"
     );
@@ -1903,8 +1904,8 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "ctx-size": "8192" }))
         .await
-        .assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
-    let text = app.file_text(PRESETS).expect("models.ini");
+        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+    let text = app.file_text(MODELS).expect("models.ini");
     assert!(
         text.starts_with("; The presets llama-server is offered (--models-preset).\r\n"),
         "the file's own header survives: {text:?}"
@@ -1927,9 +1928,9 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "top-k": "40" }))
         .await
-        .assert_saved(&rev(&KEY_A, PRESETS, ON_TOPK_40, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_TOPK_40, ALPHA), false);
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(ON_TOPK_40),
         "the new key lands inside [alpha], not at the end of the file"
     );
@@ -1938,12 +1939,10 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "n-gpu-layers": Value::Null }))
         .await
-        .assert_saved(&rev(&KEY_A, PRESETS, ON_NO_NGPU, ALPHA), false);
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(ON_NO_NGPU));
+        .assert_saved(&rev(&KEY_A, MODELS, ON_NO_NGPU, ALPHA), false);
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(ON_NO_NGPU));
     assert!(
-        !app.file_text(PRESETS)
-            .unwrap()
-            .contains("n-gpu-layers = 99"),
+        !app.file_text(MODELS).unwrap().contains("n-gpu-layers = 99"),
         "the line and its ending are gone"
     );
 }
@@ -1960,7 +1959,7 @@ async fn save_a_value_the_file_holds_writes_nothing_and_keeps_the_line() {
     rep.assert_saved(&fresh, false);
     assert!(app.no_write_asked(), "nothing to write: {:?}", app.writes());
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the line, its spacing and its inline comment are byte for byte as they were"
     );
@@ -1975,7 +1974,7 @@ async fn save_no_changes_is_200_with_the_same_revision_and_no_write() {
     let rep = app.save_on(ALPHA, json!({})).await;
     rep.assert_saved(&fresh, false);
     assert!(app.no_write_asked(), "no key, no write: {:?}", app.writes());
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// A stale revision is 409 `model-profile-changed-elsewhere` with nothing written, the
@@ -1986,7 +1985,7 @@ async fn save_a_stale_revision_is_409_with_no_write() {
     for values in [json!({ "ctx-size": "8192" }), json!({})] {
         let app = app_holding(FILE_ON, FILE_OFF);
         // The revision of the text a first save wrote: the page is one save behind.
-        let stale = rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA);
+        let stale = rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA);
         let cookie = app.sign_in().await;
         let rep = app
             .save(ALPHA, &save_body(&stale, values.clone()), Some(&cookie))
@@ -1998,7 +1997,7 @@ async fn save_a_stale_revision_is_409_with_no_write() {
             app.calls()
         );
         assert_eq!(
-            app.file_text(PRESETS).as_deref(),
+            app.file_text(MODELS).as_deref(),
             Some(FILE_ON),
             "the file is as it was"
         );
@@ -2009,7 +2008,7 @@ async fn save_a_stale_revision_is_409_with_no_write() {
 }
 
 /// The revision carries the file's name, so the same section's text in the
-/// other file is another preset: a page that read the disabled copy is 409
+/// other file is another model profile: a page that read the disabled copy is 409
 /// against `models.ini`, and nothing is written.
 #[tokio::test]
 async fn save_a_revision_taken_from_the_other_file_is_409() {
@@ -2021,7 +2020,7 @@ async fn save_a_revision_taken_from_the_other_file_is_409() {
         .await;
     rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
     assert_eq!(app.file_text(DISABLED).as_deref(), Some(FILE_OFF));
 }
 
@@ -2036,7 +2035,7 @@ async fn save_a_revision_of_another_router_is_409() {
         .await;
     rep.assert_error(StatusCode::CONFLICT, "model-profile-changed-elsewhere");
     assert!(app.no_write_asked(), "nothing written: {:?}", app.calls());
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// The compare and swap found its file changed after the read: 409
@@ -2062,7 +2061,7 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "a refused compare leaves the file"
     );
@@ -2081,7 +2080,7 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
 /// with the manager's own `args`. `field` is `args[0]` for the rules that name
 /// their key; `fit-target-format`, the MoE cache pair, the load-on-startup pair,
 /// `model-profile-no-model` and the `override-no-*` pair name a position, a count or
-/// nothing, so each maps to the key of its control; the pair about the preset's
+/// nothing, so each maps to the key of its control; the pair about the model profile's
 /// name marks no field at all (the next test). The section is never written, and
 /// a 422 is the manager's news about the values, not a refusal of the user: the
 /// session lives, and no state is asked.
@@ -2141,14 +2140,11 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
         rep.assert_refused(key, args, field);
         assert_eq!(
             app.calls(),
-            vec![
-                format!("read {PRESETS}"),
-                format!("write-if alice {PRESETS}")
-            ],
+            vec![format!("read {MODELS}"), format!("write-if alice {MODELS}")],
             "{key}: the answer is the write's refusal, and no state is asked"
         );
         assert_eq!(
-            app.file_text(PRESETS).as_deref(),
+            app.file_text(MODELS).as_deref(),
             Some(FILE_ON),
             "{key}: the manager wrote nothing"
         );
@@ -2158,7 +2154,7 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
     }
 }
 
-/// The two refusals about the preset's name mark no field: there is no key of
+/// The two refusals about the model profile's name mark no field: there is no key of
 /// the section beside them, so the answer carries no `field` member at all.
 #[tokio::test]
 async fn save_a_refusal_about_the_name_carries_no_field() {
@@ -2177,7 +2173,7 @@ async fn save_a_refusal_about_the_name_carries_no_field() {
             )
             .await;
         rep.assert_refused_without_field(key, &[ALPHA]);
-        assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+        assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
         assert!(app.writes().len() == 1, "the write was asked: refused");
     }
 }
@@ -2206,7 +2202,7 @@ async fn save_a_refused_read_is_403_and_ends_that_session_alone() {
     rep.assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     assert_eq!(
         app.calls(),
-        vec![format!("read {PRESETS}")],
+        vec![format!("read {MODELS}")],
         "the read is refused, nothing else is asked"
     );
     assert_eq!(
@@ -2215,7 +2211,7 @@ async fn save_a_refused_read_is_403_and_ends_that_session_alone() {
         "the save connects as the signed-in user"
     );
     assert!(app.no_write_asked(), "nothing written");
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
     app.get("/api/session", Some(&alice))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -2242,13 +2238,10 @@ async fn save_a_refused_write_is_403_and_ends_the_session() {
     rep.assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
     assert_eq!(
         app.calls(),
-        vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}")
-        ],
+        vec![format!("read {MODELS}"), format!("write-if alice {MODELS}")],
         "the read landed, the write is refused"
     );
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
     app.get("/api/session", Some(&cookie))
         .await
         .assert_error(StatusCode::UNAUTHORIZED, "session-required");
@@ -2306,7 +2299,7 @@ async fn save_keeps_the_session_for_every_failure_that_is_no_refusal() {
         app.get("/api/session", Some(&cookie))
             .await
             .assert_signed_in_as("alice");
-        assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON), "{case}");
+        assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON), "{case}");
     }
 }
 
@@ -2347,7 +2340,7 @@ async fn save_a_parked_read_answers_503_and_the_cut_off_task_never_writes() {
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the file is what it was"
     );
@@ -2387,7 +2380,7 @@ async fn save_an_unreachable_manager_is_503_and_writes_nothing() {
         .await;
     rep.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(gone.no_write_asked(), "nothing written");
-    assert_eq!(gone.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(gone.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// The manager is reached for the write and answers `Unavailable` there: a
@@ -2411,14 +2404,11 @@ async fn save_when_the_write_answers_unavailable_is_504() {
     rep.assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
     assert_eq!(
         app.calls(),
-        vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}")
-        ],
+        vec![format!("read {MODELS}"), format!("write-if alice {MODELS}")],
         "the write was asked: the answer is about the write"
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the manager answered Unavailable and wrote nothing: the file is as it holds it"
     );
@@ -2448,16 +2438,13 @@ async fn save_a_parked_write_answers_504_once_the_saves_limit_passes() {
     assert!(app.writes_gated() >= 1, "the write was parked");
     assert_eq!(
         app.calls(),
-        vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}")
-        ],
+        vec![format!("read {MODELS}"), format!("write-if alice {MODELS}")],
         "the write was asked: the answer is about the write"
     );
     app.release_write_gate();
     tokio::time::sleep(GRACE).await;
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
         "the parked write landed after the answer: the outcome the 504 cannot name"
     );
@@ -2482,9 +2469,9 @@ async fn save_a_write_that_outlasts_the_read_limit_is_not_cut_off() {
             Some(&cookie),
         )
         .await;
-    rep.assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
         "the slow write landed"
     );
@@ -2511,7 +2498,7 @@ async fn save_a_read_that_outlasts_its_limit_is_cut_off_before_the_write() {
         "no write was asked: {:?}",
         app.writes()
     );
-    assert_eq!(app.file_text(PRESETS).as_deref(), Some(FILE_ON));
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
 /// A manager failure that is no refusal, no check and no lost compare is 502
@@ -2547,10 +2534,10 @@ async fn save_the_managers_other_answer_is_502_without_its_words() {
 }
 
 // ---------------------------------------------------------------------------
-// `running`: the instances serving the preset
+// `running`: the instances serving the model profile
 // ---------------------------------------------------------------------------
 
-/// A preset of `models.ini` is served by every instance of the engine, so
+/// A model profile of `models.ini` is served by every instance of the engine, so
 /// `running` is true when any of them is up: the instances are listed, then
 /// their states asked in order until one is `active`.
 #[tokio::test]
@@ -2559,12 +2546,12 @@ async fn save_running_is_true_when_any_instance_is_active() {
     app.set_instances(&["one", "default"]);
     app.set_state("default", InstanceState::Active);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), true);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
     assert_eq!(
         app.calls(),
         vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}"),
+            format!("read {MODELS}"),
+            format!("write-if alice {MODELS}"),
             "list".to_string(),
             "status one".to_string(),
             "status default".to_string(),
@@ -2581,12 +2568,12 @@ async fn save_running_is_true_for_an_activating_instance_and_the_asks_stop_there
     app.set_instances(&["default", "one"]);
     app.set_state("default", InstanceState::Activating);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), true);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
     assert_eq!(
         app.calls(),
         vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}"),
+            format!("read {MODELS}"),
+            format!("write-if alice {MODELS}"),
             "list".to_string(),
             "status default".to_string(),
         ],
@@ -2602,12 +2589,12 @@ async fn save_running_is_false_when_every_instance_is_inactive() {
     app.set_instances(&["one", "default"]);
     app.set_state("one", InstanceState::Deactivating);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), false);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
     assert_eq!(
         app.calls(),
         vec![
-            format!("read {PRESETS}"),
-            format!("write-if alice {PRESETS}"),
+            format!("read {MODELS}"),
+            format!("write-if alice {MODELS}"),
             "list".to_string(),
             "status one".to_string(),
             "status default".to_string(),
@@ -2632,9 +2619,9 @@ async fn save_running_is_true_when_the_state_read_fails_after_the_write() {
         app.set_state("default", InstanceState::Active);
         app.set_status_outcome(outcome);
         let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-        rep.assert_saved(&rev(&KEY_A, PRESETS, ON_CTX_8192, ALPHA), true);
+        rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
         assert_eq!(
-            app.file_text(PRESETS).as_deref(),
+            app.file_text(MODELS).as_deref(),
             Some(ON_CTX_8192),
             "{case}: the write landed"
         );
@@ -2667,7 +2654,7 @@ async fn save_no_changes_with_a_state_read_outliving_the_limit_is_200_running_tr
         app.writes()
     );
     assert_eq!(
-        app.file_text(PRESETS).as_deref(),
+        app.file_text(MODELS).as_deref(),
         Some(FILE_ON),
         "the file is as it was read"
     );

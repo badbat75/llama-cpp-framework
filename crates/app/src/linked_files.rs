@@ -1,24 +1,24 @@
-//! The model files a preset links, and deleting them together with the preset.
+//! The model files a model profile links, and deleting them together with the model profile.
 //!
-//! A preset names up to three files: `model` (every shard of a split model),
+//! A model profile names up to three files: `model` (every shard of a split model),
 //! `mmproj` and `model-draft` (an MTP head, a DFlash or a DSpark drafter).
-//! Deleting the preset can take them too: the Models tab's Delete dialog
-//! (`gui/models_tab.rs`, one tick per file) and `preset delete --delete-files`
+//! Deleting the model profile can take them too: the Models tab's Delete dialog
+//! (`gui/models_tab.rs`, one tick per file) and `model-profile delete --delete-files`
 //! (`cli.rs`). Deleting gigabytes is not undoable, so the rules are:
 //!
 //! - **Keep is the default.** Nothing here runs unless the user picked the
 //!   files: every tick starts cleared, the CLI needs the flag.
-//! - **A file another preset references is never deleted**, whichever INI file
-//!   that preset sits in (`models.ini` or `models.ini.disabled`: callers pass
-//!   `presets::load_listed`, both files). `users` names those presets, the
+//! - **A file another model profile references is never deleted**, whichever INI file
+//!   that model profile sits in (`models.ini` or `models.ini.disabled`: callers pass
+//!   `presets::load_listed`, both files). `users` names those model profiles, the
 //!   dialog shows the file as in use and cannot tick it, and `delete` skips it
 //!   unless the CLI's `--even-if-shared` asks otherwise. Paths are compared the
 //!   way the pickers match them (`model_scan::paths_eq`: separators and ASCII
 //!   case folded), which can only err toward "in use", the safe side.
 //! - **A split model is ONE entry.** `shard_set` derives every shard's name from
-//!   the `-NNNNN-of-NNNNN` suffix (the shard the preset names may be any of
+//!   the `-NNNNN-of-NNNNN` suffix (the shard the model profile names may be any of
 //!   them), the entry deletes every shard that exists, and the in-use check
-//!   expands the OTHER presets' paths the same way, so a preset naming shard 2
+//!   expands the OTHER model profiles' paths the same way, so a model profile naming shard 2
 //!   of the set still holds it.
 //! - **Empty folders go, and only inside ModelsDir's four subfolders.** A
 //!   Hugging Face download lands in `<ModelsDir>\<sub>\<org>\<repo>\` (`hf.rs`),
@@ -29,7 +29,7 @@
 //!   which is never removed itself. The bound is lexical (component by
 //!   component, a `..` anywhere refuses the walk), and `fs::remove_dir` is the
 //!   second guard: it fails on a folder that is not empty. A file outside those
-//!   subfolders can still be deleted when the preset links it there; nothing
+//!   subfolders can still be deleted when the model profile links it there; nothing
 //!   around it is touched.
 //!
 //! Everything but `linked_files` (which stats the files), `delete` and
@@ -41,9 +41,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::model_scan::{self, Category};
-use crate::presets::Preset;
+use crate::presets::ModelProfile;
 
-/// Which key of the preset links the file.
+/// Which key of the model profile links the file.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Role {
     Model,
@@ -63,8 +63,8 @@ impl Role {
         }
     }
 
-    /// The preset's value for this key, as written (untrimmed).
-    pub fn path_of(self, p: &Preset) -> &str {
+    /// The model profile's value for this key, as written (untrimmed).
+    pub fn path_of(self, p: &ModelProfile) -> &str {
         match self {
             Role::Model => &p.model,
             Role::Mmproj => &p.mmproj,
@@ -73,18 +73,18 @@ impl Role {
     }
 }
 
-/// One file (or one split model) a preset links that exists on disk.
+/// One file (or one split model) a model profile links that exists on disk.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkedFile {
     pub role: Role,
-    /// The path as the preset writes it.
+    /// The path as the model profile writes it.
     pub path: PathBuf,
     /// What deleting the entry removes: the shards of a split model that
     /// exist, else the one file. Never empty.
     pub files: Vec<PathBuf>,
     /// Bytes on disk, every file of `files` together.
     pub size: u64,
-    /// The OTHER presets referencing any of `files`, by id: non-empty means in
+    /// The OTHER model profiles referencing any of `files`, by id: non-empty means in
     /// use, so the dialog cannot tick it and `delete` keeps it.
     pub used_by: Vec<String>,
 }
@@ -132,7 +132,7 @@ fn file_name(p: &Path) -> String {
         .unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
-/// `[a], [b]`: preset ids the way every status line writes them.
+/// `[a], [b]`: model profile ids the way every status line writes them.
 fn bracketed(ids: &[String]) -> String {
     ids.iter()
         .map(|id| format!("[{id}]"))
@@ -173,8 +173,8 @@ fn same_path(a: &Path, b: &Path) -> bool {
     model_scan::paths_eq(&a.to_string_lossy(), &b.to_string_lossy())
 }
 
-/// Every path a preset references, split models expanded to all their shards.
-fn referenced(p: &Preset) -> Vec<PathBuf> {
+/// Every path a model profile references, split models expanded to all their shards.
+fn referenced(p: &ModelProfile) -> Vec<PathBuf> {
     Role::ALL
         .iter()
         .map(|r| r.path_of(p).trim())
@@ -183,9 +183,9 @@ fn referenced(p: &Preset) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The presets other than `target_id` (compared ignoring ASCII case, like the
+/// The model profiles other than `target_id` (compared ignoring ASCII case, like the
 /// INI layer) that reference any of `files`, in the order of `all`.
-pub fn users(files: &[PathBuf], target_id: &str, all: &[Preset]) -> Vec<String> {
+pub fn users(files: &[PathBuf], target_id: &str, all: &[ModelProfile]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for p in all.iter().filter(|p| !p.id.eq_ignore_ascii_case(target_id)) {
         let hit = referenced(p)
@@ -200,9 +200,9 @@ pub fn users(files: &[PathBuf], target_id: &str, all: &[Preset]) -> Vec<String> 
 
 /// The files `target` links that exist on disk, model first, then the mmproj,
 /// then the drafter; a path linked under two keys is listed once. `all` is
-/// every preset of both INI files (it may include `target` itself, which is
+/// every model profile of both INI files (it may include `target` itself, which is
 /// skipped by id), for the in-use check.
-pub fn linked_files(target: &Preset, all: &[Preset]) -> Vec<LinkedFile> {
+pub fn linked_files(target: &ModelProfile, all: &[ModelProfile]) -> Vec<LinkedFile> {
     let mut out: Vec<LinkedFile> = Vec::new();
     let mut seen: Vec<PathBuf> = Vec::new();
     for role in Role::ALL {
@@ -262,7 +262,7 @@ pub fn selection_summary(files: &[LinkedFile], ticked: &[bool]) -> String {
 pub struct Outcome {
     /// Each file removed, with its size.
     pub removed: Vec<(PathBuf, u64)>,
-    /// Entries skipped because another preset uses them: (name, preset ids).
+    /// Entries skipped because another model profile uses them: (name, model profile ids).
     pub kept: Vec<(String, Vec<String>)>,
     /// Files that could not be removed, with the error.
     pub failed: Vec<(PathBuf, String)>,
@@ -271,7 +271,7 @@ pub struct Outcome {
 }
 
 /// Delete every file of `chosen`, then the folders that left empty. An entry in
-/// use (`used_by`, which the caller computes against the presets as they stand
+/// use (`used_by`, which the caller computes against the model profiles as they stand
 /// NOW) is kept unless `even_if_shared`. A file that fails is reported and the
 /// rest still go: nothing here is all-or-nothing, since what was removed cannot
 /// be put back anyway.
@@ -386,7 +386,7 @@ fn component_eq(a: &str, b: &str) -> bool {
 }
 
 /// The status line after a delete: `(text, is_error)`. An error only when a
-/// file could not be removed; a file kept because another preset uses it is
+/// file could not be removed; a file kept because another model profile uses it is
 /// the rule working, not a failure.
 pub fn report(id: &str, out: &Outcome) -> (String, bool) {
     let mut parts = vec![strings::fill("deleted-preset", &[&id])];
@@ -422,13 +422,13 @@ pub fn report(id: &str, out: &Outcome) -> (String, bool) {
 mod tests {
     use super::*;
 
-    fn preset(id: &str, model: &str, mmproj: &str, draft: &str) -> Preset {
-        Preset {
+    fn model_profile(id: &str, model: &str, mmproj: &str, draft: &str) -> ModelProfile {
+        ModelProfile {
             id: id.into(),
             model: model.into(),
             mmproj: mmproj.into(),
             model_draft: draft.into(),
-            ..Preset::default()
+            ..ModelProfile::default()
         }
     }
 
@@ -474,23 +474,23 @@ mod tests {
     }
 
     #[test]
-    fn users_names_other_presets_in_either_file_and_matches_shards() {
+    fn users_names_other_model_profiles_in_either_file_and_matches_shards() {
         let all = vec![
-            preset(
+            model_profile(
                 "me",
                 r"C:\M\models\s-00001-of-00002.gguf",
                 r"C:\M\mmprojs\p.gguf",
                 "",
             ),
             // Names shard 2 of the same set, in another spelling.
-            preset("twin", "c:/m/models/S-00002-of-00002.gguf", "", ""),
-            preset(
+            model_profile("twin", "c:/m/models/S-00002-of-00002.gguf", "", ""),
+            model_profile(
                 "vision",
                 r"C:\M\models\other.gguf",
                 r"C:\M\mmprojs\p.gguf",
                 "",
             ),
-            preset("ME", r"C:\M\models\s-00001-of-00002.gguf", "", ""),
+            model_profile("ME", r"C:\M\models\s-00001-of-00002.gguf", "", ""),
         ];
         let model = shard_set(Path::new(r"C:\M\models\s-00001-of-00002.gguf"));
         assert_eq!(
@@ -519,8 +519,11 @@ mod tests {
         touch(&s1, 10);
         touch(&s2, 20);
         touch(&mm, 5);
-        let target = preset("t", &s(&s1), &s(&mm), &s(&m.join("mtps").join("gone.gguf")));
-        let all = vec![target.clone(), preset("other", "x.gguf", &s(&mm), "")];
+        let target = model_profile("t", &s(&s1), &s(&mm), &s(&m.join("mtps").join("gone.gguf")));
+        let all = vec![
+            target.clone(),
+            model_profile("other", "x.gguf", &s(&mm), ""),
+        ];
         let files = linked_files(&target, &all);
         assert_eq!(files.len(), 2, "a drafter not on disk is not listed");
         assert_eq!(files[0].role, Role::Model);
@@ -539,7 +542,7 @@ mod tests {
             files[1].row_detail()
         );
         // A path under two keys is one entry.
-        let doubled = preset("d", &s(&mm), &s(&mm), "");
+        let doubled = model_profile("d", &s(&mm), &s(&mm), "");
         assert_eq!(linked_files(&doubled, &[]).len(), 1);
     }
 
@@ -575,7 +578,7 @@ mod tests {
         touch(&keep, 1);
         let draft = m.join("mtps").join("org2").join("repo").join("d.gguf");
         touch(&draft, 2);
-        let target = preset("t", &s(&s1), "", &s(&draft));
+        let target = model_profile("t", &s(&s1), "", &s(&draft));
         let files = linked_files(&target, &[]);
         let out = delete(&files, &s(m), false);
         assert_eq!(out.removed.len(), 3);

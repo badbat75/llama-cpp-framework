@@ -599,10 +599,10 @@ pub(crate) fn manager_dbus_e2e() {
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
 
     // Serve `core` on one end of a socket pair, the server built on its own
     // thread (both ends handshake at once); the client on the other end,
@@ -691,7 +691,7 @@ pub(crate) fn manager_dbus_e2e() {
         assert_eq!(e.0, err_name("NotAuthorized"), "WriteFile without a sender");
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets,
+            model_profiles,
             "a refused write leaves the file"
         );
         assert_eq!(calls(&c), vec![], "nothing reached the service manager");
@@ -705,7 +705,7 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "ReadFile", &("models.ini",)).expect("ReadFile");
         assert_eq!(
             body::<(bool, String, bool)>(&r),
-            (true, presets.to_string(), false)
+            (true, model_profiles.to_string(), false)
         );
         assert_eq!(calls(&c), vec![Call::Status("default".into())]);
 
@@ -750,7 +750,7 @@ pub(crate) fn manager_dbus_e2e() {
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-            presets
+            model_profiles
         );
     }
 
@@ -1051,13 +1051,13 @@ pub(crate) fn manager_dbus_waits_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(
         sys.join("server@default.ini"),
         "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
     )
     .expect("write default");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
 
     let alice = Caller(":1.42".into());
     let gate = Gate::new();
@@ -1138,7 +1138,7 @@ pub(crate) fn manager_dbus_waits_e2e() {
     );
     assert_eq!(
         read,
-        Ok((true, presets.to_string(), false)),
+        Ok((true, model_profiles.to_string(), false)),
         "ReadFile replies"
     );
 
@@ -1170,9 +1170,9 @@ pub(crate) fn manager_dbus_checks_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
-    std::fs::write(sys.join("models.ini"), presets).expect("write presets");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
 
     let core = Arc::new(
         Manager::new(
@@ -1260,7 +1260,7 @@ pub(crate) fn manager_dbus_checks_e2e() {
     );
     let (name, message) = write(
         "models.ini",
-        &format!("{presets}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"),
+        &format!("{model_profiles}[m]\nmodel = /models/m.gguf\noverride-tensor = blk\\.0\\.ffn_up_exps\n"),
     )
     .expect_err("an override with no device");
     assert_eq!(name, invalid);
@@ -1274,12 +1274,12 @@ pub(crate) fn manager_dbus_checks_e2e() {
     );
     assert_eq!(
         std::fs::read_to_string(sys.join("models.ini")).unwrap(),
-        presets,
+        model_profiles,
         "refused: the file kept"
     );
 
     // A valid write still goes through.
-    let more = format!("{presets}[m]\nmodel = /models/m.gguf\nctx-size = 8192\n");
+    let more = format!("{model_profiles}[m]\nmodel = /models/m.gguf\nctx-size = 8192\n");
     assert_eq!(write("models.ini", &more), Ok(()));
 }
 
@@ -1312,10 +1312,10 @@ pub(crate) fn manager_dbus_principal_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("engine config dir");
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let presets = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
-    let more = format!("{presets}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n");
+    let model_profiles = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
+    let more = format!("{model_profiles}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n");
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
-    std::fs::write(sys.join("models.ini"), presets).expect("presets file");
+    std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // `core` served on one end of a socket pair (the server built on its own
@@ -1453,11 +1453,11 @@ pub(crate) fn manager_dbus_principal_e2e() {
         (true, ini.to_string(), false),
         "the key kept and nothing withheld from a member's read"
     );
-    let preset =
+    let model_profile =
         call(&client, "ReadFileAs", &("alice", "models.ini")).expect("ReadFileAs of a preset file");
     let plain = call(&client, "ReadFile", &("models.ini",)).expect("ReadFile of a preset file");
     assert_eq!(
-        preset.body().signature(),
+        model_profile.body().signature(),
         plain.body().signature(),
         "the As reply has the plain method's shape"
     );
