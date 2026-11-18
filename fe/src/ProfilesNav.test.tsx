@@ -666,14 +666,22 @@ test.each(OLD)(
         await within(main).findByRole('heading', { level: 1, name: ID }),
         old,
       ).toBeTruthy()
-      expect(profileReads(bff), old).toEqual([`/api/profiles/model/${rest}`])
+      // The h1 is the id of the address, so it is on screen in the page's first
+      // render, before the read is asked for: wait for the read, this tick is
+      // not enough.
+      await waitFor(() =>
+        expect(profileReads(bff), old).toEqual([`/api/profiles/model/${rest}`]),
+      )
     } else if (rest === 'Qwen%203') {
       // The page of `Qwen 3`: the h1 decoded, the read the address's bytes.
       expect(
         await within(main).findByRole('heading', { level: 1, name: 'Qwen 3' }),
         old,
       ).toBeTruthy()
-      expect(profileReads(bff), old).toEqual([`/api/profiles/model/${rest}`])
+      // The decoded h1 is the address's too, so the same race: wait for the read.
+      await waitFor(() =>
+        expect(profileReads(bff), old).toEqual([`/api/profiles/model/${rest}`]),
+      )
     } else if (rest === '%2E%2E') {
       // 59a: the id is `..`, no read at all. The page is behind the session
       // read, so an async finder.
