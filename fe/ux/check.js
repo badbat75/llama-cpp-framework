@@ -1,5 +1,6 @@
 // The UX check: the built web UI's pages at rest, in every browser that
-// starts, at 1280 and 320 px, in light and dark. Each state is proven rendered
+// starts, at 1280 and 320 px, in light and dark, and on three of them with a
+// theme choice stored against the OS scheme. Each state is proven rendered
 // (its own marker, `expect`), then read by axe-core (the WCAG 2a, 2aa, 21aa and
 // 22aa tags) and its scrollWidth compared with the viewport. The stub bff
 // (stub.py) answers for the server and prints the port it bound.
@@ -22,6 +23,12 @@ const BROWSERS = ['chromium', 'firefox', 'webkit']
 const WIDTHS = [1280, 320]
 const THEMES = ['light', 'dark']
 const HEIGHT = 900
+
+// The theme axis of 07-hearth-h4-theme.md 4a: nothing stored, so the page
+// follows the OS scheme, and a stored choice opposite to it. A choice is only
+// read where a session shows the theme button.
+const CHOICES = [null, 'opposite']
+const CHOICE_STATES = ['overview', 'instance-server', 'model-profile']
 
 // How long the stub may take to print its port. It binds before printing, so
 // this covers the interpreter start, not the requests.
@@ -140,7 +147,8 @@ function stubPort(stub) {
       if (Number.isInteger(port) && port > 0 && port < 65536) done(true, port)
       else done(false, `its first line was "${line}"`)
     }
-    const onExit = (code) => done(false, `exited (${code}) before printing a port`)
+    const onExit = (code) =>
+      done(false, `exited (${code}) before printing a port`)
     const onError = (e) => done(false, `did not start: ${e.message}`)
     timer = setTimeout(
       () => done(false, `printed nothing in ${STUB_START_MS / 1000}s`),
@@ -209,7 +217,34 @@ async function bodyBackground(browser, theme) {
   }
 }
 
-/** Every width, theme and state in one browser; one line per failing state. */
+/** What the stored choice left on the page: the attribute the app wrote, the
+ *  button's pressed state, and the body background, which must be the chosen
+ *  scheme's and not the OS's. `background` is what this browser paints for that
+ *  scheme with nothing stored. */
+async function chosen(page, other, background) {
+  const seen = await page.evaluate(() => ({
+    attr: document.documentElement.dataset.theme ?? '',
+    pressed:
+      document.querySelector('.theme-switch')?.getAttribute('aria-pressed') ??
+      '',
+    body: getComputedStyle(document.body).backgroundColor,
+  }))
+  const want = String(other === 'dark')
+  const found = []
+  if (seen.attr !== other) {
+    found.push(`data-theme: "${seen.attr}" (expected "${other}")`)
+  }
+  if (seen.pressed !== want) {
+    found.push(`aria-pressed: "${seen.pressed}" (expected "${want}")`)
+  }
+  if (seen.body !== background) {
+    found.push(`body background: ${seen.body} (expected ${background})`)
+  }
+  return found
+}
+
+/** Every width, theme, choice and state in one browser; one line per failing
+ *  state, its theme tag `light+dark` when a choice is stored. */
 async function check(browser, name, lines) {
   // The dark scheme has to reach the page: index.css sets --bg under
   // prefers-color-scheme, so body's background differs between the themes.
@@ -222,37 +257,62 @@ async function check(browser, name, lines) {
   }
   for (const width of WIDTHS) {
     for (const theme of THEMES) {
-      const ctx = await browser.newContext({
-        viewport: { width, height: HEIGHT },
-        colorScheme: theme,
-      })
-      try {
-        const page = await ctx.newPage()
-        for (const state of STATES) {
-          const found = []
-          const res = await fetch(`${BASE}/__set?${state.set}`)
-          if (!res.ok) {
-            found.push(`set request: ${res.status} ${res.statusText}`)
+      // The scheme a stored choice goes against, and what this browser paints
+      // for it with nothing stored.
+      const other = theme === 'light' ? 'dark' : 'light'
+      const otherBackground = other === 'dark' ? dark : light
+      for (const choice of CHOICES) {
+        const stored = choice !== null
+        const states = stored
+          ? STATES.filter((s) => CHOICE_STATES.includes(s.name))
+          : STATES
+        const tag = stored ? `${theme}+${other}` : theme
+        const ctx = await browser.newContext({
+          viewport: { width, height: HEIGHT },
+          colorScheme: theme,
+        })
+        try {
+          // The choice is in localStorage before the page opens, so the app
+          // reads it at its own start and the button shows it pressed.
+          if (stored) {
+            await ctx.addInitScript((v) => {
+              try {
+                localStorage.setItem('pai-theme', v)
+              } catch {}
+            }, other)
           }
-          // A hash change does not reload the app: every state starts from a
-          // blank page, so the page is built for it.
-          await page.goto('about:blank')
-          await page.goto(`${BASE}${state.hash}`, { waitUntil: 'networkidle' })
-          const missing = await rendered(page, state)
-          if (missing !== null) {
-            found.push(missing)
-          } else {
-            await sleep(SETTLE_MS)
-            found.push(...(await problems(page, width)))
+          const page = await ctx.newPage()
+          for (const state of states) {
+            const found = []
+            const res = await fetch(`${BASE}/__set?${state.set}`)
+            if (!res.ok) {
+              found.push(`set request: ${res.status} ${res.statusText}`)
+            }
+            // A hash change does not reload the app: every state starts from a
+            // blank page, so the page is built for it.
+            await page.goto('about:blank')
+            await page.goto(`${BASE}${state.hash}`, {
+              waitUntil: 'networkidle',
+            })
+            const missing = await rendered(page, state)
+            if (missing !== null) {
+              found.push(missing)
+            } else {
+              await sleep(SETTLE_MS)
+              found.push(...(await problems(page, width)))
+              if (stored) {
+                found.push(...(await chosen(page, other, otherBackground)))
+              }
+            }
+            if (found.length > 0) {
+              lines.push(
+                `${name} ${width}px ${tag} ${state.name}: ${found.join('; ')}`,
+              )
+            }
           }
-          if (found.length > 0) {
-            lines.push(
-              `${name} ${width}px ${theme} ${state.name}: ${found.join('; ')}`,
-            )
-          }
+        } finally {
+          await ctx.close()
         }
-      } finally {
-        await ctx.close()
       }
     }
   }
@@ -302,13 +362,18 @@ async function main() {
     stub.kill()
   }
   for (const line of lines) console.log(line)
-  const states = WIDTHS.length * THEMES.length * STATES.length
+  const plain = WIDTHS.length * THEMES.length * STATES.length
+  const stored = WIDTHS.length * THEMES.length * CHOICE_STATES.length
   console.log(
     `summary: browsers ${ran.join(' ') || 'none'}${
       skipped.length ? ` (skipped: ${skipped.join(' ')})` : ''
     }; ${STATES.length} states x ${WIDTHS.length} widths x ${
       THEMES.length
-    } themes = ${states} per browser; ${lines.length} failing`,
+    } themes = ${plain}, plus the ${
+      CHOICE_STATES.length
+    } stored-choice states = ${plain + stored} per browser; ${
+      lines.length
+    } failing`,
   )
   if (ran.length === 0) {
     console.log('no browser started: nothing was checked')

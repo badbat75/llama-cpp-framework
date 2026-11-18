@@ -174,6 +174,11 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   SVG keeps its author `color` (the UA's `svg { forced-color-adjust: preserve-parent-color }`,
   [CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)),
   so `.mark` needs `color: inherit` there to take the link's system colour (H3.10).
+  The banner (`fe/briefs/07-hearth-h5-shell.md` H5a) sits on `--page` with no fill and no rule; Menu,
+  the theme button and the session part are one plain `div.banner-tools` (no role) pushed to the end.
+  Below 480 px the theme button is icon-only (40 by 40, name still "Dark theme") and "Signed in as
+  ..." is visually hidden (still read); the Sign in link is a pill at least 32 px high. Measured
+  2026-11-18, signed in: 72 px (one row) at 1280, 112 px (two rows) at 479 and 320 px.
   Landmarks: `header` (banner), `nav` with an accessible name, `main`. A "Skip to content" link is the
   first focusable element ([2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG22/#bypass-blocks)).
 - **Wide (min-width 960px)**: nav as a fixed column of 224px on the left; main content max 880px wide.
@@ -218,7 +223,7 @@ A text colour on a surface outside that table needs a new row first.
 |---|---|---|---|---|
 | `--page` | `#f7f1e8` | `#1b1714` | behind everything (`body`) | |
 | `--bg` | `#fffdf9` | `#231d19` | cards, save bar, dialog, secondary and inactive buttons | |
-| `--surface` | `#f5efe6` | `#2b241f` | banner, nav (until H5), notices, fill of a disabled control | |
+| `--surface` | `#f5efe6` | `#2b241f` | nav (until H5b), notices, fill of a disabled control | |
 | `--field` | `#fffdf9` | `#1b1714` | fill of an enabled input, select and unchecked checkbox | |
 | `--line` | `#e6dccf` | `#3a3029` | decorative dividers only (table rows): carries no meaning | none (no floor) |
 | `--accent-soft` | `#f1e4f6` | `#3a2a44` | About open; later the current nav entry and the Running badge | |

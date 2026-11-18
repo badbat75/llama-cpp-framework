@@ -456,7 +456,7 @@ test('H1a.7: every font-size outside :root is a var(--fs-*) of the scale, no rem
   ).toEqual([])
 })
 
-test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecked box on --field, rows divide on --line, the open About on --accent-soft, and the banner and the nav keep --surface', () => {
+test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecked box on --field, rows divide on --line, the open About on --accent-soft, the nav keeps --surface and the banner is transparent (H5a.2)', () => {
   expect(
     prop(
       single(
@@ -533,20 +533,32 @@ test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecke
     ),
     'the open About shows --accent-soft, visible on the --bg card',
   ).toBe('var(--accent-soft)')
-  for (const sel of ['.banner', '.nav']) {
-    const body = single(
-      TOP.filter((r) => r.compact === sel),
-      `the top-level ${sel} rule`,
-    ).body
-    expect(
-      prop(body, 'background'),
-      `${sel} keeps --surface until H5 restyles the shell`,
-    ).toBe('var(--surface)')
-    expect(
-      prop(body, 'border-bottom'),
-      `${sel} keeps its 1px solid --control rule`,
-    ).toBe('1px solid var(--control)')
-  }
+  // H5a.2 (07-hearth-h5-shell.md) restyled the banner: transparent, no
+  // divider. The nav keeps its look until H5b.
+  const banner = single(
+    TOP.filter((r) => r.compact === '.banner'),
+    'the top-level .banner rule',
+  ).body
+  expect(
+    prop(banner, 'background'),
+    'the banner is transparent: the shell sits on the page (H5a.2)',
+  ).toBe('transparent')
+  expect(
+    ['', '0'].includes(prop(banner, 'border-bottom')),
+    'the banner has no border-bottom declaration, or border-bottom: 0 (H5a.2)',
+  ).toBe(true)
+  const nav = single(
+    TOP.filter((r) => r.compact === '.nav'),
+    'the top-level .nav rule',
+  ).body
+  expect(
+    prop(nav, 'background'),
+    'the nav keeps --surface until H5b restyles it',
+  ).toBe('var(--surface)')
+  expect(
+    prop(nav, 'border-bottom'),
+    'the nav keeps its 1px solid --control rule',
+  ).toBe('1px solid var(--control)')
 })
 
 test('H1a.11: no transition, transition-*, animation or animation-* declaration, so nothing moves and prefers-reduced-motion needs no rule', () => {
@@ -652,12 +664,16 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list and the Sign in pill 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
     'button: min-width: 24px',
+    // H5a.4: the Sign in pill is at least 32 px; H5a.5: the icon-only theme
+    // switch below 480 px keeps the --control-h square (2.5.8).
+    'a.session: min-height: 32px',
     'main: min-width: 0',
+    '.theme-switch: min-width: var(--control-h)',
     '.model-profiles-switch: min-height: 24px',
     '.model-profiles-switch: min-width: 24px',
     '.model-profiles-switch-status: min-height: 1lh',

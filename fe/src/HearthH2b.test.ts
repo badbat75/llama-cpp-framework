@@ -414,7 +414,7 @@ test('section 0: the boxes lifted by a shadow alone carry the 1px transparent bo
 
 // ── H2b.6: nothing else moves ────────────────────────────────────────────
 
-test('H2b.6: the notice and the alert keep their border and --radius, the nav and the banner keep --surface, only the four containers take --shadow, and no container gains a state rule', () => {
+test('H2b.6: the notice and the alert keep their border and --radius, the nav keeps --surface and the banner sits on the paper (H5a.2), only the four containers take --shadow, and no container gains a state rule', () => {
   for (const [sel, border] of [
     ['.notice', '1px solid var(--control)'],
     ['.alert', '1px solid var(--danger)'],
@@ -430,18 +430,28 @@ test('H2b.6: the notice and the alert keep their border and --radius, the nav an
     ).toBe('var(--radius)')
     expect(prop(rule.body, 'box-shadow'), `${sel} is not lifted`).toBe('')
   }
-  for (const sel of ['.nav', '.banner']) {
-    const rule = topBy(sel, `the ${sel} rule`)
-    expect(
-      prop(rule.body, 'background'),
-      `${sel} keeps --surface until H5 restyles the shell (section 0: H2 touches no .nav, .banner rule)`,
-    ).toBe('var(--surface)')
-    expect(
-      prop(rule.body, 'border-bottom'),
-      `${sel} keeps its 1px solid --control rule (H1a.8)`,
-    ).toBe('1px solid var(--control)')
-    expect(prop(rule.body, 'box-shadow'), `${sel} is not lifted`).toBe('')
-  }
+  // H5a.2 (07-hearth-h5-shell.md) restyled the banner: it sits on the paper,
+  // so --surface and the divider are gone. The nav keeps its look until H5b.
+  const banner = topBy('.banner', 'the .banner rule')
+  expect(
+    prop(banner.body, 'background'),
+    'the banner is transparent: the shell sits on the page (H5a.2)',
+  ).toBe('transparent')
+  expect(
+    ['', '0'].includes(prop(banner.body, 'border-bottom')),
+    'the banner has no border-bottom declaration, or border-bottom: 0 (H5a.2)',
+  ).toBe(true)
+  expect(prop(banner.body, 'box-shadow'), '.banner is not lifted').toBe('')
+  const nav = topBy('.nav', 'the .nav rule')
+  expect(
+    prop(nav.body, 'background'),
+    'the nav keeps --surface until H5b restyles it (section 0: H2 touches no .nav rule)',
+  ).toBe('var(--surface)')
+  expect(
+    prop(nav.body, 'border-bottom'),
+    'the nav keeps its 1px solid --control rule (H1a.8)',
+  ).toBe('1px solid var(--control)')
+  expect(prop(nav.body, 'box-shadow'), '.nav is not lifted').toBe('')
   const lifted = RULES.filter(
     (r) => prop(r.body, 'box-shadow') === 'var(--shadow)',
   )

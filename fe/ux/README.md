@@ -13,13 +13,24 @@ as `not rendered` and not read as a clean page. Once per browser the check also
 proves the dark colour scheme changes the page (the computed background of
 `body` must differ from the light one).
 
+On the three signed-in states that show the theme button (Overview, the
+instance page, a model profile page) the run is repeated with a theme choice
+stored in `localStorage` (`pai-theme`) before the page opens, always the
+opposite of the context's scheme: the page must show the stored choice, with
+`data-theme` on `<html>`, `aria-pressed` on `.theme-switch` and the computed
+`body` background of the chosen scheme (the one the same browser paints for
+that scheme with nothing stored). That is 3 states x 2 widths x 2 schemes more
+per browser, counted in the summary line.
+
 The stub binds port 0 (the OS picks a free one) and prints the port it got on
 its first stdout line; the check reads it there, so it can never run against a
 foreign server on a fixed port. A stub that exits, errors, prints no port or
 stays silent for 5 s stops the run at once with its own message and exit 1.
 
 One line per failing state (browser, width, theme, state, the axe rule ids, the
-overflow, or `not rendered`), then a summary line naming the browsers that ran.
+overflow, `not rendered`, or what a stored choice left unseen; the theme of a
+stored pass is tagged `light+dark`), then a summary line naming the browsers
+that ran.
 Exit 0 with nothing failing, 1 otherwise. A browser that does not start is
 reported and skipped: the check still runs on the others and a skipped browser
 is no failure. When no browser starts, nothing has been checked: the run says

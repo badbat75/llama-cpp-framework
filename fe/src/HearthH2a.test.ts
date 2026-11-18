@@ -937,6 +937,11 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   // included.
   const TEXT_FREE = [
     '.visually-hidden',
+    // H5a.5 (07-hearth-h5-shell.md): below 480 px the theme switch label and
+    // the signed-in user name carry the .visually-hidden declarations in a
+    // media rule, so this 1px is that clip box, not a box of text.
+    '.theme-switch-label',
+    '.session > span',
     '.shape',
     '.shape-failed::before',
     '.shape-failed::after',

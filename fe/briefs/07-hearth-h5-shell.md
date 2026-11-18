@@ -117,11 +117,18 @@ instance id still breaks inside its pill (`overflow-wrap: anywhere`), no sideway
 ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)); text spacing does not clip a pill (only
 `min-height`, [1.4.12](https://www.w3.org/TR/WCAG22/#text-spacing)).
 
+**H5b.0 (carried from the H5a review) The tools stay right-aligned when they wrap.** `.banner-tools`
+also declares `justify-content: flex-end`. Measured 2026-11-18 (H5a review, all three engines): when
+the group is wider than what is left on the name's row, it takes a whole row and its items wrap to
+the left inside it (480 px signed in with the 32-character stub name: Menu at x 16, Sign out on a
+third row at x 16; 320 px with 200 % text). Section 0's "right-aligned at every width" needs this one
+declaration; DOM, Tab order (row by row, still the visual order, 1.3.2 / 2.4.3) unchanged.
+
 **H5b.7 Nothing else moves.** No DOM, no key; `ProfilesNav.test.tsx` holds as is (it pins the
 `nav-label` class, the ids and the lists, not the look); the Menu's behaviour (Escape, close on a
 link, `aria-expanded`) unchanged.
 
-**What the tester pins (H5b)**: H5b.1 to H5b.5 as declarations of the named rules; the edited
+**What the tester pins (H5b)**: H5b.0's declaration on `.banner-tools`; H5b.1 to H5b.5 as declarations of the named rules; the edited
 DisabledLook test; H5b.6's `min-height: 32px` and `overflow-wrap: anywhere` on `.nav a`.
 
 ## 3. H5c: the three carried issues

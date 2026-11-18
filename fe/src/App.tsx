@@ -275,23 +275,25 @@ export default function App() {
           <Mark />
           {t('app-name')}
         </a>
-        <button
-          id="menu-button"
-          type="button"
-          className="menu-button secondary"
-          aria-expanded={menuOpen}
-          aria-controls="nav"
-          onClick={() => setMenuOpen((o) => !o)}
-          onKeyDown={closeOnEscape}
-        >
-          {t('nav-menu')}
-        </button>
-        <ThemeSwitch />
-        <SessionBar
-          session={session}
-          current={route.page === 'sign-in'}
-          onSignOut={signOutClicked}
-        />
+        <div className="banner-tools">
+          <button
+            id="menu-button"
+            type="button"
+            className="menu-button secondary"
+            aria-expanded={menuOpen}
+            aria-controls="nav"
+            onClick={() => setMenuOpen((o) => !o)}
+            onKeyDown={closeOnEscape}
+          >
+            {t('nav-menu')}
+          </button>
+          <ThemeSwitch />
+          <SessionBar
+            session={session}
+            current={route.page === 'sign-in'}
+            onSignOut={signOutClicked}
+          />
+        </div>
       </header>
       <div className="layout">
         <nav

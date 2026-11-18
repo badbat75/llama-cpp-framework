@@ -380,14 +380,26 @@ button {
   top: var(--space-2);
 }
 
+/* The shell sits on the paper: no fill and no divider rule, the content cards
+   lift off it (07-hearth-h5-shell.md H5a.2, brief 04 1.2). */
 .banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface);
-  border-bottom: 1px solid var(--control);
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: transparent;
+}
+
+/* The banner's tools group: Menu, the theme switch and the session, pushed to
+   the end so they wrap as one group and stay right-aligned at every width
+   (H5a.3). A plain div, so nothing is added to the accessibility tree. */
+.banner-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 /* The mark and the product name on one line (07-hearth-h3-mark.md 3.4). */
@@ -444,7 +456,6 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
-  margin-left: auto;
 }
 
 /* A user name with no break point breaks anywhere, so it wraps inside the
@@ -453,10 +464,13 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* Signed out: the Sign in link, padded like a nav link for its current-page bar. */
+/* Signed out: the Sign in link is a pill, like the controls (H5a.4). */
 a.session {
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
 }
 
 .nav {
@@ -512,10 +526,39 @@ main > * {
   max-width: 880px;
 }
 
-/* Narrow: the nav collapses behind the Menu button. */
+/* Narrow: the nav collapses behind the Menu button, and the banner takes the
+   page's own gutter so the mark, the name and the tools fit (H5a.6). */
 @media (max-width: 959.98px) {
+  .banner {
+    padding: var(--space-3) var(--space-4);
+  }
+
   .nav:not(.open) {
     display: none;
+  }
+}
+
+/* Very narrow: the theme switch keeps only its icon and the banner keeps no
+   signed-in text, both hidden the way .visually-hidden hides, inside a media
+   rule because a class toggled by width would need script (H5a.5). The button
+   stays a square of --control-h, so its target does not shrink. */
+@media (max-width: 479.98px) {
+  .theme-switch-label,
+  .session > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .theme-switch {
+    min-width: var(--control-h);
+    padding: var(--space-1) var(--space-2);
   }
 }
 
