@@ -505,7 +505,11 @@ test('5b.6: each row links to #/profiles/model/<encoded id>, the page links back
   })
   expect(h1).toBeTruthy()
   expect(window.location.hash).toBe('#/profiles/model/Qwen%203%25')
-  expect(profileReads(third.bff)).toEqual(['/api/profiles/model/Qwen%203%25'])
+  await waitFor(() =>
+    expect(profileReads(third.bff), '#/profiles/model/Qwen%203%25').toEqual([
+      '/api/profiles/model/Qwen%203%25',
+    ]),
+  )
 })
 
 // ── 5b.7: addresses under #/profiles that are not pages ─────────────────

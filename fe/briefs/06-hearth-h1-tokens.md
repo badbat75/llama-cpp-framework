@@ -342,6 +342,14 @@ Waits for `PLAN.md` step 10's line: `font/woff2` in `crates/bff/build.rs` and th
   their values; the two stacks as the first values of `--font` and `--mono`; `fe/package.json` lists
   both packages at exactly `5.3.0` under `devDependencies`. H1a.1's token list is unchanged (the
   values of `--font` and `--mono` change).
-- **UX pass**: the network panel of a load shows the four latin files only (no latin-ext on an English
-  page); screenshots before and after the font loads (throttled) show no line moving more than a few
-  pixels; the bundle in `fe/dist/assets/` holds six WOFF2 files totalling 56,344 bytes.
+- **UX pass**: the network panel of a load shows only the latin files the page uses (corrected: there
+  are three latin files, not four): Next 400 and 700 on every page (the headings are 700), Mono 400
+  only where mono text shows; no latin-ext on an English page; screenshots before and after the font
+  loads (throttled) show no line moving more than a few pixels; the bundle in `fe/dist/assets/` holds
+  six WOFF2 files totalling 56,344 bytes.
+- **Measured at review** (2026-11-18, Playwright Chromium, Firefox and WebKit from `fe/ux/node_modules`,
+  fallback-only load against a font load of the same page): no line count changes (h1, paragraphs);
+  on the first screen nothing moves more than 2.6 px; a long page can grow or shrink below the fold by
+  up to 47 px when one hint wraps differently (the model profile page at 1280: Chromium +22, Firefox
+  -29, WebKit -38 px of a 6,500 to 7,900 px page; Server at 320 in Chromium -26 px, from y 2,957).
+  The fallback draws about 1.6% narrower than Atkinson on a UI sample (98.4%).

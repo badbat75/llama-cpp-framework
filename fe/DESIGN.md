@@ -214,9 +214,14 @@ Also declared, for later slices: `--hatch` and `--shadow` (redeclared in dark: a
 `--ring-w` 3px, `--space-7` 64px (brief 06 section 1). In light `--bg` and `--field` are the same
 colour; in dark an enabled field is darker than its card.
 
-- **Type**: the system font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`) until
-  H1b brings Atkinson Hyperlegible Next and Mono; monospace `ui-monospace, "Cascadia Mono", Menlo,
-  monospace` for paths, flags and values. Every `font-size` is a token: `--fs-xs` 0.8125rem,
+- **Type**: Atkinson Hyperlegible Next (400 and 700) for text, Atkinson Hyperlegible Mono (400) for
+  paths, flags and values: six WOFF2 files (latin and latin-ext) from `@fontsource` 5.3.0, bundled in
+  `fe/dist/assets/`, never fetched from another origin, `font-display: swap`; each stack goes on to a
+  metric fallback face (Arial or Liberation Sans, Courier New or Liberation Mono, with `size-adjust`
+  and ascent/descent overrides: brief 06 section 9) and then the system stacks of before. A page
+  fetches only the latin files it uses (a latin-ext file only for a letter outside latin); a weight
+  of 600 renders with the 700 face; there is no italic face and the UI sets no italic; arrows
+  (U+2190, U+2192) are not in the fonts and would fall back. Every `font-size` is a token: `--fs-xs` 0.8125rem,
   `--fs-sm` 0.875rem (hints, notes, full-value line, About, field error, nav label), `--fs-md`
   0.9375rem, `--fs-body` 1.0625rem (17 px), `--fs-lg` 1.125rem (h3), `--fs-h2` 1.375rem, `--fs-h1`
   2rem (line height 1.2); body line height `--lh` 1.55. Bold is 600.

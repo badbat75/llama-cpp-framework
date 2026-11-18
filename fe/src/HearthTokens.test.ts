@@ -175,8 +175,17 @@ const TOKENS: [string, string, string | null][] = [
   ['--radius-check', '5px', null],
   ['--radius-card', '16px', null],
   ['--radius-pill', '999px', null],
-  ['--font', "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", null],
-  ['--mono', "ui-monospace, 'Cascadia Mono', Menlo, monospace", null],
+  // The stacks H1b gives them: the face, its metric fallback, then today's.
+  [
+    '--font',
+    "'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible Next Fallback', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    null,
+  ],
+  [
+    '--mono',
+    "'Atkinson Hyperlegible Mono', 'Atkinson Hyperlegible Mono Fallback', ui-monospace, 'Cascadia Mono', Menlo, monospace",
+    null,
+  ],
   ['--fs-xs', '0.8125rem', null],
   ['--fs-sm', '0.875rem', null],
   ['--fs-md', '0.9375rem', null],

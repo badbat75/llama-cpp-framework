@@ -39,8 +39,12 @@
   --radius-card: 16px;
   --radius-pill: 999px;
 
-  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  /* The two stacks are pinned as written (H1b, brief 06 section 9): Prettier
+     would break each long stack across lines. */
+  /* prettier-ignore */
+  --font: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible Next Fallback', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* prettier-ignore */
+  --mono: 'Atkinson Hyperlegible Mono', 'Atkinson Hyperlegible Mono Fallback', ui-monospace, 'Cascadia Mono', Menlo, monospace;
 
   --fs-xs: 0.8125rem;
   --fs-sm: 0.875rem;
@@ -77,6 +81,133 @@
     --hatch: rgb(241 233 223 / 0.06);
     --shadow: 0 0 0 1px var(--line);
   }
+}
+
+/* ── Fonts ────────────────────────────────────────────────────────────── */
+
+/* The six WOFF2 files of fe/briefs/06-hearth-h1-tokens.md section 9: Next 400
+   and 700 and Mono 400, in the latin and latin-ext subsets. The rules are
+   written here, not imported from the packages' own CSS, which pairs every
+   file with a .woff Vite would copy and the bff embed for no browser to use.
+   Each src reaches the package inside fe/node_modules: Vite resolves it and
+   copies the file into fe/dist/assets, so nothing is fetched at run time. The
+   unicode-range is the package's own for the subset, so a latin-ext file is
+   downloaded only when the page shows a letter of it. */
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-400-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-700-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-ext-400-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-ext-700-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-mono/files/atkinson-hyperlegible-mono-latin-400-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(@fontsource/atkinson-hyperlegible-mono/files/atkinson-hyperlegible-mono-latin-ext-400-normal.woff2)
+    format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* The metric fallbacks, so the swap moves no line: the local face of the
+   machine, scaled to the advance width and the ascent and descent of the real
+   one (the brief's table, measured from the upstream TTFs). */
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next Fallback';
+  font-style: normal;
+  font-weight: 400;
+  src: local('Arial'), local('Liberation Sans');
+  size-adjust: 98.8%;
+  ascent-override: 99.6%;
+  descent-override: 32%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Next Fallback';
+  font-style: normal;
+  font-weight: 700;
+  src:
+    local('Arial Bold'), local('Arial-BoldMT'), local('Liberation Sans Bold');
+  size-adjust: 99.3%;
+  ascent-override: 99.1%;
+  descent-override: 31.8%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible Mono Fallback';
+  font-style: normal;
+  font-weight: 400;
+  src: local('Courier New'), local('Liberation Mono');
+  size-adjust: 105.3%;
+  ascent-override: 93.4%;
+  descent-override: 30%;
+  line-gap-override: 0%;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────── */
