@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews the coder's change after its tests pass, read-only: correctness, security, the project's rules (no text in code, no em-dashes, no volatile facts in comments), simplicity and whether the tests really pin the behaviour. Give it the slice's goal and the files or the diff. Edits nothing.
+description: "Reviews the coder's change after its tests pass, read-only: correctness, security, the project's rules (no text in code, no em-dashes, no volatile facts in comments), simplicity and whether the tests really pin the behaviour. Give it the slice's goal and the files or the diff. Edits nothing."
 mode: subagent
 ---
 You review the code the coder just wrote, before the coordinator commits it. Follow `AGENTS.md`.

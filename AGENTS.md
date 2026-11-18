@@ -104,8 +104,9 @@ The user runs the full suite, once, on the main branch after the merge and befor
 
 ## Actions with real effects
 
-- What counts here: installing or removing packages and SDKs (`xtask prereq`, `xtask install`, the bootstrap scripts), anything machine-wide (environment variables, registry, `/usr`, `/opt`), the user's own config and data (`%LOCALAPPDATA%\private-ai\`, `~/.config/private-ai/`, `~/.local/share/private-ai/`), starting llama-server or a benchmark on the GPUs, writing to the committed `benchmarks\bench.db` (`bench publish`), and git push, tags and GitHub releases.
+- What counts here: installing or removing packages and SDKs (`xtask prereq`, `xtask install`, the bootstrap scripts), anything machine-wide (environment variables, registry, `/usr`, `/opt`), the user's own config and data (`%LOCALAPPDATA%\private-ai\`, `~/.config/private-ai/`, `~/.local/share/private-ai/`), starting llama-server or a benchmark on the GPUs, writing to the committed `benchmarks\bench.db` (`bench publish`), and git tags and GitHub releases.
 - Reading is fine. Anything that changes the real thing needs the user's go-ahead each time.
+- The one standing go-ahead: every commit on `main` is pushed right after it with `git push origin main` (user, 2026-11-18). It covers commits only, never a tag or a release.
 - Agents may be blocked from running some commands. Give the user the exact command to run, and say what it does, how long it takes and what result to expect.
 - A command must undo what it changed by itself, wherever it can (a sweep puts its key back: `bench\sweep-pending-<stamp>.json`).
 
@@ -134,4 +135,4 @@ Cycle: coordinator takes the next step from `PLAN.md` and picks one small slice,
 
 ## Release process
 
-Cutting a release (version bump, packages of every OS, release commit, tag, GitHub release, uploads) follows the `release` skill, [.agents\skills\release\SKILL.md](.agents/skills/release/SKILL.md). Tags, pushes and releases need the user's go-ahead ("Actions with real effects").
+Cutting a release (version bump, packages of every OS, release commit, tag, GitHub release, uploads) follows the `release` skill, [.agents\skills\release\SKILL.md](.agents/skills/release/SKILL.md). Tags and releases need the user's go-ahead ("Actions with real effects").
