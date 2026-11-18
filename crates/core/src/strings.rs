@@ -250,6 +250,30 @@ mod tests {
         );
     }
 
+    /// The two refusals a model profile gets: the same words in both files (the
+    /// window, `pai`, `pai-manager` and the web service all read them), the id of
+    /// the profile in one, the count and the limit in the other. The advice of
+    /// the second names the switch to flip, not a profile the user has to go
+    /// and find by name.
+    #[test]
+    fn the_two_model_profile_refusals_are_the_same_words_in_both_files() {
+        const NO_MODEL: &str =
+            "`{0}` names no model file: every model profile needs a `model` path";
+        const OVER_MAX: &str = "{0} enabled model profiles would load on startup, but the server loads at most {1} models at once (ModelsMax) and would not start. Turn Load on startup off on another one, or raise ModelsMax";
+        for (name, file) in [
+            ("en_US.toml", include_str!("../strings/en_US.toml")),
+            ("cli.toml", include_str!("../strings/cli.toml")),
+        ] {
+            let table = parse(file);
+            assert_eq!(lookup(&table, "model-profile-no-model"), NO_MODEL, "{name}");
+            assert_eq!(
+                lookup(&table, "load-on-startup-over-max"),
+                OVER_MAX,
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn an_unknown_key_reads_as_itself() {
         let table = parse(r#"known = "text""#);

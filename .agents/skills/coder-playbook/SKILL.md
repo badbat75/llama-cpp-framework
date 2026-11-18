@@ -1316,3 +1316,12 @@ Lessons only: the rules are in `AGENTS.md`.
   in App. A failure that quotes an identifier your own edit removed is the tree moving, not a logic bug:
   re-read the whole file, apply what is left in one scripted pass (python, exact old text, print the
   result), then rerun the suite.
+- The disabled-file header is TWO source constants (pai-app `presets.rs` writes it, pai-bff `presets.rs`
+  carries a copy): pai-app's `the_disabled_header_is_these_four_lines` pins the bytes and the bff's
+  `the_disabled_header_is_the_configurators_one` reads pai-app's source at the literal
+  `const DISABLED_FILE_HEADER: &str = "` and unescapes it, so a header text edit changes both sources and
+  keeps that declaration spelling; the bff test's own `DISABLED_HEADER` copy is the tester's.
+- A `checks` refusal text is pinned by TWO core tests over BOTH strings files
+  (`strings::the_two_model_profile_refusals_are_the_same_words_in_both_files` and
+  `checks::the_renamed_keys_resolve_with_their_text`), and `the_new_number_key_takes_the_key_the_text_and_the_bounds`
+  pins its `{N}` count, so one text change is one line in `en_US.toml` and one in `cli.toml`, placeholders kept.

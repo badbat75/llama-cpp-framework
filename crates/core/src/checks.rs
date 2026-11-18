@@ -929,7 +929,7 @@ top-p = 0.95\r\n";
             ),
             (
                 "model-profile-no-model",
-                "model profile `{0}` names no model: every model profile needs a `model` path",
+                "`{0}` names no model file: every model profile needs a `model` path",
             ),
             (
                 "model-profile-name-taken",

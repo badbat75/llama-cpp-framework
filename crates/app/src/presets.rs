@@ -1302,9 +1302,9 @@ fn home(files: &impl ModelProfileFiles, id: &str) -> ConfigFile {
 /// Written once, when the disabled file is created, for whoever opens it by
 /// hand: what it is, and that llama-server never reads it.
 const DISABLED_FILE_HEADER: &str = "\
-; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
+; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
 ; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
-; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; models.ini, so nothing here is offered. Switching a model profile back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n";
 
 /// Switch a model profile on (`enabled`) or off by moving its section between
@@ -2280,6 +2280,29 @@ mod tests {
             !DISABLED_FILE_HEADER.contains("presets.ini"),
             "no name the preset files no longer carry: {DISABLED_FILE_HEADER}"
         );
+    }
+
+    /// The disabled file's header, byte for byte: these four `;` lines, each
+    /// ending CRLF. The bff keeps a copy of the same bytes and
+    /// `the_disabled_header_is_the_configurators_one` in
+    /// `crates/bff/tests/presets_switch.rs` keeps the two copies equal, so the
+    /// text is pinned here, where it is written.
+    #[test]
+    fn the_disabled_header_is_these_four_lines() {
+        const WANT: &str = "\
+; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
+; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
+; models.ini, so nothing here is offered. Switching a model profile back on moves its\r\n\
+; section, unchanged, back to models.ini.\r\n";
+        assert_eq!(DISABLED_FILE_HEADER, WANT);
+        assert_eq!(DISABLED_FILE_HEADER.lines().count(), 4);
+        // The word the file uses for what it holds: the profile, not the old name.
+        for word in ["preset", "Preset"] {
+            assert!(
+                !DISABLED_FILE_HEADER.contains(word),
+                "{word}: {DISABLED_FILE_HEADER}"
+            );
+        }
     }
 
     // All seven speculative keys set, with no draft FILE: the shape a Clone (or a

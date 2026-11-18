@@ -146,9 +146,9 @@ temp = 0.7\r\n\
 /// A `models.ini.disabled` with one switched-off model profile, written as the
 /// configurator writes it (its header, then the section).
 const FILE_OFF: &str = "\
-; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
+; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
 ; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
-; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; models.ini, so nothing here is offered. Switching a model profile back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n\
 [mistral-7b]\r\n\
 model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\
@@ -205,9 +205,9 @@ temp = 0.7\r\n\
 
 /// `FILE_OFF` with `temp` set to 1.0: the one line of the switched-off section.
 const OFF_TEMP_1: &str = "\
-; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
+; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
 ; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
-; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; models.ini, so nothing here is offered. Switching a model profile back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n\
 [mistral-7b]\r\n\
 model = /models/Mistral-7B-Instruct-v0.3-Q5_K_M.gguf\r\n\

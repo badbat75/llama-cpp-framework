@@ -90,7 +90,17 @@ Lessons only: the rules are in `AGENTS.md`.
   sequence as ONE background script that writes a log per command and appends `exit=$?` per command to one
   exits file: a shell chain's exit hides which command failed. Each log's single `Compiling pai-<pkg>` is
   the proof that crate compiled; a log with `Compiling pai-config` AND `Compiling pai-core` AND
-  `Compiling pai-app` is normal (the cleaned crates it links are rebuilt too).
+  `Compiling pai-app` is normal (the cleaned crates it links are rebuilt too). Adding pai-manager and the
+  six `cargo fmt` checks: 4 min total (clean 40 s, core 6 s, manager 2 s, app --lib 14 s, cli 1 s,
+  config 17 s, bff 19 s, all exit 0).
+- Two fmt reds that are the script's fault, not the code's: `cargo fmt -p` wants the PACKAGE name
+  (`pai-core`, not `core`: `package \`core\` is not a member of the workspace`, exit 1 with the usage
+  text), and a loop that runs in the script's scratch dir exits 1 with `could not find Cargo.toml`
+  (the test commands inherit the script's `cd`, a later `for` loop does not). Read the log's FIRST line
+  before reporting a fmt exit 1.
+- A rerun script launched detached (`bash run.sh &` inside a background shell) gives NO completion
+  notification (the launcher exits at once). One bounded foreground wait is the right move, not polling:
+  `for i in $(seq 1 180); do grep -q ALLDONE exits.txt && break; sleep 10; done; cat exits.txt`.
 - A `cargo test` rerun always runs the test binary; only its compile can be a replay. `-v` (before
   `--`) shows `Fresh <pkg>` (fingerprint checked against the current sources) or `Dirty`/`Compiling`.
   For the independent check after a coder, `cargo clean -p <pkg>` and rerun when in doubt.
@@ -575,6 +585,14 @@ Lessons only: the rules are in `AGENTS.md`.
   needs a NEW verbatim fixture in the owner crate: derive the expected name from the code that owns it
   (`ConfigFile::Presets.manager_name()`) and add `!HEADER.contains("<old name>")` beside it, so the pin
   cannot rot with the next rename.
+- Find a text's verbatim pins by grepping a FRAGMENT OF THE SENTENCE (`raise ModelsMax`), never the key:
+  a key grep returns dozens of key/args sites (`Refusal::new("k", &[..])`, `assert_refused("k", &[..])`,
+  the 422 `field` table, the CLI's `e.text()` compare), and every one of those is TEXT-AGNOSTIC, green
+  under any wording. The verbatim value of a strings key exists in `pai-core` only: the renamed-keys table
+  of `checks.rs` and the `parse(include_str!(..))` + `lookup` pairs of `strings.rs`. A wording change that
+  no test quotes (the manager's and the bff's refusals travel as key + args, the app and cli render them
+  through `Refusal::text()`) has NO pin to flip: write the pin in core, in BOTH strings files at once, and
+  report the other crates as green-and-untouched.
 - A tuple pairing `(the manager's file, the name on disk in the user's directory)` (the hand-over's
   `USER_FILES`): a fixture that builds the per-user directory with the MANAGER's names greens the defect,
   because the code under test reads exactly those names, and every existing test passes. The fixtures that

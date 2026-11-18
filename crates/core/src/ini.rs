@@ -1279,7 +1279,7 @@ mod tests {
     #[test]
     fn remove_key_edits_only_the_first_of_a_repeated_section() {
         // Two `[a]` headers are not mended here (the manager refuses the write
-        // with `preset-name-taken`), so the second copy is left as it is.
+        // with `model-profile-name-taken`), so the second copy is left as it is.
         let text = file_of(&["[a]", "ctx-size = 1", "[A]", "ctx-size = 2"], "\r\n");
         assert_eq!(
             text::remove_key(&text, "a", "ctx-size"),

@@ -65,9 +65,9 @@ const MODELS_DISABLED: &str = "models.ini.disabled";
 /// link: `the_disabled_header_is_the_configurators_one` in
 /// `tests/presets_switch.rs` reads that file and keeps the two copies equal.
 const DISABLED_FILE_HEADER: &str = "\
-; Presets switched OFF in pai-config (the switch beside each preset in\r\n\
+; Model profiles switched OFF in pai-config (the switch beside each model profile in\r\n\
 ; the Models tab). Same format as models.ini, but llama-server only reads\r\n\
-; models.ini, so nothing here is offered. Switching a preset back on moves its\r\n\
+; models.ini, so nothing here is offered. Switching a model profile back on moves its\r\n\
 ; section, unchanged, back to models.ini.\r\n";
 
 /// The answer to `GET /api/profiles/model`: the list as a JSON array, or
@@ -193,14 +193,14 @@ enum Answer {
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
 /// The session and the body answer first, so a body nothing can be made of (400
-/// `presets-malformed`) reaches no manager. The two files are then read once
+/// `model-profiles-malformed`) reaches no manager. The two files are then read once
 /// each, and after the writes the file that makes a model profile enabled is read
 /// again, so the `enabled` the page gets is the text on the machine. The writes
 /// and the instances' states are asked on the SAME
 /// connect, made for the session's user, all of it in one blocking task. The id
 /// is a section name, matched in any letter case as the list's ids are, never a
 /// path: the two file names are the fixed ones. A name neither file holds is 404
-/// `no-preset-named` ([`not_found`]), and nothing is written; so is
+/// `no-model-profile-named` ([`not_found`]), and nothing is written; so is
 /// llama-server's global `[*]`, which is not a model profile.
 ///
 /// The section moves, unchanged, from the file that holds it to the other one,
@@ -211,7 +211,7 @@ enum Answer {
 /// the plain write, because the compare and swap refuses a missing file. A
 /// model profile already where it is asked for answers 200 and writes nothing.
 ///
-/// 409 `preset-changed-elsewhere` is the compare and swap's refusal. When it
+/// 409 `model-profile-changed-elsewhere` is the compare and swap's refusal. When it
 /// answers the second write the model profile sits in both files, which the next
 /// switch of that model profile mends. The manager's check of the moved section is 422
 /// ([`field_of`]). A refusal of the signed-in user, at the connect, a read or a
@@ -399,7 +399,7 @@ fn running(client: &Client) -> bool {
 /// The answer to a model profile write the manager could not do, `write_asked` the
 /// shared state's: a write sent, so a stream that died there leaves its outcome
 /// unknown, is 504 `client-timeout`, and not 503 `client-unavailable`. The
-/// compare and swap found its file changed: 409 `preset-changed-elsewhere`. The
+/// compare and swap found its file changed: 409 `model-profile-changed-elsewhere`. The
 /// manager's check of the section it was asked to write is 422 with its key, its
 /// values and the field to mark ([`field_of`]); the manager's detail stays out of
 /// the body. The manager
@@ -438,13 +438,13 @@ fn switch_failure(
 /// values. One rule per check, so a refusal names the card's field whoever asks.
 /// A check that names the key it is about marks it, as its `args[0]`. The checks
 /// that name a VALUE and not a key, the load-on-startup pair (its `args` are the
-/// total and `ModelsMax`) and `preset-no-model` (its `args` are the model profile's
+/// total and `ModelsMax`) and `model-profile-no-model` (its `args` are the model profile's
 /// name), name the key their value belongs to: `load-on-startup` and `model`.
 /// So does the pair `override-no-pattern` and `override-no-device`, whose
 /// `args[0]` is the position of the rule inside the value, and
 /// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
-/// its own value. A refusal about the model profile's name (`invalid-preset-id`,
-/// `preset-name-taken`) has no key of the section to mark, so the answer carries
+/// its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
+/// `model-profile-name-taken`) has no key of the section to mark, so the answer carries
 /// no field at all.
 fn field_of(key: &str, args: &[String]) -> Option<String> {
     match key {
@@ -501,7 +501,7 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 ///
 /// A section is matched in any letter case, as the list's ids are, and
 /// llama-server's global `[*]` is never an answer: nothing in either file of
-/// that name is 404 `no-preset-named` ([`not_found`]), the id echoed only when
+/// that name is 404 `no-model-profile-named` ([`not_found`]), the id echoed only when
 /// it is a name a model profile can carry. The failures are the list's, on the same
 /// rule as the server read: 401 `session-required` with the manager not even
 /// connected to, 403 `session-not-administrator` when the manager refuses the
@@ -651,19 +651,19 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
 /// The session and the body answer first, so a body nothing can be made of (400
-/// `presets-malformed`, bytes of another content type included: [`json_body`]
+/// `model-profiles-malformed`, bytes of another content type included: [`json_body`]
 /// is the gate, as the server save's and the switch's) and a value no check
 /// allows (422, [`field_of`]) reach no manager. The file is read next: a name
-/// no file holds, and llama-server's global `[*]`, are 404 `no-preset-named`
+/// no file holds, and llama-server's global `[*]`, are 404 `no-model-profile-named`
 /// ([`not_found`]) with nothing written.
 /// The section's revision ([`section_revision`]) is then compared with the one
 /// the body carries: a card that started from an older text is 409
-/// `preset-changed-elsewhere` with nothing written, and a body that asks for the
+/// `model-profile-changed-elsewhere` with nothing written, and a body that asks for the
 /// text the file already holds answers 200 and writes nothing.
 ///
 /// The write is the compare and swap, expecting the text this request read, so
 /// the file is never changed under a card that read it earlier: 409
-/// `preset-changed-elsewhere` when the file moved in between. The manager's
+/// `model-profile-changed-elsewhere` when the file moved in between. The manager's
 /// check of the section is 422 ([`field_of`]). A refusal of the signed-in user,
 /// at the connect, the read or the write, is 403 and ends that session; the
 /// other answers keep it ([`switch_failure`]).
@@ -783,7 +783,7 @@ fn saved(revision: &str, running: bool) -> Response {
 /// answers the save gives before it reads a file, as the server save's
 /// [`crate::server::BodyAnswer`] answers them.
 enum BodyError {
-    /// The body is not a model profile save at all: 400 `presets-malformed`.
+    /// The body is not a model profile save at all: 400 `model-profiles-malformed`.
     Malformed,
     /// A value was refused: 422 `{key, args, field}`, the check's key and
     /// values, and the INI key the form marks (the table of one rule per key).
@@ -814,7 +814,7 @@ pub(crate) enum ModelProfileBodyAnswer {
     /// save goes to the file that still holds it, and a body that changed the
     /// revision of the card is not written at all.
     Text { text: String, revision: String },
-    /// The body is not a model profile save at all: 400 `presets-malformed`.
+    /// The body is not a model profile save at all: 400 `model-profiles-malformed`.
     Malformed,
     /// A value was refused: 422 `{key, args, field}`, the check's key and
     /// values, and the INI key the form marks (the table of one rule per key).
