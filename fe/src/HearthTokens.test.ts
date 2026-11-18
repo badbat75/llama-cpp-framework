@@ -1,0 +1,639 @@
+// The Hearth tokens of fe/briefs/06-hearth-h1-tokens.md, H1a: the token table,
+// the contrast pairs, the surface map, the focus rings and the "must not
+// change" guards, pinned as stylesheet text (jsdom does no layout). The file
+// reads index.css the way DisabledLook.test.ts does (comments dropped, the same
+// rule regex and depth); that file exports no helper, so this parser is a
+// small local copy of its reader.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { expect, test } from 'vitest'
+
+const CSS = readFileSync(
+  join(import.meta.dirname, 'index.css'),
+  'utf8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
+
+type Rule = {
+  sel: string
+  compact: string
+  body: string
+  at: number
+  depth: number
+}
+
+// Rules opened before this offset: the nesting level of the rule that starts
+// there, 0 at the top level.
+const opened = (upto: number): number =>
+  (CSS.slice(0, upto).match(/\{/g) ?? []).length -
+  (CSS.slice(0, upto).match(/\}/g) ?? []).length
+
+const RULES: Rule[] = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+  sel: m[1].trim(),
+  // Whitespace dropped: the selector is written over several lines.
+  compact: m[1].replace(/\s+/g, ''),
+  body: m[2],
+  at: m.index ?? 0,
+  depth: opened(m.index ?? 0),
+}))
+
+// Top-level rules only (as in DisabledLook.test.ts).
+const TOP = RULES.filter((r) => r.depth === 0)
+
+// The value of a declaration; the last one when a block repeats the property.
+const prop = (body: string, name: string): string => {
+  let val = ''
+  for (const d of body.split(';')) {
+    const i = d.indexOf(':')
+    if (i >= 0 && d.slice(0, i).trim() === name) val = d.slice(i + 1).trim()
+  }
+  return val
+}
+
+// The `--name: value;` pairs of a block, in order: the count pins duplicates.
+const customProps = (body: string): [string, string][] =>
+  [...body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]*)/g)].map((m) => [
+    m[1],
+    m[2].trim(),
+  ])
+
+// Like DisabledLook's `one`, but usable from module scope and from helpers,
+// where vitest's expect has no test context: a throw names the miss.
+const single = (list: Rule[], what: string): Rule => {
+  if (list.length !== 1)
+    throw new Error(
+      `expected exactly one rule: ${what}, found ${list.length}` +
+        (list.length
+          ? ` (${list.map((r) => r.sel.replace(/\s+/g, ' ')).join(' | ')})`
+          : ''),
+    )
+  return list[0]
+}
+
+// The end of the at-rule block that starts at this offset, by its matched
+// closing brace, the way the 7rem test locates @media (max-height: 31.98rem).
+const rangeEnd = (open: number): number => {
+  let end = open
+  let depth = 0
+  for (; end < CSS.length; end++) {
+    if (CSS[end] === '{') depth++
+    else if (CSS[end] === '}' && --depth === 0) return end
+  }
+  throw new Error(`the braces of the block at ${open} never close`)
+}
+
+const atRange = (needle: string): [number, number] => {
+  const open = CSS.indexOf(needle)
+  if (open < 0) throw new Error(`no ${needle} block in index.css`)
+  return [open, rangeEnd(open)]
+}
+
+// The light token block: the top-level rule whose selector is exactly :root.
+// The dark one: the rule whose selector is exactly :root inside the
+// prefers-color-scheme: dark media block (H4 later rewrites the locator).
+const lightBody = (): string =>
+  single(
+    TOP.filter((r) => r.compact === ':root'),
+    'the top-level :root token block',
+  ).body
+const darkBody = (): string => {
+  const [open, end] = atRange('@media (prefers-color-scheme: dark)')
+  return single(
+    RULES.filter(
+      (r) => r.depth > 0 && r.at > open && r.at < end && r.compact === ':root',
+    ),
+    'the :root rule inside the @media (prefers-color-scheme: dark) block',
+  ).body
+}
+const lightTokens = (): [string, string][] => customProps(lightBody())
+const darkTokens = (): [string, string][] => customProps(darkBody())
+
+// The value of one token in a parsed block; a miss throws naming the token,
+// so a contrast pair that lacks a token goes red on the token, not on NaN.
+const valueOf = (pairs: [string, string][], name: string): string => {
+  const hits = pairs.filter((p) => p[0] === name).map((p) => p[1])
+  if (hits.length !== 1)
+    throw new Error(`${name} is declared ${hits.length} times in the block`)
+  return hits[0]
+}
+
+// WCAG 2.2 relative luminance and contrast ratio (brief section 2, the
+// 0.04045 threshold), computed from the hex values READ from the stylesheet.
+const rgbOf = (hex: string): [number, number, number] => {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex)
+  if (!m) throw new Error(`not a 6-digit hex colour: "${hex}"`)
+  return [
+    parseInt(m[1].slice(0, 2), 16),
+    parseInt(m[1].slice(2, 4), 16),
+    parseInt(m[1].slice(4, 6), 16),
+  ]
+}
+const chan = (v: number): number => {
+  const c = v / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+const luminance = (hex: string): number => {
+  const [r, g, b] = rgbOf(hex)
+  return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+}
+const contrast = (a: string, b: string): number => {
+  const ls = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (ls[0] + 0.05) / (ls[1] + 0.05)
+}
+
+// The table of brief section 1, copied: [token, light value, dark value].
+// A null dark value: the token is not redeclared in the dark block. The
+// values are compared as written (hex lower case, rgb() space syntax).
+const TOKENS: [string, string, string | null][] = [
+  ['--page', '#f7f1e8', '#1b1714'],
+  ['--bg', '#fffdf9', '#231d19'],
+  ['--surface', '#f5efe6', '#2b241f'],
+  ['--field', '#fffdf9', '#1b1714'],
+  ['--line', '#e6dccf', '#3a3029'],
+  ['--text', '#2a211c', '#f1e9df'],
+  ['--muted', '#6b5d52', '#b5a698'],
+  ['--control', '#8c7d70', '#8a7c6f'],
+  ['--accent', '#7b3a8f', '#dcaaf0'],
+  ['--on-accent', '#ffffff', '#1b1714'],
+  ['--accent-soft', '#f1e4f6', '#3a2a44'],
+  ['--danger', '#b3261e', '#ff9a8a'],
+  ['--success', '#2f6f3e', '#7ccf8e'],
+  ['--warning', '#8a5300', '#e8b45a'],
+  ['--hatch', 'rgb(42 33 28 / 0.07)', 'rgb(241 233 223 / 0.06)'],
+  [
+    '--shadow',
+    '0 1px 2px rgb(60 40 20 / 0.08), 0 6px 20px rgb(60 40 20 / 0.06)',
+    '0 0 0 1px var(--line)',
+  ],
+  ['--space-1', '4px', null],
+  ['--space-2', '8px', null],
+  ['--space-3', '12px', null],
+  ['--space-4', '16px', null],
+  ['--space-5', '24px', null],
+  ['--space-6', '40px', null],
+  ['--space-7', '64px', null],
+  ['--radius', '10px', null],
+  ['--radius-check', '5px', null],
+  ['--radius-card', '16px', null],
+  ['--radius-pill', '999px', null],
+  ['--font', "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif", null],
+  ['--mono', "ui-monospace, 'Cascadia Mono', Menlo, monospace", null],
+  ['--fs-xs', '0.8125rem', null],
+  ['--fs-sm', '0.875rem', null],
+  ['--fs-md', '0.9375rem', null],
+  ['--fs-body', '1.0625rem', null],
+  ['--fs-lg', '1.125rem', null],
+  ['--fs-h2', '1.375rem', null],
+  ['--fs-h1', '2rem', null],
+  ['--lh', '1.55', null],
+  ['--control-h', '40px', null],
+  ['--border-w', '1.5px', null],
+  ['--ring-w', '3px', null],
+]
+
+// Tokens 1 to 16 of the table: the dark block declares exactly these.
+const DARK_NAMES = TOKENS.filter((t) => t[2] !== null).map((t) => t[0])
+
+// The --fs- tokens of the table (rows 30 to 36).
+const FS = TOKENS.map((t) => t[0]).filter((n) => n.startsWith('--fs-'))
+
+// The pairs of brief section 6, copied as given: [fg, bg, floor], each in
+// both themes.
+type Pair = [string, string, number]
+const PAIRS: Pair[] = [
+  ['--text', '--page', 4.5],
+  ['--text', '--bg', 4.5],
+  ['--text', '--surface', 4.5],
+  ['--text', '--field', 4.5],
+  ['--text', '--accent-soft', 4.5],
+  ['--muted', '--page', 4.5],
+  ['--muted', '--bg', 4.5],
+  ['--muted', '--surface', 4.5],
+  ['--muted', '--field', 4.5],
+  ['--muted', '--accent-soft', 4.5],
+  ['--accent', '--page', 4.5],
+  ['--accent', '--bg', 4.5],
+  ['--accent', '--surface', 4.5],
+  ['--accent', '--field', 4.5],
+  ['--accent', '--accent-soft', 4.5],
+  ['--danger', '--page', 4.5],
+  ['--danger', '--bg', 4.5],
+  ['--danger', '--surface', 4.5],
+  ['--danger', '--field', 4.5],
+  ['--danger', '--accent-soft', 4.5],
+  ['--success', '--page', 4.5],
+  ['--success', '--bg', 4.5],
+  ['--success', '--surface', 4.5],
+  ['--success', '--field', 4.5],
+  ['--success', '--accent-soft', 4.5],
+  ['--warning', '--page', 4.5],
+  ['--warning', '--bg', 4.5],
+  ['--warning', '--surface', 4.5],
+  ['--warning', '--field', 4.5],
+  ['--warning', '--accent-soft', 4.5],
+  ['--on-accent', '--accent', 4.5],
+  ['--control', '--page', 3],
+  ['--control', '--bg', 3],
+  ['--control', '--surface', 3],
+  ['--control', '--field', 3],
+  ['--control', '--accent-soft', 3],
+]
+const THEMES = ['light', 'dark'] as const
+
+test('H1a.1: the top-level :root declares exactly the 40 Hearth token names, none twice, and keeps color-scheme', () => {
+  const pairs = lightTokens()
+  const names = pairs.map((p) => p[0])
+  expect(
+    names.length,
+    `${names.length} custom properties: a repeat counted`,
+  ).toBe(TOKENS.length)
+  expect(
+    [...names].sort(),
+    'exactly the 40 names of the table, nothing extra',
+  ).toEqual([...TOKENS.map((t) => t[0])].sort())
+  expect(
+    prop(lightBody(), 'color-scheme'),
+    'color-scheme: light dark stays on :root',
+  ).toBe('light dark')
+})
+
+test.each(TOKENS.map((t) => [t[0], t[1]] as [string, string]))(
+  'H1a.1: %s has the light value of the table',
+  (name, light) => {
+    expect(
+      valueOf(lightTokens(), name),
+      `${name} in the top-level :root, as written in the table`,
+    ).toBe(light)
+  },
+)
+
+test('H1a.2: the dark :root declares exactly the 16 colour and shadow tokens, none twice, and nothing else', () => {
+  const pairs = darkTokens()
+  const names = pairs.map((p) => p[0])
+  expect(
+    names.length,
+    `${names.length} custom properties in the dark block: a repeat counted`,
+  ).toBe(DARK_NAMES.length)
+  expect(
+    [...names].sort(),
+    'tokens 1 to 16 of the table, the colour and shadow set, nothing else',
+  ).toEqual([...DARK_NAMES].sort())
+})
+
+test.each(
+  TOKENS.filter((t) => t[2] !== null).map(
+    (t) => [t[0], t[2] as string] as [string, string],
+  ),
+)('H1a.2: %s has the dark value of the table', (name, dark) => {
+  expect(
+    valueOf(darkTokens(), name),
+    `${name} in the dark :root, as written in the table`,
+  ).toBe(dark)
+})
+
+test('the ratio function: black on white is 21, and the brief-stated 14.03 and 4.96 of the parsed light tokens', () => {
+  expect(contrast('#000000', '#ffffff').toFixed(2), 'black on white').toBe(
+    '21.00',
+  )
+  expect(
+    contrast('#ffffff', '#000000').toFixed(2),
+    'the order of the pair does not matter',
+  ).toBe('21.00')
+  const p1 = contrast(
+    valueOf(lightTokens(), '--text'),
+    valueOf(lightTokens(), '--page'),
+  )
+  expect(
+    p1.toFixed(2),
+    `--text on --page light: measured ${p1.toFixed(2)}:1, the brief states 14.03:1`,
+  ).toBe('14.03')
+  const p25 = contrast(
+    valueOf(lightTokens(), '--success'),
+    valueOf(lightTokens(), '--accent-soft'),
+  )
+  expect(
+    p25.toFixed(2),
+    `--success on --accent-soft light, the lowest text pair: measured ${p25.toFixed(2)}:1, the brief states 4.96:1`,
+  ).toBe('4.96')
+})
+
+test('the pairs table is the brief section 2: 31 text pairs at 4.5, 5 non-text pairs at 3', () => {
+  expect(PAIRS.filter((p) => p[2] === 4.5).length, 'the P rows').toBe(31)
+  expect(PAIRS.filter((p) => p[2] === 3).length, 'the N rows').toBe(5)
+  expect(PAIRS.length, '36 pairs, each checked in both themes').toBe(36)
+})
+
+test.each(
+  PAIRS.flatMap((p) =>
+    THEMES.map(
+      (t) => [p[0], p[1], p[2], t] as [string, string, number, string],
+    ),
+  ),
+)('H1a.3: %s on %s, floor %s:1 in %s', (fg, bg, floor, theme) => {
+  const pairs = theme === 'light' ? lightTokens() : darkTokens()
+  const ratio = contrast(valueOf(pairs, fg), valueOf(pairs, bg))
+  expect(
+    ratio,
+    `${fg} on ${bg} in ${theme}: ${ratio.toFixed(2)}:1, floor ${floor}:1`,
+  ).toBeGreaterThanOrEqual(floor)
+})
+
+test('H1a.4: no colour literal outside the two token blocks and .dialog::backdrop', () => {
+  const blocks = new Set([
+    single(
+      TOP.filter((r) => r.compact === ':root'),
+      'the top-level :root token block',
+    ).at,
+    single(
+      (() => {
+        const [open, end] = atRange('@media (prefers-color-scheme: dark)')
+        return RULES.filter(
+          (r) =>
+            r.depth > 0 && r.at > open && r.at < end && r.compact === ':root',
+        )
+      })(),
+      'the :root rule inside the @media (prefers-color-scheme: dark) block',
+    ).at,
+  ])
+  // A # then 3, 4, 6 or 8 hex digits, and the colour functions, each with a
+  // boundary so border-color( and a -1 do not match. Selectors are not
+  // searched: an id selector is not a colour. Keywords stay allowed.
+  const HEX =
+    /(?<![0-9a-zA-Z-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})(?![0-9a-zA-Z-])/g
+  const FN =
+    /(^|[^-a-zA-Z0-9])(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color)\(/g
+  const offenders: string[] = []
+  for (const r of RULES) {
+    if (blocks.has(r.at) || r.compact === '.dialog::backdrop') continue
+    for (const re of [HEX, FN])
+      for (const m of r.body.matchAll(re))
+        offenders.push(`${r.sel.replace(/\s+/g, ' ')}: ${m[0].trim()}`)
+  }
+  expect(
+    offenders,
+    'every colour a rule draws is a var(--token); the only literal outside the token blocks is the .dialog::backdrop',
+  ).toEqual([])
+})
+
+test('H1a.5: the body rule sits on --page with --text, --font, --fs-body and --lh', () => {
+  const body = single(
+    TOP.filter((r) => r.compact === 'body'),
+    'the top-level body rule',
+  ).body
+  expect(
+    prop(body, 'background'),
+    'the page is the warm paper, cards lift off it',
+  ).toBe('var(--page)')
+  expect(prop(body, 'color'), 'body text is --text').toBe('var(--text)')
+  expect(prop(body, 'font-family'), 'the font stack is a token').toBe(
+    'var(--font)',
+  )
+  expect(prop(body, 'font-size'), '17 px from --fs-body').toBe('var(--fs-body)')
+  expect(prop(body, 'line-height'), 'the leading is --lh').toBe('var(--lh)')
+})
+
+test('H1a.6: the headings take the type-scale tokens, and h1 keeps its 1.2 leading, its margins and its overflow-wrap', () => {
+  const h1 = single(
+    TOP.filter((r) => r.compact === 'h1'),
+    'the top-level h1 rule',
+  ).body
+  expect(prop(h1, 'font-size'), 'h1 grows to --fs-h1').toBe('var(--fs-h1)')
+  expect(prop(h1, 'line-height'), 'and a tight 1.2 leading').toBe('1.2')
+  expect(prop(h1, 'margin'), 'margins unchanged').toBe('0 0 var(--space-4)')
+  expect(
+    prop(h1, 'overflow-wrap'),
+    'the model profile id breaks anywhere',
+  ).toBe('anywhere')
+  const size = (sel: string, want: string, what: string): void => {
+    const body = single(
+      TOP.filter((r) => r.compact === sel),
+      `the top-level ${sel} rule`,
+    ).body
+    expect(prop(body, 'font-size'), what).toBe(want)
+  }
+  size('h2', 'var(--fs-h2)', 'h2 is --fs-h2')
+  size('h3', 'var(--fs-lg)', 'the card titles are --fs-lg')
+  size('h4', 'var(--fs-body)', 'h4 is the body size')
+})
+
+test('H1a.7: every font-size outside :root is a var(--fs-*) of the scale, no rem, px or em literal', () => {
+  const literals: string[] = []
+  for (const r of RULES) {
+    if (r.compact === ':root') continue
+    for (const d of r.body.split(';')) {
+      const i = d.indexOf(':')
+      if (i < 0 || d.slice(0, i).trim() !== 'font-size') continue
+      const val = d.slice(i + 1).trim()
+      const m = /^var\((--fs-[a-z0-9-]+)\)$/.exec(val)
+      if (!m || !FS.includes(m[1]))
+        literals.push(`${r.sel.replace(/\s+/g, ' ')}: font-size: ${val}`)
+    }
+  }
+  expect(
+    literals,
+    'each font-size names one of the --fs- tokens of the table',
+  ).toEqual([])
+})
+
+test('H1a.8: cards and the save bar sit on --bg, enabled fields and the unchecked box on --field, rows divide on --line, the open About on --accent-soft, and the banner and the nav keep --surface', () => {
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === '.card'),
+        'the top-level .card rule',
+      ).body,
+      'background',
+    ),
+    'a card is the lifted --bg',
+  ).toBe('var(--bg)')
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === '.save-bar'),
+        'the top-level .save-bar rule',
+      ).body,
+      'background',
+    ),
+    'the save bar is --bg',
+  ).toBe('var(--bg)')
+  const enabled = single(
+    TOP.filter((r) =>
+      ["input[type='text']", "input[type='password']", 'select'].every((s) =>
+        r.compact.includes(s),
+      ),
+    ),
+    "the enabled field rule (input[type='text'], input[type='password'], select)",
+  ).body
+  expect(
+    prop(enabled, 'background'),
+    'an enabled field is filled with --field',
+  ).toBe('var(--field)')
+  expect(
+    prop(enabled, 'border'),
+    'its border stays 1px solid --control until H2a',
+  ).toBe('1px solid var(--control)')
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === '.model-profiles-filter-rowinput'),
+        'the .model-profiles-filter-row input rule',
+      ).body,
+      'background',
+    ),
+    'the filter input is filled with --field',
+  ).toBe('var(--field)')
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === "input[type='checkbox']"),
+        "the top-level input[type='checkbox'] rule",
+      ).body,
+      'background',
+    ),
+    'the unchecked box is filled with --field',
+  ).toBe('var(--field)')
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === 'td'),
+        'the top-level td rule',
+      ).body,
+      'border-bottom',
+    ),
+    'table rows divide on the decorative --line',
+  ).toBe('1px solid var(--line)')
+  expect(
+    prop(
+      single(
+        TOP.filter((r) => r.compact === ".about[aria-expanded='true']"),
+        "the .about[aria-expanded='true'] rule",
+      ).body,
+      'background',
+    ),
+    'the open About shows --accent-soft, visible on the --bg card',
+  ).toBe('var(--accent-soft)')
+  for (const sel of ['.banner', '.nav']) {
+    const body = single(
+      TOP.filter((r) => r.compact === sel),
+      `the top-level ${sel} rule`,
+    ).body
+    expect(
+      prop(body, 'background'),
+      `${sel} keeps --surface until H5 restyles the shell`,
+    ).toBe('var(--surface)')
+    expect(
+      prop(body, 'border-bottom'),
+      `${sel} keeps its 1px solid --control rule`,
+    ).toBe('1px solid var(--control)')
+  }
+})
+
+test('H1a.11: no transition, transition-*, animation or animation-* declaration, so nothing moves and prefers-reduced-motion needs no rule', () => {
+  const moving: string[] = []
+  for (const r of RULES)
+    for (const d of r.body.split(';')) {
+      const i = d.indexOf(':')
+      if (i < 0) continue
+      const name = d.slice(0, i).trim()
+      if (/^(transition|animation)(-|$)/.test(name))
+        moving.push(`${r.sel.replace(/\s+/g, ' ')}: ${name}`)
+    }
+  expect(
+    moving,
+    'Hearth adds no motion: a transition here would need a reduced-motion rule',
+  ).toEqual([])
+  expect(
+    CSS,
+    'no prefers-reduced-motion block: nothing moves, none is needed',
+  ).not.toMatch(/prefers-reduced-motion/)
+})
+
+test('H1a.12 guard: the focus rings keep today declarations, the accent ring whose contrast P11 to P15 pin', () => {
+  const ring = single(
+    TOP.filter((r) => r.compact === ':focus-visible'),
+    'the top-level :focus-visible rule',
+  ).body
+  expect(
+    prop(ring, 'outline'),
+    'the ring is --accent, so pairs P11 to P15 guard it',
+  ).toBe('2px solid var(--accent)')
+  expect(prop(ring, 'outline-offset'), 'offset unchanged').toBe('2px')
+  const moved = single(
+    TOP.filter((r) => r.compact === "[tabindex='-1']:focus"),
+    "the [tabindex='-1']:focus rule",
+  ).body
+  expect(prop(moved, 'outline'), 'a focus the page moves needs no ring').toBe(
+    'none',
+  )
+  const heading = single(
+    TOP.filter((r) => r.compact === '.cardh3:focus-visible'),
+    'the .card h3:focus-visible rule',
+  ).body
+  expect(
+    prop(heading, 'outline'),
+    'the jump landing keeps its accent ring',
+  ).toBe('2px solid var(--accent)')
+  expect(prop(heading, 'outline-offset'), 'with its offset').toBe('2px')
+})
+
+test('H1a.12 guard: the three forced-colours blocks stay, with system colours only (the token colours are forced there)', () => {
+  const SYSTEM = [
+    'GrayText',
+    'CanvasText',
+    'Canvas',
+    'Highlight',
+    'HighlightText',
+  ]
+  const blocks: string[] = []
+  let from = 0
+  for (;;) {
+    const at = CSS.indexOf('@media (forced-colors: active)', from)
+    if (at < 0) break
+    const end = rangeEnd(at)
+    blocks.push(CSS.slice(at, end + 1))
+    from = end + 1
+  }
+  expect(blocks.length, "today's three forced-colours blocks stay as is").toBe(
+    3,
+  )
+  const off: string[] = []
+  for (const b of blocks)
+    for (const m of b.matchAll(/([-a-zA-Z]+)\s*:\s*([^;{}]+);/g))
+      if (!SYSTEM.includes(m[2].trim())) off.push(`${m[1]}: ${m[2].trim()}`)
+  expect(
+    off,
+    'inside a forced-colours block only the system colour keywords: the cues that survive are the border styles, the shapes and the text',
+  ).toEqual([])
+})
+
+test('H1a.12 guard: no size moves in H1a: the 32px control heights stay and the shape tokens are declared but not used', () => {
+  const heights: string[] = []
+  for (const r of RULES) {
+    const v = prop(r.body, 'min-height')
+    if (v) heights.push(`${r.sel.replace(/\s+/g, ' ')}: ${v}`)
+  }
+  expect(
+    heights,
+    'every min-height is the one of today: H2a is the slice that sizes controls',
+  ).toEqual([
+    '#root: 100vh',
+    'button: 32px',
+    '.model-profiles-switch: 24px',
+    '.model-profiles-switch-status: 1lh',
+    '.model-profiles-filter-row input: 32px',
+    '.model-profiles-filter-status: 1lh',
+    '.field-label: 32px',
+    '.about: 24px',
+    "input[type='text'], input[type='password'], select: 32px",
+    '.check: 24px',
+  ])
+  const used: string[] = []
+  for (const r of RULES)
+    if (r.compact !== ':root')
+      for (const t of ['--control-h', '--border-w', '--ring-w'])
+        if (r.body.includes(`var(${t})`))
+          used.push(`${r.sel.replace(/\s+/g, ' ')}: ${t}`)
+  expect(
+    used,
+    'the shape tokens are declared for H2a, no rule draws with them in H1a',
+  ).toEqual([])
+})

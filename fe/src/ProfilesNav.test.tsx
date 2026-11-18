@@ -361,10 +361,14 @@ test('5b.3: the Model profiles link has aria-current="page" on #/profiles/model 
   })
   const onMissing = await entry()
   await waitFor(() => expect(currentOf(onMissing)).toBe('true'))
-  expect(
-    document.body.textContent,
-    'the missing one shows the id sentence',
-  ).toContain(en('model-profile-not-found', 'Gone'))
+  // The sentence arrives with the mocked 404, while the aria-current gate is
+  // met on the route's first render: wait for the answer, not for this tick.
+  await waitFor(() =>
+    expect(
+      document.body.textContent,
+      'the missing one shows the id sentence',
+    ).toContain(en('model-profile-not-found', 'Gone')),
+  )
 })
 
 test('5b.3: no aria-current on the Overview, an instance, the not-found page or #/profiles/model/, and never on the Profiles label', async () => {

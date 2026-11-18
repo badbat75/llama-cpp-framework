@@ -100,7 +100,7 @@ test('2h.163a: one rule for input, select and textarea :disabled draws the field
   expect(prop(rule.body, 'opacity'), 'no dimming').toBe('1')
 })
 
-test('2h.163b and 2h.163f: the enabled field keeps --bg with a solid --control border and the disabled rule wins by order; no :disabled rule dims and :root gains no token', () => {
+test('2h.163b and 2h.163f: the enabled field is on --field with a solid --control border and the disabled rule wins by order; no :disabled rule dims and :root declares the Hearth token set', () => {
   const enabled = one(
     TOP.filter((r) =>
       ["input[type='text']", "input[type='password']", 'select'].every((s) =>
@@ -109,9 +109,10 @@ test('2h.163b and 2h.163f: the enabled field keeps --bg with a solid --control b
     ),
     "the enabled field rule (input[type='text'], input[type='password'], select)",
   )
-  expect(prop(enabled.body, 'background'), 'enabled stays on --bg').toBe(
-    'var(--bg)',
-  )
+  expect(
+    prop(enabled.body, 'background'),
+    'the enabled field is on --field',
+  ).toBe('var(--field)')
   expect(
     prop(enabled.body, 'border'),
     'enabled keeps its solid --control border',
@@ -130,24 +131,45 @@ test('2h.163b and 2h.163f: the enabled field keeps --bg with a solid --control b
     for (const m of r.body.matchAll(/(--[a-z0-9-]+)\s*:/g)) tokens.add(m[1])
   expect(
     [...tokens].sort(),
-    ':root declares the tokens it has today, in light and in dark: no new one',
+    ':root declares the Hearth token set of brief 06 section 1, in light and in dark',
   ).toEqual(
     [
       '--accent',
+      '--accent-soft',
       '--bg',
+      '--border-w',
       '--control',
+      '--control-h',
       '--danger',
+      '--field',
       '--font',
+      '--fs-body',
+      '--fs-h1',
+      '--fs-h2',
+      '--fs-lg',
+      '--fs-md',
+      '--fs-sm',
+      '--fs-xs',
+      '--hatch',
+      '--lh',
+      '--line',
       '--mono',
       '--muted',
       '--on-accent',
+      '--page',
       '--radius',
+      '--radius-card',
+      '--radius-check',
+      '--radius-pill',
+      '--ring-w',
+      '--shadow',
       '--space-1',
       '--space-2',
       '--space-3',
       '--space-4',
       '--space-5',
       '--space-6',
+      '--space-7',
       '--success',
       '--surface',
       '--text',

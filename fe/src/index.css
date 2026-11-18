@@ -1,43 +1,81 @@
 /* The web UI's visual system: fe/DESIGN.md, sections 4 and 5. */
 
+/* The Hearth tokens of fe/briefs/06-hearth-h1-tokens.md section 1: the light
+   values on the top-level :root, the 16 colour and shadow ones redeclared in
+   the dark block. The shape tokens (--radius-check, --radius-card,
+   --radius-pill, --control-h, --border-w, --ring-w, --hatch, --shadow) are
+   declared here and drawn by the shape slice; --space-7, --fs-xs and --fs-md
+   by a later one. No colour literal sits outside these two blocks, the dialog
+   backdrop excepted. */
+
 :root {
-  --bg: #ffffff;
-  --surface: #f6f7f9;
-  --text: #1b1f24;
-  --muted: #59636e;
-  --control: #818b98;
-  --accent: #0a5cc2;
+  --page: #f7f1e8;
+  --bg: #fffdf9;
+  --surface: #f5efe6;
+  --field: #fffdf9;
+  --line: #e6dccf;
+  --text: #2a211c;
+  --muted: #6b5d52;
+  --control: #8c7d70;
+  --accent: #7b3a8f;
   --on-accent: #ffffff;
-  --danger: #b42318;
-  --success: #1a7f37;
-  --warning: #8a5a00;
+  --accent-soft: #f1e4f6;
+  --danger: #b3261e;
+  --success: #2f6f3e;
+  --warning: #8a5300;
+  --hatch: rgb(42 33 28 / 0.07);
+  --shadow: 0 1px 2px rgb(60 40 20 / 0.08), 0 6px 20px rgb(60 40 20 / 0.06);
 
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
-  --space-6: 32px;
-  --radius: 6px;
+  --space-6: 40px;
+  --space-7: 64px;
+
+  --radius: 10px;
+  --radius-check: 5px;
+  --radius-card: 16px;
+  --radius-pill: 999px;
 
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+
+  --fs-xs: 0.8125rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 0.9375rem;
+  --fs-body: 1.0625rem;
+  --fs-lg: 1.125rem;
+  --fs-h2: 1.375rem;
+  --fs-h1: 2rem;
+  --lh: 1.55;
+
+  --control-h: 40px;
+  --border-w: 1.5px;
+  --ring-w: 3px;
 
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1115;
-    --surface: #181b22;
-    --text: #e6e8eb;
-    --muted: #9ba5b0;
-    --control: #7d8794;
-    --accent: #6cb0ff;
-    --on-accent: #0f1115;
-    --danger: #ff8d80;
-    --success: #56c271;
-    --warning: #d9a72e;
+    --page: #1b1714;
+    --bg: #231d19;
+    --surface: #2b241f;
+    --field: #1b1714;
+    --line: #3a3029;
+    --text: #f1e9df;
+    --muted: #b5a698;
+    --control: #8a7c6f;
+    --accent: #dcaaf0;
+    --on-accent: #1b1714;
+    --accent-soft: #3a2a44;
+    --danger: #ff9a8a;
+    --success: #7ccf8e;
+    --warning: #e8b45a;
+    --hatch: rgb(241 233 223 / 0.06);
+    --shadow: 0 0 0 1px var(--line);
   }
 }
 
@@ -55,11 +93,11 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--page);
   color: var(--text);
   font-family: var(--font);
-  font-size: 1rem;
-  line-height: 1.5;
+  font-size: var(--fs-body);
+  line-height: var(--lh);
 }
 
 /* The nav column reaches the bottom of the window. */
@@ -70,24 +108,25 @@ body {
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: var(--fs-h1);
+  line-height: 1.2;
   margin: 0 0 var(--space-4);
   /* A model profile id has no spaces: it breaks anywhere in the column (2d.7). */
   overflow-wrap: anywhere;
 }
 
 h2 {
-  font-size: 1.25rem;
+  font-size: var(--fs-h2);
   margin: var(--space-6) 0 var(--space-2);
 }
 
 h3 {
-  font-size: 1rem;
+  font-size: var(--fs-lg);
   margin: 0 0 var(--space-2);
 }
 
 h4 {
-  font-size: 1rem;
+  font-size: var(--fs-body);
   margin: 0 0 var(--space-1);
 }
 
@@ -249,7 +288,7 @@ a.session[aria-current='page'] {
   margin: var(--space-3) 0 var(--space-1);
   padding: 0 var(--space-3);
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -311,7 +350,7 @@ th {
 }
 
 td {
-  border-bottom: 1px solid var(--surface);
+  border-bottom: 1px solid var(--line);
 }
 
 /* The model profiles keep three columns at 320 px: the name wraps anywhere,
@@ -402,7 +441,7 @@ td {
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
   color: var(--text);
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--control);
   border-radius: var(--radius);
 }
@@ -420,7 +459,7 @@ td {
 .model-profiles-filter-status {
   margin: 0;
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
 }
 
 .model-profiles-filter-status {
@@ -431,7 +470,7 @@ td {
 .model-profiles-note {
   margin-top: var(--space-2);
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
 }
 
 .notice {
@@ -522,7 +561,7 @@ td {
 .card {
   margin: 0 0 var(--space-5);
   padding: var(--space-4) var(--space-5);
-  background: var(--surface);
+  background: var(--bg);
   border-radius: var(--radius);
 }
 
@@ -536,7 +575,7 @@ td {
 .card .note {
   padding: var(--space-4) 0 var(--space-1);
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
 }
 
 .card .note + .field {
@@ -589,7 +628,7 @@ legend.field-label {
 
 .field-hint {
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
 }
 
 .field-hint p {
@@ -605,7 +644,7 @@ legend.field-label {
   margin: 0;
   color: var(--muted);
   font-family: var(--mono);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -664,7 +703,7 @@ legend.field-label {
 .about {
   min-height: 24px;
   padding: 0 var(--space-2);
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
   font-weight: 400;
   background: transparent;
   color: var(--accent);
@@ -672,7 +711,7 @@ legend.field-label {
 }
 
 .about[aria-expanded='true'] {
-  background: var(--bg);
+  background: var(--accent-soft);
 }
 
 input[type='text'],
@@ -682,7 +721,7 @@ select {
   min-height: 32px;
   padding: var(--space-1) var(--space-2);
   color: var(--text);
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--control);
   border-radius: var(--radius);
   min-width: 0;
@@ -731,7 +770,7 @@ input[type='checkbox'] {
   width: 1rem;
   height: 1rem;
   margin: 0;
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--control);
   border-radius: 3px;
   cursor: pointer;
@@ -803,7 +842,7 @@ input[type='checkbox'][aria-disabled='true']::before {
 
 .field-error {
   margin: var(--space-1) 0 0;
-  font-size: 0.875rem;
+  font-size: var(--fs-sm);
 }
 
 .error-icon {
@@ -878,7 +917,7 @@ html:has(.save-bar) {
   align-items: center;
   gap: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-4);
-  background: var(--surface);
+  background: var(--bg);
   border-top: 1px solid var(--control);
   border-radius: var(--radius) var(--radius) 0 0;
 }

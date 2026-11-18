@@ -489,7 +489,7 @@ test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem 
   for (const decl of [
     /(^|;)\s*color:\s*var\(--muted\)/,
     /font-family:\s*var\(--mono\)/,
-    /font-size:\s*0\.875rem/,
+    /font-size:\s*var\(--fs-sm\)/,
     /overflow-wrap:\s*anywhere/,
   ])
     expect(body, `the line's CSS has ${decl}`).toMatch(decl)

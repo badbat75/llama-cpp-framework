@@ -183,30 +183,49 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 ### 5.1 Tokens
 
 CSS custom properties on `:root`, dark values under `@media (prefers-color-scheme: dark)`. No theme
-switch **(preference)**: the system setting decides. Contrast figures are against `--bg` / `--surface`,
-computed with the WCAG relative-luminance formula; the floors are 4.5:1 for text
-([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)) and 3:1 for control borders, focus rings
-and state shapes ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)).
+switch yet (H4 adds one): the system setting decides. The palette is direction B "Hearth" (brief 04,
+round 2; built by brief 06 H1a, 2026-11-18): warm paper behind everything, cards lifted off it. Every
+foreground and background pair, both themes, with its measured ratio and floor, is the table of brief
+`fe/briefs/06-hearth-h1-tokens.md` section 2, pinned by `HearthTokens.test.ts`; the floors are 4.5:1 for
+text ([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)) and 3:1 for control borders, focus
+rings and state shapes ([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)). No colour literal
+outside the two token blocks, except `.dialog::backdrop` (custom properties do not reach `::backdrop`).
+A text colour on a surface outside that table needs a new row first.
 
-| Token | Light | Dark | Use | Contrast light / dark (bg, surface) |
+| Token | Light | Dark | Use | Lowest ratio light / dark (on the surfaces it is used on) |
 |---|---|---|---|---|
-| `--bg` | `#ffffff` | `#0f1115` | page | |
-| `--surface` | `#f6f7f9` | `#181b22` | cards, header, save bar, fill of a disabled control | |
-| `--text` | `#1b1f24` | `#e6e8eb` | body text | 16.6, 15.5 / 15.4, 14.0 |
-| `--muted` | `#59636e` | `#9ba5b0` | hints, secondary text, values of disabled controls | 6.1, 5.7 / 7.6, 6.9 |
-| `--control` | `#818b98` | `#7d8794` | input and checkbox borders (dashed on a disabled control), dividers that carry meaning | 3.5, 3.2 / 5.2, 4.7 |
-| `--accent` | `#0a5cc2` | `#6cb0ff` | links, primary button, focus ring, selected nav | 6.3, 5.9 / 8.4, 7.6 |
-| `--on-accent` | `#ffffff` | `#0f1115` | text on `--accent` | 6.3 / 8.4 |
-| `--danger` | `#b42318` | `#ff8d80` | errors, Failed | 6.6, 6.1 / 8.4, 7.7 |
-| `--success` | `#1a7f37` | `#56c271` | Running, Saved | 5.1, 4.7 / 8.4, 7.7 |
-| `--warning` | `#8a5a00` | `#d9a72e` | Starting, Stopping, "restart to apply" | 5.9, 5.5 / 8.6, 7.8 |
+| `--page` | `#f7f1e8` | `#1b1714` | behind everything (`body`) | |
+| `--bg` | `#fffdf9` | `#231d19` | cards, save bar, dialog, secondary and inactive buttons | |
+| `--surface` | `#f5efe6` | `#2b241f` | banner, nav (until H5), notices, fill of a disabled control | |
+| `--field` | `#fffdf9` | `#1b1714` | fill of an enabled input, select and unchecked checkbox | |
+| `--line` | `#e6dccf` | `#3a3029` | decorative dividers only (table rows): carries no meaning | none (no floor) |
+| `--accent-soft` | `#f1e4f6` | `#3a2a44` | About open; later the current nav entry and the Running badge | |
+| `--text` | `#2a211c` | `#f1e9df` | body text, headings | 13.78 / 12.70 |
+| `--muted` | `#6b5d52` | `#b5a698` | hints, secondary text, values of disabled controls, placeholder | 5.55 / 6.45 |
+| `--control` | `#8c7d70` | `#8a7c6f` | control borders (dashed on a disabled control), dividers that carry meaning | 3.48 / 3.78 |
+| `--accent` | `#7b3a8f` | `#dcaaf0` | links, primary button, focus ring, selected nav, checked box | 6.04 / 6.93 |
+| `--on-accent` | `#ffffff` | `#1b1714` | text and tick on `--accent` | 7.38 / 9.37 |
+| `--danger` | `#b3261e` | `#ff9a8a` | errors, Failed | 5.72 / 7.45 |
+| `--success` | `#2f6f3e` | `#7ccf8e` | Running, Saved | 5.30 / 8.13 (4.96 light on `--accent-soft`, unused until H6) |
+| `--warning` | `#8a5300` | `#e8b45a` | Starting, Stopping, "restart to apply" | 5.54 / 8.08 |
 
-- **Type**: the system font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`);
-  monospace `ui-monospace, "Cascadia Mono", Menlo, monospace` for paths, flags and values. Sizes in
-  `rem`: 0.875 (hints, badges), 1 (body), 1.25 (h2), 1.5 (h1); line height 1.5.
-- **Spacing**: 4, 8, 12, 16, 24, 32 px (`--space-1` to `--space-6`). Radius 6px. Focus ring:
-  2px solid `--accent`, offset 2px, on `:focus-visible`
-  ([2.4.7 Focus Visible](https://www.w3.org/TR/WCAG22/#focus-visible)).
+Also declared, for later slices: `--hatch` and `--shadow` (redeclared in dark: an outline there),
+`--radius-check`, `--radius-card`, `--radius-pill`, `--control-h` 40px, `--border-w` 1.5px,
+`--ring-w` 3px, `--space-7` 64px (brief 06 section 1). In light `--bg` and `--field` are the same
+colour; in dark an enabled field is darker than its card.
+
+- **Type**: the system font stack (`system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`) until
+  H1b brings Atkinson Hyperlegible Next and Mono; monospace `ui-monospace, "Cascadia Mono", Menlo,
+  monospace` for paths, flags and values. Every `font-size` is a token: `--fs-xs` 0.8125rem,
+  `--fs-sm` 0.875rem (hints, notes, full-value line, About, field error, nav label), `--fs-md`
+  0.9375rem, `--fs-body` 1.0625rem (17 px), `--fs-lg` 1.125rem (h3), `--fs-h2` 1.375rem, `--fs-h1`
+  2rem (line height 1.2); body line height `--lh` 1.55. Bold is 600.
+- **Spacing**: 4, 8, 12, 16, 24, 40, 64 px (`--space-1` to `--space-7`). Radius `--radius` 10px
+  (controls, notices, alerts; cards keep it until H2b). Focus ring: 2px solid `--accent` (H2a: 3px,
+  `--ring-w`), offset 2px, on `:focus-visible`
+  ([2.4.7 Focus Visible](https://www.w3.org/TR/WCAG22/#focus-visible)); measured at least 6.04:1
+  light and 6.93:1 dark against every colour beside it (the About toggle open, on `--accent-soft`;
+  H1a review).
 - **Targets**: every button, checkbox and link at least 24 by 24 CSS px, including its padding
   ([2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
 - **Motion**: none needed; a spinner, if any, stops under `prefers-reduced-motion: reduce`.
@@ -287,15 +306,16 @@ Each is one React component, reused by every page.
     disabled grey). WCAG exempts inactive controls from
     [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum) and
     [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast); holding the value to 4.5:1 anyway is a
-    **(preference)**, since the read-only cards exist to be read: `--muted` on `--surface` is 5.7:1
-    light, 6.9:1 dark.
+    **(preference)**, since the read-only cards exist to be read: `--muted` on `--surface` is 5.55:1
+    light, 6.45:1 dark.
   - **Disabled looks different from enabled** (2026-11-17, 02h 163a to 163g): every control with the
     native `disabled` attribute (`input`, `select`, `textarea`, a checkbox or switch, a button) is
-    drawn **flat**: background `--surface` (the card's own, so it reads as part of the card, not a
-    box to type into), border **1px dashed** `--control` (the box stays visible, at 3.2:1 light,
-    4.7:1 dark on `--surface`), text and check mark `--muted`, `cursor: not-allowed`, never
-    `opacity`. An enabled control keeps its solid `--control` border on `--bg`. The cue is the
-    border's style, not a colour (`--surface` on `--bg` is only 1.07:1 light, 1.1:1 dark), so it
+    drawn **flat**: background `--surface` (slightly darker than the `--bg` card, so it reads as
+    part of the card's ground, not a box to type into), border **1px dashed** `--control` (the box
+    stays visible, at 3.48:1 light, 3.78:1 dark on `--surface`), text and check mark `--muted`,
+    `cursor: not-allowed`, never `opacity`. An enabled control keeps its solid `--control` border on
+    `--field`. The cue is the border's style, not a colour (`--surface` on `--bg` is only 1.13:1
+    light, 1.09:1 dark), so it
     holds without colour ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)) and under forced
     colours, which replace border colours but not `border-style`
     ([CSS Color Adjustment 1, properties affected](https://www.w3.org/TR/css-color-adjust-1/#forced-colors-properties)).

@@ -57,7 +57,7 @@ Today's 19 custom properties: all **kept** by name, none renamed, none removed. 
 | # | Token | Light | Dark | Today (light / dark) | Fate |
 |---|---|---|---|---|---|
 | 1 | `--page` | `#f7f1e8` | `#1b1714` | | new: behind everything (`body`) |
-| 2 | `--bg` | `#fffdf9` | `#231d19` | `#ffffff` / `#0f1115` | kept, new value; now cards, save bar, dialog, tables, secondary buttons |
+| 2 | `--bg` | `#fffdf9` | `#231d19` | `#ffffff` / `#0f1115` | kept, new value; now cards, save bar, dialog, secondary buttons (the table moves onto it in H2b, with its radius and shadow, as in the mockup's `.presets`; in H1a it stays on `--page`) |
 | 3 | `--surface` | `#f5efe6` | `#2b241f` | `#f6f7f9` / `#181b22` | kept, new value; banner, nav (until H5), notices, disabled fill |
 | 4 | `--field` | `#fffdf9` | `#1b1714` | | new: enabled control fill |
 | 5 | `--line` | `#e6dccf` | `#3a3029` | | new: decorative dividers only (table rows; H2 card outline in dark) |
@@ -187,7 +187,7 @@ Selectors are not searched (an id selector is not a colour). Keywords stay allow
 `var(--fs-lg)`; `h4` `var(--fs-body)`. Margins and `overflow-wrap: anywhere` on `h1` unchanged.
 
 **H1a.7 Every font size is a token.** Every `font-size` declaration outside `:root` has a value
-`var(--fs-...)` naming one of the eight `--fs-` tokens; no `rem`, `px` or `em` literal remains (today
+`var(--fs-...)` naming one of the seven `--fs-` tokens; no `rem`, `px` or `em` literal remains (today
 8 rules carry `0.875rem`: `.nav-label`, `.model-profiles-filter-hint, .model-profiles-filter-status`,
 `.model-profiles-note`, `.card .note`, `.field-hint`, `.full-value`, `.about`, `.field-error`; all
 become `var(--fs-sm)`). `font: inherit` stays where it is.

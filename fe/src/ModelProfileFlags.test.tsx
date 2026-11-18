@@ -760,7 +760,7 @@ test('2e.124: the line is a paragraph in its own field, after its control, not a
       for (const decl of [
         /(^|;)\s*color:\s*var\(--muted\)/,
         /font-family:\s*var\(--mono\)/,
-        /font-size:\s*0\.875rem/,
+        /font-size:\s*var\(--fs-sm\)/,
         /overflow-wrap:\s*anywhere/,
       ])
         expect(body, `the written-as line's CSS has ${decl}`).toMatch(decl)
