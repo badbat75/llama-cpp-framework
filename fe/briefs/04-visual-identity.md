@@ -261,6 +261,11 @@ As specified for the recommended answer to question 3:
 
 ## 2. Build order
 
+Slice briefs: H1 is split into **H1a** (tokens, both themes, system fonts) and **H1b** (font files,
+after the platform's "fonts backend ready"), `fe/briefs/06-hearth-h1-tokens.md`; H2 into **H2a**
+(controls) and **H2b** (containers), `fe/briefs/06-hearth-h2-controls.md`. Those briefs win where
+they differ from this table.
+
 Each row is one test-first cycle (12 criteria at most, the playbook's limit). "Restyle" = CSS and tokens
 only: checked by the designer's UX pass (`fe/ux`) and the stylesheet-text tests (as
 `fe/src/DisabledLook.test.ts` reads `index.css`). "DOM" = markup or behaviour: the tester writes failing
