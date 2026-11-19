@@ -30,6 +30,7 @@ import { tickBox, type Boxed } from './boxed.ts'
 import Card from './Card.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
+import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import ModelProfileCards, {
   cardHeadingId,
@@ -279,7 +280,10 @@ export default function ModelProfilePage({
   return (
     <>
       <p className="model-profile-back">
-        <a href="#/profiles/model">{t('model-profile-back')}</a>
+        <a href="#/profiles/model">
+          <Icon name="chevron-left" />
+          {t('model-profile-back')}
+        </a>
       </p>
       <PageHeading text={shown} />
       <Body
@@ -862,6 +866,7 @@ function Content({
             they sit; only the engine Notice of 72 stays. */}
         {!doc.engineAvailable && (
           <p className="notice">
+            <Icon name="triangle-alert" />
             {t('model-profile-engine-unavailable', doc.engine)}
           </p>
         )}

@@ -14,6 +14,7 @@ import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { CheckboxField, GroupField } from './Field.tsx'
+import { Icon, type IconName } from './Icon.tsx'
 import {
   errorText,
   type Answer,
@@ -59,6 +60,18 @@ function label(action: Action): string {
       return t('run-stop')
     case 'restart':
       return t('run-restart')
+  }
+}
+
+/** The verb's icon (08-hearth-h8-icons.md H8b.1), beside the word it says. */
+function icon(action: Action): IconName {
+  switch (action) {
+    case 'start':
+      return 'play'
+    case 'stop':
+      return 'square'
+    case 'restart':
+      return 'rotate-cw'
   }
 }
 
@@ -339,6 +352,7 @@ export default function InstancePage({
                     aria-disabled={inactive(a) || undefined}
                     onClick={() => void run(a)}
                   >
+                    <Icon name={icon(a)} />
                     {label(a)}
                   </button>
                 ))}

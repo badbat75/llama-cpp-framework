@@ -96,7 +96,7 @@ function type(input: HTMLInputElement, value: string) {
 
 // ── Failure paths first: the notice is missing where it must show ─────────
 
-test('I1, I4, I6: insecure at #/sign-in, the notice is a plain paragraph after the intro and before the form, unannounced, no icon', async () => {
+test('I1, I4, I6: insecure at #/sign-in, the notice is a plain paragraph after the intro and before the form, unannounced, with its lock-open icon of H8b.3', async () => {
   secure(false)
   startAt('#/sign-in')
   fakeBff({ session: 'signed-out' })
@@ -114,7 +114,18 @@ test('I1, I4, I6: insecure at #/sign-in, the notice is a plain paragraph after t
   expect(p.tagName, 'a plain paragraph').toBe('P')
   expect(p.getAttribute('role'), 'no role of its own').toBeNull()
   expect(p.closest('[role="alert"], [role="status"], [aria-live]')).toBeNull()
-  expect(p.querySelector('img, svg'), 'text only, no icon').toBeNull()
+  // H8b.3: the notice holds its icon (brief 08): the shared decorative
+  // lock-open svg, the first child, no image and no text of its own. The
+  // shape of the drawing is pinned in HearthIconsPages.test.tsx.
+  expect(p.querySelector('img'), 'no image').toBeNull()
+  const icon = p.querySelector('svg')
+  expect(icon, 'the icon of H8b.3').toBeTruthy()
+  expect(icon!.getAttribute('class'), 'the shared icon class').toBe('icon')
+  expect(icon!.getAttribute('aria-hidden'), 'decorative').toBe('true')
+  expect(icon!.getAttribute('focusable'), 'takes no tab place').toBe('false')
+  expect(p.firstElementChild, 'the icon is the notice first child').toBe(icon)
+  expect(p.querySelectorAll('svg').length, 'one icon in the notice').toBe(1)
+  expect(p.textContent, 'the icon adds no text').toBe(en('signin-insecure'))
   // I6: the existing Notice of D5.2.
   expect(p.classList.contains('notice'), 'the .notice look').toBe(true)
 })

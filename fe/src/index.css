@@ -804,6 +804,20 @@ tr:last-child td {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  position: relative;
+}
+
+/* The search icon inside the field (08-hearth-h8-icons.md H8b.4): the row is
+   the positioned box, and the icon leaves its flow and sits at the field's own
+   padding, so the field keeps its full width and the icon reads as inside it.
+   A click on the drawing reaches the field. The muted tint of a search field is
+   a colour of its own, so a forced-colours block hands it back the system
+   colour, as the mark of 3.10. */
+.model-profiles-filter-row > .icon {
+  position: absolute;
+  left: var(--space-3);
+  pointer-events: none;
+  color: var(--muted);
 }
 
 .model-profiles-filter-row input {
@@ -812,6 +826,10 @@ tr:last-child td {
   font: inherit;
   min-height: var(--control-h);
   padding: var(--space-1) var(--space-2);
+  /* Written after the shorthand, so it has the say on the left side: the field
+     padding, the icon box (the .icon of H8a.4), and a space between, so the
+     typed text starts past the icon. */
+  padding-left: calc(var(--space-3) + 1.25em + var(--space-2));
   color: var(--text);
   background: var(--field);
   border: var(--border-w) solid var(--control);
@@ -850,6 +868,16 @@ tr:last-child td {
   border: 1px solid var(--control);
   border-radius: var(--radius);
   background: var(--surface);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+/* Its icon on the first line of the text (08-hearth-h8-icons.md H8b.5): a
+   notice wraps to several lines and the icon belongs to the first, so it is
+   centred on the line box, half a line above its own box. */
+.notice > .icon {
+  margin-top: calc((1lh - 1.25em) / 2);
 }
 
 .instance-header .engine {
@@ -1031,6 +1059,24 @@ tr:last-child td {
   .shape-failed::after {
     background: CanvasText;
   }
+
+  /* The search icon's --muted tint (08-hearth-h8-icons.md H8b.4): the tint is a
+     colour of its own, so an svg keeps it there (the UA's preserve-parent-color,
+     brief 07 section 0) and the icon reads as a smudge over the system field.
+     One declaration hands it back the system colour, as the mark of 3.10. This
+     block, and not the one above the field: a media query adds no specificity,
+     so the rule has to be written after the top-level one it answers. */
+  .model-profiles-filter-row > .icon {
+    color: inherit;
+  }
+}
+
+/* The way back to the list of model profiles (08-hearth-h8-icons.md H8b.2):
+   the chevron beside the words, centred on them (H8b.5). */
+.model-profile-back a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* The model profile page's jump list (196, DESIGN.md D5.1): the page's TOC as
@@ -1419,9 +1465,13 @@ input[role='switch'][aria-disabled='true']::before {
   font-size: var(--fs-sm);
 }
 
-.error-icon {
+/* The field error's icon (08-hearth-h8-icons.md H8b.6): the shared icon
+   replaces the drawn svg Field.tsx used to carry, so it takes the error's
+   colour from the text. It keeps the space the old rule gave the drawing, and
+   sits lowered for the icon's 24 grid. */
+.field-error > .icon {
   margin-right: var(--space-1);
-  vertical-align: -0.2em;
+  vertical-align: -0.25em;
 }
 
 /* Sign-in: labels above their fields. */
@@ -1759,6 +1809,15 @@ html:has(.save-bar) {
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
+}
+
+/* Each verb holds its icon beside the word it says (08-hearth-h8-icons.md
+   H8b.5): an inline-flex row centring the icon on the words, so the verb keeps
+   the width of its content and a switched-off verb is drawn the same way. */
+.run-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .run-alert {

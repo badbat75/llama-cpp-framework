@@ -248,3 +248,54 @@ break inside a word, nothing clipped, no sideways scroll; the long instance id s
 and stays inside its pill. Unchanged: banners 72 / 112 / 112 signed out and 72 / 194 / 112 signed in,
 Sign out 124 by 40 (125 in Firefox, WebKit), axe 0 at 1280, 480, 320 in both themes and all three
 engines.
+
+## 7. Review of H8b (2026-11-19)
+
+Built from the working tree (`InstancePage.tsx`, `ModelProfilePage.tsx`, `ModelProfiles.tsx`,
+`SignIn.tsx`, `Field.tsx`, `index.css`), checked in Chromium, Firefox and WebKit at 1280, 480 and 320
+px, light and dark (`build/ux-review/h8b2.js`, stub `stub8.py`; the plain-HTTP Notice through a
+mapped host name in Chromium). UX check: 0 failing, 48 states per browser. **Approved.**
+
+Met, all nine:
+
+- **H8b.1**: the three verbs read as play, stop, restart; 40 px high in every engine (99 to 117 px
+  wide); icon 21.3 px, centre 0 to 0.2 px off the text's, gap 8; the switched-off Start's icon is
+  drawn in the same grey as its word (`stroke` equals the button's `color`). The start at boot
+  switch's box is identical with and without the icons. One layout change: at 320 px the row wraps
+  to two rows (Start and Stop, then Restart), 88 px high against 40 with the icons removed; the three
+  words alone fit one row. Accepted as reflow, not a defect: nothing is clipped or hidden
+  ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
+- **H8b.2**: back link 159 by 26 (161 in Firefox, WebKit), 22 high before, so above the 24 px of
+  [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum); chevron centre 0 to 0.2 px off; name
+  unchanged. At 200 % text in a 320 px window the label breaks in two and the chevron sits between the
+  lines (26 px below the first line's centre): cosmetic, at a size beyond what 1.4.4 and 1.4.10 ask;
+  an `align-items: flex-start` with the Notice's `margin-top` would fix it if wanted.
+- **H8b.3 and H8b.5**: the four Notices (sign in to see this page, revoked, plain HTTP, engine)
+  each hold the icon and one text node, so the flex row breaks no inline flow; every other message
+  that can be raised is not a `.notice` (wrong password and not an administrator are `p.form-error`,
+  unchanged block; the unavailable answer uses the same element; save and run alerts carry no
+  `.notice`). Icon centre 0 to 0.2 px off the first line's centre at every width and at 200 % text
+  (0.5 with 1.4.12 spacing), text always beside it (up to 13 lines). The plain-HTTP Notice is one
+  line taller at 1280 (176 against 150) and the same at 320; the others keep their height.
+- **H8b.4**: the search icon sits inside the field, 12 px from its left edge, vertically centred
+  (0.0 px off) at 16 px and at 200 % text, and the text start is 9.0 px past its right edge in every
+  case, 1.4.12 spacing included (the field has no placeholder). A click on the icon's centre focuses
+  the field and typing reaches it; the 3 px focus ring has no clipping ancestor; label and name
+  unchanged. 1.4.11 does not apply (decorative: the field has its visible label,
+  [1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)); measured anyway 6.24 (light), 7.52
+  (dark) on the field.
+- **H8b.6**: the field error's icon is 17.5 px (16 before), in `--danger` (light rgb(179,38,30), dark
+  rgb(255,154,138)), centre 0.3 px above the text's, gap 4; `aria-describedby` still names the error
+  and focus lands on the control (Server Port, model profile Context size). A 100-character message
+  wraps to three lines at 320, under the icon as before (inline).
+- **H8b.7, H8b.8, H8b.9**: the aria snapshots of the Overview, sign-in, instance page (with a field
+  error), Model profiles and a model profile are identical with and without the icons in all three
+  engines; `role="alert"` stays on the revoked Notice.
+
+Forced colours (Chromium emulation, Firefox pref): every icon takes its host's system colour, the
+filter icon included (21:1 on the field). axe: 0 on every page, width and theme in all three engines,
+Firefox forced colours included; Chromium's forced-colours emulation in dark reports one
+`color-contrast` on the Sign in button (`.primary`), the same with the icons removed, so not this
+slice (axe reads the authored colours there). No sideways scroll at 1280, 480, 320; at 200 % text in
+a 320 px window the Model profiles table and the instance page with 1.4.12 spacing scroll sideways,
+the same with the icons removed.

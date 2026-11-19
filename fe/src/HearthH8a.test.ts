@@ -696,22 +696,67 @@ test('H8a.5: a nav entry that holds an icon wraps its label whole under the icon
 // The properties that would give an icon a colour of its own.
 const TINT = ['color', 'fill', 'stroke', 'background', 'background-color']
 
+// The blocks at ONE level of a CSS text: the loop `blocksIn` runs at each
+// level, exposed, so a scan can see the context (inside a forced-colours block
+// or not) the sanctioned pair of H8b.4 is keyed on.
+const levelIn = (text: string): { selector: string; body: string }[] => {
+  const out: { selector: string; body: string }[] = []
+  let i = 0
+  for (;;) {
+    const open = text.indexOf('{', i)
+    if (open < 0) return out
+    let end = open + 1
+    let depth = 1
+    while (end < text.length && depth > 0) {
+      if (text[end] === '{') depth++
+      else if (text[end] === '}') depth--
+      if (depth > 0) end++
+    }
+    if (depth > 0) return out
+    out.push({
+      selector: text.slice(i, open).trim(),
+      body: text.slice(open + 1, end),
+    })
+    i = end + 1
+  }
+}
+
+// H8b.4 sanctions exactly two colour declarations on the filter icon: the
+// `--muted` tint at the top level and the `color: inherit` of its
+// forced-colours block, each carried alone. The exemption is BY THE
+// DECLARATIONS: the same selectors with any other tint, or with a second one,
+// are reported, so a rule that only looks sanctioned is no exemption.
+const sanctionedTint = (tints: [string, string][], forced: boolean): boolean =>
+  tints.length === 1 &&
+  tints[0][0] === 'color' &&
+  tints[0][1] === (forced ? 'inherit' : 'var(--muted)')
+
 // Every block that reaches `.icon` and declares one of them, in any nesting,
-// including inside an at-rule (a forced-colours block is one).
+// including inside an at-rule (a forced-colours block is one), the sanctioned
+// pair of H8b.4 excepted by the declarations it carries.
 const tintedIn = (css: string): string[] => {
   const out: string[] = []
-  for (const b of blocksIn(css)) {
-    if (b.selector.startsWith('@')) continue
-    if (!listItems(b.selector).some((raw) => hasToken(raw, '.icon'))) continue
-    for (const name of TINT) {
-      const v = prop(b.body, name)
-      if (v) out.push(`${where(b.selector)}: ${name}: ${v}`)
+  const walk = (text: string, forced: boolean): void => {
+    for (const b of levelIn(text)) {
+      if (b.selector.startsWith('@')) {
+        walk(b.body, forced || /forced-colors/.test(b.selector))
+        continue
+      }
+      if (!listItems(b.selector).some((raw) => hasToken(raw, '.icon'))) continue
+      const tints = TINT.map(
+        (n) => [n, prop(b.body, n)] as [string, string],
+      ).filter(([, v]) => v !== '')
+      if (tints.length === 0) continue
+      if (sanctionedTint(tints, forced)) continue
+      for (const [name, v] of tints)
+        out.push(`${where(b.selector)}: ${name}: ${v}`)
     }
   }
+  walk(css, false)
   return out
 }
 
-test('H8a.6: no .icon rule sets a colour, in or out of a forced-colours block, so the icon takes currentColor from its host (the self-probes are the teeth of the scan)', () => {
+test('H8a.6: no .icon rule sets a colour, in or out of a forced-colours block, the filter icon of H8b.4 carrying only its sanctioned tint and its sanctioned inherit (the self-probes are the teeth of the scan)', () => {
   // The scan first, on CSS written here: what it must catch, and what a name
   // that only looks like `.icon` must not catch.
   expect(
@@ -740,8 +785,39 @@ test('H8a.6: no .icon rule sets a colour, in or out of a forced-colours block, s
       `"${where(css)}" is no rule reaching .icon: a token matched whole, so a class that only starts like it is not exempt and not a hit`,
     ).toEqual([])
   expect(
+    tintedIn(
+      '.model-profiles-filter-row > .icon { position: absolute; color: var(--muted) }',
+    ),
+    'H8b.4: the top-level tint of the filter icon, read back exempt, with its placement declarations around it',
+  ).toEqual([])
+  expect(
+    tintedIn(
+      '@media (forced-colors: active) { .model-profiles-filter-row > .icon { color: inherit } }',
+    ),
+    'H8b.4: the forced-colours inherit, read back exempt inside the block',
+  ).toEqual([])
+  expect(
+    tintedIn(
+      '@media (forced-colors: active) { .model-profiles-filter-row > .icon { color: CanvasText } }',
+    ),
+    'the exemption is by the declaration, not the selector name: the filter icon selectors with another colour are a hit',
+  ).toEqual(['.model-profiles-filter-row > .icon: color: CanvasText'])
+  expect(
+    tintedIn('.model-profiles-filter-row > .icon { color: inherit }'),
+    'the forced value outside the block is a tint of its own there: inherit is sanctioned only inside',
+  ).toEqual(['.model-profiles-filter-row > .icon: color: inherit'])
+  expect(
+    tintedIn(
+      '.model-profiles-filter-row > .icon { color: var(--muted); fill: currentColor }',
+    ),
+    'a sanctioned tint is carried alone: a second tint on the same rule is a hit',
+  ).toEqual([
+    '.model-profiles-filter-row > .icon: color: var(--muted)',
+    '.model-profiles-filter-row > .icon: fill: currentColor',
+  ])
+  expect(
     tintedIn(CSS),
-    'H8a.6: the icon has no colour of its own anywhere in the sheet, so it follows its host text in both themes and the system colour in forced colours (section 0). H8b.4 gives the filter icon --muted and its own forced-colours rule: that is the sanctioned exception the next slice records, by the declarations it carries',
+    'H8a.6, kept by H8b.4: the icon has no colour of its own anywhere in the sheet, except the filter icon of H8b.4 carrying its --muted tint at the top level and its inherit inside the forced-colours block (section 0)',
   ).toEqual([])
 })
 

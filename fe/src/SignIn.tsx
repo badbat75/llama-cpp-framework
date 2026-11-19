@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom'
 import type { ApiError } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { FieldError } from './Field.tsx'
+import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import { signIn, type Session } from './session.ts'
 import { t } from './strings.ts'
@@ -99,13 +100,20 @@ export default function SignIn({
       <p>{t('signin-intro')}</p>
       {revoked ? (
         <p role="alert" className="notice">
+          <Icon name="triangle-alert" />
           {t('session-revoked')}
         </p>
       ) : (
-        required && <p className="notice">{t('signin-required')}</p>
+        required && (
+          <p className="notice">
+            <Icon name="info" />
+            {t('signin-required')}
+          </p>
+        )
       )}
       {insecure && (
         <p id={`${id}-insecure`} className="notice">
+          <Icon name="lock-open" />
           {t('signin-insecure')}
         </p>
       )}

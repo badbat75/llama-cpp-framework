@@ -12,6 +12,7 @@ import {
   type ApiError,
 } from './api.ts'
 import Dialog from './Dialog.tsx'
+import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import { modelProfileHref, modelProfileIdUnreadable } from './route.ts'
 import type { Session } from './session.ts'
@@ -364,6 +365,7 @@ function Filtered({
           {t('model-profiles-filter-label')}
         </label>
         <div className="model-profiles-filter-row">
+          <Icon name="search" />
           <input
             ref={field}
             id="model-profiles-filter"

@@ -4,6 +4,7 @@
 // changes. Each field's elements take their ids from `id`: the main control
 // `<id>-control`, the default box `<id>-box`, the rows `<id>-row-<n>`.
 import { useState, type ReactNode } from 'react'
+import { Icon } from './Icon.tsx'
 import { t } from './strings.ts'
 
 type Common = {
@@ -497,21 +498,13 @@ export function SelectField({
   )
 }
 
-/** A field's error: under its control, an icon with no text of its own first. */
+/** A field's error: under its control, an icon with no text of its own first.
+ * The icon is the shared one (08-hearth-h8-icons.md H8b.6), so the error is
+ * drawn like every other icon and takes the error's colour from the text. */
 export function FieldError({ id, text }: { id: string; text: string }) {
   return (
     <p id={id} className="field-error">
-      <svg
-        className="error-icon"
-        viewBox="0 0 16 16"
-        width="16"
-        height="16"
-        aria-hidden="true"
-      >
-        <circle cx="8" cy="8" r="7" fill="currentColor" />
-        <rect x="7" y="3.5" width="2" height="6" fill="var(--bg)" />
-        <rect x="7" y="10.5" width="2" height="2" fill="var(--bg)" />
-      </svg>
+      <Icon name="circle-alert" />
       {text}
     </p>
   )

@@ -1240,7 +1240,8 @@ function expectFit(main: HTMLElement, r: FitReading): void {
     ).toBe(0)
     // 128: the icon and the text carry it, not the colour alone, and the
     // paragraph is the field error of DESIGN 5.2, in --danger.
-    const icon = err!.querySelector('svg.error-icon')
+    // H8b.3: the icon is the shared one, `svg.icon`.
+    const icon = err!.querySelector('svg.icon')
     expect(icon, `fit ${shown}: 128: the error icon`).toBeTruthy()
     expect(
       icon!.getAttribute('aria-hidden'),

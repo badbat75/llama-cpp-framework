@@ -204,6 +204,18 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   rather than mid-word (`:has(> .icon)`, brief 08 H8a.5). Measured 2026-11-19: 21.3 px beside the
   17 px body text (the moon 20), centre 1.3 to 1.5 px above the text's x-height centre, the banner's
   height unchanged.
+  In the pages (brief 08 H8b): Start, Stop, Restart (`play`, `square`, `rotate-cw`; `.run-actions
+  button` as `inline-flex`, the icon greyed with the text of a switched-off verb), the model profile's
+  back link (`chevron-left`, `inline-flex`), the Notices (`info` for "sign in to see this page",
+  `triangle-alert` for the revoked session and the engine Notice, `lock-open` for the plain-HTTP
+  one), every field error (`circle-alert`, inline, `vertical-align: -0.25em`, 17.5 px beside the
+  small text) and the Model profiles filter: `search` in `--muted` (system colour under forced
+  colours), absolutely placed `--space-3` inside the field's left edge with `pointer-events: none`,
+  the field's left padding widened so the typed text starts 9 px past the icon at any text size. The
+  filter icon is decorative (the field has its visible label), so 1.4.11 does not ask a contrast of
+  it; it has 6.2:1 (light) and 7.5:1 (dark) on the field anyway. At 320 px the three verbs, now 99
+  to 117 px wide, wrap to two rows (Start and Stop, then Restart): 88 px high, 40 before. Measured
+  2026-11-19 in Chromium, Firefox and WebKit.
   The banner (`fe/briefs/07-hearth-h5-shell.md` H5a) sits on `--page` with no fill and no rule; Menu,
   the theme button and the session part are one plain `div.banner-tools` (no role) pushed to the end.
   Below 480 px the theme button is icon-only (40 by 40, name still "Dark theme") and "Signed in as
@@ -381,7 +393,7 @@ Each is one React component, reused by every page.
     `aria-controls` the hint. Each `\n` of the hint text starts a new paragraph. A tooltip is not used:
     it fails on touch and needs 1.4.13's rules **(preference)**.
   - **Error**: a paragraph under the control in `--danger`, starting with an error icon that has no
-    text of its own; the control gets `aria-invalid="true"` and `aria-describedby` the error
+    text of its own (`Icon circle-alert`, brief 08 H8b.6; a long message wraps under it, inline); the control gets `aria-invalid="true"` and `aria-describedby` the error
     ([3.3.1 Error Identification](https://www.w3.org/TR/WCAG22/#error-identification),
     [3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG22/#error-suggestion)). Focus on an error
     goes to the control; when it is disabled (a dependent field, or a default box ticked), the text and
@@ -495,7 +507,11 @@ Each is one React component, reused by every page.
   when it appears after a user action, otherwise a plain paragraph.
 - **Notice**: a bordered paragraph above a form, or above a table whose rows hold controls (e.g.
   the "engine not available" Notice of section 2.2). (The read-only Notice for a non-administrator
-  was removed on 2026-11-15.)
+  was removed on 2026-11-15.) It is a flex row (`align-items: flex-start`, gap `--space-2`): an
+  icon first, centred on the first line (`margin-top: calc((1lh - 1.25em) / 2)`), the text wrapping
+  beside it, never under it. Since every child is a flex item, a Notice holds the icon and ONE run
+  of text: a link, `strong` or button inside it would break the inline flow, so such text goes in a
+  `span` (all four Notices of 2026-11-19 hold plain text only).
 - **Dialog**: native `<dialog>` opened with `showModal()`: focus moves into it, Escape closes it,
   focus returns to the control that opened it; title as `h2`, named by `aria-labelledby`. Every
   dialog has a visible button that does what Escape does (Keep editing, Cancel), so touch and
