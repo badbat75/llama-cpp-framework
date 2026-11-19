@@ -1,7 +1,7 @@
 // Test helpers for the web UI: a fake bff behind a mocked fetch (no network),
 // the English texts of the design brief, and the hash route of the page.
 // The shapes are those of fe/briefs/api-contract.md.
-import { vi } from 'vitest'
+import { test, vi } from 'vitest'
 
 /**
  * The English of the strings keys the tests read, as the design brief gives
@@ -1106,4 +1106,17 @@ export function stubDialog(): {
       proto.close = saved.close
     },
   }
+}
+
+/**
+ * A test whose work is long in wall clock: it drives the page's polls across
+ * minutes of one-second fake-clock steps, opens the whole app many times, or
+ * pays the app's first cold render of the file. On a loaded machine that is
+ * far past vitest's 5 s default, and a test that times out is not cancelled:
+ * it keeps running and its clean-up unmounts the tree of the tests that
+ * follow it. The timeout here is at least twice the worst case measured for
+ * these tests under load (comments keep no measured figures).
+ */
+export function heavyTest(name: string, fn: () => void | Promise<void>) {
+  test(name, { timeout: 40_000 }, fn)
 }

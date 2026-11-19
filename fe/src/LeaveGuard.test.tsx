@@ -24,6 +24,7 @@ import {
   reply,
   startAt,
   stubDialog,
+  heavyTest,
   type BffOptions,
 } from './test/bff.ts'
 
@@ -276,6 +277,16 @@ async function keep(d: HTMLElement) {
 }
 
 // ── 38b: the question ───────────────────────────────────────────────────
+
+// Warm-up: the app's first render of the file costs many times a later one;
+// this test absorbs that cost (a synchronous mount, no finder), so the real
+// tests find a warm render and their finders' real-time deadlines hold.
+heavyTest('warm-up: the app mounts and shows main', () => {
+  fakeBff()
+  render(<App />)
+  expect(screen.getByRole('main')).toBeTruthy()
+  cleanup()
+})
 
 test('1b.38b: a hash typed while dirty is put back, the page and its edits stay, the discard dialog opens with Keep editing focused', async () => {
   const { main } = await loaded()

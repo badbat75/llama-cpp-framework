@@ -32,6 +32,7 @@ import {
   modelProfileDoc,
   reply,
   startAt,
+  heavyTest,
   type BffOptions,
 } from './test/bff.ts'
 import { cardHeadings, fieldLabels } from './test/modelProfileCards.ts'
@@ -211,10 +212,15 @@ function fakeClock() {
   })
 }
 
-/** Lets every answer and render that is due now land; the clock stays. */
+/**
+ * Lets every answer and render that is due now land; the clock stays. The
+ * answer chain (fetch, body, render) is a few links deep, so a few rounds
+ * land it; the per-second stepping tests call this on every fake second and
+ * each round is real time.
+ */
 async function flush() {
   await act(async () => {
-    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0)
+    for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(0)
   })
 }
 
@@ -226,6 +232,16 @@ async function advance(ms: number) {
 }
 
 // ── Failure paths first: read errors (66, 59, 58) ──────────────────────
+
+// Warm-up: the app's first render of the file costs many times a later one;
+// this test absorbs that cost (a synchronous mount, no finder), so the real
+// tests find a warm render and their finders' real-time deadlines hold.
+heavyTest('warm-up: the app mounts and shows main', () => {
+  fakeBff()
+  render(<App />)
+  expect(screen.getByRole('main')).toBeTruthy()
+  cleanup()
+})
 
 test('2d.66: 403 and 503 show their api- message as a plain paragraph in place of the content; the back link and the h1 stay', async () => {
   for (const [status, key, english] of [
@@ -254,91 +270,95 @@ test('2d.66: 403 and 503 show their api- message as a plain paragraph in place o
   }
 })
 
-test('2d.66: any other status, key, body, reply shape, a network failure shows model-profile-load-failed, never the body; a field the fe does not know is ignored', async () => {
-  const answers: [string, () => Response | Promise<Response>][] = [
-    ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
-    ['500', () => reply(500, { key: 'secret-detail', args: [] })],
-    ['502 client-other', () => reply(502, { key: 'client-other', args: [] })],
-    ['404 no body', () => reply(404)],
-    ['404 other key', () => reply(404, { key: 'no-such-key', args: [] })],
-    ['403 other key', () => reply(403, { key: 'secret-detail', args: [] })],
-    ['503 other key', () => reply(503, { key: 'secret-detail', args: [] })],
-    ['403 not the error shape', () => reply(403, { error: 'secret-detail' })],
-    ['200 not json', () => reply(200, 'secret-detail')],
-    ['200 null', () => reply(200, 'null')],
-    ['200 []', () => reply(200, [])],
-    ['200 {}', () => reply(200, {})],
-    ['200 no id', () => reply(200, modelProfileDoc({}, { id: undefined }))],
-    [
-      '200 no engine',
-      () => reply(200, modelProfileDoc({}, { engine: undefined })),
-    ],
-    [
-      '200 no engineAvailable',
-      () => reply(200, modelProfileDoc({}, { engineAvailable: undefined })),
-    ],
-    [
-      '200 no enabled',
-      () => reply(200, modelProfileDoc({}, { enabled: undefined })),
-    ],
-    [
-      '200 no projectUrl',
-      () => reply(200, modelProfileDoc({}, { projectUrl: undefined })),
-    ],
-    ['200 id a number', () => reply(200, modelProfileDoc({}, { id: 7 }))],
-    [
-      '200 enabled a string',
-      () => reply(200, modelProfileDoc({}, { enabled: 'true' })),
-    ],
-    [
-      '200 engineAvailable a number',
-      () => reply(200, modelProfileDoc({}, { engineAvailable: 1 })),
-    ],
-    [
-      '200 projectUrl null',
-      () => reply(200, modelProfileDoc({}, { projectUrl: null })),
-    ],
-    [
-      '200 values a string',
-      () => reply(200, modelProfileDoc({}, { values: 'secret-detail' })),
-    ],
-    [
-      '200 values null',
-      () => reply(200, modelProfileDoc({}, { values: null })),
-    ],
-    [
-      '200 values holds a number',
-      () => reply(200, modelProfileDoc({}, { values: { model: 7 } })),
-    ],
-  ]
-  for (const [what, modelProfile] of answers) {
-    const { main } = open({ modelProfile })
-    const shown = await message(main, en('model-profile-load-failed'))
-    expect(shown.tagName, what).toBe('P')
-    expect(shown.getAttribute('role'), what).toBeNull()
-    expect(within(main).queryByRole('alert'), what).toBeNull()
-    expect(await heading1(main, ID), what).toBeTruthy()
-    expect(backLink(main), what).toBeTruthy()
-    expect(document.body.textContent, what).not.toContain('secret-detail')
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-  // Criterion 81: the shape is id, engine, engineAvailable, enabled, values,
-  // projectUrl; every other field is ignored. 2h.1's 131 took `revision` out
-  // of that set (a read without one is model-profile-load-failed, pinned by 131 in
-  // ModelProfileSave1.test.tsx), so the field ignored here is one the fe never
-  // reads. The content is awaited: the h1 of the id stands while the read is
-  // in flight, so checking the text next to it alone is a race.
-  const { main } = open({
-    modelProfile: () => reply(200, modelProfileDoc({}, { note: 'zzz' })),
-  })
-  await within(main).findByRole('heading', {
-    level: 3,
-    name: en('model-profile-assets'),
-  })
-  expect(await heading1(main, ID)).toBeTruthy()
-  expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
-})
+// heavyTest: it mounts the whole app 25 times, once per answer it checks.
+heavyTest(
+  '2d.66: any other status, key, body, reply shape, a network failure shows model-profile-load-failed, never the body; a field the fe does not know is ignored',
+  async () => {
+    const answers: [string, () => Response | Promise<Response>][] = [
+      ['network', () => Promise.reject(new TypeError('Failed to fetch'))],
+      ['500', () => reply(500, { key: 'secret-detail', args: [] })],
+      ['502 client-other', () => reply(502, { key: 'client-other', args: [] })],
+      ['404 no body', () => reply(404)],
+      ['404 other key', () => reply(404, { key: 'no-such-key', args: [] })],
+      ['403 other key', () => reply(403, { key: 'secret-detail', args: [] })],
+      ['503 other key', () => reply(503, { key: 'secret-detail', args: [] })],
+      ['403 not the error shape', () => reply(403, { error: 'secret-detail' })],
+      ['200 not json', () => reply(200, 'secret-detail')],
+      ['200 null', () => reply(200, 'null')],
+      ['200 []', () => reply(200, [])],
+      ['200 {}', () => reply(200, {})],
+      ['200 no id', () => reply(200, modelProfileDoc({}, { id: undefined }))],
+      [
+        '200 no engine',
+        () => reply(200, modelProfileDoc({}, { engine: undefined })),
+      ],
+      [
+        '200 no engineAvailable',
+        () => reply(200, modelProfileDoc({}, { engineAvailable: undefined })),
+      ],
+      [
+        '200 no enabled',
+        () => reply(200, modelProfileDoc({}, { enabled: undefined })),
+      ],
+      [
+        '200 no projectUrl',
+        () => reply(200, modelProfileDoc({}, { projectUrl: undefined })),
+      ],
+      ['200 id a number', () => reply(200, modelProfileDoc({}, { id: 7 }))],
+      [
+        '200 enabled a string',
+        () => reply(200, modelProfileDoc({}, { enabled: 'true' })),
+      ],
+      [
+        '200 engineAvailable a number',
+        () => reply(200, modelProfileDoc({}, { engineAvailable: 1 })),
+      ],
+      [
+        '200 projectUrl null',
+        () => reply(200, modelProfileDoc({}, { projectUrl: null })),
+      ],
+      [
+        '200 values a string',
+        () => reply(200, modelProfileDoc({}, { values: 'secret-detail' })),
+      ],
+      [
+        '200 values null',
+        () => reply(200, modelProfileDoc({}, { values: null })),
+      ],
+      [
+        '200 values holds a number',
+        () => reply(200, modelProfileDoc({}, { values: { model: 7 } })),
+      ],
+    ]
+    for (const [what, modelProfile] of answers) {
+      const { main } = open({ modelProfile })
+      const shown = await message(main, en('model-profile-load-failed'))
+      expect(shown.tagName, what).toBe('P')
+      expect(shown.getAttribute('role'), what).toBeNull()
+      expect(within(main).queryByRole('alert'), what).toBeNull()
+      expect(await heading1(main, ID), what).toBeTruthy()
+      expect(backLink(main), what).toBeTruthy()
+      expect(document.body.textContent, what).not.toContain('secret-detail')
+      cleanup()
+      vi.unstubAllGlobals()
+    }
+    // Criterion 81: the shape is id, engine, engineAvailable, enabled, values,
+    // projectUrl; every other field is ignored. 2h.1's 131 took `revision` out
+    // of that set (a read without one is model-profile-load-failed, pinned by 131 in
+    // ModelProfileSave1.test.tsx), so the field ignored here is one the fe never
+    // reads. The content is awaited: the h1 of the id stands while the read is
+    // in flight, so checking the text next to it alone is a race.
+    const { main } = open({
+      modelProfile: () => reply(200, modelProfileDoc({}, { note: 'zzz' })),
+    })
+    await within(main).findByRole('heading', {
+      level: 3,
+      name: en('model-profile-assets'),
+    })
+    expect(await heading1(main, ID)).toBeTruthy()
+    expect(within(main).queryByText(en('model-profile-load-failed'))).toBeNull()
+  },
+)
 
 test('2d.66: a model profile read held 15 000 ms is aborted and shows model-profile-load-failed, and the loading status goes', async () => {
   fakeClock()
