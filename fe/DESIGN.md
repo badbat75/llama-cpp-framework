@@ -181,7 +181,8 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   transparent 1px border that forced colours draw) holding the heading and the form. Two equal
   columns when `main` has room for two 18rem columns (960 px and up as built), stacked with the
   drawing first otherwise; the drawing is hidden below 480 px and in forced colours, where the
-  panel takes the whole width. Focus, reading order and Tab order are the form's: the drawing is
+  panel takes the whole width. The pair (880 px at most, as every child of `main`) is centred in
+  `main` (`margin-inline: auto`, brief 10 R1.7; a preference). Focus, reading order and Tab order are the form's: the drawing is
   absent from the accessibility tree ([1.1.1](https://www.w3.org/TR/WCAG22/#non-text-content)).
 
 ## 4. Layout and responsive rules
@@ -254,9 +255,15 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 - **Forms**: from 720px up, the label in a column of 200px and the control beside it; below, the label
   above the control. Hints and errors sit under the control.
 - Works at 320 CSS px wide and at 400% zoom with no horizontal scrolling, except the content of a
-  code block ([1.4.10 Reflow](https://www.w3.org/TR/WCAG22/#reflow)); text resizable to 200%
-  ([1.4.4](https://www.w3.org/TR/WCAG22/#resize-text)); nothing depends on orientation
-  ([1.3.4](https://www.w3.org/TR/WCAG22/#orientation)).
+  code block and a data table, which scrolls inside its own box (Table, 5.2)
+  ([1.4.10 Reflow](https://www.w3.org/TR/WCAG22/#reflow)); text resizable to 200%
+  ([1.4.4](https://www.w3.org/TR/WCAG22/#resize-text)), and the page still reflows at 320 px with
+  200% text, as the Understanding page of Reflow asks
+  ([Understanding 1.4.10](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html)); nothing depends
+  on orientation ([1.3.4](https://www.w3.org/TR/WCAG22/#orientation)). A word longer than its line
+  breaks (`body { overflow-wrap: break-word }`, inherited); a flex item that holds text needs
+  `anywhere`, since `break-word` leaves its minimum width at the longest word
+  ([CSS Text 3](https://www.w3.org/TR/css-text-3/#overflow-wrap-property); brief 10 R1.1, R1.2).
 - **Sticky save bar**: the scroll container sets `scroll-padding-bottom` to the bar's rendered height
   plus `--space-3`, kept current as the bar grows (an alert and its button can triple it at phone
   width: 242 px measured at 375 px in the 1b review), so a focused field is never hidden behind it; a
@@ -312,7 +319,7 @@ borders; at a device pixel ratio of 1 the browsers draw it 1 px, since border wi
 whole device pixels: [CSS Values 4](https://www.w3.org/TR/css-values-4/#lengths)), `--ring-w` 3px,
 `--hatch` (the disabled stripes), `--radius-check` (checkbox), `--radius-pill` (primary, secondary,
 About buttons, switch track), all in use since H2a; `--radius-card` 16px and `--shadow` (redeclared
-in dark as a 1 px `--line` outline) on the card, the table box, the save bar (top corners only) and
+in dark as a 1 px `--line` outline) on the card, the table box (`.table-scroll` from brief 10), the save bar (top corners only) and
 the dialog since H2b, and on the sign-in page's panel since H7; the drawing's own colours
 `--art-1` (`#ead9f0` / `#3a2a44`), `--art-2` (`#f3e3cf` / `#3b2f24`, its box) and `--art-3`
 (`#ffffff` / `#2b241f`, the door), decoration only, in no contrast pair (H7); declared for later slices: `--space-7` 64px (brief 06 section 1). The lift is
@@ -544,7 +551,14 @@ Each is one React component, reused by every page.
   link. Screen readers hear list, item, link, the state, the engine line, then term and definition
   ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
 - **Table**: a native `<table>` with `<th scope="col">` headers; a link in the first cell when the row
-  opens a page.
+  opens a page. It is the only child of a `div.table-scroll` (`overflow-x: auto`,
+  `scroll-padding-inline: var(--space-2)`), which carries the lift (`--bg`, `--radius-card`,
+  `--shadow`, the transparent 1px border): a scroll box clips its child's shadow, so the table has
+  none of its own. When the columns do not fit (200% text at 320 px), the table scrolls inside the
+  box and the page does not; the column cut at the box's edge shows there is more. The box has no
+  `tabindex`, role or name: every row holds a focusable control, and Tab scrolls the box to it
+  (brief 10 R1.3 to R1.6,
+  [Understanding 1.4.10](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html) on data tables).
 - **Value list**: settings shown as text, not as controls (a page or card that reads before its
   slice can write, e.g. the model profile page's Assets in 2d): a `<dl>`, each field a `<dt>` label then
   its `<dd>` value, laid out as Forms in section 4 (label column from 720px). Values from the file
@@ -558,7 +572,8 @@ Each is one React component, reused by every page.
   the "engine not available" Notice of section 2.2). (The read-only Notice for a non-administrator
   was removed on 2026-11-15.) It is a flex row (`align-items: flex-start`, gap `--space-2`): an
   icon first, centred on the first line (`margin-top: calc((1lh - 1.25em) / 2)`), the text wrapping
-  beside it, never under it. Since every child is a flex item, a Notice holds the icon and ONE run
+  beside it, never under it; a word longer than the text column breaks (`overflow-wrap: anywhere`,
+  brief 10 R1.2). Since every child is a flex item, a Notice holds the icon and ONE run
   of text: a link, `strong` or button inside it would break the inline flow, so such text goes in a
   `span` (all four Notices of 2026-11-19 hold plain text only).
 - **Dialog**: native `<dialog>` opened with `showModal()`: focus moves into it, Escape closes it,
