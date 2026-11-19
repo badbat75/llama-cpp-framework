@@ -976,9 +976,11 @@ the lowest `ModelsMax` of all instances; the switch moves a section between `pre
 `AddressInUse`). An unset `StateDir` is one shared folder, where snapshots are named by the model's file
 stem (`slot_save.rs`). `GET /api/instances` is `{id, engine, state}` from `ListInstances` and `Status`,
 the manager's two unauthenticated calls; `server@<id>.ini` needs `control` to read, which the bff's
-account lacks. The memory estimate of a GGUF against the GPUs exists in `pai-app` (`hf_fit.rs`:
-`local_shape`, a pure-Rust header reader, and `estimate`; the GPUs from `llama-server --list-devices`,
-`devices.rs`), which the manager does not link.
+account lacks. The inputs of a memory estimate are in `pai-core` since slice 10a (1694064):
+`gguf_shape` (`local_shape`, a pure-Rust header reader of a regular file, `kv_per_token`,
+`GPU_RESERVE`, `MAX_HEADER`, `REF_CTX`) and `devices` (the `--list-devices` parser); the GUI's
+placement estimate (`hf_fit::estimate`), the GPU pool (`hf_fit::gpu_pool`) and the probe itself
+(`devices::list`) stay in `pai-app`, which the manager does not link.
 
 **(a) The pool, the assignments, and what each instance is given.**
 
@@ -1033,16 +1035,51 @@ A refusal names the preset and the instance (`args` `[preset, instance]`) and wr
    `ctx-size` is the model's trained context (`<arch>.context_length` in the header), as llama.cpp
    reads `n_ctx = 0` (`common/common.h:471` in the v1.0.0 clone). The placement keys (`fit`,
    `n-gpu-layers`, `n-cpu-moe`, `cpu-moe`, `override-tensor`, `device`, `tensor-split`) do not lower it.
-   Refused (`preset-over-memory`, `args` `[preset, instance, needed MiB, available MiB]`) when it
-   exceeds the sum over the node's GPUs of total memory less `hf_fit`'s `GPU_RESERVE` each. Read: the
-   GGUF headers (`hf_fit::local_shape`: tensor sizes, input embeddings, KV per token) and the GPUs
-   (total MiB per device from the engine's `llama-server --list-devices`, run once as the instance's
-   account and cached by the manager). Not counted: the multimodal projector, a draft model, compute
-   buffers, and other instances on the same GPUs: every instance is checked alone against all the
-   node's GPUs (user, 2026-11-17). The header reader, the KV formula, the reserve and the device parser
-   move from `pai-app` to `pai-core`; `hf_fit` keeps using them. Root opens the path a `pai` member
-   wrote: a regular file only (no FIFO or device), the read capped at `hf_fit`'s `MAX_HEADER`; the reply
-   gives the two sizes, nothing of the file's content.
+   Refused (`model-profile-over-memory`, `args` `[profile, instance, needed MiB, available MiB]`) when
+   it exceeds the sum over the node's GPUs of total memory less `GPU_RESERVE` each. Read: the GGUF
+   headers (`pai_core::gguf_shape::local_shape`: tensor sizes, input embeddings, KV per token) and the
+   GPUs (total MiB per card from the engine's `llama-server --list-devices`, one card seen by two
+   backends counted once, as `gpu_pool` does). Not counted: the multimodal projector, a draft model,
+   compute buffers, and other instances on the same GPUs: every instance is checked alone against all
+   the node's GPUs (user, 2026-11-17). Root opens the path a `pai` member wrote: a regular file only
+   (no FIFO or device, `local_shape` since 10a), the read capped at `MAX_HEADER`; the reply gives the
+   two sizes, nothing of the file's content.
+
+   *Slice 10b's decisions (2026-11-19, architect; each a preference unless sourced):*
+   - **Where and which delta**: the same two places as the model-file check (`set_model_profile`, and
+     `check_contents` for `Models` and `ModelsDisabled`), after it, per instance in id order. A section
+     of the new render is judged on its effective keys (its own, else the render's `[*]` ones: llama.cpp
+     cascades the global section into every profile, `tools/server/server-models.cpp` 766-769 in
+     v1.0.0). Refused when `needed > available` **and** `needed` is larger than the same profile's
+     estimate in today's render (0 when it is not in effect today). So a save of an unrelated key, or a
+     switch off, never fails on a profile that was already over (GPUs swapped, a hand edit), and any
+     write that makes a profile larger, `[*]` included, is judged. A section byte-identical in both
+     renders is not estimated.
+   - **The keys**: `model` (resolved as in 3), `ctx-size` (absent, `0` or not an integer: the trained
+     context, else `REF_CTX` when the header has none), `cache-type-k`, `cache-type-v` (absent: `f16`;
+     the content checks already refuse a value outside `KV_CACHE_TYPES`). The KV term is the f16 bytes
+     per token of `kv_per_token` times the context times the mean of the two types' sizes relative to
+     f16, per 32 elements f32 128, f16 and bf16 64, f8_e4m3 32, q8_0 34, q5_1 24, q5_0 22, q4_1 20,
+     q4_0 and iq4_nl 18 (`ggml/src/ggml-common.h` block `static_assert`s, `ggml/src/ggml.c` type traits
+     for f8_e4m3; exact when K and V share a type or a head size). A layout `kv_per_token` cannot read
+     costs `FALLBACK_KV`. Only those long spellings are read (`c = ...` escapes the check; the
+     configurator and the web UI write `ctx-size`).
+   - **Not judged** (no refusal, no estimate): a profile with a fetch key (`FETCH_KEYS`, as 3), no
+     `model`, or a `model` whose header cannot be read (missing, not GGUF, over `MAX_HEADER`): the
+     launch fails as it does today, and 3 already refuses a missing file the write adds.
+   - **The GPUs**: the manager runs the engine's `llama-server --list-devices` (the exe the launch uses,
+     `paths::llama_server_exe`, found beside the manager's own root-owned binary or through
+     `HKLM\Software\llama.cpp`) **as itself** (root, LocalSystem), not as the instance's account: totals
+     are per card, not per account, and dropping to `private-ai` with its `render video` groups needs
+     supplementary groups, which std's `CommandExt` has only on nightly (`groups`), or on Windows a
+     virtual account's token. Killed after 30 s. Cached in the `Manager` for its life, keyed by the
+     exe's path and modification time (an engine upgrade replaces the file; a GPU change takes a reboot,
+     which restarts the manager); a failed probe is not cached. Probed only when a section is judged.
+   - **No GPU, or no list** (spawn failed, timeout, no card with a size): the check is skipped. A
+     CPU-only node would otherwise refuse every profile, and a broken probe would block every save,
+     the fix of the engine included; the check guards the node's memory, not a permission (the writer
+     already holds `configure`), so skipping widens nobody's rights.
+   - In tests the GPU totals come from a seam on `Manager` (as `FileGroup`, `PasswordChecker`).
 3. **The model file**: a `model` path must be a regular file on the node (each shard of a split one); a
    preset with `hf-repo` instead is not refused (the engine downloads it). Readability by the
    instance's account is not checked (a file in a 0700 home passes and fails at load, as today).
@@ -1477,7 +1514,20 @@ profile waits until asked.
    to `model` or replaces it with the cache path (`common/arg.cpp` 427-441, 480-535 in v1.0.0). The
    refusal names the first instance in id order; the check needs no server profile, so it also runs
    for an instance whose profile is missing. Only a file the write adds refuses ((b), "Which writes
-   run them"). 10. **The estimate to `pai-core`, then the memory check** (old 6).
+   run them"). 10. **The estimate to `pai-core`, then the memory check** (old 6), as (b) 2: 10a, the
+   header reader and the device parser to `pai-core`, done (1694064). 10b-1, `pai-core` only, pure:
+   `gpu_pool`, `Gpu` and `is_integrated` move to `pai_core::devices` (`pai-app` re-exports);
+   `Shape` gains the trained context uncapped and the f16 KV bytes per token; a function of the full-GPU
+   bytes of a shape for a context and two cache types, and one of the usable bytes of a pool. Done
+   when: the GUI's tests are unchanged and green; the figures for f16/q8_0/q4_0, a context of 0, an
+   unreadable layout and a card seen by CUDA and Vulkan are pinned. 10b-2, the manager check with a test
+   seam for the GPU totals, and `model-profile-over-memory` in `checks.rs`'s keys and both strings
+   files. Done when: an over profile switched on, assigned, or saved larger (its `ctx-size`, a cache
+   type, `[*]`'s `ctx-size`) is refused naming the first instance, nothing written; a save of another
+   key of an already-over profile, a switch off, a fetch-key profile, a non-GGUF `model`, no GPUs land.
+   10b-3, the real probe (timeout, cache by exe path and mtime, failure not cached). Done when: a fake
+   exe printing a device block gives the totals once for two checks, a changed mtime probes again, a
+   hanging one is killed and skipped.
 11. **Snapshots per instance** (old 7). 12. **Tags** on the server profile (`[Server] Tags`) and on the instance (`Tags` in its `instances.ini`
     section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused
     by the rule of (c); `Instances()` returns both lists; the shown `tags` are the union, profile first,

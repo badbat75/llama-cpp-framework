@@ -98,8 +98,13 @@ description: What the architect has learned about this project's components, int
   section of the engine's `instances.ini` (ARCHITECTURE.md "Revision: profiles"). Before that slice
   lands, `paths::instance_ids` still lists `server@*.ini` and `check_address` compares those files: both
   move to `instances.ini`. A per-engine directory is the engine (no `Engine` key), so cross-engine
-  mismatch checks are structural. The GGUF estimate (`hf_fit::local_shape`, `estimate`,
-  `devices.rs`) lives in `pai-app`, which the manager cannot link: a manager check needing it moves
-  it to `pai-core` first.
+  mismatch checks are structural. Since 10a the GGUF header reader (`pai_core::gguf_shape`) and the
+  `--list-devices` parser (`pai_core::devices`) are in `pai-core`; `hf_fit::estimate`, `gpu_pool`
+  and the probe (`devices::list`) are still `pai-app`'s, which the manager cannot link.
+- `Shape.kv` is f16 at a context capped at `REF_CTX` and `Shape.ctx` is that cap, not the trained
+  context: a check needing the full context or another cache type needs `kv_per_token` per token.
+  `--list-devices` lists one card once per backend (CUDA0 and Vulkan0): sum only after `gpu_pool`.
+- llama-server cascades the pool's `[*]` into every profile (`server-models.cpp` `cascade`): a rule on
+  a profile's effective value reads the section, else `[*]`.
 - A tester's "red tests in the tree" may be only a `todo!()` stub: `git status --untracked-files=all`
   and grep the method name before reporting what stands.
