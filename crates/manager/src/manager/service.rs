@@ -824,6 +824,96 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Assigns the model profile `profile` to instance `instance` as `value`:
+    /// `on`, `off` (the explicit overrides), `inherit` (the key kept, the
+    /// pool's own state) or `none` (the key removed). `*` is every model
+    /// profile of the pool and takes `none` and `inherit` only. The key goes
+    /// in the instance's section of `assignments.ini`, and every model profile
+    /// file of every instance renders again from what is on disk: the checks
+    /// run first, so a refusal writes and renders nothing. Guarded as a write
+    /// of a served file is: the principal and `configure` gates, the `writing`
+    /// lock, and one action record for the whole call, done or refused.
+    pub fn set_model_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        profile: &str,
+        value: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // The value first: `*` is the pool and has no override of its own.
+            let value = match value {
+                "on" | "off" if profile != "*" => value,
+                "inherit" | "none" => value,
+                _ => {
+                    return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                        key: "model-profile-bad-value",
+                        values: vec![value.to_string()],
+                    }))
+                }
+            };
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            // The instance record is judged under this same lock, as the
+            // record this call writes.
+            existing_id(instance)?;
+            let dir = crate::paths::engine_config_dir();
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            // A file that is really absent is an empty one; any other read
+            // failure answers its own kind before anything is written, so a
+            // record that cannot be read is never replaced with an empty one.
+            let on_disk = |name: &str| -> Result<String, ManagerError> {
+                match std::fs::read_to_string(dir.join(name)) {
+                    Ok(text) => Ok(text),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+                    Err(e) => Err(ManagerError::Io(e.kind())),
+                }
+            };
+            let enabled = on_disk("models.ini")?;
+            let disabled = on_disk("models.ini.disabled")?;
+            // The model profile is of the pool, in either file; the pool's
+            // global `*` is asked of no id, it names the whole pool.
+            if profile != "*" && !pool_holds(&enabled, profile) && !pool_holds(&disabled, profile) {
+                return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                    key: "no-model-profile-named",
+                    values: vec![profile.to_string()],
+                }));
+            }
+            // The record with the key as asked, judged before it is written:
+            // the render it produces is the one the instance loads, against
+            // the `ModelsMax` of the server profile its section names. A
+            // section that names no profile, or names one whose file is
+            // missing or cannot be read, has no cap to judge, as
+            // `check_renders` does: the launch refuses that instance, and a
+            // render is never judged on the defaults of a file that is not
+            // there.
+            let path = dir.join(ASSIGNMENTS_FILE);
+            let current = on_disk(ASSIGNMENTS_FILE)?;
+            let text = with_profile(&current, instance, profile, value);
+            let cap = profile_file(instance)
+                .and_then(|file| std::fs::read_to_string(file).ok())
+                .map(|contents| crate::server_cfg::from_text(&contents).models_max);
+            if let Some(models_max) = cap {
+                check_render_of(&text, instance, &enabled, &disabled, models_max)
+                    .map_err(ManagerError::Invalid)?;
+            }
+            std::fs::create_dir_all(&dir).map_err(io)?;
+            pai_core::ini::atomic_write(&path, &text).map_err(io)?;
+            // The write stands whatever the renders do, as a write of a
+            // served file does: the caller is told the first failure in id
+            // order.
+            match self.render_all_locked().first() {
+                Some((_, err)) => Err(err.clone()),
+                None => Ok(()),
+            }
+        };
+        let answer = run();
+        self.record_action("set_model_profile", instance, Some(&who), &answer);
+        answer
+    }
+
     /// Writes the render of every instance and answers with the instances
     /// whose render did not land, in id order, each with the failure that
     /// stopped it: empty when every render landed. The manager's start calls
@@ -1142,6 +1232,64 @@ fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
             .ok()
             .and_then(|text| pai_core::ini::text::section_text(&text, id));
     pai_core::assign::render(enabled, disabled, assignment.as_deref())
+}
+
+/// The record `seed` with the key of model profile `profile` in the section of
+/// `instance` set to `value`, and removed for `none`. The section is created
+/// when the instance has none, with the file's own line ending. Every other
+/// byte of `seed` is kept: the comments, the keys that are no model profile,
+/// and the blank line in front of the next section's header.
+fn with_profile(seed: &str, instance: &str, profile: &str, value: &str) -> String {
+    if value == "none" {
+        return pai_core::ini::text::remove_key(seed, instance, profile);
+    }
+    if pai_core::ini::text::section_text(seed, instance).is_some() {
+        return pai_core::ini::text::set_key(seed, instance, profile, value);
+    }
+    // The instance has no section: the new one carries its own header (a key
+    // list appended without one reads back as an empty section), and is
+    // appended as it is, with no blank line of its own.
+    let eol = pai_core::ini::detect_eol(seed);
+    let mut out = seed.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push_str(eol);
+    }
+    out.push_str(&format!("[{instance}]{eol}{profile} = {value}{eol}"));
+    out
+}
+
+/// Whether the pool `text` holds a model profile `id`: a section of that exact
+/// name, the spelling llama.cpp knows the model profile by.
+fn pool_holds(text: &str, id: &str) -> bool {
+    pai_core::ini::parse_sections(text)
+        .iter()
+        .any(|section| section.id == id)
+}
+
+/// The `load-on-startup` of instance `id`'s render against `models_max`, that
+/// instance's own, over the assignment record `assignments` rather than the
+/// one on disk: the render a write of the record is about to produce. Only a
+/// render that starts MORE than the instance starts today is judged, so a step
+/// down, or a count that stays where it is, lands. The refusal names the
+/// instance, last.
+fn check_render_of(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    models_max: Option<i32>,
+) -> Result<(), pai_core::checks::Refusal> {
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    let count = pai_core::checks::startup_loads(&render);
+    let today = pai_core::checks::startup_loads(&render_of(id, enabled, disabled));
+    if count <= today {
+        return Ok(());
+    }
+    pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
+        refusal.values.push(id.to_string());
+        refusal
+    })
 }
 
 /// The `load-on-startup` of instance `id`'s render against `models_max`, that
@@ -4192,6 +4340,1432 @@ pub(crate) fn manager_assignments_e2e() {
         Some(render(&added, off, Some(section("default").as_str()))),
         "the start render agrees with the last write"
     );
+}
+
+/// E2E phase: `SetModelProfile`, the one verb that writes `assignments.ini`
+/// (protocol 3, its `As` form and the same name over the pipe). The key of one
+/// model profile goes in the instance's section and every model profile file of
+/// every instance renders again from the pool and the assignments on disk:
+/// `on`, `off` and `inherit` are the key's three values, `none` removes the
+/// key, and `*`, the whole pool, takes `none` and `inherit` only. A call
+/// answers before it writes: an id that is no instance (`InvalidId`,
+/// `NoInstance`), a model profile the pool does not hold
+/// (`no-model-profile-named`, not asked of `*`), a value outside the list, and
+/// a render whose `load-on-startup` count is over the `ModelsMax` of the server
+/// profile the instance's section names (`load-on-startup-over-max`, naming the
+/// instance) each write and render nothing. The resource rule is one-sided:
+/// only an assignment in effect on is judged, so `off`, `none` and a `*`
+/// narrowed never refuse. Guarded as a write of a served file is: `configure`
+/// first, the `As` form answered only for the bff's account and a current
+/// member of `pai`, and one record of the action log per call, done or refused.
+#[cfg(test)]
+pub(crate) fn manager_set_model_profile_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::assign::render;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    // The bff's account, its request for alice (a member of `pai` in
+    // [`FakePasswords`]) and for bob (who is not), and a desktop caller of its
+    // own.
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core = |allow: bool, passwords: FakePasswords, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+
+    // The pool, and the record and the server profiles the fixture hands the
+    // manager: `a` loads on startup, `b` does not, `m` sits in the switched-off
+    // file so a pool test sees both halves.
+    let pool =
+        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n";
+    let off_pool = "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n";
+    write_record(&sys, &["default", "lan-2"]);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lan-2.ini"),
+        "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+    )
+    .expect("server@lan-2.ini");
+    std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+    // The assignments as an earlier call left them: a comment, a key of its
+    // own, a second section. The verb writes one key of one section and
+    // touches none of the rest.
+    let seeded =
+        "# the manager's own record\n[default]\nb = off\nnote = keep me\n\n[lan-2]\n* = inherit\n";
+
+    // ── Protocol 3 ships with this method ─────────────────────────────────
+    assert_eq!(
+        crate::manager::pipe::PROTOCOL,
+        3,
+        "the version `Version` reports, 3 with the first assignment verb"
+    );
+
+    // ── Each value writes its key, and re-renders every instance ─────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
+
+        // `on`: the key, the pool's section in the render, the rest kept.
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "on"),
+            Ok(()),
+            "a model profile of the pool, on"
+        );
+        let written = text_of("assignments.ini");
+        assert_eq!(
+            keys_of(&written, "default", "a"),
+            vec!["a = on".to_string()],
+            "one key for the model profile, at the value given"
+        );
+        assert!(
+            keys_of(&written, "lan-2", "a").is_empty(),
+            "the key is default's, not lan-2's"
+        );
+        assert!(
+            written.contains("# the manager's own record"),
+            "the comment of the file is kept"
+        );
+        assert!(
+            written.contains("note = keep me"),
+            "a key that is no model profile is kept"
+        );
+        assert!(
+            written.contains("[lan-2]\n* = inherit\n"),
+            "the section of another instance is kept as it was"
+        );
+        let d = text_of("models@default.ini");
+        let l2 = text_of("models@lan-2.ini");
+        assert_eq!(
+            d,
+            render(pool, off_pool, Some(&section(&written, "default"))),
+            "default's render is the pool cut by its section, the one just written"
+        );
+        assert!(
+            d.contains("[a]") && d.contains("load-on-startup = true"),
+            "an `on` model profile is in the render the instance loads, its own keys with it"
+        );
+        assert_eq!(
+            l2,
+            render(pool, off_pool, Some(&section(&written, "lan-2"))),
+            "the write re-renders every instance: lan-2 from its own section"
+        );
+        assert!(
+            l2.contains("[a]"),
+            "lan-2 keeps a: `* = inherit` is its own"
+        );
+
+        // `off`: the key, the section out of the render.
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "off"),
+            Ok(()),
+            "the same key, off"
+        );
+        let written = text_of("assignments.ini");
+        assert_eq!(
+            keys_of(&written, "default", "a"),
+            vec!["a = off".to_string()],
+            "the key is replaced, not added to"
+        );
+        let d = text_of("models@default.ini");
+        assert_eq!(
+            d,
+            render(pool, off_pool, Some(&section(&written, "default"))),
+            "the render follows the section"
+        );
+        assert!(
+            !d.contains("[a]"),
+            "an `off` model profile is out of the render: {d:?}"
+        );
+
+        // `inherit`: the key kept, the pool's own state decides.
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "inherit"),
+            Ok(()),
+            "the same key, inherit"
+        );
+        let written = text_of("assignments.ini");
+        assert_eq!(
+            keys_of(&written, "default", "a"),
+            vec!["a = inherit".to_string()],
+            "`inherit` is a value of the key, not its removal"
+        );
+        assert!(
+            text_of("models@default.ini").contains("[a]"),
+            "a model profile of the switched-on pool, inherited, is in the render"
+        );
+
+        // A second call with the same value writes one key, not two.
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "inherit"),
+            Ok(()),
+            "the same value again"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "a"),
+            vec!["a = inherit".to_string()],
+            "the key stays one"
+        );
+
+        // `none`: the key out, everything else as it was.
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "none"),
+            Ok(()),
+            "`none` is answered"
+        );
+        let written = text_of("assignments.ini");
+        assert_eq!(
+            section(&written, "default"),
+            "[default]\nb = off\nnote = keep me\n\n",
+            "`none` removes the key and leaves the section's other lines"
+        );
+        assert!(
+            !text_of("models@default.ini").contains("[a]"),
+            "a model profile with no key and no `*` is not rendered"
+        );
+
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=ok"#,
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=ok"#,
+            ],
+            "one record per call: the verb's action, the instance as its target, the caller, no principal as a bare -, ok"
+        );
+    }
+
+    // ── The global `*`: `none` and `inherit` only ─────────────────────────
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "inherit"),
+            Ok(()),
+            "`*` takes inherit"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "default"),
+            "[default]\n* = inherit\n",
+            "the global key, written"
+        );
+        let d = text_of("models@default.ini");
+        assert!(
+            d.contains("[a]") && d.contains("[b]") && !d.contains("[m]"),
+            "`* = inherit` is every model profile of the pool following its own file: the switched-off one stays out"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "none"),
+            Ok(()),
+            "`*` takes none"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "default"),
+            "[default]\n",
+            "`none` removes the global key too"
+        );
+
+        // The pool check is not asked of `*`: with an empty pool the global key
+        // is written, while one model profile is refused for want of a pool.
+        std::fs::write(sys.join("models.ini"), "").expect("empty pool");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("empty pool");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "inherit"),
+            Ok(()),
+            "`*` needs no model profile of the pool to exist"
+        );
+        assert!(
+            matches!(
+                m.set_model_profile(&desktop, "default", "a", "on"),
+                Err(ManagerError::Invalid(r))
+                    if r.key == "no-model-profile-named" && r.values == ["a"]
+            ),
+            "the same model profile, in an empty pool, is refused naming it"
+        );
+        std::fs::write(sys.join("models.ini"), pool).expect("the pool back");
+
+        // `on` and `off` under `*`: refused, with nothing written and no
+        // render of their own.
+        let seed = text_of("assignments.ini");
+        let before = listing();
+        let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect();
+        for value in ["on", "off"] {
+            assert!(
+                m.set_model_profile(&desktop, "default", "*", value)
+                    .is_err(),
+                "`*` refuses {value}"
+            );
+        }
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "a `*` refused writes nothing"
+        );
+        assert_eq!(listing(), before, "and creates no file");
+        for (name, text) in renders {
+            assert_eq!(text_of(&name), text, "and re-renders nothing: {name}");
+        }
+    }
+
+    // ── A call that answers before it writes ──────────────────────────────
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        // The fixture is made, not assumed: the block above leaves the
+        // switched-off file empty and default's render built from a pool of
+        // nothing. One call puts `a` in the record and in the render, the way
+        // a real assignment does, so "rendered nothing" below has something to
+        // keep.
+        std::fs::write(sys.join("models.ini"), pool).expect("pool back");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool back");
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "on"),
+            Ok(()),
+            "the fixture: a call assigns a to default"
+        );
+        let seed = text_of("assignments.ini");
+        let before = listing();
+        let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect();
+        assert!(
+            renders[0].1.contains("[a]"),
+            "the fixture: a is in default's render before the refusals"
+        );
+
+        assert_eq!(
+            m.set_model_profile(&desktop, "lan-3", "a", "on"),
+            Err(ManagerError::NoInstance),
+            "an id that is no section of the record"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                m.set_model_profile(&desktop, bad, "a", "on"),
+                Err(ManagerError::InvalidId),
+                "not an instance id at all: {bad:?}"
+            );
+        }
+        assert!(
+            matches!(
+                m.set_model_profile(&desktop, "default", "zzz", "on"),
+                Err(ManagerError::Invalid(r))
+                    if r.key == "no-model-profile-named" && r.values == ["zzz"]
+            ),
+            "a model profile the pool does not hold, named"
+        );
+        for value in ["maybe", "ON", "", "on,off", "none "] {
+            assert!(
+                matches!(
+                    m.set_model_profile(&desktop, "default", "a", value),
+                    Err(ManagerError::Invalid(r))
+                        if r.key == "model-profile-bad-value" && r.values == [value]
+                ),
+                "a value outside none, inherit, on, off is refused: {value:?}"
+            );
+        }
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "every refusal above wrote nothing"
+        );
+        assert_eq!(listing(), before, "and created no file");
+        for (name, text) in renders {
+            assert_eq!(text_of(&name), text, "and re-rendered nothing: {name}");
+        }
+    }
+
+    // ── `ModelsMax` of the server profile the section names ───────────────
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("ModelsMax 1");
+        std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("seed");
+        let seed = text_of("assignments.ini");
+        let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect();
+        // `* = inherit` puts the switched-on half in effect, so `a` loads on
+        // startup; switching on `m`, whose own section asks for it, is the
+        // second one, over the max of one.
+        let over = m.set_model_profile(&desktop, "default", "m", "on");
+        assert!(
+            matches!(
+                over,
+                Err(ManagerError::Invalid(ref r))
+                    if r.key == "load-on-startup-over-max" && r.values == ["2", "1", "default"]
+            ),
+            "over the max, the instance named last, answered {over:?}"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "the refusal above max wrote nothing"
+        );
+        for (name, text) in renders {
+            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+        }
+
+        // The rule is one-sided: what leaves the render is never judged.
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\n* = inherit\nb = off\n",
+        )
+        .expect("b off");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "off"),
+            Ok(()),
+            "an assignment off is accepted whatever the max"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "default"),
+            "[default]\n* = inherit\nb = off\na = off\n",
+            "and its key landed"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "none"),
+            Ok(()),
+            "a `*` removed, which leaves the whole pool out of the render, is accepted"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "default"),
+            "[default]\nb = off\na = off\n",
+            "the global key is out, the section's other keys kept"
+        );
+        assert_eq!(
+            text_of("models@default.ini"),
+            render(pool, off_pool, Some("[default]\nb = off\na = off\n")),
+            "and the render follows: nothing of the pool is in effect"
+        );
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("ModelsMax back");
+    }
+
+    // ── `ModelsMax` of the profile the section names, not of a file named as the id
+    {
+        // An instance whose server profile is not its own name: `lan` runs
+        // `small`, and a `server@lan.ini` that no instance runs sits beside it
+        // with a max of its own. Both directions are pinned: the max that
+        // refuses is the profile's, and the max that lets the write land is
+        // the profile's too.
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\n[lan]\nServerProfile = small\n",
+        )
+        .expect("instances.ini: lan runs the profile small");
+        std::fs::write(
+            sys.join("server@small.ini"),
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("server@small.ini");
+        std::fs::write(
+            sys.join("server@lan.ini"),
+            "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 8\n",
+        )
+        .expect("server@lan.ini, the file no instance runs");
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        std::fs::write(sys.join("assignments.ini"), "[lan]\n* = inherit\n").expect("seed");
+        assert!(
+            m.render_failures().is_empty(),
+            "the record with a profile that is not the id renders every instance"
+        );
+        let seed = text_of("assignments.ini");
+        let renders: Vec<(String, String)> =
+            ["models@default.ini", "models@lan-2.ini", "models@lan.ini"]
+                .iter()
+                .map(|name| (name.to_string(), text_of(name)))
+                .collect();
+        // `* = inherit` puts `a` in effect, so switching on `m` is the second
+        // load on startup: over `small`'s max of 1, refused, naming `lan` and
+        // the max of 1. The 8 of `server@lan.ini` is not the number the check
+        // reads.
+        let over = m.set_model_profile(&desktop, "lan", "m", "on");
+        assert!(
+            matches!(
+                over,
+                Err(ManagerError::Invalid(ref r))
+                    if r.key == "load-on-startup-over-max" && r.values == ["2", "1", "lan"]
+            ),
+            "the max of the profile the section names, answered {over:?}"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "the refusal wrote nothing to the record"
+        );
+        for (name, text) in &renders {
+            assert_eq!(text_of(name), *text, "and rendered nothing: {name}");
+        }
+
+        // The reverse: `small` raised to 8 while the file named after the id
+        // drops to 1. The same call lands, so the check cannot be reading the
+        // id's file either.
+        std::fs::write(
+            sys.join("server@small.ini"),
+            "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 8\n",
+        )
+        .expect("server@small.ini raised");
+        std::fs::write(
+            sys.join("server@lan.ini"),
+            "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("server@lan.ini lowered");
+        assert_eq!(
+            m.set_model_profile(&desktop, "lan", "m", "on"),
+            Ok(()),
+            "the profile's own max of 8 lets the second load on startup land"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "lan"),
+            "[lan]\n* = inherit\nm = on\n",
+            "the key landed in the section of the instance it was asked for"
+        );
+        assert_eq!(
+            text_of("models@lan.ini"),
+            render(pool, off_pool, Some("[lan]\n* = inherit\nm = on\n")),
+            "and the render of the instance follows the record"
+        );
+
+        // The fixture's record and files back for the phases that follow.
+        std::fs::remove_file(sys.join("server@small.ini")).expect("small out");
+        std::fs::remove_file(sys.join("server@lan.ini")).expect("lan profile out");
+        std::fs::remove_file(sys.join("models@lan.ini")).expect("lan render out");
+        write_record(&sys, &["default", "lan-2"]);
+    }
+
+    // ── Guarded: `configure`, the principal, one record ──────────────────
+    {
+        // A caller without the right: NotAuthorized, nothing written.
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), log);
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        let seed = text_of("assignments.ini");
+        let before = listing();
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "on"),
+            Err(ManagerError::NotAuthorized),
+            "a caller outside `pai`, polkit refusing"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "a refused caller writes nothing"
+        );
+        assert_eq!(listing(), before, "and leaves no render of its own behind");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_model_profile" target="default" caller=":1.42" principal=- outcome=refused"#.to_string()
+            ],
+            "the refusal is recorded as one record too"
+        );
+    }
+    {
+        // The bff acting for a member: the pair grants the call, the record
+        // names both.
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, p, log);
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        assert_eq!(
+            m.set_model_profile(&member, "default", "a", "on"),
+            Ok(()),
+            "the bff assigns for a member of `pai`"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "a"),
+            vec!["a = on".to_string()],
+            "for the member"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string()],
+            "the membership of the principal, never of the caller"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            vec![bff.clone()],
+            "the caller is checked first, at every call"
+        );
+        assert_eq!(
+            m.authority().asked.lock().unwrap().len(),
+            0,
+            "polkit is never asked for a principal: its subject is the bff"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_model_profile" target="default" caller=":1.9" principal="alice" outcome=ok"#.to_string()
+            ],
+            "the record carries the caller and the principal"
+        );
+
+        // A principal outside `pai`: the call is refused and nothing is written.
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        let seed = text_of("assignments.ini");
+        assert_eq!(
+            m.set_model_profile(&outsider, "default", "a", "on"),
+            Err(ManagerError::NotAuthorized),
+            "a right password of a caller outside `pai` is not enough"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "a refused principal writes nothing"
+        );
+
+        // A caller that is not the bff cannot name a principal at all.
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
+        let seed = text_of("assignments.ini");
+        let desktop_member = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.set_model_profile(&desktop_member, "default", "a", "on"),
+            Err(ManagerError::NotAuthorized),
+            "only the bff answers for a signed-in member"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "and a caller outside the bff writes nothing"
+        );
+    }
+
+    // ── A file that cannot be read: the read's failure, and nothing written ─
+    {
+        let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+        let kept_renders = || -> Vec<(String, String)> {
+            ["models@default.ini", "models@lan-2.ini"]
+                .iter()
+                .map(|name| (name.to_string(), text_of(name)))
+                .collect()
+        };
+        let restore_pool = || {
+            std::fs::write(sys.join("models.ini"), pool).expect("pool");
+            std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        };
+
+        // `assignments.ini` with bytes that are no text. A read taken as empty
+        // here renders a record of one key and replaces the file with it: every
+        // instance's assignments, gone.
+        {
+            let m = core(true, FakePasswords::new(), FakeActionLog::new());
+            std::fs::write(
+                sys.join("assignments.ini"),
+                b"[default]\nb = off\nnote = keep me\n\xed\xa0\xbf\n",
+            )
+            .expect("broken record");
+            let seed = bytes_of("assignments.ini");
+            let before = listing();
+            let renders = kept_renders();
+            assert_eq!(
+                m.set_model_profile(&desktop, "default", "a", "on"),
+                Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
+                "an assignments.ini that cannot be read answers the read's own kind, it is not an empty file"
+            );
+            assert_eq!(
+                bytes_of("assignments.ini"),
+                seed,
+                "and its bytes are the bytes that were there: the atomic write never replaced them"
+            );
+            assert_eq!(
+                listing(),
+                before,
+                "and the call left no file of its own behind: no temp, no render"
+            );
+            for (name, text) in renders {
+                assert_eq!(text_of(&name), text, "and re-rendered nothing: {name}");
+            }
+        }
+
+        // A directory at the record's path: the same answer, and the path
+        // stays what it is.
+        {
+            let m = core(true, FakePasswords::new(), FakeActionLog::new());
+            std::fs::remove_file(sys.join("assignments.ini")).expect("record out");
+            std::fs::create_dir(sys.join("assignments.ini")).expect("record dir");
+            let before = listing();
+            let renders = kept_renders();
+            assert_eq!(
+                m.set_model_profile(&desktop, "default", "a", "on"),
+                Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
+                "a directory at the record's path answers the read's own kind"
+            );
+            assert!(
+                sys.join("assignments.ini").is_dir(),
+                "the directory is still there: nothing was renamed over it"
+            );
+            assert_eq!(
+                listing(),
+                before,
+                "and the call left no temp file of its own next to it"
+            );
+            for (name, text) in renders {
+                assert_eq!(text_of(&name), text, "and re-rendered nothing: {name}");
+            }
+            std::fs::remove_dir(sys.join("assignments.ini")).expect("record dir out");
+        }
+
+        // A model profile file that cannot be read: the same. A pool read as
+        // empty refuses a model profile of the real pool as
+        // `no-model-profile-named`, and a `*` call renders every instance from
+        // a pool of nothing.
+        for (name, profile) in [("models.ini", "a"), ("models.ini.disabled", "m")] {
+            let m = core(true, FakePasswords::new(), FakeActionLog::new());
+            restore_pool();
+            std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("seed");
+            std::fs::write(sys.join(name), b"[a]\nmodel = \xff\n").expect("broken pool");
+            let seed = bytes_of("assignments.ini");
+            let before = listing();
+            let renders = kept_renders();
+            let answer = m.set_model_profile(&desktop, "default", profile, "on");
+            assert_eq!(
+                answer,
+                Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
+                "a {name} that cannot be read answers the read's own kind, for model profile {profile}"
+            );
+            assert!(
+                !matches!(
+                    &answer,
+                    Err(ManagerError::Invalid(r)) if r.key == "no-model-profile-named"
+                ),
+                "an unreadable {name} is never the pool answering `no-model-profile-named`"
+            );
+            assert_eq!(
+                bytes_of("assignments.ini"),
+                seed,
+                "and the unreadable {name} wrote nothing to the record"
+            );
+            assert_eq!(listing(), before, "and created no file: {name}");
+            for (file, text) in renders {
+                assert_eq!(text_of(&file), text, "and rendered nothing: {name}, {file}");
+            }
+        }
+
+        // A record that is really absent is an empty one: the first assignment
+        // of a fresh machine lands. The line endings of a new file are the INI
+        // layer's own, so the section is compared with the endings folded.
+        {
+            let m = core(true, FakePasswords::new(), FakeActionLog::new());
+            restore_pool();
+            std::fs::remove_file(sys.join("assignments.ini")).expect("record out");
+            assert_eq!(
+                m.set_model_profile(&desktop, "default", "a", "on"),
+                Ok(()),
+                "a first assignment with no assignments.ini at all is answered"
+            );
+            let written = text_of("assignments.ini");
+            assert_eq!(
+                section(&written.replace("\r\n", "\n"), "default"),
+                "[default]\na = on\n",
+                "the key lands in the section of the instance it was asked for: {written:?}"
+            );
+            assert!(
+                text_of("models@default.ini").contains("[a]"),
+                "and the render follows the record that just appeared"
+            );
+        }
+    }
+
+    // ── Slice 7 review: the resource rule is a step rule, the id is exact,
+    //    the record keeps the bytes it was not asked to write, the text ────
+
+    // PIN-1a BEGIN
+    {
+        // The instance starts OVER its max: three model profiles that load on
+        // startup are in effect, and the server profile its section names caps
+        // them at one. The resource rule reads the step a call takes, so a call
+        // that lowers the count lands even when the render it produces is
+        // still over the max.
+        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                     [d]\nmodel = /m/d.gguf\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\n",
+        )
+        .expect("three on");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            3,
+            "the fixture starts over the max of one"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "off"),
+            Ok(()),
+            "a step down lands: three loads to two, and two is still over one"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "a"),
+            vec!["a = off".to_string()],
+            "and its key landed"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            2,
+            "the render followed the record"
+        );
+    }
+    // PIN-1a END
+
+    // PIN-1b BEGIN
+    {
+        // `none` removes a key, so it lowers the count too: it lands over the
+        // max, exactly as `off` does.
+        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\n",
+        )
+        .expect("three on");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "b", "none"),
+            Ok(()),
+            "a key removed lands over the max: three loads to two, over one"
+        );
+        assert!(
+            keys_of(&text_of("assignments.ini"), "default", "b").is_empty(),
+            "the key is out of the record"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            2,
+            "and out of the render"
+        );
+    }
+    // PIN-1b END
+
+    // PIN-1c BEGIN
+    {
+        // `*` narrowed from `inherit` to `none` leaves the whole pool out of
+        // the render: it lands whatever the max.
+        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("inherit");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            3,
+            "`* = inherit` puts all three in effect, over the max of one"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "none"),
+            Ok(()),
+            "the `*` narrowed lands over the max"
+        );
+        assert!(
+            keys_of(&text_of("assignments.ini"), "default", "*").is_empty(),
+            "the global key is out"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            0,
+            "and nothing of the pool is in effect"
+        );
+    }
+    // PIN-1c END
+
+    // PIN-1d BEGIN
+    {
+        // Assigning `on` a model profile that does NOT load on startup leaves
+        // the count where it is, over the max: it lands, the count is what the
+        // rule reads, not the key.
+        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                     [d]\nmodel = /m/d.gguf\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\n",
+        )
+        .expect("three on");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "d", "on"),
+            Ok(()),
+            "`on` of a profile that never loads on startup does not raise the count"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "d"),
+            vec!["d = on".to_string()],
+            "and its key landed"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            3,
+            "the count is where it was, still over the max of one"
+        );
+    }
+    // PIN-1d END
+
+    // PIN-1e BEGIN
+    {
+        // The other side of the same fixture: `on` of a model profile that DOES
+        // load on startup raises the count and is refused, writing nothing.
+        let four = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                    [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                    [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), four).expect("four loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\n",
+        )
+        .expect("three on");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        let seed = text_of("assignments.ini");
+        let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect();
+        let over = m.set_model_profile(&desktop, "default", "e", "on");
+        assert!(
+            matches!(
+                over,
+                Err(ManagerError::Invalid(ref r))
+                    if r.key == "load-on-startup-over-max" && r.values == ["4", "1", "default"]
+            ),
+            "the step that raises the count is refused, answered {over:?}"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "the refusal wrote nothing to the record"
+        );
+        for (name, text) in renders {
+            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+        }
+    }
+    // PIN-1e END
+
+    // PIN-2a BEGIN
+    {
+        // An instance whose section names no server profile has no file to read
+        // a `ModelsMax` from, and the launch refuses it anyway: its render is
+        // not judged on the llama.cpp default cap. Five loads land.
+        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                    [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                    [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                    [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["lan-2"]);
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join(INSTANCES_FILE), "[default]\n").expect("no profile named");
+        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\nd = on\n",
+        )
+        .expect("four on");
+        assert!(
+            m.render_failures().is_empty(),
+            "a section naming no profile still renders"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "e", "on"),
+            Ok(()),
+            "the fifth load on startup lands: no profile read, no cap judged"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "e"),
+            vec!["e = on".to_string()],
+            "and its key landed"
+        );
+        assert_eq!(
+            pai_core::checks::startup_loads(&text_of("models@default.ini")),
+            5,
+            "the render holds five, over the llama.cpp default of four"
+        );
+    }
+    // PIN-2a END
+
+    // PIN-2b BEGIN
+    {
+        // The section names a profile whose file is missing: nothing to read a
+        // cap from, so the render is not judged. Five loads land.
+        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                    [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                    [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                    [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["lan-2"]);
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = gone\n",
+        )
+        .expect("profile named");
+        std::fs::remove_file(sys.join("server@gone.ini")).ok();
+        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\nd = on\n",
+        )
+        .expect("four on");
+        assert!(
+            m.render_failures().is_empty(),
+            "a section naming a missing profile still renders"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "e", "on"),
+            Ok(()),
+            "the fifth load on startup lands: the profile the section names is not there"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "e"),
+            vec!["e = on".to_string()],
+            "and its key landed"
+        );
+    }
+    // PIN-2b END
+
+    // PIN-2c BEGIN
+    {
+        // The section names a profile whose file cannot be read (no text): the
+        // same, an unreadable file is not an empty one and holds no cap.
+        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+                    [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
+                    [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
+                    [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["lan-2"]);
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = broken\n",
+        )
+        .expect("profile named");
+        std::fs::write(
+            sys.join("server@broken.ini"),
+            b"[Server]\nPort = 8090\n\xff\xfe\n",
+        )
+        .expect("unreadable profile");
+        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\na = on\nb = on\nc = on\nd = on\n",
+        )
+        .expect("four on");
+        assert!(
+            m.render_failures().is_empty(),
+            "a section naming an unreadable profile still renders"
+        );
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "e", "on"),
+            Ok(()),
+            "the fifth load on startup lands: the profile the section names is unreadable"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "e"),
+            vec!["e = on".to_string()],
+            "and its key landed"
+        );
+    }
+    // PIN-2c END
+
+    // PIN-3 BEGIN
+    {
+        // The model profile's name is exact: llama.cpp knows a pool section in
+        // its own spelling, so the pool's `[Qwen]` answers no call for `qwen`,
+        // and the call leaves the record, and the renders, as they were.
+        let qwen = "[Qwen]\nmodel = /m/qwen.gguf\nload-on-startup = true\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("default profile");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), qwen).expect("pool with Qwen");
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
+        std::fs::write(sys.join("assignments.ini"), "[default]\nQwen = off\n").expect("seed");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture renders every instance"
+        );
+        let seed = text_of("assignments.ini");
+        let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect();
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            matches!(
+                answer,
+                Err(ManagerError::Invalid(ref r))
+                    if r.key == "no-model-profile-named" && r.values == ["qwen"]
+            ),
+            "the id is looked up exactly as it was spelled, answered {answer:?}"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "Qwen"),
+            vec!["Qwen = off".to_string()],
+            "the line in the pool's own spelling is untouched"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            seed,
+            "and the call for the name the pool does not hold wrote nothing"
+        );
+        for (name, text) in renders {
+            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+        }
+    }
+    // PIN-3 END
+
+    // PIN-4a BEGIN
+    {
+        // The verb writes one key of one section: the blank line that separates
+        // that section from the next one is not its to write.
+        let seeded = "[default]\nb = off\n\n[lan-2]\n* = inherit\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("default profile");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "on"),
+            Ok(()),
+            "a lands in default's section"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nb = off\na = on\n\n[lan-2]\n* = inherit\n",
+            "the blank line between the sections stayed"
+        );
+    }
+    // PIN-4a END
+
+    // PIN-4b BEGIN
+    {
+        // A CRLF record stays CRLF on every line the verb writes.
+        let seeded = "[default]\r\nb = off\r\n\r\n[lan-2]\r\n* = inherit\r\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("default profile");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("CRLF seed");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "a", "on"),
+            Ok(()),
+            "a lands in the CRLF record"
+        );
+        let written = text_of("assignments.ini");
+        assert!(
+            written.contains("a = on\r\n"),
+            "the key line the verb wrote is CRLF like the file: {written:?}"
+        );
+        let bytes = written.as_bytes();
+        assert!(
+            bytes
+                .iter()
+                .enumerate()
+                .all(|(i, b)| *b != b'\n' || i > 0 && bytes[i - 1] == b'\r'),
+            "no line of the record the verb wrote ends with a bare LF: {written:?}"
+        );
+        assert!(
+            written.contains("[lan-2]\r\n* = inherit\r\n"),
+            "the other section keeps its CRLF bytes: {written:?}"
+        );
+    }
+    // PIN-4b END
+
+    // PIN-4c BEGIN
+    {
+        // A record whose last section has no trailing newline keeps it that
+        // way: the verb adds the key, not a terminator the file did not have.
+        let seeded = "[default]\r\n* = inherit\r\n\r\n[lan-2]\r\nb = off";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("default profile");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("no final newline");
+        assert_eq!(
+            m.set_model_profile(&desktop, "lan-2", "a", "on"),
+            Ok(()),
+            "a lands in lan-2's section, the last one"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\r\n* = inherit\r\n\r\n[lan-2]\r\nb = off\r\na = on",
+            "the file still ends on an unterminated line, and keeps the blank line"
+        );
+    }
+    // PIN-4c END
+
+    // PIN-4d BEGIN
+    {
+        // An instance the record has no section for: the verb adds one, and the
+        // sections it did have keep their bytes.
+        let seeded = "[default]\n* = inherit\n";
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("default profile");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile");
+        std::fs::write(sys.join("models.ini"), pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
+        assert_eq!(
+            m.set_model_profile(&desktop, "lan-2", "a", "on"),
+            Ok(()),
+            "lan-2 has no section of its own yet"
+        );
+        let written = text_of("assignments.ini");
+        assert_eq!(
+            section(&written, "lan-2"),
+            "[lan-2]\na = on\n",
+            "the section the record did not have is added: {written:?}"
+        );
+        assert_eq!(
+            section(&written, "default"),
+            "[default]\n* = inherit\n",
+            "and default's section is the bytes it was: {written:?}"
+        );
+        assert!(
+            text_of("models@lan-2.ini").contains("[a]"),
+            "and the render of the instance follows the section that just appeared"
+        );
+    }
+    // PIN-4d END
+
+    // PIN-5 BEGIN
+    {
+        // The text a user reads for a value outside the list, byte for byte, in
+        // both strings files: the CLI's and the GUI's.
+        const BAD_VALUE: &str = "{0} is not a value here: a model profile takes none, inherit, on or off, and * takes none or inherit";
+        for (file, source) in [
+            ("cli.toml", include_str!("../../../core/strings/cli.toml")),
+            (
+                "en_US.toml",
+                include_str!("../../../core/strings/en_US.toml"),
+            ),
+        ] {
+            let all = crate::strings::parse(source);
+            assert_eq!(
+                all["model-profile-bad-value"], BAD_VALUE,
+                "{file}: the text the refusal shows"
+            );
+        }
+    }
+    // PIN-5 END
 }
 
 /// The instance record: `instances.ini`, one section per instance. The list

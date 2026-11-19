@@ -585,6 +585,180 @@ pub(crate) fn manager_pipe_client_e2e() {
         hang_up(server, client);
         std::fs::write(sys.join("models.ini"), model_profiles).expect("restore presets");
     }
+
+    // ── The assignment verb, end to end ────────────────────────────────
+    // The same verb as over D-Bus, over the named pipe's frame: the
+    // accepted call writes the record and renders the instance's model
+    // profiles; the refusals are the core's own errors and write nothing.
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &Caller(String::new()));
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "on"),
+            Err(ClientError::NotAuthorized),
+            "no identity, no assignment"
+        );
+        assert!(
+            !sys.join("assignments.ini").exists(),
+            "the refused call writes nothing"
+        );
+        assert_eq!(asked(&c), vec![], "a call with no identity asks nobody");
+        hang_up(server, client);
+    }
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &alice);
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "on"),
+            Ok(()),
+            "the pool's model profile, assigned to an instance"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "the assignment landed"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render carries the enabled model profile"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the caller"
+        );
+        assert_eq!(calls(&c), vec![], "an assignment touches no unit");
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "off"),
+            Ok(()),
+            "the same profile switched off"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n"
+        );
+        assert!(
+            !std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render drops the disabled model profile"
+        );
+        assert_eq!(
+            client.set_model_profile("lan-3", "Qwen3.8-27B", "on"),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_model_profile(bad, "Qwen3.8-27B", "on"),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        assert_eq!(
+            client.set_model_profile("default", "zzz", "on"),
+            Err(ClientError::Invalid(Refusal {
+                key: "no-model-profile-named",
+                values: vec!["zzz".into()],
+            })),
+            "the pool has no model profile zzz"
+        );
+        for bad in ["maybe", "", "ON", "on,off"] {
+            assert!(
+                matches!(
+                    client.set_model_profile("default", "Qwen3.8-27B", bad),
+                    Err(ClientError::Invalid(_))
+                ),
+                "value {bad:?} is not one of the four"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n",
+            "refused calls write nothing"
+        );
+        hang_up(server, client);
+    }
+
+    // ── The `As` form over a stream: the bff vouches for a member ────────
+    // The frame names `SetModelProfileAs` and carries the principal beside
+    // the verb's own arguments; the caller is the bff's service account and
+    // the member's membership decides.
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .set_model_profile("default", "Qwen3.8-27B", "on"),
+            Ok(()),
+            "the member's assignment, vouched for by the bff"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "the assignment landed"
+        );
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .set_model_profile("default", "Qwen3.8-27B", "off"),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of the administrators"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "the refused call wrote nothing"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string(), "bob".to_string()],
+            "the membership of the vouched name, per call"
+        );
+        hang_up(server, client);
+    }
+    // A caller that is not the bff, vouching for a member: refused, and no
+    // membership looked up for a caller that may not vouch.
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let checked = passwords.checked.clone();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(
+            &c,
+            &Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into()),
+        );
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .set_model_profile("default", "Qwen3.8-27B", "off"),
+            Err(ClientError::NotAuthorized),
+            "only the bff vouches"
+        );
+        assert_eq!(
+            *checked.lock().unwrap(),
+            vec![],
+            "no sign-in, so no password check"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            Vec::<String>::new(),
+            "the caller gate refused before any membership question"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "a caller that is not the bff writes nothing"
+        );
+        hang_up(server, client);
+    }
 }
 
 /// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its

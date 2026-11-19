@@ -962,7 +962,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     no ETag or long max-age; an unknown `/api/<path>` is 404 with an empty body, not `{key,args}`;
     `/index.html` is 404 (only `/` serves the page, unintended).
 13a. **Next milestone (user, 2026-11-18): profiles and instances working end to end**: item 13's
-    slices 7 to 17 together (the Profiles menu, several instances on a node, one server
+    slices 8 to 17 together (the Profiles menu, several instances on a node, one server
     profile and N model profiles per instance, the resource checks, the web UI). The designer's full UX
     check closes the milestone.
     **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on

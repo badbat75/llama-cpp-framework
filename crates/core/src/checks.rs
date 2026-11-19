@@ -34,6 +34,8 @@ pub const KEYS: &[&str] = &[
     "not-one-of",
     "not-json-object",
     "min-above-max",
+    "no-model-profile-named",
+    "model-profile-bad-value",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -98,6 +100,8 @@ impl Refusal {
             "not-one-of" => strings::fill("not-one-of", &[&v(0), &v(1), &v(2)]),
             "not-json-object" => strings::fill("not-json-object", &[&v(0)]),
             "min-above-max" => strings::fill("min-above-max", &[&v(0), &v(1), &v(2), &v(3)]),
+            "no-model-profile-named" => strings::fill("no-model-profile-named", &[&v(0)]),
+            "model-profile-bad-value" => strings::fill("model-profile-bad-value", &[&v(0)]),
             other => other.to_string(),
         }
     }

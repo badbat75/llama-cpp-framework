@@ -2,8 +2,8 @@
 //! `/org/privateai/Manager1`, on the system bus or on a given connection.
 //!
 //! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
-//! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf` and
-//! `SetBootEnabled` go as the
+//! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
+//! `SetBootEnabled` and `SetModelProfile` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged: the
@@ -15,6 +15,7 @@
 //! SetBootEnabledAs(s principal, s id, b enabled)
 //! WriteFileAs(s principal, s name, s contents, b keep_api_key)
 //! WriteFileIfAs(s principal, s name, s contents, s expected)
+//! SetModelProfileAs(s principal, s instance, s profile, s value)
 //! Version() -> (s version, u protocol)
 //! ```
 
@@ -216,6 +217,20 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("SetBootEnabledAs", &(principal, id, enabled)),
             None => self.call("SetBootEnabled", &(id, enabled)),
+        }
+        .map(|_| ())
+    }
+    fn set_model_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        value: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => {
+                self.call("SetModelProfileAs", &(principal, instance, profile, value))
+            }
+            None => self.call("SetModelProfile", &(instance, profile, value)),
         }
         .map(|_| ())
     }

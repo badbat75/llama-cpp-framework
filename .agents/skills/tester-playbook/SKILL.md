@@ -310,6 +310,30 @@ Lessons only: the rules are in `AGENTS.md`.
   `startAt(hash)` (the hash only), `fakeBff(options)` and `render(<App />)`, with the teardown
   `cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); startAt('')`. `fakeBff` answers a signed-in
   session and the instance list by default, and `App` is a default export.
+- `fakeBff(options)` returns `{ fetch, calls, to, setInstances }` ONLY: `calls` is `Call[]` of
+  `{ method, path, body }` (no `"GET /path"` string to match), `to(method, path)` answers an ARRAY
+  (`expect(bff.to(..)).toHaveLength(1)`, `toBe(1)` never), and every answer override (`session`,
+  `instances`, `boot`, `version`, `signIn`.) is a CONSTRUCTOR option with no handle to change it after,
+  each one a `Response` (`reply(200, {...})`) or a fn returning one, never a plain object. So a page
+  helper that renders takes the bff and returns `{ bff, view }`, not one of them, and a test that needs
+  both destructures. `held()` is `{ answer, resolve, signals }` (`answer(init)` IS the fetch body, it
+  honours the abort signal); `deferred()` is the `{ promise, resolve }` one.
+- The bff's route spellings: the instance page href is `#/instances/<encoded id>` (plural,
+  `route.ts::instanceHref`), its boot state is `GET|PUT /api/instances/<encoded>/boot`, the session is
+  `GET|POST|DELETE /api/session` (signed in 200 `{"user"}`, signed out 401 `session-required`). A route
+  the fake does not know REJECTS with `TypeError: unexpected <route>`, which reads as a broken fetch.
+- While the session is read `App` renders `<p role="status">` with the key `loading` IN PLACE OF the
+  page, so `main` holds no list, no heading and nothing to query: await `findByText(en('loading'))`, and
+  scope every list/table query to `within(screen.getByRole('main'))`, since the nav's `ul` (the Overview
+  link) is the document's first `list`.
+- jsdom answers `dt` and `dd` as the roles `term` and `definition`, and the spec's `div` wrapper inside a
+  `dl` is invisible to a role query, so `within(dl).getAllByRole('term')` reaches a
+  `dl > div > dt + dd` row: probe it with a throwaway file (write, run, delete) before pinning a
+  labelled pair.
+- Before pinning an ABSENCE the brief did not state (a reset rule, a normalising rule a row relies on),
+  read the sheet: `index.css` has no reset naming `dl, dt, dd`, so such a pin is a red the coder cannot
+  pass without inventing a rule. What jsdom cannot see (the user-agent `dd` indent, a `list-style`) goes
+  in the report as OPEN.
 - `modelProfileDoc(values, extra)` puts `extra.values` OVER the whole default `values` object, so a
   fixture that names only its own card's keys drops `model` and `spec-type` too (the page still renders).
   A key the file lacks is ABSENT from `values`: a `''` entry is a value, not an absence.
@@ -426,10 +450,64 @@ Lessons only: the rules are in `AGENTS.md`.
   punctuation finds 0 rules, which reads as "the rule is missing" when it is there. Exempt a sanctioned
   case by the DECLARATIONS it carries, never by a selector name (a name-based allowlist exempts a rule
   that only looks the same), and read a selector list's shared body, not each selector.
+- A rule scoped under a class is pinned on the PARSED selector PARTS (each part must start with the
+  class), not on a substring of the group: the group of a nested rule carries its at-rule window, so a
+  substring is green for a rule the brief placed elsewhere. Pin "only the properties the brief lists" as
+  a set equality over the rule's declaration names: that is what refuses an extra property.
+- Compare a declaration's VALUE with whitespace collapsed (`\s+` to one space, trimmed): Prettier re-wraps
+  a long value (a shadow stack, a gradient list) and an exact compare reds on the wrap, not on the code.
+- Adding tokens to `index.css` reds the older slice's exact-list pins (the token-name list of each theme
+  block) and its COUNT pins over at-rules (the forced-colours block count; a system-colour scan whose
+  whitelist is one property reads a `display: none` inside a forced block as a system colour). Grep those
+  pins before the run and report them as collateral reds of the coder's change; never edit them in the red
+  step.
+- Decorative art of a page is pinned on two planes: DOM in the `.tsx` (structure, order, emptiness, tab
+  order) and stylesheet text in a `.ts` (every colour, size and mask declaration). The CSS reader is COPIED
+  into each file, since a test file imports no other test file.
+- A brief that says "the box holds A then B" is pinned on the wrapper's `children`
+  (`toEqual([a, b])`), not on `main.children`: the coder may nest the box at any depth.
 - A contrast rule is computed in the test (sRGB-relative luminance, `(L1+0.05)/(L2+0.05)`) from the
   PARSED hexes, never from ratio constants copied from the brief; the brief's own stated ratios go in as
   the unit-check of that function, proven by a node probe first, else the unit-check is a red the coder
   cannot pass.
+
+- Run fe vitest from `fe/` with `TMPDIR=/tmp/opencode`: vitest writes `node_modules/.vite` (the source tree
+  is gitignored only under `dist`/`coverage`, so a sandbox that read-only binds the repo dies with
+  `EROFS ... unlink tsconfig.json.tmp`), and `npm --prefix fe <script>` runs npm in that sandbox as well (it
+  creates `fe/npm-cache`, and a sandboxed `npm --prefix fe test` stalls in the background on an esbuild
+  install postinstall, printing nothing).
+- `fe/vite.config.ts` has no `setupFiles`: jest-dom's matchers (`toBeInTheDocument`, `toHaveAttribute`,
+  `toHaveClass`) are NOT installed, and `@testing-library/user-event` is not a dependency. Read
+  `package.json` and the config before importing; use `.className`, `.textContent`, `toBeTruthy()`.
+- Prettier's config is found per package: `fe/package.json` carries the fe's rules (no semicolons, width
+  100) and the repo root has no `package.json`, so a root-level `npx prettier --write <file outside fe/>`
+  uses Prettier's defaults (printWidth 80) and rewrites lines nobody touched. Format from `fe/` with
+  repo-root paths (`npx prettier --write ../crates/...`). `npm --prefix fe run format:check` covers
+  `crates/bff/ui/*.html`, `.github/workflows`, `LICENSE` and `README.md`, which a production commit may
+  have left unformatted: format them and prove with `git diff -- <file>` that only whitespace moved.
+- Right after `render(<App />)` the Overview's `main` holds only the loading `<p role="status">` (the
+  session has not settled): a synchronous `main.querySelector` finds nothing and every case of the file
+  dies in its own helper. Await the section's heading (`findByRole('heading', { level: 2 })`) before any
+  synchronous query.
+- `within(ul)` matches a `li` nested inside a tile's own `<ul>` (the selector is `ul > li`): pin "a tile
+  holds nothing nested" on `element.children`, never on a `within` list query.
+- A shape an ARIA role restores (a `ul` with `role="list"`) is not reachable by a role query alone: when
+  the brief names the class, pin `element.className` / the tag name, and say in the message that the list
+  must be a real list.
+- A control the app turns into a link only when the session is signed in (a tile that navigates): the
+  whole-page test of that page needs `fakeBff({ session: 'signed-out' })`, else the coder's change adds
+  the links the pin forbids and an unrelated test reds. Deleting a source-text pin (a literal in the
+  `.tsx`) leaves the criterion's BEHAVIOUR pins: grep them in the same file and report them as its coverage.
+- "Focus lands on the heading, nothing readable precedes it": no test can pin a focus that the app takes
+  on first arrival, because `PageHeading` focuses only when `FocusRequest > 0`. Pin the reading-order half
+  (walk the text-bearing nodes between the skip link and the heading, then the tab stops of `main`) and
+  name the existing test that carries the focus claim.
+- A test title that quotes a brief line carries its punctuation into the lint: a brief written
+  `(line 222: -)` made an em-dash message. Name the brief's section, never quote its prose.
+- Deleting keys from the test's shared `EN` table reds nothing in `strings.test.ts` (its parity check reads
+  `src/strings/en_US.json` and the source files, not the table); deleting them from the JSON while
+  production still uses them reds its "every value is used" check, so a strings pin in a new file of the
+  slice is a duplicate guard of that one.
 
 ## Renames, wire and text
 

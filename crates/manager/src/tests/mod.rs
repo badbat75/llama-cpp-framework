@@ -44,6 +44,9 @@ fn data_root_e2e() {
     // ── Manager core: the per-instance model profiles renders and assignments.ini ─
     crate::manager::service::manager_assignments_e2e();
 
+    // ── Manager core: SetModelProfile, the verb that writes assignments.ini ─
+    crate::manager::service::manager_set_model_profile_e2e();
+
     // ── Manager core: instances.ini, the instance record, read-only ──────
     crate::manager::service::manager_instances_file_e2e();
 

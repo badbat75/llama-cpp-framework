@@ -140,7 +140,7 @@ both transports:
 | `WriteFileAs(s principal, s name, s contents, b keep_api_key)` | `{"method":"WriteFileAs","principal":..,"name":..,"contents":..,"keep_api_key":..}` | as `WriteFile` |
 | `WriteFileIfAs(s principal, s name, s contents, s expected)` | `{"method":"WriteFileIfAs","principal":..,"name":..,"contents":..,"expected":..}` | as `WriteFileIf`: `Changed` when the file's bytes are not `expected` |
 | `SetBootEnabledAs(s principal, s id, b enabled)` | `{"method":"SetBootEnabledAs","principal":..,"id":..,"enabled":..}` | as `SetBootEnabled` |
-| `Version() -> (s version, u protocol)` | `{"method":"Version"}` | `{"ok":{"version":"<framework>","protocol":2}}` |
+| `Version() -> (s version, u protocol)` | `{"method":"Version"}` | `{"ok":{"version":"<framework>","protocol":3}}` |
 
 `ListInstances`, `Status`, `BootEnabled` and `Authenticate` get no `As` form: they need no right, or
 answer the bff alone. On the pipe a `principal` field on any other method is `BadRequest`, and an `As`
@@ -1309,14 +1309,16 @@ invalid value): the launch never falls back to `server@<id>.ini`. A profile chan
    `preset-engine-mismatch` are dropped.
 5. Model-file and memory checks ((b) 2, 3) unchanged, under the new names.
 
-*(d') Manager protocol 3* (PROTOCOL is 2 on main; 3 ships with the first new method). Every guarded
-method has its `As` form, needs `configure`, runs under the `writing` lock and is recorded:
+*(d') Manager protocol 3* (3 ships with the first new method, `SetModelProfile`; the other methods of this
+table join 3 while no release carries it, and a method added after a release that shipped 3 raises the
+number). Every guarded method has its `As` form, needs `configure`, runs under the `writing` lock and is
+recorded:
 
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
 | `Instances()`, no authorization | `-> a(sssqasas)`: `(id, engine, server_profile, port, instance_tags, profile_tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, instanceTags, profileTags}` | none; port 0 and no profile tags when the profile file is missing |
 | `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `instance-bad-tags` (the rule of (c)); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
-| `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (not for `*`), `value` none/inherit/on/off (`*` takes none/inherit), checks 1 and 3 of (b), model file and memory once built |
+| `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `load-on-startup-over-max` |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
 | `DeleteServerProfile(engine, profile)` | `(ss)` | `NoServerProfile`, `ServerProfileInUse` |

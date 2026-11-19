@@ -22,8 +22,9 @@ use std::io::{Error, ErrorKind, Read, Write};
 pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 
 /// The protocol version this manager answers with, the number `Version`
-/// reports beside the framework version.
-pub const PROTOCOL: u32 = 2;
+/// reports beside the framework version. 2 is the `As` methods; 3 adds
+/// `SetModelProfile`, the assignment verb, with its `As` form.
+pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
 /// `principal`.
@@ -44,6 +45,7 @@ enum Request {
     WriteFileIf(String, String, String, Option<Principal>),
     BootEnabled(String),
     SetBootEnabled(String, bool, Option<Principal>),
+    SetModelProfile(String, String, String, Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -107,6 +109,18 @@ impl Request {
                 v.get("enabled")?.as_bool()?,
                 principal().map(Some)?,
             ),
+            // The assignment verb: instance, model profile and value, the
+            // names the method's own (the frame's fields are camelCase, as
+            // every other method's).
+            "SetModelProfile" => {
+                Request::SetModelProfile(arg("instance")?, arg("profile")?, arg("value")?, None)
+            }
+            "SetModelProfileAs" => Request::SetModelProfile(
+                arg("instance")?,
+                arg("profile")?,
+                arg("value")?,
+                principal().map(Some)?,
+            ),
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -167,6 +181,12 @@ where
         Request::SetBootEnabled(id, enabled, principal) => requester(caller, principal)
             .and_then(|who| manager.set_boot_enabled(&who, &id, enabled))
             .map(|()| Value::Null),
+        // The assignment of one model profile to one instance.
+        Request::SetModelProfile(instance, profile, value, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.set_model_profile(&who, &instance, &profile, &value))
+                .map(|()| Value::Null)
+        }
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager
             .authenticate(caller, &user, &password)
@@ -1234,7 +1254,7 @@ mod tests {
             replies,
             vec![
                 json!({"ok": "active"}),
-                json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 2}}),
+                json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 3}}),
                 error("InvalidId", "InvalidId"),
                 error("BadFileName", "BadFileName"),
             ]
@@ -1297,7 +1317,7 @@ mod tests {
                     json!({"method": "Status", "id": "default"}),
                 ]),
             );
-            let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 2}});
+            let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 3}});
             assert!(result.is_ok(), "{caller:?}: {result:?}");
             assert_eq!(
                 replies,
@@ -1374,7 +1394,7 @@ mod tests {
             client.version(),
             Ok(Some(ManagerVersion {
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                protocol: 2,
+                protocol: 3,
             })),
             "the version this manager answers"
         );

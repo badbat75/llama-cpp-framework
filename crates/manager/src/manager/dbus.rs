@@ -303,6 +303,37 @@ where
             .await?)
     }
 
+    /// `SetModelProfile`: the model profile `profile` assigned to instance
+    /// `instance` as `value`, for the caller acting as itself (`sss`).
+    async fn set_model_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        profile: String,
+        value: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
+            .await?)
+    }
+
+    /// `SetModelProfile` for `principal`, the principal first as every `As`
+    /// method has it (`ssss`).
+    async fn set_model_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        profile: String,
+        value: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
+            .await?)
+    }
+
     /// `ReadFile` for `principal`. The reply has the plain method's shape;
     /// a member of `pai` may configure, so a member's read is never withheld.
     async fn read_file_as(
@@ -700,6 +731,21 @@ pub(crate) fn manager_dbus_e2e() {
             model_profiles,
             "a refused write leaves the file"
         );
+        let e = call(
+            &client,
+            "SetModelProfile",
+            &("default", "Qwen3.8-27B", "on"),
+        )
+        .expect_err("SetModelProfile");
+        assert_eq!(
+            e.0,
+            err_name("NotAuthorized"),
+            "SetModelProfile without a sender"
+        );
+        assert!(
+            !sys.join("assignments.ini").exists(),
+            "an assignment refused with no identity writes nothing"
+        );
         assert_eq!(calls(&c), vec![], "nothing reached the service manager");
         assert_eq!(asked(&c), vec![], "a call with no sender asks nobody");
 
@@ -748,15 +794,27 @@ pub(crate) fn manager_dbus_e2e() {
         assert_eq!(e.0, err_name("NotAuthorized"));
         let e = call(&client, "SetBootEnabled", &("default", true)).expect_err("SetBootEnabled");
         assert_eq!(e.0, err_name("NotAuthorized"));
+        let e = call(
+            &client,
+            "SetModelProfile",
+            &("default", "Qwen3.8-27B", "on"),
+        )
+        .expect_err("SetModelProfile");
+        assert_eq!(e.0, err_name("NotAuthorized"));
         assert_eq!(calls(&c), vec![], "a refused caller starts nothing");
         assert_eq!(
             asked(&c),
             vec![
                 (alice.clone(), Action::Control),
                 (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure)
             ],
             "polkit is asked about the sender, per action"
+        );
+        assert!(
+            !sys.join("assignments.ini").exists(),
+            "a refused assignment writes nothing"
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
@@ -931,6 +989,115 @@ pub(crate) fn manager_dbus_e2e() {
         let e = call(&client, "ReadFile", &("models.ini.disabled",)).expect_err("ReadFile dir");
         assert_eq!(e.0, err_name("Io"));
         std::fs::remove_dir(sys.join("models.ini.disabled")).unwrap();
+
+        // SetModelProfile: the assignment verb, plain `(sss)`. The accepted
+        // call writes the record and renders the instance's model profiles;
+        // refusals are the core's own errors, and write nothing.
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        let asked_before = asked(&c).len();
+        let calls_before = calls(&c).len();
+        let r = call(
+            &client,
+            "SetModelProfile",
+            &("default", "Qwen3.8-27B", "on"),
+        )
+        .expect("SetModelProfile on");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "the assignment landed"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render carries the enabled model profile"
+        );
+        call(
+            &client,
+            "SetModelProfile",
+            &("default", "Qwen3.8-27B", "off"),
+        )
+        .expect("SetModelProfile off");
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n",
+            "the same profile switched off"
+        );
+        assert!(
+            !std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render drops the disabled model profile"
+        );
+        assert_eq!(
+            asked(&c).len(),
+            asked_before + 2,
+            "the guarded call a write is: configure asked of the sender, every call"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            calls_before,
+            "an assignment touches no unit"
+        );
+        let e = call(&client, "SetModelProfile", &("lan-3", "Qwen3.8-27B", "on"))
+            .expect_err("an assignment of no instance");
+        assert_eq!(
+            e.0,
+            err_name("NoInstance"),
+            "an id the record has no section for"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            let e = call(&client, "SetModelProfile", &(bad, "Qwen3.8-27B", "on"))
+                .expect_err("an invalid id");
+            assert_eq!(e.0, err_name("InvalidId"), "id {bad:?}");
+        }
+        let e = call(&client, "SetModelProfile", &("default", "zzz", "on"))
+            .expect_err("a model profile the pool has not");
+        assert_eq!(
+            e.0,
+            err_name("Invalid"),
+            "the pool has no model profile zzz"
+        );
+        for bad in ["maybe", "", "ON", "on,off"] {
+            let e = call(&client, "SetModelProfile", &("default", "Qwen3.8-27B", bad))
+                .expect_err("a value that is not one of the four");
+            assert_eq!(e.0, err_name("Invalid"), "value {bad:?}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n",
+            "refused calls write nothing"
+        );
+        // The signature is `(sss)`: no less, no more, and three strings.
+        // zbus answers a shape mismatch with its own error, never one of
+        // the manager's, and the file is untouched.
+        for e in [
+            call(&client, "SetModelProfile", &("default", "Qwen3.8-27B")).expect_err("two strings"),
+            call(
+                &client,
+                "SetModelProfile",
+                &("default", "Qwen3.8-27B", "on", "more"),
+            )
+            .expect_err("four strings"),
+            call(&client, "SetModelProfile", &("default", 7u32, "on"))
+                .expect_err("a number where a string belongs"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n",
+            "a body the method does not take writes nothing"
+        );
     }
 
     // ── ReadFile says when it withheld the API key ───────────────────────
@@ -1193,6 +1360,11 @@ pub(crate) fn manager_dbus_checks_e2e() {
     let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n",
+    )
+    .expect("write instances");
 
     let core = Arc::new(
         Manager::new(
@@ -1296,6 +1468,52 @@ pub(crate) fn manager_dbus_checks_e2e() {
         std::fs::read_to_string(sys.join("models.ini")).unwrap(),
         model_profiles,
         "refused: the file kept"
+    );
+
+    // The verb's refusals carry the encoded refusal as a write's does: the
+    // model profile the pool has not, and a value that is not one of the
+    // four.
+    std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+    let set = |instance: &str, profile: &str, value: &str| -> Result<(), (String, String)> {
+        client
+            .call_method(
+                None::<&str>,
+                OBJECT_PATH,
+                Some(INTERFACE),
+                "SetModelProfile",
+                &(instance, profile, value),
+            )
+            .map(|_| ())
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                other => panic!("SetModelProfile: not a method error reply: {other:?}"),
+            })
+    };
+    let (name, message) = set("default", "zzz", "on").expect_err("no model profile zzz");
+    assert_eq!(name, invalid);
+    assert_eq!(
+        Refusal::decode(&message),
+        Some(refusal("no-model-profile-named", &["zzz"])),
+        "{message:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+        "[default]\n",
+        "refused: the record kept"
+    );
+    let (name, message) =
+        set("default", "Qwen3.8-27B", "maybe").expect_err("a value that is not one of the four");
+    assert_eq!(name, invalid);
+    assert!(
+        Refusal::decode(&message).is_some(),
+        "the value's refusal carries its key: {message:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+        "[default]\n",
+        "refused: the record kept"
     );
 
     // A valid write still goes through.
@@ -1680,6 +1898,84 @@ pub(crate) fn manager_dbus_principal_e2e() {
             bff_checks(&c).len(),
             bff_before + 2,
             "the caller checked once per principal call"
+        );
+    }
+
+    // ── The member's model profile assignment, vouched for by the bff ────
+    // The `As` form is `(ssss)` with the principal first, as the design's
+    // `SetModelProfileAs(s principal, s instance, s profile, s value)`: an
+    // implementation taking the principal last would name an instance
+    // "alice" here and fail.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        call(
+            &client,
+            "SetModelProfileAs",
+            &("alice", "default", "Qwen3.8-27B", "on"),
+        )
+        .expect("SetModelProfileAs for a member");
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "the member's assignment landed"
+        );
+        assert_eq!(
+            polkit(&c),
+            vec![],
+            "the principal gate decides the right: polkit is asked nothing"
+        );
+        assert_eq!(calls(&c).len(), 5, "an assignment touches no unit");
+        let e = call(
+            &client,
+            "SetModelProfileAs",
+            &("bob", "default", "Qwen3.8-27B", "off"),
+        )
+        .expect_err("SetModelProfileAs for a non-member");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}NotAuthorized"),
+            "SetModelProfileAs for bob"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "a refused assignment writes nothing"
+        );
+        let e = call(
+            &client,
+            "SetModelProfileAs",
+            &("alice", "default", "Qwen3.8-27B"),
+        )
+        .expect_err("the As form is four strings");
+        assert!(
+            !e.0.starts_with(PREFIX),
+            "the shape is zbus's answer, not the manager's: {e:?}"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 2,
+            "the membership of the vouched name, asked once per call"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 2,
+            "the caller checked once per principal call"
+        );
+        // A caller that is not the bff, naming a member: refused.
+        let (_server, other) = connect(&c, Some(":1.42"));
+        let e = call(
+            &other,
+            "SetModelProfileAs",
+            &("alice", "default", "Qwen3.8-27B", "off"),
+        )
+        .expect_err("SetModelProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"));
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "a caller that is not the bff writes nothing"
         );
     }
 }
@@ -2429,7 +2725,7 @@ mod tests {
             );
             assert_eq!(
                 body::<(String, u32)>(&reply),
-                (env!("CARGO_PKG_VERSION").to_string(), 2),
+                (env!("CARGO_PKG_VERSION").to_string(), 3),
                 "{sender:?}: the framework version and the protocol"
             );
             assert!(

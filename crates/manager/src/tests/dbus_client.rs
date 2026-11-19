@@ -102,7 +102,7 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 11] = [
+    let each: [(&str, ClientCall); 12] = [
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
         }),
@@ -121,6 +121,9 @@ fn a_peer_without_the_manager_object_is_unavailable() {
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
             c.set_boot_enabled("default", true).err()
+        }),
+        ("set_model_profile", |c| {
+            c.set_model_profile("default", "Qwen3.8-27B", "on").err()
         }),
     ];
     for (method, f) in each {
@@ -595,6 +598,101 @@ pub(crate) fn manager_dbus_client_e2e() {
         assert_eq!(calls(&c), vec![], "a file write touches no unit");
         std::fs::write(sys.join("models.ini"), model_profiles).expect("restore presets");
     }
+
+    // ── The assignment verb, end to end ────────────────────────────────
+    // `set_model_profile` is the plain verb `(sss)`: the accepted call
+    // writes the record and renders the instance's model profiles; the
+    // refusals are the core's own errors and write nothing.
+    {
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, None);
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "on"),
+            Err(ClientError::NotAuthorized),
+            "no sender, no assignment"
+        );
+        assert!(
+            !sys.join("assignments.ini").exists(),
+            "the refused call writes nothing"
+        );
+        assert_eq!(asked(&c), vec![], "a call with no sender asks nobody");
+    }
+    {
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "on"),
+            Ok(()),
+            "the pool's model profile, assigned to an instance"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = on\n",
+            "the assignment landed"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render carries the enabled model profile"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the sender"
+        );
+        assert_eq!(calls(&c), vec![], "an assignment touches no unit");
+        assert_eq!(
+            client.set_model_profile("default", "Qwen3.8-27B", "off"),
+            Ok(()),
+            "the same profile switched off"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n"
+        );
+        assert!(
+            !std::fs::read_to_string(sys.join("models@default.ini"))
+                .expect("the render")
+                .contains("[Qwen3.8-27B]"),
+            "the render drops the disabled model profile"
+        );
+        assert_eq!(
+            client.set_model_profile("lan-3", "Qwen3.8-27B", "on"),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_model_profile(bad, "Qwen3.8-27B", "on"),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        assert_eq!(
+            client.set_model_profile("default", "zzz", "on"),
+            Err(ClientError::Invalid(Refusal {
+                key: "no-model-profile-named",
+                values: vec!["zzz".into()],
+            })),
+            "the pool has no model profile zzz"
+        );
+        for bad in ["maybe", "", "ON", "on,off"] {
+            assert!(
+                matches!(
+                    client.set_model_profile("default", "Qwen3.8-27B", bad),
+                    Err(ClientError::Invalid(_))
+                ),
+                "value {bad:?} is not one of the four"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
+            "[default]\nQwen3.8-27B = off\n",
+            "refused calls write nothing"
+        );
+    }
 }
 
 /// A core taking `bff` for the bff's account over the fake accounts (alice
@@ -724,7 +822,7 @@ fn the_dbus_client_reads_the_managers_version() {
         got,
         Ok(Some(ManagerVersion {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol: 2,
+            protocol: 3,
         })),
         "the version this manager answers"
     );
@@ -1090,6 +1188,73 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             bff_checks(&c).len(),
             bff_before + 2,
             "the caller checked once per principal call"
+        );
+    }
+
+    // ── The member's model profile assignment, through the client ────────
+    // The bff's client bound to `alice`: `set_model_profile` goes as the
+    // `As` form, the member's membership decides. The counts are relative:
+    // this phase's logs already carry every call above.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        let calls_before = calls(&c).len();
+        std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        assert_eq!(
+            on("set_model_profile", &client, move |c| c
+                .acting_for("alice")
+                .set_model_profile("default", "Qwen3.8-27B", "on")),
+            Ok(()),
+            "a member assigns a model profile"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "the member's assignment landed"
+        );
+        assert_eq!(
+            on("set_model_profile", &client, move |c| c
+                .acting_for("bob")
+                .set_model_profile("default", "Qwen3.8-27B", "off")),
+            Err(ClientError::NotAuthorized),
+            "a principal outside pai is refused"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "the refused call wrote nothing"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            calls_before,
+            "an assignment touches no unit"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 2,
+            "the membership of the vouched name, asked once per call"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 2,
+            "the caller checked once per principal call"
+        );
+    }
+    // A caller that is not the bff, vouching for a member: refused.
+    {
+        let (_server, other) = connect(&c, Some(OTHER));
+        let other = Arc::new(other);
+        assert_eq!(
+            on("set_model_profile", &other, move |c| c
+                .acting_for("alice")
+                .set_model_profile("default", "Qwen3.8-27B", "off")),
+            Err(ClientError::NotAuthorized),
+            "a caller that is not the bff does not vouch"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nQwen3.8-27B = on\n",
+            "a caller that is not the bff writes nothing"
         );
     }
 }

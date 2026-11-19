@@ -172,6 +172,31 @@ Lessons only: the rules are in `AGENTS.md`.
   `git show HEAD:<path>` in BOTH copies, and keep the revert as a literal string, not a rule (a scripted
   rule that keys on a word inside the constant re-corrupts the fix on the next pass).
 
+## The manager's verbs, refusals and records
+
+- A refusal a client test decodes must be a key of `checks::KEYS` with a `text()` arm: `Refusal::decode`
+  answers `Other` for any other key, so a new key added only to the strings files reddens the D-Bus and
+  pipe round trips. `Refusal::new` is private and its key is `&'static str`, so manager code builds the
+  struct literal.
+- The startup budget of an instance is checked with the EXISTING rule, not a new one:
+  `checks::startup_loads` takes the RENDERED per-instance file (the sections that carry
+  `load-on-startup = true`) and `checks::startup_count` the count against the server profile's `ModelsMax`,
+  so judge the render the write produces, with the record's own key. Its refusal values are
+  `[count, max, instance]`: a test comparing `values == ["2"]` compares the max.
+- The per-instance render is the launch's real file (`assign::render`): judge a record with
+  `checks::model_profile_conflicts` on that text, and skip the startup budget for an instance with no
+  `server@<id>.ini`, as `check_renders` does: the launch refuses it and no render is judged on defaults of a
+  file that is not there.
+- The action log's absent principal is the BARE `-` (`record_action`'s `quoted(None)`), which the method's
+  own doc comment, `action_log.rs` and 23 assertions in `service.rs` pin. A new test asking for
+  `principal="-"` asks for a rule change, not an implementation: quote it and every one of those goes red.
+- The `ModelsMax` step rule: judge `startup_count` only when the render the write produces starts MORE than the render on disk, and skip the judgement wholly when the section names no profile or its file is missing/unreadable. Pass the cap as `Option<Option<i32>>` (`cap`, judged only in the `if let`) so "no cap to judge" never rides on `None` (which means the engine's default), and take the current count from `render_of` (it reads the record from disk under the write lock, so it needs no argument).
+- `ini::detect_eol` is `pub`: a writer outside core that appends a section writes it in the file's own style. An empty text reads as CRLF.
+- `set_key` and `remove_key` already keep the section's trailing blank separator line: a writer that trims the section tail is the one that eats it. If a brief pins "every other byte kept", drop the tail trim, and expect the older assertion in the same test function (the `none` path, section text pinned without the blank) to go red: PIN-4a and that one are unsatisfiable together. Report the pair, keep the brief's rule.
+- A `models@<id>.ini` render is written after the record change and its failure is the CALL's answer, so a
+  verb's doc states which one the caller sees; the renders go through `render_all_locked` (no lock
+  recursion) and a lock taken `unwrap_or_else(|e| e.into_inner())` is a documented pattern here.
+
 ## Renaming a word across the tree
 
 - The ARCHITECTURE.md names table is the authority. Enumerate every site by grepping the literal before
@@ -287,7 +312,6 @@ Lessons only: the rules are in `AGENTS.md`.
   control disabled" tests have ONE fix point there (an editable number field is TWO tab stops, its box and
   its input), and the fixtures pinning a full-value line must move to a field that stays read-only. Report
   the list, never edit the tests.
-
 ## Tests that cannot pass, and what to report
 
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the

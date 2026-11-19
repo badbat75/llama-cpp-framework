@@ -624,7 +624,7 @@ fn line_start_of(content: &str, pos: usize) -> usize {
 /// The file's line-ending style: LF only when the content has newlines and no
 /// CRLF; everything else, including brand-new / empty files, is CRLF. Also
 /// what the render of a generated file (`assign::render`) writes its header in.
-pub(crate) fn detect_eol(content: &str) -> &'static str {
+pub fn detect_eol(content: &str) -> &'static str {
     if content.contains('\n') && !content.contains("\r\n") {
         "\n"
     } else {

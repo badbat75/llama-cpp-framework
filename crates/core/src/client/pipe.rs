@@ -283,6 +283,21 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             &[("id", json!(id)), ("enabled", json!(enabled))],
         ))
     }
+    fn set_model_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        value: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetModelProfile",
+            &[
+                ("instance", json!(instance)),
+                ("profile", json!(profile)),
+                ("value", json!(value)),
+            ],
+        ))
+    }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
         let ok = v.get("authenticated").and_then(Value::as_bool);
@@ -509,7 +524,7 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 11] = [
+    const EVERY_METHOD: [(&str, Call); 12] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -522,6 +537,9 @@ mod tests {
         ("boot_enabled", |c| c.boot_enabled("default").err()),
         ("set_boot_enabled", |c| {
             c.set_boot_enabled("default", true).err()
+        }),
+        ("set_model_profile", |c| {
+            c.set_model_profile("default", "Qwen 3 (v2) é", "on").err()
         }),
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
@@ -837,7 +855,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 12] = [
+        let cases: [(Call, Value); 13] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -904,6 +922,10 @@ mod tests {
                 // The compare and swap: the file's name, the new content and
                 // the content it must still hold, and no `keep_api_key`.
                 json!({"method": "WriteFileIf", "name": "models.ini", "contents": contents, "expected": ""}),
+            ),
+            (
+                |c| c.set_model_profile("lan-2", "Qwen 3 (v2) é", "off").err(),
+                json!({"method": "SetModelProfile", "instance": "lan-2", "profile": "Qwen 3 (v2) é", "value": "off"}),
             ),
         ];
         for (f, request) in cases {
@@ -1205,7 +1227,7 @@ mod tests {
     #[test]
     fn an_acting_client_sends_the_as_forms() {
         let refused = error_reply("InvalidId", "InvalidId");
-        let cases: [Case; 7] = [
+        let cases: [Case; 8] = [
             (
                 "start",
                 |c| c.start("default").err(),
@@ -1249,6 +1271,11 @@ mod tests {
                 "set_boot_enabled",
                 |c| c.set_boot_enabled("lan-2", true).err(),
                 json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "lan-2", "enabled": true}),
+            ),
+            (
+                "set_model_profile",
+                |c| c.set_model_profile("lan-2", "Qwen 3 (v2) é", "on").err(),
+                json!({"method": "SetModelProfileAs", "principal": "alice", "instance": "lan-2", "profile": "Qwen 3 (v2) é", "value": "on"}),
             ),
         ];
         for (method, act, request) in cases {

@@ -178,6 +178,25 @@ pub trait ManagerClient {
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError>;
     /// Make the instance start when the system starts, or not.
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError>;
+    /// Assigns the model profile `profile` to instance `instance` as `value`:
+    /// `on`, `off`, `inherit` (the pool's own state) or `none` (no assignment
+    /// of its own). `*` is every model profile of the pool, and takes `none`
+    /// and `inherit` only. Guarded as a write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_model_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        value: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (instance, profile, value);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetModelProfile".into(),
+        ))
+    }
     /// Whether `password` is `user`'s OS password, and whether that user may
     /// configure: (ok, can_configure). The manager answers only the bff's
     /// account; anyone else is [`ClientError::NotAuthorized`].
@@ -523,11 +542,19 @@ mod tests {
     /// The default body: a call the client cannot make, said as `Other` with
     /// a detail. Never Ok, never one of the manager's refusals: a caller
     /// must not read a transport with no compare and swap as a write the
-    /// manager refused. A transport that speaks the method overrides the body
-    /// (the round trips are in `pai-manager`'s e2e).
+    /// manager refused, and never Ok: a client that cannot set a model
+    /// profile must not report one as set. A transport that speaks the
+    /// method overrides the body (the round trips are in `pai-manager`'s
+    /// e2e).
     #[test]
     fn a_client_of_the_default_body_reports_other() {
         match NoCompareSwap.write_file_if("models.ini", "[x]\nmodel = /m/x.gguf\n", "") {
+            Err(ClientError::Other(detail)) => {
+                assert!(!detail.is_empty(), "the detail says why: {detail:?}")
+            }
+            other => panic!("the trait's default body: {other:?}"),
+        }
+        match NoCompareSwap.set_model_profile("default", "Qwen 3 (v2) é", "on") {
             Err(ClientError::Other(detail)) => {
                 assert!(!detail.is_empty(), "the detail says why: {detail:?}")
             }
