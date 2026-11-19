@@ -31,8 +31,12 @@
 //!   neither header, the shape of `curl`, a CLI and any client that sends no
 //!   fetch metadata.
 //! - A `GET` is never refused for these headers: reading is what the page does
-//!   on its own, and `GET /api/instances` and `GET .../boot` answer without a
-//!   session at all.
+//!   on its own. The session gates these reads (401 `session-required` with no
+//!   live session, before the manager is connected to, pinned in
+//!   `tests/instances.rs`, `tests/control.rs`, `tests/router.rs`), so every
+//!   probe here that says "this Host is answered" carries the cookie of a LIVE
+//!   session: an answered Host gets the read's own answer, a refused Host gets
+//!   the guard's 403 before any session is read.
 //! - A JSON body larger than 64 KiB on the boot write and on `POST
 //!   /api/session` is refused 413 `{"key": "payload-too-large", "args": []}`
 //!   before the manager is connected to: the sign-in body is the only one an
@@ -1118,9 +1122,9 @@ async fn an_origin_at_the_default_port_passes() {
 }
 
 /// A `GET` is never refused for these headers: the page reads the session, the
-/// instances, the boot flag and the server file, and the reads that answer
-/// without a session are the ones it polls. The manager is reached, so the
-/// request was answered, not refused.
+/// instances, the boot flag and the server file, every one of them behind the
+/// session, and the reads it polls are among them. The manager is reached, so
+/// the request was answered, not refused.
 #[tokio::test]
 async fn a_get_route_is_never_refused_for_these_headers() {
     for extra in [
@@ -1134,11 +1138,25 @@ async fn a_get_route_is_never_refused_for_these_headers() {
     ] {
         let app = new_app();
         let cookie = app.sign_in().await;
-        app.ask(Method::GET, "/api/version", None, None, None, &extra)
-            .await
-            .assert_ok();
+        app.ask(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &extra,
+        )
+        .await
+        .assert_ok();
         let r = app
-            .ask(Method::GET, "/api/instances", None, None, None, &extra)
+            .ask(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &extra,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1149,7 +1167,7 @@ async fn a_get_route_is_never_refused_for_these_headers() {
         app.ask(
             Method::GET,
             "/api/instances/default/boot",
-            None,
+            Some(&cookie),
             None,
             None,
             &extra,
@@ -1386,12 +1404,26 @@ async fn a_host_that_is_not_text_is_refused() {
             .assert_bad_host();
     }
     app.boot_raw(&cookie, &named).await.assert_bad_host();
-    app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
-        .await
-        .assert_bad_host();
-    app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-        .await
-        .assert_bad_host();
+    app.ask_raw(
+        Method::GET,
+        "/api/instances",
+        Some(&cookie),
+        None,
+        None,
+        &named,
+    )
+    .await
+    .assert_bad_host();
+    app.ask_raw(
+        Method::GET,
+        "/api/version",
+        Some(&cookie),
+        None,
+        None,
+        &named,
+    )
+    .await
+    .assert_bad_host();
     app.assert_asks_nothing("a Host that is not text");
     app.get("/api/session", Some(&cookie))
         .await
@@ -1527,11 +1559,18 @@ async fn a_host_that_is_a_foreign_name_is_refused() {
         app.sign_in_raw(CREDENTIALS, &rebinding)
             .await
             .assert_bad_host();
-        // The reads answer nothing to a foreign name, the session-free ones
-        // included.
-        app.ask_raw(Method::GET, "/api/instances", None, None, None, &rebinding)
-            .await
-            .assert_bad_host();
+        // The reads answer nothing to a foreign name, session or no session:
+        // the name rule answers before the session is read.
+        app.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &rebinding,
+        )
+        .await
+        .assert_bad_host();
 
         // The `Host` on its own, with no fetch metadata: `curl` naming a host
         // this bff does not serve. A name the bff does not serve is a refusal
@@ -1542,12 +1581,26 @@ async fn a_host_that_is_a_foreign_name_is_refused() {
                 .await
                 .assert_bad_host();
         }
-        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
-            .await
-            .assert_bad_host();
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
         app.ask_raw(
             Method::GET,
             "/api/session",
@@ -1599,7 +1652,14 @@ async fn a_loopback_host_is_answered_as_today() {
         app.boot_raw(&cookie, &named).await.assert_enabled(true);
         app.sign_in_raw(CREDENTIALS, &named).await.assert_ok();
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1654,16 +1714,23 @@ async fn an_ip_host_off_loopback_is_answered() {
             .await
             .assert_enabled(true);
         app.sign_in_with("alice", &extra).await.assert_ok();
-        app.delete_session_with(&cookie, &extra)
-            .await
-            .assert_accepted();
 
         // The client that names only the address it dialed (`curl`, the CLI,
         // a proxy): no fetch metadata, and the session it signs in with is
-        // readable at that same address.
+        // readable at that same address. The sign-in above is signed out
+        // below, so these probes carry the live cookie of the test's own
+        // session: a session-gated read answers 401 to the cookie of a
+        // session that has ended.
         let named = host_line(host);
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1671,15 +1738,28 @@ async fn an_ip_host_off_loopback_is_answered() {
             "Host: {host}: {}",
             r.body
         );
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_ok();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_ok();
         let reply = app.sign_in_raw(CREDENTIALS, &named).await;
         reply.assert_ok();
         let at = reply.set_cookie.expect("a session cookie");
         app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
             .await
             .assert_signed_in_as("alice");
+
+        // The sign-out, last: the session the test signed in is ended at
+        // this address.
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
     }
 }
 
@@ -1716,16 +1796,21 @@ async fn a_machine_name_in_the_list_is_answered() {
             .await
             .assert_enabled(true);
         app.sign_in_with("alice", &extra).await.assert_ok();
-        app.delete_session_with(&cookie, &extra)
-            .await
-            .assert_accepted();
 
         // The client naming only the name it dialed (`curl`, the CLI, a proxy):
         // no fetch metadata, the reads answer, and a session signed in at that
-        // name is readable at it.
+        // name is readable at it. The sign-out is below, so these probes
+        // carry the live cookie of the test's own session.
         let named = host_line(host);
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1733,15 +1818,28 @@ async fn a_machine_name_in_the_list_is_answered() {
             "Host: {host}: {}",
             r.body
         );
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_ok();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_ok();
         let reply = app.sign_in_raw(CREDENTIALS, &named).await;
         reply.assert_ok();
         let at = reply.set_cookie.expect("a session cookie");
         app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
             .await
             .assert_signed_in_as("alice");
+
+        // The sign-out, last: the session the test signed in is ended at
+        // this name.
+        app.delete_session_with(&cookie, &extra)
+            .await
+            .assert_accepted();
     }
 }
 
@@ -1785,12 +1883,26 @@ async fn a_name_outside_the_injected_list_is_refused() {
         // The `Host` on its own, with no fetch metadata: `curl` naming a host
         // this bff does not serve.
         let named = host_line(host);
-        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
-            .await
-            .assert_bad_host();
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
         app.ask_raw(
             Method::GET,
             "/api/session",
@@ -1863,7 +1975,14 @@ async fn localhost_and_an_ip_are_answered_with_a_name_list() {
         app.sign_in_with("alice", &extra).await.assert_ok();
         let named = host_line(host);
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1897,7 +2016,14 @@ async fn a_trailing_dot_on_a_machine_name_is_the_same_name() {
         // sign-in is checked at it.
         let named = host_line(host);
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -1905,9 +2031,16 @@ async fn a_trailing_dot_on_a_machine_name_is_the_same_name() {
             "Host: {host}: {}",
             r.body
         );
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_ok();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_ok();
         let reply = app.sign_in_raw(CREDENTIALS, &named).await;
         reply.assert_ok();
         let at = reply.set_cookie.expect("a session cookie");
@@ -1965,9 +2098,16 @@ async fn localhost_with_a_trailing_dot_is_localhost() {
             let cookie = app.sign_in().await;
 
             let named = host_line(host);
-            app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-                .await
-                .assert_ok();
+            app.ask_raw(
+                Method::GET,
+                "/api/version",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
+            .await
+            .assert_ok();
 
             let origin = format!("http://{host}");
             let extra = vec![("host", host), ("origin", origin.as_str())];
@@ -1988,9 +2128,16 @@ async fn localhost_with_a_trailing_dot_is_localhost() {
     let before = app.asked();
     for host in ["localhost.", "localhost.:8590"] {
         let named = host_line(host);
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
         let rebinding = at_host(host);
         app.boot_raw(&cookie, &rebinding).await.assert_bad_host();
         app.sign_in_raw(CREDENTIALS, &rebinding)
@@ -2037,12 +2184,26 @@ async fn a_host_of_only_dots_is_refused() {
 
         // The `Host` on its own, with no fetch metadata.
         let named = host_line(host);
-        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
-            .await
-            .assert_bad_host();
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
         app.ask_raw(
             Method::GET,
             "/api/session",
@@ -2097,16 +2258,21 @@ async fn a_loopback_host_is_answered_at_a_loopback_listen() {
                 .await
                 .assert_enabled(true);
             app.sign_in_with("alice", &extra).await.assert_ok();
-            app.delete_session_with(&cookie, &extra)
-                .await
-                .assert_accepted();
 
             // The client naming only the name it dialed (`curl`, the CLI, a
             // proxy): the reads answer and the session it signs in with is
-            // readable at it.
+            // readable at it. The sign-out is below, so these probes carry
+            // the live cookie of the test's own session.
             let named = host_line(host);
             let r = app
-                .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+                .ask_raw(
+                    Method::GET,
+                    "/api/instances",
+                    Some(&cookie),
+                    None,
+                    None,
+                    &named,
+                )
                 .await;
             assert_eq!(
                 r.json(),
@@ -2114,15 +2280,28 @@ async fn a_loopback_host_is_answered_at_a_loopback_listen() {
                 "Listen {listen}, Host: {host}: {}",
                 r.body
             );
-            app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-                .await
-                .assert_ok();
+            app.ask_raw(
+                Method::GET,
+                "/api/version",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
+            .await
+            .assert_ok();
             let reply = app.sign_in_raw(CREDENTIALS, &named).await;
             reply.assert_ok();
             let at = reply.set_cookie.expect("a session cookie");
             app.ask_raw(Method::GET, "/api/session", Some(&at), None, None, &named)
                 .await
                 .assert_signed_in_as("alice");
+
+            // The sign-out, last: the session the test signed in is ended
+            // at this name at this listen.
+            app.delete_session_with(&cookie, &extra)
+                .await
+                .assert_accepted();
         }
     }
 }
@@ -2176,12 +2355,26 @@ async fn a_loopback_host_is_refused_at_a_lan_only_listen() {
         // The `Host` on its own, with no fetch metadata: `curl` naming a host
         // that is not served at the address the bff is bound to.
         let named = host_line(host);
-        app.ask_raw(Method::GET, "/api/instances", None, None, None, &named)
-            .await
-            .assert_bad_host();
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
-            .await
-            .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_bad_host();
         app.ask_raw(
             Method::GET,
             "/api/session",
@@ -2230,14 +2423,20 @@ async fn a_lan_only_listen_answers_the_other_addresses() {
             .await
             .assert_enabled(true);
         app.sign_in_with("alice", &extra).await.assert_ok();
-        app.delete_session_with(&cookie, &extra)
-            .await
-            .assert_accepted();
 
-        // The client naming only the address it dialed.
+        // The client naming only the address it dialed. The sign-out is
+        // below, so these probes carry the live cookie of the test's own
+        // session.
         let named = host_line(host);
         let r = app
-            .ask_raw(Method::GET, "/api/instances", None, None, None, &named)
+            .ask_raw(
+                Method::GET,
+                "/api/instances",
+                Some(&cookie),
+                None,
+                None,
+                &named,
+            )
             .await;
         assert_eq!(
             r.json(),
@@ -2245,9 +2444,22 @@ async fn a_lan_only_listen_answers_the_other_addresses() {
             "Listen {LISTEN_LAN}, Host: {host}: {}",
             r.body
         );
-        app.ask_raw(Method::GET, "/api/version", None, None, None, &named)
+        app.ask_raw(
+            Method::GET,
+            "/api/version",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_ok();
+
+        // The sign-out, last: the session the test signed in is ended at
+        // this address.
+        app.delete_session_with(&cookie, &extra)
             .await
-            .assert_ok();
+            .assert_accepted();
     }
 }
 
@@ -2294,7 +2506,9 @@ async fn a_write_with_an_origin_naming_another_ip_is_refused() {
 /// A request with no `Host` line is answered as today: HTTP/1.0 (`curl -0.9`)
 /// sends none, and the CLI, the tests and a raw client are that shape. There
 /// is no name to check, and a client that sends no fetch metadata is not a
-/// browser's cross-site request.
+/// browser's cross-site request. The read probe carries the live cookie of
+/// the test's session: `GET /api/instances` is gated by a session, and its
+/// 401 to no session is pinned in `tests/instances.rs` and `tests/router.rs`.
 #[tokio::test]
 async fn a_request_with_no_host_is_answered_as_today() {
     let app = new_app();
@@ -2305,7 +2519,7 @@ async fn a_request_with_no_host_is_answered_as_today() {
     app.put_with("/api/instances/default/boot", &cookie, &[])
         .await
         .assert_enabled(true);
-    let r = app.get("/api/instances", None).await;
+    let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
         json!([{"id": "default", "engine": ENGINE, "state": "active"}]),

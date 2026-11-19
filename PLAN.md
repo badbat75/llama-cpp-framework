@@ -836,7 +836,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    (polkit `auth_self_keep`), on Windows from the token's membership. Sign-in succeeds only for a
    `pai` member (403 `session-not-administrator` after a right password otherwise); the session reply
    drops `canConfigure`; every route acting on an instance or file needs `configure`; the Overview
-   (`/api/version`, `/api/instances`, GET boot) stays session-free; the web UI drops its read-only
+   (`/api/version`, `/api/instances`, GET boot) needs a session too (item 13a, 2026-11-19); the web UI drops its read-only
    views. Web users' state (user, 2026-11-15, relayed and confirmed): one machine-wide state
    (preferences, `bench.db`, HF token, `opencode.json`) shared by the administrators, not per user; it
    unblocks the Downloads, Benchmarks, Integrations and Settings pages, where it lives is to plan.
@@ -879,7 +879,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
    as slice 9d after 9b (it also mends the Linux restore, which by the code cannot read
    `/var/lib/private-ai`). The bff keeps its 5 s limit: stop and restart stay job submissions. The routes: `GET`/`PUT /api/instances/{id}/boot`, as the contract's
    "Start, stop, restart, boot" (204 once the job is accepted, the new key `client-service-failed`;
-   session-free reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
+   these reads move no session). The 5 s `MANAGER_TIMEOUT` fits reads only: a save, and a stop
    or restart that saves GiB-sized slot snapshots first, need their own limit, chosen from a measured
    snapshot save (none measured yet), under the fe's 120 s for non-GET calls (fe 19d9594: 15 s for
    a GET, 120 s otherwise, an estimate until this value exists). Optional: answer start and restart after systemd's

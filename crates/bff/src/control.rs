@@ -2,17 +2,17 @@
 //! `/restart`, and `GET`/`PUT /api/instances/{id}/boot`. The verbs answer 204
 //! once the manager's job is accepted: the state right after can still be the
 //! previous one, so the web UI polls `GET /api/instances` and the reply carries
-//! no state. The boot flag is read by anyone (the instance page reads it
-//! without signing in, as `GET /api/instances`) and written by a signed-in
-//! user.
+//! no state. The boot flag is read by a signed-in user, as its write is.
 //!
-//! The verbs and the boot write sit behind a session, so they act for the
-//! signed-in user: the session's user is the principal of the connect, taken
-//! from the session alone, and the manager re-checks their right at every
-//! call. A refusal is 403 and ends the session that acted, as the server read
-//! does (`server.rs`). `GET .../boot` never looks at a session: it connects as
-//! the bff's own account, and so never moves an idle deadline, which is why
-//! the page can poll it.
+//! The verbs, the boot read and the boot write sit behind a session. The verbs
+//! and the write act for the signed-in user: the session's user is the
+//! principal of the connect, taken from the session alone, and the manager
+//! re-checks their right at every call. A refusal is 403 and ends the session
+//! that acted, as the server read does (`server.rs`). `GET .../boot` reads the
+//! session to gate the read and then connects as the bff's own account, leaving
+//! the idle deadline where it was, which is why the page can poll it: the
+//! refusal of that connect is of the bff's account, not of the signed-in user,
+//! so it ends no session.
 //!
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
 //! detail: the service manager's message stays in the bff's log.
@@ -32,9 +32,9 @@ use std::time::Duration;
 /// One control verb: the call its route makes on the manager.
 type Verb = fn(&Client, &str) -> Result<(), ClientError>;
 
-/// The control routes over the seams: the three verbs, the boot flag read
-/// without a session, and its write through one. The body of the route that
-/// reads one, the boot write, is capped by the one layer in front of the whole
+/// The control routes over the seams: the three verbs and the boot flag, read
+/// and written, all three behind a session. The body of the route that reads
+/// one, the boot write, is capped by the one layer in front of the whole
 /// router (`lib.rs`).
 pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions>) -> axum::Router {
     let verb = |v: Verb| {
@@ -44,8 +44,10 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
         }
     };
     let boot = {
-        let connect = connect.clone();
-        move |Path(id): Path<String>| boot_read(connect.clone(), timeout, id)
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>, headers: HeaderMap| {
+            boot_read(connect.clone(), timeout, sessions.clone(), id, headers)
+        }
     };
     let set_boot = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
@@ -114,10 +116,22 @@ async fn act(
     }
 }
 
-/// `GET /api/instances/{id}/boot`: 200 `{"enabled"}`, for anyone. The connect
-/// is handed no principal, and the session store is never touched: a poll of
-/// this route leaves an idle deadline where it was.
-async fn boot_read(connect: Connect, timeout: Duration, id: String) -> Response {
+/// `GET /api/instances/{id}/boot`: 200 `{"enabled"}`, to a signed-in reader:
+/// with no live session the answer is 401 `session-required` with no
+/// `Set-Cookie`, and the manager is not connected to. The connect is handed no
+/// principal: the flag is what the manager answers of the bff's own account.
+/// The session is read without refreshing it, so a poll of this route leaves an
+/// idle deadline where it was.
+async fn boot_read(
+    connect: Connect,
+    timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+) -> Response {
+    if sessions.peek(&headers).is_none() {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    }
     let ask = tokio::task::spawn_blocking(move || connect(None)?.boot_enabled(&id));
     match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(enabled))) => axum::Json(json!({ "enabled": enabled })).into_response(),
@@ -202,8 +216,9 @@ fn action_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
 
 /// The boot read's failures, as on `GET /api/instances`: the manager's
 /// refusal of the bff's own account is 502 with its key and ends no session,
-/// this route has none. The service manager's failure is not a read's news:
-/// the read asks for no job, so it is `client-other`.
+/// because the refusal is of the bff's account and not of the signed-in user,
+/// and a read is no action. The service manager's failure is not a read's
+/// news: the read asks for no job, so it is `client-other`.
 fn read_failure(failure: ClientError) -> Response {
     match failure {
         ClientError::NoInstance | ClientError::InvalidId => {

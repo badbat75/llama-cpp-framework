@@ -224,6 +224,29 @@ Lessons only: the rules are in `AGENTS.md`.
   recompile against the CURRENT trait. A parallel merge silently adopts your harness and rewrites the
   tests around it.
 
+## Gating a route (a session or permission gate slice)
+
+- A gate's acceptance is the refusal, and a route deleted passes the 401 pin as well as a route gated.
+  Retarget every existing pin of the answer behind the gate (add the cookie, keep the body assertion
+  whole), so the read must still answer, and pin the refusal beside it.
+- The gate's check must not consume what it checks: the bff's `Sessions::current` refreshes the idle
+  deadline, so a gate written with it keeps a page alive forever. Pin the deadline: sign in, ask every
+  gated route, advance the fake clock under the bound (alive), past it (dead).
+- A gate keeps its place in the order in front of it. Pin a refusal that answers earlier (a foreign
+  `Host`, an `Origin`, a 404, a 405) WITH a valid cookie, so it stays its own code, and the gate's 401
+  with none. A guard that answers after the gate is a behaviour change nobody asked for.
+- Where signing in is impossible (the binary's real authenticator is the machine's manager, 503 under the
+  test redirect), pin the gate at the socket (401, the exact body, no `Set-Cookie`) and keep the answer's
+  shape pinned at router level with a fake authenticator. Say which level pins what.
+- A child-process test's readiness probe keyed to a status the slice gates (poll `/api/version` for 200)
+  hangs to its deadline and reads as "nothing served". Make the probe accept the pinned status.
+- `crates/bff/tests/pai_bff_binary.rs` spawns a child per test: on a loaded machine a signal test's exit
+  code flakes (exit 1 with an empty stderr, green alone). Reproduce with `--test-threads=1` before naming
+  it, and report it as a flake, not as a red of the slice.
+- The source's route list (the doc comments naming `GET /api/version` as open) goes false with the gate:
+  report the line for the coder (a tester edits no `src`), and quote a clean `clippy` to show the tests
+  needed no source change to compile.
+
 ## Behaviour that cannot run here (Windows, xtask, packages, CI)
 
 - The manager's Windows decisions are OS-neutral in `crates/manager/src/manager/windows.rs`, so
@@ -656,3 +679,21 @@ Lessons only: the rules are in `AGENTS.md`.
 - `within()` needs an `HTMLElement`, not the `Element` a `querySelector` gives: cast at the query, not at
   each `within`. The fe gates reject `toHaveAttribute` and friends (no setupFiles, no jest-dom): pin with
   `getAttribute(...)` / `toBe`.
+- `expect(el).not.toBeNull()` narrows nothing for `tsc -b`: every later use of that `Element | null` reds
+  `possibly null`. Guard, then bind a `const el = found as HTMLElement`, and keep the guard's label.
+- A disclosure that hides an EXISTING card's body turns every test that reads that body into one that
+  opens it first: put the open step BEFORE the test's first role query of the rows (a scripted insert
+  after the mount block lands after `pairs(card)` and reds the test for the wrong reason). The tests that
+  only locate the card's heading stay green, so enumerate the readers by grepping `definitionsWithLabels`
+  / `getAllByRole('definition')`, not the card's name.
+- A new focusable control inside one card joins EVERY whole-page tab list. Where a file builds the list
+  from a shared `CARD_TAB_STOPS` the edit is one line; the files that inline the Engine stops
+  (`ModelProfileCards1` to `5`, `ModelProfilePage`) each need their own insert, and a list whose tail is a
+  `tabbed.slice(start.length)` compare takes the control at the tail, not in its `start` prefix.
+- A jump entry is clicked from the list container by its TEXT: once a card carries a disclosure named by
+  its own title, `getByRole('button', { name: title })` matches the entry and the toggle. And a shared
+  card list already holds the card the slice styles (`cardHeadings()` includes Assets): "the cards in the
+  order of 83" is that list, not `[ASSETS, ...list]`, which reds as a card missing.
+- A spy that records state while the app's own handler runs must never throw: read by
+  `document.getElementById` and return nulls for a missing element. A throwing spy inside React's dispatch
+  becomes an unhandled rejection, and the run then reports no per-assert reason.

@@ -173,6 +173,24 @@ impl Sessions {
         Some((id, identity))
     }
 
+    /// The identity of the session the request's cookie names, the idle
+    /// deadline LEFT where it was: the reads a page polls (the version, the
+    /// instances, an instance's boot flag) are gated by a session and are no
+    /// sign of a user at the keyboard, so a session used only through them
+    /// still ends at its idle timeout. An expired session is removed, as in
+    /// [`Sessions::current`].
+    pub(crate) fn peek(&self, headers: &HeaderMap) -> Option<Identity> {
+        let id = cookie_value(headers)?;
+        let now = (self.clock)();
+        let mut store = self.store();
+        let (identity, used) = store.sessions.get(&id).cloned()?;
+        if now.saturating_duration_since(used) > IDLE {
+            store.sessions.remove(&id);
+            return None;
+        }
+        Some(identity)
+    }
+
     /// Ends the session `id`: sign-out's removal, which the manager's
     /// refusal of the signed-in user shares, so a session that lost its
     /// right is gone at once and the page returns to the sign-in form.

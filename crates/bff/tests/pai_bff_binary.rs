@@ -190,7 +190,8 @@ fn version_names_pai_bff() {
 }
 
 /// Started with a `bff.ini` naming a loopback port, it serves the router
-/// there: `/api/version` and the page at `/`, out of the binary.
+/// there: the session gate's 401 of `/api/version` and the page at `/`, out of
+/// the binary. The page is open; the reads are not.
 #[test]
 fn it_serves_on_the_configured_address() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -213,13 +214,18 @@ fn it_serves_on_the_configured_address() {
             Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
         }
     };
-    assert!(status.contains(" 200 "), "{status}\n{body}");
+    assert!(status.contains(" 401 "), "{status}\n{body}");
     assert!(
         headers.contains("content-type: application/json"),
         "{headers}"
     );
+    assert!(!headers.contains("set-cookie"), "{headers}");
     let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
-    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"), "{body}");
+    assert_eq!(
+        json,
+        serde_json::json!({ "key": "session-required", "args": [] }),
+        "{body}"
+    );
 
     let (status, headers, body) = get(addr, "/").expect("GET /");
     assert!(status.contains(" 200 "), "{status}\n{body}");
@@ -233,7 +239,7 @@ fn it_serves_on_the_configured_address() {
 /// An address off loopback is the administrator's choice (`listen.rs`): with
 /// `Listen = 0.0.0.0:<port>` the service binds every interface and serves, so
 /// it answers on this machine's own address. Plain HTTP, no authentication
-/// gate on the address.
+/// gate on the address; the session gate is the same here as on loopback.
 #[test]
 fn it_serves_on_a_wildcard_address() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -257,13 +263,18 @@ fn it_serves_on_a_wildcard_address() {
             Err(e) => panic!("nothing served on 0.0.0.0:{port} after {DEADLINE:?}: {e}"),
         }
     };
-    assert!(status.contains(" 200 "), "{status}\n{body}");
+    assert!(status.contains(" 401 "), "{status}\n{body}");
     assert!(
         headers.contains("content-type: application/json"),
         "{headers}"
     );
+    assert!(!headers.contains("set-cookie"), "{headers}");
     let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
-    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"), "{body}");
+    assert_eq!(
+        json,
+        serde_json::json!({ "key": "session-required", "args": [] }),
+        "{body}"
+    );
 
     let (status, headers, body) = get(addr, "/").expect("GET /");
     assert!(status.contains(" 200 "), "{status}\n{body}");
@@ -375,13 +386,15 @@ fn service_with_an_argument_is_a_usage_error() {
 // ── The manager, under the test redirect ────────────────────────────────
 
 /// Under `PRIVATE_AI_DATA_ROOT` the shipped router dials no manager, as
-/// pai-app's `system_connect` does: `/api/instances` answers 503
-/// `{"key": "client-unavailable", "args": []}` at once. The child's system bus is a socket
-/// this test listens on, so a bff that dials the bus anyway is caught by the
-/// accept, not hidden by a missing socket.
+/// pai-app's `system_connect` does. With no session the gate answers the reads
+/// before it reaches the manager at all: `/api/instances`, `/api/version` and
+/// an instance's boot flag are 401 `{"key": "session-required", "args": []}`,
+/// with no cookie. The child's system bus is a socket this test listens on, so
+/// a bff that dials the bus anyway is caught by the accept, not hidden by a
+/// missing socket.
 #[cfg(unix)]
 #[test]
-fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
+fn reads_under_the_test_redirect_answer_before_the_manager() {
     use std::os::unix::net::UnixListener;
     let dir = tempfile::tempdir().expect("tempdir");
     let bus = dir.path().join("bus");
@@ -397,7 +410,7 @@ fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
     let mut child = Serving(cmd.spawn().expect("spawn pai-bff"));
 
     let deadline = Instant::now() + DEADLINE;
-    let (status, headers, body) = loop {
+    let first = loop {
         if let Some(status) = child.0.try_wait().expect("try_wait") {
             let mut err = String::new();
             if let Some(mut e) = child.0.stderr.take() {
@@ -411,17 +424,30 @@ fn instances_under_the_test_redirect_are_unavailable_without_dialing() {
             Err(e) => panic!("nothing served on {addr} after {DEADLINE:?}: {e}"),
         }
     };
-    assert!(status.contains(" 503 "), "{status}\n{body}");
-    assert!(
-        headers.contains("content-type: application/json"),
-        "{headers}"
-    );
-    let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
-    assert_eq!(
-        json,
-        serde_json::json!({ "key": "client-unavailable", "args": [] }),
-        "{body}"
-    );
+    for (uri, (status, headers, body)) in [
+        ("/api/instances", first),
+        (
+            "/api/version",
+            get(addr, "/api/version").expect("GET /api/version"),
+        ),
+        (
+            "/api/instances/default/boot",
+            get(addr, "/api/instances/default/boot").expect("GET /api/instances/default/boot"),
+        ),
+    ] {
+        assert!(status.contains(" 401 "), "GET {uri}: {status}\n{body}");
+        assert!(
+            headers.contains("content-type: application/json"),
+            "GET {uri}: {headers}"
+        );
+        assert!(!headers.contains("set-cookie"), "GET {uri}: {headers}");
+        let json: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
+        assert_eq!(
+            json,
+            serde_json::json!({ "key": "session-required", "args": [] }),
+            "GET {uri}: {body}"
+        );
+    }
     match listener.accept() {
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
         Ok(_) => panic!("pai-bff dialed the system bus under the test redirect"),

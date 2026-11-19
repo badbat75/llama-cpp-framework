@@ -321,6 +321,12 @@ Lessons only: the rules are in `AGENTS.md`.
   LATER wins per property: a switch track placed after the checkbox rules inherits its fills and overrides
   only the geometry. A `background` shorthand resets `background-image`, which is why a hatch declared only
   on the field and button rules cannot leak into the box or the track.
+- A CSS test that pins a rule by its EXACT selector list and walks the cascade scans depth-0 rules only
+  and skips a selector part containing `[` or `:`, so a body hidden by the `hidden` attribute must be
+  reached by no top-level `display` rule (`[hidden] { display: none !important }` is the only one allowed).
+  Mirror the test's own readers (rules from the brace balance, `prop()`, specificity, the chain match) in a
+  scratch node script and run it on the sheet: every claim shows at once, and it catches a rule the
+  harness wrote TWICE, which the selector-count pin reads as a red.
 - Making a read-only card editable turns red every fixture that pinned it read-only. The shared list under
   `fe/src/test/` spells the editable set and derives the tab stops from it, so the tab-order and "every
   control disabled" tests have ONE fix point there (an editable number field is TWO tab stops, its box and
@@ -369,6 +375,19 @@ Lessons only: the rules are in `AGENTS.md`.
   fixture: the Save bar's `p[role="status"]` (`SaveBar.tsx`) predates the slice, and a brief's "what
   must not change" list naming the bar forbids the only fix. Report, do not remove the cue.
 
+- A fixture helper that forwards its argument as the document's TOP-LEVEL members (H11a:
+  `assetsDoc(extra)` = `modelProfileDoc(values, { ...extra })`) turns a test that overrides a `values` key
+  into a pin of the top-level member: the `values` the page reads keeps the fixture's default, so the
+  expectation is unreachable, and reading the phantom member to satisfy it is not the contract (the profile
+  read is `{id, engine, engineAvailable, enabled, values, projectUrl, revision}`; only the LIST row
+  carries `model`). Quote the fixture line and the contract line; implement the brief's read.
+- Rows moved behind `hidden` close the ROLE queries to them: every fixture that reads a card's `dl` with
+  `getAllByRole('term')` needs the disclosure clicked first, and a test the brief's pin list omits
+  (`ModelProfileContent.test.tsx` 2d.81) is a red to report, not a production defect.
+- `HearthTokens.test.ts` H1a.12 lists EVERY `min-height`/`min-width` of the sheet as
+  `selector: min-height: value`, so any new one the brief asks for is a red there.
+- `fe/.prettierignore` leaves `ux/`, `briefs/` and `DESIGN.md` unformatted on purpose: `prettier --write`
+  on `fe/ux/check.js` reformats blocks the project keeps as they are, so revert every hunk but yours.
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the
   next pins the same input `disabled` and empty with its box `checked`, from the identical fixture. The
   other one's wording governs; report the exact triple and change nothing.

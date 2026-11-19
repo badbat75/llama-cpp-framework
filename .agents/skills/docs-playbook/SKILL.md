@@ -376,3 +376,18 @@ Lessons only: the rules are in `AGENTS.md`.
   key that moved after the design is recorded in that section's own "**As built**" paragraph, leaving
   the record's "Done when" text alone (the model profile save: 3eb24b2, follow-ups 26f5413; 403 key: 5f0d405).
   Grep `proposed.`, `What exists.`, `is open`, `are open` at the start of each section.
+- The sign-in-only rule (user, 2026-11-19: a visitor sees only the sign-in page) is in
+  `crates/bff/README.md` (intro, the route table's rows, the instances status table, the session's
+  idle bullet, the dated hand checks, the fe route table's `#/` row) and `AGENTS.md`'s overview, and
+  outside those in the root `README.md`'s overview sentence, `ARCHITECTURE.md` (the `Connect`
+  paragraph's "session-free routes", a "session-free Overview", the node-routes record) and
+  `PLAN.md`: grep `without sign-in`, `session-free`, `for anyone` in every `.md`. The gate is
+  `Sessions::peek`: the version, the instances and `GET boot` are gated and connect as the bff's own
+  account, so the session section's "each use moves the deadline" bullet must name the three polled
+  reads that leave it where it was, and the instances list answers 401 BEFORE the manager is asked: a
+  dated check that logged a 503 there needs its date inside the sentence, not beside it.
+- A markdown table row is ONE line: cell text that wraps breaks the table. Join with
+  `sed -i 'N{N;s/\n/ /}'`, then check every `^|` line ends with `|`.
+- A `python3 - <<PY` write of a whole file can land silently unwritten (three line-level rewrites of
+  `crates/bff/README.md` reported success and left the bytes; `>>` and `sed -i` landed): re-read the
+  file after a scripted write, and prefer the edit tool for a line edit.

@@ -89,6 +89,31 @@ impl Reply {
             );
         }
     }
+
+    /// The gate's answer, on the shipped router: 401
+    /// `{"key": "session-required", "args": []}` with no `Set-Cookie`: a read
+    /// refused for want of a session hands out no session, and reaches no
+    /// manager.
+    fn assert_session_required(&self) {
+        assert_eq!(self.status, StatusCode::UNAUTHORIZED, "{}", self.body);
+        assert!(
+            self.content_type.starts_with("application/json"),
+            "content-type {:?}",
+            self.content_type
+        );
+        let json: serde_json::Value = serde_json::from_str(&self.body).expect("a JSON body");
+        assert_eq!(
+            json,
+            serde_json::json!({ "key": "session-required", "args": [] }),
+            "{}",
+            self.body
+        );
+        assert!(
+            self.values_of("set-cookie").is_empty(),
+            "a refused read sets a cookie: {:?}",
+            self.headers
+        );
+    }
 }
 
 // ── Failure paths first ─────────────────────────────────────────────────
@@ -123,23 +148,27 @@ async fn version_refuses_another_method() {
 
 // ── What it serves ──────────────────────────────────────────────────────
 
-/// `GET /api/version` answers JSON with the framework version, the one the
-/// packages are named after (`version.workspace`).
+/// The shipped router keeps every read behind a session (`PLAN.md` 13a): with
+/// no cookie, `GET /api/version`, `GET /api/instances` and an instance's boot
+/// flag are 401 `session-required`, with no `Set-Cookie`. The page at `/` and
+/// its files answer to anyone. What each read answers to a signed-in reader is
+/// pinned with a fake authenticator (`tests/instances.rs`, `tests/control.rs`:
+/// these tests hand the real router, whose authenticator is the machine's).
 #[tokio::test]
-async fn version_answers_the_framework_version_as_json() {
-    let r = send(Method::GET, "/api/version").await;
+async fn the_reads_need_a_session_on_the_shipped_router() {
+    for uri in [
+        "/api/version",
+        "/api/instances",
+        "/api/instances/default/boot",
+    ] {
+        send(Method::GET, uri).await.assert_session_required();
+    }
+    let r = send(Method::GET, "/").await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(
-        r.content_type.starts_with("application/json"),
+        r.content_type.starts_with("text/html"),
         "content-type {:?}",
         r.content_type
-    );
-    let json: serde_json::Value = serde_json::from_str(&r.body).expect("a JSON body");
-    assert_eq!(
-        json,
-        serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }),
-        "{}",
-        r.body
     );
 }
 
@@ -172,7 +201,7 @@ async fn root_serves_an_html_page() {
 async fn every_reply_carries_the_framing_and_sniffing_headers() {
     for (method, uri, status) in [
         (Method::GET, "/", StatusCode::OK),
-        (Method::GET, "/api/version", StatusCode::OK),
+        (Method::GET, "/api/version", StatusCode::UNAUTHORIZED),
         (Method::GET, "/api/no-such-call", StatusCode::NOT_FOUND),
         (Method::POST, "/api/version", StatusCode::METHOD_NOT_ALLOWED),
     ] {

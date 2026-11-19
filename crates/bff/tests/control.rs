@@ -8,10 +8,12 @@
 //! - The three control routes take no body and answer 204 once the service
 //!   manager has accepted the job: an empty body, nothing else. The web UI
 //!   polls `GET /api/instances` for the state, so the bff sends no state back.
-//! - `GET /api/instances/{id}/boot` answers 200 `{"enabled"}` and needs no
-//!   sign-in: it connects as the bff's own account (no principal), and the
-//!   manager's refusal of the bff is 502 `client-not-authorized`, as on
-//!   `GET /api/instances`.
+//! - `GET /api/instances/{id}/boot` answers 200 `{"enabled"}` behind a
+//!   session, like every other read (`PLAN.md` 13a): it connects as the bff's
+//!   own account (no principal), and the manager's refusal of the bff is 502
+//!   `client-not-authorized`, as on `GET /api/instances`. With no session it
+//!   is 401 `session-required`, with no `Set-Cookie`, and the manager is not
+//!   connected to.
 //! - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers
 //!   200 `{"enabled"}` read back from the manager after the write: the reply
 //!   is what the read answered, never what the body asked.
@@ -659,6 +661,18 @@ impl Reply {
         );
     }
 
+    /// The gate's answer: 401 `{"key": "session-required", "args": []}` with
+    /// no `Set-Cookie`: a read refused for want of a session hands out no
+    /// session.
+    fn assert_session_required(&self) {
+        self.assert_error(StatusCode::UNAUTHORIZED, "session-required");
+        assert!(
+            self.values_of("set-cookie").is_empty(),
+            "a refused read sets a cookie: {:?}",
+            self.headers
+        );
+    }
+
     /// The accepted answer: 204, an empty body, no JSON.
     fn assert_accepted(&self) {
         assert_eq!(self.status, StatusCode::NO_CONTENT, "{}", self.body);
@@ -1110,45 +1124,66 @@ async fn a_failure_that_is_not_a_refusal_keeps_the_session() {
     }
 }
 
-// ── `GET /api/instances/{id}/boot`: the route that needs no sign-in ─────
+// ── `GET /api/instances/{id}/boot`: the read behind the session ─────────
 
-/// The boot state answers 200 with exactly `{"enabled"}`, for anyone: no
-/// cookie, as with a signed-in one. It connects as the bff's own account, so
-/// the connect is handed no principal.
+/// The boot state answers 200 with exactly `{"enabled"}` to a signed-in
+/// reader. It connects as the bff's own account, so the connect is handed no
+/// principal: the session gates the read, it does not choose who it acts for.
 #[tokio::test]
-async fn the_boot_state_answers_the_flag_with_no_session() {
+async fn the_boot_state_answers_the_flag_to_a_signed_in_reader() {
     for initial in [true, false] {
         let app = app_for(Answer::ok(), Ok(()), initial, None, Vec::new());
-        app.get("/api/instances/default/boot", None)
-            .await
-            .assert_enabled(initial);
         let cookie = app.sign_in().await;
         app.get("/api/instances/default/boot", Some(&cookie))
             .await
             .assert_enabled(initial);
         assert_eq!(
             principals_of(&app.principals),
-            vec![None, None],
-            "the bff's own account, both times"
+            vec![None],
+            "the bff's own account"
         );
-        assert_eq!(
-            app.calls(),
-            ["boot_enabled default", "boot_enabled default"],
-            "one read each, no probe"
-        );
+        assert_eq!(app.calls(), ["boot_enabled default"], "one read, no probe");
     }
 }
 
+/// The same read with no session, and with a cookie naming no session (made
+/// up, or from before a restart), is 401 `session-required` with no
+/// `Set-Cookie`, and asks the manager nothing: the gate answers on its own.
+#[tokio::test]
+async fn the_boot_read_needs_a_session() {
+    let app = app_for(Answer::ok(), Ok(()), true, None, Vec::new());
+    app.get("/api/instances/default/boot", None)
+        .await
+        .assert_session_required();
+    let stale = format!("pai_session={}", "ab".repeat(32));
+    app.get("/api/instances/default/boot", Some(&stale))
+        .await
+        .assert_session_required();
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        0,
+        "the gate connected to the manager"
+    );
+    assert!(app.calls().is_empty(), "{:?}", app.calls());
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/boot", Some(&cookie))
+        .await
+        .assert_enabled(true);
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        1,
+        "only the signed-in read connected"
+    );
+}
+
 /// The manager refuses the bff on this route: 502 `client-not-authorized`, the
-/// same key as on `GET /api/instances`, and no session ends: the route has
-/// none, and a signed-in browser's cookie survives the answer.
+/// same key as on `GET /api/instances`, and no session ends: the refusal is of
+/// the bff's account, not of the signed-in user, so the browser's cookie
+/// survives the answer.
 #[tokio::test]
 async fn a_manager_refusal_on_the_boot_read_is_502_and_ends_no_session() {
     let app = app_boot_read(Err(ClientError::NotAuthorized));
     let cookie = app.sign_in().await;
-    app.get("/api/instances/default/boot", None)
-        .await
-        .assert_error(StatusCode::BAD_GATEWAY, "client-not-authorized");
     app.get("/api/instances/default/boot", Some(&cookie))
         .await
         .assert_error(StatusCode::BAD_GATEWAY, "client-not-authorized");
@@ -1194,7 +1229,8 @@ async fn the_boot_read_errors() {
             "client-other",
         ),
     ] {
-        let r = app.get("/api/instances/default/boot", None).await;
+        let cookie = app.sign_in().await;
+        let r = app.get("/api/instances/default/boot", Some(&cookie)).await;
         r.assert_error(status, key);
         assert!(
             !r.body.contains("permission denied") && !r.body.contains("unit failed"),
@@ -1203,13 +1239,15 @@ async fn the_boot_read_errors() {
         );
     }
     let app = app_no_manager();
-    app.get("/api/instances/default/boot", None)
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/boot", Some(&cookie))
         .await
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert_eq!(app.connects.load(Ordering::SeqCst), 1, "connected once");
     let app = app_slow(Duration::from_secs(2));
+    let cookie = app.sign_in().await;
     let asked = Instant::now();
-    app.get("/api/instances/default/boot", None)
+    app.get("/api/instances/default/boot", Some(&cookie))
         .await
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(

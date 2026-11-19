@@ -1,6 +1,7 @@
-//! `GET /api/instances`: the manager's instances and the state of each,
-//! through `pai_bff::router_with` and a fake manager client, never the real
-//! system bus or pipe. Each test hands the router one request
+//! `GET /api/instances`: the manager's instances and the state of each, and
+//! `GET /api/version`, through `pai_bff::router_with_session` with a fake
+//! manager client and a fake authenticator, never the real system bus, pipe,
+//! PAM or LogonUser. Each test hands the router one request
 //! (`tower::ServiceExt::oneshot`) under a deadline, so a bff that waits on the
 //! manager fails instead of hanging.
 //!
@@ -12,16 +13,31 @@
 //! when the manager refuses the bff, 502 `client-other` with no args on any
 //! other failure, never the manager's detail.
 //!
-//! The route needs no session, so it asks the manager as the bff's own
-//! account: every `Connect` here is handed no principal (`None`).
+//! Both reads sit behind a session, as every other read (`PLAN.md` 13a: a
+//! visitor who has not signed in sees only the sign-in page). With no session,
+//! and with the cookie of a session that ended, the answer is 401
+//! `{"key": "session-required", "args": []}`: no `Set-Cookie` (a refused read
+//! hands out no session) and the manager is never connected to. A verb the
+//! route does not route is the router's 405, which answers before the session
+//! is read.
+//!
+//! A signed-in read still acts as the bff's own account: `Connect` is handed
+//! no principal (`None`), because these reads ask only what the manager
+//! answers without authorization. The session gates the read, it does not
+//! choose who it acts for. Neither read moves the session's idle deadline, so
+//! a page that only polls them still ends its session.
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{header, Method, Request, StatusCode};
+use axum::Router;
 use http_body_util::BodyExt;
+use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,6 +49,23 @@ const TIMEOUT: Duration = Duration::from_millis(200);
 /// How long a test waits for the bff's answer before failing.
 const DEADLINE: Duration = Duration::from_secs(5);
 
+/// The client address a sign-in is sent from (the lockout counters key on it).
+const CLIENT: &str = "127.0.0.1:51000";
+
+/// The revision secret these routers are built with: the routes tested here
+/// never read it.
+const REVISION_KEY: [u8; 16] = [0; 16];
+
+/// The session idle timeout chosen for the bff (`session.rs`'s own).
+const IDLE: Duration = Duration::from_secs(30 * 60);
+
+/// A step just under the idle timeout: the read that runs that far after the
+/// sign-in leaves one second to the deadline the sign-in set.
+const SHORT: Duration = Duration::from_secs(30 * 60 - 60);
+
+/// The key of the gate's answer (`session.rs`).
+const SESSION_REQUIRED: &str = "session-required";
+
 type Log = Arc<Mutex<Vec<String>>>;
 
 /// A manager that answers from its fields and logs every call
@@ -42,18 +75,31 @@ struct FakeManager {
     states: HashMap<String, Result<InstanceState, ClientError>>,
     /// How long `list_instances` takes.
     delay: Duration,
+    /// What `boot_enabled` answers, for the tests that read the boot flag.
+    boot: Result<bool, ClientError>,
     log: Log,
 }
 
 impl FakeManager {
     fn new(log: &Log, instances: &[(&str, InstanceState)]) -> FakeManager {
+        let owned = instances
+            .iter()
+            .map(|(id, s)| (id.to_string(), s.clone()))
+            .collect::<Vec<_>>();
+        FakeManager::listing(log, &owned)
+    }
+
+    /// The same, from names the caller owns: the app builders hand these to a
+    /// `'static` closure.
+    fn listing(log: &Log, instances: &[(String, InstanceState)]) -> FakeManager {
         FakeManager {
-            instances: Ok(instances.iter().map(|(id, _)| id.to_string()).collect()),
+            instances: Ok(instances.iter().map(|(id, _)| id.clone()).collect()),
             states: instances
                 .iter()
-                .map(|(id, s)| (id.to_string(), Ok(s.clone())))
+                .map(|(id, s)| (id.clone(), Ok(s.clone())))
                 .collect(),
             delay: Duration::ZERO,
+            boot: Ok(false),
             log: log.clone(),
         }
     }
@@ -106,7 +152,7 @@ impl ManagerClient for FakeManager {
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         self.record(format!("boot_enabled {id}"));
-        Ok(false)
+        self.boot.clone()
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
         self.record(format!("set_boot_enabled {id} {enabled}"));
@@ -143,24 +189,11 @@ fn connect_logging(
     })
 }
 
-/// A connect that hands out `make()` each time and counts the calls.
-fn connect_with(
-    count: &Arc<AtomicUsize>,
-    make: impl Fn() -> Result<Client, ClientError> + Send + Sync + 'static,
-) -> Connect {
-    connect_logging(count, &Principals::default(), make)
-}
-
-/// A connect to one fake manager, built afresh for each call by `make`.
-fn connect_to(make: impl Fn() -> FakeManager + Send + Sync + 'static) -> Connect {
-    connect_with(&Arc::new(AtomicUsize::new(0)), move || {
-        Ok(Box::new(make()) as Client)
-    })
-}
-
 struct Reply {
     status: StatusCode,
     content_type: String,
+    /// Every header of the reply, the name lowercased as `http` stores it.
+    headers: Vec<(String, String)>,
     body: String,
 }
 
@@ -168,6 +201,15 @@ impl Reply {
     fn json(&self) -> Value {
         serde_json::from_str(&self.body)
             .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", self.body))
+    }
+
+    /// The values the reply carries under `name`, in the order they came.
+    fn values_of(&self, name: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
     }
 
     /// An error answer: its status and `{"key": key, "args": []}` as JSON,
@@ -186,91 +228,358 @@ impl Reply {
             self.body
         );
     }
-}
 
-async fn send_to(router: axum::Router, method: Method, uri: &str) -> Reply {
-    let request = Request::builder()
-        .method(method)
-        .uri(uri)
-        .body(Body::empty())
-        .expect("request");
-    let response = tokio::time::timeout(DEADLINE, router.oneshot(request))
-        .await
-        .unwrap_or_else(|_| panic!("no answer to {uri} within {DEADLINE:?}"))
-        .expect("infallible");
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .map(|v| v.to_str().expect("ascii content-type").to_string())
-        .unwrap_or_default();
-    let bytes = response
-        .into_body()
-        .collect()
-        .await
-        .expect("body")
-        .to_bytes();
-    Reply {
-        status,
-        content_type,
-        body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
+    /// The gate's answer: 401 `{"key": "session-required", "args": []}`, and
+    /// no `Set-Cookie`: a read refused for want of a session hands out no
+    /// session. The framing and the sniffing header ride it like every reply.
+    fn assert_session_required(&self) {
+        self.assert_error(StatusCode::UNAUTHORIZED, SESSION_REQUIRED);
+        assert!(
+            self.values_of("set-cookie").is_empty(),
+            "a refused read sets a cookie: {:?}",
+            self.headers
+        );
+        for (name, want) in [
+            ("x-frame-options", "DENY"),
+            ("x-content-type-options", "nosniff"),
+        ] {
+            assert_eq!(
+                self.values_of(name),
+                vec![want],
+                "{name} exactly once: {:?}",
+                self.headers
+            );
+        }
+    }
+
+    /// 200 with the framework version, the one the packages are named after
+    /// (`version.workspace`).
+    fn assert_version(&self) {
+        assert_eq!(self.status, StatusCode::OK, "{}", self.body);
+        assert!(
+            self.content_type.starts_with("application/json"),
+            "content-type {:?}",
+            self.content_type
+        );
+        assert_eq!(
+            self.json(),
+            json!({ "version": env!("CARGO_PKG_VERSION") }),
+            "{}",
+            self.body
+        );
+    }
+
+    /// 200 with exactly `{"enabled": <bool>}`: the flag alone.
+    fn assert_enabled(&self, enabled: bool) {
+        assert_eq!(self.status, StatusCode::OK, "{}", self.body);
+        let value = self.json();
+        let obj = value
+            .as_object()
+            .unwrap_or_else(|| panic!("not an object: {}", self.body));
+        assert_eq!(obj.len(), 1, "the flag alone: {}", self.body);
+        assert_eq!(
+            obj.get("enabled").and_then(Value::as_bool),
+            Some(enabled),
+            "{}",
+            self.body
+        );
+    }
+
+    /// `GET /api/session` for a session that is still signed in.
+    fn assert_signed_in_as(&self, user: &str) {
+        assert_eq!(self.status, StatusCode::OK, "signed in: {}", self.body);
+        assert_eq!(self.json(), json!({ "user": user }), "{}", self.body);
     }
 }
 
-async fn get_instances(connect: Connect) -> Reply {
-    send_to(
-        pai_bff::router_with(connect, TIMEOUT),
-        Method::GET,
-        "/api/instances",
-    )
-    .await
+/// The authenticator these routers sign in through: any name with the one
+/// password, never PAM, LogonUser or the manager.
+struct FakeAuth;
+
+impl Authenticator for FakeAuth {
+    fn authenticate(&self, user: &str, password: &str) -> Result<Identity, AuthError> {
+        if password == "correct horse" {
+            Ok(Identity {
+                user: user.to_string(),
+            })
+        } else {
+            Err(AuthError::BadCredentials)
+        }
+    }
 }
 
-fn calls(log: &Log) -> Vec<String> {
-    log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+/// The time the session routes read, moved by the test.
+struct FakeClock(Arc<Mutex<Instant>>);
+
+impl FakeClock {
+    fn new() -> FakeClock {
+        FakeClock(Arc::new(Mutex::new(Instant::now())))
+    }
+
+    fn clock(&self) -> pai_bff::session::Clock {
+        let now = self.0.clone();
+        Arc::new(move || *now.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    fn advance(&self, by: Duration) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) += by;
+    }
 }
 
-// ── Failure paths first ─────────────────────────────────────────────────
+/// A router over a fake manager, a fake authenticator and a clock the test
+/// moves, with the log of the manager's calls, the count of connects and the
+/// principals each was handed.
+struct App {
+    router: Router,
+    clock: FakeClock,
+    log: Log,
+    connects: Arc<AtomicUsize>,
+    principals: Principals,
+}
+
+/// The app over a manager built by `make`, which is handed the app's call log
+/// and is called again for each connect.
+fn app_at(make: impl Fn(&Log) -> FakeManager + Send + Sync + 'static) -> App {
+    app_connecting(move |log| Ok(Box::new(make(log)) as Client))
+}
+
+/// The app whose connect hands out what `make` answers, so a connect that
+/// fails, hangs, or answers differently each time is testable.
+fn app_connecting(
+    make: impl Fn(&Log) -> Result<Client, ClientError> + Send + Sync + 'static,
+) -> App {
+    let log = Log::default();
+    let connects = Arc::new(AtomicUsize::new(0));
+    let principals = Principals::default();
+    let l = log.clone();
+    let connect = connect_logging(&connects, &principals, move || make(&l));
+    let clock = FakeClock::new();
+    let router = pai_bff::router_with_session(
+        connect,
+        TIMEOUT,
+        Arc::new(FakeAuth),
+        clock.clock(),
+        REVISION_KEY,
+    );
+    App {
+        router,
+        clock,
+        log,
+        connects,
+        principals,
+    }
+}
+
+/// The app whose manager lists `instances` with these states.
+fn app_listing(instances: &[(&str, InstanceState)]) -> App {
+    let owned = instances
+        .iter()
+        .map(|(id, s)| (id.to_string(), s.clone()))
+        .collect::<Vec<_>>();
+    app_at(move |l| FakeManager::listing(l, &owned))
+}
+
+impl App {
+    fn calls(&self) -> Vec<String> {
+        self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Nothing was asked of the manager: no connect, no call, no principal
+    /// named. The gate answers on its own.
+    fn assert_asked_nothing(&self, what: &str) {
+        assert_eq!(self.connects.load(Ordering::SeqCst), 0, "{what}: connected");
+        assert!(self.calls().is_empty(), "{what}: {:?}", self.calls());
+        assert!(
+            principals_of(&self.principals).is_empty(),
+            "{what}: a principal was named"
+        );
+    }
+
+    /// Sign `alice` in and return the cookie the browser sends back.
+    async fn sign_in(&self) -> String {
+        self.sign_in_as("alice").await
+    }
+
+    /// Sign `user` in and return the cookie the browser sends back.
+    async fn sign_in_as(&self, user: &str) -> String {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/session")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({ "username": user, "password": "correct horse" }).to_string(),
+            ))
+            .expect("request");
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(CLIENT.parse::<SocketAddr>().expect("address")));
+        let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
+            .await
+            .expect("sign-in answered in time")
+            .expect("infallible");
+        assert_eq!(response.status(), StatusCode::OK, "signed in as {user}");
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("a session cookie")
+            .to_str()
+            .expect("ascii cookie")
+            .split(';')
+            .next()
+            .expect("name=value")
+            .trim()
+            .to_string()
+    }
+
+    /// `DELETE /api/session`: the session ends. The cookie the reply carries
+    /// clears the name, so the browser drops it; the test keeps the old one,
+    /// the shape of a tab that signs out in another tab.
+    async fn sign_out(&self, cookie: &str) -> Reply {
+        let r = self.get("/api/session", Some(cookie)).await;
+        let deleted = self.ask(Method::DELETE, "/api/session", Some(cookie)).await;
+        assert_eq!(r.status, StatusCode::OK, "signed in first: {}", r.body);
+        assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+        deleted
+    }
+
+    async fn get(&self, uri: &str, cookie: Option<&str>) -> Reply {
+        self.ask(Method::GET, uri, cookie).await
+    }
+
+    async fn ask(&self, method: Method, uri: &str, cookie: Option<&str>) -> Reply {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header(header::COOKIE, c);
+        }
+        let request = builder.body(Body::empty()).expect("request");
+        let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
+            .await
+            .unwrap_or_else(|_| panic!("no answer to {uri} within {DEADLINE:?}"))
+            .expect("infallible");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|v| v.to_str().expect("ascii content-type").to_string())
+            .unwrap_or_default();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).to_string(),
+                )
+            })
+            .collect();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        Reply {
+            status,
+            content_type,
+            headers,
+            body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
+        }
+    }
+
+    /// Sign in and read `GET /api/instances` with that session.
+    async fn instances(&self) -> Reply {
+        let cookie = self.sign_in().await;
+        self.get("/api/instances", Some(&cookie)).await
+    }
+
+    /// Sign in and read `GET /api/version` with that session.
+    async fn version(&self) -> Reply {
+        let cookie = self.sign_in().await;
+        self.get("/api/version", Some(&cookie)).await
+    }
+}
+
+// ── Failure paths first: the session ────────────────────────────────────
+
+/// With no session, `GET /api/instances` and `GET /api/version` answer 401
+/// `session-required` with no `Set-Cookie`, and the manager is never even
+/// connected to: the gate answers on its own.
+#[tokio::test]
+async fn the_instances_and_version_reads_need_a_session() {
+    for uri in ["/api/instances", "/api/version"] {
+        let app = app_listing(&[("default", InstanceState::Active)]);
+        app.get(uri, None).await.assert_session_required();
+        app.assert_asked_nothing(&format!("GET {uri} with no session"));
+    }
+}
+
+/// A cookie of a session that ended (the tab signed out, the manager refused
+/// the user, the idle timeout passed) is refused on the same reads, and asks
+/// the manager nothing.
+#[tokio::test]
+async fn a_terminated_session_is_refused_on_the_reads() {
+    let app = app_listing(&[("default", InstanceState::Active)]);
+    let cookie = app.sign_in().await;
+    app.sign_out(&cookie).await;
+    for uri in ["/api/instances", "/api/version"] {
+        app.get(uri, Some(&cookie)).await.assert_session_required();
+    }
+    app.assert_asked_nothing("the reads of a cookie of an ended session");
+}
+
+/// A verb the route does not route is the router's 405, not the gate's 401:
+/// the routing answers before the session is read, and the manager is asked
+/// nothing.
+#[tokio::test]
+async fn instances_refuses_another_method_without_asking_the_manager() {
+    for uri in ["/api/instances", "/api/version"] {
+        for method in [Method::POST, Method::PUT, Method::DELETE] {
+            let app = app_listing(&[("default", InstanceState::Active)]);
+            let r = app.ask(method.clone(), uri, None).await;
+            assert_eq!(
+                r.status,
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{method} {uri}: {}",
+                r.body
+            );
+            app.assert_asked_nothing(&format!("{method} {uri}"));
+        }
+    }
+}
 
 /// No manager to connect to (not running, no bus, no pipe): 503 with the
 /// key the web UI shows its message for.
 #[tokio::test]
 async fn no_manager_is_unavailable() {
-    let count = Arc::new(AtomicUsize::new(0));
-    let r = get_instances(connect_with(&count, || Err(ClientError::Unavailable))).await;
+    let app = app_connecting(|_| Err(ClientError::Unavailable));
+    let r = app.instances().await;
     r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
-    assert_eq!(count.load(Ordering::SeqCst), 1, "connected once");
+    assert_eq!(app.connects.load(Ordering::SeqCst), 1, "connected once");
 }
 
 /// A manager that goes away during the call (the connection broke) is the
 /// same: unavailable.
 #[tokio::test]
 async fn a_manager_gone_during_the_call_is_unavailable() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
-        let mut m = FakeManager::new(&l, &[]);
-        m.instances = Err(ClientError::Unavailable);
-        m
-    }))
-    .await;
+    let app = app_at(|l| FakeManager {
+        instances: Err(ClientError::Unavailable),
+        ..FakeManager::new(l, &[])
+    });
+    let r = app.instances().await;
     r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
-    assert_eq!(calls(&log), ["list"]);
+    assert_eq!(app.calls(), ["list"]);
 }
 
 /// A manager that does not answer within the timeout: unavailable, answered
 /// at the timeout, never a hang (the slow call goes on off the request).
 #[tokio::test]
 async fn a_manager_that_does_not_answer_in_time_is_unavailable() {
-    let log = Log::default();
-    let l = log.clone();
+    let app = app_at(|l| FakeManager {
+        delay: Duration::from_secs(2),
+        ..FakeManager::new(l, &[("default", InstanceState::Active)])
+    });
     let started = Instant::now();
-    let r = get_instances(connect_to(move || {
-        let mut m = FakeManager::new(&l, &[("default", InstanceState::Active)]);
-        m.delay = Duration::from_secs(2);
-        m
-    }))
-    .await;
+    let r = app.instances().await;
     let took = started.elapsed();
     r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(
@@ -283,13 +592,12 @@ async fn a_manager_that_does_not_answer_in_time_is_unavailable() {
 /// timeout covers the connect too.
 #[tokio::test]
 async fn a_connect_that_hangs_is_unavailable() {
-    let count = Arc::new(AtomicUsize::new(0));
-    let started = Instant::now();
-    let r = get_instances(connect_with(&count, || {
+    let app = app_connecting(|_| {
         std::thread::sleep(Duration::from_secs(2));
         Err(ClientError::Unavailable)
-    }))
-    .await;
+    });
+    let started = Instant::now();
+    let r = app.instances().await;
     let took = started.elapsed();
     r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert!(
@@ -299,31 +607,32 @@ async fn a_connect_that_hangs_is_unavailable() {
 }
 
 /// The manager refuses the bff (the pipe's security descriptor or the bus
-/// policy leaves its account out): 502 client-not-authorized, so the page can say
-/// it is the service's access, not the manager's absence.
+/// policy leaves its account out): 502 client-not-authorized, so the page can
+/// say it is the service's access, not the manager's absence. The session of
+/// the reader is not a refusal of that user, so it lives on.
 #[tokio::test]
 async fn a_refusal_by_the_manager_is_not_authorized() {
-    let r = get_instances(connect_with(&Arc::new(AtomicUsize::new(0)), || {
-        Err(ClientError::NotAuthorized)
-    }))
-    .await;
-    r.assert_error(StatusCode::BAD_GATEWAY, "client-not-authorized");
+    let app = app_connecting(|_| Err(ClientError::NotAuthorized));
+    let cookie = app.sign_in().await;
+    app.get("/api/instances", Some(&cookie))
+        .await
+        .assert_error(StatusCode::BAD_GATEWAY, "client-not-authorized");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
 }
 
 /// Any other failure is 502 `client-other` with no args: the manager's
 /// detail (which `client-other`'s `{0}` would carry) stays in the bff.
 #[tokio::test]
 async fn any_other_failure_is_failed_without_the_detail() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
-        let mut m = FakeManager::new(&l, &[]);
-        m.instances = Err(ClientError::Other(
+    let app = app_at(|l| FakeManager {
+        instances: Err(ClientError::Other(
             "org.freedesktop.DBus.Error.AccessDenied: secret-detail".into(),
-        ));
-        m
-    }))
-    .await;
+        )),
+        ..FakeManager::new(l, &[])
+    });
+    let r = app.instances().await;
     r.assert_error(StatusCode::BAD_GATEWAY, "client-other");
     assert!(!r.body.contains("secret-detail"), "{}", r.body);
 }
@@ -332,11 +641,9 @@ async fn any_other_failure_is_failed_without_the_detail() {
 /// fails the whole answer: no list with a hole in it.
 #[tokio::test]
 async fn a_state_that_cannot_be_read_fails_the_answer() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
+    let app = app_at(|l| {
         let mut m = FakeManager::new(
-            &l,
+            l,
             &[
                 ("default", InstanceState::Active),
                 ("coder", InstanceState::Inactive),
@@ -349,8 +656,8 @@ async fn a_state_that_cannot_be_read_fails_the_answer() {
             )),
         );
         m
-    }))
-    .await;
+    });
+    let r = app.instances().await;
     r.assert_error(StatusCode::BAD_GATEWAY, "client-other");
     assert!(!r.body.contains("llama.cpp@coder"), "{}", r.body);
 }
@@ -359,11 +666,9 @@ async fn a_state_that_cannot_be_read_fails_the_answer() {
 /// out: it no longer exists, the others are still answered.
 #[tokio::test]
 async fn an_instance_removed_meanwhile_is_left_out() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
+    let app = app_at(|l| {
         let mut m = FakeManager::new(
-            &l,
+            l,
             &[
                 ("default", InstanceState::Active),
                 ("gone", InstanceState::Inactive),
@@ -371,41 +676,13 @@ async fn an_instance_removed_meanwhile_is_left_out() {
         );
         m.states.insert("gone".into(), Err(ClientError::NoInstance));
         m
-    }))
-    .await;
+    });
+    let r = app.instances().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
         json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
     );
-}
-
-/// The route is read-only: another method is 405 and asks the manager
-/// nothing (not even a connection).
-#[tokio::test]
-async fn instances_refuses_another_method_without_asking_the_manager() {
-    for method in [Method::POST, Method::PUT, Method::DELETE] {
-        let count = Arc::new(AtomicUsize::new(0));
-        let log = Log::default();
-        let l = log.clone();
-        let connect = connect_with(&count, move || {
-            Ok(Box::new(FakeManager::new(&l, &[("default", InstanceState::Active)])) as Client)
-        });
-        let r = send_to(
-            pai_bff::router_with(connect, TIMEOUT),
-            method.clone(),
-            "/api/instances",
-        )
-        .await;
-        assert_eq!(
-            r.status,
-            StatusCode::METHOD_NOT_ALLOWED,
-            "{method}: {}",
-            r.body
-        );
-        assert_eq!(count.load(Ordering::SeqCst), 0, "{method}: connected");
-        assert!(calls(&log).is_empty(), "{method}: {:?}", calls(&log));
-    }
 }
 
 // ── What it answers ─────────────────────────────────────────────────────
@@ -414,9 +691,7 @@ async fn instances_refuses_another_method_without_asking_the_manager() {
 /// error.
 #[tokio::test]
 async fn no_instances_is_an_empty_list() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || FakeManager::new(&l, &[]))).await;
+    let r = app_listing(&[]).instances().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert!(
         r.content_type.starts_with("application/json"),
@@ -430,21 +705,15 @@ async fn no_instances_is_an_empty_list() {
 /// state named as the manager names it (an unknown name passed on as is).
 #[tokio::test]
 async fn each_instance_with_its_state_in_the_manager_s_order() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
-        FakeManager::new(
-            &l,
-            &[
-                ("default", InstanceState::Active),
-                ("coder", InstanceState::Failed),
-                ("big-model", InstanceState::Inactive),
-                ("a", InstanceState::Activating),
-                ("z", InstanceState::Deactivating),
-                ("odd", InstanceState::Other("maintenance".into())),
-            ],
-        )
-    }))
+    let r = app_listing(&[
+        ("default", InstanceState::Active),
+        ("coder", InstanceState::Failed),
+        ("big-model", InstanceState::Inactive),
+        ("a", InstanceState::Activating),
+        ("z", InstanceState::Deactivating),
+        ("odd", InstanceState::Other("maintenance".into())),
+    ])
+    .instances()
     .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
@@ -465,38 +734,27 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
 /// reads a file.
 #[tokio::test]
 async fn reading_the_instances_asks_only_the_read_only_calls() {
-    let log = Log::default();
-    let l = log.clone();
-    let r = get_instances(connect_to(move || {
-        FakeManager::new(
-            &l,
-            &[
-                ("default", InstanceState::Active),
-                ("coder", InstanceState::Inactive),
-            ],
-        )
-    }))
-    .await;
+    let app = app_listing(&[
+        ("default", InstanceState::Active),
+        ("coder", InstanceState::Inactive),
+    ]);
+    let r = app.instances().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(calls(&log), ["list", "status default", "status coder"]);
+    assert_eq!(app.calls(), ["list", "status default", "status coder"]);
 }
 
-/// The route is session-free and acts as the bff's own account: the connect
-/// is asked with no principal, so the manager answers it with the bff's
-/// rights (the reads it asks need none). A route behind a session names its
-/// user instead (`tests/server.rs`).
+/// The signed-in read acts as the bff's own account: the connect is asked
+/// with no principal, so the manager answers it with the bff's rights (the
+/// reads it asks need none). The session gates the read, it does not choose
+/// who it acts for. A route that acts for the user names them instead
+/// (`tests/server.rs`).
 #[tokio::test]
 async fn the_instances_route_connects_without_a_principal() {
-    let log = Log::default();
-    let l = log.clone();
-    let principals = Principals::default();
-    let connect = connect_logging(&Arc::new(AtomicUsize::new(0)), &principals, move || {
-        Ok(Box::new(FakeManager::new(&l, &[("default", InstanceState::Active)])) as Client)
-    });
-    let r = get_instances(connect).await;
+    let app = app_listing(&[("default", InstanceState::Active)]);
+    let r = app.instances().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
-        principals_of(&principals),
+        principals_of(&app.principals),
         vec![None],
         "the bff acts as itself here"
     );
@@ -506,43 +764,120 @@ async fn the_instances_route_connects_without_a_principal() {
 /// bff asks it anew each time, it does not keep the first failure.
 #[tokio::test]
 async fn a_manager_started_later_is_seen_at_the_next_request() {
-    let count = Arc::new(AtomicUsize::new(0));
-    let log = Log::default();
-    let (c, l) = (count.clone(), log.clone());
-    let connect = connect_with(&count, move || {
-        // `count` was already raised for this call: the first is 1.
-        if c.load(Ordering::SeqCst) == 1 {
-            Err(ClientError::Unavailable)
+    let asked = Arc::new(AtomicUsize::new(0));
+    let seen = asked.clone();
+    let app = app_at(move |l| {
+        // `seen` counts the connects: this closure runs once for each.
+        if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+            FakeManager {
+                instances: Err(ClientError::Unavailable),
+                ..FakeManager::new(l, &[])
+            }
         } else {
-            Ok(Box::new(FakeManager::new(&l, &[("default", InstanceState::Active)])) as Client)
+            FakeManager::new(l, &[("default", InstanceState::Active)])
         }
     });
-    let router = pai_bff::router_with(connect, TIMEOUT);
-    let first = send_to(router.clone(), Method::GET, "/api/instances").await;
+    let cookie = app.sign_in().await;
+    let first = app.get("/api/instances", Some(&cookie)).await;
     first.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
-    let second = send_to(router, Method::GET, "/api/instances").await;
+    let second = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
         json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
     );
-    assert_eq!(count.load(Ordering::SeqCst), 2);
+    assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
+    assert_eq!(app.connects.load(Ordering::SeqCst), 2);
 }
 
-/// The other routes are unchanged under `router_with`.
+/// `GET /api/version` answers the framework version to a signed-in reader;
+/// the same route with no session is 401 (`the_instances_and_version_reads_need_a_session`).
 #[tokio::test]
-async fn version_is_still_served_beside_the_instances() {
-    let r = send_to(
-        pai_bff::router_with(
-            connect_with(&Arc::new(AtomicUsize::new(0)), || {
-                Err(ClientError::Unavailable)
-            }),
-            TIMEOUT,
-        ),
-        Method::GET,
-        "/api/version",
-    )
-    .await;
+async fn version_is_served_to_a_signed_in_reader() {
+    let app = app_connecting(|_| Err(ClientError::Unavailable));
+    app.version().await.assert_version();
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        0,
+        "the version read asks the manager nothing"
+    );
+}
+
+/// The other routes are unchanged beside these two: the model-profile list
+/// and the control verbs keep their own session rule (`tests/model_profiles.rs`,
+/// `tests/control.rs`), and the page at `/` is open to anyone.
+#[tokio::test]
+async fn the_page_stays_open_beside_the_gated_reads() {
+    let app = app_connecting(|_| Err(ClientError::Unavailable));
+    let r = app.get("/", None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!({ "version": env!("CARGO_PKG_VERSION") }));
+    assert!(
+        r.content_type.starts_with("text/html"),
+        "content-type {:?}",
+        r.content_type
+    );
+    app.assert_asked_nothing("GET / with no session");
+}
+
+// ── The idle deadline: a session read only through these reads ends ─────
+
+/// `GET /api/version` is a read, not an action: it never moves a session's
+/// idle deadline, which stays the sign-in's, to the second: at the timeout the
+/// session is alive, one second later it is gone.
+#[tokio::test]
+async fn the_version_read_does_not_move_the_idle_deadline() {
+    let alive = app_listing(&[("default", InstanceState::Active)]);
+    let cookie = alive.sign_in().await;
+    alive.clock.advance(SHORT);
+    let r = alive.get("/api/version", Some(&cookie)).await;
+    assert_eq!(r.status, StatusCode::OK, "the read is answered: {}", r.body);
+    alive.clock.advance(IDLE - SHORT);
+    alive
+        .get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+
+    // One second past that same deadline: the read, in the middle, moved
+    // nothing. A read that refreshed the session would still be alive here.
+    let gone = app_listing(&[("default", InstanceState::Active)]);
+    let cookie = gone.sign_in().await;
+    gone.clock.advance(SHORT);
+    gone.get("/api/version", Some(&cookie))
+        .await
+        .assert_version();
+    gone.clock.advance(IDLE - SHORT + Duration::from_secs(1));
+    gone.get("/api/session", Some(&cookie))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, SESSION_REQUIRED);
+}
+
+/// A tab that only ever reads these three routes (the version, the instances,
+/// one instance's boot flag) is a session that ends: the page left open keeps
+/// its reads and still signs itself out at the idle timeout.
+#[tokio::test]
+async fn a_session_read_only_through_the_gated_reads_still_expires() {
+    let app = app_listing(&[("default", InstanceState::Active)]);
+    let cookie = app.sign_in().await;
+    app.clock.advance(SHORT);
+    app.get("/api/version", Some(&cookie))
+        .await
+        .assert_version();
+    let r = app.get("/api/instances", Some(&cookie)).await;
+    assert_eq!(
+        r.json(),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }]),
+        "{}",
+        r.body
+    );
+    app.get("/api/instances/default/boot", Some(&cookie))
+        .await
+        .assert_enabled(false);
+    app.clock.advance(IDLE - SHORT + Duration::from_secs(1));
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, SESSION_REQUIRED);
+    // The session is gone: the same reads now answer 401.
+    app.get("/api/instances", Some(&cookie))
+        .await
+        .assert_session_required();
 }

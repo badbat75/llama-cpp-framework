@@ -17,8 +17,9 @@ pub type Client = Box<dyn pai_core::client::ManagerClient + Send + Sync>;
 
 /// How the bff connects to the manager, called for each request that asks it.
 /// `principal` is the user the call acts for: a route behind a session hands
-/// its session's user, the session-free routes and the sign-in check hand
-/// `None` and act as the bff's own account.
+/// its session's user; the sign-in check and the reads gated by a session that
+/// ask only what the manager answers of the bff's own account (the instances
+/// list, an instance's boot flag) hand `None`.
 pub type Connect =
     std::sync::Arc<dyn Fn(Option<&str>) -> Result<Client, ClientError> + Send + Sync>;
 
@@ -94,27 +95,39 @@ fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Er
     ))
 }
 
-/// The routes of [`router`], the manager reached through `connect`, each
+/// The routes every builder starts from: the web UI's page at `/` and its
+/// files under `/assets/`, open to anyone, and the two reads a session gates,
+/// `GET /api/version` and `GET /api/instances`, which answer 401
+/// `session-required` to a request with no live session, before the manager is
+/// asked. `sessions` is the store of the builder that registers them
+/// ([`router_with_policy`]): these two reads use it as the gate and never move
+/// a session's idle deadline. The manager is reached through `connect`, each
 /// answer that asks it given up after `timeout`.
-pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Router {
+pub(crate) fn router_with(
+    connect: Connect,
+    timeout: std::time::Duration,
+    sessions: std::sync::Arc<session::Sessions>,
+) -> axum::Router {
     use axum::extract::Path;
     use axum::routing::get;
+    let version = {
+        let sessions = sessions.clone();
+        move |headers: axum::http::HeaderMap| version(sessions.clone(), headers)
+    };
+    let instances = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |headers: axum::http::HeaderMap| {
+            instances(connect.clone(), timeout, sessions.clone(), headers)
+        }
+    };
     axum::Router::new()
         .route("/", get(|| async { serve("index.html") }))
         .route(
             "/assets/{*path}",
             get(|Path(path): Path<String>| async move { serve(&format!("assets/{path}")) }),
         )
-        .route(
-            "/api/version",
-            get(|| async {
-                axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") }))
-            }),
-        )
-        .route(
-            "/api/instances",
-            get(move || instances(connect.clone(), timeout)),
-        )
+        .route("/api/version", get(version))
+        .route("/api/instances", get(instances))
 }
 
 /// The routes of [`router_with`] plus the session routes, signing in
@@ -125,8 +138,8 @@ pub fn router_with(connect: Connect, timeout: std::time::Duration) -> axum::Rout
 /// `PUT /api/instances/{id}/boot`, the model-profile list
 /// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}` and the model profile
 /// switch `PUT /api/profiles/model/{id}/enabled`. The boot read
-/// `GET /api/instances/{id}/boot` needs none, so it is served beside them.
-/// One sign-in's check is given
+/// `GET /api/instances/{id}/boot` is gated by a session too, and reads the
+/// flag as the bff's own account (`control::routes`). One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
 /// `session::routes_with_sign_in_timeout` is what a test hands its own
 /// bound to). Every route answers through the same-origin guard
@@ -259,7 +272,7 @@ fn router_with_policy(
             )
         }
     };
-    router_with(connect.clone(), timeout)
+    router_with(connect.clone(), timeout, sessions.clone())
         .merge(session::routes(sessions.clone()))
         .route(
             "/api/instances/{id}/server",
@@ -370,11 +383,41 @@ fn system_connect(principal: Option<&str>) -> Result<Client, ClientError> {
     }
 }
 
+/// `GET /api/version`: `{"version": <framework version>}`, to a signed-in
+/// reader. With no live session the answer is 401 `session-required` and no
+/// `Set-Cookie`; the session gates the read, nothing else. The read asks the
+/// manager nothing, and it leaves the session's idle deadline where it was, so
+/// a page that only polls it signs itself out at the idle timeout.
+async fn version(
+    sessions: std::sync::Arc<session::Sessions>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse};
+    if sessions.peek(&headers).is_none() {
+        return session::error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    }
+    axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })).into_response()
+}
+
 /// `GET /api/instances`: `[{"id", "engine", "state"}]` in the manager's
-/// order, or `{"key": <strings key>, "args": []}`, never the manager's detail.
-async fn instances(connect: Connect, timeout: std::time::Duration) -> axum::response::Response {
+/// order, to a signed-in reader, or `{"key": <strings key>, "args": []}`,
+/// never the manager's detail. With no live session the answer is 401
+/// `session-required`, the manager is not connected to, and no `Set-Cookie`
+/// goes out. The session gates the read and is not its principal: the list and
+/// the states are what the manager answers of the bff's own account, so
+/// `connect` is handed `None`, and the idle deadline stays where it was (the
+/// page polls this read).
+async fn instances(
+    connect: Connect,
+    timeout: std::time::Duration,
+    sessions: std::sync::Arc<session::Sessions>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    if sessions.peek(&headers).is_none() {
+        return session::error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    }
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
         let client = connect(None)?;
         let mut list = Vec::new();

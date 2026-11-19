@@ -2,14 +2,17 @@
 
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
-built from `fe/` and the API it calls. Today it answers the
-framework version, the manager's instances with their state, the run verbs, the start-at-boot flag
-and, for a signed-in user, an instance's server file read and saved, the model profile list, the model profile
+built from `fe/` and the API it calls. Today every API route
+beside the sign-in is for a signed-in user: the framework version, the manager's instances with their state, the run verbs, the
+start-at-boot flag, an instance's server file read and saved, the model profile list, the model profile
 on/off switch and one model profile, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
-The web UI is for administrators only, members of the group `pai` (user, 2026-11-15): the Overview
-(version, instances) shows without sign-in, a right password of a `pai` member signs in, a right
-password of anyone else is 403 `session-not-administrator` (`fe/briefs/api-contract.md`). Behind
-sign-in it has an instance page (the server file, Start, Stop, Restart, start at boot: all served)
+Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
+a session: any other API route is 401 `session-required`, asking the manager nothing (user,
+2026-11-19: a visitor who has not signed in sees only the sign-in page). The web UI is for
+administrators only, members of the group `pai` (user, 2026-11-15): a right password of a `pai`
+member signs in, a right password of anyone else is 403 `session-not-administrator`
+(`fe/briefs/api-contract.md`). Behind
+sign-in it has the Overview (version, instances), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
 and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
 page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
@@ -24,15 +27,18 @@ rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web
   `private-ai-bff` (no home, no shell; created by the package's own sysusers.d entry), hardened with
   the sandbox `DynamicUser=` would imply written out: a `DynamicUser=` cannot work, because dbus-daemon
   drops a dynamic user's connection at `Hello` (on Ubuntu 26.04, dbus-daemon 1.16.2, `/api/instances`
-  answered 503; sources in the unit's test in `xtask/src/linux/system_files.rs`). Checked on the real
-  install of 2.99.1 on Ubuntu 26.04 (2026-11-14, by the user): the service active, `/api/version`
+  answered 503, that read being open to a request with no session then; sources in the unit's test in
+  `xtask/src/linux/system_files.rs`). Checked on the real
+  install of 2.99.1 on Ubuntu 26.04 (2026-11-14, by the user, a build from before the session gate of
+  2026-11-19, which answered a request with no session): the service active, `/api/version`
   answered, `/api/instances` `[]` with 200, and 503 `unavailable` with the manager stopped.
 - Windows: the framework's MSI installs the service `private-ai-bff` (`pai-bff.exe service`, automatic start,
   `NT SERVICE\private-ai-bff`, restarted after a failure). Its `Error:` line goes nowhere there: by
   the code, a bad `bff.ini` or a bind failure shows only in the service manager's state and exit code.
   In CI (run 43651545466, a `windows-2025` runner) it ran as that service, its path and account as
   declared, `/api/version` answering the framework version and `/api/instances` 200 (since run
-  43654217880 listing exactly `default`, engine `llama.cpp`, state `inactive`); nothing else has
+  43654217880 listing exactly `default`, engine `llama.cpp`, state `inactive`, those builds answering a
+  session-free request); nothing else has
   run on Windows, and the open checks are in the test plan of
   [installer/AGENTS.md](../../installer/AGENTS.md).
 
@@ -98,22 +104,22 @@ runtime (axum).
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/version` | `{"version": "<framework version>"}` |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager` ([below](#the-instances-from-the-manager)) |
-| `POST /api/session` | Signs in: `{"user"}` and the session cookie ([below](#the-session)) |
-| `GET /api/session` | `{"user"}` of the cookie's session |
-| `DELETE /api/session` | Signs out: 204, the cookie cleared |
+| `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list and the states are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
+| `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
+| `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
 | `GET /api/instances/{id}/server` | The instance's `server@<id>.ini` with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `PUT /api/instances/{id}/server` | The form's save of that file, for a signed-in user ([below](#saving-the-server-file)) |
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
-| `GET /api/instances/{id}/boot` | `{"enabled"}`, for anyone: the connect carries no principal, the session store is never touched, so the page can poll it; the failures are `/api/instances`' |
+| `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-model-profile-routes)) |
 | `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
 | `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
 | `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
-| `GET /` | The embedded `index.html` |
-| `GET /assets/{*path}` | The embedded file at `assets/<path>` |
+| `GET /` | The embedded `index.html`, for anyone |
+| `GET /assets/{*path}` | The embedded file at `assets/<path>`, for anyone |
 
 Other methods on these routes are 405, any other path 404. Only a path in the embedded table
 matches, so `..` reaches nothing else. Content types go by extension: HTML, JavaScript
@@ -123,7 +129,9 @@ Checked by hand on Linux from the debug build (2026-11-14): `--version` exits 0,
 2, `0.0.0.0:8590` and `localhost:8590` exit 1; on `127.0.0.1` it answered `/api/version`, `/` as
 `text/html`, 405 to a `POST` and 404 elsewhere. Under `PRIVATE_AI_DATA_ROOT` `/api/instances`
 answered 503 `{"error":"unavailable"}` (the error shape before `{"key", "args"}`) and a `POST` to it
-405. That bff predates 1aac8e1: `0.0.0.0:8590` is an address it serves now (pinned by
+405. That bff predates 1aac8e1, and the session gate of 2026-11-19: `/api/version` and
+`/api/instances` answered a request with no session in that build, and answer 401
+`session-required` now. `0.0.0.0:8590` is an address it serves now (pinned by
 `parse_accepts_an_address_off_loopback`, `tests/listen.rs`), and nothing here was repeated against a
 LAN address.
 
@@ -138,7 +146,9 @@ running or does not answer.", a sign-in attempt the session-unavailable message 
 cleared and focused, and `#/instances/default` the sign-in form with "Sign in to see this page.".
 That bff predates de07ddf: the manager checks sign-in now, so the 503 of a `POST` and the sign-in
 form of an instance page are what a page shows only where there is no manager to ask (a test
-redirect, or a machine with the manager down).
+redirect, or a machine with the manager down). It also predates the session gate of 2026-11-19: that
+`/api/instances` 503, and the Overview showing the version with no sign-in, are what a request with no
+session got then; the read answers 401 `session-required` now and the Overview is behind sign-in.
 
 ## The instances from the manager
 
@@ -151,6 +161,7 @@ naming the session's user, what a signed-in route makes ([below](#the-server-fil
 | Status | Body | When |
 | --- | --- | --- |
 | 200 | `[{"id", "engine", "state"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the two calls is left out |
+| 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure |
@@ -213,7 +224,11 @@ the manager is asked, so a locked pair never reaches it. A sign-in still being c
 - **`GET` and `DELETE /api/session`** answer 401 `{"key": "session-required", "args": []}` with no
   cookie, an unknown id or an expired one. `DELETE` ends the session (a replayed id is refused) and
   clears the cookie (`Max-Age=0`); the user's other sessions stay.
-- **A session ends after 30 minutes without a request that uses it**; each use moves the deadline.
+- **A session ends after 30 minutes without a request that uses it**; each use moves the deadline,
+  apart from the three reads a page polls (`GET /api/version`, `GET /api/instances` and
+  `GET /api/instances/{id}/boot`): those read the session as a gate and leave the deadline where it
+  was (`Sessions::peek` in `crates/bff/src/session.rs`), so a page kept open by those calls alone
+  signs itself out at the 30 minutes.
 - **In memory only**: a restart of the bff signs everyone out. The lockout reads the client's
   address from the connection (`serve.rs` serves `into_make_service_with_connect_info`).
 - The time comes from a clock handed to `router_with_session` (`Instant::now` in the service), so
@@ -258,7 +273,7 @@ guide).
 | --- | --- | --- |
 | 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read. A principal's read is never withheld, so on this route `"withheld"` is absent and `OpencodeApiKey` carries the saved key |
 | 401 | `{"key": "session-required", "args": []}` | No session |
-| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on. A session-free read (the instances list, `GET boot`) answers the same refusal 502 `client-not-authorized` and ends nothing: it has no session |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on. A read gated by a session whose connect carries no principal (the instances list, `GET boot`) answers the same refusal 502 `client-not-authorized` and ends nothing: the refusal is of the bff's account, not of the signed-in user |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
@@ -595,9 +610,9 @@ its data once when it opens and never shows a reply's text. An old `#/models` bo
 
 | Route | Page | Who |
 | --- | --- | --- |
-| `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none | anyone |
+| `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none. Both reads are 401 with no session, so an unsigned visitor has nothing to show (user, 2026-11-19; the sign-in-only shell the web UI shows here is its own slice, `fe/briefs/09-signin-only.md`, uncommitted when this was written) | signed in; otherwise the sign-in form in its place |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
-| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and, for an administrator, `PUT /api/instances/<id>/boot`), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
