@@ -620,6 +620,24 @@ Lessons only: the rules are in `AGENTS.md`.
   session answered, and settle signed-out states by the sign-in `h1`, never by a nav finder (that burns
   its 1 s timeout and hides the real red). A helper that waits for the banner's signed-out Sign in link
   needs retargeting the same way once Sign out lands on the sign-in page.
+- On the fake clock a testing-library `findBy` / `findAllBy` DEADLOCKS: its polling interval is a faked
+  timer and nothing advances it, so the case dies at the real 5 s timeout, which reads as a broken test.
+  Write one `appear(find)` helper that loops the sync getter plus `flush()` and use it everywhere on the
+  fake clock; keep a real `findBy` only in a case on the real clock.
+- A mount helper that takes the fake bff only because `fakeBff()` installs itself as `globalThis.fetch`
+  trips `TS6133 'bff' is declared but its value is never read` in the type check: have it return
+  `{ bff, main }` and let each case destructure what it asserts.
+- Sign out lands on `#/` with NO notice at all (09 S1a.11), so "the notice never shows after Sign out" is
+  pinned as an EMPTY notices list, not as `signin-required`: the latter reds on a correct app.
+- A field of `InstancePage` (`GroupField`, `Boot`) renders its status slot `<p role="status">` empty AT
+  REST, so "this field carries no live region" is false today and is not a red to write: pin what the
+  brief says, that its read paragraph (`bootReadText`) is a plain `<p>` with no `role`.
+- `test.each` over array items APPENDS the arguments past the `%s` placeholders to the title, so a builder
+  function in the tuple prints as source text in the test name. Order the tuple so every value the title
+  shows has its placeholder and the builders come last, and type the tuple with all its elements.
+- `--reporter-option outputFile=` is not a vitest flag: to get one line per red, write the dot reporter's
+  stdout to a file and pair each `FAIL` line with the next `AssertionError` /
+  `TestingLibraryElementError` line.
 
 ## Renames, wire and text
 

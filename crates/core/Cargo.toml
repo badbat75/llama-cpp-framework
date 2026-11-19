@@ -28,6 +28,11 @@ serde_json = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5.19"
 
+# `O_NONBLOCK` on the open of a model file (gguf_shape.rs): the `fs` feature
+# for its `fcntl::OFlag`.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["fs"] }
+
 # The Win32 calls of proc.rs (the std handles a child must not inherit) and
 # of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`), and the
 # engine's registration (paths.rs: `RegGetValueW`).

@@ -122,18 +122,7 @@ pub fn list(root_dir: &str, subdir: &str) -> Vec<FileOption> {
 
 /// Split a `-NNNNN-of-NNNNN` multi-shard suffix off a file stem.
 /// Returns `(base, shard_counter)`, e.g. `("model", "00002")`.
-pub(crate) fn split_shard_suffix(stem: &str) -> Option<(&str, &str)> {
-    let (head, total) = stem.rsplit_once("-of-")?;
-    if total.len() != 5 || !total.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let idx = head.rfind('-')?;
-    let counter = &head[idx + 1..];
-    if counter.len() != 5 || !counter.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    Some((&head[..idx], counter))
-}
+pub(crate) use pai_core::gguf_shape::split_shard_suffix;
 
 fn is_multi_shard_trailer(name: &str) -> bool {
     // Match -NNNNN-of-NNNNN.gguf where the first number isn't 00001. The

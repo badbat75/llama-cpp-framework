@@ -3585,6 +3585,7 @@ name = "pai-core"
 version = "2.99.1"
 dependencies = [
  "if-addrs",
+ "nix",
  "serde_json",
  "tempfile",
  "toml",

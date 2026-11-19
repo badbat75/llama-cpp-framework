@@ -64,12 +64,26 @@ Lessons only: the rules are in `AGENTS.md`.
   `git status --porcelain -- '*.rs'` before and after to prove fmt touched no new file.
 - rustfmt: it sorts consecutive `mod` declarations (`reorder_modules`), so a `mod` added out of order
   fails `--check`; it breaks a one-line `let x = if c { a } else { b };` past 50 chars
-  (`single_line_if_else_max_width`), so write the multi-line form. Shortening a test with `s == ""` is
+  (`single_line_if_else_max_width`), so write the multi-line form. It also breaks a
+  `return Err(format!("{}: {}", path.display(), strings::t("key")));` at an 8-space indent (82 cols,
+  the call's args pass `fn_call_width`), so write that one in its broken form from the start. Shortening a test with `s == ""` is
   refused by `-D warnings` (`clippy::comparison_to_empty`): write `s.is_empty()`.
 - The tester's test code reddens the linter under `--all-targets`, and most of it is not yours to fix:
   `for who in [&alice]` is `clippy::single_element_loop`; `.err().expect(msg)` is `clippy::err_expect`,
   whose identical mechanical fix is `.expect_err(msg)` (apply it, name it). A fix that changes what a test
   asserts stays the tester's.
+- A test helper of a test module whose ONLY callers are `#[cfg(unix)]` tests (a bound and a
+  thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. It is
+  the tester's region: report it, and prove production is clean with the same crate WITHOUT
+  `--all-targets`.
+- `nix` 0.31 `fcntl::OFlag` needs the `fs` feature (`OFlag::O_NONBLOCK.bits()` is the `c_int` for
+  `OpenOptionsExt::custom_flags`, so a FIFO open answers ENXIO instead of blocking). Call the trait
+  method fully qualified inside the `#[cfg(unix)]` statement: a `use std::os::unix::...` at the root is
+  `unused_imports` on windows-gnu. That statement forces the `OpenOptions` builder into statement form,
+  and rustfmt then breaks an `.open(path).map_err(..)` chain.
+- A `pub fn` parameter the function no longer needs (a size the caller read before the open, now
+  governed by the opened file's metadata) is `unused_variables` even when public: use it as the bound
+  the opened metadata clamps (`file_size.min(opened)`), never with a `_` prefix in a public signature.
 - A whole crate of mechanical fixes (15 needless `&` in the manager's test fixtures) goes in one call:
   `cargo clippy --fix --allow-dirty -p <crate> --all-targets -- -D warnings` names the file and how many
   fixes. Snapshot the file outside the repo first, `diff` it after: every line must be a `&` removed, and

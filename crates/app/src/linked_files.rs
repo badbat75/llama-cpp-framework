@@ -144,30 +144,7 @@ fn bracketed(ids: &[String]) -> String {
 /// read): `m-00002-of-00003.gguf` gives `m-00001-of-00003.gguf` through
 /// `m-00003-of-00003.gguf`, in the folder of `path` and with its extension's
 /// spelling. Anything that is not a `-NNNNN-of-NNNNN` shard is a set of one.
-pub fn shard_set(path: &Path) -> Vec<PathBuf> {
-    let one = || vec![path.to_path_buf()];
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return one();
-    };
-    let Some(cut) = name.len().checked_sub(5) else {
-        return one();
-    };
-    if !name.is_char_boundary(cut) || !name[cut..].eq_ignore_ascii_case(".gguf") {
-        return one();
-    }
-    let (stem, ext) = (&name[..cut], &name[cut..]);
-    let Some((base, _)) = model_scan::split_shard_suffix(stem) else {
-        return one();
-    };
-    // split_shard_suffix checked the 5 trailing digits.
-    let total_text = &stem[stem.len() - 5..];
-    match total_text.parse::<u32>() {
-        Ok(total) if total > 0 => (1..=total)
-            .map(|i| path.with_file_name(format!("{base}-{i:05}-of-{total_text}{ext}")))
-            .collect(),
-        _ => one(),
-    }
-}
+pub use pai_core::gguf_shape::shard_set;
 
 fn same_path(a: &Path, b: &Path) -> bool {
     model_scan::paths_eq(&a.to_string_lossy(), &b.to_string_lossy())

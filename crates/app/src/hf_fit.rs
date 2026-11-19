@@ -232,7 +232,6 @@
 
 use crate::strings;
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -240,411 +239,26 @@ use std::sync::{Arc, Mutex};
 use crate::devices::DeviceOption;
 use crate::hf::{self, Candidate, Fetch, HfError, Token};
 
+// The header reader and the shape of a model's weights live in `pai-core`, so
+// the manager's memory check and the configurator's placement read the same
+// bytes the same way. They are named here as they always were.
+use pai_core::gguf_shape::{kv_per_token, read_local_header, tensor_bytes, MAX_HEADER};
+pub use pai_core::gguf_shape::{
+    local_shape, parse_header, shape_of, Header, Kv, Layer, ParseError, Shape, ShapeResult,
+    GPU_RESERVE, REF_CTX,
+};
+
 const GIB: u64 = 1 << 30;
 const MIB: u64 = 1 << 20;
 
-/// Kept free on every GPU: llama.cpp's `--fit-target` plus compute buffers.
-pub const GPU_RESERVE: u64 = 2 * GIB;
 /// Kept free in system RAM for the OS and the desktop.
 pub const RAM_RESERVE: u64 = 4 * GIB;
-/// The context the KV cache is reserved for (the model's own when shorter).
-pub const REF_CTX: u64 = 32 * 1024;
-/// The KV reserve when the header does not tell the attention layout.
-const FALLBACK_KV: u64 = 2 * GIB;
 /// The first range request of a header.
 const INITIAL_FETCH: u64 = 8 * MIB;
-/// Beyond this a header is refused: no real one comes close.
-const MAX_HEADER: u64 = 128 * MIB;
 /// Added to the largest header seen so far, for the next first request.
 const HINT_MARGIN: u64 = 256 * 1024;
 /// Header fetches in flight at once.
 pub const WORKERS: usize = 4;
-
-// ── GGUF header ──────────────────────────────────────────────────────────
-
-/// One metadata value. Arrays of strings (the tokenizer) and long numeric
-/// arrays are skipped, not kept: nothing here reads them.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Kv {
-    Uint(u64),
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Str(String),
-    Arr(Vec<Kv>),
-    Skipped,
-}
-
-impl Kv {
-    fn as_u64(&self) -> Option<u64> {
-        match self {
-            Kv::Uint(v) => Some(*v),
-            Kv::Int(v) => u64::try_from(*v).ok(),
-            _ => None,
-        }
-    }
-}
-
-/// A parsed header: the key/values, each tensor's name and offset (relative
-/// to `data_start`), and where the tensor data begins.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Header {
-    pub kvs: HashMap<String, Kv>,
-    pub tensors: Vec<(String, u64)>,
-    pub data_start: u64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParseError {
-    /// The buffer ended inside the header: fetch more.
-    Truncated,
-    /// Not a GGUF header this reader takes.
-    Invalid(String),
-}
-
-struct Reader<'a> {
-    buf: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn take(&mut self, n: u64) -> Result<&'a [u8], ParseError> {
-        let n = usize::try_from(n)
-            .map_err(|_| ParseError::Invalid(strings::t("gguf-length-beyond-memory")))?;
-        let end = self.pos.checked_add(n).ok_or(ParseError::Truncated)?;
-        if end > self.buf.len() {
-            return Err(ParseError::Truncated);
-        }
-        let s = &self.buf[self.pos..end];
-        self.pos = end;
-        Ok(s)
-    }
-
-    fn skip(&mut self, n: u64) -> Result<(), ParseError> {
-        self.take(n).map(|_| ())
-    }
-
-    fn u32(&mut self) -> Result<u32, ParseError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
-    }
-
-    fn u64(&mut self) -> Result<u64, ParseError> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
-    }
-
-    /// A length-prefixed string; `MAX_STRING` bounds what a corrupt length
-    /// can make this ask for.
-    fn string_len(&mut self) -> Result<u64, ParseError> {
-        const MAX_STRING: u64 = 64 * MIB;
-        let n = self.u64()?;
-        if n > MAX_STRING {
-            return Err(ParseError::Invalid(strings::fill(
-                "gguf-string-too-long",
-                &[&n],
-            )));
-        }
-        Ok(n)
-    }
-
-    fn string(&mut self) -> Result<String, ParseError> {
-        let n = self.string_len()?;
-        Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
-    }
-
-    /// One value of type `t`.
-    fn value(&mut self, t: u32, depth: u32) -> Result<Kv, ParseError> {
-        Ok(match t {
-            0 => Kv::Uint(u64::from(self.take(1)?[0])),
-            1 => Kv::Int(i64::from(self.take(1)?[0] as i8)),
-            2 => Kv::Uint(u64::from(u16::from_le_bytes(
-                self.take(2)?.try_into().unwrap(),
-            ))),
-            3 => Kv::Int(i64::from(i16::from_le_bytes(
-                self.take(2)?.try_into().unwrap(),
-            ))),
-            4 => Kv::Uint(u64::from(self.u32()?)),
-            5 => Kv::Int(i64::from(self.u32()? as i32)),
-            6 => Kv::Float(f64::from(f32::from_le_bytes(
-                self.take(4)?.try_into().unwrap(),
-            ))),
-            7 => Kv::Bool(self.take(1)?[0] != 0),
-            8 => Kv::Str(self.string()?),
-            9 => {
-                if depth > 2 {
-                    return Err(ParseError::Invalid(strings::t("gguf-arrays-too-deep")));
-                }
-                let et = self.u32()?;
-                let n = self.u64()?;
-                if n > 1 << 28 {
-                    return Err(ParseError::Invalid(strings::fill(
-                        "gguf-array-too-long",
-                        &[&n],
-                    )));
-                }
-                match (et, fixed_size(et)) {
-                    // Small numeric arrays (per-layer head counts) are kept.
-                    (_, Some(_)) if n <= 4096 => Kv::Arr(
-                        (0..n)
-                            .map(|_| self.value(et, depth + 1))
-                            .collect::<Result<_, _>>()?,
-                    ),
-                    (_, Some(size)) => {
-                        self.skip(n * size)?;
-                        Kv::Skipped
-                    }
-                    (8, None) => {
-                        for _ in 0..n {
-                            let len = self.string_len()?;
-                            self.skip(len)?;
-                        }
-                        Kv::Skipped
-                    }
-                    (9, None) => {
-                        for _ in 0..n {
-                            self.value(9, depth + 1)?;
-                        }
-                        Kv::Skipped
-                    }
-                    _ => {
-                        return Err(ParseError::Invalid(strings::fill(
-                            "gguf-array-element-type",
-                            &[&et],
-                        )))
-                    }
-                }
-            }
-            10 => Kv::Uint(self.u64()?),
-            11 => Kv::Int(self.u64()? as i64),
-            12 => Kv::Float(f64::from_le_bytes(self.take(8)?.try_into().unwrap())),
-            _ => return Err(ParseError::Invalid(strings::fill("gguf-value-type", &[&t]))),
-        })
-    }
-}
-
-/// The byte size of a fixed-size GGUF value type.
-fn fixed_size(t: u32) -> Option<u64> {
-    match t {
-        0 | 1 | 7 => Some(1),
-        2 | 3 => Some(2),
-        4..=6 => Some(4),
-        10..=12 => Some(8),
-        _ => None,
-    }
-}
-
-/// Parse a GGUF header (v2 or v3, little-endian) from the first bytes of a
-/// file (pure). `Truncated` when `buf` ends before the tensor infos do.
-pub fn parse_header(buf: &[u8]) -> Result<Header, ParseError> {
-    let mut r = Reader { buf, pos: 0 };
-    if r.take(4)? != b"GGUF" {
-        return Err(ParseError::Invalid(strings::t("gguf-no-magic")));
-    }
-    let version = r.u32()?;
-    if !matches!(version, 2 | 3) {
-        return Err(ParseError::Invalid(strings::fill(
-            "gguf-version",
-            &[&version],
-        )));
-    }
-    let n_tensors = r.u64()?;
-    let n_kv = r.u64()?;
-    if n_tensors > 1 << 20 || n_kv > 1 << 20 {
-        return Err(ParseError::Invalid(strings::fill(
-            "gguf-too-many-entries",
-            &[&n_tensors, &n_kv],
-        )));
-    }
-    let mut kvs = HashMap::new();
-    for _ in 0..n_kv {
-        let key = r.string()?;
-        let t = r.u32()?;
-        let v = r.value(t, 0)?;
-        kvs.insert(key, v);
-    }
-    let mut tensors = Vec::with_capacity(n_tensors as usize);
-    for _ in 0..n_tensors {
-        let name = r.string()?;
-        let n_dims = r.u32()?;
-        if n_dims > 8 {
-            return Err(ParseError::Invalid(strings::fill(
-                "gguf-tensor-dimensions",
-                &[&name, &n_dims],
-            )));
-        }
-        r.skip(u64::from(n_dims) * 8)?;
-        let _type = r.u32()?;
-        let offset = r.u64()?;
-        tensors.push((name, offset));
-    }
-    let align = kvs
-        .get("general.alignment")
-        .and_then(Kv::as_u64)
-        .filter(|&a| a > 0)
-        .unwrap_or(32);
-    let data_start = (r.pos as u64).div_ceil(align) * align;
-    Ok(Header {
-        kvs,
-        tensors,
-        data_start,
-    })
-}
-
-// ── Shape ────────────────────────────────────────────────────────────────
-
-/// One block's weights, in bytes: the routed experts, and everything else.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Layer {
-    pub experts: u64,
-    pub other: u64,
-}
-
-/// A candidate's shape as a report holds it: read, or why not.
-pub type ShapeResult = Result<Arc<Shape>, String>;
-
-/// What the estimate needs of a model (`shape_of`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Shape {
-    pub arch: String,
-    /// Routed-expert tensors are present.
-    pub moe: bool,
-    /// Every tensor, in bytes.
-    pub total: u64,
-    /// The input embedding tables (`is_input_embedding`): host memory.
-    pub token_embd: u64,
-    /// The tensors outside any block but the input embeddings (output head,
-    /// norms): the output layer's position.
-    pub globals: u64,
-    pub layers: Vec<Layer>,
-    /// The KV cache at `ctx` tokens, f16.
-    pub kv: u64,
-    pub ctx: u64,
-}
-
-/// `blk.N.` → N.
-fn block_of(name: &str) -> Option<usize> {
-    name.strip_prefix("blk.")?.split('.').next()?.parse().ok()
-}
-
-/// An input embedding table, which llama.cpp keeps in host memory whatever
-/// the offload (`LLM_TENSOR_LAYER_INPUT`, `llama-arch.cpp`).
-fn is_input_embedding(name: &str) -> bool {
-    matches!(name, "token_embd.weight" | "per_layer_token_embd.weight")
-}
-
-/// A routed-expert tensor: what `--n-cpu-moe` moves (`LLM_FFN_EXPS_REGEX`,
-/// `\.ffn_(up|down|gate|gate_up)_(ch|)exps`). A shared expert (`_shexp`) is not.
-fn is_expert(name: &str) -> bool {
-    ["up", "down", "gate", "gate_up"].iter().any(|k| {
-        name.contains(&format!(".ffn_{k}_exps")) || name.contains(&format!(".ffn_{k}_chexps"))
-    })
-}
-
-/// Fold the headers of a model's shards (first shard first, each with the
-/// shard's file size) into a `Shape` (pure). The key/values come from the
-/// shard that has `general.architecture` (the first, for gguf-split files).
-pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
-    let kvs = shards
-        .iter()
-        .map(|(h, _)| &h.kvs)
-        .find(|k| k.contains_key("general.architecture"))
-        .ok_or_else(|| strings::t("gguf-no-arch"))?;
-    let arch = match kvs.get("general.architecture") {
-        Some(Kv::Str(s)) => s.clone(),
-        _ => return Err(strings::t("gguf-arch-not-string")),
-    };
-    let mut s = Shape {
-        arch: arch.clone(),
-        moe: false,
-        total: 0,
-        token_embd: 0,
-        globals: 0,
-        layers: Vec::new(),
-        kv: 0,
-        ctx: 0,
-    };
-    for (h, file_size) in shards {
-        for (name, bytes) in tensor_bytes(h, *file_size)? {
-            s.total += bytes;
-            if is_input_embedding(name) {
-                s.token_embd += bytes;
-            } else if let Some(b) = block_of(name) {
-                if b >= 4096 {
-                    return Err(strings::fill("block-one", &[&b]));
-                }
-                if s.layers.len() <= b {
-                    s.layers.resize(b + 1, Layer::default());
-                }
-                if is_expert(name) {
-                    s.layers[b].experts += bytes;
-                    s.moe = true;
-                } else {
-                    s.layers[b].other += bytes;
-                }
-            } else {
-                s.globals += bytes;
-            }
-        }
-    }
-    let key = |k: &str| kvs.get(&format!("{arch}.{k}"));
-    let int = |k: &str| key(k).and_then(Kv::as_u64);
-    s.ctx = int("context_length")
-        .filter(|&c| c > 0)
-        .map_or(REF_CTX, |c| c.min(REF_CTX));
-    s.kv = kv_per_token(&key, s.layers.len() as u64).map_or(FALLBACK_KV, |b| b * s.ctx);
-    Ok(s)
-}
-
-/// Each tensor of one shard with its bytes, in data order: from its offset to
-/// the next tensor's, the last one to the end of the file.
-fn tensor_bytes(h: &Header, file_size: u64) -> Result<Vec<(&str, u64)>, String> {
-    let mut offsets: Vec<(u64, &str)> = h.tensors.iter().map(|(n, o)| (*o, n.as_str())).collect();
-    offsets.sort();
-    let data = file_size
-        .checked_sub(h.data_start)
-        .ok_or_else(|| strings::fill("gguf-shard-too-small", &[&file_size, &h.data_start]))?;
-    Ok(offsets
-        .iter()
-        .enumerate()
-        .map(|(i, (off, name))| {
-            let end = offsets.get(i + 1).map_or(data, |n| n.0);
-            (*name, end.saturating_sub(*off))
-        })
-        .collect())
-}
-
-/// KV bytes per token (f16, all attention layers), from the attention keys;
-/// `None` when the layout is not readable.
-fn kv_per_token<'k>(key: &dyn Fn(&str) -> Option<&'k Kv>, blocks: u64) -> Option<u64> {
-    let int = |k: &str| key(k).and_then(Kv::as_u64);
-    let n_layer = int("block_count").unwrap_or(blocks);
-    if let Some(rank) = int("attention.kv_lora_rank") {
-        // MLA: the compressed latent plus the rope part, one cache.
-        let rope = int("rope.dimension_count").unwrap_or(64);
-        return Some((rank + rope) * 2 * n_layer);
-    }
-    let n_embd = int("embedding_length")?;
-    let n_head = match key("attention.head_count")? {
-        Kv::Arr(a) => a.iter().filter_map(Kv::as_u64).max()?,
-        v => v.as_u64()?,
-    };
-    if n_head == 0 {
-        return None;
-    }
-    let k_len = int("attention.key_length").unwrap_or(n_embd / n_head);
-    let v_len = int("attention.value_length").unwrap_or(n_embd / n_head);
-    let per_head = (k_len + v_len) * 2;
-    match key("attention.head_count_kv") {
-        Some(Kv::Arr(a)) => Some(a.iter().filter_map(Kv::as_u64).sum::<u64>() * per_head),
-        other => {
-            let hkv = other.and_then(Kv::as_u64).unwrap_or(n_head);
-            let attn_layers = match int("full_attention_interval").filter(|&i| i > 1) {
-                Some(i) => n_layer.div_ceil(i),
-                None => n_layer,
-            };
-            Some(hkv * per_head * attn_layers)
-        }
-    }
-}
 
 // ── Remote headers ───────────────────────────────────────────────────────
 
@@ -786,81 +400,6 @@ pub fn fetch_shapes(
             });
         }
     });
-}
-
-// ── Local headers ────────────────────────────────────────────────────────
-
-/// One file's header from disk, over growing reads like `fetch_header_from`.
-fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> {
-    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut len = INITIAL_FETCH.min(file_size);
-    loop {
-        let mut buf = Vec::new();
-        f.seek(SeekFrom::Start(0))
-            .and_then(|_| (&mut f).take(len).read_to_end(&mut buf))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        match parse_header(&buf) {
-            Ok(h) => return Ok(h),
-            Err(ParseError::Truncated) if len < MAX_HEADER && len < file_size => {
-                len = (len * 4).min(MAX_HEADER).min(file_size);
-            }
-            Err(ParseError::Truncated) => {
-                return Err(strings::fill("gguf-cut-short", &[&buf.len()]))
-            }
-            Err(ParseError::Invalid(m)) => return Err(strings::fill("gguf-unreadable", &[&m])),
-        }
-    }
-}
-
-/// The `Shape` of a model on disk: `first` and the rest of its shard set
-/// (`linked_files::shard_set`), each header read locally. What the model profile of a
-/// download is placed from (`hf::model_profile_from_download`).
-pub fn local_shape(first: &Path) -> Result<Shape, String> {
-    let mut headers = Vec::new();
-    for p in crate::linked_files::shard_set(first) {
-        let size = std::fs::metadata(&p)
-            .map_err(|e| format!("{}: {e}", p.display()))?
-            .len();
-        headers.push((read_local_header(&p, size)?, size));
-    }
-    shape_of(&headers)
-}
-
-/// What `moe_cache::floor` needs of a model on disk, every shard's header read
-/// locally (no llama.cpp library): each tensor with its bytes and the header's
-/// `<arch>.expert_count`, `<arch>.expert_used_count` and `<arch>.block_count`
-/// (0 when missing).
-pub fn local_experts(first: &Path) -> Result<(Vec<crate::gguf::TensorInfo>, [u32; 3]), String> {
-    let mut tensors = Vec::new();
-    let mut counts = None;
-    for p in crate::linked_files::shard_set(first) {
-        let size = std::fs::metadata(&p)
-            .map_err(|e| format!("{}: {e}", p.display()))?
-            .len();
-        let h = read_local_header(&p, size)?;
-        if let Some(Kv::Str(arch)) = h.kvs.get("general.architecture") {
-            let int = |k: &str| {
-                h.kvs
-                    .get(&format!("{arch}.{k}"))
-                    .and_then(Kv::as_u64)
-                    .and_then(|v| u32::try_from(v).ok())
-                    .unwrap_or(0)
-            };
-            counts = Some([
-                int("expert_count"),
-                int("expert_used_count"),
-                int("block_count"),
-            ]);
-        }
-        tensors.extend(tensor_bytes(&h, size)?.into_iter().map(|(name, bytes)| {
-            crate::gguf::TensorInfo {
-                name: name.to_string(),
-                bytes,
-            }
-        }));
-    }
-    let counts = counts.ok_or_else(|| strings::t("gguf-no-arch"))?;
-    Ok((tensors, counts))
 }
 
 // ── The machine ──────────────────────────────────────────────────────────
@@ -1180,6 +719,43 @@ pub fn local_draft_shape(path: &Path) -> Result<DraftShape, String> {
         .map_err(|e| format!("{}: {e}", path.display()))?
         .len();
     draft_shape_of(&[(read_local_header(path, size)?, size)])
+}
+
+/// What the MoE placement floor needs of a model on disk, every shard's
+/// header read locally (no llama.cpp library): each tensor with its bytes
+/// and the header's `<arch>.expert_count`, `<arch>.expert_used_count` and
+/// `<arch>.block_count` (0 when missing).
+pub fn local_experts(first: &Path) -> Result<(Vec<crate::gguf::TensorInfo>, [u32; 3]), String> {
+    let mut tensors = Vec::new();
+    let mut counts = None;
+    for p in crate::linked_files::shard_set(first) {
+        let size = std::fs::metadata(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?
+            .len();
+        let h = read_local_header(&p, size)?;
+        if let Some(Kv::Str(arch)) = h.kvs.get("general.architecture") {
+            let int = |k: &str| {
+                h.kvs
+                    .get(&format!("{arch}.{k}"))
+                    .and_then(Kv::as_u64)
+                    .and_then(|v| u32::try_from(v).ok())
+                    .unwrap_or(0)
+            };
+            counts = Some([
+                int("expert_count"),
+                int("expert_used_count"),
+                int("block_count"),
+            ]);
+        }
+        tensors.extend(tensor_bytes(&h, size)?.into_iter().map(|(name, bytes)| {
+            crate::gguf::TensorInfo {
+                name: name.to_string(),
+                bytes,
+            }
+        }));
+    }
+    let counts = counts.ok_or_else(|| strings::t("gguf-no-arch"))?;
+    Ok((tensors, counts))
 }
 
 /// The files a download brings beside the model, as the estimate counts
@@ -2183,109 +1759,6 @@ pub mod tests {
         )
     }
 
-    #[test]
-    fn a_header_parses_keys_and_tensor_offsets() {
-        let (h, size) = moe_fixture();
-        let hdr = parse_header(&h).unwrap();
-        assert_eq!(hdr.kvs["general.architecture"], Kv::Str("qwen3moe".into()));
-        assert_eq!(hdr.kvs["qwen3moe.block_count"], Kv::Uint(2));
-        assert_eq!(
-            hdr.kvs["tokenizer.ggml.tokens"],
-            Kv::Skipped,
-            "string arrays are skipped"
-        );
-        assert_eq!(hdr.tensors.len(), 21);
-        assert_eq!(hdr.tensors[0], ("token_embd.weight".to_string(), 0));
-        assert_eq!(hdr.data_start % 32, 0);
-        assert!(hdr.data_start >= h.len() as u64 && hdr.data_start < size);
-        // Followed by tensor data: a longer buffer parses the same.
-        let mut longer = h.clone();
-        longer.extend_from_slice(&[0u8; 4096]);
-        assert_eq!(parse_header(&longer).unwrap(), hdr);
-    }
-
-    #[test]
-    fn a_short_or_foreign_buffer_says_which() {
-        let (h, _) = moe_fixture();
-        for cut in [0, 3, 10, 30, h.len() / 2, h.len() - 1] {
-            assert_eq!(
-                parse_header(&h[..cut]),
-                Err(ParseError::Truncated),
-                "cut at {cut}"
-            );
-        }
-        assert!(matches!(
-            parse_header(b"GGML\x03\0\0\0"),
-            Err(ParseError::Invalid(_))
-        ));
-        let mut v1 = h.clone();
-        v1[4] = 1;
-        assert!(matches!(parse_header(&v1), Err(ParseError::Invalid(_))));
-        // A corrupt string length is refused, not fetched for.
-        let mut huge = b"GGUF\x03\0\0\0".to_vec();
-        huge.extend_from_slice(&0u64.to_le_bytes());
-        huge.extend_from_slice(&1u64.to_le_bytes());
-        huge.extend_from_slice(&u64::MAX.to_le_bytes());
-        assert!(matches!(parse_header(&huge), Err(ParseError::Invalid(_))));
-    }
-
-    #[test]
-    fn the_shape_splits_each_layer_into_experts_and_the_rest() {
-        let (h, size) = moe_fixture();
-        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
-        assert_eq!(s.arch, "qwen3moe");
-        assert!(s.moe);
-        assert_eq!(s.layers.len(), 2);
-        assert_eq!(s.layers[0].experts, 1300 * MIB);
-        // attention 18 MiB + norm 4 KiB + router 512 KiB, each padded to 32.
-        assert_eq!(s.layers[1].other, 18 * MIB + 4096 + 512 * 1024);
-        assert_eq!(s.token_embd, 300 * MIB);
-        assert_eq!(s.globals, 300 * MIB + 4096);
-        assert_eq!(s.total, size - parse_header(&h).unwrap().data_start);
-        // 4 kv heads x (128 + 128) x 2 bytes x 2 layers, at 32k (the model's 256k capped).
-        assert_eq!(s.ctx, REF_CTX);
-        assert_eq!(s.kv, 4 * 256 * 2 * 2 * REF_CTX);
-    }
-
-    #[test]
-    fn a_downloaded_model_is_read_from_disk_with_its_shards() {
-        let dir = tempfile::tempdir().unwrap();
-        let (h, size) = gguf(
-            &[
-                ("general.architecture", W::Str("qwen3moe")),
-                ("qwen3moe.block_count", W::U32(1)),
-            ],
-            &[
-                ("token_embd.weight", MIB),
-                ("blk.0.ffn_up_exps.weight", 2 * MIB),
-                ("output.weight", MIB),
-            ],
-        );
-        let one = dir.path().join("m.gguf");
-        write_sparse(&one, &h, size);
-        let s = local_shape(&one).unwrap();
-        assert_eq!(s, shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap());
-        // A split model: the first shard brings the rest.
-        let (h1, s1) = gguf(
-            &[("general.architecture", W::Str("qwen3"))],
-            &[
-                ("blk.0.attn_q.weight", MIB),
-                ("per_layer_token_embd.weight", 3 * MIB),
-            ],
-        );
-        let (h2, s2) = gguf(&[("split.no", W::U32(1))], &[("blk.1.attn_q.weight", MIB)]);
-        write_sparse(&dir.path().join("x-00001-of-00002.gguf"), &h1, s1);
-        write_sparse(&dir.path().join("x-00002-of-00002.gguf"), &h2, s2);
-        let s = local_shape(&dir.path().join("x-00001-of-00002.gguf")).unwrap();
-        assert_eq!(s.layers.len(), 2);
-        assert_eq!(
-            s.token_embd,
-            3 * MIB,
-            "the per-layer embedding stays in host memory"
-        );
-        assert!(local_shape(&dir.path().join("missing.gguf")).is_err());
-    }
-
     /// `header` padded with a hole to `size` bytes.
     pub fn write_sparse(path: &Path, header: &[u8], size: u64) {
         std::fs::write(path, header).unwrap();
@@ -2295,85 +1768,6 @@ pub mod tests {
             .unwrap()
             .set_len(size)
             .unwrap();
-    }
-
-    #[test]
-    fn kv_layouts_per_layer_hybrid_and_mla() {
-        let kv = |kvs: &[(&str, Kv)]| {
-            let m: HashMap<String, Kv> = kvs
-                .iter()
-                .map(|(k, v)| (format!("a.{k}"), v.clone()))
-                .collect();
-            kv_per_token(&|k: &str| m.get(&format!("a.{k}")), 4)
-        };
-        let base = [
-            ("embedding_length", Kv::Uint(4096)),
-            ("attention.head_count", Kv::Uint(32)),
-        ];
-        // No head_count_kv: MHA, key/value length from the embedding.
-        assert_eq!(kv(&base), Some(32 * 256 * 2 * 4));
-        // A per-layer array: recurrent layers count zero.
-        let mut arr = base.to_vec();
-        arr.push((
-            "attention.head_count_kv",
-            Kv::Arr(vec![Kv::Uint(0), Kv::Uint(8), Kv::Uint(0), Kv::Uint(8)]),
-        ));
-        assert_eq!(kv(&arr), Some(16 * 256 * 2));
-        // Every 4th layer attends.
-        let mut hybrid = base.to_vec();
-        hybrid.push(("attention.head_count_kv", Kv::Uint(2)));
-        hybrid.push(("full_attention_interval", Kv::Uint(4)));
-        assert_eq!(kv(&hybrid), Some(2 * 256 * 2));
-        // MLA: latent plus rope dims.
-        let mla = [
-            ("attention.kv_lora_rank", Kv::Uint(512)),
-            ("rope.dimension_count", Kv::Uint(64)),
-        ];
-        assert_eq!(kv(&mla), Some(576 * 2 * 4));
-        assert_eq!(kv(&[]), None, "unknown layout: the fallback reserve");
-    }
-
-    #[test]
-    fn split_shards_add_up_with_the_keys_from_the_first() {
-        let (h1, s1) = gguf(
-            &[
-                ("general.architecture", W::Str("qwen3")),
-                ("qwen3.block_count", W::U32(2)),
-                ("qwen3.embedding_length", W::U32(1024)),
-                ("qwen3.attention.head_count", W::U32(8)),
-                ("qwen3.attention.head_count_kv", W::ArrU32(vec![8, 8])),
-            ],
-            &[
-                ("token_embd.weight", 64 * MIB),
-                ("blk.0.attn_q.weight", 32 * MIB),
-            ],
-        );
-        let (h2, s2) = gguf(
-            &[("split.no", W::U32(1))],
-            &[
-                ("blk.1.attn_q.weight", 32 * MIB),
-                ("output.weight", 64 * MIB),
-            ],
-        );
-        let s = shape_of(&[
-            (parse_header(&h1).unwrap(), s1),
-            (parse_header(&h2).unwrap(), s2),
-        ])
-        .unwrap();
-        assert!(!s.moe);
-        assert_eq!(
-            s.layers,
-            [Layer {
-                experts: 0,
-                other: 32 * MIB
-            }; 2]
-        );
-        assert_eq!(s.globals, 64 * MIB);
-        assert_eq!(s.kv, 16 * 256 * 2 * REF_CTX);
-        assert!(
-            shape_of(&[(parse_header(&h2).unwrap(), s2)]).is_err(),
-            "no architecture anywhere"
-        );
     }
 
     // ── machine ──

@@ -915,6 +915,7 @@ size-mismatch-removed = "{0} came out with {1} bytes, the repository lists {2}: 
 drafter-named = "{0} drafter"
 gguf-cut-short = "the GGUF header is cut short after {0} bytes"
 gguf-unreadable = "not a readable GGUF header: {0}"
+gguf-not-file = "not a regular file"
 gguf-no-arch = "no general.architecture in the header"
 gguf-arch-not-string = "general.architecture is not a string"
 image-encoder = "image encoder"

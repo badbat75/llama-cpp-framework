@@ -4,6 +4,7 @@
 //! same ones for feedback while the user types. A refusal is a strings key
 //! and its values, which the client shows in its own language.
 
+use crate::gguf_shape;
 use crate::ini::{self, INT_ANY, INT_NON_NEGATIVE, INT_POSITIVE};
 use crate::strings;
 use std::ops::RangeInclusive;
@@ -453,22 +454,14 @@ pub fn model_files_of(model: &str) -> Vec<String> {
         Some(dot) => (&name[..dot], &name[dot..]),
         None => (name, ""),
     };
-    let Some((head, total)) = stem.rsplit_once("-of-") else {
+    let Some((base, _)) = gguf_shape::split_shard_suffix(stem) else {
         return vec![value.to_string()];
     };
-    let Some(dash) = head.rfind('-') else {
-        return vec![value.to_string()];
-    };
-    let counter = &head[dash + 1..];
-    let shard_digits = |s: &str| s.len() == 5 && s.bytes().all(|c| c.is_ascii_digit());
-    let total = match (shard_digits(total), shard_digits(counter)) {
-        (true, true) => total.parse::<usize>().unwrap_or(0),
-        _ => 0,
-    };
+    // split_shard_suffix checked the 5 trailing digits of the total.
+    let total = stem[stem.len() - 5..].parse::<usize>().unwrap_or(0);
     if total == 0 {
         return vec![value.to_string()];
     }
-    let base = &head[..dash];
     (1..=total)
         .map(|i| format!("{dir}{base}-{i:05}-of-{total:05}{ext}"))
         .collect()

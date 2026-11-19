@@ -7,6 +7,10 @@ pub mod assign;
 pub mod bff_cfg;
 pub mod checks;
 pub mod client;
+// A compute device as `llama-server --list-devices` reports it, and its parser.
+pub mod devices;
+// The GGUF header reader, a model's shape and the KV formula (the estimate's inputs).
+pub mod gguf_shape;
 pub mod http;
 pub mod ini;
 pub mod launch;
