@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { DiscardDialog } from './Dialog.tsx'
+import { Icon } from './Icon.tsx'
 import InstancePage from './InstancePage.tsx'
 import {
   instancesStore,
@@ -285,6 +286,7 @@ export default function App() {
             onClick={() => setMenuOpen((o) => !o)}
             onKeyDown={closeOnEscape}
           >
+            <Icon name="menu" />
             {t('nav-menu')}
           </button>
           <ThemeSwitch />
@@ -312,6 +314,7 @@ export default function App() {
                 href="#/"
                 aria-current={route.page === 'overview' ? 'page' : undefined}
               >
+                <Icon name="house" />
                 {t('nav-overview')}
               </a>
             </li>
@@ -339,6 +342,7 @@ export default function App() {
                           : undefined
                     }
                   >
+                    <Icon name="layers" />
                     {t('nav-model-profiles')}
                   </a>
                 </li>
@@ -388,6 +392,7 @@ function SessionBar({
         href="#/sign-in"
         aria-current={current ? 'page' : undefined}
       >
+        <Icon name="log-in" />
         {t('session-sign-in')}
       </a>
     )
@@ -396,6 +401,7 @@ function SessionBar({
     <div className="session">
       <span>{t('session-signed-in-as', session.user)}</span>
       <button type="button" className="secondary" onClick={onSignOut}>
+        <Icon name="log-out" />
         {t('session-sign-out')}
       </button>
     </div>

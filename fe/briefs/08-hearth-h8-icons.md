@@ -108,10 +108,20 @@ unchanged (H4.2, H5a.1).
 
 **H8a.4 `.icon`** (top-level rule): `width: 1.25em`, `height: 1.25em`, `flex: none`.
 
-**H8a.5 Hosts lay out icon and text.** A rule whose selector list is `#menu-button`,
-`.session button` declares `display: inline-flex`, `align-items: center`, `gap: var(--space-2)`;
+**H8a.5 Hosts lay out icon and text.** A rule whose selector list is `.menu-button`,
+`.session button` declares `display: inline-flex`, `align-items: center`, `gap: var(--space-2)`,
+written before the `@media (min-width: 960px)` block whose `.menu-button { display: none }` hides
+the Menu on a wide screen (H5a): same specificity, so the later rule wins and the Menu stays hidden
+at 960 px and above. Never `#menu-button` here: an id (1,0,0) outweighs that hide rule (0,1,0) and
+shows the Menu at every width (correction after the H8a review: the first text named `#menu-button`);
 `a.session` (already `inline-flex`, H5a.4) and `.nav a` (already `flex`, H5b.2) add
-`gap: var(--space-2)`. The H5a narrow block is unchanged (the Menu keeps its text at every width:
+`gap: var(--space-2)`. A nav entry that holds an icon breaks its label between words only:
+`.nav a:has(> .icon) { flex-wrap: wrap; overflow-wrap: break-word }`, so when the label does not fit
+beside the icon (200 % text in the 224 px column) it moves whole under the icon instead of breaking
+mid-word; instance links (no icon) keep `overflow-wrap: anywhere`, which their long ids need (a flex
+item's automatic minimum width is its min-content width, which `break-word` would make the whole
+id: [CSS Text 3, overflow-wrap](https://www.w3.org/TR/css-text-3/#overflow-wrap-property)) (added
+after the H8a review: measured "Overvi / ew" and "Mode / l profil / es" at 200 %). The H5a narrow block is unchanged (the Menu keeps its text at every width:
 a preference, as H5 decided).
 
 **H8a.6 Forced colours.** No `.icon` rule sets a colour, in or out of a forced-colours block (the
@@ -187,3 +197,54 @@ icon visible. No new UX check state.
 
 Every accessible name, role, id, key and text; focus order and focus moves; the mark; the favicon;
 the H4 theme rules; the field error's announcement.
+
+## 6. Review of H8a (2026-11-19)
+
+Built from the working tree (`Icon.tsx`, `App.tsx`, `ThemeSwitch.tsx`, `index.css`), checked in
+Chromium, Firefox and WebKit at 1280, 480 and 320 px, light and dark, signed out and signed in with a
+32-character user name (`build/ux-review/h8a.js`, stub `stub8.py`). UX check: 0 failing, 48 states
+per browser. **Rejected** for two defects, both corrected in H8a.5 above:
+
+1. **Not met, H8a.5 / H8a.9: the Menu shows at 960 px and above.** `#menu-button` (1,0,0) in
+   `index.css` (the rule after `a.session`) outweighs `@media (min-width: 960px) { .menu-button {
+   display: none } }`: measured a 104 by 40 Menu in the banner at 1280 in all three engines, so the
+   wide layout has a Menu that toggles a nav already shown. The fault is the brief's: its first text
+   named `#menu-button`. Fix: the selector `.menu-button`; the stylesheet test that pins the selector
+   list follows.
+2. **Not met, H8a.5 (added): mid-word breaks at 200 % text.** In the 224 px column the icon (42.5 px
+   plus the gap) leaves the label less than "Overview" needs, and `overflow-wrap: anywhere` breaks it:
+   Overview 113 px high (61 at HEAD), Model profiles 219 (113 at HEAD); at 320 px Model profiles
+   wraps at the space (113, fine). Fix: the `:has(> .icon)` rule of H8a.5.
+
+Met: H8a.1 to H8a.4, H8a.6 to H8a.8. The five shell glyphs and the moon read as their meaning
+(menu, house, layers, log-in, log-out, moon; zoomed shots at 4x). `.icon` is 1.25em of the 17 px body
+text, 21.3 px (the moon 20, held by `.theme-switch svg`), 42.5 at 200 % text; centre 1.3 (Chromium)
+to 1.5 px (Firefox, WebKit) above the text's x-height centre, gap 8 px; stroke equals the host's
+colour at rest, hover, on the current entry and on the pressed theme button, in both themes (no
+disabled control in the shell). Heights: Menu, theme, Sign out 40; Sign in and pills 34. Banner
+heights equal those with the icons removed at every width (72 / 112 / 112 signed out, 72 / 194 / 112
+signed in at 1280 / 480 / 320), no new wrap, no sideways scroll, nothing clipped at 200 % text and with
+1.4.12 spacing. Accessible names: the banner and nav aria snapshots are identical with and without
+the icons. Contrast: the icon needs none of its own where the same words are text beside it (1.4.11
+covers graphics "required to understand the content", [WCAG 2.2, 1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast));
+measured anyway on the current entry: 6.04 (light), 12.79 (dark). Forced colours (Chromium emulation,
+Firefox pref): every icon visible in its host's system colour, `HighlightText` on the current entry and
+the pressed theme button. A click on the Menu's `svg` lands on the button (`elementFromPoint` is its
+`path`) and toggles it; Enter and Space toggle; the focus ring encloses the icon. Theme button: the
+moon pixel-identical with and without `class="icon"`, box 148 by 40 (40 by 40 below 480). axe: 0 in
+every state.
+
+**Re-review after the fix (2026-11-19): Approved.** `index.css` only: the row rule is `.menu-button,
+.session button`, before the wide hide; `.nav a:has(> .icon)` added (`build/ux-review/h8b.js`, stub
+`stub8.py`, a second instance with a 79-character id). UX check: 0 failing, 48 states per browser.
+Defect 1 met: in Chromium, Firefox and WebKit the Menu is not rendered at 1280 and 960 px and is at
+959, 480 and 320 (icon and text in a row, gap 8, 40 high); click, Enter and Space toggle it. Defect 2
+met: the rule applies in all three engines (computed `overflow-wrap: break-word`, `flex-wrap: wrap`
+on Overview and Model profiles; `anywhere` on instance links). At 200 % text (Chromium, Firefox) in
+the 224 px column Overview is 111 px, its label whole under the icon (61 at HEAD, 113 broken), Model
+profiles 164, under the icon and broken at the space only (113 at HEAD, 219 broken); in the open menu
+at 320 Overview stays beside its icon (61) and Model profiles moves under it on one line (111). No
+break inside a word, nothing clipped, no sideways scroll; the long instance id still breaks anywhere
+and stays inside its pill. Unchanged: banners 72 / 112 / 112 signed out and 72 / 194 / 112 signed in,
+Sign out 124 by 40 (125 in Firefox, WebKit), axe 0 at 1280, 480, 320 in both themes and all three
+engines.

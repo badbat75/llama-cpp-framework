@@ -191,6 +191,19 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   SVG keeps its author `color` (the UA's `svg { forced-color-adjust: preserve-parent-color }`,
   [CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)),
   so `.mark` needs `color: inherit` there to take the link's system colour (H3.10).
+  Icons (`fe/src/Icon.tsx`, `fe/briefs/08-hearth-h8-icons.md`): one component, `Icon name=...`, the
+  path data of `lucide-static` 1.74.0 (ISC) in an `svg.icon` with `stroke="currentColor"`,
+  `aria-hidden`, `focusable="false"`, no size attribute; `.icon` is 1.25em square, `flex: none`, and
+  sets no colour, so it takes its host's text colour in every state and the system colour under
+  forced colours. Every icon is decorative, the first child of a host that holds the same words as
+  text, at `--space-2` from them. In the shell: Menu (`menu`), the theme button (`moon`, kept at
+  1.25rem by `.theme-switch svg`), Sign in (`log-in`), Sign out (`log-out`), the nav's Overview
+  (`house`) and Model profiles (`layers`); instance links get none (their ids are data). The icon
+  hosts are `.menu-button` (a class: an id would outweigh the wide screen's hide rule) and
+  `.session button` as `inline-flex`; a nav entry with an icon wraps its label whole under the icon
+  rather than mid-word (`:has(> .icon)`, brief 08 H8a.5). Measured 2026-11-19: 21.3 px beside the
+  17 px body text (the moon 20), centre 1.3 to 1.5 px above the text's x-height centre, the banner's
+  height unchanged.
   The banner (`fe/briefs/07-hearth-h5-shell.md` H5a) sits on `--page` with no fill and no rule; Menu,
   the theme button and the session part are one plain `div.banner-tools` (no role) pushed to the end.
   Below 480 px the theme button is icon-only (40 by 40, name still "Dark theme") and "Signed in as

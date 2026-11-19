@@ -983,6 +983,10 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
     // The theme switch's icon: an aria-hidden svg with one path, no text, the
     // fixed box of 07-hearth-h4-theme.md H4.11.
     '.theme-switch svg',
+    // The icons of 08-hearth-h8-icons.md H8a.4: the svg is aria-hidden and
+    // draws, it holds no text (pinned in HearthIcons.test.tsx), so the 1.25em
+    // square the brief gives it is a box without text.
+    '.icon',
     "input[type='checkbox']",
     "input[type='checkbox']::before",
     "input[role='switch']",

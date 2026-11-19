@@ -4,6 +4,7 @@
 // writes localStorage and asks the server nothing, so it shows in every session
 // state, signed in, signed out and while the session is read.
 import { useEffect, useState } from 'react'
+import { Icon } from './Icon.tsx'
 import {
   applyTheme,
   schemeQuery,
@@ -13,12 +14,6 @@ import {
   type Theme,
 } from './theme.ts'
 import { t } from './strings.ts'
-
-/** Lucide's `moon`, its path written inline: the brief's section 0 takes one
- * icon now, so the label can go on a narrow screen later. Lucide's licence text
- * ships with the installer. */
-const MOON =
-  'M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401'
 
 export function ThemeSwitch() {
   const [choice, setChoice] = useState<Theme | null>(storedTheme)
@@ -58,18 +53,7 @@ export function ThemeSwitch() {
       aria-pressed={pressed}
       onClick={flip}
     >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d={MOON} />
-      </svg>
+      <Icon name="moon" />
       <span className="theme-switch-label">{t('theme-dark')}</span>
     </button>
   )

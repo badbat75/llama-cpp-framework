@@ -441,6 +441,20 @@ button {
   color: var(--accent);
 }
 
+/* An icon beside text (08-hearth-h8-icons.md H8a.4): a square of the host's
+   text size, so it grows with the text beside it and with the user's text size
+   (1.4.4), and a flex item that takes no share of the free space, so pressing
+   a control that holds one moves no text. It declares no colour: the svg draws
+   with currentColor, so it takes the text colour of its host in both themes
+   and the system colour in forced colours (H8a.6, section 0). The theme
+   switch's own box rule (H4.11) outweighs this one by its specificity, so the
+   theme button keeps the box H4 gave it. */
+.icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+}
+
 /* The theme switch of the banner (07-hearth-h4-theme.md H4.11): icon and label
    on one line at the small gap, the icon a fixed box that takes no share of the
    free space, so pressing moves no text. Its on state is the mockup's: the soft
@@ -484,13 +498,30 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* Signed out: the Sign in link is a pill, like the controls (H5a.4). */
+/* Signed out: the Sign in link is a pill, like the controls (H5a.4). The icon
+   of H8a.3 sits at the small gap. */
 a.session {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-2);
   min-height: 32px;
   padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
+}
+
+/* The Menu button and Sign out are the shell's other icon-and-text hosts
+   (08-hearth-h8-icons.md H8a.5): a row centring the icon on the words it sits
+   beside, at the same gap. The row is inline-flex so the control keeps the
+   width of its content. The Menu button keeps its text at every width, as H5
+   decided: the narrow block touches no rule reaching it. The class, never the
+   id: an id outweighs the wide `.menu-button { display: none }` written below
+   and shows the Menu at every width, while the class ties with it and loses by
+   the order of the sheet. */
+.menu-button,
+.session button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* The nav sits on the paper like the banner: no fill, and the bottom edge is
@@ -516,18 +547,32 @@ a.session {
   border-left: 2px solid var(--line);
 }
 
-/* An entry is a pill, like the controls (H5b.2): a row centring its label,
-   tall enough to be a target (2.5.8), sized by min-height only so the pill
-   grows with the text the user enlarges (1.4.12). */
+/* An entry is a pill, like the controls (H5b.2): a row centring its label, and
+   the icon of H8a.2 beside it at the small gap, tall enough to be a target
+   (2.5.8), sized by min-height only so the pill grows with the text the user
+   enlarges (1.4.12). */
 .nav a {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
   min-height: 32px;
   padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-pill);
   color: var(--text);
   text-decoration: none;
   overflow-wrap: anywhere;
+}
+
+/* An entry that holds an icon (08-hearth-h8-icons.md H8a.5, from the H8a
+   review): the label moves whole under the icon when it does not fit beside it,
+   and breaks inside a word only where a whole word has no room. The plain entry
+   keeps `anywhere`, which its long instance id needs: such an id has no break
+   point, and a break-word there makes the whole id one unbreakable word. The
+   rule wins on the entries it names (0,2,1 over 0,1,1), so the plain rule keeps
+   its say on the instance links. */
+.nav a:has(> .icon) {
+  flex-wrap: wrap;
+  overflow-wrap: break-word;
 }
 
 .nav a:hover {
