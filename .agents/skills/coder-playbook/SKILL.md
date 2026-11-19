@@ -29,7 +29,13 @@ Lessons only: the rules are in `AGENTS.md`.
 - Prove a hypothesis where no one's tests live: copy the tree (`rsync -a --exclude build --exclude .git
   --exclude dist --exclude node_modules`, ~23 MB), set `CARGO_TARGET_DIR` to a fresh dir, patch
   production or the tests there, and rerun: the failures come out one at a time and the green copy shows
-  the complete list. Never patch the repo's tests.
+  the complete list. Never patch the repo's tests. The copy can share the repo's
+  `build/linux/cargo-target`: registry crates are keyed by version, not by workspace path, so the deps
+  are reused and only the workspace crates rebuild (a few minutes, no extra disk).
+- The sandbox clock jumps by hours mid-task: a file you edited an hour ago reports an mtime from BEFORE
+  your edit, and files move and grow under you. Content, not mtime, is the state: `md5sum` the pair,
+  `grep -n` the exact text, and re-read a region before quoting it. A python patch script must anchor on
+  exact text (`s.index(anchor)`, `assert count == 1`), never on a line number read a moment ago.
 - The `edit` tool here intermittently fails to find text `awk` shows verbatim: append with a shell heredoc
   and check `git diff --stat`. And a call the harness rejects for a bad parameter key can still write its
   arguments into the file: after any rejected edit, `grep -n "parameter>" <file>`.
@@ -49,6 +55,8 @@ Lessons only: the rules are in `AGENTS.md`.
   order in the other: sort the edits so the writer's file order never depends on the map. A red only
   `preserve_order` shows is INVISIBLE in a bare `-p pai-bff` run: reproduce it with both packages in one
   invocation (`PRIVATE_AI_LLAMA_CPP_DIR=$PWD/build/linux/llama.cpp cargo test -p pai-bff -p pai-app --lib -- <name>`). Name the order in the doc comment as the code states it ("sorted by key").
+- A closure binding used as a fallback is `clippy::redundant_closure` when written `|| other()`: pass
+  `&other` (a `&F` with `F: Fn` is `FnOnce`), which keeps the binding for the arm below it.
 - `cargo fmt -p <crate>` rewrites the crate's `tests/*.rs` too. When a tester's file is pending a lint,
   apply rustfmt's diff to your own file by hand (`--check` prints it) and report the test file; plain
   `cargo clippy -p <crate> -- -D warnings` (no `--all-targets`) shows the production code clean. After a
@@ -183,6 +191,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `load-on-startup = true`) and `checks::startup_count` the count against the server profile's `ModelsMax`,
   so judge the render the write produces, with the record's own key. Its refusal values are
   `[count, max, instance]`: a test comparing `values == ["2"]` compares the max.
+- A server profile switch is NOT the step rule: it changes no model profile, so the whole count is judged
+  against the NEW profile's cap (a step down to a lower cap is refused). Judge the render cut by the
+  `assignments.ini` the call read with its `on_disk` closure, never by `render_of` (that one swallows a
+  read failure with `.ok()`, so a broken record reads as an empty one and the switch lands).
 - The per-instance render is the launch's real file (`assign::render`): judge a record with
   `checks::model_profile_conflicts` on that text, and skip the startup budget for an instance with no
   `server@<id>.ini`, as `check_renders` does: the launch refuses it and no render is judged on defaults of a
@@ -191,6 +203,8 @@ Lessons only: the rules are in `AGENTS.md`.
   own doc comment, `action_log.rs` and 23 assertions in `service.rs` pin. A new test asking for
   `principal="-"` asks for a rule change, not an implementation: quote it and every one of those goes red.
 - The `ModelsMax` step rule: judge `startup_count` only when the render the write produces starts MORE than the render on disk, and skip the judgement wholly when the section names no profile or its file is missing/unreadable. Pass the cap as `Option<Option<i32>>` (`cap`, judged only in the `if let`) so "no cap to judge" never rides on `None` (which means the engine's default), and take the current count from `render_of` (it reads the record from disk under the write lock, so it needs no argument).
+- A record write (`assignments.ini`, `instances.ini`) goes through `write_served_file(..., &ConfigFile::Models, ...)`: mode 0644 whatever the umask, temp file renamed over the target. `ini::atomic_write` lands 0600, and the e2e pins the mode over a 0600 seed with the process masked `0o077`, so the swap shows as one red mode assertion.
+- A "the profile my own section names is no conflict" answer must come BEFORE the address walk: two sections naming one server profile make the other instance's port look taken (`AddressInUse`), so a later check cannot rescue the early one.
 - `ini::detect_eol` is `pub`: a writer outside core that appends a section writes it in the file's own style. An empty text reads as CRLF.
 - `set_key` and `remove_key` already keep the section's trailing blank separator line: a writer that trims the section tail is the one that eats it. If a brief pins "every other byte kept", drop the tail trim, and expect the older assertion in the same test function (the `none` path, section text pinned without the blank) to go red: PIN-4a and that one are unsatisfiable together. Report the pair, keep the brief's rule.
 - A `models@<id>.ini` render is written after the record change and its failure is the CALL's answer, so a
@@ -312,7 +326,48 @@ Lessons only: the rules are in `AGENTS.md`.
   control disabled" tests have ONE fix point there (an editable number field is TWO tab stops, its box and
   its input), and the fixtures pinning a full-value line must move to a field that stays read-only. Report
   the list, never edit the tests.
+
+### The jump region, and a rule whose selector a test names
+
+- A strings-file VALUE is the accessible NAME of a region: while `en_US.json` and the tester's
+  `fe/src/test/bff.ts` EN table disagree, every `getByRole(..., { name: en(key) })` of that region is
+  red, and the strings edit alone turns them green (H10 turned 21 baseline reds green). Check the
+  tester's table first: it is the acceptance text.
+- Renaming a shorthand rule to scope it (H10: `.jump button` to `.jump ul button`, so a new control in
+  the same region keeps the global `button` + `.secondary` look) reddens every test that LOCATES the
+  rule by its selector text (`flatBy('.jump button')`) and `HearthTokens`'s H1a.12 list of
+  `selector: min-height: value` pairs, and its forced-colours twin must move with it (that block's
+  comment names the rule it follows). The token guard COUNTS the forced-colours blocks: scope inside
+  the existing one, adding a block is a red of its own.
+- The specificity facts of this sheet: `button` and `.secondary` are (0,1,0), `.jump button` is (0,1,1),
+  so an unscoped region rule beats the pill and the height; a `.jump .jump-toggle` override is (0,2,0)
+  and beats the rail's `.jump-toggle { display: none }` (0,1,0), which is why scoping the entry rule is
+  the only clean way. One declaration per property per rule: `border` and `border-width` in one body
+  makes a later `border-width` dead (`declaration-block-no-redundant-longhand-properties`).
+- State by CLASS, never the `hidden` attribute, when a wider window must override it: the hide goes in a
+  `max-width` block that ends below the rail's `min-width` block, so the rail shows the list whatever
+  the state is (the H10 tests read `className`, so `hidden` is red twice).
+- jsdom `fireEvent.click` does not move focus the way a real click does, so "the focus stays on the
+  control" needs `e.currentTarget.focus()` in the handler; a CSS-only sheet cannot satisfy it.
+- A strings-key id makes a good `aria-labelledby` target (the label element carries `id={key}`): the
+  repo's ids and keys match by convention. An element a sheet hides still names what points at it, so a
+  hidden label keeps the region named.
+- One new focusable control reddens, by one position, every "the tab stops are exactly" test in the
+  region, the "the nav holds only its list" and "no new element, class or text" guards, and the app's
+  own button-text list (`ModelProfilePage.test.tsx` 2d.67). Enumerate them, quote the brief line that
+  asks for the control, change no test.
+- A test file the tester owns can go back to HEAD under you mid-task (`git status` showed
+  `HearthH2a.test.ts` clean after my edit of it). Re-check `git status` and the file text before
+  trusting anything you wrote there, and write no test file at all.
+
 ## Tests that cannot pass, and what to report
+
+- A cascade test's self-probe can restate its own expectations as the PRE-slice sheet (H10: the probe
+  wants min-height `32px` and the winner `.jump button`, while the test it probes wants
+  `var(--control-h)` and `inline-flex` from the identical call). Satisfy the test, quote the pair.
+- "the page adds no live region" counts every region of the page, and this one has a page-level
+  fixture: the Save bar's `p[role="status"]` (`SaveBar.tsx`) predates the slice, and a brief's "what
+  must not change" list naming the bar forbids the only fix. Report, do not remove the cue.
 
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the
   next pins the same input `disabled` and empty with its box `checked`, from the identical fixture. The
@@ -326,5 +381,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - A `pub(crate)` item, a fixture list, a pinned revision constant: report it, the tester owns it. The bff's
   revision is a keyed hash over the file name, so renaming a config FILE moves every pinned revision
   constant in the bff's tests.
+- `tests::data_root_e2e` runs every e2e phase in sequence in ONE test, so its first panic hides every
+  later phase: the manager's "262 passed" says nothing about the pins of the D-Bus and pipe phases.
+  Enumerate them in the copy, one patch at a time.
+- A pin of an instance's startup count needs the instance's `[id]` section in `assignments.ini`:
+  `assign::render` leaves a model profile OFF when the assignment carries no key for it and no `*`
+  (`None => keys.contains_key("*") && global`), so an instance with no assignment section starts nothing
+  and the `ModelsMax` cap cannot fire. The manager's D-Bus phase seeds `assignments.ini` as `"[default]\n"`.
+- A "wrote nothing" / "left no file of its own" assertion compares the file against a snapshot the SAME
+  block took: a fixture that seeds a file after its snapshot, or a call the block accepted before it, moves
+  the baseline the assertion then calls the verb's doing.
 - To see a full jsdom dump of a failing `getByRole`/`getAllByRole` assertion, use
   `DEBUG_PRINT_LIMIT=200000 npx vitest run src/<File>.test.tsx`.

@@ -24,6 +24,19 @@ Lessons only: the rules are in `AGENTS.md`.
 - When a phase can only be proven in a red state, seed the pre-save state into a file and show the
   refusal, then write the final test asserting the good outcome. The red of a test that asserts success,
   naming the exact refusal, is a better report than an artificial case.
+- A long phase with many pins: wrap each pin in `// <SLICE>-PIN-<n> BEGIN/END` comment markers and prove
+  each pin's own red with a script that in a scratch copy deletes the PRE regions and pins 1..N-1, runs
+  that one phase, and restores byte for byte (`cmp -s`). The reported panic lines are of the scratch copy,
+  not of the file; say so in the report.
+- A pin block a delete-script removes must be SELF-CONTAINED: its own snapshot reads (`let kept = read(..)`
+  inside the block), no variable shared across regions, so a pins-deleted copy still compiles; and the
+  block's green-run cleanup must tolerate files a deleted pin created (`let _ = remove_file(..)`), else
+  the copy panics in cleanup and the pin's own red is never reached.
+- A bookkeeping pin (a log or call COUNT over calls made by earlier pins) can never prove its own red:
+  with those pins deleted the count passes vacuously. Report it as green today, deferred to the coder's
+  green run.
+- A prove loop rewrites the real source while it runs: run nothing else with cargo on that crate
+  meanwhile (the target-dir lock serialises, and a concurrent run judges the scratch copy).
 - `cargo test -p <crate>` runs no target when one target fails to compile (`--no-fail-fast` only unrolls
   the run). Report which binaries did not run, and run the untouched binaries in a second invocation
   (`--lib --test a --test b`) to show them green.
@@ -341,6 +354,11 @@ Lessons only: the rules are in `AGENTS.md`.
   card-order and tab-path tests of each cards file, the count / strings-parity tests, the page test's tab
   path, the heading-order tests, and `App.test.tsx`'s strings test (the coder's key pin). Count them in
   the report as collateral reds of the shared list, one line per file.
+- A brief that names a landmark from a `<p>` the CSS hides is two pins: the attributes in the new file
+  (`aria-labelledby` present, `aria-label` absent, the `<p>`'s classes, its text), and the
+  `getByRole(.., { name })` reading as a guard. Retarget every role-by-name query of the suite in the same
+  step and report them as collateral reds of the reword: a hidden label reaches an assistive technology,
+  never a layout test, so the visible reading is the UX pass's.
 - Making an EXISTING card editable is done in the shared table, not in a page test: its label keys in
   `EDITABLE_FIELDS`, and for a number field with a default box, its label key in `BOXED_FIELDS`.
   `fieldTabStops` and `controlEnabled` derive from it, so the collateral reds before the coder are the
@@ -447,9 +465,12 @@ Lessons only: the rules are in `AGENTS.md`.
   declaration pinned on a `@media` WINDOW is green when any nested rule of the window carries it, so pin
   "the media block" claims on the window and "the control" claims on the rules. A whitespace-stripped
   `compact` form is the exact-match key: `.nav a` compacts to `.nava`, and a needle that drops the
-  punctuation finds 0 rules, which reads as "the rule is missing" when it is there. Exempt a sanctioned
+  punctuation finds 0 rules, which reads as "the rule is missing" when it is there. So a descendant
+  selector handed to the exact-match locator must pass through the SAME strip as the parse, else the
+  locator reds "found 0" on a rule that exists, and that typo reds a criterion expected green. Exempt a sanctioned
   case by the DECLARATIONS it carries, never by a selector name (a name-based allowlist exempts a rule
   that only looks the same), and read a selector list's shared body, not each selector.
+- A rule ADDED to a forced-colours block reds the system-colour whitelist of `fe/src/HearthTokens.test.ts` (its `SYSTEM` list plus the word-by-word exemptions: a new system colour such as `LinkText` is the coder's edit there, never the tester's), and a NEW forced block reds that test's exact block count: writing the rule inside an existing block keeps the count. The same file pins every `min-height`/`min-width` as an ORDERED per-rule list, so a rule the brief REPLACES must be replaced in place, not appended.
 - A rule scoped under a class is pinned on the PARSED selector PARTS (each part must start with the
   class), not on a substring of the group: the group of a nested rule carries its at-rule window, so a
   substring is green for a rule the brief placed elsewhere. Pin "only the properties the brief lists" as
@@ -470,6 +491,48 @@ Lessons only: the rules are in `AGENTS.md`.
   PARSED hexes, never from ratio constants copied from the brief; the brief's own stated ratios go in as
   the unit-check of that function, proven by a node probe first, else the unit-check is a red the coder
   cannot pass.
+- A cascade scan weighs the chain of real ancestors, element outwards (`[nav, section, main, div.layout,
+  #root, body, html]`). A probe selector whose ancestor ORDER is inverted (`main .layout .jump`, when
+  `main` sits INSIDE `.layout`) matches nothing, so the probe returns `[]` where a violation is expected,
+  and the scan reads toothless. Write every probe selector from the real ancestor list, top down.
+- A probe compares one property, and only when the rule under test DECLARES it: a competitor on
+  `max-width` against a rule that declares `display` is skipped and greens vacuously. Give the probe's
+  rule the property the probe weighs.
+- The specificity a scan prints comes from its own helper, not from hand arithmetic: a hand-written
+  `(0,2,2)` in the expected string reds a probe whose scan correctly printed `(0,2,1)` (`:has()` takes the
+  specificity of its argument, so `.layout section:has(> .jump)` is 0,2,1). Run the probe, read the line
+  it emits, then write that line.
+- End a cascade scan's self-probe block with a probe of the FINISHED shape, a mini sheet carrying the
+  rules the slice is meant to add next to the real neighbours (`main > *` and the short-viewport block):
+  it proves the scans stay silent on the target, so the coder's green is reachable, and it costs no
+  mounts. In such a sheet, a tie written after is a violation: only a LOWER specificity buys silence.
+  Write the mini sheet's entry rule scoped the way the slice will scope it (`.jump ul button`, not
+  `.jump button`), else the probe's "the pill wins" expectation is wrong on its own sheet.
+- Weigh every element of the slice in ONE pass: collect each chain's misses into one array and assert
+  once. A test that asserts chain by chain stops at the first chain, and the report shows the label's
+  misses while the toggle's (`32px` beating the 40 px pill) stay hidden from the coder.
+- Vitest's jsdom loads no stylesheet, so `getComputedStyle` of a mounted page sees the user agent only: a
+  cascade question ("does the pill win over the entry rule?") is answered by the parser plus specificity
+  arithmetic over the file's text, never by the DOM. Weigh the real `index.css` chains and keep a
+  hand-written mini sheet for the shape the slice must reach.
+- A focus ring's outline cannot be weighed when the sheet already carries
+  `[tabindex='-1']:focus { outline: none }` (jsdom matches `:focus` in a selector, so every chain reports
+  `outline: none` whatever the code does): pin the ring's DOM half (the class, no `tabindex`, enabled),
+  guard that no rule naming the slice's class declares an `outline`, and report the rendered ring OPEN for
+  the UX pass.
+- The rules a narrow-viewport scan weighs: the top level plus every block whose media window can hold
+  the width, so `@media (min-width:`, `prefers-color-scheme:` and `forced-colors:` blocks are out. The
+  same ranges answer "the slice put its rule in the block it named" and "no other block declares it",
+  which is how a `display: none` at one width is pinned without a browser.
+- A whole-page mount's `bff.calls` starts with `/api/session` and `/api/instances`: pin "this slice
+  writes nothing" by filtering the calls by method, never as the whole path list, and pin one read with
+  `bff.to('GET', path)`.
+- The model-profile section holds card intro `<p>`s and card fields that are `select`s: a bare
+  `getByRole('paragraph')` or `getByRole('combobox')` inside it reds "found multiple". Query by name
+  (`{ name: en('model-profile-engine') }`) or by class (`section.querySelector('p.notice')`).
+- Prettier 3.10 in a `semi: false` package KEEPS the semicolons a file already has: that file stays
+  format-clean, and a semicolon-less statement appended to it stays clean too, so an added assertion
+  needs no style edit in the existing file.
 
 - Run fe vitest from `fe/` with `TMPDIR=/tmp/opencode`: vitest writes `node_modules/.vite` (the source tree
   is gitignored only under `dist`/`coverage`, so a sandbox that read-only binds the repo dies with
@@ -504,6 +567,15 @@ Lessons only: the rules are in `AGENTS.md`.
   name the existing test that carries the focus claim.
 - A test title that quotes a brief line carries its punctuation into the lint: a brief written
   `(line 222: -)` made an em-dash message. Name the brief's section, never quote its prose.
+- A test of a component the slice has not written imports it by a path kept IN A VARIABLE
+  (`const M = './Icon.tsx'; await import(M)`): a literal specifier is resolved by vite's import analysis
+  at TRANSFORM time, so the whole file collects 0 tests and the suite dies "Failed to resolve import",
+  which reports no per-case red. The variable form loads the file and each case reds on its own import,
+  naming the module. The type check cannot see a variable specifier, so `typecheck` is clean: report the
+  missing module as a runtime red, never as a TS2307.
+- `HTMLCollection[i]` is `undefined` out of range, not `null`, and `expect(el).not.toBeNull()` greens on
+  `undefined`: the red is then the opaque `Cannot read properties of undefined (reading 'tagName')`. Guard
+  a child the slice must add with `toBeTruthy()` and a label, so the red names the host that has no icon.
 - Deleting keys from the test's shared `EN` table reds nothing in `strings.test.ts` (its parity check reads
   `src/strings/en_US.json` and the source files, not the table); deleting them from the JSON while
   production still uses them reds its "every value is used" check, so a strings pin in a new file of the
@@ -572,3 +644,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - Never `git checkout --` / `git restore` a file another session may have left dirty (a playbook, a shared
   test file): a revert once dropped 27 lines two sessions had added that day. Undo your own edit by hand,
   and re-read the tail of a shared file before the last edit.
+- A stylesheet-cascade reader over element chains needs two rules the browser has: a compound carrying an
+  attribute selector, a pseudo-class or a pseudo-element NEVER matches a chain built from tag/id/classes
+  (the sheet's `[hidden] { display: none !important }` else wins every display read), and a shorthand is
+  folded into its longhand sides (a later `padding:` beats an earlier `padding-left:` at a tie, that is
+  how an icon placement is undone). Self-probe both on doctored sheets, and make "nothing declared" read
+  as `''` so a missing rule is a miss, never a pass.
+- Run `npx prettier --write` on your new fe test files BEFORE editing them further: prettier rewraps, and
+  an edit built from the pre-format text misses. A `write` that "succeeded" may not be what the disk
+  holds after a formatter pass: re-read the file before judging which draft is live.
+- `within()` needs an `HTMLElement`, not the `Element` a `querySelector` gives: cast at the query, not at
+  each `within`. The fe gates reject `toHaveAttribute` and friends (no setupFiles, no jest-dom): pin with
+  `getAttribute(...)` / `toBe`.

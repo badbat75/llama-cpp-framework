@@ -3,7 +3,7 @@
 //!
 //! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
-//! `SetBootEnabled` and `SetModelProfile` go as the
+//! `SetBootEnabled`, `SetModelProfile` and `SetServerProfile` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged: the
@@ -16,6 +16,7 @@
 //! WriteFileAs(s principal, s name, s contents, b keep_api_key)
 //! WriteFileIfAs(s principal, s name, s contents, s expected)
 //! SetModelProfileAs(s principal, s instance, s profile, s value)
+//! SetServerProfileAs(s principal, s instance, s profile)
 //! Version() -> (s version, u protocol)
 //! ```
 
@@ -231,6 +232,13 @@ impl ManagerClient for DbusClient {
                 self.call("SetModelProfileAs", &(principal, instance, profile, value))
             }
             None => self.call("SetModelProfile", &(instance, profile, value)),
+        }
+        .map(|_| ())
+    }
+    fn set_server_profile(&self, instance: &str, profile: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("SetServerProfileAs", &(principal, instance, profile)),
+            None => self.call("SetServerProfile", &(instance, profile)),
         }
         .map(|_| ())
     }

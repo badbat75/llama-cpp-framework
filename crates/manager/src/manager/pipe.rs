@@ -23,7 +23,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 
 /// The protocol version this manager answers with, the number `Version`
 /// reports beside the framework version. 2 is the `As` methods; 3 adds
-/// `SetModelProfile`, the assignment verb, with its `As` form.
+/// `SetModelProfile`, the assignment verb, and `SetServerProfile`, the switch
+/// of an instance to another server profile, each with its `As` form.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -46,6 +47,8 @@ enum Request {
     BootEnabled(String),
     SetBootEnabled(String, bool, Option<Principal>),
     SetModelProfile(String, String, String, Option<Principal>),
+    /// `instance`, `profile`: point an instance at a server profile.
+    SetServerProfile(String, String, Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -121,6 +124,13 @@ impl Request {
                 arg("value")?,
                 principal().map(Some)?,
             ),
+            // The switch verb: the instance and the server profile it names.
+            "SetServerProfile" => {
+                Request::SetServerProfile(arg("instance")?, arg("profile")?, None)
+            }
+            "SetServerProfileAs" => {
+                Request::SetServerProfile(arg("instance")?, arg("profile")?, principal().map(Some)?)
+            }
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -187,6 +197,10 @@ where
                 .and_then(|who| manager.set_model_profile(&who, &instance, &profile, &value))
                 .map(|()| Value::Null)
         }
+        // The switch of an instance to another server profile.
+        Request::SetServerProfile(instance, profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.set_server_profile(&who, &instance, &profile))
+            .map(|()| Value::Null),
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager
             .authenticate(caller, &user, &password)
@@ -704,6 +718,112 @@ mod tests {
 
     // ── The wire ────────────────────────────────────────────────────────
 
+    /// `SetServerProfile` asks the authority for configure as the
+    /// connection's caller; a refused caller changes nothing. The instance id
+    /// is refused by the core's own existence check, so nothing here reaches a
+    /// file.
+    #[test]
+    fn the_server_profile_change_asks_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetServerProfile", "instance": "default", "profile": "big"}),
+                json!({"method": "SetServerProfile", "instance": "default", "profile": "big"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("NotAuthorized", "NotAuthorized"); 2]);
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `SetServerProfile` of an id that is no instance: refused after its
+    /// authorization, nothing done. Only the ids the core refuses before it
+    /// reads a record are used here: this unit test does not redirect the data
+    /// root (see `tests::mod`'s warning).
+    #[test]
+    fn the_server_profile_of_an_invalid_id_is_refused() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetServerProfile", "instance": "a_b", "profile": "big"}),
+                json!({"method": "SetServerProfile", "instance": "Default", "profile": "big"}),
+                json!({"method": "SetServerProfile", "instance": "", "profile": "big"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(replies, vec![error("InvalidId", "InvalidId"); 3]);
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 3]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The `As` form carries the principal and runs for the bff's account
+    /// alone: a member's call reaches the core's checks, a principal outside
+    /// `pai` is refused, the membership asked for the name sent, polkit never
+    /// asked for a principal.
+    #[test]
+    fn the_server_profile_as_form_acts_for_the_principal() {
+        let (c, admins) = principal_core(FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "../x", "profile": "big"}),
+                json!({"method": "SetServerProfileAs", "principal": "bob", "instance": "../x", "profile": "big"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("InvalidId", "InvalidId"),
+                error("NotAuthorized", "NotAuthorized")
+            ],
+            "a member reaches the core's own checks, a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec!["alice".to_string(), "bob".to_string()],
+            "the membership of the name the request vouches for, once per call"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(asked_bff(&c), vec![bff(); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `instance` and `profile` are both required strings, and the name's
+    /// spelling is exactly the method's: a frame missing one, carrying one
+    /// that is not a string, or spelled otherwise, is no request.
+    #[test]
+    fn a_malformed_server_profile_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "SetServerProfile", "instance": "default"}),
+            json!({"method": "SetServerProfile", "profile": "big"}),
+            json!({"method": "SetServerProfile", "instance": 5, "profile": "big"}),
+            json!({"method": "SetServerProfile", "instance": "default", "profile": null}),
+            json!({"method": "SetServerProfile", "instance": "default", "profile": ["big"]}),
+            json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "default"}),
+            json!({"method": "setServerProfile", "instance": "default", "profile": "big"}),
+            json!({"method": "SetServerProfiles", "instance": "default", "profile": "big"}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
+    }
+
     /// The raw replies, as pinned in `pai_core::client::pipe`'s header:
     /// requests on one connection answered in order.
     #[test]
@@ -812,6 +932,14 @@ mod tests {
                 "Invalid",
             ),
             (ManagerError::Changed, "Changed"),
+            (
+                ManagerError::NoServerProfile("nope café".into()),
+                "NoServerProfile",
+            ),
+            (
+                ManagerError::ServerProfileInUse("lan 2 (café)".into(), "lan-2".into()),
+                "ServerProfileInUse",
+            ),
         ]
     }
 
@@ -829,6 +957,10 @@ mod tests {
                 ManagerError::NoInstance => ClientError::NoInstance,
                 ManagerError::BadFileName => ClientError::BadFileName,
                 ManagerError::AddressInUse(id) => ClientError::AddressInUse(id.clone()),
+                ManagerError::NoServerProfile(n) => ClientError::NoServerProfile(n.clone()),
+                ManagerError::ServerProfileInUse(n, id) => {
+                    ClientError::ServerProfileInUse(n.clone(), id.clone())
+                }
                 ManagerError::UnresolvableHost(h) => ClientError::UnresolvableHost(h.clone()),
                 ManagerError::Service(s) => ClientError::Service(s.0.clone()),
                 ManagerError::Io(k) => ClientError::Io(k.to_string()),
@@ -1028,6 +1160,7 @@ mod tests {
                 json!({"method": "ReadFileAs", "principal": "alice", "name": "server.ini"}),
                 json!({"method": "WriteFileAs", "principal": "alice", "name": "server.ini", "contents": "x", "keep_api_key": false}),
                 json!({"method": "WriteFileIfAs", "principal": "alice", "name": "server.ini", "contents": "x", "expected": ""}),
+                json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "../x", "profile": "big"}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -1039,12 +1172,13 @@ mod tests {
                 error("BadFileName", "BadFileName"),
                 error("BadFileName", "BadFileName"),
                 error("BadFileName", "BadFileName"),
+                error("InvalidId", "InvalidId"),
             ]
         );
         assert_eq!(calls(&c), vec![Call::Stop("default".into())]);
         assert_eq!(
             asked_admin(&admins),
-            vec!["alice".to_string(); 5],
+            vec!["alice".to_string(); 6],
             "the membership of the name the request vouches for, once per call"
         );
         assert_eq!(
@@ -1052,7 +1186,7 @@ mod tests {
             vec![],
             "polkit asked, so the call ran as the bff's own, not for the principal"
         );
-        assert_eq!(asked_bff(&c), vec![bff(); 5]);
+        assert_eq!(asked_bff(&c), vec![bff(); 6]);
     }
 
     /// A caller that is not the bff naming a principal: NotAuthorized for
@@ -1063,7 +1197,7 @@ mod tests {
     fn an_as_method_from_a_caller_that_is_not_the_bff_is_refused_unasked() {
         for caller in [alice(), Caller("S-1-5-18".into()), Caller(String::new())] {
             let (c, admins) = principal_core(FakePasswords::new());
-            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 7];
+            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 8];
             expected.push(json!({"ok": "active"}));
             let (result, replies) = serve(
                 &c,
@@ -1076,6 +1210,7 @@ mod tests {
                     json!({"method": "WriteFileAs", "principal": "alice", "name": "models.ini", "contents": "", "keep_api_key": false}),
                     json!({"method": "WriteFileIfAs", "principal": "alice", "name": "models.ini", "contents": "", "expected": ""}),
                     json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default", "enabled": true}),
+                    json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "default", "profile": "big"}),
                     json!({"method": "Status", "id": "default"}),
                 ]),
             );
@@ -1102,7 +1237,7 @@ mod tests {
             if !caller.0.is_empty() {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![caller.clone(); 7],
+                    vec![caller.clone(); 8],
                     "{caller:?}: the caller is checked first, once per call"
                 );
             }
@@ -1171,6 +1306,10 @@ mod tests {
             json!({"method": "WriteFileIfAs", "principal": "alice", "name": "models.ini", "expected": ""}),
             json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default"}),
             json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default", "enabled": "yes"}),
+            json!({"method": "SetServerProfileAs", "instance": "default", "profile": "big"}),
+            json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "default"}),
+            json!({"method": "SetServerProfileAs", "principal": 5, "instance": "default", "profile": "big"}),
+            json!({"method": "SetServerProfileAs", "principal": null, "instance": "default", "profile": "big"}),
             // The name says it carries a principal: the plain spelling is
             // unknown with one, and the `As` spelling is unknown without.
             json!({"method": "startAs", "principal": "alice", "id": "default"}),
@@ -1207,6 +1346,7 @@ mod tests {
             json!({"method": "WriteFileIf", "name": "models.ini", "contents": "", "expected": "", "principal": "alice"}),
             json!({"method": "BootEnabled", "id": "default", "principal": "alice"}),
             json!({"method": "SetBootEnabled", "id": "default", "enabled": true, "principal": "alice"}),
+            json!({"method": "SetServerProfile", "instance": "default", "profile": "big", "principal": "alice"}),
             json!({"method": "Authenticate", "user": "alice", "password": "s3cret-Pw", "principal": "alice"}),
             json!({"method": "Version", "principal": "alice"}),
             json!({"method": "Start", "id": "default", "principal": 5}),

@@ -1319,7 +1319,7 @@ recorded:
 | `Instances()`, no authorization | `-> a(sssqasas)`: `(id, engine, server_profile, port, instance_tags, profile_tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, instanceTags, profileTags}` | none; port 0 and no profile tags when the profile file is missing |
 | `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `instance-bad-tags` (the rule of (c)); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
-| `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `load-on-startup-over-max` |
+| `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
 | `DeleteServerProfile(engine, profile)` | `(ss)` | `NoServerProfile`, `ServerProfileInUse` |
 | `CreateInstance(engine, id, serverProfile)` (replaces `(engine, id, port, tags)`: port and tags are the profile's) | `(sss)` | `unknown-engine`, `instance-bad-id`, `InstanceExists`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`; writes its `instances.ini` section, then an empty render; assigned no model profile; boot off |
@@ -1345,7 +1345,7 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
 | `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, instanceTags, removable}`: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing | as (f) |
 | `PUT /api/instances/{id}/tags` `{"tags": [string]}` | 204 | 404 `client-no-instance`, 422 `instance-bad-tags` `field` `tags`, 400 `instance-malformed` |
-| `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use` and `load-on-startup-over-max` (`field` `serverProfile` each) |
+| `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use`, `client-unresolvable-host` and `load-on-startup-over-max` (`field` `serverProfile` each) |
 | `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value"}` -> 200 `{effective, running}` | as (f), keys renamed |
 | `PUT /api/instances/{id}/profiles/model` `{"all": "inherit" \| "none"}` (was `.../presets-all`) | 200 `{running}` | 404 `client-no-instance` |
@@ -1472,7 +1472,9 @@ profile waits until asked.
     `Instances()` ((g')), before slice 15 gives clients a way to switch it.
 14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
-    instance, the pool rows' `assignments`, `restart`, resource refusals (old 10).
+    instance, the pool rows' `assignments`, `restart`, resource refusals (old 10). The manager's
+    `SetServerProfile` answers nothing about a restart: the route reads `Status` after the switch and
+    answers `{running}`, true when the instance must be restarted to apply it.
 16. **`CreateInstance`, then `RemoveInstance`** (two slices, `NoModelProfiles` at start), then the bff's
     `POST` and `DELETE /api/instances` (old 11, 12).
 17. **The web UI** (the web UI session, designer's brief first), then **the estimate as a read** (old 13, 14).

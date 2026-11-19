@@ -53,6 +53,10 @@ pub enum Error {
     NoInstance(String),
     BadFileName(String),
     AddressInUse(String),
+    NoServerProfile(String),
+    /// The message is the profile and the instance, split at the separator
+    /// `Refusal::encode` uses.
+    ServerProfileInUse(String),
     UnresolvableHost(String),
     Service(String),
     Io(String),
@@ -73,6 +77,8 @@ impl From<ManagerError> for Error {
             ManagerError::NoInstance => Error::NoInstance(message),
             ManagerError::BadFileName => Error::BadFileName(message),
             ManagerError::AddressInUse(_) => Error::AddressInUse(message),
+            ManagerError::NoServerProfile(_) => Error::NoServerProfile(message),
+            ManagerError::ServerProfileInUse(_, _) => Error::ServerProfileInUse(message),
             ManagerError::UnresolvableHost(_) => Error::UnresolvableHost(message),
             ManagerError::Service(_) => Error::Service(message),
             ManagerError::Io(_) => Error::Io(message),
@@ -331,6 +337,34 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
+            .await?)
+    }
+
+    /// `SetServerProfile`: the server profile an instance runs, `(ss)`.
+    async fn set_server_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_server_profile(&who, &instance, &profile))
+            .await?)
+    }
+
+    /// `SetServerProfile` for `principal`, the principal first as every `As`
+    /// method has it (`sss`).
+    async fn set_server_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_server_profile(&who, &instance, &profile))
             .await?)
     }
 
@@ -742,6 +776,13 @@ pub(crate) fn manager_dbus_e2e() {
             err_name("NotAuthorized"),
             "SetModelProfile without a sender"
         );
+        let e = call(&client, "SetServerProfile", &("default", "default"))
+            .expect_err("SetServerProfile");
+        assert_eq!(
+            e.0,
+            err_name("NotAuthorized"),
+            "SetServerProfile without a sender"
+        );
         assert!(
             !sys.join("assignments.ini").exists(),
             "an assignment refused with no identity writes nothing"
@@ -784,9 +825,11 @@ pub(crate) fn manager_dbus_e2e() {
         assert_eq!(asked(&c), vec![], "a call with no sender asks nobody");
     }
 
+    // SSP-D-PRE-1 BEGIN
     // ── A caller polkit refuses: asked with its bus name, nothing done ───
     {
         let c = core(false, &[]);
+        let record = std::fs::read_to_string(sys.join("instances.ini")).expect("record");
         let (_server, client) = connect(&c, Some(":1.42"));
         let e = call(&client, "Start", &("default",)).expect_err("Start");
         assert_eq!(e.0, err_name("NotAuthorized"));
@@ -801,11 +844,15 @@ pub(crate) fn manager_dbus_e2e() {
         )
         .expect_err("SetModelProfile");
         assert_eq!(e.0, err_name("NotAuthorized"));
+        let e = call(&client, "SetServerProfile", &("default", "default"))
+            .expect_err("SetServerProfile");
+        assert_eq!(e.0, err_name("NotAuthorized"));
         assert_eq!(calls(&c), vec![], "a refused caller starts nothing");
         assert_eq!(
             asked(&c),
             vec![
                 (alice.clone(), Action::Control),
+                (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure),
                 (alice.clone(), Action::Configure)
@@ -820,7 +867,13 @@ pub(crate) fn manager_dbus_e2e() {
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             model_profiles
         );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            record,
+            "a refused caller writes no instance record"
+        );
     }
+    // SSP-D-PRE-1 END
 
     // ── An authorized caller: each method reaches the core ───────────────
     {
@@ -1098,6 +1151,239 @@ pub(crate) fn manager_dbus_e2e() {
             "[default]\nQwen3.8-27B = off\n",
             "a body the method does not take writes nothing"
         );
+
+        // ── SetServerProfile: the server profile of an instance, `(ss)` ───
+        // The sibling of `SetModelProfile`: the same verb shape, the same
+        // guard rails, and the instance's own profile legal (switching back).
+        // `alt` is a spare profile file, on the port `lan-2` already runs,
+        // that the record names for nobody: a switch to it lands and shows in
+        // the record's bytes.
+        let profile_of = |id: &str| -> Option<String> {
+            std::fs::read_to_string(sys.join("instances.ini"))
+                .ok()
+                .and_then(|t| {
+                    t.split("\n\n")
+                        .find(|s| s.starts_with(&format!("[{id}]\n")))
+                        .and_then(|s| s.lines().find(|l| l.starts_with("ServerProfile =")))
+                        .map(|l| l["ServerProfile =".len()..].trim().to_string())
+                })
+        };
+        let fixture = std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+        let asked_before = asked(&c).len();
+        let calls_before = calls(&c).len();
+        std::fs::write(
+            sys.join("server@alt.ini"),
+            "[Server]\nPort = 8081\nHostname = gpu-box.lan\n",
+        )
+        .expect("write alt");
+        let r = call(&client, "SetServerProfile", &("lan-2", "alt"))
+            .expect("SetServerProfile of lan-2");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            profile_of("lan-2").as_deref(),
+            Some("alt"),
+            "a server profile nobody runs lands"
+        );
+        assert_eq!(
+            asked(&c).len(),
+            asked_before + 1,
+            "the guarded call a write is: configure asked of the sender, every call"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            calls_before,
+            "a server profile change touches no unit"
+        );
+        let landed = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        assert!(
+            landed.contains("[lan-2]\nServerProfile = alt\n"),
+            "the section the verb wrote: {landed:?}"
+        );
+        assert!(
+            landed.starts_with("[default]\nServerProfile = default\n\n[broken]\n"),
+            "the sections it did not touch keep their bytes: {landed:?}"
+        );
+        assert!(
+            landed.ends_with("[lan-2]\nServerProfile = alt\n"),
+            "the record keeps its one last section: {landed:?}"
+        );
+        assert_eq!(
+            landed.matches("[lan-2]").count(),
+            1,
+            "one section per instance, no copy: {landed:?}"
+        );
+        let e = call(&client, "SetServerProfile", &("lan-3", "alt"))
+            .expect_err("a server profile of no instance");
+        assert_eq!(e.0, err_name("NoInstance"), "lan-3 has no section");
+        for bad in ["", "../x", "Default", "a_b"] {
+            let e = call(&client, "SetServerProfile", &(bad, "alt")).expect_err("an invalid id");
+            assert_eq!(e.0, err_name("InvalidId"), "id {bad:?}");
+        }
+        let e = call(&client, "SetServerProfile", &("lan-2", "nope"))
+            .expect_err("a server profile the pool has not");
+        assert_eq!(e.0, err_name("NoServerProfile"), "no server profile nope");
+        assert_eq!(e.1, "nope", "the message is the name: {e:?}");
+        let e = call(&client, "SetServerProfile", &("lan-2", "broken"))
+            .expect_err("the server profile of broken");
+        assert_eq!(
+            e.0,
+            err_name("ServerProfileInUse"),
+            "one server profile, one instance"
+        );
+        assert_eq!(
+            e.1, "broken\u{1f}broken",
+            "the profile and its owner, split by the unit separator: {e:?}"
+        );
+        std::fs::write(
+            sys.join("server@over.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("write over");
+        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        let e = call(&client, "SetServerProfile", &("lan-2", "over"))
+            .expect_err("the address of default");
+        assert_eq!(e.0, err_name("AddressInUse"), "the port of default: {e:?}");
+        assert_eq!(
+            e.1, "default",
+            "an instance is named by its id on the wire: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            before,
+            "the refused switch wrote nothing"
+        );
+        std::fs::write(
+            sys.join("server@web.ini"),
+            "[Server]\nPort = 8590\nHostname = 127.0.0.1\n",
+        )
+        .expect("write web");
+        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        let e = call(&client, "SetServerProfile", &("lan-2", "web"))
+            .expect_err("the address of the web service");
+        assert_eq!(
+            e.0,
+            err_name("AddressInUse"),
+            "the port of the web service: {e:?}"
+        );
+        assert_eq!(
+            e.1, "private-ai-bff",
+            "the web service is named by its service: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            before,
+            "the refused switch wrote nothing"
+        );
+        // The cap the switch steps into: the new profile's `ModelsMax`, under
+        // the loads the instance's render starts. The pool is written for the
+        // call, so the render starts two loads and `cap` caps them at 1: the
+        // refusal is the core's own, over D-Bus as `Invalid` with the encoded
+        // refusal, the instance named last.
+        std::fs::write(
+            sys.join("server@cap.ini"),
+            "[Server]\nPort = 8085\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("write cap");
+        let pool = std::fs::read_to_string(sys.join("models.ini")).expect("pool");
+        std::fs::write(
+            sys.join("models.ini"),
+            "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n\
+             [b]\nmodel = /models/b.gguf\nload-on-startup = true\n",
+        )
+        .expect("write a pool of two loads");
+        // The assignment the phase seeded names `[default]` only, so `lan-2`
+        // starts nothing and a cap of 1 is over nothing. Seed `lan-2` the
+        // assignment that gives it the pool's two loads, so the refusal below
+        // is over a render that really starts them.
+        let assignments =
+            std::fs::read_to_string(sys.join("assignments.ini")).expect("assignments");
+        std::fs::write(
+            sys.join("assignments.ini"),
+            format!("{assignments}\n[lan-2]\n* = inherit\n"),
+        )
+        .expect("give lan-2 the pool's two loads");
+        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        let e = call(&client, "SetServerProfile", &("lan-2", "cap"))
+            .expect_err("a render over the new profile's cap");
+        assert_eq!(e.0, err_name("Invalid"), "the cap is checked: {e:?}");
+        assert_eq!(
+            pai_core::checks::Refusal::decode(&e.1).map(|r| (r.key.to_string(), r.values)),
+            Some((
+                "load-on-startup-over-max".to_string(),
+                vec!["2".to_string(), "1".to_string(), "lan-2".to_string()]
+            )),
+            "the refusal, with its key and its values: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            before,
+            "the refused switch wrote nothing"
+        );
+        std::fs::write(sys.join("models.ini"), pool.as_bytes()).expect("the pool back");
+        std::fs::write(sys.join("assignments.ini"), assignments.as_bytes())
+            .expect("the assignments back");
+        std::fs::create_dir(sys.join("server@folder.ini")).expect("dir in the way");
+        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        let e = call(&client, "SetServerProfile", &("lan-2", "folder"))
+            .expect_err("a folder where a server profile belongs");
+        assert_eq!(
+            e.0,
+            err_name("Io"),
+            "a profile that cannot be read is not an empty one: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            before,
+            "the refused switch wrote nothing"
+        );
+        std::fs::remove_dir(sys.join("server@folder.ini")).unwrap();
+        std::fs::remove_file(sys.join("instances.ini")).expect("remove the record");
+        std::fs::create_dir(sys.join("instances.ini")).expect("dir in the way");
+        let e = call(&client, "SetServerProfile", &("lan-2", "default"))
+            .expect_err("a folder where the record belongs");
+        assert_eq!(
+            e.0,
+            err_name("Io"),
+            "a record that cannot be read is not an empty one: {e:?}"
+        );
+        std::fs::remove_dir(sys.join("instances.ini")).unwrap();
+        std::fs::write(sys.join("instances.ini"), fixture.as_bytes()).expect("restore the record");
+        // The signature is `(ss)`: no less, no more, and two strings. zbus
+        // answers a shape mismatch with its own error, never one of the
+        // manager's, and the record is untouched.
+        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        for e in [
+            call(&client, "SetServerProfile", &("lan-2",)).expect_err("one string"),
+            call(&client, "SetServerProfile", &("lan-2", "lan-2", "more"))
+                .expect_err("three strings"),
+            call(&client, "SetServerProfile", &("lan-2", 7u32))
+                .expect_err("a number where a string belongs"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            before,
+            "a body the method does not take writes nothing"
+        );
+        for gone in [
+            "server@over.ini",
+            "server@web.ini",
+            "server@cap.ini",
+            "server@alt.ini",
+        ] {
+            // A pin that did not run wrote no spare profile: its absence is not a failure.
+            let _ = std::fs::remove_file(sys.join(gone));
+        }
+        std::fs::write(sys.join("instances.ini"), fixture.as_bytes())
+            .expect("restore the fixture record");
     }
 
     // ── ReadFile says when it withheld the API key ───────────────────────
@@ -1978,6 +2264,91 @@ pub(crate) fn manager_dbus_principal_e2e() {
             "a caller that is not the bff writes nothing"
         );
     }
+
+    // ── The member's server profile of an instance, vouched by the bff ────
+    // The `As` form is `(sss)` with the principal first, as the design's
+    // `SetServerProfileAs(s principal, s instance, s server profile)`: an
+    // implementation taking the principal last would name an instance
+    // "alice" here and fail.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        let polkit_before = polkit(&c).len();
+        std::fs::write(
+            sys.join("server@alt.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("alt profile");
+        call(&client, "SetServerProfileAs", &("alice", "default", "alt"))
+            .expect("SetServerProfileAs for a member");
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = alt\n",
+            "the member's switch landed"
+        );
+        assert_eq!(
+            polkit(&c).len(),
+            polkit_before,
+            "the principal gate decides the right: polkit is asked nothing"
+        );
+        assert_eq!(
+            calls(&c).len(),
+            5,
+            "a server profile change touches no unit"
+        );
+        let e = call(
+            &client,
+            "SetServerProfileAs",
+            &("bob", "default", "default"),
+        )
+        .expect_err("SetServerProfileAs for a non-member");
+        assert_eq!(
+            e.0,
+            format!("{PREFIX}NotAuthorized"),
+            "SetServerProfileAs for bob"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = alt\n",
+            "a refused switch writes nothing"
+        );
+        let e = call(&client, "SetServerProfileAs", &("alice", "default"))
+            .expect_err("the As form is three strings");
+        assert!(
+            !e.0.starts_with(PREFIX),
+            "the shape is zbus's answer, not the manager's: {e:?}"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 2,
+            "the membership of the vouched name, asked once per call"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 2,
+            "the caller checked once per principal call"
+        );
+        // A caller that is not the bff, naming a member: refused.
+        let (_server, other) = connect(&c, Some(":1.42"));
+        let e = call(
+            &other,
+            "SetServerProfileAs",
+            &("alice", "default", "default"),
+        )
+        .expect_err("SetServerProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"));
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = alt\n",
+            "a caller that is not the bff writes nothing"
+        );
+        std::fs::remove_file(sys.join("server@alt.ini")).expect("remove alt");
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect("restore the record");
+    }
 }
 
 #[cfg(test)]
@@ -2496,8 +2867,8 @@ mod tests {
         m.body().deserialize().expect("reply body")
     }
 
-    /// The seven `As` methods, each with its own arguments after the principal.
-    fn as_methods() -> [(&'static str, AsCall); 7] {
+    /// The `As` methods, each with its own arguments after the principal.
+    fn as_methods() -> [(&'static str, AsCall); 8] {
         [
             ("StartAs", |c, p| call(c, "StartAs", &(p, "default"))),
             ("StopAs", |c, p| call(c, "StopAs", &(p, "default"))),
@@ -2513,6 +2884,9 @@ mod tests {
             }),
             ("SetBootEnabledAs", |c, p| {
                 call(c, "SetBootEnabledAs", &(p, "default", true))
+            }),
+            ("SetServerProfileAs", |c, p| {
+                call(c, "SetServerProfileAs", &(p, "default", "default"))
             }),
         ]
     }
@@ -2578,7 +2952,7 @@ mod tests {
             if let Some(name) = sender {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![Caller(name.to_string()); 7],
+                    vec![Caller(name.to_string()); 8],
                     "{sender:?}: the caller is checked first, once per call"
                 );
             }
@@ -2660,8 +3034,8 @@ mod tests {
             }
             assert_eq!(
                 asked_admin(&admins),
-                vec![user.to_string(); 7],
-                "the membership of {user}: asked, and it says no"
+                vec![user.to_string(); as_methods().len()],
+                "the membership of {user}: asked once per `As` method, and it says no"
             );
             assert_eq!(
                 polkit(&c),

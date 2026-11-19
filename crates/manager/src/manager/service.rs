@@ -197,6 +197,11 @@ pub enum ManagerError {
     BadFileName,
     /// This host and port collide with the instance of this id.
     AddressInUse(String),
+    /// The engine has no server profile of this name, so no
+    /// `server@<name>.ini` to point an instance at.
+    NoServerProfile(String),
+    /// The server profile of this name is the one the instance of this id runs.
+    ServerProfileInUse(String, String),
     /// This host name of the file being written does not resolve.
     UnresolvableHost(String),
     /// The service manager failed.
@@ -222,6 +227,12 @@ pub fn error_reply(e: &ManagerError) -> (String, String) {
         ManagerError::NoInstance => ("NoInstance", "NoInstance".to_string()),
         ManagerError::BadFileName => ("BadFileName", "BadFileName".to_string()),
         ManagerError::AddressInUse(id) => ("AddressInUse", id.clone()),
+        ManagerError::NoServerProfile(name) => ("NoServerProfile", name.clone()),
+        // The profile and the instance, split by the client at the separator
+        // `Refusal::encode` uses.
+        ManagerError::ServerProfileInUse(name, id) => {
+            ("ServerProfileInUse", format!("{name}\u{1f}{id}"))
+        }
         ManagerError::UnresolvableHost(host) => ("UnresolvableHost", host.clone()),
         ManagerError::Service(e) => ("Service", e.0.clone()),
         ManagerError::Io(kind) => ("Io", kind.to_string()),
@@ -242,6 +253,8 @@ fn error_kind(e: &ManagerError) -> &'static str {
         ManagerError::NoInstance => "NoInstance",
         ManagerError::BadFileName => "BadFileName",
         ManagerError::AddressInUse(_) => "AddressInUse",
+        ManagerError::NoServerProfile(_) => "NoServerProfile",
+        ManagerError::ServerProfileInUse(_, _) => "ServerProfileInUse",
         ManagerError::UnresolvableHost(_) => "UnresolvableHost",
         ManagerError::Service(_) => "Service",
         ManagerError::Io(_) => "Io",
@@ -900,7 +913,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     .map_err(ManagerError::Invalid)?;
             }
             std::fs::create_dir_all(&dir).map_err(io)?;
-            pai_core::ini::atomic_write(&path, &text).map_err(io)?;
+            write_served_file(&path, &ConfigFile::Models, &text, &*self.group).map_err(io)?;
             // The write stands whatever the renders do, as a write of a
             // served file does: the caller is told the first failure in id
             // order.
@@ -911,6 +924,123 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         };
         let answer = run();
         self.record_action("set_model_profile", instance, Some(&who), &answer);
+        answer
+    }
+
+    /// Points instance `instance` at the server profile `profile`: writes the
+    /// `ServerProfile` key of its section of `instances.ini`, every other byte
+    /// of the record kept. The instance's launch is the one that reads the
+    /// profile, so the call touches no unit and renders nothing: a server
+    /// profile carries no model profile text, and the render's name is the
+    /// instance's. Each check answers before the write, and a refusal writes
+    /// nothing: the id must be a section of the record (`InvalidId`,
+    /// `NoInstance`; a record that cannot be read is `Io`, never the empty list
+    /// `paths::instance_ids` answers for one), the profile must be one the
+    /// engine has (`NoServerProfile`, naming it: a name that builds no file, or
+    /// a file that is really absent; any other read failure is `Io`), no other
+    /// instance may run it (`ServerProfileInUse`, naming the profile and that
+    /// instance), the address the switch takes must be free
+    /// (`AddressInUse`), and the new profile's `ModelsMax` must hold the loads
+    /// the instance's render starts (`load-on-startup-over-max`): that render
+    /// is cut by `assignments.ini`, and a record there that cannot be read is
+    /// `Io` as the instance record is. The profile the instance's own section
+    /// names is answered before the walk of the others: no conflict with
+    /// itself, and the switch to it changes no byte. Guarded as a write of a served file is: the
+    /// principal and `configure` gates, the `writing` lock, and one action
+    /// record for the whole call, done or refused.
+    pub fn set_server_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            valid_id(instance)?;
+            let dir = crate::paths::engine_config_dir();
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            // A file that is really absent is an empty one; any other read
+            // failure answers its own kind before anything is written, as in
+            // `set_model_profile`. The record first: it is the one this call
+            // writes, and an instance is a section of it.
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            if !pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == instance)
+            {
+                return Err(ManagerError::NoInstance);
+            }
+            // The target's file. `paths::instance_ini` answers nothing for a
+            // name that builds no profile path, and the engine's directory is
+            // the only place a name is looked up: both are the profile the
+            // engine has none of, said with the name the caller asked for.
+            let path = crate::paths::instance_ini(profile)
+                .ok_or_else(|| ManagerError::NoServerProfile(profile.to_string()))?;
+            let contents = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ManagerError::NoServerProfile(profile.to_string()));
+                }
+                Err(e) => return Err(io(e)),
+            };
+            // One instance per server profile: the profile of another instance
+            // is that instance's address and its cap. The profile the
+            // instance's own section names is answered before that walk: it is
+            // no conflict with itself, and the switch to it changes no byte.
+            if crate::paths::instance_server_profile(instance).as_deref() == Some(profile) {
+                return Ok(());
+            }
+            if let Some(holder) = profile_holder(profile) {
+                return Err(ManagerError::ServerProfileInUse(
+                    profile.to_string(),
+                    holder,
+                ));
+            }
+            // The address the switch takes. The target is unused at this
+            // moment, so a save of it is judged against nothing: the switch is
+            // where its address meets the instances that run, and the web
+            // service. This instance's own current profile is out of the walk,
+            // so a profile on the port the instance already runs lands.
+            let mine = binding(&crate::server_cfg::from_text(&contents), &self.resolver)
+                .map_err(ManagerError::UnresolvableHost)?;
+            self.check_binding(&mine, |id| id == instance)?;
+            // The new profile's cap, over the loads the instance's render
+            // starts today: the switch changes no model profile, so the count
+            // it is judged on is this instance's own render, cut by the
+            // assignment record read here.
+            let on_disk = |name: &str| -> Result<String, ManagerError> {
+                match std::fs::read_to_string(dir.join(name)) {
+                    Ok(text) => Ok(text),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+                    Err(e) => Err(io(e)),
+                }
+            };
+            let enabled = on_disk("models.ini")?;
+            let disabled = on_disk("models.ini.disabled")?;
+            let assignments = on_disk(ASSIGNMENTS_FILE)?;
+            check_render_of_full(
+                &assignments,
+                instance,
+                &enabled,
+                &disabled,
+                crate::server_cfg::from_text(&contents).models_max,
+            )
+            .map_err(ManagerError::Invalid)?;
+            std::fs::create_dir_all(&dir).map_err(io)?;
+            let text = pai_core::ini::text::set_key(&record, instance, "ServerProfile", profile);
+            write_served_file(
+                &dir.join(INSTANCES_FILE),
+                &ConfigFile::Models,
+                &text,
+                &*self.group,
+            )
+            .map_err(io)
+        };
+        let answer = run();
+        self.record_action("set_server_profile", instance, Some(&who), &answer);
         answer
     }
 
@@ -1125,18 +1255,35 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         if !profile_in_use(name) {
             return Ok(());
         }
+        self.check_binding(&mine, |other| {
+            crate::paths::instance_server_profile(other).as_deref() == Some(name)
+        })
+    }
+
+    /// Refuse when the binding `mine` collides with the address of another
+    /// instance: the walk every check of an address shares, the save of a
+    /// server profile and the switch of an instance to another one. `skip`
+    /// answers the instances to leave out of the walk, the ones that hold the
+    /// address for the reason the check is about: the profile being saved, for
+    /// a save, and the instance being switched, for a switch. An instance
+    /// whose section names no profile, whose profile builds no path, or whose
+    /// profile file cannot be read, is skipped too.
+    fn check_binding<F>(&self, mine: &Binding, skip: F) -> Result<(), ManagerError>
+    where
+        F: Fn(&str) -> bool,
+    {
         for other in crate::paths::instance_ids() {
+            if skip(&other) {
+                continue;
+            }
             let Some(path) = profile_file(&other) else {
                 continue;
             };
-            if crate::paths::instance_server_profile(&other).as_deref() == Some(name) {
-                continue;
-            }
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
             let theirs = binding(&crate::server_cfg::from_text(&text), &self.resolver);
-            if theirs.is_ok_and(|b| addresses_collide(&mine, &b)) {
+            if theirs.is_ok_and(|b| addresses_collide(mine, &b)) {
                 return Err(ManagerError::AddressInUse(other));
             }
         }
@@ -1147,7 +1294,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 port: addr.port() as i32,
                 ips: vec![addr.ip()],
             };
-            if addresses_collide(&mine, &theirs) {
+            if addresses_collide(mine, &theirs) {
                 return Err(ManagerError::AddressInUse(BFF_NAME.to_string()));
             }
         }
@@ -1168,9 +1315,27 @@ fn profile_file(id: &str) -> Option<std::path::PathBuf> {
 /// Whether any instance runs the server profile `name`: the profiles the
 /// sections name are what binds an address and what caps a render.
 fn profile_in_use(name: &str) -> bool {
+    profile_holder(name).is_some()
+}
+
+/// The instance running the server profile `name`, when one does: the first
+/// section of `instances.ini` that names it.
+fn profile_holder(name: &str) -> Option<String> {
     crate::paths::instance_ids()
-        .iter()
-        .any(|id| crate::paths::instance_server_profile(id).as_deref() == Some(name))
+        .into_iter()
+        .find(|id| crate::paths::instance_server_profile(id).as_deref() == Some(name))
+}
+
+/// The text of the record file `path`: `instances.ini`, read whole so a write
+/// of it keeps every other byte. A file that is not there reads as empty:
+/// llama.cpp's MSI copies it at install, and an install that has not is a tree
+/// with no instance.
+fn read_record(path: &std::path::Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e),
+    }
 }
 
 /// The content checks of `file` for `contents`, against the files on disk:
@@ -1286,6 +1451,29 @@ fn check_render_of(
     if count <= today {
         return Ok(());
     }
+    pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
+        refusal.values.push(id.to_string());
+        refusal
+    })
+}
+
+/// The `load-on-startup` of instance `id`'s render against `models_max`, that
+/// instance's own, over the assignment record `assignments` rather than the
+/// one on disk: the render a server profile switch leaves. The whole count is
+/// judged, so a switch to a lower cap is refused as one that starts more is:
+/// the step rule of `check_render_of` is `SetModelProfile`'s, and a switch
+/// changes no model profile, so it has no step to make. The refusal names the
+/// instance, last.
+fn check_render_of_full(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    models_max: Option<i32>,
+) -> Result<(), pai_core::checks::Refusal> {
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    let count = pai_core::checks::startup_loads(&render);
     pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
         refusal.values.push(id.to_string());
         refusal
@@ -1962,6 +2150,29 @@ fn write_record(dir: &std::path::Path, ids: &[&str]) {
             .join("\n"),
     )
     .expect(INSTANCES_FILE);
+}
+
+/// The umask window of the mode pins: the constructor masks the process with
+/// the mode it is given and keeps the previous umask, `Drop` restores it. The
+/// umask is process-wide and the e2e phases run on parallel threads, so a
+/// panic between the mask and the restore must not leave 0o077 on the process.
+#[cfg(all(test, target_os = "linux"))]
+struct UmaskGuard(nix::sys::stat::Mode);
+
+#[cfg(all(test, target_os = "linux"))]
+impl UmaskGuard {
+    /// Masks the process with `mask`, answering the guard that restores the
+    /// umask it found when it is dropped.
+    fn mask(mask: nix::sys::stat::Mode) -> Self {
+        Self(nix::sys::stat::umask(mask))
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        nix::sys::stat::umask(self.0);
+    }
 }
 
 /// E2E phase for the manager core, for this crate's e2e test to call: it sets
@@ -5137,7 +5348,6 @@ pub(crate) fn manager_set_model_profile_e2e() {
     // ── Slice 7 review: the resource rule is a step rule, the id is exact,
     //    the record keeps the bytes it was not asked to write, the text ────
 
-    // PIN-1a BEGIN
     {
         // The instance starts OVER its max: three model profiles that load on
         // startup are in effect, and the server profile its section names caps
@@ -5192,9 +5402,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the render followed the record"
         );
     }
-    // PIN-1a END
 
-    // PIN-1b BEGIN
     {
         // `none` removes a key, so it lowers the count too: it lands over the
         // max, exactly as `off` does.
@@ -5239,9 +5447,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and out of the render"
         );
     }
-    // PIN-1b END
 
-    // PIN-1c BEGIN
     {
         // `*` narrowed from `inherit` to `none` leaves the whole pool out of
         // the render: it lands whatever the max.
@@ -5287,9 +5493,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and nothing of the pool is in effect"
         );
     }
-    // PIN-1c END
 
-    // PIN-1d BEGIN
     {
         // Assigning `on` a model profile that does NOT load on startup leaves
         // the count where it is, over the max: it lands, the count is what the
@@ -5337,9 +5541,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the count is where it was, still over the max of one"
         );
     }
-    // PIN-1d END
 
-    // PIN-1e BEGIN
     {
         // The other side of the same fixture: `on` of a model profile that DOES
         // load on startup raises the count and is refused, writing nothing.
@@ -5393,9 +5595,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
         }
     }
-    // PIN-1e END
 
-    // PIN-2a BEGIN
     {
         // An instance whose section names no server profile has no file to read
         // a `ModelsMax` from, and the launch refuses it anyway: its render is
@@ -5440,9 +5640,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the render holds five, over the llama.cpp default of four"
         );
     }
-    // PIN-2a END
 
-    // PIN-2b BEGIN
     {
         // The section names a profile whose file is missing: nothing to read a
         // cap from, so the render is not judged. Five loads land.
@@ -5486,9 +5684,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and its key landed"
         );
     }
-    // PIN-2b END
 
-    // PIN-2c BEGIN
     {
         // The section names a profile whose file cannot be read (no text): the
         // same, an unreadable file is not an empty one and holds no cap.
@@ -5536,9 +5732,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and its key landed"
         );
     }
-    // PIN-2c END
 
-    // PIN-3 BEGIN
     {
         // The model profile's name is exact: llama.cpp knows a pool section in
         // its own spelling, so the pool's `[Qwen]` answers no call for `qwen`,
@@ -5591,9 +5785,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
         }
     }
-    // PIN-3 END
 
-    // PIN-4a BEGIN
     {
         // The verb writes one key of one section: the blank line that separates
         // that section from the next one is not its to write.
@@ -5624,9 +5816,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the blank line between the sections stayed"
         );
     }
-    // PIN-4a END
 
-    // PIN-4b BEGIN
     {
         // A CRLF record stays CRLF on every line the verb writes.
         let seeded = "[default]\r\nb = off\r\n\r\n[lan-2]\r\n* = inherit\r\n";
@@ -5668,9 +5858,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the other section keeps its CRLF bytes: {written:?}"
         );
     }
-    // PIN-4b END
 
-    // PIN-4c BEGIN
     {
         // A record whose last section has no trailing newline keeps it that
         // way: the verb adds the key, not a terminator the file did not have.
@@ -5701,9 +5889,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "the file still ends on an unterminated line, and keeps the blank line"
         );
     }
-    // PIN-4c END
 
-    // PIN-4d BEGIN
     {
         // An instance the record has no section for: the verb adds one, and the
         // sections it did have keep their bytes.
@@ -5744,9 +5930,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and the render of the instance follows the section that just appeared"
         );
     }
-    // PIN-4d END
 
-    // PIN-5 BEGIN
     {
         // The text a user reads for a value outside the list, byte for byte, in
         // both strings files: the CLI's and the GUI's.
@@ -5765,7 +5949,936 @@ pub(crate) fn manager_set_model_profile_e2e() {
             );
         }
     }
-    // PIN-5 END
+
+    #[cfg(target_os = "linux")]
+    {
+        // The mode of the record the verb writes: the manager's config files
+        // are read by every client, so a write lands them 0644 whatever the
+        // process umask was, even over a file that was 0600. The umask is
+        // process-wide, so it is masked only around the call and restored
+        // before the first assert.
+        use std::os::unix::fs::PermissionsExt;
+        write_record(&sys, &["default", "lan-2"]);
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("server@default.ini");
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("server@lan-2.ini");
+        std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+        std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
+        std::fs::set_permissions(
+            sys.join("assignments.ini"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("0600 assignments");
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let before = listing();
+        let guard = UmaskGuard::mask(nix::sys::stat::Mode::from_bits_retain(0o077));
+        let answer = m.set_model_profile(&desktop, "default", "a", "on");
+        let old_mask = guard.0;
+        drop(guard);
+        assert_eq!(
+            nix::sys::stat::umask(old_mask),
+            old_mask,
+            "the window restored the umask"
+        );
+        let mode = std::fs::metadata(sys.join("assignments.ini"))
+            .ok()
+            .map(|f| f.permissions().mode());
+        let after = listing();
+        assert_eq!(
+            answer,
+            Ok(()),
+            "the fixture: a model profile of the pool, on, lands"
+        );
+        assert_eq!(
+            mode.map(|f| f & 0o777),
+            Some(0o644),
+            "the record was 0600 and the process was masked 0o077: the written assignments.ini is 0644"
+        );
+        assert_eq!(
+            after, before,
+            "and the write left no temp file of its own beside it"
+        );
+    }
+}
+
+/// E2E phase: `SetServerProfile`, the verb that points an instance at one of
+/// the node's server profiles (protocol 3, its `As` form and the same name over
+/// the pipe). It writes one key, the `ServerProfile` of the instance's section
+/// of `instances.ini`, and the instance's next launch reads the profile the key
+/// names. The profile a switch aims at is unused at that moment, so the port
+/// check of a profile save (`check_address`, which judges a profile no instance
+/// runs against nothing) judges nothing here: the switch judges the target's
+/// address against every other instance's profile and against the web service's,
+/// leaving out the profile the switching instance runs now. A call answers
+/// before it writes: an id that is no instance (`InvalidId`, `NoInstance`), a
+/// profile the engine has none of (`NoServerProfile`, naming it), a profile
+/// another instance runs (`ServerProfileInUse`, naming the profile and that
+/// instance), an address the switch would take (`AddressInUse`, naming the
+/// instance, or the web service as itself) and a `ModelsMax` under the loads the
+/// instance's render starts (`load-on-startup-over-max`, naming the instance)
+/// each write nothing, and a file that cannot be read is answered its own kind
+/// rather than as an empty one. Guarded as a write of a served file is:
+/// `configure` first, the `As` form answered only for the bff's account and a
+/// current member of `pai`, and one record of the action log per call, done or
+/// refused.
+#[cfg(test)]
+pub(crate) fn manager_set_server_profile_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let framework = crate::paths::system_config_dir();
+    std::fs::create_dir_all(&framework).expect("framework config dir");
+
+    // The bff's account, its request for alice (a member of `pai` in
+    // [`FakePasswords`]) and for bob (who is not), and a desktop caller of its
+    // own.
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core = |allow: bool, passwords: FakePasswords, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let profile = |name: &str, text: &str| {
+        std::fs::write(sys.join(format!("server@{name}.ini")), text).expect("server profile");
+    };
+    let no_profile = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::NoServerProfile(name.to_string()))
+    };
+    let in_use = |name: &str, id: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::ServerProfileInUse(
+            name.to_string(),
+            id.to_string(),
+        ))
+    };
+    let taken = |who: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::AddressInUse(who.to_string()))
+    };
+    let over_max = |count: &str, max: &str, id: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key: "load-on-startup-over-max",
+            values: vec![count.to_string(), max.to_string(), id.to_string()],
+        }))
+    };
+    // The model profile renders of the two instances: a server profile switch
+    // writes no model profile text, so these bytes must not move.
+    let renders = || -> Vec<(String, String)> {
+        ["models@default.ini", "models@lan-2.ini"]
+            .iter()
+            .map(|name| (name.to_string(), text_of(name)))
+            .collect()
+    };
+    // The instance's launch, read after a switch: `flag` is the value of a flag
+    // in its argument list, `None` when the launch carries none.
+    let exe = dir
+        .path()
+        .join("bin")
+        .join(crate::paths::binary_name("llama-server"));
+    let launch = |id: &str| {
+        crate::launch::instance_command(id, &exe).expect("the instance has a profile to launch")
+    };
+    let flag = |cmd: &std::process::Command, name: &str| -> Option<String> {
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let i = args.iter().position(|a| a == name)?;
+        args.get(i + 1).cloned()
+    };
+
+    // The record, seeded the way an earlier write leaves it: a comment, a key
+    // of its own, a `;` comment and a blank line in front of the next section.
+    // The verb writes one key of one section, so the file it writes is compared
+    // byte for byte with these bytes.
+    const SEEDED: &str = "# the manager's own record\n[default]\nServerProfile = default\n; a note of its own\nnote = keep me\n\n[lan-2]\nServerProfile = lan-2\n";
+    std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    // The server profiles. `own` shares `default`'s 8080 (one in use, one
+    // spare), `clash` shares `lan-2`'s 8081 (spare), `big` sits on the free
+    // 8082, `on-bff` on the web service's default port, `tiny` caps the pool at
+    // 1, `roomy` at 3.
+    profile("default", "[Server]\nPort = 8080\nHostname = 127.0.0.1\n");
+    profile("lan-2", "[Server]\nPort = 8081\nHostname = 127.0.0.1\n");
+    profile("own", "[Server]\nPort = 8080\nHostname = 127.0.0.1\n");
+    profile("clash", "[Server]\nPort = 8081\nHostname = 127.0.0.1\n");
+    profile("big", "[Server]\nPort = 8082\nHostname = 127.0.0.1\n");
+    profile("on-bff", "[Server]\nPort = 8590\nHostname = 127.0.0.1\n");
+    profile(
+        "tiny",
+        "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 1\n",
+    );
+    profile(
+        "roomy",
+        "[Server]\nPort = 8084\nHostname = 127.0.0.1\nModelsMax = 3\n",
+    );
+    // The pool: three model profiles that load on startup and one that does
+    // not. The switched-off half asks for a load too, so the count a check
+    // reads is a render's, never the pool's.
+    let pool = "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\nload-on-startup = true\n\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n\n[d]\nmodel = /models/d.gguf\n";
+    let off_pool = "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n";
+    std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+    // The assignments, per instance: `default` inherits the pool, so its render
+    // starts three model profiles; `lan-2` switches all three off, so its
+    // render starts none. The same profile caps one and caps nothing for the
+    // other, which is what the per-instance rule is for.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\n* = inherit\n\n[lan-2]\n* = inherit\na = off\nb = off\nc = off\n",
+    )
+    .expect("assignments.ini");
+
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's record renders every instance"
+        );
+        assert_eq!(
+            flag(&launch("default"), "--port").as_deref(),
+            Some("8080"),
+            "the fixture: the launch reads the profile the section names"
+        );
+        let before = listing();
+        let kept = renders();
+
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Ok(()),
+            "a spare profile on a port nobody runs"
+        );
+        let written = text_of(INSTANCES_FILE);
+        assert_eq!(
+            written,
+            SEEDED.replace("ServerProfile = default", "ServerProfile = big"),
+            "one key of one section: every other byte of the record, the comment, the `;` comment, the key of its own and the blank line in front of the next section, as it was"
+        );
+        assert_eq!(
+            keys_of(&written, "default", "ServerProfile"),
+            vec!["ServerProfile = big".to_string()],
+            "the key is replaced, not added to"
+        );
+        assert_eq!(
+            section(&written, "lan-2"),
+            "[lan-2]\nServerProfile = lan-2\n",
+            "the section of another instance is kept as it was"
+        );
+        let cmd = launch("default");
+        assert_eq!(
+            flag(&cmd, "--port").as_deref(),
+            Some("8082"),
+            "the next launch of the instance is the new profile's port"
+        );
+        assert_eq!(
+            flag(&cmd, "--models-preset").as_deref(),
+            Some(sys.join("models@default.ini").to_string_lossy().as_ref()),
+            "and its model profiles stay the render of the instance id, not of the profile"
+        );
+
+        // A profile that caps the pool: its own key reaches the launch.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "roomy"),
+            Ok(()),
+            "a cap equal to the loads the instance starts is not over it"
+        );
+        let cmd = launch("default");
+        assert_eq!(
+            flag(&cmd, "--port").as_deref(),
+            Some("8084"),
+            "the second switch landed"
+        );
+        assert_eq!(
+            flag(&cmd, "--models-max").as_deref(),
+            Some("3"),
+            "the new profile's cap, read from its file"
+        );
+
+        // Back to the profile it started on.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "default"),
+            Ok(()),
+            "a switch back"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = default".to_string()],
+            "one key after three switches, not three"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            SEEDED,
+            "the record is the bytes it was before the switches"
+        );
+        assert_eq!(listing(), before, "the verb creates no file of its own");
+        for (name, text) in kept {
+            assert_eq!(
+                text_of(&name),
+                text,
+                "and renders nothing: a server profile carries no model profile text, and the render's name is the instance's, not the profile's: {name}"
+            );
+        }
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_server_profile" target="default" caller=":1.42" principal=- outcome=ok"#.to_string();
+                3
+            ],
+            "one record per call: the verb's action, the instance as its target, the caller, no principal as a bare -, ok"
+        );
+    }
+
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "lan-3", "big"),
+            Err(ManagerError::NoInstance),
+            "an id that is no section of the record"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                m.set_server_profile(&desktop, bad, "big"),
+                Err(ManagerError::InvalidId),
+                "not an instance id at all: {bad:?}"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "every refusal above wrote nothing"
+        );
+        assert_eq!(listing(), before, "and created no file");
+    }
+
+    {
+        // A file outside the engine's directory, at the place a naive join of
+        // the name `../x` lands. It stays the fixture's, so the refusals below
+        // built no path.
+        std::fs::write(dir.path().join("x.ini"), b"not a profile\n").expect("outside marker");
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "nope"),
+            no_profile("nope"),
+            "no `server@nope.ini` anywhere: the name the caller asked for comes back"
+        );
+        for bad in ["", "../x", "a/b", "Big", "x.ini"] {
+            assert_eq!(
+                m.set_server_profile(&desktop, "default", bad),
+                no_profile(bad),
+                "a name that builds no profile file, named back: {bad:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join("x.ini")).expect("outside marker"),
+            b"not a profile\n",
+            "a name that builds no profile built no path beside it"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "every refusal above wrote nothing"
+        );
+        assert_eq!(listing(), before, "and created no file");
+    }
+
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "lan-2"),
+            in_use("lan-2", "lan-2"),
+            "a profile another instance runs, naming the profile and that instance"
+        );
+        assert_eq!(
+            m.set_server_profile(&desktop, "lan-2", "default"),
+            in_use("default", "default"),
+            "the same rule read from the other section"
+        );
+        // The profile the instance already runs is no conflict with itself: the
+        // switching instance is out of the walk.
+        // The answer comes at once, from a write of nothing: a write of this
+        // record is an atomic rename that replaces the file, so the record that
+        // is still the same inode is the record the call never rewrote.
+        #[cfg(unix)]
+        let ino = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(sys.join(INSTANCES_FILE))
+                .expect("the record")
+                .ino()
+        };
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "default"),
+            Ok(()),
+            "the profile it already runs is no conflict with itself"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(
+                std::fs::metadata(sys.join(INSTANCES_FILE))
+                    .expect("the record")
+                    .ino(),
+                ino,
+                "the profile it runs is answered at once: the record is the file that was there, not a copy written over it"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "the refusals above wrote nothing, and the accepted call changed no byte: {seed:?}"
+        );
+        assert_eq!(listing(), before, "and neither created a file");
+    }
+
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let seed = text_of(INSTANCES_FILE);
+        // `clash` is spare and sits on lan-2's 8081. A profile no instance runs
+        // binds nothing, so its own save is judged against nothing: the switch
+        // is where this address is refused.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "clash"),
+            taken("lan-2"),
+            "a spare profile on the port of another instance, naming that instance"
+        );
+        // The web service: no `bff.ini` is its default address, 127.0.0.1:8590.
+        std::fs::remove_file(framework.join("bff.ini")).ok();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "on-bff"),
+            taken(BFF_NAME),
+            "the web service's address, named as itself"
+        );
+        // Its file names the address it holds: move the service to 9999 and
+        // 8590 is free, while 9999 is the service's.
+        std::fs::write(
+            framework.join("bff.ini"),
+            "[Bff]\nListen = 127.0.0.1:9999\n",
+        )
+        .expect("bff.ini");
+        profile("on-listen", "[Server]\nPort = 9999\nHostname = 127.0.0.1\n");
+        // The tree is snapshotted after this block's own seeds: the pin below
+        // says the refusals added no file of their own, and `server@on-listen.ini`
+        // is a seed of this block, not one of theirs.
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "on-listen"),
+            taken(BFF_NAME),
+            "the address `bff.ini` names is the one the service holds"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "every refusal above wrote nothing"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and left no file of its own beside the record"
+        );
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "on-bff"),
+            Ok(()),
+            "the service's default address is free once its file moved"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed.replace("ServerProfile = default", "ServerProfile = on-bff"),
+            "the accepted switch is the only key that moved"
+        );
+        std::fs::remove_file(framework.join("bff.ini")).ok();
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        // `own` is spare and holds 8080, which `default` runs right now: the
+        // switch binds nothing new, so it lands.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "own"),
+            Ok(()),
+            "a spare profile on the port the instance already runs"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = own".to_string()],
+            "and the key is the new profile"
+        );
+        // Moved: `default` runs `own` now, so lan-2's 8081 is back in the walk.
+        let seed = text_of(INSTANCES_FILE);
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "clash"),
+            taken("lan-2"),
+            "the instance's current profile is `own` now: lan-2 is not left out"
+        );
+        assert_eq!(text_of(INSTANCES_FILE), seed, "the refusal wrote nothing");
+        // An instance whose profile cannot be read is skipped, as a profile
+        // save skips it: nothing is judged on the defaults of a file that
+        // cannot be read, so 8081 is nobody's and `clash` lands.
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            b"[Server]\nPort = 8081\n\xed\xa0\xbf\n",
+        )
+        .expect("unreadable lan-2 profile");
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "clash"),
+            Ok(()),
+            "an instance whose profile cannot be read binds no address"
+        );
+        std::fs::write(
+            sys.join("server@lan-2.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("lan-2 profile back");
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        assert!(
+            m.render_failures().is_empty(),
+            "the record's renders are rewritten from what is on disk"
+        );
+        let kept = renders();
+        // `default`'s render starts three model profiles, `tiny` caps them at 1.
+        // The switch changes no model profile, so the count it is judged on is
+        // the one the instance starts today: a step to a lower cap is judged
+        // all the same, which is the full rule of (b') 3 at the switch, not the
+        // step rule `SetModelProfile` uses (that one lets a count that does not
+        // rise through).
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "tiny"),
+            over_max("3", "1", "default"),
+            "the new profile's cap under the loads the instance starts, the instance named last, and the count is the render's, not the pool's four"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            SEEDED,
+            "the refusal over the max wrote nothing"
+        );
+        for (name, text) in kept {
+            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+        }
+        // The cap is each instance's own render's: `lan-2` switched its three
+        // off, so `tiny` caps nothing for it, while it refuses `default`.
+        assert_eq!(
+            m.set_server_profile(&desktop, "lan-2", "tiny"),
+            Ok(()),
+            "the same profile, for the instance whose render starts nothing"
+        );
+        // A profile with no `ModelsMax` caps nothing.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Ok(()),
+            "no ModelsMax is no cap"
+        );
+        // A cap raised to the count lands: the rule is a cap check, judged on
+        // what the instance starts.
+        profile(
+            "tiny",
+            "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 3\n",
+        );
+        assert_eq!(
+            m.set_server_profile(&desktop, "lan-2", "roomy"),
+            Ok(()),
+            "and the instance on the raised profile moves on to the cap of 3"
+        );
+        let written = text_of(INSTANCES_FILE);
+        assert_eq!(
+            section(&written, "default"),
+            "[default]\nServerProfile = big\n; a note of its own\nnote = keep me\n\n",
+            "the switching sections, each its own: {written:?}"
+        );
+        assert_eq!(
+            section(&written, "lan-2"),
+            "[lan-2]\nServerProfile = roomy\n",
+            "the switch that landed for the refused instance's own id, in its own section, its only key the profile: {written:?}"
+        );
+        assert_eq!(
+            written,
+            SEEDED
+                .replace("ServerProfile = default", "ServerProfile = big")
+                .replace("ServerProfile = lan-2", "ServerProfile = roomy"),
+            "the record as it stood, only the two `ServerProfile` keys changed: the leading comment, the `;` comment, the key of a section's own and the blank line in front of the next section are the bytes they were, and the refusal over the cap moved nothing: {written:?}"
+        );
+        // The `a`/`b`/`c` keys are the assignments' and stay there: this verb
+        // writes the record, never the assignments.
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\n* = inherit\n\n[lan-2]\n* = inherit\na = off\nb = off\nc = off\n",
+            "the assignments, where those keys live, are the bytes they were"
+        );
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        // The target profile with bytes that are no text. A profile read as
+        // empty lands as a switch to a profile with no port and no cap, so a
+        // file the manager cannot read must never be answered as an empty one.
+        profile("big", "[Server]\nPort = 8082\nHostname = 127.0.0.1\n");
+        std::fs::write(
+            sys.join("server@big.ini"),
+            b"[Server]\nPort = 8082\n\xed\xa0\xbf\n",
+        )
+        .expect("broken profile");
+        let record = bytes_of(INSTANCES_FILE);
+        let broken = bytes_of("server@big.ini");
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
+            "a profile that cannot be read answers the read's own kind"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record,
+            "the record is the bytes that were there: the atomic write never replaced them"
+        );
+        assert_eq!(
+            bytes_of("server@big.ini"),
+            broken,
+            "and the profile the call read keeps its bytes"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and the call left no file of its own behind: no temp, no render"
+        );
+        // A directory at the profile's path: the same answer, and the path
+        // stays what it is.
+        std::fs::remove_file(sys.join("server@big.ini")).expect("big out");
+        std::fs::create_dir(sys.join("server@big.ini")).expect("big dir");
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
+            "a directory at the profile's path answers the read's own kind"
+        );
+        assert!(
+            sys.join("server@big.ini").is_dir(),
+            "the directory is still there: nothing was renamed over it"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and the call left no temp file of its own next to it"
+        );
+        std::fs::remove_dir(sys.join("server@big.ini")).expect("big dir out");
+        profile("big", "[Server]\nPort = 8082\nHostname = 127.0.0.1\n");
+        // The record itself unreadable: the read's own kind, not the empty list
+        // `paths::instance_ids` answers for a file it cannot read, and the
+        // record is never replaced with one the manager made up.
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            b"[default]\nServerProfile = default\n\xed\xa0\xbf\n",
+        )
+        .expect("broken record");
+        let record = bytes_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
+            "a record that cannot be read answers its read's own kind, it is not a record of no instances"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record,
+            "and its bytes are the bytes that were there"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and the call left no file of its own behind"
+        );
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    }
+
+    {
+        // The cap check judges the instance's render, and the render is cut by
+        // `assignments.ini`. A record there that cannot be read is not an empty
+        // one: answering it as if nothing were assigned lets through a switch
+        // the same call refuses while the file can be read.
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let assignments =
+            "[default]\n* = inherit\n\n[lan-2]\n* = inherit\na = off\nb = off\nc = off\n";
+        std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
+        profile(
+            "tiny",
+            "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        );
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        // The fixture: with the record readable the switch is over the cap.
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "tiny"),
+            over_max("3", "1", "default"),
+            "the fixture: the same switch is refused while the assignments can be read"
+        );
+        // Bytes that are no text: the read's own kind, and the record stays.
+        std::fs::write(
+            sys.join("assignments.ini"),
+            b"[default]\n* = inherit\n\xed\xa0\xbf\n",
+        )
+        .expect("broken assignments");
+        let record = bytes_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "tiny"),
+            Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
+            "an assignments.ini that cannot be read answers the read's own kind, not the cap of a render cut by no assignment"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record,
+            "the record is the bytes that were there: the refusal wrote nothing"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and the call left no file of its own behind: no temp, no render"
+        );
+        // A directory at the record's path: the read's own kind, the same.
+        std::fs::remove_file(sys.join("assignments.ini")).expect("assignments out");
+        std::fs::create_dir(sys.join("assignments.ini")).expect("assignments dir");
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "tiny"),
+            Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
+            "a directory at the assignments path answers the read's own kind"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record,
+            "and the record keeps its bytes"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "and the call left no file of its own behind"
+        );
+        std::fs::remove_dir(sys.join("assignments.ini")).expect("assignments dir out");
+        std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
+    }
+
+    {
+        // Two instances naming one server profile by hand: each asking for the
+        // profile its own section already names is no conflict with the other,
+        // whichever of them sorts first, and the switch to it changes no byte.
+        let twin = "# the record as an editor left it\n[default]\nServerProfile = twin\n\n[zulu]\nServerProfile = twin\n";
+        std::fs::write(sys.join(INSTANCES_FILE), twin).expect(INSTANCES_FILE);
+        profile("twin", "[Server]\nPort = 8090\nHostname = 127.0.0.1\n");
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let record = bytes_of(INSTANCES_FILE);
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "twin"),
+            Ok(()),
+            "the instance whose section sorts first asks for the profile it already names"
+        );
+        assert_eq!(
+            m.set_server_profile(&desktop, "zulu", "twin"),
+            Ok(()),
+            "so does the one whose section sorts last: it names that profile too, the first instance is not the holder for it"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record,
+            "the switch to the profile a section already names changes no byte"
+        );
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // The mode of the record the verb writes: the manager's config files
+        // are read by every client, so a write lands them 0644 whatever the
+        // process umask was, even over a file that was 0600. The umask is
+        // process-wide, so it is masked only around the call and restored
+        // before the first assert.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        std::fs::set_permissions(
+            sys.join(INSTANCES_FILE),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("0600 record");
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let before = listing();
+        let guard = UmaskGuard::mask(nix::sys::stat::Mode::from_bits_retain(0o077));
+        let answer = m.set_server_profile(&desktop, "default", "big");
+        let old_mask = guard.0;
+        drop(guard);
+        assert_eq!(
+            nix::sys::stat::umask(old_mask),
+            old_mask,
+            "the window restored the umask"
+        );
+        let mode = std::fs::metadata(sys.join(INSTANCES_FILE))
+            .ok()
+            .map(|f| f.permissions().mode());
+        let after = listing();
+        assert_eq!(answer, Ok(()), "the fixture: the switch lands");
+        assert_eq!(
+            mode.map(|f| f & 0o777),
+            Some(0o644),
+            "the record was 0600 and the process was masked 0o077: the written instances.ini is 0644"
+        );
+        assert_eq!(
+            after, before,
+            "and the write left no temp file of its own beside it"
+        );
+    }
+
+    {
+        // A caller without the right: NotAuthorized, nothing written.
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), log);
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "big"),
+            Err(ManagerError::NotAuthorized),
+            "a caller outside `pai`, polkit refusing"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "a refused caller writes nothing"
+        );
+        assert_eq!(listing(), before, "and leaves no file of its own behind");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_server_profile" target="default" caller=":1.42" principal=- outcome=refused"#.to_string()
+            ],
+            "the refusal is recorded as one record too"
+        );
+    }
+    {
+        // The bff acting for a member: the pair grants the call, the record
+        // names both.
+        let p = FakePasswords::new();
+        let asked_admin = p.asked_admin.clone();
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, p, log);
+        assert_eq!(
+            m.set_server_profile(&member, "default", "big"),
+            Ok(()),
+            "the bff switches the server profile for a member of `pai`"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = big".to_string()],
+            "for the member"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string()],
+            "the membership of the principal, never of the caller"
+        );
+        assert_eq!(
+            *m.authority().asked_bff.lock().unwrap(),
+            vec![bff.clone()],
+            "the caller is checked first, at every call"
+        );
+        assert_eq!(
+            m.authority().asked.lock().unwrap().len(),
+            0,
+            "polkit is never asked for a principal: its subject is the bff"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_server_profile" target="default" caller=":1.9" principal="alice" outcome=ok"#.to_string()
+            ],
+            "the record carries the caller and the principal"
+        );
+
+        // A principal outside `pai`: the call is refused and nothing is written.
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let seed = text_of(INSTANCES_FILE);
+        assert_eq!(
+            m.set_server_profile(&outsider, "default", "own"),
+            Err(ManagerError::NotAuthorized),
+            "a right password of a caller outside `pai` is not enough"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "a refused principal writes nothing"
+        );
+
+        // A caller that is not the bff cannot name a principal at all.
+        let desktop_member = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.set_server_profile(&desktop_member, "default", "own"),
+            Err(ManagerError::NotAuthorized),
+            "only the bff answers for a signed-in member"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "and a caller outside the bff writes nothing"
+        );
+    }
 }
 
 /// The instance record: `instances.ini`, one section per instance. The list

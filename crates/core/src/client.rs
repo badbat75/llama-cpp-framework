@@ -62,6 +62,13 @@ pub enum ClientError {
     BadFileName,
     /// The id of the instance already on that address.
     AddressInUse(String),
+    /// No server profile of that name: no such file, or a name that builds
+    /// none.
+    NoServerProfile(String),
+    /// The server profile is used by this other instance. The wire message is
+    /// the profile and the instance, in that order, split on `SEP`, as a
+    /// refusal's values are.
+    ServerProfileInUse(String, String),
     /// The host that does not resolve.
     UnresolvableHost(String),
     /// The service manager's own message.
@@ -103,6 +110,18 @@ impl ClientError {
             "Io" => ClientError::Io(message.to_string()),
             "Invalid" => Refusal::decode(message).map_or_else(other, ClientError::Invalid),
             "Changed" => ClientError::Changed,
+            // The server profile that is not there, and the instance running
+            // it: both name the profile, the second names the holder too,
+            // after the separator `checks::SEP` (the manager's `encode`).
+            "NoServerProfile" => ClientError::NoServerProfile(message.to_string()),
+            "ServerProfileInUse" => {
+                const SEP: char = '\u{1f}';
+                message
+                    .split_once(SEP)
+                    .map_or_else(&other, |(profile, instance)| {
+                        ClientError::ServerProfileInUse(profile.to_string(), instance.to_string())
+                    })
+            }
             _ => other(),
         }
     }
@@ -115,6 +134,12 @@ impl ClientError {
             ClientError::NoInstance => strings::t("client-no-instance"),
             ClientError::BadFileName => strings::t("client-bad-file-name"),
             ClientError::AddressInUse(id) => strings::fill("client-address-in-use", &[id]),
+            // The arms are forced by the exhaustive match, the smallest the
+            // tests below pin.
+            ClientError::NoServerProfile(_) => strings::t("client-no-server-profile"),
+            ClientError::ServerProfileInUse(profile, instance) => {
+                strings::fill("client-server-profile-in-use", &[profile, instance])
+            }
             ClientError::UnresolvableHost(host) => {
                 strings::fill("client-unresolvable-host", &[host])
             }
@@ -197,6 +222,18 @@ pub trait ManagerClient {
             "this transport of the manager has no SetModelProfile".into(),
         ))
     }
+    /// Points the instance `instance` at the server profile `profile`.
+    /// Guarded as a write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_server_profile(&self, instance: &str, profile: &str) -> Result<(), ClientError> {
+        let _ = (instance, profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetServerProfile".into(),
+        ))
+    }
     /// Whether `password` is `user`'s OS password, and whether that user may
     /// configure: (ok, can_configure). The manager answers only the bff's
     /// account; anyone else is [`ClientError::NotAuthorized`].
@@ -221,12 +258,14 @@ mod tests {
     }
 
     /// The error keys of the client, with how many `{N}` each takes.
-    const KEYS: [(&str, usize); 11] = [
+    const KEYS: [(&str, usize); 13] = [
         ("client-not-authorized", 0),
         ("client-invalid-id", 0),
         ("client-no-instance", 0),
         ("client-bad-file-name", 0),
         ("client-address-in-use", 1),
+        ("client-no-server-profile", 0),
+        ("client-server-profile-in-use", 2),
         ("client-unresolvable-host", 1),
         ("client-service-failed", 1),
         ("client-io-failed", 1),
@@ -296,6 +335,28 @@ mod tests {
             reply("AddressInUse", "default"),
             ClientError::AddressInUse("default".into())
         );
+        // The server profile refusals of `SetServerProfile`: the name alone,
+        // and the pair the message carries, profile first.
+        assert_eq!(
+            reply("NoServerProfile", "big"),
+            ClientError::NoServerProfile("big".into())
+        );
+        assert_eq!(
+            reply("ServerProfileInUse", "big\u{1f}lan-2"),
+            ClientError::ServerProfileInUse("big".into(), "lan-2".into())
+        );
+        assert_eq!(
+            reply("ServerProfileInUse", "\u{1f}lan-2"),
+            ClientError::ServerProfileInUse(String::new(), "lan-2".into()),
+            "an empty profile name is still the pair the manager sent"
+        );
+        // A message that is not a pair is no answer the client can spell out.
+        match reply("ServerProfileInUse", "big") {
+            ClientError::Other(detail) => {
+                assert!(detail.contains("big"), "{detail:?}");
+            }
+            other => panic!("a name with no separator: {other:?}"),
+        }
         assert_eq!(
             reply("UnresolvableHost", "nowhere.invalid"),
             ClientError::UnresolvableHost("nowhere.invalid".into())
@@ -423,6 +484,19 @@ mod tests {
                 fill("client-address-in-use", "default"),
             ),
             (
+                ClientError::NoServerProfile("big".into()),
+                gui.get("client-no-server-profile")
+                    .expect("client-no-server-profile in en_US.toml")
+                    .clone(),
+            ),
+            (
+                ClientError::ServerProfileInUse("big".into(), "lan-2".into()),
+                gui.get("client-server-profile-in-use")
+                    .expect("client-server-profile-in-use in en_US.toml")
+                    .replace("{0}", "big")
+                    .replace("{1}", "lan-2"),
+            ),
+            (
                 ClientError::UnresolvableHost("gpu-box.lan".into()),
                 fill("client-unresolvable-host", "gpu-box.lan"),
             ),
@@ -482,6 +556,39 @@ mod tests {
         assert_eq!(
             ClientError::AddressInUse("private-ai-bff".into()).text(),
             "private-ai-bff already uses that address and port."
+        );
+    }
+
+    /// The in-use sentence of a server profile names the profile and the
+    /// instance that holds it, in the order the manager sends them: the CLI's
+    /// file and the GUI's say the same, `text()` reads the GUI's.
+    #[test]
+    fn the_server_profile_in_use_text_names_the_profile_then_the_instance() {
+        assert_eq!(
+            ClientError::ServerProfileInUse("big".into(), "lan-2".into()).text(),
+            "The server profile big is already used by instance lan-2."
+        );
+        assert_eq!(
+            crate::strings::parse(include_str!("../strings/cli.toml"))
+                .get("client-server-profile-in-use")
+                .expect("client-server-profile-in-use in cli.toml"),
+            "The server profile {0} is already used by instance {1}."
+        );
+    }
+
+    /// A server profile the engine has none of: the sentence says there is
+    /// none, as the one about an instance does, and names nothing.
+    #[test]
+    fn the_no_server_profile_text_says_there_is_none() {
+        assert_eq!(
+            ClientError::NoServerProfile("big".into()).text(),
+            "There is no server profile of that name."
+        );
+        assert_eq!(
+            crate::strings::parse(include_str!("../strings/cli.toml"))
+                .get("client-no-server-profile")
+                .expect("client-no-server-profile in cli.toml"),
+            "There is no server profile of that name."
         );
     }
 

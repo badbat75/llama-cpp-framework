@@ -19,8 +19,8 @@
 //! ```
 //!
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
-//! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf` and
-//! `SetBootEnabled` go as the
+//! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
+//! `SetBootEnabled`, `SetModelProfile` and `SetServerProfile` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
 //! that need no right are unchanged.
@@ -298,6 +298,13 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             ],
         ))
     }
+
+    fn set_server_profile(&self, instance: &str, profile: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetServerProfile",
+            &[("instance", json!(instance)), ("profile", json!(profile))],
+        ))
+    }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
         let ok = v.get("authenticated").and_then(Value::as_bool);
@@ -524,7 +531,7 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 12] = [
+    const EVERY_METHOD: [(&str, Call); 13] = [
         ("list_instances", |c| c.list_instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -540,6 +547,9 @@ mod tests {
         }),
         ("set_model_profile", |c| {
             c.set_model_profile("default", "Qwen 3 (v2) é", "on").err()
+        }),
+        ("set_server_profile", |c| {
+            c.set_server_profile("lan-2", "Qwen 3 (v2) é").err()
         }),
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
@@ -821,6 +831,22 @@ mod tests {
                 error_reply("Invalid", &refusal.encode()),
                 ClientError::Invalid(refusal.clone()),
             ),
+            (
+                error_reply("NoServerProfile", "nope café"),
+                ClientError::NoServerProfile("nope café".into()),
+            ),
+            (
+                // The profile and the instance, split at the separator the
+                // refusal's encode uses.
+                error_reply("ServerProfileInUse", "lan 2 (café)\u{1f}lan-2"),
+                ClientError::ServerProfileInUse("lan 2 (café)".into(), "lan-2".into()),
+            ),
+            (
+                // A name the pair is not there for: the message is the
+                // profile's own name, and nothing is split.
+                error_reply("NoServerProfile", "lan-2\u{1f}lan-2"),
+                ClientError::NoServerProfile("lan-2\u{1f}lan-2".into()),
+            ),
         ];
         for (reply, expected) in cases {
             for (method, f) in EVERY_METHOD {
@@ -855,7 +881,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 13] = [
+        let cases: [(Call, Value); 14] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -926,6 +952,10 @@ mod tests {
             (
                 |c| c.set_model_profile("lan-2", "Qwen 3 (v2) é", "off").err(),
                 json!({"method": "SetModelProfile", "instance": "lan-2", "profile": "Qwen 3 (v2) é", "value": "off"}),
+            ),
+            (
+                |c| c.set_server_profile("lan-2", "Qwen 3 (v2) é").err(),
+                json!({"method": "SetServerProfile", "instance": "lan-2", "profile": "Qwen 3 (v2) é"}),
             ),
         ];
         for (f, request) in cases {
@@ -1227,7 +1257,7 @@ mod tests {
     #[test]
     fn an_acting_client_sends_the_as_forms() {
         let refused = error_reply("InvalidId", "InvalidId");
-        let cases: [Case; 8] = [
+        let cases: [Case; 9] = [
             (
                 "start",
                 |c| c.start("default").err(),
@@ -1276,6 +1306,11 @@ mod tests {
                 "set_model_profile",
                 |c| c.set_model_profile("lan-2", "Qwen 3 (v2) é", "on").err(),
                 json!({"method": "SetModelProfileAs", "principal": "alice", "instance": "lan-2", "profile": "Qwen 3 (v2) é", "value": "on"}),
+            ),
+            (
+                "set_server_profile",
+                |c| c.set_server_profile("lan-2", "Qwen 3 (v2) é").err(),
+                json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "lan-2", "profile": "Qwen 3 (v2) é"}),
             ),
         ];
         for (method, act, request) in cases {

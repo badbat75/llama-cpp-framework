@@ -70,3 +70,6 @@ sha1 = "0.10"
 # they would from the bus; serde is for the generic call helper.
 zbus = { version = "5.19", features = ["p2p", "bus-impl"] }
 serde = "1"
+# The file-mode pins mask the process umask around one call:
+# `nix::sys::stat::umask`, the `fs` feature of the nix already in the lock.
+nix = { version = "0.31", features = ["fs"] }

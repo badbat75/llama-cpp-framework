@@ -759,6 +759,181 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         hang_up(server, client);
     }
+
+    // ── The server profile verb, end to end ──────────────────────────────
+    // The same verb as over D-Bus, over the named pipe's frame: the accepted
+    // call writes the record, the refusals are the core's own errors and
+    // write nothing.
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &Caller(String::new()));
+        assert_eq!(
+            client.set_server_profile("default", "default"),
+            Err(ClientError::NotAuthorized),
+            "no identity, no server profile change"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            record,
+            "the refused call writes no instance record"
+        );
+        assert_eq!(asked(&c), vec![], "a call with no identity asks nobody");
+        hang_up(server, client);
+    }
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &alice);
+        std::fs::write(
+            sys.join("server@alt.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("alt profile");
+        assert_eq!(
+            client.set_server_profile("lan-2", "alt"),
+            Ok(()),
+            "a server profile no instance uses"
+        );
+        let landed = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        assert!(
+            landed.contains("[lan-2]\nServerProfile = alt\n"),
+            "the switch landed: {landed:?}"
+        );
+        assert!(
+            landed.starts_with("[default]\nServerProfile = default\n\n[broken]\n"),
+            "the sections the switch did not touch keep their bytes: {landed:?}"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the caller"
+        );
+        assert_eq!(calls(&c), vec![], "a server profile change touches no unit");
+        assert_eq!(
+            client.set_server_profile("lan-3", "alt"),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_server_profile(bad, "alt"),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        assert_eq!(
+            client.set_server_profile("default", "nope"),
+            Err(ClientError::NoServerProfile("nope".into())),
+            "the pool has no server profile nope"
+        );
+        assert_eq!(
+            client.set_server_profile("lan-2", "broken"),
+            Err(ClientError::ServerProfileInUse(
+                "broken".into(),
+                "broken".into()
+            )),
+            "one server profile, one instance: the client splits profile and owner"
+        );
+        std::fs::write(
+            sys.join("server@clash.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("clash profile");
+        assert_eq!(
+            client.set_server_profile("lan-2", "clash"),
+            Err(ClientError::AddressInUse("default".into())),
+            "the port default listens on, named by its instance"
+        );
+        std::fs::write(
+            sys.join("server@web.ini"),
+            "[Server]\nPort = 8590\nHostname = 127.0.0.1\n",
+        )
+        .expect("web profile");
+        let kept = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        assert_eq!(
+            client.set_server_profile("lan-2", "web"),
+            Err(ClientError::AddressInUse("private-ai-bff".into())),
+            "the port of the web service is named by its service"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            kept,
+            "refused calls write nothing"
+        );
+        let _ = std::fs::remove_file(sys.join("server@clash.ini"));
+        let _ = std::fs::remove_file(sys.join("server@web.ini"));
+        let _ = std::fs::remove_file(sys.join("server@alt.ini"));
+        std::fs::write(sys.join("instances.ini"), record.as_bytes()).expect("restore instances");
+        hang_up(server, client);
+    }
+
+    // ── The `As` form over a stream: the bff vouches for a member ────────
+    // The frame names `SetServerProfileAs` and carries the principal beside
+    // the verb's own arguments; the caller is the bff's service account and
+    // the member's membership decides.
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        std::fs::write(
+            sys.join("server@alt.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("alt profile");
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .set_server_profile("default", "alt"),
+            Ok(()),
+            "the member's switch, vouched for by the bff"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = alt\n\n[broken]\nServerProfile = broken\n\n[lan-2]\nServerProfile = big\n",
+            "the switch landed, the other sections kept"
+        );
+        let kept = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .set_server_profile("default", "default"),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of the administrators"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            kept,
+            "the refused call wrote nothing"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec!["alice".to_string(), "bob".to_string()],
+            "the membership of the vouched name, per call"
+        );
+        let _ = std::fs::remove_file(sys.join("server@alt.ini"));
+        std::fs::write(sys.join("instances.ini"), record.as_bytes()).expect("restore instances");
+        hang_up(server, client);
+    }
+    // A caller that is not the bff, vouching for a member: refused, and the
+    // record kept.
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &alice);
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .set_server_profile("default", "default"),
+            Err(ClientError::NotAuthorized),
+            "only the bff vouches"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            record,
+            "a caller that is not the bff writes nothing"
+        );
+        hang_up(server, client);
+    }
 }
 
 /// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its
