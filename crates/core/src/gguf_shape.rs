@@ -289,6 +289,12 @@ pub struct Shape {
     pub total: u64,
     /// The input embedding tables (`is_input_embedding`): host memory.
     pub token_embd: u64,
+    /// The file has an `output.weight` tensor: the output head is its own
+    /// tensor. A model without one outputs through its input embedding and
+    /// llama.cpp loads a SECOND copy of that tensor for the output layer
+    /// (`TENSOR_DUPLICATED`, `llama-model-loader.cpp`), which the GPUs carry:
+    /// `full_gpu_bytes` subtracts `token_embd` only when this is true.
+    pub output_head: bool,
     /// The tensors outside any block but the input embeddings (output head,
     /// norms): the output layer's position.
     pub globals: u64,
@@ -296,6 +302,12 @@ pub struct Shape {
     /// The KV cache at `ctx` tokens, f16.
     pub kv: u64,
     pub ctx: u64,
+    /// The context the model was trained on, uncapped (`ctx` carries the
+    /// capped one): `<arch>.context_length`, 0 when the header has none.
+    pub trained_ctx: u64,
+    /// The f16 KV bytes of one token (`kv_per_token`); `None` when the layout
+    /// cannot be read, the Shape does not decide what that costs.
+    pub kv_f16_per_token: Option<u64>,
 }
 
 /// `blk.N.` → N.
@@ -317,9 +329,19 @@ fn is_expert(name: &str) -> bool {
     })
 }
 
+/// The output head tensor. A file without one outputs through its input
+/// embedding, and llama.cpp then loads a second copy of that tensor for the
+/// output layer (`TENSOR_DUPLICATED`, `llama-model-loader.cpp`), which goes
+/// on the output layer's device.
+fn is_output_head(name: &str) -> bool {
+    name == "output.weight"
+}
+
 /// Fold the headers of a model's shards (first shard first, each with the
 /// shard's file size) into a `Shape` (pure). The key/values come from the
 /// shard that has `general.architecture` (the first, for gguf-split files).
+/// The sums saturate: a header declaring more than a u64 of tensors is a
+/// number at the ceiling, never a panic or a wrap.
 pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
     let kvs = shards
         .iter()
@@ -335,16 +357,19 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         moe: false,
         total: 0,
         token_embd: 0,
+        output_head: false,
         globals: 0,
         layers: Vec::new(),
         kv: 0,
         ctx: 0,
+        trained_ctx: 0,
+        kv_f16_per_token: None,
     };
     for (h, file_size) in shards {
         for (name, bytes) in tensor_bytes(h, *file_size)? {
-            s.total += bytes;
+            s.total = s.total.saturating_add(bytes);
             if is_input_embedding(name) {
-                s.token_embd += bytes;
+                s.token_embd = s.token_embd.saturating_add(bytes);
             } else if let Some(b) = block_of(name) {
                 if b >= 4096 {
                     return Err(strings::fill("block-one", &[&b]));
@@ -353,22 +378,28 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
                     s.layers.resize(b + 1, Layer::default());
                 }
                 if is_expert(name) {
-                    s.layers[b].experts += bytes;
+                    s.layers[b].experts = s.layers[b].experts.saturating_add(bytes);
                     s.moe = true;
                 } else {
-                    s.layers[b].other += bytes;
+                    s.layers[b].other = s.layers[b].other.saturating_add(bytes);
                 }
             } else {
-                s.globals += bytes;
+                if is_output_head(name) {
+                    s.output_head = true;
+                }
+                s.globals = s.globals.saturating_add(bytes);
             }
         }
     }
     let key = |k: &str| kvs.get(&format!("{arch}.{k}"));
     let int = |k: &str| key(k).and_then(Kv::as_u64);
+    s.trained_ctx = int("context_length").unwrap_or(0);
     s.ctx = int("context_length")
         .filter(|&c| c > 0)
         .map_or(REF_CTX, |c| c.min(REF_CTX));
-    s.kv = kv_per_token(&key, s.layers.len() as u64).map_or(FALLBACK_KV, |b| b * s.ctx);
+    let per_token = kv_per_token(&key, s.layers.len() as u64);
+    s.kv_f16_per_token = per_token;
+    s.kv = per_token.map_or(FALLBACK_KV, |b| b.saturating_mul(s.ctx));
     Ok(s)
 }
 
@@ -391,16 +422,23 @@ pub fn tensor_bytes(h: &Header, file_size: u64) -> Result<Vec<(&str, u64)>, Stri
 }
 
 /// KV bytes per token (f16, all attention layers), from the attention keys;
-/// `None` when the layout is not readable.
+/// `None` when the layout is not readable (no head count, or no key/value
+/// length and no embedding length to take them from). The products saturate:
+/// a header declaring a layout past a u64 counts gives `u64::MAX`, never a
+/// panic.
 pub fn kv_per_token<'k>(key: &dyn Fn(&str) -> Option<&'k Kv>, blocks: u64) -> Option<u64> {
     let int = |k: &str| key(k).and_then(Kv::as_u64);
     let n_layer = int("block_count").unwrap_or(blocks);
     if let Some(rank) = int("attention.kv_lora_rank") {
         // MLA: the compressed latent plus the rope part, one cache.
         let rope = int("rope.dimension_count").unwrap_or(64);
-        return Some((rank + rope) * 2 * n_layer);
+        return Some(
+            rank.saturating_add(rope)
+                .saturating_mul(2)
+                .saturating_mul(n_layer),
+        );
     }
-    let n_embd = int("embedding_length")?;
+    let n_embd = int("embedding_length");
     let n_head = match key("attention.head_count")? {
         Kv::Arr(a) => a.iter().filter_map(Kv::as_u64).max()?,
         v => v.as_u64()?,
@@ -408,20 +446,77 @@ pub fn kv_per_token<'k>(key: &dyn Fn(&str) -> Option<&'k Kv>, blocks: u64) -> Op
     if n_head == 0 {
         return None;
     }
-    let k_len = int("attention.key_length").unwrap_or(n_embd / n_head);
-    let v_len = int("attention.value_length").unwrap_or(n_embd / n_head);
-    let per_head = (k_len + v_len) * 2;
+    // The head's key/value length, the model width over the head count when
+    // the header gives neither.
+    let head_len = |k: &str| int(k).or_else(|| n_embd.map(|e| e / n_head));
+    let k_len = head_len("attention.key_length")?;
+    let v_len = head_len("attention.value_length")?;
+    let per_head = k_len.saturating_add(v_len).saturating_mul(2);
     match key("attention.head_count_kv") {
-        Some(Kv::Arr(a)) => Some(a.iter().filter_map(Kv::as_u64).sum::<u64>() * per_head),
+        Some(Kv::Arr(a)) => Some(
+            a.iter()
+                .filter_map(Kv::as_u64)
+                .fold(0u64, u64::saturating_add)
+                .saturating_mul(per_head),
+        ),
         other => {
             let hkv = other.and_then(Kv::as_u64).unwrap_or(n_head);
             let attn_layers = match int("full_attention_interval").filter(|&i| i > 1) {
                 Some(i) => n_layer.div_ceil(i),
                 None => n_layer,
             };
-            Some(hkv * per_head * attn_layers)
+            Some(hkv.saturating_mul(per_head).saturating_mul(attn_layers))
         }
     }
+}
+
+/// What a KV cache type costs per 32 elements, in bytes (the block
+/// `static_assert`s of `ggml/src/ggml-common.h`, and the type traits of
+/// `ggml/src/ggml.c` for `f8_e4m3`). An unknown name costs f16: a preset's
+/// cache types are content-checked against `checks::KV_CACHE_TYPES`, so a
+/// name outside this list reaches here only from a caller that skipped it.
+fn kv_type_bytes(t: &str) -> u64 {
+    match t {
+        "f32" => 128,
+        "f16" | "bf16" => 64,
+        "f8_e4m3" => 32,
+        "q8_0" => 34,
+        "q5_1" => 24,
+        "q5_0" => 22,
+        "q4_1" => 20,
+        "q4_0" | "iq4_nl" => 18,
+        _ => 64,
+    }
+}
+
+/// The full-GPU estimate of a model (ARCHITECTURE.md (b) 2): what the preset
+/// would put on the GPUs if every tensor llama.cpp can offload were there.
+/// Every tensor of the model (`total`) less the input embedding tables
+/// (`token_embd`, host memory whatever the placement) only when the model has
+/// an `output.weight` of its own (`output_head`): a model without one outputs
+/// through its embedding and llama.cpp loads a second copy of that tensor for
+/// the output layer, so its whole `total` is the weights term. Plus the KV
+/// cache of `ctx` tokens at `type_k` and `type_v`: `kv_f16_per_token` times
+/// `ctx`, scaled by the mean of the two types' sizes relative to f16 (their
+/// bytes per 32 elements over f16's). A layout `kv_per_token` could not read
+/// costs `FALLBACK_KV`, `ctx` of 0 costs no KV, and the placement keys never
+/// lower the result. `ctx` and a header's counts are numbers a client writes,
+/// so the terms saturate: a product past a u64, divided last, is `u64::MAX`,
+/// never a panic or a wrap.
+pub fn full_gpu_bytes(s: &Shape, ctx: u64, type_k: &str, type_v: &str) -> u64 {
+    let weights = if s.output_head {
+        s.total.saturating_sub(s.token_embd)
+    } else {
+        s.total
+    };
+    let scale = kv_type_bytes(type_k) + kv_type_bytes(type_v);
+    let kv = s.kv_f16_per_token.map_or(FALLBACK_KV, |per_token| {
+        per_token
+            .checked_mul(ctx)
+            .and_then(|bytes| bytes.checked_mul(scale))
+            .map_or(u64::MAX, |bytes| bytes / 128)
+    });
+    weights.saturating_add(kv)
 }
 
 // ── Shards ───────────────────────────────────────────────────────────────
@@ -595,6 +690,40 @@ mod tests {
         out.extend_from_slice(s.as_bytes());
     }
 
+    /// One metadata value written the way a GGUF file carries it.
+    pub fn put_kv(out: &mut Vec<u8>, v: &W) {
+        match v {
+            W::U32(x) => {
+                out.extend_from_slice(&4u32.to_le_bytes());
+                out.extend_from_slice(&x.to_le_bytes());
+            }
+            W::U64(x) => {
+                out.extend_from_slice(&10u32.to_le_bytes());
+                out.extend_from_slice(&x.to_le_bytes());
+            }
+            W::Str(s) => {
+                out.extend_from_slice(&8u32.to_le_bytes());
+                put_str(out, s);
+            }
+            W::ArrU32(a) => {
+                out.extend_from_slice(&9u32.to_le_bytes());
+                out.extend_from_slice(&4u32.to_le_bytes());
+                out.extend_from_slice(&(a.len() as u64).to_le_bytes());
+                for x in a {
+                    out.extend_from_slice(&x.to_le_bytes());
+                }
+            }
+            W::ArrStr(a) => {
+                out.extend_from_slice(&9u32.to_le_bytes());
+                out.extend_from_slice(&8u32.to_le_bytes());
+                out.extend_from_slice(&(a.len() as u64).to_le_bytes());
+                for s in a {
+                    put_str(out, s);
+                }
+            }
+        }
+    }
+
     /// A GGUF v3 file's header for `kvs` and `tensors` (name, bytes), and the
     /// whole file's size (offsets laid out as llama.cpp does: each tensor
     /// aligned to 32).
@@ -605,36 +734,7 @@ mod tests {
         out.extend_from_slice(&(kvs.len() as u64).to_le_bytes());
         for (k, v) in kvs {
             put_str(&mut out, k);
-            match v {
-                W::U32(x) => {
-                    out.extend_from_slice(&4u32.to_le_bytes());
-                    out.extend_from_slice(&x.to_le_bytes());
-                }
-                W::U64(x) => {
-                    out.extend_from_slice(&10u32.to_le_bytes());
-                    out.extend_from_slice(&x.to_le_bytes());
-                }
-                W::Str(s) => {
-                    out.extend_from_slice(&8u32.to_le_bytes());
-                    put_str(&mut out, s);
-                }
-                W::ArrU32(a) => {
-                    out.extend_from_slice(&9u32.to_le_bytes());
-                    out.extend_from_slice(&4u32.to_le_bytes());
-                    out.extend_from_slice(&(a.len() as u64).to_le_bytes());
-                    for x in a {
-                        out.extend_from_slice(&x.to_le_bytes());
-                    }
-                }
-                W::ArrStr(a) => {
-                    out.extend_from_slice(&9u32.to_le_bytes());
-                    out.extend_from_slice(&8u32.to_le_bytes());
-                    out.extend_from_slice(&(a.len() as u64).to_le_bytes());
-                    for s in a {
-                        put_str(&mut out, s);
-                    }
-                }
-            }
+            put_kv(&mut out, v);
         }
         let mut off = 0u64;
         for (name, bytes) in tensors {
@@ -648,6 +748,105 @@ mod tests {
         }
         let data_start = (out.len() as u64).div_ceil(32) * 32;
         (out, data_start + off)
+    }
+
+    /// A GGUF v3 header for `kvs` and tensors declared as
+    /// `(name, dims, offset)`: the dims are what the file DECLARES (a corrupt
+    /// header declares more than a u64 can count), the offset where the reader
+    /// looks for the tensor. No file size: `shape_of` counts a tensor's bytes
+    /// from the offsets and the size the caller passes, never from the dims.
+    pub fn gguf_declared(kvs: &[(&str, W)], tensors: &[(&str, &[u64], u64)]) -> Vec<u8> {
+        let mut out = b"GGUF".to_vec();
+        out.extend_from_slice(&3u32.to_le_bytes());
+        out.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
+        out.extend_from_slice(&(kvs.len() as u64).to_le_bytes());
+        for (k, v) in kvs {
+            put_str(&mut out, k);
+            put_kv(&mut out, v);
+        }
+        for (name, dims, off) in tensors {
+            put_str(&mut out, name);
+            out.extend_from_slice(&(dims.len() as u32).to_le_bytes());
+            for d in dims.iter() {
+                out.extend_from_slice(&d.to_le_bytes());
+            }
+            out.extend_from_slice(&12u32.to_le_bytes()); // Q4_K
+            out.extend_from_slice(&off.to_le_bytes());
+        }
+        out
+    }
+
+    // ── The tied-output fixtures: the same qwen2 lookalike with and without
+    // an `output.weight` tensor (slice 10b-1's tied-embedding pins) ──
+    //
+    // One block, an embedding of 100 MiB, attention of 12 MiB, the final norm:
+    // f16 KV of 1024 bytes per token (4 kv heads x (64 + 64) x 2 bytes x 1
+    // block), a trained context of 32k, so 32 MiB of KV at `REF_CTX`.
+
+    /// The attention keys both fixtures share.
+    fn qwen2_kvs() -> Vec<(&'static str, W<'static>)> {
+        vec![
+            ("general.architecture", W::Str("qwen2")),
+            ("qwen2.block_count", W::U32(1)),
+            ("qwen2.context_length", W::U32(REF_CTX as u32)),
+            ("qwen2.embedding_length", W::U32(1024)),
+            ("qwen2.attention.head_count", W::U32(16)),
+            ("qwen2.attention.head_count_kv", W::U32(4)),
+            ("qwen2.attention.key_length", W::U32(64)),
+            ("qwen2.attention.value_length", W::U32(64)),
+        ]
+    }
+
+    /// A model whose file has NO `output.weight`: it uses `token_embd` as its
+    /// output head (tied embeddings).
+    fn tied_fixture() -> (Vec<u8>, u64) {
+        gguf(
+            &qwen2_kvs(),
+            &[
+                ("token_embd.weight", 100 * MIB),
+                ("blk.0.attn_q.weight", 8 * MIB),
+                ("blk.0.attn_k.weight", 2 * MIB),
+                ("blk.0.attn_v.weight", 2 * MIB),
+                ("output_norm.weight", 4096),
+            ],
+        )
+    }
+
+    /// The same model with its own output head: `output.weight`, 100 MiB.
+    fn untied_fixture() -> (Vec<u8>, u64) {
+        gguf(
+            &qwen2_kvs(),
+            &[
+                ("token_embd.weight", 100 * MIB),
+                ("blk.0.attn_q.weight", 8 * MIB),
+                ("blk.0.attn_k.weight", 2 * MIB),
+                ("blk.0.attn_v.weight", 2 * MIB),
+                ("output_norm.weight", 4096),
+                ("output.weight", 100 * MIB),
+            ],
+        )
+    }
+
+    /// A header whose attention keys are the largest a u64 can hold: every
+    /// product of `kv_per_token` overflows, and the shape's KV of any context
+    /// overflows with it.
+    fn huge_kv_fixture() -> (Vec<u8>, u64) {
+        gguf(
+            &[
+                ("general.architecture", W::Str("qwen3")),
+                ("qwen3.block_count", W::U32(4)),
+                ("qwen3.embedding_length", W::U64(u64::MAX)),
+                ("qwen3.attention.head_count", W::U64(1)),
+                ("qwen3.attention.key_length", W::U64(u64::MAX)),
+                ("qwen3.attention.value_length", W::U64(1)),
+                ("qwen3.attention.head_count_kv", W::U64(2)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.attn_q.weight", 2 * MIB),
+                ("output.weight", MIB),
+            ],
+        )
     }
 
     /// A two-block Qwen3-30B-A3B lookalike (real key and tensor names, sizes
@@ -1165,5 +1364,428 @@ mod tests {
         // The estimate may not count this on any card; a check built on it
         // (the manager's, and `hf_fit`'s) agrees on one number.
         assert_eq!(GPU_RESERVE, 2 * GIB);
+    }
+
+    // ── Slice 10b-1: the trained context and the f16 KV bytes per token on
+    // the Shape, and the full-GPU bytes of a shape for a context and two
+    // cache types (the manager's memory estimate, pure) ──
+
+    #[test]
+    fn the_shape_carries_the_trained_context_and_the_f16_kv_bytes_per_token() {
+        let (h, size) = moe_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(
+            s.trained_ctx, 262144,
+            "the trained context, uncapped (`ctx` keeps the capped one)"
+        );
+        assert_eq!(
+            s.kv_f16_per_token,
+            Some(4096),
+            "f16 bytes per token: 4 kv heads x (128 + 128) x 2 bytes x 2 layers"
+        );
+        // The download fixture (`a_downloaded_model_is_read_from_disk_with_its_
+        // shards`): no context_length, and no attention keys the reader can
+        // use.
+        let (h2, s2) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(1)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.attn_q.weight", 2 * MIB),
+                ("output.weight", MIB),
+            ],
+        );
+        let s2 = shape_of(&[(parse_header(&h2).unwrap(), s2)]).unwrap();
+        assert_eq!(
+            s2.trained_ctx, 0,
+            "no context_length in the header: 0, not the reference context"
+        );
+        assert_eq!(
+            s2.kv_f16_per_token, None,
+            "a layout kv_per_token cannot read: None, the Shape does not decide"
+        );
+    }
+
+    #[test]
+    fn the_full_gpu_bytes_are_the_weights_less_the_input_embedding_plus_the_kv() {
+        let (h, size) = moe_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        let weights = s.total - s.token_embd;
+        // f16/f16 at the reference context: 4096 f16 bytes per token, so the
+        // KV term is 128 MiB.
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "f16", "f16"),
+            weights + 4096 * REF_CTX,
+            "f16/f16: the KV term is 128 MiB at 32k"
+        );
+        // q8_0/q8_0: 34 bytes per 32 elements, relative to f16's 64: the mean
+        // is 68/128, so 68 MiB at 32k.
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "q8_0", "q8_0"),
+            weights + 4096 * REF_CTX * 68 / 128,
+            "q8_0/q8_0: the KV term is 68 MiB at 32k"
+        );
+        // q4_0/f16: (18 + 64)/128, so 82 MiB at 32k.
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "q4_0", "f16"),
+            weights + 4096 * REF_CTX * 82 / 128,
+            "q4_0/f16: the KV term is 82 MiB at 32k"
+        );
+        // A context of 0: no KV at all, the weights alone.
+        assert_eq!(full_gpu_bytes(&s, 0, "f16", "f16"), weights);
+    }
+
+    #[test]
+    fn each_cache_type_costs_its_ggml_block_size_per_32_elements() {
+        // The sizes the design lists (ggml's block static asserts): at ctx 1
+        // with one type paired with itself the KV term is 64 times the type's
+        // bytes per 32 elements (4096 f16 bytes per token x 2s/128).
+        let (h, size) = moe_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        let weights = s.total - s.token_embd;
+        for (ty, bytes_per_32) in [
+            ("f32", 128),
+            ("f16", 64),
+            ("bf16", 64),
+            ("f8_e4m3", 32),
+            ("q8_0", 34),
+            ("q5_1", 24),
+            ("q5_0", 22),
+            ("q4_1", 20),
+            ("q4_0", 18),
+            ("iq4_nl", 18),
+        ] {
+            assert_eq!(
+                full_gpu_bytes(&s, 1, ty, ty) - weights,
+                64 * bytes_per_32,
+                "{ty}: {bytes_per_32} bytes per 32 elements"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_kv_layout_costs_the_fallback_reserve() {
+        // The download fixture: kv_per_token reads no layout, so the KV term
+        // is FALLBACK_KV whatever the context and the cache types.
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(1)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.attn_q.weight", 2 * MIB),
+                ("output.weight", MIB),
+            ],
+        );
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(s.kv_f16_per_token, None);
+        let weights = s.total - s.token_embd;
+        assert_eq!(
+            weights,
+            3 * MIB,
+            "the fixture's weights, less the input embedding"
+        );
+        for ctx in [0, 8192] {
+            assert_eq!(
+                full_gpu_bytes(&s, ctx, "f16", "f16"),
+                weights + FALLBACK_KV,
+                "an unreadable layout costs FALLBACK_KV at ctx {ctx}"
+            );
+        }
+        assert_eq!(
+            full_gpu_bytes(&s, 8192, "q4_0", "q4_0"),
+            weights + FALLBACK_KV,
+            "and the cache types change nothing when the layout cannot be read"
+        );
+    }
+
+    #[test]
+    fn an_unknown_cache_type_costs_f16() {
+        // ASSUMPTION: the design says nothing about a name outside the list,
+        // so this pins f16 for it. The values checked here are content-checked
+        // against KV_CACHE_TYPES before any estimate runs (ARCHITECTURE.md
+        // slice 10b's keys), so this is the defensive floor, not a live path.
+        let (h, size) = moe_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "q4_0", "q8_nv3"),
+            full_gpu_bytes(&s, REF_CTX, "q4_0", "f16"),
+            "an unknown cache type name costs f16 (assumed: the design does not say)"
+        );
+    }
+
+    // ── Slice 10b-1, review: the estimate is arithmetic over numbers a client
+    // writes (a profile's ctx-size, a header's counts), so it saturates instead
+    // of overflowing, and a model that uses its embedding as its output head
+    // keeps that embedding on the GPUs ──
+
+    #[test]
+    fn a_model_without_an_output_weight_keeps_its_embedding_on_the_gpu() {
+        // A file with no `output.weight` uses `token_embd` as its output head,
+        // and llama.cpp loads a SECOND copy of that tensor for the output
+        // layer: `src/llama-model-loader.cpp` 1258-1263 turns a
+        // `TENSOR_DUPLICATED` `token_embd` into `LLM_TENSOR_OUTPUT` (so the
+        // copy goes on the output layer's device) and 1466-1481 adds its bytes
+        // to the loaded size; `src/models/beam.cpp` 61-66 is one model that
+        // does this. So the host-memory rule (`is_input_embedding`) does not
+        // lower the estimate for such a model: the weights term is the whole
+        // tensor total, `token_embd` subtracted only when the file has an
+        // `output.weight`.
+        let (h, size) = tied_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(s.token_embd, 100 * MIB, "the fixture has an embedding");
+        assert_eq!(s.total, 112 * MIB + 4096, "the fixture's tensors");
+        assert_eq!(
+            full_gpu_bytes(&s, 0, "f16", "f16"),
+            112 * MIB + 4096,
+            "no output.weight, ctx 0 (no KV): the weights term is the whole total"
+        );
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "f16", "f16"),
+            144 * MIB + 4096,
+            "no output.weight: the whole total plus the f16 KV of 32 MiB at 32k"
+        );
+    }
+
+    #[test]
+    fn a_model_with_an_output_weight_keeps_its_embedding_in_host_memory() {
+        // Guard: green today, the tied fix must keep it. The same model with
+        // its own output head: the embedding stays in host memory, the output
+        // head is the tensor that sits on the GPUs, so the estimate is the same
+        // number as the tied model's: the duplicated embedding costs what a
+        // head of its own costs.
+        let (h, size) = untied_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(s.total, 212 * MIB + 4096, "the fixture's tensors");
+        assert_eq!(s.token_embd, 100 * MIB, "the fixture's embedding");
+        assert_eq!(
+            full_gpu_bytes(&s, 0, "f16", "f16"),
+            112 * MIB + 4096,
+            "output.weight present, ctx 0: the total less the embedding"
+        );
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "f16", "f16"),
+            144 * MIB + 4096,
+            "output.weight present: the same estimate as the tied model"
+        );
+    }
+
+    #[test]
+    fn a_split_model_is_tied_only_when_no_shard_has_an_output_weight() {
+        // The tensor list `shape_of` folds is the whole model's, so the output
+        // head of a split model is seen wherever its shard is. Both rows put
+        // the same 110 MiB of weights on the GPUs: one because the embedding IS
+        // the output head, the other because the head is its own tensor and the
+        // embedding is host memory. The first row is the guard (green today,
+        // first so it is proven), the second the red.
+        for (label, second, total, weights) in [
+            (
+                "the second shard declares output.weight",
+                vec![
+                    ("blk.0.attn_v.weight", 2 * MIB),
+                    ("blk.0.attn_norm.weight", 4096),
+                    ("output.weight", 100 * MIB),
+                ],
+                210 * MIB + 4096,
+                110 * MIB + 4096,
+            ),
+            (
+                "no shard declares output.weight",
+                vec![
+                    ("blk.0.attn_v.weight", 2 * MIB),
+                    ("blk.0.attn_norm.weight", 4096),
+                ],
+                110 * MIB + 4096,
+                110 * MIB + 4096,
+            ),
+        ] {
+            let (h1, s1) = gguf(
+                &qwen2_kvs(),
+                &[
+                    ("token_embd.weight", 100 * MIB),
+                    ("blk.0.attn_q.weight", 8 * MIB),
+                ],
+            );
+            let t: Vec<(&str, u64)> = second.iter().map(|(n, b)| (*n, *b)).collect();
+            let (h2, s2) = gguf(&[("split.no", W::U32(1))], &t);
+            let s = shape_of(&[
+                (parse_header(&h1).unwrap(), s1),
+                (parse_header(&h2).unwrap(), s2),
+            ])
+            .unwrap();
+            assert_eq!(s.total, total, "{label}: the shards add up");
+            assert_eq!(
+                full_gpu_bytes(&s, 0, "f16", "f16"),
+                weights,
+                "{label}, ctx 0: the second row's total is the first row's plus the 100 MiB embedding, so both rows put the same 110 MiB of weights on the GPUs"
+            );
+            assert_eq!(
+                full_gpu_bytes(&s, REF_CTX, "f16", "f16"),
+                weights + 32 * MIB,
+                "{label}: that term plus the f16 KV of 32 MiB at 32k"
+            );
+        }
+    }
+
+    #[test]
+    fn the_estimate_saturates_when_the_context_overflows_the_kv_term() {
+        // `ctx` is a model profile's ctx-size: a member of `pai` writes any
+        // integer there and the manager does this arithmetic as root, so an
+        // overflowing context is a number at the ceiling, never a panic (the
+        // debug build checks the arithmetic) and never a wrap to something that
+        // looks like it fits.
+        let (h, size) = moe_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(s.kv_f16_per_token, Some(4096), "the fixture's real KV");
+        // Guard, first so it is proven: green today, the saturation must not
+        // blunt an answer that fits.
+        assert_eq!(
+            full_gpu_bytes(&s, 1 << 40, "f16", "f16"),
+            s.total - s.token_embd + 4096 * (1 << 40),
+            "a context that does not overflow keeps its exact answer"
+        );
+        for ctx in [u64::MAX, u64::MAX / 2, 1 << 50] {
+            assert_eq!(
+                full_gpu_bytes(&s, ctx, "f32", "f32"),
+                u64::MAX,
+                "ctx {ctx}: the KV term alone is past a u64, the estimate saturates"
+            );
+        }
+        assert_eq!(
+            full_gpu_bytes(&s, u64::MAX, "q4_0", "q4_0"),
+            u64::MAX,
+            "the cheapest cache type does not save an overflowing context"
+        );
+    }
+
+    #[test]
+    fn the_estimate_saturates_when_the_kv_bytes_per_token_overflow_them() {
+        // The other side of the same arithmetic: a header that declares a KV
+        // layout bigger than a u64 (a corrupt or hostile file), read by the
+        // manager as root.
+        let (h, size) = huge_kv_fixture();
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(
+            s.kv_f16_per_token,
+            Some(u64::MAX),
+            "a layout past a u64: the per-token count saturates, no panic"
+        );
+        assert_eq!(
+            s.kv,
+            u64::MAX,
+            "the shape's KV at the reference context saturates with it"
+        );
+        for (ctx, k, v) in [
+            (1u64, "f16", "f16"),
+            (REF_CTX, "f16", "f16"),
+            (REF_CTX, "q4_0", "q4_0"),
+        ] {
+            assert_eq!(
+                full_gpu_bytes(&s, ctx, k, v),
+                u64::MAX,
+                "{k}/{v} at ctx {ctx}: the KV term is past a u64"
+            );
+        }
+    }
+
+    #[test]
+    fn kv_per_token_saturates_on_a_header_with_huge_head_counts() {
+        let kv = |kvs: &[(&str, Kv)]| {
+            let m: HashMap<String, Kv> = kvs
+                .iter()
+                .map(|(k, v)| (format!("a.{k}"), v.clone()))
+                .collect();
+            kv_per_token(&|k: &str| m.get(&format!("a.{k}")), 4)
+        };
+        let big = u64::MAX;
+        let heads = u64::from(u32::MAX);
+        // Guard, first so it is proven: green today, the saturation must not
+        // turn an unreadable layout into a number.
+        assert_eq!(
+            kv(&[
+                ("embedding_length", Kv::Uint(4096)),
+                ("attention.head_count", Kv::Uint(0)),
+            ]),
+            None,
+            "0 heads is an unreadable layout, not a division by zero"
+        );
+        // MLA: the latent size alone is past a u64.
+        assert_eq!(
+            kv(&[
+                ("attention.kv_lora_rank", Kv::Uint(big)),
+                ("rope.dimension_count", Kv::Uint(64)),
+                ("block_count", Kv::Uint(4)),
+            ]),
+            Some(u64::MAX),
+            "MLA with a huge latent: saturated, not a panic"
+        );
+        // The head count as a per-layer array, the largest u32 in every layer,
+        // and the key and value lengths the embedding divided by it.
+        assert_eq!(
+            kv(&[
+                ("embedding_length", Kv::Uint(big)),
+                ("attention.head_count", Kv::Arr(vec![Kv::Uint(heads); 4])),
+                ("block_count", Kv::Uint(4)),
+            ]),
+            Some(u64::MAX),
+            "the head count times the default key length times the layers"
+        );
+        // head_count_kv as an array, the sum times a huge key length.
+        assert_eq!(
+            kv(&[
+                ("attention.head_count", Kv::Uint(1)),
+                ("attention.key_length", Kv::Uint(big)),
+                ("attention.value_length", Kv::Uint(1)),
+                ("attention.head_count_kv", Kv::Arr(vec![Kv::Uint(heads); 4])),
+                ("block_count", Kv::Uint(4)),
+            ]),
+            Some(u64::MAX),
+            "a huge key length times the kv-head array"
+        );
+        // Guard: green today, the saturation must not turn this into a number.
+        assert_eq!(
+            kv(&[
+                ("embedding_length", Kv::Uint(4096)),
+                ("attention.head_count", Kv::Uint(0)),
+            ]),
+            None,
+            "0 heads is an unreadable layout, not a division by zero"
+        );
+    }
+
+    #[test]
+    fn shape_of_saturates_a_header_declaring_more_than_a_u64_can_count() {
+        // The dims are skipped, so the bytes come from the offsets and the size
+        // the caller passes: two shards each declaring a file of `u64::MAX`
+        // bytes is more than a u64 counts.
+        let h = gguf_declared(
+            &[
+                ("general.architecture", W::Str("qwen3")),
+                ("qwen3.block_count", W::U32(1)),
+            ],
+            &[
+                ("token_embd.weight", &[u64::MAX, u64::MAX], 0),
+                ("blk.0.attn_q.weight", &[u64::MAX, u64::MAX], 4096),
+            ],
+        );
+        let hdr = parse_header(&h).expect("the reader skips the dims, the header parses");
+        let s = shape_of(&[(hdr.clone(), u64::MAX), (hdr, u64::MAX)]).expect("no panic");
+        assert_eq!(
+            s.token_embd,
+            2 * 4096,
+            "the embedding is the small tensor at offset 0, in both shards"
+        );
+        assert_eq!(s.total, u64::MAX, "two shards of a u64::MAX: saturated");
+        assert_eq!(s.layers[0].other, u64::MAX, "the block's bytes, saturated");
+        assert_eq!(s.globals, 0, "nothing outside the blocks");
+        assert_eq!(s.kv, FALLBACK_KV, "no attention keys: the fallback reserve");
+        assert_eq!(
+            full_gpu_bytes(&s, REF_CTX, "f16", "f16"),
+            u64::MAX,
+            "the estimate of a saturated shape saturates, it does not overflow"
+        );
     }
 }

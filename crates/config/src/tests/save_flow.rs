@@ -1665,6 +1665,7 @@ pub(super) fn run(app: &AppWindow) {
             moe: false,
             total: gib << 30,
             token_embd: 0,
+            output_head: false,
             globals: 0,
             layers: vec![
                 crate::hf_fit::Layer {
@@ -1675,6 +1676,8 @@ pub(super) fn run(app: &AppWindow) {
             ],
             kv: 1 << 30,
             ctx: 32768,
+            trained_ctx: 32768,
+            kv_f16_per_token: Some((1 << 30) / 32768),
         })
     };
     st.invoke_hf_pick_result(0);

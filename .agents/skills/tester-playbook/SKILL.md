@@ -408,6 +408,15 @@ Lessons only: the rules are in `AGENTS.md`.
   control a later slice inserts in the banner is retargeted ONCE, in the shared helper. Once a jump
   button carries a card title, that title is no longer unique: "no card `h3` is a tab stop" compares
   tabbable ELEMENTS, never NAMES (a name list holds every title twice and is true whatever the code does).
+- A shared start list that GAINS a card's disclosure reds every file whose local tail list starts with
+  that same disclosure (`CARD_TAB_STOPS` led with `en('model-profile-assets')`): drop it from the local
+  list in the same step, else the expected list names the toggle twice and the delta reads as an
+  off-by-one nobody can trace. In the same step, a test title that said "the first card's About toggle"
+  must name `fieldAboutToggles()[0]`: the card's rows carry no About toggle, only the 2e fields do.
+- Retiring the last use of a destructured mount result (`const { main } = await loaded(..)` followed by
+  the deleted `await engineSelect(main)`) is a `tsc -b` TS6133 that the Vitest run never shows: drop the
+  binding with the pin. The same for a helper the retarget leaves uncalled: delete it, its doc comment and
+  its now-unused string constant (`engineSelect` and `ENGINE` in `ModelProfileSave16`).
 - Typing into a control of a card that is not editable yet is a SILENT no-op (React skips `onChange` on a
   disabled control): the value stays, the form stays clean, the save bar stays inert, and a refusal test
   reds at `findByText(en('save-invalid'))` after ~1 s and reads like a missing check. One debug print of
@@ -648,9 +657,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - `test.each` over array items APPENDS the arguments past the `%s` placeholders to the title, so a builder
   function in the tuple prints as source text in the test name. Order the tuple so every value the title
   shows has its placeholder and the builders come last, and type the tuple with all its elements.
-- `--reporter-option outputFile=` is not a vitest flag: to get one line per red, write the dot reporter's
-  stdout to a file and pair each `FAIL` line with the next `AssertionError` /
-  `TestingLibraryElementError` line.
+- One line per red, with the reason: `npx vitest run src/<file> --reporter=json --outputFile=/tmp/opencode/<name>.json`
+  (vitest 5 accepts `--outputFile` for the json reporter), then read the file with node: each
+  `testResults[].assertionResults[]` carries `status`, `title` and `failureMessages`, so print the status,
+  the title and the first line matching `AssertionError|Error|TestingLibraryElementError`. The reporter
+  option is a flag of its own (`--outputFile=`, not `--reporter-option outputFile=`).
 
 ## Renames, wire and text
 

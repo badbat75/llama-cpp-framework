@@ -48,6 +48,17 @@ Lessons only: the rules are in `AGENTS.md`.
   so production carries no `allow(dead_code)`), and do the same with a test-only answer enum, keeping the
   narrow production error beside it. A `#[cfg(test)]` variant that production's `match` names is the shape
   to avoid, not to allow.
+- `cargo test -p <crate>` compiles the `#[cfg(test)]` modules of the workspace's PATH DEPENDENCIES
+  (pai-cli's run builds `pai-app`'s test module), so a new public field of a core struct reddens the
+  fixtures of every crate that builds one: `crates/app/src/hf_fit.rs`, `crates/cli/src/cli.rs` and
+  `crates/config/src/tests/save_flow.rs` all write full `Shape { .. }` literals. Rust has no default
+  for a struct literal, so no shape of the field keeps them compiling. Enumerate the E0063 sites,
+  report them as the tester's, and prove production with `cargo clippy -p <crate> -- -D warnings`
+  (no `--all-targets`).
+- "Saturating, divide last" is NOT a `saturating_mul` chain: `(a * b * c).saturating_mul(...)/d`
+  answers `u64::MAX / d` on an overflowing product, and a test pinning the ceiling wants `u64::MAX`.
+  Write `a.checked_mul(b).and_then(|x| x.checked_mul(c)).map_or(u64::MAX, |x| x / d)`: exact when the
+  product fits, the ceiling when it does not.
 - Gate a request body before connecting: parse and content-type in one helper, answer the route's own
   `*-malformed` 400 first, and let a test pin that order with an empty calls list.
 - `serde_json`'s `preserve_order` is ON for a crate built with `pai-app` in the same invocation and OFF in
@@ -62,6 +73,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `cargo clippy -p <crate> -- -D warnings` (no `--all-targets`) shows the production code clean. After a
   rename that lengthens identifiers, `cargo fmt -p <crate>` per touched crate, and count
   `git status --porcelain -- '*.rs'` before and after to prove fmt touched no new file.
+- rustfmt's order inside one `use` group: a plain `use` of a path BEFORE a `pub use` of the same prefix
+  (`use pai_core::devices::backend_of;` above `pub use pai_core::devices::{gpu_pool, is_integrated, Gpu};`),
+  and inside the braces lowercase items before the `CamelCase` one. A blank line + comment starts a group,
+  so a re-export of a path that sorts before the group above it needs its own group, and the pair order is
+  what `--check` wants first try.
 - rustfmt: it sorts consecutive `mod` declarations (`reorder_modules`), so a `mod` added out of order
   fails `--check`; it breaks a one-line `let x = if c { a } else { b };` past 50 chars
   (`single_line_if_else_max_width`), so write the multi-line form. It also breaks a

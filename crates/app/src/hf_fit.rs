@@ -248,6 +248,11 @@ pub use pai_core::gguf_shape::{
     GPU_RESERVE, REF_CTX,
 };
 
+// The physical pool moved to `pai-core` beside the header reader, so the
+// manager's memory check counts the cards exactly as this estimate does.
+use pai_core::devices::backend_of;
+pub use pai_core::devices::{gpu_pool, is_integrated, Gpu};
+
 const GIB: u64 = 1 << 30;
 const MIB: u64 = 1 << 20;
 
@@ -403,124 +408,6 @@ pub fn fetch_shapes(
 }
 
 // ── The machine ──────────────────────────────────────────────────────────
-
-/// One physical GPU: the `--device` id it is written as, the name the probe
-/// reports, its memory.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Gpu {
-    pub id: String,
-    pub name: String,
-    pub total_mib: u64,
-}
-
-impl Gpu {
-    /// What the estimate may fill: the card minus `GPU_RESERVE`.
-    pub fn usable(&self) -> u64 {
-        (self.total_mib * MIB).saturating_sub(GPU_RESERVE)
-    }
-
-    /// The name without the vendor words: `RTX 4070 SUPER`, `AI PRO R9700`.
-    pub fn short_name(&self) -> String {
-        const VENDOR: [&str; 6] = ["nvidia", "geforce", "amd", "radeon", "intel", "ati"];
-        let words: Vec<&str> = self
-            .name
-            .split_whitespace()
-            .filter(|w| {
-                let bare = w
-                    .trim_end_matches("(TM)")
-                    .trim_end_matches("(R)")
-                    .to_ascii_lowercase();
-                !VENDOR.contains(&bare.as_str())
-            })
-            .collect();
-        if words.is_empty() {
-            self.name.clone()
-        } else {
-            words.join(" ")
-        }
-    }
-}
-
-/// A GPU whose memory is system RAM: an APU's integrated graphics. By name,
-/// since `--list-devices` does not say (AMD reports `AMD Radeon(TM)
-/// Graphics`, or a `780M`/`890M`/`8060S` style model; Intel its UHD, Iris and
-/// bare "Arc Graphics" iGPUs).
-pub fn is_integrated(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
-    if n.contains("radeon") {
-        // `680M` / `780M` / `890M`, and Strix Halo's `8060S` / `8050S` /
-        // `8040S`; a laptop dGPU's `RX 6600M` has four digits and an RX.
-        let model = n.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| {
-            let all_digits = |d: &str| d.chars().all(|c| c.is_ascii_digit());
-            match (t.strip_suffix('m'), t.strip_suffix('s')) {
-                (Some(d), _) => d.len() == 3 && all_digits(d),
-                (_, Some(d)) => d.len() == 4 && d.starts_with("80") && all_digits(d),
-                _ => false,
-            }
-        });
-        return model || n.ends_with("radeon(tm) graphics") || n.ends_with("radeon graphics");
-    }
-    n.contains("intel")
-        && (n.contains("uhd")
-            || n.contains("iris")
-            || n.contains("hd graphics")
-            || n.ends_with("arc(tm) graphics")
-            || n.ends_with("arc graphics"))
-}
-
-/// The physical discrete GPUs of a device probe (see the module header): CPU
-/// entries and unsized devices dropped, one card counted once across
-/// backends, integrated GPUs dropped when a discrete one exists. Each card
-/// keeps the id and size of the backend that sees the most cards of its name,
-/// a non-Vulkan one on a tie (CUDA0, not Vulkan1). Probe order.
-pub fn gpu_pool(devs: &[DeviceOption]) -> Vec<Gpu> {
-    // name -> backends in probe order, each with its devices of that name
-    type Seen<'a> = Vec<(String, Vec<&'a DeviceOption>)>;
-    let mut by_name: Vec<(String, Seen)> = Vec::new();
-    for d in devs.iter().filter(|d| !d.is_cpu() && d.total_mib > 0) {
-        let name = if d.name.is_empty() {
-            d.id.clone()
-        } else {
-            d.name.trim().to_string()
-        };
-        let key = name.to_ascii_lowercase();
-        let entry = match by_name.iter().position(|e| e.0.to_ascii_lowercase() == key) {
-            Some(i) => &mut by_name[i],
-            None => {
-                by_name.push((name, Vec::new()));
-                by_name.last_mut().unwrap()
-            }
-        };
-        let b = backend_of(&d.id);
-        match entry.1.iter_mut().find(|(k, _)| *k == b) {
-            Some((_, list)) => list.push(d),
-            None => entry.1.push((b, vec![d])),
-        }
-    }
-    let mut gpus: Vec<Gpu> = Vec::new();
-    for (name, backends) in by_name {
-        let pick = backends
-            .iter()
-            .max_by_key(|(b, list)| (list.len(), b != "vulkan"));
-        if let Some((_, list)) = pick {
-            gpus.extend(list.iter().map(|d| Gpu {
-                id: d.id.clone(),
-                name: name.clone(),
-                total_mib: d.total_mib,
-            }));
-        }
-    }
-    if gpus.iter().any(|g| !is_integrated(&g.name)) {
-        gpus.retain(|g| !is_integrated(&g.name));
-    }
-    gpus
-}
-
-/// `cuda` for `CUDA0`: a device id's backend, lowercase.
-fn backend_of(id: &str) -> String {
-    id.trim_end_matches(|c: char| c.is_ascii_digit())
-        .to_ascii_lowercase()
-}
 
 /// `gpus` in the order a split runs best on (pure; module header): on Windows
 /// a ROCm card first and a CUDA one last, on Linux the reverse; the rest in
@@ -1794,65 +1681,9 @@ pub mod tests {
         ]
     }
 
-    #[test]
-    fn the_pool_counts_each_card_once_without_the_igpu() {
-        let g = gpu_pool(&probe());
-        assert_eq!(
-            g,
-            [
-                Gpu {
-                    id: "CUDA0".into(),
-                    name: "NVIDIA GeForce RTX 4070 SUPER".into(),
-                    total_mib: 12281
-                },
-                // ROCm1: the iGPU took ROCm0, and ROCm, not Vulkan2, names it.
-                Gpu {
-                    id: "ROCm1".into(),
-                    name: "AMD Radeon AI PRO R9700".into(),
-                    total_mib: 32624
-                },
-            ]
-        );
-        assert_eq!(g[0].short_name(), "RTX 4070 SUPER");
-        assert_eq!(g[1].short_name(), "AI PRO R9700");
-        // Two identical cards stay two.
-        let twin = [
-            dev("CUDA0", "RTX 3090", 24576),
-            dev("CUDA1", "RTX 3090", 24576),
-            dev("Vulkan0", "RTX 3090", 24000),
-            dev("Vulkan1", "RTX 3090", 24000),
-        ];
-        let ids: Vec<String> = gpu_pool(&twin).into_iter().map(|g| g.id).collect();
-        assert_eq!(ids, ["CUDA0", "CUDA1"]);
-        // A card only Vulkan sees keeps its Vulkan id.
-        assert_eq!(
-            gpu_pool(&[dev("Vulkan0", "Intel(R) Arc(TM) A770 Graphics", 16000)])[0].id,
-            "Vulkan0"
-        );
-        // An APU alone keeps its iGPU; the CPU never counts.
-        let apu = [
-            dev("Vulkan0", "AMD Radeon 8060S Graphics", 98304),
-            dev("CPU", "CPU", 65536),
-        ];
-        assert_eq!(gpu_pool(&apu).len(), 1);
-        for n in [
-            "AMD Radeon(TM) Graphics",
-            "AMD Radeon 780M Graphics",
-            "AMD Radeon(TM) 890M",
-            "Intel(R) UHD Graphics 770",
-            "Intel(R) Arc(TM) Graphics",
-        ] {
-            assert!(is_integrated(n), "{n}");
-        }
-        for n in [
-            "AMD Radeon AI PRO R9700",
-            "AMD Radeon RX 7900 XTX",
-            "Intel(R) Arc(TM) A770 Graphics",
-            "NVIDIA GeForce RTX 4070 SUPER",
-        ] {
-            assert!(!is_integrated(n), "{n}");
-        }
-    }
+    // The pool test (`the_pool_counts_each_card_once_without_the_igpu`) moved
+    // to `pai_core::devices::tests` with the items it covers (slice 10b-1);
+    // `dev` and `probe` stay: the budget test below reads them.
 
     #[test]
     fn the_budget_keeps_each_card_in_the_split_order_of_its_os() {
@@ -1948,10 +1779,13 @@ pub mod tests {
             moe: true,
             total,
             token_embd: GIB / 2,
+            output_head: true,
             globals: GIB / 2,
             layers,
             kv: GIB,
             ctx: REF_CTX,
+            trained_ctx: REF_CTX,
+            kv_f16_per_token: Some(GIB / REF_CTX),
         }
     }
 
@@ -1968,10 +1802,13 @@ pub mod tests {
             moe: false,
             total: 17 * GIB,
             token_embd: GIB / 2,
+            output_head: true,
             globals: GIB / 2,
             layers,
             kv: 4 * GIB,
             ctx: REF_CTX,
+            trained_ctx: REF_CTX,
+            kv_f16_per_token: Some(4 * GIB / REF_CTX),
         }
     }
 
@@ -2068,6 +1905,7 @@ pub mod tests {
             moe: false,
             total: GIB / 2 + GIB + 48 * (3 * GIB / 4),
             token_embd: GIB / 2,
+            output_head: true,
             globals: GIB,
             layers: vec![
                 Layer {
@@ -2078,6 +1916,8 @@ pub mod tests {
             ],
             kv: 6 * GIB,
             ctx: REF_CTX,
+            trained_ctx: REF_CTX,
+            kv_f16_per_token: Some(6 * GIB / REF_CTX),
         };
         let e = estimate(&big, &pair(Some(64)));
         assert_eq!(
@@ -2345,6 +2185,7 @@ pub mod tests {
             moe: false,
             total: GIB + 22 * GIB,
             token_embd: GIB / 2,
+            output_head: true,
             globals: GIB / 2,
             layers: vec![
                 Layer {
@@ -2355,6 +2196,8 @@ pub mod tests {
             ],
             kv: 44 * GIB / 8,
             ctx: REF_CTX,
+            trained_ctx: REF_CTX,
+            kv_f16_per_token: Some(44 * GIB / 8 / REF_CTX),
         }
     }
 
@@ -2645,6 +2488,7 @@ pub mod tests {
             moe: false,
             total: gib * GIB,
             token_embd: 0,
+            output_head: false,
             globals: 0,
             layers: vec![
                 Layer {
@@ -2655,6 +2499,8 @@ pub mod tests {
             ],
             kv: GIB,
             ctx: REF_CTX,
+            trained_ctx: REF_CTX,
+            kv_f16_per_token: Some(GIB / REF_CTX),
         };
         let b = budget_of(12, Some(32));
         let x = Extras {

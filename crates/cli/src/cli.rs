@@ -2175,6 +2175,7 @@ mod tests {
                 moe: false,
                 total: gib * GIB,
                 token_embd: 0,
+                output_head: false,
                 globals: 0,
                 layers: vec![
                     Layer {
@@ -2185,6 +2186,8 @@ mod tests {
                 ],
                 kv: GIB,
                 ctx: 32768,
+                trained_ctx: 32768,
+                kv_f16_per_token: Some(GIB / 32768),
             })
         };
         let b = Budget {
