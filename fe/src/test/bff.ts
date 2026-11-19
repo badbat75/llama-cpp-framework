@@ -28,6 +28,7 @@ export const EN: Record<string, string> = {
   'signin-intro':
     'Use the user name and password of your account on the computer that runs Private AI Framework. Only members of its pai group can sign in.',
   'signin-required': 'Sign in to see this page.',
+  'signin-session-ended': 'Your session has ended. Sign in again to continue.',
   'signin-username': 'User name',
   'signin-password': 'Password',
   'signin-submit': 'Sign in',

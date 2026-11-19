@@ -292,7 +292,9 @@ test('1a.24: a 401 on the server read shows the sign-in form in place of the for
   ).toBeNull()
   // As on any protected page (2.2): the route stays, the form says why.
   expect(window.location.hash).toBe('#/instances/default')
-  expect(within(main).getByText(en('signin-required'))).toBeTruthy()
+  // 09 S1b.3: the read answered 401 while the app was signed in, so the notice
+  // says the session ended (it is `signin-required` on a first load signed out).
+  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
   // The whole app is signed out (2.6), and signed out the shell offers
   // nothing: no Sign in in the banner, no nav (09 S1a.4).
   const banner = screen.getByRole('banner')

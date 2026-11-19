@@ -153,9 +153,17 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   page." shows only at an address other than `#/`, an empty hash and `#/sign-in`. Signed in,
   `#/sign-in` is an alias of `#/`, rewritten by `history.replaceState`
   (`fe/briefs/09-signin-only.md` S1a.7 to S1a.10).
-- The session can end while a page is open (any request answers 401). The page keeps what
-  it shows and any unsaved edits, the header and nav stay as they were, and the page offers
-  **Sign in** in a dialog; after it, the user retries. The same user keeps the page as it was, focus
+- The session can end while a page is open. When a page's own **read** answers 401 (the
+  Overview's version, instances and tile boot reads, the instance page's first list read and its
+  server read, the model profile list and one profile), the app signs out: the sign-in page at the
+  same address, the alert "Your session has ended. Sign in again to continue."
+  (`signin-session-ended`, in the place of "Sign in to see this page."; the revoked alert wins over
+  it), the focus on its `h1`; after a sign-in the page reads again (`fe/briefs/09-signin-only.md`
+  S1b). On the instance page neither the polled list nor the boot read signs out (a sign-out there
+  would drop unsaved Server edits with no question): the polls change nothing, the boot field shows
+  `boot-load-failed`, and the next save or action shows its own 401 handling (below).
+- When an **action or a save** answers 401, the page keeps what it shows and any unsaved edits,
+  the header and nav stay as they were, and the page offers **Sign in** in a dialog; after it, the user retries. The same user keeps the page as it was, focus
   on the control whose request was refused. Another user makes the page read its data again for the
   new session; unsaved edits are dropped (they belong to the session that made them) and an alert
   says so.

@@ -26,17 +26,21 @@ function stubFetch(answer: () => Promise<Response>) {
 
 const unavailable = strings['version-unavailable']
 
+// The session-end report (09 S1b.1): not what these tests are about, and none
+// of their answers ends a session, so the page's report goes nowhere.
+const noSignOut = () => {}
+
 // ── Failure paths first ─────────────────────────────────────────────────
 
 test('a service that cannot be reached shows the failure message', async () => {
   stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
-  render(<Version />)
+  render(<Version onSignedOut={noSignOut} />)
   expect(await screen.findByText(unavailable)).toBeTruthy()
 })
 
 test('an error status shows the failure message, not the body', async () => {
   stubFetch(() => Promise.resolve(reply(500, '{"version":"9.9.9"}')))
-  render(<Version />)
+  render(<Version onSignedOut={noSignOut} />)
   expect(await screen.findByText(unavailable)).toBeTruthy()
   expect(document.body.textContent).not.toContain('9.9.9')
 })
@@ -44,7 +48,7 @@ test('an error status shows the failure message, not the body', async () => {
 test('a body that is not the version shows the failure message', async () => {
   for (const body of ['not json', '{}', '{"version":42}', '{"version":""}']) {
     stubFetch(() => Promise.resolve(reply(200, body)))
-    render(<Version />)
+    render(<Version onSignedOut={noSignOut} />)
     expect(await screen.findByText(unavailable), body).toBeTruthy()
     expect(document.body.textContent, body).not.toMatch(/undefined|42|\{0\}/)
     cleanup()
@@ -57,7 +61,7 @@ test('the version read from /api/version is shown', async () => {
   const fetch = stubFetch(() =>
     Promise.resolve(reply(200, '{"version":"2.99.0"}')),
   )
-  render(<Version />)
+  render(<Version onSignedOut={noSignOut} />)
   expect(await screen.findByText('Version 2.99.0')).toBeTruthy()
   expect(fetch).toHaveBeenCalled()
   expect(String(fetch.mock.calls[0]?.[0])).toBe('/api/version')

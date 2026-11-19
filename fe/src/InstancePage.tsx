@@ -11,7 +11,13 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import {
+  apiError,
+  call,
+  isRecord,
+  sessionEnded,
+  sessionRevoked,
+} from './api.ts'
 import Dialog from './Dialog.tsx'
 import { CheckboxField, GroupField } from './Field.tsx'
 import { Icon, type IconName } from './Icon.tsx'
@@ -24,7 +30,7 @@ import {
 import PageHeading from './PageHeading.tsx'
 import type { Runs } from './ServerForm.tsx'
 import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
-import type { Session } from './session.ts'
+import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
@@ -167,7 +173,7 @@ export default function InstancePage({
 }: {
   id: string
   store: InstancesStore
-  onSignedOut: (byManager: boolean) => void
+  onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
 }) {
@@ -199,6 +205,15 @@ export default function InstancePage({
     let live = true
     store.read().then((a) => {
       if (!live) return
+      if (!Array.isArray(a) && a.error === 'session-required') {
+        // The page's first read is the one that says the session is gone
+        // (09 S1b.1, the review of S1b 8 C1): the app signs out and the
+        // sign-in page says why, in place of this page. The later reads are
+        // the polls of the other effect, and a 401 there changes nothing
+        // (S1b.2).
+        onSignedOut('ended')
+        return
+      }
       setAnswer(a)
       const found = find(a, id)
       if (found === undefined) return
@@ -208,7 +223,7 @@ export default function InstancePage({
     return () => {
       live = false
     }
-  }, [store, id])
+  }, [store, id, onSignedOut])
 
   // The polls (41b, 41c): one timer, then one read; a new `next` (or null at
   // a click) cancels the timers and ignores a read still in flight. An action
@@ -431,11 +446,14 @@ function Body({
   return children
 }
 
-/** Reads whether the instance starts at boot: the value, or the error key. */
+/** Reads whether the instance starts at boot: the value, 'signed-out' when the
+ * read answered 401 (the key `failureText` maps for a write), or the error
+ * key: a read shows its own paragraph (`bootReadText`). */
 async function readBoot(id: string): Promise<boolean | string> {
   try {
     const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
     if (reply.ok) return enabledIn(reply.body) ?? 'failed'
+    if (sessionEnded(reply)) return 'signed-out'
     return apiError(reply.body)?.key ?? 'failed'
   } catch {
     return 'failed'
@@ -512,7 +530,12 @@ function Boot({
   useEffect(() => {
     let live = true
     readBoot(id).then((v) => {
-      if (live) setValue(v)
+      if (!live) return
+      // A 401 here is a failed read like any other, shown by `bootReadText`
+      // (09 S1b.6, the review of S1b 8 C2): this is not the page's first read,
+      // and signing out would throw away the Server form's unsaved edits with
+      // no question.
+      setValue(v)
     })
     return () => {
       live = false

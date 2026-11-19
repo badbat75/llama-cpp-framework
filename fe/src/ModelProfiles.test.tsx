@@ -445,7 +445,10 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
     selector: 'input',
   }) as HTMLInputElement
   expect(window.location.hash).toBe('#/profiles/model')
-  expect(within(main).getByText(en('signin-required'))).toBeTruthy()
+  // 09 S1b.3: the read answered 401 while the app was signed in, so the
+  // notice says the session ended (it is `signin-required` on a first load
+  // signed out).
+  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
   expect(within(main).queryByRole('table')).toBeNull()
   expect(
     within(main).queryByRole('heading', {

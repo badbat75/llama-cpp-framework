@@ -801,7 +801,9 @@ test('1c.41b: the idle poll stops at sign-out (the Overview reads once on openin
 
 test('1c.41b: the idle poll stops when a server read signs the app out', async () => {
   const { bff, main } = await open({ server: () => SESSION_ENDED() })
-  expect(within(main).getByText(en('signin-required'))).toBeTruthy()
+  // 09 S1b.3: the server read answered 401 while signed in: the notice says the
+  // session ended.
+  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
   const now = reads(bff)
   await advance(10_000)
   expect(reads(bff)).toBe(now)

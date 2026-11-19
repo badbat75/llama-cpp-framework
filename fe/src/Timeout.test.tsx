@@ -352,7 +352,7 @@ test('1c.47c, 47e: a held idle read is aborted 15 000 ms after it was sent; the 
 test('1c.47b, 47e: a held version read is not aborted at 14 999 ms; at 15 000 ms it is, and the page shows version-unavailable', async () => {
   fakeClock()
   const h = heldFetch()
-  render(<Version />)
+  render(<Version onSignedOut={() => {}} />)
   await flush()
   const signal = h.signals[0]
   expect(signal, 'the version read passes a signal to fetch').toBeInstanceOf(

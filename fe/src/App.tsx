@@ -26,7 +26,12 @@ import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
 import ModelProfilePage from './ModelProfilePage.tsx'
 import { instanceHref, legacyHref, parseRoute, type Route } from './route.ts'
-import { readSession, signOut, type Session } from './session.ts'
+import {
+  readSession,
+  signOut,
+  type Session,
+  type SignedOut,
+} from './session.ts'
 import SignIn from './SignIn.tsx'
 import { ThemeSwitch } from './ThemeSwitch.tsx'
 import { t } from './strings.ts'
@@ -59,6 +64,13 @@ function replaceTo(href: string) {
   )
 }
 
+/**
+ * What the sign-in page says about a session that ended: `ended` when a read
+ * answered 401, `revoked` when the manager refused its user, `none` when the
+ * visitor signed out themselves or never signed in (09 S1b.3, S1b.5).
+ */
+type Notice = 'none' | 'ended' | 'revoked'
+
 export default function App() {
   // The route reads the rewritten address, so an old bookmark opens its page
   // with no flash of the not-found page; the effect below puts the same
@@ -78,10 +90,11 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   // The page holds unsaved changes.
   const [dirty, setDirty] = useState(false)
-  // The session ended because the manager refused its user (a read answered
-  // 403 session-not-administrator): the sign-in form says that, not the plain
-  // "sign in to see this page".
-  const [revoked, setRevoked] = useState(false)
+  // The session ended and the sign-in page says why: see `Notice`. The ref is
+  // the word as it stands right now, so several reads answering 401 at once
+  // say it once and move the focus once (S1b.1).
+  const [notice, setNotice] = useState<Notice>('none')
+  const told = useRef<Notice>('none')
   // Leaving asked about: where to (none: Sign out) and what to give the
   // focus back to (the link or control that asked, or what had it when the
   // browser moved the address).
@@ -115,6 +128,16 @@ export default function App() {
     return () => {
       live = false
     }
+  }, [])
+
+  /**
+   * Stable: the sign-in page stops saying anything about a session. A new
+   * address and a sign-in both start a page with nothing to explain (S1b.3:
+   * the notice goes at the next address change and at a successful sign-in).
+   */
+  const forgetNotice = useCallback(() => {
+    told.current = 'none'
+    setNotice('none')
   }, [])
 
   /**
@@ -202,17 +225,17 @@ export default function App() {
       setHash(next)
       // The alias asks for the Overview and the bar has to say so (S1a.10).
       if (aliased) replaceTo(next)
-      setRevoked(false)
+      forgetNotice()
       setFocus((n) => n + 1)
       setMenuOpen(false)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
-  }, [dirty, hash, session])
+  }, [dirty, forgetNotice, hash, session])
 
   const signedIn = (s: Session) => {
     setSession(s)
-    setRevoked(false)
+    forgetNotice()
     // The kept filter belongs to the one who typed it: another user starts
     // empty (62a).
     if (filter !== null && filter.owner !== s.user) setFilter(null)
@@ -241,12 +264,30 @@ export default function App() {
   }
 
   /**
-   * Stable: the pages sign the app out when a read is refused. `byManager` tells
-   * a read the manager refused from any other sign-out.
+   * Stable: the pages sign the app out when a read is refused, and Sign out
+   * ends the visitor's own session. `reason` says what the sign-in page tells:
+   * a read that answered 401, a read the manager refused, or nothing when the
+   * visitor signed out themselves (09 S1b.3). The word of a kind is told once,
+   * so the reads of one page that all answer 401 move the focus once, and the
+   * revoked word wins over the ended one (S1b.5).
    */
-  const signedOut = useCallback((byManager: boolean) => {
+  const signedOut = useCallback((reason: SignedOut) => {
+    if (reason === 'sign-out') {
+      told.current = 'none'
+      setNotice('none')
+    } else if (
+      reason === 'revoked'
+        ? told.current !== 'revoked'
+        : told.current === 'none'
+    ) {
+      told.current = reason
+      setNotice(reason)
+    } else {
+      // Nothing new to say: the sign-in page is already there, with the focus
+      // on its h1.
+      return
+    }
     setSession(null)
-    setRevoked(byManager)
     setFocus((n) => n + 1)
   }, [])
 
@@ -262,7 +303,7 @@ export default function App() {
     await signOut()
     // Sign out empties the kept filter: the next sign-in may be someone else.
     setFilter(null)
-    signedOut(false)
+    signedOut('sign-out')
     go('#/')
   }
 
@@ -404,7 +445,8 @@ export default function App() {
             // only where the visitor asked for a page of their own (S1a.7).
             <SignIn
               required={route.page !== 'overview' && route.page !== 'sign-in'}
-              revoked={revoked}
+              revoked={notice === 'revoked'}
+              ended={notice === 'ended'}
               onSignedIn={signedIn}
             />
           ) : (
@@ -514,7 +556,7 @@ function Page({
   session: Session | undefined
   filterText: string
   onFilterText: (text: string) => void
-  onSignedOut: (byManager: boolean) => void
+  onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
 }) {
@@ -524,7 +566,7 @@ function Page({
   if (route.page === 'overview' || route.page === 'sign-in') {
     // Signed in, #/sign-in is an alias of #/ (09 S1a.10); the alias effect
     // follows with the address.
-    return <Overview store={store} />
+    return <Overview store={store} onSignedOut={onSignedOut} />
   }
   if (route.page === 'not-found') {
     return <NotFound />

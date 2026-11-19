@@ -13,7 +13,6 @@ export type IconName =
   | 'layers'
   | 'menu'
   | 'moon'
-  | 'log-in'
   | 'log-out'
   | 'play'
   | 'square'
@@ -50,13 +49,6 @@ const SHAPES: Record<IconName, ReactNode> = {
   ),
   moon: (
     <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
-  ),
-  'log-in': (
-    <>
-      <path d="m10 17 5-5-5-5" />
-      <path d="M15 12H3" />
-      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-    </>
   ),
   'log-out': (
     <>

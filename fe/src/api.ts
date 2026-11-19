@@ -55,6 +55,15 @@ export function sessionRevoked(reply: Reply): boolean {
   )
 }
 
+/**
+ * The session this request was made with is gone: 401 `session-required`. The
+ * one answer of the contract read by its status and not by its key
+ * (fe/briefs/09-signin-only.md, S1b.1).
+ */
+export function sessionEnded(reply: Reply): boolean {
+  return reply.status === 401
+}
+
 /** The key and args of an error body, or null when the body is not one. */
 export function apiError(body: unknown): ApiError | null {
   if (typeof body !== 'object' || body === null) return null

@@ -8,7 +8,7 @@ import ServerForm, {
   type ServerDoc,
   withholdsKey,
 } from './ServerForm.tsx'
-import type { Session } from './session.ts'
+import type { Session, SignedOut } from './session.ts'
 import { t } from './strings.ts'
 
 /** What the read gave: the document, or the error key of its message. */
@@ -81,7 +81,7 @@ export default function ServerSection({
   /** Raised by every sign-in that kept the page (43b). */
   renewals: number
   runs: Runs
-  onSignedOut: (byManager: boolean) => void
+  onSignedOut: (reason: SignedOut) => void
   /** A sign-in in the save's dialog: true when the edits stay with it. */
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
@@ -108,7 +108,7 @@ export default function ServerSection({
     readServer(id).then((a) => {
       if (!live) return
       if (a === 'signed-out' || a === 'revoked') {
-        onSignedOut(a === 'revoked')
+        onSignedOut(a === 'revoked' ? 'revoked' : 'ended')
         return
       }
       setAnswer(a)

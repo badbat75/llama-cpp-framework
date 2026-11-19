@@ -75,11 +75,6 @@ const SHAPES: Record<string, Shape[]> = {
       },
     ],
   ],
-  'log-in': [
-    ['path', { d: 'm10 17 5-5-5-5' }],
-    ['path', { d: 'M15 12H3' }],
-    ['path', { d: 'M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4' }],
-  ],
   'log-out': [
     ['path', { d: 'm16 17 5-5-5-5' }],
     ['path', { d: 'M21 12H9' }],
@@ -389,6 +384,26 @@ test('H8a.3 signed out: the banner holds no Sign in and no Menu button (09 S1a.4
     tabNames(banner),
     'the tab order in the banner signed out: home, Dark theme (09 S1a.5)',
   ).toEqual([en('app-name'), en('theme-dark')])
+})
+
+// 09 S1a took the banner's Sign in link away (fe/briefs/09-signin-only.md
+// section 5: `a.session` is gone), so the shape of brief 04's `log-in` row has
+// no place left to draw: the map must not keep a name nothing uses.
+test('09 S1a: Icon.tsx holds no log-in shape, nothing uses it since the signed-out banner lost its Sign in link (comments dropped, so a needle in a comment is no hit)', () => {
+  const src = readFileSync(join(import.meta.dirname, 'Icon.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  expect(
+    src.includes("'log-in'"),
+    'the name is gone from the map and from the union',
+  ).toBe(false)
+  expect(src.includes('m10 17 5-5-5-5'), 'the drawing is gone with it').toBe(
+    false,
+  )
+  expect(
+    src.includes("'log-out'"),
+    'the Sign out button of a signed-in session keeps its shape',
+  ).toBe(true)
 })
 
 // The shape moved into the component: the inline drawing is gone from the file,

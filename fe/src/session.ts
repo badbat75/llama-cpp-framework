@@ -3,6 +3,13 @@ import { apiError, call, type ApiError } from './api.ts'
 
 export type Session = { user: string }
 
+/**
+ * Why the app signed out, which decides what the sign-in page says: a read
+ * answered 401 so the session is gone, the manager refused the session's user,
+ * or the visitor signed out themselves (fe/briefs/09-signin-only.md, S1b.3).
+ */
+export type SignedOut = 'ended' | 'revoked' | 'sign-out'
+
 function isSession(value: unknown): value is Session {
   if (typeof value !== 'object' || value === null) return false
   const { user } = value as { user?: unknown }

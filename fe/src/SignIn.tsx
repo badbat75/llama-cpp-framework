@@ -30,6 +30,7 @@ function failureText(error: ApiError | null): string {
 export default function SignIn({
   required,
   revoked = false,
+  ended = false,
   inDialog = false,
   onSignedIn,
   onCancel,
@@ -38,6 +39,8 @@ export default function SignIn({
   required: boolean
   /** True in place of a protected page after the manager ended the session. */
   revoked?: boolean
+  /** True in place of a protected page after a read answered 401. */
+  ended?: boolean
   /** True inside a Dialog, which holds the title: no h1, no focus taken. */
   inDialog?: boolean
   onSignedIn: (session: Session) => void
@@ -102,6 +105,11 @@ export default function SignIn({
         <p role="alert" className="notice">
           <Icon name="triangle-alert" />
           {t('session-revoked')}
+        </p>
+      ) : ended ? (
+        <p role="alert" className="notice">
+          <Icon name="triangle-alert" />
+          {t('signin-session-ended')}
         </p>
       ) : (
         required && (

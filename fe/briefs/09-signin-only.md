@@ -268,3 +268,92 @@ answers 401 `session-required`), at 1280, 960, 480 and 320 px, light and dark. S
 - Observation, a preference and not a condition: at 1280 the art and panel sit at x 40 to 920, the
   right 360 px empty under a banner whose theme button is at the far right. Centring the pair could
   be a later polish; nothing in H7 or this brief asks for it.
+
+## 8. Review of S1b (designer, 2026-11-19)
+
+**Approved with conditions** (C1, C2). Measured on the uncommitted change in Chromium, Firefox and
+WebKit (Playwright, `stub9.py` with a `/__r401` switch that makes chosen routes answer 401
+`session-required` after a sign-in, beside its `/__revoke` for 403), at 1280 and 320 px, light and
+dark. Scripts: `build/ux-review/s1b.js`, `s1b-all.js`; output `s1b-1.txt` to `s1b-5.txt`.
+
+- S1b.1 met (`Version.tsx` 43, `Instances.tsx` 140, 222, `App.tsx` 274): 48 runs (version, instances,
+  a tile's boot, all three; 3 engines, 2 widths, 2 themes): the sign-in page at `#/`, one
+  `p.notice[role=alert]` with the icon and the exact text, focus on `h1` "Sign in", no nav, no Menu,
+  no dialog; one alert inserted and one focus move after the hash change even with two 401s; no
+  error text ever painted first (a MutationObserver from the first byte saw none). 0 requests in the
+  10 s after the 401. Sign in again: the Overview at `#/`, no notice, the tile and its boot read back.
+- S1b.2 met for the Overview and the polled list: on the instance page a poll answering 401 changes
+  nothing (form, run controls, state kept; the polls go on every 5 s).
+- S1b.3 met for the server read, the model profile list and one profile (24 runs): the page's
+  address kept, exactly one notice, 0 requests in the 6 s after; sign-in lands back on that page.
+  Its place: after the intro, before the plain-HTTP notice (Chromium on a `lan.test` name mapped to
+  127.0.0.1, so a real non-secure context; Firefox and WebKit by overriding `isSecureContext`).
+- S1b.4 met (`en_US.json` 19). S1b.5 met: revoked first then a 401: the revoked alert only; a 401
+  first: the ended alert only (the page is gone before the 403 lands). Never two notices.
+- Notice rules: it goes at an address change while signed out (`signin-required` at a protected
+  hash, none at `#/`); never after Sign out (also with Sign out racing two 401s); never on a first
+  load signed out. A first load WITH a session whose reads answer 401 shows it: right, the session
+  ended.
+- Look: text 42,33,28 on 245,239,230 light, 241,233,223 on 43,36,31 dark (both far above 4.5:1,
+  [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)); icon 21 px in the text colour; forced
+  colours (Chromium) icon and edge drawn, axe 0; 200 % text at 320 px stacked, no sideways scroll.
+  axe 0 on all 12 sign-in-with-notice states and the 12 plain-HTTP states. Firefox reports the
+  plain-HTTP notice 1 px wider than its box at 200 %/320 px (scrollWidth); nothing is cut in the
+  screenshot; not this slice's notice.
+- The role question: right. The ended notice is news the visitor did not ask for (an alert, as the
+  revoked one), the plain-HTTP notice is a standing fact of the page, unannounced by 03 I4. Chromium's
+  accessibility tree: one `alert` node (live `assertive`) holding the text, the `h1` focused; the alert
+  node is inserted once per sign-out. What a screen reader then speaks (the alert, the focused
+  heading, their order, a double reading) is not observable here; untested with NVDA, JAWS or
+  VoiceOver ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)).
+- `fe/ux`: section 4 asked for no S1b state (section 6 is a review measure): unchanged is right.
+  `npm --prefix fe/ux run check`: 52 states per browser in Chromium, Firefox and WebKit, 0 failing.
+
+**C1, not met: the instance page with the session gone never signs out.** With every read answering
+401, a visit to `#/instances/default` shows "The instances could not be read." with the nav and
+Sign out, and nothing more is sent: the page's first `GET /api/instances` (`InstancePage.tsx` 206)
+fails first, so the server read that S1b.3 relies on is never sent. The first list read of the
+instance page signs out like the server read; its polls keep S1b.2. (A gap of this brief, which
+named only the server read.)
+
+**C2, not met: the instance page's boot read signs out (`InstancePage.tsx` 527).** S1b.6 keeps the
+boot field and its `bootReadText`. Signing out there also throws away unsaved edits with no
+question: with the boot read answering 401 3 s late, a Port typed meanwhile was lost, against
+`fe/DESIGN.md` 2.2 ("keeps the user's edits",
+[3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry)). The boot read keeps today's handling
+(`boot-load-failed` in the field); the server read alone signs that page out. The test that pins
+it, `SessionEnded.test.tsx` 714, is retargeted to that field.
+
+Unchanged and checked: a 401 on a save keeps the form and shows the bar's `session-ended` alert; a
+401 on Restart shows `session-ended-retry` with its Sign in, the page kept.
+
+### 8.1 Re-review of the fix round (designer, 2026-11-19): approved
+
+Measured on the uncommitted `InstancePage.tsx` (one build) in Chromium, Firefox and WebKit at 1280
+and 320 px, light theme. Scripts `build/ux-review/s1b-fix.js` (new), `s1b.js` parts 1 and 2 (its
+instance-page boot case dropped: C2 now keeps that page); output `s1b-fix.txt`, `s1b-fix-1.txt`,
+`s1b-fix-2.txt`, `s1b-fix-check.txt`.
+
+- **C1 met** (`InstancePage.tsx` 208 to 216). Signed in on the Overview, the session then gone
+  (every read 401), `#/instances/default` reached by the nav link and by a hash change: 12 of 12
+  runs show the sign-in page at that address, one `signin-session-ended` alert (one inserted), focus
+  on `h1` "Sign in", no nav; "The instances could not be read." never painted (only "Loading…",
+  observed from the first byte); one request (`GET /api/instances`), none in the next 10 s. Two focus
+  moves to an `h1` are recorded: the route's own heading, then "Sign in"; one alert. Sign in again:
+  the instance page, `h1` "default" focused, list, boot and server read again.
+- **C2 met** (`InstancePage.tsx` 456, 533 to 538). Boot read answering 401 3 s late, Port typed
+  meanwhile: 6 of 6 runs keep the page, the nav, Port 8123 and the save bar; the boot field shows
+  `boot-load-failed`; no alert, focus left in Port. The text is true (the value could not be read)
+  and names no wrong cause; acceptable (a preference, not a criterion). What the user sees next: the
+  polled list answering 401 for 11 s (3 polls) changes nothing, so the page does not say the
+  session ended until the user acts; Save then shows the bar's alert "Your session has ended. Sign
+  in again to save; your changes are kept." with Sign in, Port still 8123, focus on Save (6 of 6).
+  Nothing is lost ([3.3.7](https://www.w3.org/TR/WCAG22/#redundant-entry)); a page left open learns
+  of it only at the next save or action, or at the next page's first read.
+- No regression: the Overview's three reads, alone and together (48 runs, 2 themes): one alert,
+  0 requests in the next 10 s, axe 0 on the 12 checked states. The server read, the model profile
+  list and one profile (18 runs): signed out at that address, one alert, 0 requests in the 6 s after.
+  The polled list answering 401 on the instance page: page kept, no alert (6 runs).
+- `npm --prefix fe/ux run check`: 52 states per browser in Chromium, Firefox and WebKit, 0 failing.
+- `fe/DESIGN.md` (the session paragraph, line 156) now names the instance page's first list read and
+  says the boot read and the polls do not sign out.

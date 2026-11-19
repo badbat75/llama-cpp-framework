@@ -1,14 +1,16 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
 import { useEffect, useState } from 'react'
-import { apiError, call, isRecord } from './api.ts'
+import { apiError, call, isRecord, sessionEnded } from './api.ts'
 import { instanceHref } from './route.ts'
+import type { SignedOut } from './session.ts'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
 
 export type Instance = { id: string; engine: string; state: string }
 
-/** What the bff answered: the instances, or the key of the message saying why not. */
+/** What the bff answered: the instances, or the key of the message saying why
+ * not, `session-required` for a read that answered 401 (09 S1b.1). */
 export type Answer = Instance[] | { error: string }
 
 /** The message of an error key the bff answers; anything else is a failure. */
@@ -42,6 +44,7 @@ function isInstance(value: unknown): value is Instance {
 async function readInstances(): Promise<Answer> {
   try {
     const reply = await call('/api/instances')
+    if (sessionEnded(reply)) return { error: 'session-required' }
     if (!reply.ok) {
       const key = apiError(reply.body)?.key
       const known =
@@ -57,14 +60,18 @@ async function readInstances(): Promise<Answer> {
 }
 
 /**
- * Whether the instance starts at boot, for a tile: the value, or null when the
- * read has no answer for the tile. The instance page reads the same route and
- * says why a read failed (its `readBoot`); the Overview is a glance, so a tile
- * shows nothing at all when there is no answer.
+ * Whether the instance starts at boot, for a tile: the value, `session-required`
+ * when the read answered 401 (09 S1b.1), or null when the read has no answer
+ * for the tile. The instance page reads the same route and says why a read
+ * failed (its `readBoot`); the Overview is a glance, so a tile shows nothing at
+ * all when there is no answer.
  */
-async function readBoot(id: string): Promise<boolean | null> {
+async function readBoot(
+  id: string,
+): Promise<boolean | 'session-required' | null> {
   try {
     const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
+    if (sessionEnded(reply)) return 'session-required'
     if (!reply.ok) return null
     return isRecord(reply.body) && typeof reply.body.enabled === 'boolean'
       ? reply.body.enabled
@@ -117,24 +124,36 @@ export function instancesStore(): InstancesStore {
   }
 }
 
-export default function Instances({ store }: { store: InstancesStore }) {
+export default function Instances({
+  store,
+  onSignedOut,
+}: {
+  store: InstancesStore
+  /** Raised when the read answers 401, the session being gone (09 S1b.1). */
+  onSignedOut: (reason: SignedOut) => void
+}) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
 
   useEffect(() => {
     let live = true
     store.read().then((a) => {
-      if (live) setAnswer(a)
+      if (!live) return
+      if (!Array.isArray(a) && a.error === 'session-required') {
+        onSignedOut('ended')
+        return
+      }
+      setAnswer(a)
     })
     return () => {
       live = false
     }
-  }, [store])
+  }, [store, onSignedOut])
 
   return (
     <section>
       <h2>{t('instances-title')}</h2>
-      <Body answer={answer} />
+      <Body answer={answer} onSignedOut={onSignedOut} />
     </section>
   )
 }
@@ -145,7 +164,13 @@ function manyEngines(instances: Instance[]): boolean {
 }
 
 /** The instances as a list of tiles, or the message in their place. */
-function Body({ answer }: { answer: Answer | undefined }) {
+function Body({
+  answer,
+  onSignedOut,
+}: {
+  answer: Answer | undefined
+  onSignedOut: (reason: SignedOut) => void
+}) {
   if (answer === undefined) {
     return null
   }
@@ -162,7 +187,12 @@ function Body({ answer }: { answer: Answer | undefined }) {
     // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
     <ul className="tiles" role="list">
       {answer.map((i) => (
-        <Tile key={i.id} instance={i} engines={engines} />
+        <Tile
+          key={i.id}
+          instance={i}
+          engines={engines}
+          onSignedOut={onSignedOut}
+        />
       ))}
     </ul>
   )
@@ -177,10 +207,12 @@ function Body({ answer }: { answer: Answer | undefined }) {
 function Tile({
   instance,
   engines,
+  onSignedOut,
 }: {
   instance: Instance
   /** The engine line is there: the engines tell the instances apart. */
   engines: boolean
+  onSignedOut: (reason: SignedOut) => void
 }) {
   const { id, engine, state } = instance
   // null: no row, because there is no answer to show.
@@ -189,12 +221,17 @@ function Tile({
   useEffect(() => {
     let live = true
     readBoot(id).then((v) => {
-      if (live && v !== null) setBoot(v)
+      if (!live) return
+      if (v === 'session-required') {
+        onSignedOut('ended')
+        return
+      }
+      if (v !== null) setBoot(v)
     })
     return () => {
       live = false
     }
-  }, [id])
+  }, [id, onSignedOut])
 
   return (
     <li className="tile">

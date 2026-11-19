@@ -15,7 +15,7 @@ import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import { modelProfileHref, modelProfileIdUnreadable } from './route.ts'
-import type { Session } from './session.ts'
+import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { t } from './strings.ts'
 
@@ -150,7 +150,7 @@ export default function ModelProfiles({
   /** The text kept by the shell, for the tab's life (02-models.md, 62). */
   filterText: string
   onFilterText: (text: string) => void
-  onSignedOut: (byManager: boolean) => void
+  onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
 }) {
   // undefined while the reply is awaited.
@@ -162,7 +162,8 @@ export default function ModelProfiles({
     let live = true
     readModelProfiles().then((a) => {
       if (!live) return
-      if (a === 'signed-out' || a === 'revoked') onSignedOut(a === 'revoked')
+      if (a === 'signed-out' || a === 'revoked')
+        onSignedOut(a === 'revoked' ? 'revoked' : 'ended')
       else setAnswer(a)
     })
     return () => {

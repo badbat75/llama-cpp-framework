@@ -374,7 +374,8 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
     selector: 'input',
   }) as HTMLInputElement
   expect(window.location.hash).toBe(HASH)
-  expect(within(main).getByText(en('signin-required'))).toBeTruthy()
+  // 09 S1b.3: a 401 on the read of a signed-in app ends the session.
+  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
   expect(within(main).queryByRole('heading', { level: 1, name: ID })).toBeNull()
   const banner = screen.getByRole('banner')
   expect(
@@ -835,7 +836,7 @@ test('2d.62a: a sign-in after a 401 keeps the filter for the same user', async (
   navigate('#/')
   await heading1(main, en('overview-title'))
   navigate('#/profiles/model')
-  await within(main).findByText(en('signin-required'))
+  await within(main).findByText(en('signin-session-ended'))
   expect(window.location.hash).toBe('#/profiles/model')
   await signInto(main, 'alice')
   const t = await table(main)
@@ -860,7 +861,7 @@ test('2d.62a: a sign-in as another user after a 401 empties the filter', async (
   navigate('#/')
   await heading1(main, en('overview-title'))
   navigate('#/profiles/model')
-  await within(main).findByText(en('signin-required'))
+  await within(main).findByText(en('signin-session-ended'))
   await signInto(main, 'carol')
   const t = await table(main)
   expect(filterField(main).value, 'another user starts empty').toBe('')

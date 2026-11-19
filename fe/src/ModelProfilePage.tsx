@@ -74,7 +74,7 @@ import {
 } from './SaveBar.tsx'
 import { modelProfileIdUnreadable } from './route.ts'
 import { SignInDialog, useSignInDialog } from './SignIn.tsx'
-import type { Session } from './session.ts'
+import type { Session, SignedOut } from './session.ts'
 import { t } from './strings.ts'
 
 /** One model profile as the read gives it, the shape of criterion 81 with the
@@ -203,7 +203,7 @@ export default function ModelProfilePage({
 }: {
   /** The id from the address, while the read has not answered. */
   id: string
-  onSignedOut: (byManager: boolean) => void
+  onSignedOut: (reason: SignedOut) => void
   /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
   onRenewed: (session: Session) => boolean
   /** Told whether the form holds unsaved changes; false when it goes. */
@@ -239,7 +239,7 @@ export default function ModelProfilePage({
     readModelProfile(id).then((a) => {
       if (!live) return
       if (a === 'signed-out' || a === 'revoked') {
-        onSignedOut(a === 'revoked')
+        onSignedOut(a === 'revoked' ? 'revoked' : 'ended')
         return
       }
       // A read a Reload asked for answers the page like a first visit: the
