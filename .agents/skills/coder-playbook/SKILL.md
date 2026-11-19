@@ -70,6 +70,17 @@ Lessons only: the rules are in `AGENTS.md`.
   `for who in [&alice]` is `clippy::single_element_loop`; `.err().expect(msg)` is `clippy::err_expect`,
   whose identical mechanical fix is `.expect_err(msg)` (apply it, name it). A fix that changes what a test
   asserts stays the tester's.
+- A whole crate of mechanical fixes (15 needless `&` in the manager's test fixtures) goes in one call:
+  `cargo clippy --fix --allow-dirty -p <crate> --all-targets -- -D warnings` names the file and how many
+  fixes. Snapshot the file outside the repo first, `diff` it after: every line must be a `&` removed, and
+  the fixer recompiles, so a coercion it cannot prove is left alone. `cargo fmt -p a -p b` takes several
+  crates in one call.
+- Enumerating the reds a panic hides in a one-test e2e, in the tree copy: rewrite `assert!(cond, msg)` as
+  `if !(cond) { eprintln!("MARK"); eprintln!(msg); }` (find the `assert!(` above the needle, balance
+  parens, split at the first top-level comma; a `"RED " + msg` prefix does not compile), and make a shared
+  snapshot helper (`kept`) non-fatal too. Then `cargo test -p <crate> -- --nocapture`: captured stdout is
+  printed ONLY when the test fails, so an all-patched copy that passes prints nothing and a plain grep of
+  the marks is the full red list.
 - Flakes to state in the report, not chase: xtask's script-sandbox tests share ONE temp dir per process
   (keyed by `std::process::id()`, the same in every thread), so a full `cargo test -p xtask` can fail one
   `linux::system_files` script test that passes in isolation and on a rerun; the bff's `tests/session.rs`
@@ -210,6 +221,22 @@ Lessons only: the rules are in `AGENTS.md`.
 - A `models@<id>.ini` render is written after the record change and its failure is the CALL's answer, so a
   verb's doc states which one the caller sees; the renders go through `render_all_locked` (no lock
   recursion) and a lock taken `unwrap_or_else(|e| e.into_inner())` is a documented pattern here.
+- `assign::render` takes BOTH pool files, so a profile sitting in `models.ini.disabled` IS in effect on
+  every instance whose section says `on` for it (an explicit `on` beats the file it lives in). Consequence
+  the tester's fixtures do not agree on: a write of the disabled file that ADDS a profile with a missing
+  `model` while the record keeps it `on` adds a missing pair to that render, so the delta call refuses it,
+  and the block "a switch off never fails a resource check, whatever the file" (its pool has the profile in
+  NO file today) is unsatisfiable with S9C-PIN-1 (same operation, profile already in that file, expected
+  refusal). The pair to report; only a narrower rule ("judge a profile only if the file being written
+  already holds it") gives both, and that is the tester's call, not the coder's.
+- The model-file check (`check_model_files_of`) is a DELTA: it refuses the first (model profile, path) the
+  new render is missing that the same instance's render today (pool pair and record on disk) is not
+  already missing, in id order; the pairs compare whole, so a `model` pointed at a new path is a new pair.
+  Pass `today` in as the render text: `render_of` reads the record from disk, so the caller supplies the
+  pool pair of the render today and the record needs no argument. Consequence to report, not to code
+  around: a save whose text equals the file on disk adds nothing, so it lands, and every fixture that
+  saves the same pool twice with the model file deleted in between expects a refusal no rule that honours
+  ARCHITECTURE.md (b) ("never re-judged", "a `*` narrowed never fail") can give.
 
 ## Renaming a word across the tree
 
@@ -412,3 +439,27 @@ Lessons only: the rules are in `AGENTS.md`.
   the baseline the assertion then calls the verb's doing.
 - To see a full jsdom dump of a failing `getByRole`/`getAllByRole` assertion, use
   `DEBUG_PRINT_LIMIT=200000 npx vitest run src/<File>.test.tsx`.
+
+## `fe/`: the page's identity, the address, and jsdom's history
+
+- "expected `<h1 id="page-heading">` to be `<h1 id="page-heading">` ... serializes to the same string" is
+  a REMOUNT: the h1 the test found is detached (`document.body.contains(h1)` false, `parentElement`
+  undefined). The cause in `App.tsx` is the `key` of the page element: a key that changes with the
+  address remounts the page. When an address is a rename of the page already shown (an alias, a legacy
+  bookmark), key on the NORMALISED address (`const at = ...`), never on the raw hash. Prove a remount
+  by observing `main`'s childList records from before `render`: `-[H1:page-heading]` then `+[H1:...]`.
+- `expect(nav).toBe(expect.anything())` never passes: `toBe` is `Object.is`. Only `toEqual` accepts an
+  asymmetric matcher, so a retarget that writes `toBe(expect.anything())` is a test bug, red for every
+  case that expects the element.
+- `react-hooks/set-state-in-effect` (error here) follows `setState` called from the effect THROUGH a
+  component-scope function, so a wrapper does not help, and a dep on that function loops (a new identity
+  every render). Moving the bar (`history.replaceState`) and moving the focus
+  (`document.getElementById('page-heading')?.focus()`) is DOM work: put it in the effect with NO state
+  update, and derive what the render reads (route, page key) from a normalised value.
+- jsdom session history (30): `location.hash = x` appends an entry AFTER THE CURRENT entry and drops the
+  forward ones, so `history.length` in a file that shares one window is order-dependent: it passes with
+  `-t` and fails in the full run after any test that called `history.back()`. `history.replaceState`
+  never changes the length. A test pinning `history.length` is only meaningful in a window it owns.
+- `startAt()` (`fe/src/test/bff.ts`) is itself a `history.replaceState`. A `vi.spyOn(history,
+  'replaceState')` installed before `open()` records that call too, so an "exactly one replaceState"
+  assertion needs the spy installed after the address is set.

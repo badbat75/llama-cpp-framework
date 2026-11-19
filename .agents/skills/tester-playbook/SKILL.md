@@ -603,6 +603,23 @@ Lessons only: the rules are in `AGENTS.md`.
   `src/strings/en_US.json` and the source files, not the table); deleting them from the JSON while
   production still uses them reds its "every value is used" check, so a strings pin in a new file of the
   slice is a duplicate guard of that one.
+- In a mutation scratch copy of `fe/`, `src/HearthTiles.test.tsx` is ALWAYS red: it reads
+  `../../crates/core/strings/en_US.toml` from `import.meta.dirname`, which resolves outside the copy. Judge
+  a survivor on the rest of the full-suite failures, and never report that file as a kill.
+- Install `pushState` / `replaceState` spies AFTER the mount: the harness's own `startAt(hash)` writes the
+  bar, so a spy installed before it counts the harness, and "one replaceState of `#/`" reds on a correct
+  app. The same rule saves the `history.length` baseline.
+- jsdom's `history.length` cannot pin "no entry added" for a fragment typed and then replaced inside the
+  `hashchange` handler (a bare `replaceState` there moved jsdom's length by 2, a browser's by 0): pin it as
+  `pushState` NOT called plus the exact URL of the `replaceState`, and write the limit in the comment.
+- An alias rule usually has TWO code paths: the arrival whose address equals the state hash takes the
+  "no navigation" branch, and the arrival that MOVES the address takes the `setHash` branch. A test from
+  the Overview alone leaves the second path a survivor: pin both.
+- When a shell part starts arriving with the session (a nav, a Menu button, the banner's Sign in), every
+  synchronous `getByRole('navigation')` helper reds: add an async finder helper and take the part once the
+  session answered, and settle signed-out states by the sign-in `h1`, never by a nav finder (that burns
+  its 1 s timeout and hides the real red). A helper that waits for the banner's signed-out Sign in link
+  needs retargeting the same way once Sign out lands on the sign-in page.
 
 ## Renames, wire and text
 

@@ -905,6 +905,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             let path = dir.join(ASSIGNMENTS_FILE);
             let current = on_disk(ASSIGNMENTS_FILE)?;
             let text = with_profile(&current, instance, profile, value);
+            // The model files the render this record leaves names, judged
+            // against the render this instance has today: only a file the
+            // record ADDS refuses. The check has no cap to read, so it runs on
+            // this instance, the one whose profile file is missing included.
+            let today = render_of(instance, &enabled, &disabled);
+            check_model_files_of(&text, instance, &enabled, &disabled, &today)
+                .map_err(ManagerError::Invalid)?;
             let cap = profile_file(instance)
                 .and_then(|file| std::fs::read_to_string(file).ok())
                 .map(|contents| crate::server_cfg::from_text(&contents).models_max);
@@ -1344,7 +1351,10 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
 /// instance's render. A render is the pool cut by the instance's section of
 /// `assignments.ini`, so the `load-on-startup` count is judged per instance,
 /// against the `ModelsMax` of the server profile that instance's section of
-/// `instances.ini` names. A refusal writes nothing.
+/// `instances.ini` names. Both model profile files are judged for their model
+/// files too: a model profile the write puts in effect on an instance names
+/// files the node has, and a file that instance's render is already missing
+/// is never re-judged. A refusal writes nothing.
 fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
@@ -1377,13 +1387,21 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
             let (old, off) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
             checks::models_file(contents, &old, &off, NO_MODELS_MAX)?;
             checks::model_profile_ids_free(contents, &old, &off)?;
-            check_renders(&enabled, &disabled)
+            check_renders(&enabled, &disabled)?;
+            check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)
         }
         ConfigFile::ModelsDisabled => {
             let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
             checks::models_disabled_file(contents, &old, &enabled_file)?;
             checks::model_profile_ids_free(contents, &old, &enabled_file)?;
-            check_renders(&enabled, &disabled)
+            check_renders(&enabled, &disabled)?;
+            check_model_files(
+                &on_disk(ASSIGNMENTS_FILE),
+                &enabled,
+                &disabled,
+                &enabled_file,
+                &old,
+            )
         }
     }
 }
@@ -1516,6 +1534,116 @@ fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::
         )?;
     }
     Ok(())
+}
+
+/// The model profile keys whose `model` file the engine puts on the node
+/// itself: `hf-repo` downloads it, `model-url` and `docker-repo` replace the
+/// value with a file the engine fetches (llama.cpp `common/arg.cpp`). A model
+/// profile carrying one of them names no file of the node, so the model-file
+/// check looks at nothing for it.
+const FETCH_KEYS: [&str; 3] = ["hf-repo", "model-url", "docker-repo"];
+
+/// The model files of every instance's render, in id order: the first render
+/// naming a file the write ADDS refuses. `assignments`, `enabled` and
+/// `disabled` are the record and the pool pair the write leaves; `old` and
+/// `off` are the pool pair on disk, which with the record on disk (read by
+/// `render_of`) is the render today.
+fn check_model_files(
+    assignments: &str,
+    enabled: &str,
+    disabled: &str,
+    old: &str,
+    off: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    for id in crate::paths::instance_ids() {
+        check_model_files_of(
+            assignments,
+            &id,
+            enabled,
+            disabled,
+            &render_of(&id, old, off),
+        )?;
+    }
+    Ok(())
+}
+
+/// The model files instance `id`'s render names, over the pool pair and the
+/// assignment record `assignments`: the render the write is about to produce.
+/// Every model profile in effect has a `model` whose every file (every shard
+/// of a split one) is a regular file: the `metadata` call follows a symlink,
+/// so a link to a file is that file, while a directory, a FIFO or a device is
+/// a file that is not there. A value that is not absolute is looked for in
+/// `launch::instance_current_dir`, the folder the router and its children
+/// inherit, and the refusal names the path the check looked at, the resolved
+/// one. The refusal is `model-profile-model-missing` with
+/// `[model profile, instance, path]`. The check reads no server profile, so it
+/// runs on an instance whose profile file is missing too: its launch is
+/// refused for the profile, and a model file is a fact about the node.
+///
+/// The check refuses only a file the write ADDS: a (model profile, path) pair
+/// that the instance's render today (`today`: the render of the pool pair and
+/// the record on disk) is already missing is left alone, so a switch off, an
+/// assignment removed, a `*` narrowed, or a save that touches only another
+/// model profile, never fails on a file a model profile already in effect lost
+/// (ARCHITECTURE.md (b), "Which writes run them"). The first missing pair of
+/// the new render that is not missing today refuses, the instances answered in
+/// id order.
+fn check_model_files_of(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    today: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    let cwd = crate::launch::instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    );
+    let was = missing_model_files(today, &cwd);
+    if let Some((profile, path)) = missing_model_files(&render, &cwd)
+        .iter()
+        .find(|pair| !was.contains(pair))
+    {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-model-missing",
+            values: vec![profile.clone(), id.to_string(), path.clone()],
+        });
+    }
+    Ok(())
+}
+
+/// The model files the render `render` names that are not on the node, as the
+/// (model profile, path) pair of each, in the order the check looks at them:
+/// the sections in the render's order, and for each the files of its `model`
+/// value in the order [`pai_core::checks::model_files_of`] lists them, the
+/// path the check looked at. A model profile carrying one of [`FETCH_KEYS`] is
+/// skipped, the engine putting that file on the node itself.
+fn missing_model_files(render: &str, cwd: &std::path::Path) -> Vec<(String, String)> {
+    let mut missing = Vec::new();
+    for section in pai_core::ini::parse_sections(render) {
+        let get = |key: &str| section.keys.get(key).map(String::as_str);
+        if FETCH_KEYS
+            .iter()
+            .any(|key| get(key).is_some_and(|v| !v.trim().is_empty()))
+        {
+            continue;
+        }
+        for file in pai_core::checks::model_files_of(get("model").unwrap_or_default()) {
+            let file = std::path::Path::new(&file);
+            let path = if file.is_absolute() {
+                file.to_path_buf()
+            } else {
+                cwd.join(file)
+            };
+            if !std::fs::metadata(&path).is_ok_and(|f| f.is_file()) {
+                missing.push((section.id.clone(), path.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    missing
 }
 
 /// `id` if it is a valid instance id.
@@ -2152,6 +2280,47 @@ fn write_record(dir: &std::path::Path, ids: &[&str]) {
     .expect(INSTANCES_FILE);
 }
 
+/// A fixture's model profile text with files the node has. A write that puts a
+/// model profile in effect is checked for its model files, so a fixture whose
+/// pool is in effect has to name files that exist: each `model` value becomes
+/// an empty file under `dir/models` and is replaced by its path. The ids, the
+/// other keys, the comments and the order of the text are kept.
+#[cfg(test)]
+pub(crate) fn real_model_files(dir: &std::path::Path, text: &str) -> String {
+    let root = dir.join("models");
+    std::fs::create_dir_all(&root).expect("models dir");
+    let mut out = String::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("model") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // What follows the first `;` or `#` is a comment (`ini::parse_sections`).
+        let value = &value[..value.find([';', '#']).unwrap_or(value.len())];
+        let value = value.trim();
+        if value.is_empty() {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        let name = std::path::Path::new(value)
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new("model"));
+        let path = root.join(name);
+        std::fs::write(&path, "").expect("model file");
+        out.push_str("model = ");
+        out.push_str(&path.to_string_lossy());
+        out.push('\n');
+    }
+    out
+}
+
 /// The umask window of the mode pins: the constructor masks the process with
 /// the mode it is given and keeps the previous umask, `Drop` restores it. The
 /// umask is process-wide and the e2e phases run on parallel threads, so a
@@ -2321,7 +2490,10 @@ pub(crate) fn manager_e2e() {
 
     // ── Writes: the directory created, atomic, no temp file left ─────────
     let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    );
     {
         let m = Manager::new(
             FakeService::new(),
@@ -2337,14 +2509,14 @@ pub(crate) fn manager_e2e() {
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, false),
+            m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
         assert_eq!(
             m.write_file(
                 &alice,
                 "models.ini.disabled",
-                "[Old]\nmodel = /m/old.gguf\n",
+                &real_model_files(dir.path(), "[Old]\nmodel = /m/old.gguf\n"),
                 false
             ),
             Ok(())
@@ -2372,7 +2544,7 @@ pub(crate) fn manager_e2e() {
         );
         assert_eq!(
             m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert!(
             m.service().calls.lock().unwrap().is_empty(),
@@ -2402,10 +2574,13 @@ pub(crate) fn manager_e2e() {
             format!("{default_ini}ModelsMax = 1\n"),
         )
         .expect("ModelsMax fixture");
-        let two_loading = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
-                           [b]\nmodel = /m/b.gguf\nload-on-startup = true\n";
+        let two_loading = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+             [b]\nmodel = /m/b.gguf\nload-on-startup = true\n",
+        );
         assert_eq!(
-            m.write_file(&alice, "models.ini", two_loading, false),
+            m.write_file(&alice, "models.ini", &two_loading, false),
             Err(ManagerError::Invalid(pai_core::checks::Refusal {
                 key: "load-on-startup-over-max",
                 values: vec!["2".into(), "1".into(), "default".into()],
@@ -2414,7 +2589,7 @@ pub(crate) fn manager_e2e() {
         );
         assert_eq!(
             m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(model_profiles))),
+            Ok(Some(plain(&model_profiles))),
             "the refused pool wrote nothing"
         );
         // The same pool is accepted once that instance's own max holds it.
@@ -2424,7 +2599,7 @@ pub(crate) fn manager_e2e() {
         )
         .expect("ModelsMax fixture");
         assert_eq!(
-            m.write_file(&alice, "models.ini", two_loading, false),
+            m.write_file(&alice, "models.ini", &two_loading, false),
             Ok(())
         );
         // The pool and the instance file the blocks that follow expect.
@@ -2433,7 +2608,7 @@ pub(crate) fn manager_e2e() {
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, false),
+            m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
 
@@ -2469,7 +2644,7 @@ pub(crate) fn manager_e2e() {
         assert_eq!(m.list_instances(), ["default"]);
         assert_eq!(
             m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(m.status("default"), Ok(UnitState::Active));
         assert!(
@@ -2776,7 +2951,7 @@ pub(crate) fn manager_e2e() {
         record(&["default", "lan-2", "wild", "bare"]);
         // models.ini has no address: never checked.
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, false),
+            m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
         assert_eq!(m.list_instances(), ["bare", "default", "lan-2", "wild"]);
@@ -2803,7 +2978,12 @@ pub(crate) fn manager_e2e() {
         let probe = sys.join("probe");
         let enforced = std::fs::write(&probe, "").is_err();
         let _ = std::fs::remove_file(&probe);
-        let result = m.write_file(&alice, "models.ini", "[Other]\nmodel = /m/o.gguf\n", false);
+        let result = m.write_file(
+            &alice,
+            "models.ini",
+            &real_model_files(dir.path(), "[Other]\nmodel = /m/o.gguf\n"),
+            false,
+        );
         std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
         if enforced {
             assert!(
@@ -2939,7 +3119,11 @@ pub(crate) fn manager_instance_files_e2e() {
             .collect()
     };
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let fixtures = tempfile::tempdir().expect("tempdir");
+    let model_profiles = real_model_files(
+        fixtures.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
 
     // ── Writes go through the group seam: instance files only ────────────
     {
@@ -2956,7 +3140,7 @@ pub(crate) fn manager_instance_files_e2e() {
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, false),
+            m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
         let c = group_calls.lock().unwrap().clone();
@@ -2982,7 +3166,7 @@ pub(crate) fn manager_instance_files_e2e() {
         // ── The model profile files need no caller at all ───────────────────────
         assert_eq!(
             m.read_file(None::<&Caller>, "models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(
             m.read_file(None::<&Caller>, "models.ini.disabled"),
@@ -3196,16 +3380,16 @@ ModelsMax = 2
     // ── The model profile files are never blanked, nor is configure asked ───────
     {
         let m = manager(false);
-        let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nOpencodeApiKey = not-a-secret-here\n";
-        put("models.ini", model_profiles);
-        put("models.ini.disabled", model_profiles);
+        let model_profiles = real_model_files(dir.path(), "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nOpencodeApiKey = not-a-secret-here\n");
+        put("models.ini", &model_profiles);
+        put("models.ini.disabled", &model_profiles);
         assert_eq!(
             m.read_file(None::<&Caller>, "models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(
             m.read_file(Some(&alice), "models.ini.disabled"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(*m.authority().asked_quietly.lock().unwrap(), vec![]);
     }
@@ -3438,9 +3622,13 @@ ModelsMax = 2
     {
         put("server@default.ini", saved);
         let m = manager(true);
-        let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+        let fixtures = tempfile::tempdir().expect("tempdir");
+        let model_profiles = real_model_files(
+            fixtures.path(),
+            "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+        );
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, true),
+            m.write_file(&alice, "models.ini", &model_profiles, true),
             Ok(())
         );
         assert_eq!(get("models.ini"), model_profiles);
@@ -3476,11 +3664,12 @@ pub(crate) fn manager_engine_dir_e2e() {
     // An earlier layout's files and the framework's own, in its directory.
     std::fs::create_dir_all(&framework).expect("framework dir");
     let stray_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let stray_model_profiles = "[stray]\nmodel = /models/stray.gguf\n";
+    let stray_model_profiles =
+        real_model_files(dir.path(), "[stray]\nmodel = /models/stray.gguf\n");
     for (name, text) in [
         ("server@stray.ini", stray_ini),
         ("server@default.ini", stray_ini),
-        ("models.ini", stray_model_profiles),
+        ("models.ini", &stray_model_profiles),
         ("bff.ini", "[Bff]\nListen = 127.0.0.1:8590\n"),
     ] {
         std::fs::write(framework.join(name), text).expect("framework file");
@@ -3507,25 +3696,29 @@ pub(crate) fn manager_engine_dir_e2e() {
 
     // ── Writes land in the engine's directory ─────────────────────────────
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
-    let disabled = "[Old]\nmodel = /models/old.gguf\n";
+    let fixtures = tempfile::tempdir().expect("tempdir");
+    let model_profiles = real_model_files(
+        fixtures.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
+    let disabled = real_model_files(dir.path(), "[Old]\nmodel = /models/old.gguf\n");
     assert_eq!(
         m.write_file(&alice, "server@default.ini", ini, false),
         Ok(())
     );
     assert_eq!(
-        m.write_file(&alice, "models.ini", model_profiles, false),
+        m.write_file(&alice, "models.ini", &model_profiles, false),
         Ok(())
     );
     assert_eq!(
-        m.write_file(&alice, "models.ini.disabled", disabled, false),
+        m.write_file(&alice, "models.ini.disabled", &disabled, false),
         Ok(())
     );
     write_record(&engine, &["default"]);
     for (name, text) in [
         ("server@default.ini", ini),
-        ("models.ini", model_profiles),
-        ("models.ini.disabled", disabled),
+        ("models.ini", &model_profiles),
+        ("models.ini.disabled", &disabled),
     ] {
         assert_eq!(
             std::fs::read_to_string(engine.join(name)).ok().as_deref(),
@@ -3550,7 +3743,7 @@ pub(crate) fn manager_engine_dir_e2e() {
     assert_eq!(names(&framework), framework_before, "nothing written there");
     for (name, text) in [
         ("server@default.ini", stray_ini),
-        ("models.ini", stray_model_profiles),
+        ("models.ini", &stray_model_profiles),
     ] {
         assert_eq!(
             std::fs::read_to_string(framework.join(name)).unwrap(),
@@ -3563,7 +3756,7 @@ pub(crate) fn manager_engine_dir_e2e() {
     assert_eq!(m.list_instances(), ["default"]);
     assert_eq!(
         m.read_file(None::<&Caller>, "models.ini"),
-        Ok(Some(plain(model_profiles)))
+        Ok(Some(plain(&model_profiles)))
     );
     assert_eq!(
         m.read_file(Some(&alice), "server@default.ini"),
@@ -3625,7 +3818,11 @@ pub(crate) fn manager_waits_e2e() {
     let bob = Caller(":1.43".into());
     let carol = Caller(":1.44".into());
     let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let fixtures = tempfile::tempdir().expect("tempdir");
+    let model_profiles = real_model_files(
+        fixtures.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
 
     // ── A pending authorization holds up no other caller ─────────────────
     {
@@ -3634,7 +3831,7 @@ pub(crate) fn manager_waits_e2e() {
         let sys = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&sys).expect("system config dir");
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
-        std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+        std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
         write_record(&sys, &["default"]);
 
         let gate = Gate::new();
@@ -3672,7 +3869,7 @@ pub(crate) fn manager_waits_e2e() {
         };
         assert_eq!(
             answer(&gate, "read_file", read),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         let stop = {
             let (m, bob) = (m.clone(), bob.clone());
@@ -3902,9 +4099,12 @@ pub(crate) fn manager_checks_e2e() {
         names
     };
     let flagged = |ids: &[&str]| -> String {
-        ids.iter()
-            .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
-            .collect()
+        real_model_files(
+            dir.path(),
+            &ids.iter()
+                .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
+                .collect::<String>(),
+        )
     };
 
     // ── A refused caller is told only that: no check runs first ──────────
@@ -3977,8 +4177,10 @@ pub(crate) fn manager_checks_e2e() {
 
     // ── Valid files are written; then an invalid rewrite keeps the old ───
     let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n";
-    let model_profiles =
-        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
+    );
     {
         let m = manager(true);
         // default is an instance: its section of the record, before the writes
@@ -3989,7 +4191,7 @@ pub(crate) fn manager_checks_e2e() {
             Ok(())
         );
         assert_eq!(
-            m.write_file(&alice, "models.ini", model_profiles, false),
+            m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
 
@@ -4016,16 +4218,16 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(&alice, "models.ini", &bad, false),
             invalid("comment-markers", &["model"])
         );
-        let bad = format!(
+        let bad = real_model_files(dir.path(), &format!(
             "{model_profiles}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
-        );
+        ));
         assert_eq!(
             m.write_file(&alice, "models.ini", &bad, false),
             invalid("moe-cache-with-tensor-split", &[])
         );
         assert_eq!(
             read("models.ini").as_deref(),
-            Some(model_profiles),
+            Some(model_profiles.as_str()),
             "old kept"
         );
         assert_eq!(
@@ -4061,10 +4263,10 @@ pub(crate) fn manager_checks_e2e() {
             invalid("load-on-startup-over-max", &["3", "2", "default"]),
             "the refusal names the instance whose render is over its max"
         );
-        assert_eq!(read("models.ini").as_deref(), Some(model_profiles));
+        assert_eq!(read("models.ini").as_deref(), Some(model_profiles.as_str()));
         assert_eq!(
             read("models@default.ini"),
-            Some(pai_core::assign::render(model_profiles, "", None)),
+            Some(pai_core::assign::render(&model_profiles, "", None)),
             "a refused write leaves the render as it was: it opens with the \
              generated header, so it is the pool rendered, never the pool text"
         );
@@ -4153,14 +4355,23 @@ pub(crate) fn manager_checks_e2e() {
     }
 
     // ── A broken section already on disk blocks no other write ───────────
-    let broken = "[old]\nmodel = /models/old.gguf\nctx-size = abc\n";
+    let broken = real_model_files(
+        dir.path(),
+        "[old]\nmodel = /models/old.gguf\nctx-size = abc\n",
+    );
     {
         let m = manager(true);
-        std::fs::write(sys.join("models.ini"), broken).expect("hand-edited fixture");
-        let added = format!("{broken}[new]\nmodel = /models/new.gguf\n");
+        std::fs::write(sys.join("models.ini"), &broken).expect("hand-edited fixture");
+        let added = real_model_files(
+            dir.path(),
+            &format!("{broken}[new]\nmodel = /models/new.gguf\n"),
+        );
         assert_eq!(m.write_file(&alice, "models.ini", &added, false), Ok(()));
         assert_eq!(read("models.ini"), Some(added.clone()));
-        let edited = format!("{broken}[new]\nmodel = /models/new.gguf\nparallel = 0\n");
+        let edited = real_model_files(
+            dir.path(),
+            &format!("{broken}[new]\nmodel = /models/new.gguf\nparallel = 0\n"),
+        );
         assert_eq!(
             m.write_file(&alice, "models.ini", &edited, false),
             invalid(
@@ -4176,27 +4387,33 @@ pub(crate) fn manager_checks_e2e() {
         let m = manager(true);
         // The broken model profile moves out of models.ini unchanged: accepted.
         assert_eq!(
-            m.write_file(&alice, "models.ini.disabled", broken, false),
+            m.write_file(&alice, "models.ini.disabled", &broken, false),
             Ok(())
         );
-        assert_eq!(read("models.ini.disabled").as_deref(), Some(broken));
+        assert_eq!(read("models.ini.disabled"), Some(broken.clone()));
         // A disabled model profile edited now gets the model profile rules.
-        let edited = format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n");
+        let edited = real_model_files(
+            dir.path(),
+            &format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n"),
+        );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &edited, false),
             invalid("fit-target-format", &["2048MiB", "MiB"])
         );
-        assert_eq!(read("models.ini.disabled").as_deref(), Some(broken));
+        assert_eq!(read("models.ini.disabled"), Some(broken.clone()));
         // No startup count: llama-server never reads this file.
-        let many = format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"]));
+        let many = real_model_files(
+            dir.path(),
+            &format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"])),
+        );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &many, false),
             Ok(())
         );
         // Switching the broken one back on: new in models.ini, so checked.
-        let enabled = "[new]\nmodel = /models/new.gguf\n";
-        std::fs::write(sys.join("models.ini"), enabled).expect("models.ini fixture");
-        let on = format!("{enabled}{broken}");
+        let enabled = real_model_files(dir.path(), "[new]\nmodel = /models/new.gguf\n");
+        std::fs::write(sys.join("models.ini"), &enabled).expect("models.ini fixture");
+        let on = real_model_files(dir.path(), &format!("{enabled}{broken}"));
         assert_eq!(
             m.write_file(&alice, "models.ini", &on, false),
             invalid(
@@ -4210,13 +4427,13 @@ pub(crate) fn manager_checks_e2e() {
     //    the other file check_contents hands to models_file ──────────────
     {
         let m = manager(true);
-        let kept = "[kept]\nmodel = /models/kept.gguf\n";
-        let parked = "[commented]\nmodel = /models/c.gguf ; Q8\n";
-        std::fs::write(sys.join("models.ini"), kept).expect("models.ini fixture");
-        std::fs::write(sys.join("models.ini.disabled"), parked).expect("disabled fixture");
+        let kept = real_model_files(dir.path(), "[kept]\nmodel = /models/kept.gguf\n");
+        let parked = real_model_files(dir.path(), "[commented]\nmodel = /models/c.gguf ; Q8\n");
+        std::fs::write(sys.join("models.ini"), &kept).expect("models.ini fixture");
+        std::fs::write(sys.join("models.ini.disabled"), &parked).expect("disabled fixture");
         // The switch moves the section whole: new to models.ini, held
         // identically by the disabled file, so the commented line is known.
-        let on = format!("{kept}{parked}");
+        let on = real_model_files(dir.path(), &format!("{kept}{parked}"));
         assert_eq!(m.write_file(&alice, "models.ini", &on, false), Ok(()));
         assert_eq!(
             read("models.ini").as_deref(),
@@ -4228,34 +4445,46 @@ pub(crate) fn manager_checks_e2e() {
     // ── ctx-size = 0 (the context from the model) is writable ────────────
     {
         let m = manager(true);
-        let zero = "[new]\nmodel = /models/new.gguf\nctx-size = 0\n";
-        assert_eq!(m.write_file(&alice, "models.ini", zero, false), Ok(()));
-        assert_eq!(read("models.ini").as_deref(), Some(zero));
+        let zero = real_model_files(
+            dir.path(),
+            "[new]\nmodel = /models/new.gguf\nctx-size = 0\n",
+        );
+        assert_eq!(m.write_file(&alice, "models.ini", &zero, false), Ok(()));
+        assert_eq!(read("models.ini"), Some(zero.clone()));
     }
 
     // ── One id across models.ini and models.ini.disabled ───────────────
     {
         let m = manager(true);
-        let enabled = "[new]\nmodel = /models/new.gguf\n";
-        let parked = "[Parked]\nmodel = /models/parked.gguf\nctx-size = 8192\n";
-        std::fs::write(sys.join("models.ini"), enabled).expect("models.ini fixture");
-        std::fs::write(sys.join("models.ini.disabled"), parked).expect("disabled fixture");
+        let enabled = real_model_files(dir.path(), "[new]\nmodel = /models/new.gguf\n");
+        let parked = real_model_files(
+            dir.path(),
+            "[Parked]\nmodel = /models/parked.gguf\nctx-size = 8192\n",
+        );
+        std::fs::write(sys.join("models.ini"), &enabled).expect("models.ini fixture");
+        std::fs::write(sys.join("models.ini.disabled"), &parked).expect("disabled fixture");
         // A new enabled model profile named like a parked one, in another case.
-        let namesake = format!("{enabled}[parked]\nmodel = /models/other.gguf\n");
+        let namesake = real_model_files(
+            dir.path(),
+            &format!("{enabled}[parked]\nmodel = /models/other.gguf\n"),
+        );
         assert_eq!(
             m.write_file(&alice, "models.ini", &namesake, false),
             invalid("model-profile-name-taken", &["parked"])
         );
-        assert_eq!(read("models.ini").as_deref(), Some(enabled), "old kept");
+        assert_eq!(read("models.ini"), Some(enabled.clone()), "old kept");
         // A new parked model profile named like an enabled one.
-        let namesake = format!("{parked}[NEW]\nmodel = /models/other.gguf\n");
+        let namesake = real_model_files(
+            dir.path(),
+            &format!("{parked}[NEW]\nmodel = /models/other.gguf\n"),
+        );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &namesake, false),
             invalid("model-profile-name-taken", &["NEW"])
         );
-        assert_eq!(read("models.ini.disabled").as_deref(), Some(parked));
+        assert_eq!(read("models.ini.disabled"), Some(parked.clone()));
         // Switching the parked one on writes models.ini first: a move.
-        let on = format!("{enabled}{parked}");
+        let on = real_model_files(dir.path(), &format!("{enabled}{parked}"));
         assert_eq!(m.write_file(&alice, "models.ini", &on, false), Ok(()));
         assert_eq!(read("models.ini"), Some(on));
         assert_eq!(
@@ -4267,10 +4496,15 @@ pub(crate) fn manager_checks_e2e() {
     // ── Floats, enums, JSON and min <= max: refused, the file kept ───────
     {
         let m = manager(true);
-        let kept = "[kept]\nmodel = /models/kept.gguf\n";
-        std::fs::write(sys.join("models.ini"), kept).expect("models.ini fixture");
+        let kept = real_model_files(dir.path(), "[kept]\nmodel = /models/kept.gguf\n");
+        std::fs::write(sys.join("models.ini"), &kept).expect("models.ini fixture");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("disabled fixture");
-        let with = |lines: &str| format!("{kept}[new]\nmodel = /models/new.gguf\n{lines}");
+        let with = |lines: &str| {
+            real_model_files(
+                dir.path(),
+                &format!("{kept}[new]\nmodel = /models/new.gguf\n{lines}"),
+            )
+        };
         assert_eq!(
             m.write_file(&alice, "models.ini", &with("temp = NaN\n"), false),
             invalid("not-a-number", &["temp", "NaN"])
@@ -4306,7 +4540,11 @@ pub(crate) fn manager_checks_e2e() {
             m.write_file(&alice, "models.ini.disabled", &with("top-p = inf\n"), false),
             invalid("not-a-number", &["top-p", "inf"])
         );
-        assert_eq!(read("models.ini").as_deref(), Some(kept), "old kept");
+        assert_eq!(
+            read("models.ini").as_deref(),
+            Some(kept.as_str()),
+            "old kept"
+        );
         assert_eq!(read("models.ini.disabled").as_deref(), Some(""), "old kept");
     }
 }
@@ -4355,9 +4593,11 @@ pub(crate) fn manager_assignments_e2e() {
     // The global `[*]` section reaches the pool only as a hand edit: a
     // client write of it is refused, `*` is not a model profile id.
     let global = "[*]\ntemp = 0.7\n\n";
-    let pool =
-        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n";
-    let off = "[z]\nmodel = /models/z.gguf\n";
+    let pool = real_model_files(
+        dir.path(),
+        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n",
+    );
+    let off = real_model_files(dir.path(), "[z]\nmodel = /models/z.gguf\n");
 
     // ── assignments.ini: the client reads it, and never writes it ────────
     assert_eq!(
@@ -4391,14 +4631,14 @@ pub(crate) fn manager_assignments_e2e() {
     // The pool stands first, so the renders of the created instances hold
     // model profiles: default is told `a`, lan-2 is told `b`.
     write_record(&sys, &["default", "lan-2", "lan-3"]);
-    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", &pool, false), Ok(()));
     assert_eq!(
         m.write_file(&alice, "server@default.ini", default_ini, false),
         Ok(())
     );
     assert_eq!(
         read("models@default.ini"),
-        Some(render(pool, "", Some(section("default").as_str()))),
+        Some(render(&pool, "", Some(section("default").as_str()))),
         "default's render on the instance's creation"
     );
     assert_eq!(
@@ -4413,7 +4653,7 @@ pub(crate) fn manager_assignments_e2e() {
     let lan2 = read("models@lan-2.ini").expect("lan-2's render");
     assert_eq!(
         lan2,
-        render(pool, "", Some(section("lan-2").as_str())),
+        render(&pool, "", Some(section("lan-2").as_str())),
         "lan-2's render is its own section"
     );
     assert!(
@@ -4437,7 +4677,7 @@ pub(crate) fn manager_assignments_e2e() {
     );
     assert_eq!(
         read("models@lan-3.ini"),
-        Some(render(pool, "", None)),
+        Some(render(&pool, "", None)),
         "no section: no preset of the pool"
     );
     assert_eq!(
@@ -4470,50 +4710,56 @@ pub(crate) fn manager_assignments_e2e() {
     );
     assert_eq!(
         read("models.ini").as_deref(),
-        Some(pool),
+        Some(pool.as_str()),
         "the refused write changed nothing"
     );
     std::fs::write(sys.join("models.ini"), &on_disk).expect("hand-edited pool");
     assert_eq!(
-        m.write_file(&alice, "models.ini.disabled", off, false),
+        m.write_file(&alice, "models.ini.disabled", &off, false),
         Ok(())
     );
     assert_eq!(
         read("models@default.ini"),
-        Some(render(&on_disk, off, Some(section("default").as_str()))),
+        Some(render(&on_disk, &off, Some(section("default").as_str()))),
         "the render takes the global section from the pool file on disk"
     );
     assert_eq!(
         read("models@lan-3.ini"),
-        Some(render(&on_disk, off, None)),
+        Some(render(&on_disk, &off, None)),
         "the global section reaches every instance: lan-3 is the global section alone"
     );
-    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", &pool, false), Ok(()));
     assert_eq!(
         read("models@default.ini"),
-        Some(render(pool, off, Some(section("default").as_str()))),
+        Some(render(&pool, &off, Some(section("default").as_str()))),
         "default keeps a alone: the pool's other presets are not its rows"
     );
     assert_eq!(
         read("models@lan-2.ini"),
-        Some(render(pool, off, Some(section("lan-2").as_str()))),
+        Some(render(&pool, &off, Some(section("lan-2").as_str()))),
         "lan-2 keeps b alone"
     );
     assert_eq!(
         read("models@lan-3.ini"),
-        Some(render(pool, off, None)),
+        Some(render(&pool, &off, None)),
         "the client's write replaced the hand-edited global section"
     );
-    let added = format!("{pool}\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n");
+    let added = real_model_files(
+        dir.path(),
+        &format!("{pool}\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n"),
+    );
     assert_eq!(m.write_file(&alice, "models.ini", &added, false), Ok(()));
     assert_eq!(
         read("models@default.ini"),
-        Some(render(&added, off, Some(section("default").as_str()))),
+        Some(render(&added, &off, Some(section("default").as_str()))),
         "the second write of the pool re-renders"
     );
 
     // ── A refused write changes no render ────────────────────────────────
-    let broken = format!("{added}\n[bad]\nmodel = /models/bad.gguf\nctx-size = abc\n");
+    let broken = real_model_files(
+        dir.path(),
+        &format!("{added}\n[bad]\nmodel = /models/bad.gguf\nctx-size = abc\n"),
+    );
     let answer = m.write_file(&alice, "models.ini", &broken, false);
     assert!(
         matches!(answer, Err(ManagerError::Invalid(_))),
@@ -4521,7 +4767,7 @@ pub(crate) fn manager_assignments_e2e() {
     );
     assert_eq!(
         read("models@default.ini"),
-        Some(render(&added, off, Some(section("default").as_str()))),
+        Some(render(&added, &off, Some(section("default").as_str()))),
         "a refused write leaves every render as it was"
     );
     assert_eq!(
@@ -4548,7 +4794,7 @@ pub(crate) fn manager_assignments_e2e() {
     );
     assert_eq!(
         read("models@default.ini"),
-        Some(render(&added, off, Some(section("default").as_str()))),
+        Some(render(&added, &off, Some(section("default").as_str()))),
         "the start render agrees with the last write"
     );
 }
@@ -4631,9 +4877,14 @@ pub(crate) fn manager_set_model_profile_e2e() {
     // The pool, and the record and the server profiles the fixture hands the
     // manager: `a` loads on startup, `b` does not, `m` sits in the switched-off
     // file so a pool test sees both halves.
-    let pool =
-        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n";
-    let off_pool = "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n";
+    let pool = real_model_files(
+        dir.path(),
+        "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\n",
+    );
+    let off_pool = real_model_files(
+        dir.path(),
+        "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n",
+    );
     write_record(&sys, &["default", "lan-2"]);
     std::fs::write(
         sys.join("server@default.ini"),
@@ -4645,8 +4896,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
     )
     .expect("server@lan-2.ini");
-    std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
-    std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+    std::fs::write(sys.join("models.ini"), &pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("models.ini.disabled");
     // The assignments as an earlier call left them: a comment, a key of its
     // own, a second section. The verb writes one key of one section and
     // touches none of the rest.
@@ -4699,7 +4950,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         let l2 = text_of("models@lan-2.ini");
         assert_eq!(
             d,
-            render(pool, off_pool, Some(&section(&written, "default"))),
+            render(&pool, &off_pool, Some(&section(&written, "default"))),
             "default's render is the pool cut by its section, the one just written"
         );
         assert!(
@@ -4708,7 +4959,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         assert_eq!(
             l2,
-            render(pool, off_pool, Some(&section(&written, "lan-2"))),
+            render(&pool, &off_pool, Some(&section(&written, "lan-2"))),
             "the write re-renders every instance: lan-2 from its own section"
         );
         assert!(
@@ -4731,7 +4982,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         let d = text_of("models@default.ini");
         assert_eq!(
             d,
-            render(pool, off_pool, Some(&section(&written, "default"))),
+            render(&pool, &off_pool, Some(&section(&written, "default"))),
             "the render follows the section"
         );
         assert!(
@@ -4845,7 +5096,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             ),
             "the same model profile, in an empty pool, is refused naming it"
         );
-        std::fs::write(sys.join("models.ini"), pool).expect("the pool back");
+        std::fs::write(sys.join("models.ini"), &pool).expect("the pool back");
 
         // `on` and `off` under `*`: refused, with nothing written and no
         // render of their own.
@@ -4881,8 +5132,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         // nothing. One call puts `a` in the record and in the render, the way
         // a real assignment does, so "rendered nothing" below has something to
         // keep.
-        std::fs::write(sys.join("models.ini"), pool).expect("pool back");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool back");
+        std::fs::write(sys.join("models.ini"), &pool).expect("pool back");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool back");
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
         assert_eq!(
             m.set_model_profile(&desktop, "default", "a", "on"),
@@ -5004,7 +5255,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         assert_eq!(
             text_of("models@default.ini"),
-            render(pool, off_pool, Some("[default]\nb = off\na = off\n")),
+            render(&pool, &off_pool, Some("[default]\nb = off\na = off\n")),
             "and the render follows: nothing of the pool is in effect"
         );
         std::fs::write(
@@ -5095,7 +5346,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         assert_eq!(
             text_of("models@lan.ini"),
-            render(pool, off_pool, Some("[lan]\n* = inherit\nm = on\n")),
+            render(&pool, &off_pool, Some("[lan]\n* = inherit\nm = on\n")),
             "and the render of the instance follows the record"
         );
 
@@ -5219,8 +5470,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
                 .collect()
         };
         let restore_pool = || {
-            std::fs::write(sys.join("models.ini"), pool).expect("pool");
-            std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+            std::fs::write(sys.join("models.ini"), &pool).expect("pool");
+            std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         };
 
         // `assignments.ini` with bytes that are no text. A read taken as empty
@@ -5354,10 +5605,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         // them at one. The resource rule reads the step a call takes, so a call
         // that lowers the count lands even when the render it produces is
         // still over the max.
-        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let three = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                      [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                      [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
-                     [d]\nmodel = /m/d.gguf\n";
+                     [d]\nmodel = /m/d.gguf\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5370,7 +5624,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini"), &three).expect("three loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5406,9 +5660,12 @@ pub(crate) fn manager_set_model_profile_e2e() {
     {
         // `none` removes a key, so it lowers the count too: it lands over the
         // max, exactly as `off` does.
-        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let three = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                      [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
-                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n";
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5421,7 +5678,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini"), &three).expect("three loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5451,9 +5708,12 @@ pub(crate) fn manager_set_model_profile_e2e() {
     {
         // `*` narrowed from `inherit` to `none` leaves the whole pool out of
         // the render: it lands whatever the max.
-        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let three = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                      [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
-                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n";
+                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5466,7 +5726,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini"), &three).expect("three loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("inherit");
         assert!(
@@ -5498,10 +5758,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         // Assigning `on` a model profile that does NOT load on startup leaves
         // the count where it is, over the max: it lands, the count is what the
         // rule reads, not the key.
-        let three = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let three = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                      [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                      [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
-                     [d]\nmodel = /m/d.gguf\n";
+                     [d]\nmodel = /m/d.gguf\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5514,7 +5777,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), three).expect("three loads");
+        std::fs::write(sys.join("models.ini"), &three).expect("three loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5545,10 +5808,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
     {
         // The other side of the same fixture: `on` of a model profile that DOES
         // load on startup raises the count and is refused, writing nothing.
-        let four = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let four = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
-                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5561,7 +5827,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), four).expect("four loads");
+        std::fs::write(sys.join("models.ini"), &four).expect("four loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5600,11 +5866,14 @@ pub(crate) fn manager_set_model_profile_e2e() {
         // An instance whose section names no server profile has no file to read
         // a `ModelsMax` from, and the launch refuses it anyway: its render is
         // not judged on the llama.cpp default cap. Five loads land.
-        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let five = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
                     [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
-                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["lan-2"]);
         std::fs::write(
@@ -5613,7 +5882,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         )
         .expect("lan-2 profile");
         std::fs::write(sys.join(INSTANCES_FILE), "[default]\n").expect("no profile named");
-        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini"), &five).expect("five loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5644,11 +5913,14 @@ pub(crate) fn manager_set_model_profile_e2e() {
     {
         // The section names a profile whose file is missing: nothing to read a
         // cap from, so the render is not judged. Five loads land.
-        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let five = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
                     [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
-                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["lan-2"]);
         std::fs::write(
@@ -5662,7 +5934,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         )
         .expect("profile named");
         std::fs::remove_file(sys.join("server@gone.ini")).ok();
-        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini"), &five).expect("five loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5688,11 +5960,14 @@ pub(crate) fn manager_set_model_profile_e2e() {
     {
         // The section names a profile whose file cannot be read (no text): the
         // same, an unreadable file is not an empty one and holds no cap.
-        let five = "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
+        let five = real_model_files(
+            dir.path(),
+            "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
                     [b]\nmodel = /m/b.gguf\nload-on-startup = true\n\n\
                     [c]\nmodel = /m/c.gguf\nload-on-startup = true\n\n\
                     [d]\nmodel = /m/d.gguf\nload-on-startup = true\n\n\
-                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n";
+                    [e]\nmodel = /m/e.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["lan-2"]);
         std::fs::write(
@@ -5710,7 +5985,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             b"[Server]\nPort = 8090\n\xff\xfe\n",
         )
         .expect("unreadable profile");
-        std::fs::write(sys.join("models.ini"), five).expect("five loads");
+        std::fs::write(sys.join("models.ini"), &five).expect("five loads");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(
             sys.join("assignments.ini"),
@@ -5737,7 +6012,10 @@ pub(crate) fn manager_set_model_profile_e2e() {
         // The model profile's name is exact: llama.cpp knows a pool section in
         // its own spelling, so the pool's `[Qwen]` answers no call for `qwen`,
         // and the call leaves the record, and the renders, as they were.
-        let qwen = "[Qwen]\nmodel = /m/qwen.gguf\nload-on-startup = true\n";
+        let qwen = real_model_files(
+            dir.path(),
+            "[Qwen]\nmodel = /m/qwen.gguf\nload-on-startup = true\n",
+        );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
         std::fs::write(
@@ -5750,7 +6028,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), qwen).expect("pool with Qwen");
+        std::fs::write(sys.join("models.ini"), &qwen).expect("pool with Qwen");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("no off file");
         std::fs::write(sys.join("assignments.ini"), "[default]\nQwen = off\n").expect("seed");
         assert!(
@@ -5802,8 +6080,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), pool).expect("pool");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("models.ini"), &pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
         assert_eq!(
             m.set_model_profile(&desktop, "default", "a", "on"),
@@ -5832,8 +6110,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), pool).expect("pool");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("models.ini"), &pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("CRLF seed");
         assert_eq!(
             m.set_model_profile(&desktop, "default", "a", "on"),
@@ -5875,8 +6153,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), pool).expect("pool");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("models.ini"), &pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("no final newline");
         assert_eq!(
             m.set_model_profile(&desktop, "lan-2", "a", "on"),
@@ -5906,8 +6184,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("lan-2 profile");
-        std::fs::write(sys.join("models.ini"), pool).expect("pool");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("off pool");
+        std::fs::write(sys.join("models.ini"), &pool).expect("pool");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
         assert_eq!(
             m.set_model_profile(&desktop, "lan-2", "a", "on"),
@@ -5969,8 +6247,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
         )
         .expect("server@lan-2.ini");
-        std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
-        std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+        std::fs::write(sys.join("models.ini"), &pool).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("models.ini.disabled");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
         std::fs::set_permissions(
             sys.join("assignments.ini"),
@@ -6007,6 +6285,958 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and the write left no temp file of its own beside it"
         );
     }
+}
+
+/// E2E phase: the model-file check (PLAN.md step 10 item 13, slice 9;
+/// ARCHITECTURE.md (b) 3, "Which writes run them", item 10 of the slices
+/// notes, and the key's name under "Renamed error keys"). A `model` path must
+/// be a regular file on the node, every shard of a split model included; a
+/// relative `model` is resolved against the working directory of the instance
+/// (`launch::instance_current_dir`, the folder the engine starts in) and the
+/// refusal names the resolved path, the one the check looked at; a model
+/// profile with `hf-repo`, `model-url` or `docker-repo` is not checked, the
+/// engine filling that file from the hub or fetching it itself; readability by
+/// the instance's account is not checked at all. The manager refuses a file
+/// where a write puts the model profile in
+/// effect on an instance: a new assignment or override in effect on, the global
+/// switch on, and a model profile save on every instance where it is in effect.
+/// The refusal is `model-profile-model-missing` with `[model profile, instance,
+/// path]`, the first file of the value that is missing (a shard named whole,
+/// the first missing one), the instances answered in id order. A switch off, an
+/// assignment removed and a `*` narrowed never fail it. A refusal writes
+/// nothing and renders nothing.
+///
+/// Every fixture here leaves `ModelsMax` out of the server profiles, so the
+/// load-on-startup rule has no cap to judge: `set_model_profile` and
+/// `check_renders` skip an instance with none. Each refusal below can therefore
+/// only be the model file's.
+#[cfg(test)]
+pub(crate) fn manager_model_file_check_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+
+    // The node's model files: `path` is the text a `model` key holds, `make`
+    // puts one there, `rm` takes it away.
+    let path = |name: &str| models.join(name).to_string_lossy().into_owned();
+    let make = |name: &str| {
+        std::fs::write(models.join(name), "gguf").expect("model file");
+    };
+    let rm = |name: &str| {
+        let _ = std::fs::remove_file(models.join(name));
+    };
+
+    let bff = Caller(":1.9".into());
+    let desktop = Caller(":1.42".into());
+    let manager = || {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(FakeActionLog::new())
+    };
+
+    let read_opt = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    // The picture a refusal must leave exactly as it found it: the bytes of the
+    // record, of the two pool files and of the renders, a render that is not
+    // there included, and the folder's own listing, which is what a file
+    // created out of nothing changes.
+    let listing_text = || format!("{}\n", listing().join("\n"));
+    let seen = |name: &str| -> String {
+        if name == "listing" {
+            listing_text()
+        } else {
+            read_opt(name).unwrap_or_default()
+        }
+    };
+    let snapshot = |names: &[&str]| -> Vec<(String, String)> {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .chain(std::iter::once("listing".to_string()))
+            .map(|name| (name.clone(), seen(&name)))
+            .collect()
+    };
+    let kept = |before: &[(String, String)]| {
+        for (name, text) in before {
+            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+        }
+    };
+    let pool_files = |on: &str, off: &str| {
+        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
+    };
+    let assignments = |text: &str| {
+        std::fs::write(sys.join("assignments.ini"), text).expect("assignments.ini");
+    };
+    // The refusal this phase is about, its three args whole.
+    let named = |answer: &Result<(), ManagerError>, profile: &str, instance: &str, file: &str| {
+        matches!(
+            answer,
+            Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-model-missing"
+                    && r.values == [profile.to_string(), instance.to_string(), file.to_string()]
+        )
+    };
+    // The same refusal, its path compared as a path: a relative `model` is
+    // looked for resolved against the instance's folder, so the string the
+    // refusal names is a join, compared by its components, whichever separator
+    // and spelling of the folder it carries.
+    let named_at = |answer: &Result<(), ManagerError>,
+                    profile: &str,
+                    instance: &str,
+                    want: &std::path::Path| {
+        let same = |a: &str| {
+            std::path::absolute(std::path::Path::new(a)).ok() == std::path::absolute(want).ok()
+        };
+        matches!(
+            answer,
+            Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-model-missing"
+                    && r.values.len() == 3
+                    && r.values[0] == profile
+                    && r.values[1] == instance
+                    && same(&r.values[2])
+        )
+    };
+
+    write_record(&sys, &["default", "lan-2"]);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lan-2.ini"),
+        "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+    )
+    .expect("server@lan-2.ini");
+    const WATCH: [&str; 5] = [
+        "assignments.ini",
+        "models.ini",
+        "models.ini.disabled",
+        "models@default.ini",
+        "models@lan-2.ini",
+    ];
+    let m = manager();
+
+    // ── An assignment in effect on: the file has to be there ──────────────
+    {
+        make("ok.gguf");
+        make("offok.gguf");
+        // The switched-on pool holds `ok` (its file there) and `gone` (its file
+        // not); the switched-off file holds `offok` (there) and `offgone` (not).
+        let pool = format!(
+            "[ok]\nmodel = {}\n\n[gone]\nmodel = {}\n",
+            path("ok.gguf"),
+            path("gone.gguf")
+        );
+        let off_pool = format!(
+            "[offok]\nmodel = {}\n\n[offgone]\nmodel = {}\n",
+            path("offok.gguf"),
+            path("offgone.gguf")
+        );
+        pool_files(&pool, &off_pool);
+        let seed = "[default]\ngone = off\n\n[lan-2]\ngone = off\n";
+
+        // All three land in one report, so each case answers for itself.
+        let mut refused: Vec<String> = Vec::new();
+        for (profile, value, instance, file) in [
+            ("gone", "on", "default", path("gone.gguf")),
+            ("offgone", "on", "default", path("offgone.gguf")),
+            ("gone", "inherit", "default", path("gone.gguf")),
+        ] {
+            assignments(seed);
+            let before = snapshot(&WATCH);
+            let answer = m.set_model_profile(&desktop, instance, profile, value);
+            if !named(&answer, profile, instance, &file) {
+                refused.push(format!(
+                    "`{profile} = {value}` on {instance} puts a model profile with no file in effect, answered {answer:?}"
+                ));
+            }
+            kept(&before);
+        }
+        assert!(
+            refused.is_empty(),
+            "a new assignment in effect on a model profile with no file is refused:\n{}",
+            refused.join("\n")
+        );
+
+        // Never refused: `off` and `none` (the model profile leaves the render),
+        // `inherit` of one the pool has switched off, and `on` of one whose
+        // file is there.
+        for (profile, value) in [
+            ("gone", "off"),
+            ("offgone", "inherit"),
+            ("ok", "on"),
+            ("offok", "on"),
+        ] {
+            assignments(seed);
+            let answer = m.set_model_profile(&desktop, "default", profile, value);
+            assert_eq!(
+                answer,
+                Ok(()),
+                "`{profile} = {value}` is not in effect with a missing file, or its file is there"
+            );
+            assert!(
+                text_of("assignments.ini").contains(&format!("{profile} = {value}")),
+                "and its key landed: {profile} = {value}"
+            );
+        }
+
+        // `none` takes the key of a model profile with no file away, and a `*`
+        // narrowed leaves every such model profile out: neither fails.
+        assignments(seed);
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "gone", "none"),
+            Ok(()),
+            "an assignment removed is never refused"
+        );
+        assert!(
+            keys_of(&text_of("assignments.ini"), "default", "gone").is_empty(),
+            "the key is out"
+        );
+        assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "*", "none"),
+            Ok(()),
+            "a `*` narrowed is never refused, whatever the pool holds"
+        );
+        assert!(
+            keys_of(&text_of("assignments.ini"), "default", "*").is_empty(),
+            "the global key is out"
+        );
+    }
+
+    // ── The file has to be a regular one: a directory, a FIFO, a symlink ──
+    {
+        let base = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        std::fs::create_dir(models.join("dir.gguf")).expect("a directory named .gguf");
+        pool_files(&base, "");
+        assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
+
+        // A directory is not a model file.
+        let with = format!("{base}\n[dir]\nmodel = {}\n", path("dir.gguf"));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "dir", "default", &path("dir.gguf")),
+            "a directory in `model` is refused as a file that is not there: {answer:?}"
+        );
+        kept(&before);
+
+        // A FIFO is not a model file either: reading it would block, so it is
+        // refused as a file that is not there.
+        #[cfg(target_os = "linux")]
+        {
+            let fifo = models.join("fifo.gguf");
+            nix::sys::stat::mknod(
+                &fifo,
+                nix::sys::stat::SFlag::S_IFIFO,
+                nix::sys::stat::Mode::from_bits_truncate(0o644),
+                0,
+            )
+            .expect("mkfifo");
+            let with = format!("{base}\n[pipes]\nmodel = {}\n", path("fifo.gguf"));
+            let before = snapshot(&WATCH);
+            let answer = m.write_file(&desktop, "models.ini", &with, false);
+            assert!(
+                named(&answer, "pipes", "default", &path("fifo.gguf")),
+                "a FIFO in `model` is refused as a file that is not there: {answer:?}"
+            );
+            kept(&before);
+        }
+
+        // A symlink to a regular file is that file: the save lands.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(models.join("ok.gguf"), models.join("link.gguf"))
+                .expect("symlink");
+            let with = format!("{base}\n[link]\nmodel = {}\n", path("link.gguf"));
+            assert_eq!(
+                m.write_file(&desktop, "models.ini", &with, false),
+                Ok(()),
+                "a symlink to a regular file is the file"
+            );
+            assert_eq!(text_of("models.ini"), with, "and the save landed");
+        }
+    }
+
+    // ── A split model: every shard, the first missing one named ───────────
+    {
+        make("big-00001-of-00003.gguf");
+        make("big-00003-of-00003.gguf");
+        let base = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        let with = format!(
+            "{base}\n[big]\nmodel = {}\n",
+            path("big-00001-of-00003.gguf")
+        );
+        pool_files(&base, "");
+
+        // Shard 2 is not there: the refusal names it, the instance where the
+        // model profile is in effect.
+        assignments("[default]\n* = inherit\n\n[lan-2]\nbig = off\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "big", "default", &path("big-00002-of-00003.gguf")),
+            "the shard that is missing is named whole: {answer:?}"
+        );
+        kept(&before);
+
+        // Shard 3 missing and 2 there: the refusal names 3.
+        make("big-00002-of-00003.gguf");
+        rm("big-00003-of-00003.gguf");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "big", "default", &path("big-00003-of-00003.gguf")),
+            "the first shard that is missing, wherever it falls: {answer:?}"
+        );
+        kept(&before);
+
+        // Every shard there: the save lands.
+        make("big-00003-of-00003.gguf");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &with, false),
+            Ok(()),
+            "a split model with every shard is a file that is there"
+        );
+        assert_eq!(text_of("models.ini"), with, "and the save landed");
+
+        // The instance named is the one whose render holds the model profile,
+        // and where more than one does, the first in id order. The save lands
+        // with every shard above, so re-seed the pool: the case below must
+        // really ADD the model profile whose shard is missing, not re-write
+        // one the pool already holds.
+        pool_files(&base, "");
+        rm("big-00002-of-00003.gguf");
+        assignments("[default]\nbig = off\n\n[lan-2]\n* = inherit\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "big", "lan-2", &path("big-00002-of-00003.gguf")),
+            "in effect on lan-2 alone: lan-2 is named: {answer:?}"
+        );
+        kept(&before);
+
+        pool_files(&base, "");
+        assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
+        rm("big-00002-of-00003.gguf");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "big", "default", &path("big-00002-of-00003.gguf")),
+            "in effect on both: the first instance in id order answers: {answer:?}"
+        );
+        kept(&before);
+        make("big-00002-of-00003.gguf");
+    }
+
+    // ── `hf-repo`, `model-url`, `docker-repo`: that file is not the node's ─
+    {
+        // The engine fills `model` from the hub (`--hf-repo`) or replaces it
+        // with a file it fetches itself (`--model-url`, `--docker-repo`:
+        // llama.cpp `common/arg.cpp` 427-441 and 480-535 in v1.0.0). The file
+        // the model profile names is therefore not on the node at save time,
+        // so a model profile carrying any of the three keys is not checked.
+        let base = format!("[base]\nmodel = {}\n", path("ok.gguf"));
+        pool_files(&base, "");
+        assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
+        let fetches: [(&str, &str, &str); 3] = [
+            ("hf", "hf-repo", "theos/Big-8B-Q4"),
+            ("url", "model-url", "https://example.test/Big-8B-Q4.gguf"),
+            ("docker", "docker-repo", "ggmlorg/llama:server"),
+        ];
+
+        for (id, key, value) in fetches {
+            // Its `model` file is there: the key adds no file to look for.
+            let with = format!(
+                "{base}\n[{id}]\nmodel = {}\n{key} = {value}\n",
+                path("ok.gguf")
+            );
+            assert_eq!(
+                m.write_file(&desktop, "models.ini", &with, false),
+                Ok(()),
+                "`{key}` with its `model` file there lands"
+            );
+            assert_eq!(text_of("models.ini"), with, "and the save landed: {key}");
+
+            // Its `model` file is not there: the engine is the one putting it
+            // there, so the check looks at nothing and the save lands.
+            let with = format!(
+                "{base}\n[{id}]\nmodel = {}\n{key} = {value}\n",
+                path(&format!("{id}-gone.gguf"))
+            );
+            assert_eq!(
+                m.write_file(&desktop, "models.ini", &with, false),
+                Ok(()),
+                "`{key}` with a `model` that is not there is not checked: the engine fetches that file"
+            );
+            assert_eq!(text_of("models.ini"), with, "and the save landed: {key}");
+        }
+
+        // The skip is the keyed model profile's own: another one in the same
+        // save, with none of the three keys, is checked as always.
+        let with = format!(
+            "{base}\n[hf]\nmodel = {}\nhf-repo = theos/Big-8B-Q4\n\n[plain]\nmodel = {}\n",
+            path("hf-gone.gguf"),
+            path("plain-gone.gguf")
+        );
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            named(&answer, "plain", "default", &path("plain-gone.gguf")),
+            "`[hf]` is skipped, `[plain]` beside it is refused: {answer:?}"
+        );
+        kept(&before);
+
+        // A model profile with `hf-repo` and no `model` at all is never refused
+        // by this check: it names no file. It is the `model` rule's own, the key
+        // the manager answers today.
+        let with = format!("{base}\n[repo]\nhf-repo = theos/Big-8B-Q4\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &with, false);
+        assert!(
+            matches!(&answer, Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-no-model" && r.values == ["repo"]),
+            "`hf-repo` alone is the `model` rule's, never the model file's: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── A model profile save: only where it is in effect ──────────────────
+    {
+        let on_disk = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        let save = format!("{on_disk}\n[new]\nmodel = {}\n", path("new.gguf"));
+        pool_files(&on_disk, "");
+
+        // In effect on no instance: every instance has it `off`, so the save
+        // lands with the file missing.
+        assignments("[default]\nnew = off\n\n[lan-2]\nnew = off\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &save, false),
+            Ok(()),
+            "a save whose only new model profile is in effect nowhere lands"
+        );
+        assert_eq!(text_of("models.ini"), save, "and landed");
+
+        // In effect on one instance: that instance is named. The save above
+        // landed, so re-seed the pool: the case below must really ADD the
+        // model profile whose file is missing.
+        pool_files(&on_disk, "");
+        assignments("[default]\nnew = off\n\n[lan-2]\n* = inherit\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &save, false);
+        assert!(
+            named(&answer, "new", "lan-2", &path("new.gguf")),
+            "the save puts the model profile in effect on lan-2: {answer:?}"
+        );
+        kept(&before);
+
+        // The switch off, on both sides: taking the model profile out of the
+        // switched-on file, and putting it into the switched-off one, are never
+        // refused, not even while the assignment keeps it on. The state a real
+        // switch off starts from, seeded directly: the model profile in the
+        // switched-on file, its file not there, in effect on `default`.
+        pool_files(&save, "");
+        assignments("[default]\nnew = on\n");
+        let answer = m.write_file(
+            &desktop,
+            "models.ini.disabled",
+            &format!("[new]\nmodel = {}\n", path("new.gguf")),
+            false,
+        );
+        assert_eq!(
+            answer,
+            Ok(()),
+            "a switch off never fails a resource check, whatever the file: {answer:?}"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            format!("[new]\nmodel = {}\n", path("new.gguf")),
+            "and landed"
+        );
+        assignments("[default]\nnew = inherit\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_disk, false),
+            Ok(()),
+            "the other half of the switch, the model profile out of the switched-on file, lands"
+        );
+        assert_eq!(text_of("models.ini"), on_disk, "and landed");
+    }
+
+    // ── The global switch on ──────────────────────────────────────────────
+    {
+        let on_disk = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        let off = format!("[sw]\nmodel = {}\n", path("sw.gguf"));
+        let on = format!("{on_disk}\n[sw]\nmodel = {}\n", path("sw.gguf"));
+        pool_files(&on_disk, &off);
+
+        // The model profile sits switched off with its file missing, assigned to
+        // both instances with no override of the switch. Switching it on, the
+        // write into the switched-on file, is refused on the first of them.
+        assignments("[default]\nsw = inherit\n\n[lan-2]\nsw = inherit\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on, false);
+        assert!(
+            named(&answer, "sw", "default", &path("sw.gguf")),
+            "the global switch on, in effect on every instance that does not say off: {answer:?}"
+        );
+        kept(&before);
+
+        // The same switch where every instance says off lands, and with it the
+        // second write of the switch, the model profile out of the switched-off
+        // file.
+        assignments("[default]\nsw = off\n\n[lan-2]\nsw = off\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on, false),
+            Ok(()),
+            "the switch on lands where every instance has the model profile off"
+        );
+        assert_eq!(
+            m.write_file(&desktop, "models.ini.disabled", "", false),
+            Ok(()),
+            "and so does the model profile leaving the switched-off file"
+        );
+    }
+
+    // ── A relative `model`: the instance's own folder is where it lives ───
+    {
+        // The engine resolves a relative `model` against the working directory
+        // of the process it launches, `launch::instance_current_dir` (the
+        // engine's `state` directory on Windows, the data root elsewhere: the
+        // folder the router and its children inherit). The check resolves the
+        // value there, and the path it names is the one it looked at, the
+        // resolved one, not the value as written.
+        let cwd = crate::launch::instance_current_dir(
+            cfg!(windows),
+            &crate::paths::data_root(),
+            &crate::paths::instance_state_dir(),
+        );
+        std::fs::create_dir_all(cwd.join("Qwen")).expect("the instance's folder");
+        let on_disk = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        pool_files(&on_disk, "");
+        assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
+
+        // The file is in that folder: the save lands.
+        std::fs::write(cwd.join("Qwen/Big-8B-Q4.gguf"), "gguf").expect("model file");
+        let rel = format!("{on_disk}\n[rel]\nmodel = Qwen/Big-8B-Q4.gguf\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &rel, false),
+            Ok(()),
+            "a relative `model` whose file is in the instance's folder lands"
+        );
+        assert_eq!(text_of("models.ini"), rel, "and the save landed");
+
+        // The file is not there: refused, naming the resolved path.
+        let gone = format!("{on_disk}\n[rel]\nmodel = Qwen/Gone-8B-Q4.gguf\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &gone, false);
+        assert!(
+            named_at(&answer, "rel", "default", &cwd.join("Qwen/Gone-8B-Q4.gguf")),
+            "a relative `model` missing from the instance's folder is refused, naming the path the check looked at: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── An instance whose server profile is not there ─────────────────────
+    {
+        // `ghost` runs a server profile whose file is missing, so its launch
+        // refuses it and the load-on-startup rule skips it (no cap to read).
+        // The model-file check has no cap, so it runs on `ghost`'s render too.
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = default\n\n[ghost]\nServerProfile = ghost\n",
+        )
+        .expect("instances.ini: ghost has no profile file");
+        let on_disk = format!("[ok]\nmodel = {}\n", path("ok.gguf"));
+        let save = format!("{on_disk}\n[lost]\nmodel = {}\n", path("lost.gguf"));
+        pool_files(&on_disk, "");
+        let watch: Vec<&str> = WATCH
+            .iter()
+            .copied()
+            .chain(std::iter::once("models@ghost.ini"))
+            .collect();
+
+        assignments("[default]\nlost = off\n\n[ghost]\n* = inherit\n");
+        let before = snapshot(&watch);
+        let answer = m.write_file(&desktop, "models.ini", &save, false);
+        assert!(
+            named(&answer, "lost", "ghost", &path("lost.gguf")),
+            "in effect on the instance with no profile file: that instance answers: {answer:?}"
+        );
+        kept(&before);
+
+        pool_files(&save, "");
+        assignments("[default]\nlost = off\n\n[ghost]\nlost = off\n");
+        let before = snapshot(&watch);
+        let answer = m.set_model_profile(&desktop, "ghost", "lost", "on");
+        assert!(
+            named(&answer, "lost", "ghost", &path("lost.gguf")),
+            "an assignment on an instance with no profile file is refused as any other: {answer:?}"
+        );
+        kept(&before);
+
+        write_record(&sys, &["default", "lan-2"]);
+    }
+
+    // ── A broken profile in effect: the check refuses only what the write adds ──
+    {
+        // ARCHITECTURE.md (b) "Which writes run them": "A switch off, an
+        // assignment removed, a `*` narrowed never fail a resource check", so a
+        // check refuses what the write ADDS and never a file a model profile
+        // already in effect lost earlier. Here `b` sits in effect on `default`
+        // and its file is deleted after it was assigned, so every write that
+        // touches only another model profile must land, and the two that add a
+        // missing file answer naming the model profile they add, never `b`.
+        let section = |id: &str, file: &str, extra: &str| {
+            format!("[{id}]\nmodel = {}\n{extra}\n", path(file))
+        };
+        let b_sec = section("b", "b.gguf", "");
+        let a_sec = section("a", "a.gguf", "ctx-size = 4096");
+        let c_sec = section("c", "c.gguf", "");
+        let d_sec = section("d", "d.gguf", "");
+        let e_sec = section("e", "e.gguf", "");
+        let pool = format!("{b_sec}\n{a_sec}\n{c_sec}\n{d_sec}\n{e_sec}");
+        // `b`, `a` are in effect on `default` by their own key, `c` through
+        // `* = inherit`; `d` and `e` are off. `lan-2` runs `a` alone.
+        let seeded =
+            "[default]\n* = inherit\na = on\nb = on\nd = off\ne = off\n\n[lan-2]\na = on\n";
+        // The picture before each write: `b`'s file gone (deleted after the
+        // assignment landed), every other file of the pool there.
+        let seed = || {
+            make("a.gguf");
+            make("c.gguf");
+            make("d.gguf");
+            rm("b.gguf");
+            rm("e.gguf");
+            pool_files(&pool, "");
+            assignments(seeded);
+        };
+        // The snapshot that is not there, told by name, so a case that wrote
+        // something reports it and the next case still runs.
+        let changed = |before: &[(String, String)]| -> Option<String> {
+            before
+                .iter()
+                .find(|(name, text)| seen(name) != *text)
+                .map(|(name, _)| name.clone())
+        };
+        let mut fails: Vec<String> = Vec::new();
+
+        // (a) An assignment removed, and an override switched off, on a model
+        // profile that is not the broken one.
+        // S9B-PIN-1 BEGIN
+        {
+            seed();
+            let answer = m.set_model_profile(&desktop, "default", "a", "none");
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(a) `a = none` while `b` is broken in effect lands: {answer:?}"
+                ));
+            } else if !keys_of(&text_of("assignments.ini"), "default", "a").is_empty() {
+                fails.push("(a) and the key `a` is out of the section".to_string());
+            }
+        }
+        // S9B-PIN-1 END
+        // S9B-PIN-2 BEGIN
+        {
+            seed();
+            let answer = m.set_model_profile(&desktop, "default", "a", "off");
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(a) `a = off` while `b` is broken in effect lands: {answer:?}"
+                ));
+            } else if !text_of("assignments.ini").contains("a = off") {
+                fails.push("(a) and the key `a = off` landed".to_string());
+            }
+        }
+        // S9B-PIN-2 END
+
+        // (b) The global switch narrowed: `*` out, which takes model profiles
+        // out of the render and adds none.
+        // S9B-PIN-3 BEGIN
+        {
+            seed();
+            let answer = m.set_model_profile(&desktop, "default", "*", "none");
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(b) `* = none` while `b` is broken in effect lands: {answer:?}"
+                ));
+            } else if !keys_of(&text_of("assignments.ini"), "default", "*").is_empty() {
+                fails.push("(b) and the global key is out".to_string());
+            }
+        }
+        // S9B-PIN-3 END
+
+        // (c) A save of `models.ini` that edits one non-model key of another
+        // model profile, and (d) the switch off of a third one: the two writes
+        // of the switch, the model profile out of the switched-on file and into
+        // the switched-off one.
+        // S9B-PIN-4 BEGIN
+        {
+            seed();
+            let edit = pool.replace("ctx-size = 4096", "ctx-size = 8192");
+            let answer = m.write_file(&desktop, "models.ini", &edit, false);
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(c) a save of `models.ini` that edits only `a`'s ctx-size lands: {answer:?}"
+                ));
+            } else if text_of("models.ini") != edit {
+                fails.push("(c) and the save landed".to_string());
+            }
+        }
+        // S9B-PIN-4 END
+        // S9B-PIN-5 BEGIN
+        {
+            seed();
+            let no_c = format!("{b_sec}\n{a_sec}\n{d_sec}\n{e_sec}");
+            let answer = m.write_file(&desktop, "models.ini", &no_c, false);
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(d) the switch off of `c`: `c` out of `models.ini` lands: {answer:?}"
+                ));
+            } else {
+                let off = format!("[c]\nmodel = {}\n", path("c.gguf"));
+                let second = m.write_file(&desktop, "models.ini.disabled", &off, false);
+                if second != Ok(()) {
+                    fails.push(format!(
+                        "(d) the switch off of `c`: `c` into `models.ini.disabled` lands: {second:?}"
+                    ));
+                }
+            }
+        }
+        // S9B-PIN-5 END
+
+        // (e) The switch on of a model profile whose file IS there, beside the
+        // broken one.
+        // S9B-PIN-6 BEGIN
+        {
+            seed();
+            let answer = m.set_model_profile(&desktop, "default", "d", "on");
+            if answer != Ok(()) {
+                fails.push(format!(
+                    "(e) `d = on`, its file there, while `b` is broken lands: {answer:?}"
+                ));
+            } else if !text_of("assignments.ini").contains("d = on") {
+                fails.push("(e) and the key `d = on` landed".to_string());
+            }
+        }
+        // S9B-PIN-6 END
+
+        // (f) and (g) stay refused: the write that ADDS a model profile with no
+        // file, and the save that points a model profile at a file that is not
+        // there. Each names the model profile the write touches, not `b`, and
+        // writes nothing.
+        // S9B-PIN-7 BEGIN
+        {
+            seed();
+            let before = snapshot(&WATCH);
+            let answer = m.set_model_profile(&desktop, "default", "e", "on");
+            if !named(&answer, "e", "default", &path("e.gguf")) {
+                fails.push(format!(
+                    "(f) `e = on` refused naming `e` while `b` is broken: {answer:?}"
+                ));
+            }
+            if let Some(what) = changed(&before) {
+                fails.push(format!("(f) the refusal wrote nothing: {what} changed"));
+            }
+        }
+        // S9B-PIN-7 END
+        // S9B-PIN-8 BEGIN
+        {
+            seed();
+            let before = snapshot(&WATCH);
+            let a_gone = pool.replace(
+                &format!("model = {}\nctx-size", path("a.gguf")),
+                &format!("model = {}\nctx-size", path("a-gone.gguf")),
+            );
+            let answer = m.write_file(&desktop, "models.ini", &a_gone, false);
+            if !named(&answer, "a", "default", &path("a-gone.gguf")) {
+                fails.push(format!(
+                    "(g) a save pointing `a` at a missing file refused naming `a`: {answer:?}"
+                ));
+            }
+            if let Some(what) = changed(&before) {
+                fails.push(format!("(g) the refusal wrote nothing: {what} changed"));
+            }
+        }
+        // S9B-PIN-8 END
+
+        assert!(
+            fails.is_empty(),
+            "a resource check refuses only what the write adds, never a model profile already \
+             in effect with a missing file:\n{}",
+            fails.join("\n")
+        );
+    }
+
+    // ── A switched-off model profile in effect: the disabled file is checked ─
+    //
+    // `assign::render` takes BOTH pool files, so a model profile that sits in
+    // `models.ini.disabled` is in effect on every instance whose section of
+    // `assignments.ini` says `on` for it. A save of the switched-off file
+    // changes that instance's render, so it is judged by the model-file check
+    // exactly as a save of `models.ini` is: it refuses what the write ADDS, on
+    // every render the write moves, and nothing else.
+    // S9C-PIN-1 BEGIN
+    {
+        // The switched-on file holds `ok`, the switched-off one `p` and `q`,
+        // every file there. `default` has `p = on`, `lan-2` has `p = off`, and
+        // no instance says anything about `q`.
+        let sec = |id: &str, file: &str, ctx: &str| {
+            format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
+        };
+        let on = sec("ok", "ok.gguf", "4096");
+        let off = format!(
+            "{}\n{}",
+            sec("p", "p.gguf", "4096"),
+            sec("q", "q.gguf", "1024")
+        );
+        let seed = || {
+            make("ok.gguf");
+            make("p.gguf");
+            make("q.gguf");
+            pool_files(&on, &off);
+            assignments("[default]\np = on\n\n[lan-2]\np = off\n");
+        };
+
+        seed();
+        // The save points `p`, which `default` has `on`, at a file that is not
+        // there: `default`'s render gains a model file the node does not have,
+        // so the save is refused naming `p`, `default` and that path, and
+        // writes nothing.
+        let save = off.replace(
+            &format!("model = {}\nctx-size", path("p.gguf")),
+            &format!("model = {}\nctx-size", path("p-gone.gguf")),
+        );
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini.disabled", &save, false);
+        assert!(
+            named(&answer, "p", "default", &path("p-gone.gguf")),
+            "a save of `models.ini.disabled` that puts a model profile with no file in effect on an instance that has it `on` is refused: {answer:?}"
+        );
+        kept(&before);
+    }
+    // S9C-PIN-1 END
+    // S9C-PIN-2 BEGIN
+    {
+        let sec = |id: &str, file: &str, ctx: &str| {
+            format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
+        };
+        let on = sec("ok", "ok.gguf", "4096");
+        let off = format!(
+            "{}\n{}",
+            sec("p", "p.gguf", "4096"),
+            sec("q", "q.gguf", "1024")
+        );
+        let seed = || {
+            make("ok.gguf");
+            make("p.gguf");
+            make("q.gguf");
+            pool_files(&on, &off);
+            assignments("[default]\np = on\n\n[lan-2]\np = off\n");
+        };
+
+        seed();
+        // The same save for `q`: no instance has it `on`, so it is in no
+        // render, its missing file is in effect nowhere, and the save lands.
+        let save = off.replace(
+            &format!("model = {}\nctx-size", path("q.gguf")),
+            &format!("model = {}\nctx-size", path("q-gone.gguf")),
+        );
+        let answer = m.write_file(&desktop, "models.ini.disabled", &save, false);
+        assert_eq!(
+            answer,
+            Ok(()),
+            "a switched-off model profile no instance has `on` is in no render, so a missing file is not in effect anywhere: {answer:?}"
+        );
+        assert_eq!(text_of("models.ini.disabled"), save, "and the save landed");
+    }
+    // S9C-PIN-2 END
+    // S9C-PIN-3 BEGIN
+    {
+        let sec = |id: &str, file: &str, ctx: &str| {
+            format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
+        };
+        let on = sec("ok", "ok.gguf", "4096");
+        let off = format!(
+            "{}\n{}",
+            sec("p", "p.gguf", "4096"),
+            sec("q", "q.gguf", "1024")
+        );
+        let seed = || {
+            make("ok.gguf");
+            make("p.gguf");
+            make("q.gguf");
+            pool_files(&on, &off);
+            assignments("[default]\np = on\n\n[lan-2]\np = off\n");
+        };
+
+        // `p` sits in effect on `default` with its file gone, taken away after
+        // the assignment landed. The check refuses only what a write adds, so a
+        // save of the switched-off file that touches another key lands: first
+        // a key of `p` itself, then a key of `q` beside the broken one.
+        seed();
+        rm("p.gguf");
+        let edit_p = off.replace("ctx-size = 4096", "ctx-size = 8192");
+        let answer = m.write_file(&desktop, "models.ini.disabled", &edit_p, false);
+        assert_eq!(
+            answer,
+            Ok(()),
+            "a save of the switched-off file that edits only `ctx-size` of a model profile already in effect with a missing file lands: {answer:?}"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            edit_p,
+            "and the save landed"
+        );
+
+        let edit_q = edit_p.replace("ctx-size = 1024", "ctx-size = 2048");
+        let second = m.write_file(&desktop, "models.ini.disabled", &edit_q, false);
+        assert_eq!(
+            second,
+            Ok(()),
+            "a save of the switched-off file that edits only another model profile, beside one in effect with a missing file, lands: {second:?}"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            edit_q,
+            "and the save landed"
+        );
+    }
+    // S9C-PIN-3 END
 }
 
 /// E2E phase: `SetServerProfile`, the verb that points an instance at one of
@@ -6163,10 +7393,13 @@ pub(crate) fn manager_set_server_profile_e2e() {
     // The pool: three model profiles that load on startup and one that does
     // not. The switched-off half asks for a load too, so the count a check
     // reads is a render's, never the pool's.
-    let pool = "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\nload-on-startup = true\n\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n\n[d]\nmodel = /models/d.gguf\n";
-    let off_pool = "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n";
-    std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
-    std::fs::write(sys.join("models.ini.disabled"), off_pool).expect("models.ini.disabled");
+    let pool = real_model_files(dir.path(), "[a]\nmodel = /models/a.gguf\nload-on-startup = true\n\n[b]\nmodel = /models/b.gguf\nload-on-startup = true\n\n[c]\nmodel = /models/c.gguf\nload-on-startup = true\n\n[d]\nmodel = /models/d.gguf\n");
+    let off_pool = real_model_files(
+        dir.path(),
+        "[m]\nmodel = /models/m.gguf\nload-on-startup = true\n",
+    );
+    std::fs::write(sys.join("models.ini"), &pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("models.ini.disabled");
     // The assignments, per instance: `default` inherits the pool, so its render
     // starts three model profiles; `lan-2` switches all three off, so its
     // render starts none. The same profile caps one and caps nothing for the
@@ -7237,9 +8470,12 @@ pub(crate) fn manager_profiles_in_use_e2e() {
         }))
     };
     let flagged = |ids: &[&str]| -> String {
-        ids.iter()
-            .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
-            .collect()
+        real_model_files(
+            dir.path(),
+            &ids.iter()
+                .map(|id| format!("[{id}]\nmodel = /models/{id}.gguf\nload-on-startup = true\n"))
+                .collect::<String>(),
+        )
     };
     // default on big (8081), lan on small (8082).
     let in_use = "[default]\nServerProfile = big\n\n[lan]\nServerProfile = small\n";
@@ -7757,15 +8993,21 @@ pub(crate) fn manager_render_failure_e2e() {
     let section = |id: &str| -> String {
         pai_core::ini::text::section_text(assignments, id).unwrap_or_default()
     };
-    let pool = "[a]\nmodel = /models/a.gguf\n\n[b]\nmodel = /models/b.gguf\n\n[c]\nmodel = /models/c.gguf\n";
+    let pool = real_model_files(dir.path(), "[a]\nmodel = /models/a.gguf\n\n[b]\nmodel = /models/b.gguf\n\n[c]\nmodel = /models/c.gguf\n");
     // The pool a hand edit puts on disk, and the one a client write puts
     // there: d arrives with the hand edit, e with the write.
-    let hand = format!("{pool}\n[d]\nmodel = /models/d.gguf\n");
-    let written = format!("{hand}\n[e]\nmodel = /models/e.gguf\n");
+    let hand = real_model_files(
+        dir.path(),
+        &format!("{pool}\n[d]\nmodel = /models/d.gguf\n"),
+    );
+    let written = real_model_files(
+        dir.path(),
+        &format!("{hand}\n[e]\nmodel = /models/e.gguf\n"),
+    );
 
     std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
     write_record(&sys, &["default", "lan-2", "lan-3"]);
-    assert_eq!(m.write_file(&alice, "models.ini", pool, false), Ok(()));
+    assert_eq!(m.write_file(&alice, "models.ini", &pool, false), Ok(()));
     for (id, port) in [("default", 8081u16), ("lan-2", 8082), ("lan-3", 8083)] {
         let ini = format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n");
         assert_eq!(
@@ -7776,7 +9018,7 @@ pub(crate) fn manager_render_failure_e2e() {
     }
     assert_eq!(
         read("models@lan-3.ini"),
-        Some(render(pool, "", Some(section("lan-3").as_str()))),
+        Some(render(&pool, "", Some(section("lan-3").as_str()))),
         "every instance rendered, before anything is broken"
     );
 
@@ -7911,13 +9153,22 @@ pub(crate) fn manager_principal_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("engine config dir");
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
-    let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    );
+    let other = real_model_files(
+        dir.path(),
+        "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n",
+    );
     // A model profile text no block of this phase writes on purpose: a refused write
     // of it is visible as the file on disk staying as `other`.
-    let third = "[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n";
+    let third = real_model_files(
+        dir.path(),
+        "[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n",
+    );
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("presets file");
     write_record(&sys, &["default"]);
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
@@ -8041,7 +9292,7 @@ pub(crate) fn manager_principal_e2e() {
     {
         let m = core(false, false, FakePasswords::new());
         assert_eq!(
-            m.write_file(&alice, "models.ini", other, false),
+            m.write_file(&alice, "models.ini", &other, false),
             Ok(()),
             "granting the bff `configure` for this is what the pair replaces"
         );
@@ -8065,7 +9316,7 @@ pub(crate) fn manager_principal_e2e() {
             "bob is no `pai` member"
         );
         assert_eq!(
-            m.write_file(&bob, "models.ini", model_profiles, false),
+            m.write_file(&bob, "models.ini", &model_profiles, false),
             Err(ManagerError::NotAuthorized),
             "writing needs the same membership"
         );
@@ -8142,7 +9393,7 @@ pub(crate) fn manager_principal_e2e() {
                 principal: Some(Principal("alice".into())),
             };
             assert_eq!(
-                m.write_file(&who, "models.ini", third, false),
+                m.write_file(&who, "models.ini", &third, false),
                 Err(ManagerError::NotAuthorized),
                 "{who:?}: only the bff vouches for a user"
             );
@@ -8186,7 +9437,7 @@ pub(crate) fn manager_principal_e2e() {
                         principal: Some(Principal(name.into())),
                     },
                     "models.ini",
-                    third,
+                    &third,
                     false
                 ),
                 Err(ManagerError::NotAuthorized),
@@ -8257,7 +9508,7 @@ pub(crate) fn manager_principal_e2e() {
         );
         assert_eq!(
             m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(other))),
+            Ok(Some(plain(&other))),
             "the member the bff names does read it: the gate refuses these calls, not all of them"
         );
         assert_eq!(
@@ -8289,10 +9540,16 @@ pub(crate) fn manager_action_log_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("engine config dir");
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
-    let other = "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    );
+    let other = real_model_files(
+        dir.path(),
+        "[Qwen3.8-32B]\nmodel = /m/Qwen3.8-32B-Q4_K_M.gguf\n",
+    );
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("presets file");
     write_record(&sys, &["default"]);
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
@@ -8335,14 +9592,14 @@ pub(crate) fn manager_action_log_e2e() {
             Ok(()),
             "start at boot is a guarded call too"
         );
-        assert_eq!(m.write_file(&alice, "models.ini", other, false), Ok(()));
+        assert_eq!(m.write_file(&alice, "models.ini", &other, false), Ok(()));
         assert_eq!(
             m.read_file(Some(&alice), "server@default.ini"),
             Ok(Some(plain(ini)))
         );
         assert_eq!(
             m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(other))),
+            Ok(Some(plain(&other))),
             "the preset file needs no right, yet the read of it is recorded"
         );
         let recs = records(&lines);
@@ -8375,7 +9632,7 @@ pub(crate) fn manager_action_log_e2e() {
         let m = core(true, FakePasswords::new(), service, log);
         assert_eq!(m.start(&bob, "default"), Err(ManagerError::NotAuthorized));
         assert_eq!(
-            m.write_file(&bob, "models.ini", model_profiles, false),
+            m.write_file(&bob, "models.ini", &model_profiles, false),
             Err(ManagerError::NotAuthorized)
         );
         assert_eq!(
@@ -8393,7 +9650,7 @@ pub(crate) fn manager_action_log_e2e() {
             "not an id at all"
         );
         assert_eq!(
-            m.write_file(&alice, "nope.ini", model_profiles, false),
+            m.write_file(&alice, "nope.ini", &model_profiles, false),
             Err(ManagerError::BadFileName)
         );
         let failed = m
@@ -8454,7 +9711,7 @@ pub(crate) fn manager_action_log_e2e() {
         );
         assert_eq!(
             m.read_file(Some(&desktop), "models.ini"),
-            Ok(Some(plain(other))),
+            Ok(Some(plain(&other))),
             "a preset file needs no right, yet it is recorded like any guarded call"
         );
         let recs = records(&lines);
@@ -8495,7 +9752,10 @@ pub(crate) fn manager_action_log_e2e() {
     // write), and no record names the marker.
     {
         let secret = "sk-LOG-NEVER-9d21";
-        let secret_model_profiles = format!("[Qwen3.8-27B]\nmodel = /m/{secret}.gguf\n");
+        let secret_model_profiles = real_model_files(
+            dir.path(),
+            &format!("[Qwen3.8-27B]\nmodel = /m/{secret}.gguf\n"),
+        );
         let secret_ini = ini.replace("sk-local-3f9a", secret);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
@@ -8833,9 +10093,15 @@ pub(crate) fn manager_write_file_if_e2e() {
         caller: bff.clone(),
         principal: Some(Principal("bob".into())),
     };
-    let model_profiles =
-        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n";
-    let other = "[Qwen3.8-32B]\nmodel = /models/Qwen3.8-32B-Q4_K_M.gguf\n";
+    let fixtures = tempfile::tempdir().expect("tempdir");
+    let model_profiles = real_model_files(
+        fixtures.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\nctx-size = 172032\n",
+    );
+    let other = real_model_files(
+        fixtures.path(),
+        "[Qwen3.8-32B]\nmodel = /models/Qwen3.8-32B-Q4_K_M.gguf\n",
+    );
     let default_ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 2\n";
     let invalid = |key: &'static str, values: &[&str]| {
         Err(ManagerError::Invalid(Refusal {
@@ -8904,7 +10170,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         let m = core(false, FakePasswords::new(), log);
         for name in names {
             assert_eq!(
-                m.write_file_if(&desktop, name, other, model_profiles),
+                m.write_file_if(&desktop, name, &other, &model_profiles),
                 Err(ManagerError::NotAuthorized),
                 "{name}: the refusal write_file gives a caller without configure"
             );
@@ -8947,8 +10213,8 @@ pub(crate) fn manager_write_file_if_e2e() {
 
     // ── Equal bytes: written, and checked as write_file checks ───────────
     {
-        let (_dir, sys) = root(&[
-            ("models.ini", model_profiles),
+        let (dir, sys) = root(&[
+            ("models.ini", &model_profiles),
             ("server@default.ini", default_ini),
         ]);
         write_record(&sys, &["default"]);
@@ -9014,11 +10280,11 @@ pub(crate) fn manager_write_file_if_e2e() {
             newer,
             "the refused text left the file"
         );
-        let bad_model_profiles = format!(
+        let bad_model_profiles = real_model_files(dir.path(), &format!(
             "{model_profiles}[Other]\nmodel = /models/o.gguf\nmoe-cache-mib = 4096\nsplit-mode = tensor\n"
-        );
+        ));
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini", &bad_model_profiles, model_profiles),
+            m.write_file_if(&desktop, "models.ini", &bad_model_profiles, &model_profiles),
             invalid("moe-cache-with-tensor-split", &[]),
             "the preset file's checks run too"
         );
@@ -9068,7 +10334,7 @@ pub(crate) fn manager_write_file_if_e2e() {
     // ── Any other bytes: Changed, nothing written ────────────────────────
     {
         let (_dir, sys) = root(&[
-            ("models.ini", model_profiles),
+            ("models.ini", &model_profiles),
             ("server@default.ini", default_ini),
         ]);
         let log = FakeActionLog::new();
@@ -9090,7 +10356,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         ];
         for expected in &stale {
             assert_eq!(
-                m.write_file_if(&desktop, "models.ini", other, expected),
+                m.write_file_if(&desktop, "models.ini", &other, expected),
                 Err(ManagerError::Changed),
                 "expected {expected:?} against the file on disk"
             );
@@ -9122,7 +10388,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         // The file's own bytes are accepted: the table above is not green
         // because every compare refuses.
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini", other, model_profiles),
+            m.write_file_if(&desktop, "models.ini", &other, &model_profiles),
             Ok(()),
             "the expected text is the file's own: written"
         );
@@ -9131,18 +10397,18 @@ pub(crate) fn manager_write_file_if_e2e() {
 
     // ── A missing file: Changed, and nothing is created ──────────────────
     {
-        let (_dir, sys) = root(&[("models.ini", model_profiles)]);
+        let (dir, sys) = root(&[("models.ini", &model_profiles)]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
-        let disabled = "[Old]\nmodel = /models/old.gguf\n";
+        let disabled = real_model_files(dir.path(), "[Old]\nmodel = /models/old.gguf\n");
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini.disabled", disabled, model_profiles),
+            m.write_file_if(&desktop, "models.ini.disabled", &disabled, &model_profiles),
             Err(ManagerError::Changed),
             "the caller expects a file that is not there"
         );
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini.disabled", disabled, disabled),
+            m.write_file_if(&desktop, "models.ini.disabled", &disabled, &disabled),
             Err(ManagerError::Changed),
             "an expected equal to the contents does not make the file exist"
         );
@@ -9169,7 +10435,7 @@ pub(crate) fn manager_write_file_if_e2e() {
         let sys = crate::paths::engine_config_dir();
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini", model_profiles, model_profiles),
+            m.write_file_if(&desktop, "models.ini", &model_profiles, &model_profiles),
             Err(ManagerError::Changed),
             "no file to compare with"
         );
@@ -9179,7 +10445,7 @@ pub(crate) fn manager_write_file_if_e2e() {
     // ── The principal form: the pair is the right, the compare is byte for byte
     {
         let ini = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-        let (_dir, sys) = root(&[("models.ini", model_profiles), ("server@default.ini", ini)]);
+        let (_dir, sys) = root(&[("models.ini", &model_profiles), ("server@default.ini", ini)]);
         let passwords = FakePasswords::new();
         let asked_admin = passwords.asked_admin.clone();
         let log = FakeActionLog::new();
@@ -9209,7 +10475,7 @@ pub(crate) fn manager_write_file_if_e2e() {
             "the key line the caller sent is written as sent, with no key flag"
         );
         assert_eq!(
-            m.write_file_if(&member, "models.ini", other, model_profiles),
+            m.write_file_if(&member, "models.ini", &other, &model_profiles),
             Ok(()),
             "a member's compare-and-swap lands with the caller allowed nothing"
         );
@@ -9218,7 +10484,7 @@ pub(crate) fn manager_write_file_if_e2e() {
             m.write_file_if(
                 &member,
                 "models.ini",
-                model_profiles,
+                &model_profiles,
                 "[Qwen3.8-9B]\nmodel = /m/x.gguf\n"
             ),
             Err(ManagerError::Changed),
@@ -9230,7 +10496,7 @@ pub(crate) fn manager_write_file_if_e2e() {
             "the refused write changed no file"
         );
         assert_eq!(
-            m.write_file_if(&outsider, "models.ini", model_profiles, other),
+            m.write_file_if(&outsider, "models.ini", &model_profiles, &other),
             Err(ManagerError::NotAuthorized),
             "a non-member is refused as write_file refuses it"
         );
@@ -9249,8 +10515,8 @@ pub(crate) fn manager_write_file_if_e2e() {
                     principal: Some(Principal("alice".into())),
                 },
                 "models.ini",
-                model_profiles,
-                other
+                &model_profiles,
+                &other
             ),
             Err(ManagerError::NotAuthorized),
             "only the bff's account vouches for a user"

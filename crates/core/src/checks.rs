@@ -36,6 +36,7 @@ pub const KEYS: &[&str] = &[
     "min-above-max",
     "no-model-profile-named",
     "model-profile-bad-value",
+    "model-profile-model-missing",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -102,6 +103,9 @@ impl Refusal {
             "min-above-max" => strings::fill("min-above-max", &[&v(0), &v(1), &v(2), &v(3)]),
             "no-model-profile-named" => strings::fill("no-model-profile-named", &[&v(0)]),
             "model-profile-bad-value" => strings::fill("model-profile-bad-value", &[&v(0)]),
+            "model-profile-model-missing" => {
+                strings::fill("model-profile-model-missing", &[&v(0), &v(1), &v(2)])
+            }
             other => other.to_string(),
         }
     }
@@ -421,6 +425,53 @@ pub fn model_profile_model(id: &str, model: &str) -> Result<(), Refusal> {
     } else {
         Ok(())
     }
+}
+
+/// The model files a model profile's `model` value names, in the order a check
+/// looks for them: the one file as written, or every shard of a split model
+/// when the value names one (a file stem ending `-NNNNN-of-NNNNN`, the names
+/// llama.cpp writes, `{base}-{NNNNN}-of-{NNNNN}.{ext}`: `model_scan`,
+/// `gguf::read_tensors`). A value that is not blank always names at least
+/// itself, whatever its spelling. Empty for a blank value: the profile has no
+/// file of its own (the `hf-repo` case, and [`model_profile_model`]'s to
+/// refuse). The list is the whole of what the model-file check looks at, so a
+/// repository in `hf-repo` adds nothing to look for.
+pub fn model_files_of(model: &str) -> Vec<String> {
+    let value = model.trim();
+    if value.is_empty() {
+        return Vec::new();
+    }
+    // The file name, after the last separator of either spelling.
+    let cut = value
+        .rfind('/')
+        .map(|i| i + 1)
+        .max(value.rfind('\\').map(|i| i + 1))
+        .unwrap_or(0);
+    let (dir, name) = value.split_at(cut);
+    // The extension keeps its `.` so every shard name rebuilds byte for byte.
+    let (stem, ext) = match name.rfind('.').filter(|dot| *dot > 0) {
+        Some(dot) => (&name[..dot], &name[dot..]),
+        None => (name, ""),
+    };
+    let Some((head, total)) = stem.rsplit_once("-of-") else {
+        return vec![value.to_string()];
+    };
+    let Some(dash) = head.rfind('-') else {
+        return vec![value.to_string()];
+    };
+    let counter = &head[dash + 1..];
+    let shard_digits = |s: &str| s.len() == 5 && s.bytes().all(|c| c.is_ascii_digit());
+    let total = match (shard_digits(total), shard_digits(counter)) {
+        (true, true) => total.parse::<usize>().unwrap_or(0),
+        _ => 0,
+    };
+    if total == 0 {
+        return vec![value.to_string()];
+    }
+    let base = &head[..dash];
+    (1..=total)
+        .map(|i| format!("{dir}{base}-{i:05}-of-{total:05}{ext}"))
+        .collect()
 }
 
 /// `fit-target` as llama.cpp takes it: MiB as whole numbers, one for every
@@ -1901,6 +1952,128 @@ top-p = 0.95\r\n";
             }
             assert_eq!(Refusal::decode(&r.encode()), Some(r.clone()), "{key}");
         }
+    }
+
+    /// The key of the model-file check (PLAN.md step 10 item 13, slice 9): in
+    /// `KEYS`, so the manager's refusal crosses the wire; in both strings files,
+    /// with the three values its rule passes (`[model profile, instance, path]`,
+    /// ARCHITECTURE.md item 10 of the slices notes, the renamed key); and with a
+    /// text arm that fills them in.
+    #[test]
+    fn the_model_file_refusal_key_is_known_and_worded() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        let key = "model-profile-model-missing";
+        let values = vec!["big", "default", "/models/big-00002-of-00003.gguf"];
+        assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+        for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+            let text = table
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} missing from {name}"));
+            assert_eq!(placeholders(text), 3, "{name} {key}: {text:?}");
+        }
+        let r = refusal(key, &values);
+        let text = r.text();
+        assert!(!text.starts_with(key), "{key} has no text arm: {text:?}");
+        for v in &values {
+            assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
+        }
+        assert_eq!(
+            Refusal::decode(&r.encode()),
+            Some(r.clone()),
+            "{key} round-trips on the wire"
+        );
+    }
+
+    /// The files a `model` value names, the whole list the model-file check
+    /// stats: the one file as written; every shard of a split model, in index
+    /// order, named from the value's own directory, extension and separator,
+    /// whichever shard the value happens to name; the value alone when the
+    /// `-NNNNN-of-NNNNN` spelling is not there (a short counter, a total of
+    /// zero, a `-of-` inside a directory name, a name with no extension);
+    /// nothing for a blank value, which is `model_profile_model`'s to refuse
+    /// and what a profile with only `hf-repo` leaves. Every name is the value's
+    /// own spelling: a relative one is resolved by the caller, against the
+    /// instance's folder, and a model profile carrying `hf-repo`, `model-url`
+    /// or `docker-repo` leaves the model-file check with nothing to look at.
+    #[test]
+    fn model_files_of_lists_the_files_a_model_value_names() {
+        // One line per file: the list reads straight, and an empty list is "".
+        let names = |model: &str| model_files_of(model).join("\n");
+        let shards = |dir: &str, ext: &str| {
+            (1..=3)
+                .map(|i| format!("{dir}big-{i:05}-of-00003{ext}"))
+                .collect::<Vec<String>>()
+                .join("\n")
+        };
+
+        assert_eq!(names(""), "", "a blank value names nothing");
+        assert_eq!(names("   "), "", "spaces are blank");
+        assert_eq!(
+            names("/models/a.gguf"),
+            "/models/a.gguf",
+            "one file, as written"
+        );
+        assert_eq!(
+            names("  /models/a.gguf  "),
+            "/models/a.gguf",
+            "the value as the readers see it, trimmed"
+        );
+        assert_eq!(
+            names("Qwen/Qwen3-8B-Q4.gguf"),
+            "Qwen/Qwen3-8B-Q4.gguf",
+            "a relative value names itself"
+        );
+        assert_eq!(
+            names("/models/no-extension"),
+            "/models/no-extension",
+            "a name with no extension"
+        );
+        assert_eq!(
+            names("/models/dir-00001-of-00003/model.gguf"),
+            "/models/dir-00001-of-00003/model.gguf",
+            "a `-of-` in a directory name is no shard: the file name decides"
+        );
+        assert_eq!(
+            names("/models/x-00001-of-1.gguf"),
+            "/models/x-00001-of-1.gguf",
+            "a counter of one digit is not llama.cpp's spelling"
+        );
+        assert_eq!(
+            names("/models/x-1-of-00003.gguf"),
+            "/models/x-1-of-00003.gguf",
+            "a shard counter of one digit is not either"
+        );
+        assert_eq!(
+            names("/models/x-00001-of-00000.gguf"),
+            "/models/x-00001-of-00000.gguf",
+            "a total of zero expands to nothing, so the value stands alone"
+        );
+        assert_eq!(
+            names("/models/big-00001-of-00003.gguf"),
+            shards("/models/", ".gguf"),
+            "the first shard names the whole model"
+        );
+        assert_eq!(
+            names("/models/big-00002-of-00003.gguf"),
+            shards("/models/", ".gguf"),
+            "a middle shard names the whole model too, in index order"
+        );
+        assert_eq!(
+            names("Qwen/big-00001-of-00003.gguf"),
+            shards("Qwen/", ".gguf"),
+            "the shards of a relative value stay relative, the directory of the value kept: the check joins each onto the instance's folder"
+        );
+        assert_eq!(
+            names("C:\\models\\big-00001-of-00003.gguf"),
+            shards("C:\\models\\", ".gguf"),
+            "the separator of the value is kept"
+        );
+        assert_eq!(
+            names("/models/big-00001-of-00003.GGUF"),
+            shards("/models/", ".GGUF"),
+            "so is its extension, its case included"
+        );
     }
 
     /// The float keys of a model profile (the Models tab's sampling fields and the

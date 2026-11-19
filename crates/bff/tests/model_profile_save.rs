@@ -2079,8 +2079,10 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
 /// 422 still marks the field the design's table gives for that rule, verbatim
 /// with the manager's own `args`. `field` is `args[0]` for the rules that name
 /// their key; `fit-target-format`, the MoE cache pair, the load-on-startup pair,
-/// `model-profile-no-model` and the `override-no-*` pair name a position, a count or
-/// nothing, so each maps to the key of its control; the pair about the model profile's
+/// `model-profile-no-model`, `model-profile-model-missing` (its args are the model
+/// profile, the instance and the file) and the `override-no-*` pair name a
+/// position, a count or nothing, so each maps to the key of its control; the
+/// pair about the model profile's
 /// name marks no field at all (the next test). The section is never written, and
 /// a 422 is the manager's news about the values, not a refusal of the user: the
 /// session lives, and no state is asked.
@@ -2116,6 +2118,11 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
         ("load-on-startup-over-max", &["4", "2"], "load-on-startup"),
         ("load-on-startup-unlimited", &["3"], "load-on-startup"),
         ("model-profile-no-model", &[ALPHA], "model"),
+        (
+            "model-profile-model-missing",
+            &[ALPHA, "default", "/models/alpha.gguf"],
+            "model",
+        ),
         ("override-no-pattern", &["1"], "override-tensor"),
         (
             "override-no-device",

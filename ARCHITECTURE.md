@@ -52,7 +52,8 @@ Linux system files in `xtask/src/linux/system_files.rs`.
   body of at most 1 MiB, the D-Bus method and error names (`crates/core/src/client/pipe.rs` header,
   the server in `crates/manager/src/manager/pipe.rs`). Methods: `ListInstances`, `Status`, `Start`,
   `Stop`, `Restart`, `ReadFile`, `WriteFile`, `BootEnabled`, `SetBootEnabled`, `Authenticate`, the
-  `<Method>As` forms of the seven guarded ones and `Version` (protocol 1; "Acting for a signed-in
+  `<Method>As` forms of the guarded ones (nine since slice 8: the seven of protocol 1, then
+  `SetModelProfile` and `SetServerProfile`) and `Version` (protocol 1; "Acting for a signed-in
   user" below), plus `WriteFileIf` and `WriteFileIfAs`, the compare and swap of a write (protocol 2;
   "Saving the server file from the web" below). The client works over any `Read + Write` stream.
 - **The bff's HTTP API**: the routes and error shape `{key, args}` in
@@ -227,7 +228,9 @@ unguarded ones are unchanged), so `pai-config`, `pai` and `pai-app` change nothi
 becomes `Fn(Option<&str>) -> Result<Client, ClientError>`: `system_connect(Some(user))` returns the
 bound client. The rule for routes: **every route behind a session connects as the session's user**
 (`Sessions::current`, never a name from the request), so a removed member is refused at once;
-session-free routes (`/api/instances`, GET boot) and the authenticator connect with `None`, as the bff.
+the session-gated reads that need no right of the user (`/api/version`, `/api/instances`, GET boot: 401
+`session-required` with no session, checked with `Sessions::peek`, which moves no idle deadline; a600a46,
+user 2026-11-19) and the authenticator connect with `None`, as the bff.
 Built: `Connect` and `system_connect` in `crates/bff/src/lib.rs`, the server read in
 `crates/bff/src/server.rs` (the only route behind a session today), `Sessions::end` in
 `crates/bff/src/session.rs`, shared with sign-out. A route added behind a session follows the same
@@ -274,8 +277,8 @@ Then the docs agent updates `crates/bff/README.md`, "Through the manager" and th
 designed, with one correction found in review, and one key that moved later (5f0d405). Slice 5's
 `NotAuthorized` answer is recorded above as 403 `client-not-authorized`; today a signed-in route answers
 403 `session-not-administrator`, the sign-in's key for the same fact (`control.rs` `action_failure`,
-`server.rs`, `presets.rs`), and `client-not-authorized` is the 502 of a session-free read, the instances
-list and the boot read (`control.rs` `read_failure`, `lib.rs`). The 503/504 line above words a timeout
+`server.rs`, `presets.rs`), and `client-not-authorized` is the 502 of a read that connects as the bff, the
+instances list and the boot read (behind a session since a600a46) (`control.rs` `read_failure`, `lib.rs`). The 503/504 line above words a timeout
 as 504; the
 built rule turns on one fact, settled by one atomic shared by the handler and its blocking task: while
 the write was never asked a time limit or a dead stream is 503 `client-unavailable` (the task then
@@ -950,7 +953,7 @@ record wins over (a) to (j).
 name), its instances inside, each with a Server tab and a Presets tab, no top-level Models entry (an old
 `#/models` link opens the `default` instance's Presets); more nodes later without redoing the page.
 Each instance is collapsible and shows, collapsed, its engine, its port and its tags; tags are labels
-only, the router routes by model name; the session-free Overview shows port and tags. Instances are
+only, the router routes by model name; the Overview (behind sign-in since a600a46) shows port and tags. Instances are
 added and removed from the web UI, llama.cpp first, each on its own port; `default` cannot be removed;
 a running instance is stopped before its removal. Strata is a step of its own. **Presets are a shared
 pool per node, assigned to instances, many to many**: removing an instance removes only its
@@ -1050,7 +1053,13 @@ A refusal names the preset and the instance (`args` `[preset, instance]`) and wr
 Which writes run them: a new assignment or override in effect on; the global switch on (every instance
 where the preset is assigned without `off`); a preset's save (every instance where it is in effect);
 a `ModelsMax` lowered in a server save (that instance). A switch off, an assignment removed, a `*`
-narrowed never fail a resource check.
+narrowed never fail a resource check. The model-file check refuses only a missing file the write ADDS: per instance, the
+(profile, resolved path) pairs missing from the new render minus those already missing from today's
+(slice 9, 2026-11-19). So a save of another profile, or of a key beside `model`, lands while a profile
+in effect has lost its file outside the framework (the launch then fails as before); a decision, the
+alternative (refuse every write while any render misses a file) blocking the fix of an unrelated key.
+A save writes whichever pool file holds the profile, `models.ini.disabled` included (a profile there
+is in effect where an `on` override assigns it), so both files' writes run the check.
 
 **(c) Port and tags** (unchanged). The port stays `Port` in `server@<id>.ini`. Tags go in the same file,
 `[Server] Tags = coding, fast`, a framework key never passed to llama-server, a `ServerConfig` field so
@@ -1097,7 +1106,7 @@ nothing.
 (`with_instance_defaults` takes the id); the shipped `server@default.ini` sets `StateDir`, so `default`
 keeps its folder.
 
-**(f) The bff.** Every node-scoped route sits under the node's prefix `api` (`GET /api/node`, session-free:
+**(f) The bff.** Every node-scoped route sits under the node's prefix `api` (`GET /api/node`, behind a session like every read since a600a46:
 `{"name": <host name>, "api": "/api"}`; hub mode answers `GET /api/nodes` with the same objects and
 `api` = `/api/nodes/<node>`): `instances` and everything below it, `presets` and everything below it,
 `engines`. At `/api` in every mode: `version`, `session`, `node`, `nodes`.
@@ -1462,7 +1471,13 @@ profile waits until asked.
    nothing; an unused profile on another instance's port or on the web service's port is refused at the
    switch; a switch to a profile on the instance's own current port succeeds; a success rewrites the
    section and the next launch uses the new profile.
-9. **The model-file check** (old 5). 10. **The estimate to `pai-core`, then the memory check** (old 6).
+9. **The model-file check** (old 5). Each file of `model` (every shard) must be a regular file. A
+   relative `model` resolves against `launch::instance_current_dir`, the cwd the router and its children
+   inherit. A profile with `hf-repo`, `model-url` or `docker-repo` is not checked: llama.cpp downloads
+   to `model` or replaces it with the cache path (`common/arg.cpp` 427-441, 480-535 in v1.0.0). The
+   refusal names the first instance in id order; the check needs no server profile, so it also runs
+   for an instance whose profile is missing. Only a file the write adds refuses ((b), "Which writes
+   run them"). 10. **The estimate to `pai-core`, then the memory check** (old 6).
 11. **Snapshots per instance** (old 7). 12. **Tags** on the server profile (`[Server] Tags`) and on the instance (`Tags` in its `instances.ini`
     section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused
     by the rule of (c); `Instances()` returns both lists; the shown `tags` are the union, profile first,

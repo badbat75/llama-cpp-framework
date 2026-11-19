@@ -650,6 +650,7 @@ pub fn serve() -> zbus::Result<Connection> {
 #[cfg(test)]
 pub(crate) fn manager_dbus_e2e() {
     use super::service::fakes::{Call, FakeAuthority, FakeResolver, FakeService};
+    use super::service::real_model_files;
     use super::service::Action;
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -664,7 +665,10 @@ pub(crate) fn manager_dbus_e2e() {
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
     // An instance is a section of the record, not a file: the fixture hands
     // the manager the `instances.ini` it reads. lan-2 starts as a section with
     // no `server@lan-2.ini`, the instance the accepted write below gives its
@@ -672,7 +676,7 @@ pub(crate) fn manager_dbus_e2e() {
     let record = "[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n\n[lan-2]\nServerProfile = lan-2\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
 
     // Serve `core` on one end of a socket pair, the server built on its own
@@ -1509,6 +1513,7 @@ pub(crate) fn manager_dbus_e2e() {
 pub(crate) fn manager_dbus_waits_e2e() {
     use super::service::fakes::{FakeResolver, FakeService, Gate, GateAuthority, GATE_WAIT};
     use super::service::on_thread;
+    use super::service::real_model_files;
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
     use zbus::blocking::connection::Builder;
@@ -1517,13 +1522,16 @@ pub(crate) fn manager_dbus_waits_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
     std::fs::write(
         sys.join("server@default.ini"),
         "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
     )
     .expect("write default");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     // An instance is a section of the record, not a file: the Start this phase
     // waits at polkit for is an instance only once `instances.ini` has it.
     std::fs::write(
@@ -1633,6 +1641,7 @@ pub(crate) fn manager_dbus_waits_e2e() {
 #[cfg(test)]
 pub(crate) fn manager_dbus_checks_e2e() {
     use super::service::fakes::{FakeAuthority, FakeResolver, FakeService};
+    use super::service::real_model_files;
     use pai_core::checks::Refusal;
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -1643,9 +1652,12 @@ pub(crate) fn manager_dbus_checks_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(
         sys.join("instances.ini"),
         "[default]\nServerProfile = default\n",
@@ -1817,6 +1829,7 @@ pub(crate) fn manager_dbus_principal_e2e() {
     use super::service::fakes::{
         Call, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
     };
+    use super::service::real_model_files;
     use std::os::unix::net::UnixStream;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -1836,8 +1849,14 @@ pub(crate) fn manager_dbus_principal_e2e() {
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("engine config dir");
     let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nOpencodeApiKey = sk-local-3f9a\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n";
-    let more = format!("{model_profiles}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n");
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    );
+    let more = real_model_files(
+        dir.path(),
+        &format!("{model_profiles}[Qwen3.8-14B]\nmodel = /m/Qwen3.8-14B-Q4_K_M.gguf\n"),
+    );
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), model_profiles).expect("presets file");
     // An instance is a section of the record: the `As` verbs of this phase

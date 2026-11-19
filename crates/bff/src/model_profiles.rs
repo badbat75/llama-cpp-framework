@@ -438,8 +438,9 @@ fn switch_failure(
 /// values. One rule per check, so a refusal names the card's field whoever asks.
 /// A check that names the key it is about marks it, as its `args[0]`. The checks
 /// that name a VALUE and not a key, the load-on-startup pair (its `args` are the
-/// total and `ModelsMax`) and `model-profile-no-model` (its `args` are the model profile's
-/// name), name the key their value belongs to: `load-on-startup` and `model`.
+/// total and `ModelsMax`) and `model-profile-no-model` and `model-profile-model-missing`
+/// (their `args` are the model profile's name, the latter's with the instance and
+/// the file), name the key their value belongs to: `load-on-startup` and `model`.
 /// So does the pair `override-no-pattern` and `override-no-device`, whose
 /// `args[0]` is the position of the rule inside the value, and
 /// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
@@ -451,7 +452,7 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         "load-on-startup-over-max" | "load-on-startup-unlimited" => {
             Some("load-on-startup".to_string())
         }
-        "model-profile-no-model" => Some("model".to_string()),
+        "model-profile-no-model" | "model-profile-model-missing" => Some("model".to_string()),
         "fit-target-format" => Some("fit-target".to_string()),
         "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),

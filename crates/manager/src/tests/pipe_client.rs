@@ -6,7 +6,9 @@
 
 use crate::manager::pipe::serve_stream;
 use crate::manager::service::fakes::{Call, FakeAuthority, FakeResolver, FakeService};
-use crate::manager::service::{plain, withheld, Action, Caller, Manager, UnitState};
+use crate::manager::service::{
+    plain, real_model_files, withheld, Action, Caller, Manager, UnitState,
+};
 use pai_core::checks::Refusal;
 use pai_core::client::pipe::PipeClient;
 use pai_core::client::{ClientError, InstanceState, ManagerClient};
@@ -85,11 +87,14 @@ pub(crate) fn manager_pipe_client_e2e() {
     std::fs::create_dir_all(&sys).expect("system config dir");
     let default_ini = "[Server]\nPort = 8080\nHostname = 0.0.0.0\n";
     let broken_ini = "[Server]\nPort = 8090\nHostname = 127.0.0.1\n";
-    let model_profiles = "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n";
+    let model_profiles = real_model_files(
+        dir.path(),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    );
     let record = "[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n\n[lan-2]\nServerProfile = big\n";
     std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
-    std::fs::write(sys.join("models.ini"), model_profiles).expect("write presets");
+    std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
@@ -140,7 +145,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
         assert_eq!(
             client.read_file("models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(
             client.read_file("instances.ini"),
@@ -190,7 +195,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             );
             assert_eq!(
                 client.read_file("models.ini"),
-                Ok(Some(plain(model_profiles))),
+                Ok(Some(plain(&model_profiles))),
                 "a preset file is never withheld"
             );
             hang_up(server, client);
@@ -314,7 +319,7 @@ pub(crate) fn manager_pipe_client_e2e() {
 
         assert_eq!(
             client.read_file("models.ini"),
-            Ok(Some(plain(model_profiles)))
+            Ok(Some(plain(&model_profiles)))
         );
         assert_eq!(
             client.read_file("models.ini.disabled"),
