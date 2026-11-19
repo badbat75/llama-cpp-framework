@@ -340,6 +340,12 @@ Lessons only: the rules are in `AGENTS.md`.
   manager's write), and which checks run per file is `check_contents` in
   `crates/manager/src/manager/service.rs` (`models_file` then `model_profile_ids_free` for
   `models.ini`, `models_disabled_file` then `model_profile_ids_free` for `models.ini.disabled`, each `?` first).
+  A write that puts a model profile in effect also runs the manager's model-file check, which is not in
+  `pai-core` `checks.rs` (`check_model_files` in the manager's `check_contents`, after `check_renders`, and
+  `check_model_files_of` inside `set_model_profile`). Its 422 `field` is `field_of` in `crates/bff/src/model_profiles.rs`:
+  a key whose args name a VALUE and not a key (`model-profile-no-model`, `model-profile-model-missing`, the
+  `load-on-startup-*` pair) needs an entry there, so the prose that lists them (the switch's 422 paragraph,
+  which the save's table points at) must list it too.
 - The bff's two time limits: `MANAGER_TIMEOUT` (5 s, reads and control verbs) and `WRITE_TIMEOUT`
   (15 s, the server save and the model profile switch), both `lib.rs`, pinned by
   `the_write_limit_outlasts_the_read_limit` (`src/tests/timeouts.rs`). The 5 s sits in five bff README

@@ -428,7 +428,9 @@ The moved text goes through the manager's content checks, the configurator's own
 `model_profile_ids_free`, which keeps a section that is new to a file from taking an id the other file
 holds, so ids stay unique across the pair. A refusal is 422 with the check's key, its values and
 `field`, the model profile key for the form to mark: `load-on-startup` for both
-`load-on-startup-*` keys, the key named in the check's args for the others, and no `field` for a
+`load-on-startup-*` keys, `model` for `model-profile-no-model` and `model-profile-model-missing`
+(their args name the model profile, the latter's also the instance and the file, never a key), the
+key named in the check's args for the others, and no `field` for a
 refusal about the model profile's name (`invalid-model-profile-id`, `model-profile-name-taken`). The destination is
 written first, so a refusal leaves both files as they were.
 
@@ -539,7 +541,7 @@ and `true` when that state cannot be read after the write landed, the safe answe
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
