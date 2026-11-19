@@ -170,7 +170,10 @@ function Body({
   }
   const engines = manyEngines(answer)
   return (
-    <ul className="tiles">
+    // role="list": WebKit drops the list semantics of a ul whose list-style is
+    // none, on purpose, and advises the explicit role (the follow-up of H6,
+    // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
+    <ul className="tiles" role="list">
       {answer.map((i) => (
         <Tile key={i.id} instance={i} engines={engines} signedIn={signedIn} />
       ))}

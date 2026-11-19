@@ -85,8 +85,9 @@ test('H6a.1: the instances are a ul.tiles of li.tile, in the order received, wit
   const list = await within(section).findByRole('list')
   expect(list.tagName).toBe('UL')
   expect(classes(list)).toContain('tiles')
-  // the semantics come from the element, not from a role
-  expect(list.getAttribute('role')).toBeNull()
+  // the semantics are spelled out, for the engine that drops those of a bare
+  // ul (the follow-up of H6, section 4)
+  expect(list.getAttribute('role')).toBe('list')
 
   // one item per instance, in the order the bff answered
   const items = within(list).getAllByRole('listitem')
@@ -100,10 +101,32 @@ test('H6a.1: the instances are a ul.tiles of li.tile, in the order received, wit
   expect(tableParts(section)).toEqual([])
 })
 
+// The follow-up of H6 (08-hearth-h6-overview.md, section 4): WebKit drops the
+// list semantics of a `ul` whose `list-style` is none, on purpose, and advises
+// an explicit `role="list"` (WebKit bug 170179, comment 1). Playwright 1.65 has
+// no WebKit accessibility tree to measure it with, so the attribute is the pin.
+test('H6 follow-up: ul.tiles carries role="list", so the count of instances is a list in every engine', async () => {
+  fakeBff()
+  render(<App />)
+
+  const list = await within(await instancesSection()).findByRole('list')
+  expect(list.tagName).toBe('UL')
+  expect(classes(list)).toContain('tiles')
+  expect(list.getAttribute('role')).toBe('list')
+  // the role of the list does not touch those of its items
+  const items = within(list).getAllByRole('listitem')
+  expect(items.length).toBe(INSTANCES.length)
+  for (const item of items) expect(item.getAttribute('role')).toBeNull()
+})
+
 // ── H6a.2: the tile ────────────────────────────────────────────────────────
 
 test('H6a.2: a tile is the tile-head row with the id link and the badge, and nothing else', async () => {
-  fakeBff()
+  // Signed out, so the boot row of H6b never joins the tile: this test counts
+  // the tile's children as they stand, and the row arrives with the session
+  // read, which would race the asserts. The tile with the row is pinned by
+  // HearthTilesBoot.test.tsx.
+  fakeBff({ session: 'signed-out' })
   render(<App />)
 
   const [tile] = await tiles()

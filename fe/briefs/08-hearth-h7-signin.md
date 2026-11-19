@@ -126,6 +126,39 @@ The existing `sign-in` state, both themes: at 1280 the art and the panel side by
 taller than the panel; at 320 no art; in dark the drawing's lines `--text` on `--art-3` readable as a
 picture; forced colours (Firefox pref): no art. No new UX check state is needed.
 
+## Review (2026-11-19): approved
+
+Measured on the uncommitted change in Chromium, Firefox and WebKit (Playwright, stub), 1280, 960, 480
+and 320 px, light and dark; UX check 48 states per browser, 0 failing (no new state needed).
+
+- H7.1, H7.2, H7.3 met: `fe/src/SignIn.tsx` 179 to 186 (the dialog returns `content` as before),
+  `SignInArt` 192; the dialog (401 on a Server save) holds no `.signin-art`, `.signin-page` or panel.
+- H7.4, H7.5 met: `fe/src/index.css` 31, 94, 119 (tokens), 1434 on (colours); computed fills match
+  per theme. `.art-line` keeps the default black fill, harmless: its path has no area.
+- H7.6 met: `index.css` 1398, 1405, 1422. Panel at 1280: 420 px wide, `--bg`, radius 16px, the
+  `--shadow` (dark: the 1px `--line` outline), padding 24px, height from content; art 420x278 beside
+  it, centred, shorter than the panel (408). At 960: two 308 px columns. At 480: stacked, art first
+  (form top at y 642 of 900). Matches direction B's sign-in, minus the node name (05e) and with equal
+  columns instead of B's `1fr 26rem` (as briefed).
+- H7.7 met: `index.css` 607 (narrow block, `.signin-page .signin-art`) and 1756 (last
+  forced-colours block): no art at 320 in all three; forced colours (Chromium emulation, Firefox
+  pref), both schemes: art `display: none`, panel edge 1px `CanvasText`, shadow none, the panel takes
+  the whole width, a 401 shown.
+- H7.8 met: no sideways scroll at any width, at 320x225 (400 % of 1280x900) or with 200 % text
+  (Chromium `Page.setFontSizes` 32, root 200 % elsewhere: stacked, panel 880x646 at 1280, 288x1068 at
+  320, nothing clipped). 1280x400: page scrolls (528 px), form top at y 266.
+- H7.9 met: Chromium's accessibility tree has no svg or image node; `main` reads heading, intro,
+  form. Banner Sign in moves focus to `h1#page-heading` in all three (a direct load leaves it on
+  `body`, as before); Tab: skip link, brand, theme, Sign in, Overview (Menu at 320), user name,
+  password, Sign in. No animation (reduced motion and not).
+- H7.10 met: empty fields, 401, 403, 503 each shown inside the panel, `role="alert"` or field errors,
+  focus to the user name (empty, 403) or password (401, 503) as before, the panel grows (408 to 525
+  at most at 1280, 461 to 657 at 320) without clipping; the insecure notice (Chromium, host mapped
+  off loopback) inside the panel and on the password's `aria-describedby`. axe 0 everywhere.
+- Note, not a condition: from 480 px to the two-column width the drawing stacks above the form, so
+  on a short phone held sideways the form starts below the first screen. It scrolls; hide it there
+  too only if users find it in the way.
+
 ## 3. What must not change
 
 `SignIn`'s props and behaviour; the dialog; every text and key; ids; focus; the banner's Sign in link

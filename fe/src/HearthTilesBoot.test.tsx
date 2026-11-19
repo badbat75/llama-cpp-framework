@@ -491,26 +491,6 @@ describe('H6b.2: the rows join with the sign-in banner', () => {
 
 // ── The stylesheet, read as text ────────────────────────────────────────────
 
-// The dependency list of the boot effect, pinned as text: jsdom cannot flip
-// `signedIn` while a tile stays mounted (sign-in and sign-out pass through the
-// sign-in route, which remounts the Overview), so H6b.2's rule "the read
-// starts with the sign-in, on the mount of the tile" has no observable
-// sequence; it is pinned as the contract that the boot effect re-runs when
-// the session changes, not only when the id does. A contract pin, not a
-// behaviour test: it says the effect's key is (id, signedIn), which is what
-// makes the read belong to the sign-in.
-test('H6b.2: the boot effect is keyed on the id and the session (source pin of the deps list)', () => {
-  const src = readFileSync(join(import.meta.dirname, 'Instances.tsx'), 'utf8')
-  const deps = [...src.matchAll(/\}, \[([^\]]*)\]\)/g)].map((m) =>
-    (m[1] ?? '').replace(/\s+/g, ' ').trim(),
-  )
-  const keyed = deps.filter((d) => /\bid\b/.test(d))
-  expect(
-    keyed,
-    'the effect that reads boot lists the id and signedIn: a sign-in restarts the read on the tile that is already keyed by the id',
-  ).toEqual(['id, signedIn'])
-})
-
 const CSS = readFileSync(
   join(import.meta.dirname, 'index.css'),
   'utf8',

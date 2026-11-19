@@ -459,8 +459,10 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
     .sort()
   expect(
     lifted,
-    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, table, .save-bar, .dialog) plus the tile H6a.6 lifts with the same token',
-  ).toEqual(['.card', '.dialog', '.save-bar', '.tile', 'table'].sort())
+    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, table, .save-bar, .dialog), the tile H6a.6 and the sign-in panel H7.6 lift with the same token',
+  ).toEqual(
+    ['.card', '.dialog', '.save-bar', '.signin-panel', '.tile', 'table'].sort(),
+  )
   // A container carries no state look: H2 adds no hover, active, focus,
   // disabled, checked or aria rule on the containers (section 0: no hover look
   // on controls, and H2b adds none on a box). A rule on a child (.card h3,

@@ -222,6 +222,8 @@ inside `nav` (unverified). Playwright 1.65 has no engine accessibility tree for 
 `ariaSnapshot` computes roles itself and reports a list in every engine), so this cannot be
 measured here. The count of instances is what a glance wants, so `<ul className="tiles"
 role="list">`; the tester pins the attribute. Not a condition of H6b.
+Reviewed with H7 (2026-11-19): met, `fe/src/Instances.tsx` 176; the aria snapshot is unchanged
+(list, listitem, link, state, term, definition) and axe reports nothing in all three engines.
 
 **Later, for the bff (a note, not a condition):** with many instances the Overview sends one boot
 read per tile; a batch answer (the boot flag in `GET /api/instances`, signed in) would make it one.

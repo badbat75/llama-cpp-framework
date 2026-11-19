@@ -113,8 +113,10 @@ const inside = (range: [number, number]): Rule[] =>
 /** The rules of `ranges`, for a media block that appears more than once. */
 const insideAll = (ranges: [number, number][]): Rule[] => ranges.flatMap(inside)
 
-// The 16 colour and shadow tokens of brief 06 H1a.2 (the rows of its table,
-// in the order of the table), copied: the dark scheme declares exactly these.
+// The colour and shadow tokens of brief 06 H1a.2 (the rows of its table, in
+// the order of the table), plus the three art tokens of brief 08 H7.5 (the
+// drawing, declared after --shadow in every theme block): the dark scheme
+// declares exactly these.
 const DARK16: [string, string][] = [
   ['--page', '#1b1714'],
   ['--bg', '#231d19'],
@@ -132,6 +134,9 @@ const DARK16: [string, string][] = [
   ['--warning', '#e8b45a'],
   ['--hatch', 'rgb(241 233 223 / 0.06)'],
   ['--shadow', '0 0 0 1px var(--line)'],
+  ['--art-1', '#3a2a44'],
+  ['--art-2', '#3b2f24'],
+  ['--art-3', '#2b241f'],
 ]
 
 // The selector of H4.10's block A, in the compact spelling this reader uses.
@@ -155,21 +160,21 @@ test('H4.10: the dark media block holds exactly one rule, whose selector is :roo
   ).toBe(SYSTEM_DARK)
 })
 
-test('H4.10: block A declares exactly the 16 dark tokens of H1a.2, in the order of the table, and nothing else', () => {
+test('H4.10: block A declares exactly the 19 dark tokens (the 16 of H1a.2 and the three art tokens of brief 08 H7.5), in the order of the table, and nothing else', () => {
   const body = systemDark().body
-  expect(customProps(body), 'the 16 names and values, in order').toEqual(DARK16)
+  expect(customProps(body), 'the 19 names and values, in order').toEqual(DARK16)
   expect(
     declarations(body),
-    '16 declarations: the block adds no other property',
+    '19 declarations: the block adds no other property',
   ).toHaveLength(DARK16.length)
 })
 
-test('H4.10: the top-level :root[data-theme=dark] repeats the same 16 tokens with the same values in the same order, plus color-scheme: dark, and nothing else', () => {
+test('H4.10: the top-level :root[data-theme=dark] repeats the same 19 tokens with the same values in the same order, plus color-scheme: dark, and nothing else', () => {
   const body = topBy(
     ":root[data-theme='dark']",
     "the top-level :root[data-theme='dark'] rule",
   ).body
-  expect(customProps(body), 'block B: the same 16, in the same order').toEqual(
+  expect(customProps(body), 'block B: the same 19, in the same order').toEqual(
     DARK16,
   )
   expect(
@@ -182,7 +187,7 @@ test('H4.10: the top-level :root[data-theme=dark] repeats the same 16 tokens wit
   ).toBe('dark')
   expect(
     declarations(body),
-    '17 declarations: the 16 tokens and color-scheme, nothing else',
+    '20 declarations: the 19 tokens and color-scheme, nothing else',
   ).toHaveLength(DARK16.length + 1)
 })
 

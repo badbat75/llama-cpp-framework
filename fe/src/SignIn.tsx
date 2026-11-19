@@ -93,7 +93,7 @@ export default function SignIn({
     }
   }
 
-  return (
+  const content = (
     <>
       {!inDialog && <PageHeading text={t('signin-title')} />}
       <p>{t('signin-intro')}</p>
@@ -172,6 +172,116 @@ export default function SignIn({
         </div>
       </form>
     </>
+  )
+  // The page (fe/briefs/08-hearth-h7-signin.md H7.1) is the drawing and the
+  // panel that holds all of this; the dialog holds exactly the same nodes it
+  // held before, with no box and no drawing.
+  if (inDialog) return content
+  return (
+    <div className="signin-page">
+      <SignInArt />
+      <div className="signin-panel">{content}</div>
+    </div>
+  )
+}
+
+/** The drawing beside the form (08-hearth-h7-signin.md H7.2 and H7.3): pure
+ * decoration, so it is hidden from assistive technology, carries no text and
+ * no name, and takes every colour from its classes (H7.4): the CSS gives the
+ * fill and the stroke, the drawing only the geometry. */
+function SignInArt() {
+  return (
+    <div className="signin-art" aria-hidden="true">
+      <svg viewBox="0 0 420 260" focusable="false" aria-hidden="true">
+        <circle className="art-sun" cx="330" cy="70" r="38" />
+        <path className="art-ground" d="M0 214h420v46H0z" />
+        <path
+          className="art-door"
+          d="M120 214V112a90 90 0 0 1 180 0v102z"
+          strokeWidth="3"
+        />
+        <rect
+          className="art-panel"
+          x="160"
+          y="120"
+          width="100"
+          height="80"
+          rx="12"
+          strokeWidth="3"
+        />
+        <rect
+          className="art-bar-on"
+          x="174"
+          y="136"
+          width="72"
+          height="12"
+          rx="6"
+        />
+        <rect
+          className="art-bar"
+          x="174"
+          y="156"
+          width="72"
+          height="12"
+          rx="6"
+          strokeWidth="2.5"
+        />
+        <rect
+          className="art-bar"
+          x="174"
+          y="176"
+          width="72"
+          height="12"
+          rx="6"
+          strokeWidth="2.5"
+        />
+        <circle className="art-knob" cx="236" cy="142" r="3" />
+        <path
+          className="art-cable"
+          d="M260 196c40 0 40 18 80 18"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray="1 8"
+        />
+        <rect
+          className="art-panel"
+          x="320"
+          y="180"
+          width="64"
+          height="34"
+          rx="6"
+          strokeWidth="3"
+        />
+        <path
+          className="art-line"
+          d="M312 214h80"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        <path
+          className="art-stem"
+          d="M60 214c0-30 10-46 26-58M86 214c0-22-6-38-20-50"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        <ellipse
+          className="art-leaf"
+          cx="86"
+          cy="152"
+          rx="12"
+          ry="6"
+          transform="rotate(-35 86 152)"
+        />
+        <ellipse
+          className="art-leaf"
+          cx="64"
+          cy="162"
+          rx="11"
+          ry="5"
+          transform="rotate(30 64 162)"
+        />
+      </svg>
+    </div>
   )
 }
 

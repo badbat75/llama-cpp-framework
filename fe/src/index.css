@@ -26,6 +26,12 @@
   --hatch: rgb(42 33 28 / 0.07);
   --shadow: 0 1px 2px rgb(60 40 20 / 0.08), 0 6px 20px rgb(60 40 20 / 0.06);
 
+  /* The drawing of the sign-in page (fe/briefs/08-hearth-h7-signin.md H7.5):
+     decoration, so it joins no contrast pair and answers to no floor. */
+  --art-1: #ead9f0;
+  --art-2: #f3e3cf;
+  --art-3: #ffffff;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -85,6 +91,9 @@
     --warning: #e8b45a;
     --hatch: rgb(241 233 223 / 0.06);
     --shadow: 0 0 0 1px var(--line);
+    --art-1: #3a2a44;
+    --art-2: #3b2f24;
+    --art-3: #2b241f;
   }
 }
 
@@ -107,6 +116,9 @@
   --warning: #e8b45a;
   --hatch: rgb(241 233 223 / 0.06);
   --shadow: 0 0 0 1px var(--line);
+  --art-1: #3a2a44;
+  --art-2: #3b2f24;
+  --art-3: #2b241f;
   color-scheme: dark;
 }
 
@@ -585,6 +597,15 @@ main > * {
   .theme-switch {
     min-width: var(--control-h);
     padding: var(--space-1) var(--space-2);
+  }
+
+  /* The sign-in drawing goes below 480 px (08-hearth-h7-signin.md H7.7): the
+     intro, the notices and the two fields already fill the first screen of a
+     phone, and the drawing adds nothing to them. The extra class is what makes
+     this win: a media query adds no specificity, and the .signin-art rule that
+     lays the drawing out is written further down the sheet. */
+  .signin-page .signin-art {
+    display: none;
   }
 }
 
@@ -1369,6 +1390,101 @@ input[role='switch'][aria-disabled='true']::before {
   gap: var(--space-2);
 }
 
+/* The page of H7.6 (fe/briefs/08-hearth-h7-signin.md): the drawing and the
+   panel, two columns when main holds the room for two 18rem columns and the
+   gap, stacked otherwise. A viewport breakpoint would misjudge the room, the
+   nav takes a column from 960 px up. Nothing fixes the panel's height: only
+   its content sizes it (1.4.12). */
+.signin-page {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-6);
+  align-items: center;
+}
+
+.signin-art {
+  background: var(--art-2);
+  border-radius: 24px;
+  padding: var(--space-5);
+  display: grid;
+  place-items: center;
+}
+
+.signin-art svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+}
+
+/* The form in a lifted box, the card's shape. The transparent border is the
+   edge that survives forced colours, where a shadow computes to none (brief 06
+   section 0); min-width 0 keeps a long value from widening its column. */
+.signin-panel {
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+/* The shapes take their colour by class (H7.4): no engine is trusted to
+   resolve var() written in a fill attribute, so the drawing carries geometry
+   and the CSS gives every fill and stroke. */
+.signin-art .art-sun,
+.signin-art .art-ground {
+  fill: var(--art-1);
+}
+
+.signin-art .art-door {
+  fill: var(--art-3);
+  stroke: var(--text);
+}
+
+.signin-art .art-panel {
+  fill: var(--bg);
+  stroke: var(--text);
+}
+
+.signin-art .art-bar-on {
+  fill: var(--accent);
+}
+
+.signin-art .art-bar {
+  fill: none;
+  stroke: var(--text);
+}
+
+.signin-art .art-knob {
+  fill: var(--on-accent);
+}
+
+.signin-art .art-cable,
+.signin-art .art-stem {
+  fill: none;
+}
+
+.signin-art .art-cable,
+.signin-art .art-line {
+  stroke: var(--text);
+}
+
+/* The stem of the plant, after the rule that shares it with the cable: same
+   specificity, so the later rule is the one that draws. */
+.signin-art .art-stem {
+  stroke: var(--success);
+}
+
+.signin-art .art-leaf {
+  fill: var(--success);
+}
+
+/* The drawing is hidden where it does not help (H7.7): below 480 px it would
+   push the form past the first screen of a phone, and in forced colours every
+   fill becomes a system colour and it turns into overlapping outlines. The two
+   rules sit in the sheet's one narrow block and its last forced-colours block,
+   whose count the token guards pin, so they are written there, not here. */
+
 .stacked {
   display: flex;
   flex-direction: column;
@@ -1629,5 +1745,15 @@ html:has(.save-bar) {
   .check input[type='checkbox'][aria-disabled='true'],
   .check input[type='checkbox'][aria-disabled='true']::before {
     border-color: GrayText;
+  }
+
+  /* The sign-in drawing goes in forced colours (08-hearth-h7-signin.md H7.7):
+     every fill becomes a system colour there, so the drawing turns into
+     overlapping outlines that say nothing. It is decoration, so nothing is
+     lost: the form carries the page. This rule is written after the .signin-art
+     rule, so its display wins, and it joins this block because the token guards
+     pin the count of the sheet's forced-colours blocks. */
+  .signin-art {
+    display: none;
   }
 }

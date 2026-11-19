@@ -169,6 +169,11 @@ const TOKENS: [string, string, string | null][] = [
     '0 1px 2px rgb(60 40 20 / 0.08), 0 6px 20px rgb(60 40 20 / 0.06)',
     '0 0 0 1px var(--line)',
   ],
+  // Brief 08 H7.5: the three drawing tokens, in all three theme blocks.
+  // Decoration, so they join no contrast pair (the pairs table below).
+  ['--art-1', '#ead9f0', '#3a2a44'],
+  ['--art-2', '#f3e3cf', '#3b2f24'],
+  ['--art-3', '#ffffff', '#2b241f'],
   ['--space-1', '4px', null],
   ['--space-2', '8px', null],
   ['--space-3', '12px', null],
@@ -204,7 +209,8 @@ const TOKENS: [string, string, string | null][] = [
   ['--ring-w', '3px', null],
 ]
 
-// Tokens 1 to 16 of the table: the dark block declares exactly these.
+// The tokens of the table with a dark value (16 of brief 06, plus the three
+// art tokens of brief 08 H7.5): the dark block declares exactly these.
 const DARK_NAMES = TOKENS.filter((t) => t[2] !== null).map((t) => t[0])
 
 // The --fs- tokens of the table (rows 30 to 36).
@@ -253,7 +259,7 @@ const PAIRS: Pair[] = [
 ]
 const THEMES = ['light', 'dark'] as const
 
-test('H1a.1: the top-level :root declares exactly the 40 Hearth token names, none twice, and keeps color-scheme', () => {
+test('H1a.1: the top-level :root declares exactly the 43 Hearth token names, none twice, and keeps color-scheme', () => {
   const pairs = lightTokens()
   const names = pairs.map((p) => p[0])
   expect(
@@ -262,7 +268,7 @@ test('H1a.1: the top-level :root declares exactly the 40 Hearth token names, non
   ).toBe(TOKENS.length)
   expect(
     [...names].sort(),
-    'exactly the 40 names of the table, nothing extra',
+    'exactly the 43 names of the table (40 of brief 06 plus the three art tokens of brief 08 H7.5), nothing extra',
   ).toEqual([...TOKENS.map((t) => t[0])].sort())
   expect(
     prop(lightBody(), 'color-scheme'),
@@ -280,7 +286,7 @@ test.each(TOKENS.map((t) => [t[0], t[1]] as [string, string]))(
   },
 )
 
-test('H1a.2: the dark :root declares exactly the 16 colour and shadow tokens, none twice, and nothing else', () => {
+test('H1a.2: the dark :root declares exactly the 19 colour and shadow tokens, none twice, and nothing else', () => {
   const pairs = darkTokens()
   const names = pairs.map((p) => p[0])
   expect(
@@ -289,7 +295,7 @@ test('H1a.2: the dark :root declares exactly the 16 colour and shadow tokens, no
   ).toBe(DARK_NAMES.length)
   expect(
     [...names].sort(),
-    'tokens 1 to 16 of the table, the colour and shadow set, nothing else',
+    'tokens 1 to 19 of the table, the colour and shadow set, nothing else',
   ).toEqual([...DARK_NAMES].sort())
 })
 
@@ -649,11 +655,16 @@ test('H1a.12 guard: the four forced-colours blocks stay, with system colours onl
     v.replace(/\s+/g, ' ').toLowerCase() === GRADIENT
   const off: string[] = []
   for (const b of blocks)
-    for (const m of b.matchAll(/([-a-zA-Z]+)\s*:\s*([^;{}]+);/g))
+    for (const m of b.matchAll(/([-a-zA-Z]+)\s*:\s*([^;{}]+);/g)) {
       // forced-color-adjust is the one property that is not a colour: the
       // switch knob needs it (H2a.6), and naming it keeps the scan honest.
+      // H7.7 (brief 08) removes the sign-in drawing in forced colours: a
+      // display: none is not a colour either, so it joins the named pair,
+      // property and value together, keeping the scan honest.
+      if (m[1] === 'display' && m[2].trim() === 'none') continue
       if (m[1] !== 'forced-color-adjust' && !allowed(m[2].trim()))
         off.push(`${m[1]}: ${m[2].trim()}`)
+    }
   expect(
     off,
     'inside a forced-colours block only the system colour keywords and the CSS-wide keyword inherit: a var(), a hex, a named colour or any other keyword is an author colour the forced palette fights; the cues that survive are the border styles, the shapes and the text',
@@ -705,6 +716,8 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     "input[type='text'], input[type='password'], select: min-height: var(--control-h)",
     "input[type='text'], input[type='password'], select: min-width: 0",
     '.check: min-height: 24px',
+    // H7.6 (brief 08): the sign-in panel is a grid child, min-width 0 lets it shrink.
+    '.signin-panel: min-width: 0',
     '.save-messages: min-width: 0',
     // H5c.7: the row of the bar's buttons shrinks with the bar.
     '.save-actions: min-width: 0',

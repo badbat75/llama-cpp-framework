@@ -161,6 +161,14 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   `window.isSecureContext` is `false` (neither HTTPS nor a loopback address) the sign-in form, on
   its page and in the dialog, shows a static Notice before the fields saying the password is sent
   unencrypted, described on the password field; nowhere else (`fe/briefs/03-insecure-sign-in.md`).
+- **The sign-in page** (H7, `fe/briefs/08-hearth-h7-signin.md`; the dialog has none of it): a
+  decorative drawing (`div.signin-art`, `aria-hidden`, colours by class from `--art-*`, `--text`,
+  `--accent`, `--success`) beside a `div.signin-panel` (`--bg`, the card's radius and shadow, a
+  transparent 1px border that forced colours draw) holding the heading and the form. Two equal
+  columns when `main` has room for two 18rem columns (960 px and up as built), stacked with the
+  drawing first otherwise; the drawing is hidden below 480 px and in forced colours, where the
+  panel takes the whole width. Focus, reading order and Tab order are the form's: the drawing is
+  absent from the accessibility tree ([1.1.1](https://www.w3.org/TR/WCAG22/#non-text-content)).
 
 ## 4. Layout and responsive rules
 
@@ -261,7 +269,9 @@ whole device pixels: [CSS Values 4](https://www.w3.org/TR/css-values-4/#lengths)
 `--hatch` (the disabled stripes), `--radius-check` (checkbox), `--radius-pill` (primary, secondary,
 About buttons, switch track), all in use since H2a; `--radius-card` 16px and `--shadow` (redeclared
 in dark as a 1 px `--line` outline) on the card, the table box, the save bar (top corners only) and
-the dialog since H2b; declared for later slices: `--space-7` 64px (brief 06 section 1). The lift is
+the dialog since H2b, and on the sign-in page's panel since H7; the drawing's own colours
+`--art-1` (`#ead9f0` / `#3a2a44`), `--art-2` (`#f3e3cf` / `#3b2f24`, its box) and `--art-3`
+(`#ffffff` / `#2b241f`, the door), decoration only, in no contrast pair (H7); declared for later slices: `--space-7` 64px (brief 06 section 1). The lift is
 decorative (cards carry no meaning): in light the card is told from the page by the shadow and the
 fill (`--bg` on `--page` 1.11:1), in dark by the outline (1.39:1 on `--page`) and the fill (1.07:1),
 measured in the H2b review; no floor applies. The card and the table box carry a transparent 1 px
@@ -445,7 +455,8 @@ Each is one React component, reused by every page.
   `CanvasText`, so the five shapes stay distinct in the user's own colours
   ([CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop);
   H6a.10, measured in Chromium emulation and Firefox's forced colours).
-- **Tile** (the Overview's instances, H6a and H6b): a `ul.tiles` of `li.tile` cards in a grid
+- **Tile** (the Overview's instances, H6a and H6b): a `ul.tiles` (`role="list"`: WebKit drops the
+  list role of a `ul` with `list-style: none`, [WebKit bug 170179](https://bugs.webkit.org/show_bug.cgi?id=170179)) of `li.tile` cards in a grid
   (three across at 1280, two at 960, one at 480 and below; tiles of a row the same height), in the
   manager's order. Each tile: a head with the id as the link to the instance page (at least 24 px
   each way, [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)) and its State badge, which

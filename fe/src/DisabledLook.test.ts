@@ -132,11 +132,14 @@ test('2h.163b and 2h.163f: the enabled field is on --field with a solid --contro
     for (const m of r.body.matchAll(/(--[a-z0-9-]+)\s*:/g)) tokens.add(m[1])
   expect(
     [...tokens].sort(),
-    ':root declares the Hearth token set of brief 06 section 1, in light and in dark',
+    ':root declares the Hearth token set of brief 06 section 1, in light and in dark, plus the three art tokens of brief 08 H7.5',
   ).toEqual(
     [
       '--accent',
       '--accent-soft',
+      '--art-1',
+      '--art-2',
+      '--art-3',
       '--bg',
       '--border-w',
       '--control',

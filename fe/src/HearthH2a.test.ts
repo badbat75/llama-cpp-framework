@@ -1005,7 +1005,14 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   const fixed: string[] = []
   for (const r of RULES) {
     const height = prop(r.body, 'height')
-    if (height && !textFree(r.flat) && !isClipBox(r.body))
+    // `height: auto` is the absence of a height: the content sizes the box,
+    // exactly what 1.4.12 asks (brief 08 H7.6 spells it for the drawing).
+    if (
+      height &&
+      height.trim() !== 'auto' &&
+      !textFree(r.flat) &&
+      !isClipBox(r.body)
+    )
       fixed.push(`${r.flat}: ${height}`)
   }
   expect(fixed, 'no fixed height outside the boxes that carry no text').toEqual(
@@ -1031,6 +1038,7 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
       const height = prop(b.body, 'height')
       if (
         height &&
+        height.trim() !== 'auto' &&
         !b.selector.startsWith('@') &&
         !textFree(b.selector) &&
         !isClipBox(b.body)
@@ -1063,6 +1071,10 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
   expect(
     heightsInCss('.theme-switch-label { min-height: 20px }'),
     'a box that carries no height is not listed',
+  ).toEqual([])
+  expect(
+    heightsInCss('.theme-switch-label { height: auto }'),
+    'auto is no height of its own: the box is sized by its content, so it is not listed (brief 08 H7.6)',
   ).toEqual([])
   expect(
     heightsInCss(CLIP),
