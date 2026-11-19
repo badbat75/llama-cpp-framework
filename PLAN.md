@@ -977,6 +977,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
     labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
     and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design.
+    **The node's status shows the engine** (user, 2026-11-19): for a signed-in administrator only (a visitor
+    keeps the framework version and the instances' state), the installed engine's version and the GPU backend
+    packages installed with their versions (today ROCm/HIP, CUDA with NCCL, Vulkan; OpenCL is not built). What
+    is installed, not what a running instance loaded. With slice 13 (`GET /api/node`); where the manager or
+    the bff reads it, and on Windows, is the architect's. The same slice can carry each instance's start at
+    boot inside `GET /api/instances` for a signed-in caller (the fe designer: the Overview reads
+    `GET /api/instances/{id}/boot` once per tile today).
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
