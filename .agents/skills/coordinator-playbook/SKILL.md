@@ -33,6 +33,14 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   chat); two copies otherwise resume the same subagents and launch duplicate coders on one tree. A
   copy stopped mid-slice leaves its coder's half-written code: brief the next coder to tell the
   tests from the production code in `git diff` first.
+- **Pace (user, 2026-11-19: "in 2 days only 3 small changes")**: slice 9 took 4 hours and 16 OpenCode
+  runs, slice 10a 9 runs for a code move. The user chose two changes:
+  - **Bigger slices**: one slice is one useful piece whole (e.g. all of 10b: estimate, manager check and
+    real probe in one tester/coder round), not a chain of sub-slices each with its full cycle.
+  - **Lighter reruns**: the tester's rerun is incremental; `cargo clean -p` and a full rerun of every
+    crate only once, when the slice closes. Mutants only for security code (the manager's checks and
+    permissions, the bff's guards and sessions, what root reads); elsewhere the red-before-green proof
+    is enough.
 - Brief the `architect` (added 2026-11-15) before a step or slice that adds or changes a component, a
   protocol, a trust boundary, an identity or permission rule, or a deployment or packaging shape; its
   design (in `ARCHITECTURE.md`) comes before the tester's tests, and it reviews the coder's result.
