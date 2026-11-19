@@ -64,6 +64,18 @@ function nav(): HTMLElement {
   return screen.getByRole('navigation', { name: en('nav-label') })
 }
 
+/** The nav, once the session answered: 09 S1a.3, it arrives with the session. */
+async function navReady(): Promise<HTMLElement> {
+  return screen.findByRole('navigation', { name: en('nav-label') })
+}
+
+/** The names of the links of the nav `n`, in order. */
+function navLinksIn(n: HTMLElement): string[] {
+  return within(n)
+    .queryAllByRole('link')
+    .map((a) => a.textContent ?? '')
+}
+
 /** The names of the links in the nav, in order. */
 function navLinks(): string[] {
   return within(nav())
@@ -448,12 +460,11 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
-  ).not.toBeNull()
-  expect(
-    within(nav()).queryByRole('list', { name: en('nav-instances') }),
+    '09 S1a.4: signed out the banner offers no Sign in',
   ).toBeNull()
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: signed out there is no nav',
   ).toBeNull()
   fireEvent.change(username, { target: { value: 'alice' } })
   fireEvent.change(password, { target: { value: 'hunter2' } })
@@ -511,44 +522,40 @@ test('2a.4, 2a.18: after sign-in from #/profiles/model the Model profiles page o
 
 // ── Nav and route (1 to 5) ──────────────────────────────────────────────
 
-test('2a.1: while the session read is pending the nav holds only Overview, and no model profiles are read', async () => {
+test('2a.1: while the session read is pending there is no nav at all, and no model profiles are read', async () => {
   const session = deferred()
   const { bff } = open({ session: () => session.promise })
-  expect(navLinks()).toEqual([en('nav-overview')])
+  // 09 S1a.3: pending, main is the loading line and the shell has no nav.
+  expect(document.querySelector('nav')).toBeNull()
   expect(modelProfilesReads(bff)).toBe(0)
   await act(async () => {
     session.resolve(reply(200, { user: 'alice' }))
   })
   expect(
-    await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
+    await screen.findByRole('link', { name: en('nav-model-profiles') }),
   ).toBeTruthy()
 })
 
-test('2a.1: signed out the nav has no Model profiles link', async () => {
+test('2a.1: signed out there is no nav, so no Model profiles link', async () => {
   startAt('#/')
   open({ session: 'signed-out' })
-  await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  const banner = screen.getByRole('banner')
-  await waitFor(() =>
-    expect(
-      within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
-        within(banner).queryByRole('link', { name: en('session-sign-in') }),
-    ).not.toBeNull(),
-  )
-  expect(navLinks()).toEqual([en('nav-overview')])
+  // 09 S1a.1 and S1a.4: signed out the sign-in page is the only content, and
+  // the shell has no nav.
+  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
+  expect(screen.queryByRole('navigation', { name: en('nav-label') })).toBeNull()
 })
 
 test('2a.1: signed in, the nav holds Overview, the instance links, then Model profiles to #/profiles/model, outside the Instances group', async () => {
   startAt('#/')
   open()
-  const list = await within(nav()).findByRole('list', {
-    name: en('nav-instances'),
-  })
-  const models = await within(nav()).findByRole('link', {
+  // 09 S1a.3: the nav comes with the session.
+  const n = await navReady()
+  const list = await within(n).findByRole('list', { name: en('nav-instances') })
+  const models = await within(n).findByRole('link', {
     name: en('nav-model-profiles'),
   })
   expect(models.getAttribute('href')).toBe('#/profiles/model')
-  expect(navLinks()).toEqual([
+  expect(navLinksIn(n)).toEqual([
     en('nav-overview'),
     'default',
     'coder',
@@ -571,19 +578,21 @@ test('2a.1: a failed instances read leaves out the Instances group, not Model pr
 
 test('2a.2: on #/profiles/model the Model profiles link has aria-current="page", and loses it on another route', async () => {
   open()
-  const models = await within(nav()).findByRole('link', {
+  // 09 S1a.3: the nav comes with the session.
+  const n = await navReady()
+  const models = await within(n).findByRole('link', {
     name: en('nav-model-profiles'),
   })
   await waitFor(() => expect(models.getAttribute('aria-current')).toBe('page'))
   expect(
-    within(nav())
+    within(n)
       .getByRole('link', { name: en('nav-overview') })
       .getAttribute('aria-current'),
   ).toBeNull()
   navigate('#/')
   await waitFor(() => expect(models.getAttribute('aria-current')).toBeNull())
   expect(
-    within(nav())
+    within(n)
       .getByRole('link', { name: en('nav-overview') })
       .getAttribute('aria-current'),
   ).toBe('page')

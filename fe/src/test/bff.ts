@@ -43,11 +43,11 @@ export const EN: Record<string, string> = {
   'api-session-too-many-attempts':
     'Too many attempts. Try again in {0} seconds.',
   'api-session-unavailable':
-    'Signing in is not available on this server right now. You can still see the overview without signing in.',
+    'Signing in is not available on this server right now.',
   'api-session-not-administrator':
-    'Only members of the pai group can sign in, and this account is not one. Ask whoever administers this computer to add it; you can still see the overview without signing in.',
+    'Only members of the pai group can sign in, and this account is not one. Ask whoever administers this computer to add it.',
   'session-revoked':
-    'You have been signed out: this account is no longer a member of the pai group. Ask whoever administers this computer to add it again; you can still see the overview without signing in.',
+    'You have been signed out: this account is no longer a member of the pai group. Ask whoever administers this computer to add it again.',
   'overview-title': 'Overview',
   'instance-engine': '{0} instance',
   'instance-state': 'State: {0}',

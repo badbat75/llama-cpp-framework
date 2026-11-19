@@ -86,6 +86,11 @@ function nav(): HTMLElement {
   return screen.getByRole('navigation', { name: en('nav-label') })
 }
 
+/** The nav, once the session answered: 09 S1a.3, it arrives with the session. */
+async function navShown(): Promise<HTMLElement> {
+  return screen.findByRole('navigation', { name: en('nav-label') })
+}
+
 /** The names of the nav's links, in order. */
 function navLinks(): string[] {
   return within(nav())
@@ -100,14 +105,14 @@ async function navReady(): Promise<HTMLElement> {
   return n
 }
 
-/** The Model profiles link in the nav. */
+/** The Model profiles link in the nav (the nav comes with the session). */
 async function entry(): Promise<HTMLElement> {
-  return within(nav()).findByRole('link', { name: ENTRY })
+  return within(await navShown()).findByRole('link', { name: ENTRY })
 }
 
 /** The nav's Profiles list, found by the name of its label. */
 async function profilesList(): Promise<HTMLElement> {
-  return within(nav()).findByRole('list', { name: PROFILES })
+  return within(await navShown()).findByRole('list', { name: PROFILES })
 }
 
 function profilesLabel(): HTMLElement | null {
@@ -307,18 +312,26 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(navLinks()).toEqual([en('nav-overview'), ENTRY])
 })
 
-test('5b.1: signed out, the nav holds Overview only: no Profiles label, no Profiles list, no Model profiles link', async () => {
+test('5b.1: signed out there is no nav at all: no Profiles label, no Profiles list, no Model profiles link (09 S1a.4)', async () => {
   const { main } = open({ session: 'signed-out' })
-  await within(main).findByText(en('signin-required'))
-  const n = nav()
-  expect(navLinks()).toEqual([en('nav-overview')])
-  expect(within(n).queryByText(PROFILES)).toBeNull()
+  // 09 S1a.1: signed out, the sign-in page is the only content.
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: en('signin-title'),
+  })
+  expect(
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: no nav signed out',
+  ).toBeNull()
   expect(profilesLabel(), 'no label element').toBeNull()
   expect(
-    within(n).queryByRole('list', { name: PROFILES }),
-    'no labelled list',
-  ).toBeNull()
-  expect(within(n).queryByRole('link', { name: ENTRY })).toBeNull()
+    document.querySelectorAll('[aria-labelledby="nav-profiles"]'),
+    'no Profiles list',
+  ).toHaveLength(0)
+  expect(
+    screen.queryAllByRole('link', { name: ENTRY }),
+    'no Model profiles link',
+  ).toHaveLength(0)
 })
 
 test('5b.2: nothing says Server profiles, nothing links under #/profiles/server, and no nav-server-profiles key is added (05c adds it)', async () => {
@@ -541,11 +554,24 @@ test.each(DEAD)(
 )
 
 test.each(DEAD.slice(0, 3))(
-  '5b.7: %s (%s) is the not-found page signed out too, with no read',
+  '5b.7: %s (%s) is the sign-in page signed out too (09 S1a.1, S1a.7), with no read',
   async (hash) => {
     startAt(hash)
     const { bff, main } = open({ session: 'signed-out' })
-    await notFound(main)
+    // 09 S1a.1: signed out, no hash is the not-found page: the sign-in page is
+    // the only content. 09 S1a.7: a hash that is a page shows the notice.
+    await within(main).findByRole('heading', {
+      level: 1,
+      name: en('signin-title'),
+    })
+    expect(within(main).getByText(en('signin-required'))).toBeTruthy()
+    expect(
+      within(main).queryByRole('heading', {
+        level: 1,
+        name: en('not-found'),
+      }),
+      `${hash}: not the not-found page`,
+    ).toBeNull()
     expect(window.location.hash, hash).toBe(hash)
     expect(profileReads(bff), `${hash}: nothing read`).toEqual([])
   },

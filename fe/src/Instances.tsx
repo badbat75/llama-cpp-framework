@@ -117,14 +117,7 @@ export function instancesStore(): InstancesStore {
   }
 }
 
-export default function Instances({
-  store,
-  signedIn,
-}: {
-  store: InstancesStore
-  /** The visitor's session is known and current: the tiles read Start at boot. */
-  signedIn: boolean
-}) {
+export default function Instances({ store }: { store: InstancesStore }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
 
@@ -141,7 +134,7 @@ export default function Instances({
   return (
     <section>
       <h2>{t('instances-title')}</h2>
-      <Body answer={answer} signedIn={signedIn} />
+      <Body answer={answer} />
     </section>
   )
 }
@@ -152,13 +145,7 @@ function manyEngines(instances: Instance[]): boolean {
 }
 
 /** The instances as a list of tiles, or the message in their place. */
-function Body({
-  answer,
-  signedIn,
-}: {
-  answer: Answer | undefined
-  signedIn: boolean
-}) {
+function Body({ answer }: { answer: Answer | undefined }) {
   if (answer === undefined) {
     return null
   }
@@ -175,7 +162,7 @@ function Body({
     // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
     <ul className="tiles" role="list">
       {answer.map((i) => (
-        <Tile key={i.id} instance={i} engines={engines} signedIn={signedIn} />
+        <Tile key={i.id} instance={i} engines={engines} />
       ))}
     </ul>
   )
@@ -183,26 +170,23 @@ function Body({
 
 /**
  * One tile: the id, the state, the engine when it tells the instances apart,
- * and for a signed-in visitor the boot fact. The boot read belongs to the
- * tile: it goes when the tile mounts, once, and the row shows only an answer
- * that came (no row while it is on its way, none after a failure).
+ * and the boot fact. The boot read belongs to the tile: it goes when the tile
+ * mounts, once, and the row shows only an answer that came (no row while it is
+ * on its way, none after a failure).
  */
 function Tile({
   instance,
   engines,
-  signedIn,
 }: {
   instance: Instance
   /** The engine line is there: the engines tell the instances apart. */
   engines: boolean
-  signedIn: boolean
 }) {
   const { id, engine, state } = instance
   // null: no row, because there is no answer to show.
   const [boot, setBoot] = useState<boolean | null>(null)
 
   useEffect(() => {
-    if (!signedIn) return
     let live = true
     readBoot(id).then((v) => {
       if (live && v !== null) setBoot(v)
@@ -210,7 +194,7 @@ function Tile({
     return () => {
       live = false
     }
-  }, [id, signedIn])
+  }, [id])
 
   return (
     <li className="tile">
@@ -224,7 +208,7 @@ function Tile({
         </span>
       </div>
       {engines && <p className="tile-engine">{t('instance-engine', engine)}</p>}
-      {signedIn && boot !== null && (
+      {boot !== null && (
         <dl className="tile-facts">
           <div>
             <dt>{t('boot-label')}</dt>

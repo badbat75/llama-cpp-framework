@@ -53,13 +53,25 @@ const MISSING_ID = 'No-Such-Model-Profile'
 // is blank, still loading, showing an error or the wrong route has no axe
 // violation, so each state proves itself rendered before it is read.
 const STATES = [
+  // 09 S1a.1: signed out, the sign-in page is the whole of main at every
+  // address, so these three are what a visitor meets at rest there.
   {
-    name: 'overview-signed-out',
+    name: 'sign-in-at-home',
     set: 'session=out',
     hash: '#/',
     expect: [
-      { selector: '#page-heading', text: S['overview-title'] },
-      { selector: 'a.session', text: S['session-sign-in'] },
+      { selector: '#page-heading', text: S['signin-title'] },
+      { selector: 'input[type="password"]' },
+    ],
+  },
+  {
+    name: 'sign-in-protected',
+    // A protected address: the form, and the notice that says why (09 S1a.7).
+    set: 'session=out',
+    hash: '#/instances/default',
+    expect: [
+      { selector: 'input[type="password"]' },
+      { selector: 'p.notice', text: S['signin-required'] },
     ],
   },
   {
@@ -90,15 +102,6 @@ const STATES = [
       { selector: 'li.tile', count: 4 },
       { selector: 'dl.tile-facts' },
     ],
-  },
-  {
-    name: 'overview-tiles-signed-out',
-    // Signed out: the tiles, and no boot row. The expect only finds, so the
-    // absent dl.tile-facts is pinned by the unit test
-    // (fe/briefs/08-hearth-h6-overview.md, section 3).
-    set: 'session=out&list=many',
-    hash: '#/',
-    expect: [{ selector: 'li.tile' }],
   },
   {
     name: 'instance-server',

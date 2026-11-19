@@ -229,10 +229,11 @@ describe('H4: the light/dark theme switch', () => {
     ).toHaveLength(0)
     cleanup()
 
-    // Signed out.
+    // Signed out (09 S1a.1: the page is the sign-in page, there is no
+    // session link to wait for).
     fakeBff({ session: 'signed-out' })
     render(<App />)
-    await screen.findByRole('link', { name: en('session-sign-in') })
+    await screen.findByRole('heading', { level: 1, name: en('signin-title') })
     expect(
       within(screen.getByRole('banner')).getByRole('button', {
         name: en('theme-dark'),
@@ -270,15 +271,15 @@ describe('H4: the light/dark theme switch', () => {
     ).toBe(screen.getByRole('link', { name: en('skip-to-content') }))
   })
 
-  test('H4.2: signed out, the switch sits between the Menu button and the Sign in link', async () => {
+  // 09 S1a.4: signed out there is no nav, so the Menu button and the session
+  // part are gone: the theme switch is the only tool left in the banner.
+  test('09 S1a.4 (H4.2): signed out, the switch is the only tool in the banner, after the home link', async () => {
     fakeBff({ session: 'signed-out' })
     render(<App />)
-    await screen.findByRole('link', { name: en('session-sign-in') })
+    await screen.findByRole('heading', { level: 1, name: en('signin-title') })
     expect(tabbableIn(screen.getByRole('banner'))).toEqual([
       en('app-name'),
-      en('nav-menu'),
       en('theme-dark'),
-      en('session-sign-in'),
     ])
   })
 

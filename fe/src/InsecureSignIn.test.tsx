@@ -255,10 +255,13 @@ test('I2, I3: insecure, the dialog of a save answered 401 holds the notice after
   expect(bff.to('POST', '/api/session'), 'Cancel sent nothing').toHaveLength(0)
 })
 
-test('I7: insecure, the Overview signed out and the banner show no notice', async () => {
+// 09 S1a.1: signed out at `#/` there is no Overview to check (the page is the
+// sign-in page, which does show the notice: I2). The banner part stays signed
+// in: the notice belongs to the form, nowhere else.
+test('I7: insecure, the signed-in Overview and the banner show no notice', async () => {
   secure(false)
   startAt('#/')
-  fakeBff({ session: 'signed-out' })
+  fakeBff()
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', {

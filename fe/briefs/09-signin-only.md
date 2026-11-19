@@ -216,3 +216,55 @@ page or `loading`, a `nav`, the Menu button or `a.session`:
 - S1b: on the signed-in Overview, `/__set?session=out`, then a hash change away and back to `#/`
   (the Overview reads again): one sign-in page, the alert read once.
 - axe-core clean on the new states (section 4).
+
+## 7. Review of S1a (designer, 2026-11-19)
+
+**Approved.** Measured on the uncommitted change in Chromium, Firefox and WebKit (Playwright, a copy
+of the UX stub with a request log and two modes: `today`, where `/api/version`, `/api/instances` and
+the boot read answer 200 with no session, and `future`, where every `/api/` path but the session
+answers 401 `session-required`), at 1280, 960, 480 and 320 px, light and dark. Scripts:
+`build/ux-review/s1a.js`, `s1a-skip.js`, `stub9.py`; output `s1a.txt`.
+
+- UX check (`fe/ux`): 52 states per browser, 0 failing; `sign-in-at-home`, `sign-in-protected` and
+  `sign-in` render as section 4 says.
+- S1a.1, S1a.4, S1a.6 met (`App.tsx` 331, 350, 399): 252 loads (7 hashes, both modes): `main` holds
+  `div.signin-page` only, one `h1` "Sign in", title "Sign in | Private AI Framework", no `nav`, no
+  `#menu-button`, no `a.session`, `div.banner-tools` holds the theme button only. Unreachable bff
+  (requests aborted): the sign-in page, and a submit shows `signin-failed`.
+- S1a.2 met, both modes: the only request before a sign-in is one `GET /api/session`, at every hash.
+- S1a.3 met: session read held 1 s: "Loading…", no nav, no Menu, theme button only, then the form;
+  no flash of nav or Overview in 100 ms samples.
+- S1a.7 met (`App.tsx` 406): the notice at `#/instances/default`, `#/profiles/model`,
+  `#/profiles/model/x`, `#/nope`; none at `#/`, the empty hash, `#/sign-in`.
+- S1a.8, S1a.9 met: sign-in at each of the 7 hashes lands on that page (an unknown hash: not-found;
+  `#/sign-in`: `#/` Overview), focus on its `h1`, nav present; `history.length` unchanged in all 84
+  runs (3 engines, 2 widths, 2 modes); Back goes to the entry before the visit, Forward returns to
+  the page. The jsdom gap the tester left is closed here.
+- S1a.10 met (`App.tsx` 101, 132, 159): `#/sign-in` set while signed in on an instance page:
+  `history.length` grows by one (the typed entry itself) and that entry reads `#/`, the Overview
+  with its nav entry current, focus on its `h1`; Back returns to the instance page, Forward to `#/`.
+  A direct load of `#/sign-in` signed in shows `#/` with no entry added.
+- S1a.11 met: Sign out from the Overview and a clean instance page: `#/`, the sign-in page, no
+  notice, focus on "Sign in", no nav. Dirty form: the discard dialog; Keep editing keeps the page
+  and session; Discard changes signs out as above. Revoked read: the reworded `session-revoked`
+  alert, axe 0.
+- S1a.12 met: `signedIn` gone from `Overview.tsx` and `Instances.tsx`; `a.session` gone from
+  `index.css`; `.layout > main:only-child` at `index.css` 660: signed out `main` is x 0, full width
+  at 960 and 1280 (signed in: x 224, 736 and 1056); art and panel side by side, 420 px each, as H7
+  (at 960 now 420 px columns instead of H7's 308, the nav column being gone). Strings
+  `en_US.json` 30 to 32 as the table.
+- S1a.5 met: Tab order skip link, home, Dark theme, user name, password, Sign in in all three
+  engines at 1280 and 320, at `#/` and a protected hash; the skip link moves the focus to `main`
+  and keeps the hash, the next Tab is the user name. The header is static, so the focus is not
+  obscured (2.4.11). 200 % text: stacked, no sideways scroll, nothing clipped. Forced colours
+  (Chromium): the panel edge, fields and button seen; axe 0. axe 0 on 72 sign-in loads (both
+  hashes, every width, both themes).
+- Unchanged and checked: a 401 on a save keeps the form and shows the save bar's
+  `session-ended` alert.
+- For S1b, measured today: signed in on the Overview, the session gone and the bff at `future`,
+  a hash change away and back gives the Overview with "The version could not be read from the
+  service." and "The instances could not be read.", the nav and Sign out still shown, 2 requests
+  in 3 s (no loop, no boot read). With today's bff the Overview reads as if signed in.
+- Observation, a preference and not a condition: at 1280 the art and panel sit at x 40 to 920, the
+  right 360 px empty under a banner whose theme button is at the far right. Centring the pair could
+  be a later polish; nothing in H7 or this brief asks for it.

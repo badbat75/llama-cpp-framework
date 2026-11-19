@@ -258,12 +258,8 @@ test('H5b.3 in forced colours: the current entry of the nav (the same three sele
   const forced = rules[0]!
   expect(
     listItems(forced.sel),
-    'the same three selectors as the current-entry rule: the nav entry of the page, its aria-current="true" spelling for a page below a nav entry, and the banner Sign in link',
-  ).toEqual([
-    ".nav a[aria-current='page']",
-    ".nav a[aria-current='true']",
-    "a.session[aria-current='page']",
-  ])
+    'the same selectors as the current-entry rule: the nav entry of the page and its aria-current="true" spelling for a page below a nav entry (09 S1a.12 dropped the banner Sign in link, whose rule is gone)',
+  ).toEqual([".nav a[aria-current='page']", ".nav a[aria-current='true']"])
   expect(
     listItems(forced.sel),
     'and unchanged in the top-level rule the forced rule mirrors',
@@ -275,7 +271,7 @@ test('H5b.3 in forced colours: the current entry of the nav (the same three sele
             r.compact.includes("[aria-current='page']") &&
             r.compact.includes("[aria-current='true']"),
         ),
-        "the top-level current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true'], a.session[aria-current='page'])",
+        "the top-level current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true'])",
       ).sel,
     ),
   )

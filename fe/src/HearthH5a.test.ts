@@ -207,23 +207,10 @@ test('H5a.3: .banner-tools is a top-level wrapping flex row centred at --space-2
 })
 
 // ── H5a.4: the Sign in link ─────────────────────────────────────────────
-
-test('H5a.4: a.session is a pill: --radius-pill, padded --space-1 --space-4, at least 32px, an inline-flex row centred', () => {
-  const link = topBy('a.session', 'the a.session rule (the Sign in link)')
-  expect(
-    prop(link.body, 'border-radius'),
-    'a pill, like the .primary and .secondary controls',
-  ).toBe('var(--radius-pill)')
-  expect(prop(link.body, 'padding'), 'the pill padding').toBe(
-    'var(--space-1) var(--space-4)',
-  )
-  expect(
-    prop(link.body, 'min-height'),
-    '32 px: above the 24 px target of 2.5.8, under the 40 px of a control',
-  ).toBe('32px')
-  expect(prop(link.body, 'display'), 'a row of its own').toBe('inline-flex')
-  expect(prop(link.body, 'align-items'), 'centred').toBe('center')
-})
+// (The `a.session` rule of H5a.4 is gone: 09 S1a.4 removes the banner's Sign
+// in pill with the nav, and 09 S1a.12 removes its selectors. The absence of
+// every `a.session` selector, top level and in a media block, is pinned by
+// S1a.test.ts.)
 
 // ── H5a.5: below 480 px, the icon-only button and the hidden name ───────
 
@@ -332,16 +319,12 @@ test('H5a.7: the nav rules are those of H5b (07-hearth-h5-shell.md, section 2) a
         r.compact.includes("a[aria-current='page']") &&
         r.compact.includes("a[aria-current='true']"),
     ),
-    "the current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true'], a.session[aria-current='page'])",
+    "the current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true']: 09 S1a.12 dropped the a.session entry of the list)",
   )
   expect(
     listItems(current.sel),
-    'the selector list of DESIGN.md 2.3, unchanged',
-  ).toEqual([
-    ".nav a[aria-current='page']",
-    ".nav a[aria-current='true']",
-    "a.session[aria-current='page']",
-  ])
+    'the selector list, less the banner pill that S1a.4 removed',
+  ).toEqual([".nav a[aria-current='page']", ".nav a[aria-current='true']"])
   expect(
     prop(current.body, 'box-shadow'),
     'no inset bar: H5b.3 removed it',

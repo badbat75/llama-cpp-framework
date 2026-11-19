@@ -176,7 +176,7 @@ test('H5b.2: .nav a is a pill (a flex row centred, min-height 32px, padded --spa
   ).toBe('var(--space-1) var(--space-4)')
   expect(
     prop(link.body, 'border-radius'),
-    '--radius-pill, like a.session and the controls',
+    '--radius-pill, like the controls',
   ).toBe('var(--radius-pill)')
   expect(prop(link.body, 'color'), 'the text colour is kept').toBe(
     'var(--text)',
@@ -203,16 +203,12 @@ test("H5b.3: the one current-entry rule (the unchanged selector list of aria-cur
         r.compact.includes("a[aria-current='page']") &&
         r.compact.includes("a[aria-current='true']"),
     ),
-    "the current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true'], a.session[aria-current='page'])",
+    "the current-entry rule (.nav a[aria-current='page'], .nav a[aria-current='true']: 09 S1a.12 dropped the a.session entry of the list)",
   )
   expect(
     listItems(current.sel),
-    'the selector list of DESIGN.md 2.3, unchanged: the entry of a page below a nav entry (a model profile page) is drawn as the current one too, and the banner Sign in link takes the same pill (H5a.4)',
-  ).toEqual([
-    ".nav a[aria-current='page']",
-    ".nav a[aria-current='true']",
-    "a.session[aria-current='page']",
-  ])
+    'the selector list, less the banner pill that S1a.4 removed: the entry of a page below a nav entry (a model profile page) is drawn as the current one too',
+  ).toEqual([".nav a[aria-current='page']", ".nav a[aria-current='true']"])
   expect(
     prop(current.body, 'background'),
     'the --accent-soft fill replaces the inset bar (--accent on --accent-soft is P15, 6.04 / 6.93, already pinned by HearthTokens.test.ts: 1.4.3)',

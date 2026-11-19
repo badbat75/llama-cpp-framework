@@ -1,7 +1,8 @@
 // H5a, the banner of the Hearth shell (fe/briefs/07-hearth-h5-shell.md, section 1,
 // criterion H5a.1): the tools group. The banner keeps the names, roles, ids and tab
-// order of H4.2 and the rules 1a.1, 1a.3 and 1b.5a (App.test.tsx and
-// HearthTheme.test.tsx pin those, unchanged), so this file pins only the wrapper:
+// order of H4.2 and the rules 1a.1 and 1a.3 (App.test.tsx and
+// HearthTheme.test.tsx pin those, unchanged; 09 S1a.4 dropped the session part
+// and the Menu button from the signed-out and pending banner), so this file pins only the wrapper:
 // the header's element children, the class and the absence of a role of
 // `div.banner-tools`, its element children in order, and the names by role inside
 // it, in the three session states. The stylesheet side (H5a.2 to H5a.7) is in
@@ -144,50 +145,36 @@ test('H5a.1: signed in, the header has exactly two element children, the home li
   ])
 })
 
-test('H5a.1: signed out, the tools group holds the Menu button, the theme button and the Sign in link in that order, and the tab order is home, Menu, Dark theme, Sign in', async () => {
+// 09 S1a.4: signed out there is no nav, so the Menu button and the session
+// pill go with it. The theme button stays (the brief says so, section 6).
+test('09 S1a.4 (H5a.1): signed out, the tools group holds the theme button only, and the tab order is home, Dark theme', async () => {
   const banner = openApp({ session: 'signed-out' })
-  await screen.findByRole('link', { name: en('session-sign-in') })
   const kids = childrenOf(banner)
   expect(kids.length, 'two element children signed out as well').toBe(2)
   const tools = kids[1]!
   expect(shape(tools), 'the same wrapper').toEqual(['div', '', 'banner-tools'])
   expect(
     [...tools.children].map(shape),
-    'the group holds, in order, the Menu button, the theme button and the session part',
-  ).toEqual([
-    ['button', 'menu-button', 'menu-button secondary'],
-    ['button', '', 'secondary theme-switch'],
-    ['a', '', 'session'],
-  ])
-  const link = tools.children[2]!
+    'the group holds the theme button only: the Menu button and the session part went with the nav',
+  ).toEqual([['button', '', 'secondary theme-switch']])
   expect(
-    link.getAttribute('href'),
-    'the session part signed out is a.session to the sign-in page',
-  ).toBe('#/sign-in')
-  expect(
-    within(tools as HTMLElement)
-      .getAllByRole('link')
-      .map(text),
-    'the names by role inside the group: Sign in',
-  ).toEqual([en('session-sign-in')])
+    within(tools as HTMLElement).queryAllByRole('link'),
+    'no Sign in link anywhere in the group (09 S1a.4)',
+  ).toHaveLength(0)
   expect(
     within(tools as HTMLElement)
       .getAllByRole('button')
       .map(text),
-    'and Menu, Dark theme',
-  ).toEqual([en('nav-menu'), en('theme-dark')])
+    'Dark theme, and no Menu',
+  ).toEqual([en('theme-dark')])
+  expect(document.getElementById('menu-button'), 'no Menu button').toBeNull()
   expect(
     tabNames(banner),
-    'the tab order in the banner: home, Menu, Dark theme, Sign in (H4.2)',
-  ).toEqual([
-    en('app-name'),
-    en('nav-menu'),
-    en('theme-dark'),
-    en('session-sign-in'),
-  ])
+    'the tab order in the banner: home, Dark theme',
+  ).toEqual([en('app-name'), en('theme-dark')])
 })
 
-test('H5a.1: while the session is read, the tools group holds the Menu button and the theme button and no session part', () => {
+test('09 S1a.1 (H5a.1): while the session is read, the tools group holds the theme button and nothing else', () => {
   // Nothing is awaited: this is the state before the session reply lands.
   const pending = deferred()
   const banner = openApp({ session: () => pending.promise })
@@ -197,11 +184,8 @@ test('H5a.1: while the session is read, the tools group holds the Menu button an
   expect(shape(tools), 'the same wrapper').toEqual(['div', '', 'banner-tools'])
   expect(
     [...tools.children].map(shape),
-    'the group holds the Menu button and the theme button only: the session part shows in neither state yet',
-  ).toEqual([
-    ['button', 'menu-button', 'menu-button secondary'],
-    ['button', '', 'secondary theme-switch'],
-  ])
+    'the group holds the theme button only: neither the session part nor the Menu button show while the session is read',
+  ).toEqual([['button', '', 'secondary theme-switch']])
   expect(tools.querySelectorAll('.session').length, 'no session part').toBe(0)
   expect(
     within(tools as HTMLElement).queryAllByRole('link'),
@@ -211,6 +195,6 @@ test('H5a.1: while the session is read, the tools group holds the Menu button an
     within(tools as HTMLElement)
       .queryAllByRole('button')
       .map(text),
-    'the two tool buttons are named as in H4.2',
-  ).toEqual([en('nav-menu'), en('theme-dark')])
+    'the tool button is named as in H4.2',
+  ).toEqual([en('theme-dark')])
 })

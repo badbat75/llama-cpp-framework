@@ -2200,13 +2200,14 @@ test('1b.38 (1a.15): Sign out while dirty asks first; Keep sends nothing, Discar
     within(d).getByRole('button', { name: en('discard-confirm') }),
   )
   await waitFor(() => expect(bff.to('DELETE', '/api/session')).toHaveLength(1))
+  // 09 S1a.11: Discard signs out and lands on the sign-in page; 09 S1a.4: the
+  // banner offers no Sign in signed out.
   const banner = screen.getByRole('banner')
-  await waitFor(() =>
-    expect(
-      within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
-        within(banner).queryByRole('link', { name: en('session-sign-in') }),
-    ).not.toBeNull(),
-  )
+  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
+  expect(
+    within(banner).queryByRole('link', { name: en('session-sign-in') }),
+    'no Sign in in the banner',
+  ).toBeNull()
 })
 
 test('1b.38a: Escape in the dialog opened by a link is Keep editing, focus back on the link', async () => {

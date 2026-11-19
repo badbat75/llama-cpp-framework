@@ -111,6 +111,11 @@ class Handler(SimpleHTTPRequestHandler):
             for k, v in parse_qs(url.query).items():
                 STATE[k] = v[0]
             return self.json(200, STATE)
+        # The bff from item 13a (fe/briefs/api-contract.md): with no session,
+        # every route beside the session one answers 401 session-required, so
+        # the signed-out pages can only be the sign-in page.
+        if p.startswith("/api/") and p != "/api/session" and STATE["session"] == "out":
+            return self.json(401, {"key": "session-required", "args": []})
         if p == "/api/version":
             return self.json(200, {"version": "3.0.0"})
         if p == "/api/session":

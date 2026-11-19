@@ -498,17 +498,6 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* Signed out: the Sign in link is a pill, like the controls (H5a.4). The icon
-   of H8a.3 sits at the small gap. */
-a.session {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 32px;
-  padding: var(--space-1) var(--space-4);
-  border-radius: var(--radius-pill);
-}
-
 /* The Menu button and Sign out are the shell's other icon-and-text hosts
    (08-hearth-h8-icons.md H8a.5): a row centring the icon on the words it sits
    beside, at the same gap. The row is inline-flex so the control keeps the
@@ -585,8 +574,7 @@ a.session {
    replace the inset bar (H5b.3); the weight is the cue that stays when
    forced colours drop the fill (1.4.1). */
 .nav a[aria-current='page'],
-.nav a[aria-current='true'],
-a.session[aria-current='page'] {
+.nav a[aria-current='true'] {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
@@ -665,6 +653,12 @@ main > * {
     display: grid;
     grid-template-columns: 224px minmax(0, 1fr);
     flex: 1;
+  }
+
+  /* Signed out there is no nav (09 S1a.4), so main is the row's only child:
+     left alone it would fall in the nav column, so it spans the whole row. */
+  .layout > main:only-child {
+    grid-column: 1 / -1;
   }
 
   .nav {
@@ -1897,11 +1891,10 @@ html:has(.save-bar) {
   /* The nav's current entry keeps its mark there the way the pressed switch
      does (the H5b review): the fill and the label take the system highlight,
      and no colour adjust keeps the author's current state. The bolder label of
-     the top-level rule stays the cue that needs no colour. The three selectors
+     the top-level rule stays the cue that needs no colour. The two selectors
      are those of that rule, unchanged. */
   .nav a[aria-current='page'],
-  .nav a[aria-current='true'],
-  a.session[aria-current='page'] {
+  .nav a[aria-current='true'] {
     forced-color-adjust: none;
     background: Highlight;
     color: HighlightText;

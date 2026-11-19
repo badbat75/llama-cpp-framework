@@ -787,11 +787,14 @@ test('1c.41b: the idle poll stops at sign-out (the Overview reads once on openin
   )
   await flush()
   expect(bff.to('DELETE', '/api/session')).toHaveLength(1)
+  // 09 S1a.11: Sign out lands on the sign-in page, not on the Overview.
   expect(
-    screen.getByRole('heading', { level: 1, name: en('overview-title') }),
+    screen.getByRole('heading', { level: 1, name: en('signin-title') }),
   ).toBeTruthy()
   const after = reads(bff)
-  expect(after, 'the Overview read on opening').toBe(2)
+  // 09 S1a.11: no Overview mounts after the sign-out, so the only read is the
+  // one of the nav on opening.
+  expect(after, 'the instances read on opening').toBe(1)
   await advance(10_000)
   expect(reads(bff)).toBe(after)
 })

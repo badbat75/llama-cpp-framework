@@ -3,9 +3,10 @@
 // answers GET /api/instances with 200 and [{"id", "engine", "state"}] in the
 // manager's order, and errors as {"key", "args"} (fe/briefs/api-contract.md):
 // 503 client-unavailable with no manager, 502 client-not-authorized when the
-// manager refuses the bff, anything else generic. Signed out here, so the nav
-// lists no instance and the only instance links are the list's (H6a rewrote
-// the table of 1a.16 to 1a.18 as a list of tiles: fe/briefs/08-hearth-h6).
+// manager refuses the bff, anything else generic. Signed in here (09 S1a.1:
+// the Overview is the signed-in page), so the nav lists the instances beside
+// the list (H6a rewrote the table of 1a.16 to 1a.18 as a list of tiles:
+// fe/briefs/08-hearth-h6).
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
@@ -20,11 +21,11 @@ afterEach(() => {
 })
 
 function stubInstances(answer: () => Response | Promise<Response>) {
-  return fakeBff({ session: 'signed-out', instances: answer })
+  return fakeBff({ instances: answer })
 }
 
 function list(instances: Instance[]) {
-  return fakeBff({ session: 'signed-out', instances })
+  return fakeBff({ instances })
 }
 
 /** The instances list of main (H6a.1: a `ul`, not a table). */

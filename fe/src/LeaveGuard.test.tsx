@@ -115,10 +115,10 @@ async function loadedAfterNavigation(options: BffOptions = {}) {
 /**
  * The path that leaves go()'s pass-through token set: signed in on the
  * Overview, Sign out there (go('#/') sets the token, the hash is already '#/'
- * so no hashchange consumes it), the instance page by its link in the
- * Overview's table, then a sign-in in place (the page's own form, not the
- * #/sign-in route: it fires no hashchange). The Sign out's token is still
- * set when the page is reached.
+ * so no hashchange consumes it). 09 S1a.11: Sign out lands on the sign-in page
+ * at '#/', so the sign-in is that page's form: it fires no hashchange, the
+ * token state the Sign out left is untouched. The Overview shows, and the
+ * instance page is reached by the Overview's link.
  */
 async function loadedAfterSignOutOnOverview() {
   startAt('#/')
@@ -130,9 +130,7 @@ async function loadedAfterSignOutOnOverview() {
     name: en('overview-title'),
   })
   fireEvent.click(screen.getByRole('button', { name: en('session-sign-out') }))
-  await screen.findByRole('link', { name: en('session-sign-in') })
-  fireEvent.click(within(main).getByRole('link', { name: 'default' }))
-  await flushTasks()
+  // 09 S1a.11: the sign-in page at '#/', no notice, the form to sign in again.
   await within(main).findByRole('heading', {
     level: 1,
     name: en('signin-title'),
@@ -148,6 +146,16 @@ async function loadedAfterSignOutOnOverview() {
   fireEvent.click(
     within(main).getByRole('button', { name: en('signin-submit') }),
   )
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: en('overview-title'),
+  })
+  fireEvent.click(
+    await within(main).findByRole('link', {
+      name: 'default',
+    }),
+  )
+  await flushTasks()
   await within(main).findByRole('heading', {
     level: 3,
     name: en('server-network'),

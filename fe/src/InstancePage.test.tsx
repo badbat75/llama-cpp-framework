@@ -293,8 +293,8 @@ test('1a.24: a 401 on the server read shows the sign-in form in place of the for
   // As on any protected page (2.2): the route stays, the form says why.
   expect(window.location.hash).toBe('#/instances/default')
   expect(within(main).getByText(en('signin-required'))).toBeTruthy()
-  // The whole app is signed out (2.6): the banner offers Sign in, the nav
-  // drops its instances.
+  // The whole app is signed out (2.6), and signed out the shell offers
+  // nothing: no Sign in in the banner, no nav (09 S1a.4).
   const banner = screen.getByRole('banner')
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
@@ -302,10 +302,11 @@ test('1a.24: a 401 on the server read shows the sign-in form in place of the for
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
-  ).not.toBeNull()
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+    '09 S1a.4: no Sign in in the banner signed out',
+  ).toBeNull()
   expect(
-    within(nav).queryByRole('list', { name: en('nav-instances') }),
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: no nav signed out',
   ).toBeNull()
   // After sign-in the page comes back, with the server file read again.
   fireEvent.change(username, { target: { value: 'alice' } })

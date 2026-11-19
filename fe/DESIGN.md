@@ -31,12 +31,12 @@ order, defaults and checks, and says where it differs on purpose.
 
 Every page of the finished web UI, in nav order. "Slice" says when it is built; a page with no slice
 is not in the nav yet. "Who": "anyone" includes the signed out; "administrator" means signed in, which
-only an administrator can be (section 3). From slice S1 (`fe/briefs/09-signin-only.md`, user
+only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-only.md`, user
 2026-11-19) no page is "anyone": a visitor who has not signed in sees only the sign-in page.
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
-| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | anyone (Start at boot: signed in); administrator from slice S1 | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`) |
+| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
@@ -101,8 +101,9 @@ Decided with the user on 2026-11-14.
   `GET /api/instances`, in the manager's order. Signed in, after it (or right after Overview when the
   instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
   labelled by it, today with the one link "Model profiles"; "Server profiles" joins it when its page
-  exists (05c). Each group label is text, not a link. Signed out, the nav holds Overview only (from slice S1: no nav
-  and no Menu button signed out or while the session is read, `fe/briefs/09-signin-only.md` S1a.4).
+  exists (05c). Each group label is text, not a link. Signed out, or while the session is read, there
+  is no nav and no Menu button, and `main` spans the whole `.layout` row from 960 px up
+  (`.layout > main:only-child`; `fe/briefs/09-signin-only.md` S1a.4, S1a.12).
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
   link of its own (a model profile's page under Model profiles), that entry keeps the current-page style with
   `aria-current="true"`: it leads elsewhere, but the page belongs to it
@@ -113,7 +114,7 @@ Decided with the user on 2026-11-14.
   decoration (1.09:1 light, 1.35:1 dark on `--page`); the non-colour cue is the weight
   ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color); bold is a cue in
   [G182](https://www.w3.org/WAI/WCAG22/Techniques/general/G182)). Under forced colours the
-  current entry (and the Sign in pill on `#/sign-in`, which goes from slice S1) takes `Highlight` / `HighlightText` with
+  current entry takes `Highlight` / `HighlightText` with
   `forced-color-adjust: none`, as the pressed theme switch does (H5c.6; the focus ring stays seen on
   it: H5c review, Chromium and Firefox). Text on the fill 6.04:1 light, 6.93:1 dark.
 - On every route change: `document.title` becomes `<page> | Private AI Framework`
@@ -138,7 +139,7 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 
 | State | How the fe knows | Sees | Can do |
 |---|---|---|---|
-| Signed out | `GET /api/session` answers 401 | Overview only; header shows **Sign in** (from slice S1: the sign-in page only, at every address; no nav, no Sign in in the header) | read version and instance states (from slice S1: nothing; only the session is read) |
+| Signed out | `GET /api/session` answers 401 | the sign-in page only, at every address; no nav, no Menu button, no Sign in in the header (the banner holds the home link and the theme switch) | sign in; the fe reads only the session (`fe/briefs/09-signin-only.md` S1a.1 to S1a.4) |
 | Signed in (an administrator) | `GET /api/session` answers 200 `{"user"}` | every page, editable, with the save bar | start, stop, restart, save files, set start at boot |
 
 - The fe does not read a role from the session. The manager still decides each request; a refusal
@@ -147,9 +148,11 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   so with 403 `session-not-administrator` (`fe/briefs/01-server.md` S1). Where an action or edits
   are at stake the page takes the session-ended state below with the message `session-revoked`; on
   a read the app signs out, the sign-in form showing that message.
-- A signed-out user who opens any page but the Overview sees the sign-in form in its place, and
-  returns to that page after signing in (from slice S1 the Overview too; `#/sign-in` signed in is
-  `#/`: `fe/briefs/09-signin-only.md` S1a.9, S1a.10).
+- A signed-out user who opens any address sees the sign-in page in its place, the address kept, and
+  lands on that page after signing in, with no history entry added; the notice "Sign in to see this
+  page." shows only at an address other than `#/`, an empty hash and `#/sign-in`. Signed in,
+  `#/sign-in` is an alias of `#/`, rewritten by `history.replaceState`
+  (`fe/briefs/09-signin-only.md` S1a.7 to S1a.10).
 - The session can end while a page is open (any request answers 401). The page keeps what
   it shows and any unsaved edits, the header and nav stay as they were, and the page offers
   **Sign in** in a dialog; after it, the user retries. The same user keeps the page as it was, focus

@@ -160,24 +160,10 @@ async function withPending() {
 }
 
 describe('H6b.1 and H6b.2: who reads the boot state, and how often', () => {
-  test('H6b.1: signed out, the tiles list the instances, no boot read is sent and no tile has a dl', async () => {
-    const { bff } = open(fakeBff({ session: 'signed-out' }))
-    const list = await tiles()
-    expect(
-      within(list)
-        .getAllByRole('listitem')
-        .map((li) => within(li).getByRole('link').textContent),
-      'the tiles are the instances of the manager',
-    ).toEqual(INSTANCES.map((i) => i.id))
-    expect(
-      document.querySelectorAll('dl'),
-      'no boot row for a signed-out visitor',
-    ).toHaveLength(0)
-    expect(bootCalls(bff), 'no boot read for a signed-out visitor').toEqual([])
-  })
-
   // The read is the signed-in page's: it starts with the session, never
   // before, so no tile can show a state the session has not earned.
+  // (09 S1a.1: signed out there is no Overview at all, so the signed-out
+  // tiles are gone with it: SignInOnly.test.tsx pins what main holds then.)
   test('H6b.1: while the session is read there is no list, no row and no boot read, and the session is read once', async () => {
     const s = held()
     const { bff } = open(fakeBff({ session: (init) => s.answer(init) }))
@@ -438,35 +424,42 @@ describe('H6b.4: no claim about a state that is not known', () => {
 })
 
 describe('H6b.2: the rows join with the sign-in banner', () => {
-  test('H6b.2: signing in from the banner adds the rows, Sign out removes them, and the tiles stay', async () => {
+  test('09 S1a.1 (H6b.2): signing in from the page at #/ brings the whole Overview, Sign out takes it away', async () => {
     const { bff } = open(fakeBff({ session: 'signed-out' }))
     const banner = await screen.findByRole('banner')
     expect(
       within(banner).queryByRole('button', { name: en('session-sign-out') }),
-      'the banner offers Sign in, not Sign out',
+      'the banner offers no Sign out',
     ).toBeNull()
 
-    // The tiles are already there for the signed-out visitor: signing in adds
-    // the rows, it does not bring the list (H6b.2).
-    const list = await tiles()
-    expect(within(list).getAllByRole('listitem')).toHaveLength(INSTANCES.length)
+    // 09 S1a.1: signed out, `#/` is the sign-in page: there is no list and no
+    // row to lose, and nothing of the server is asked for.
+    const main = screen.getByRole('main')
+    await within(main).findByRole('heading', {
+      level: 1,
+      name: en('signin-title'),
+    })
+    expect(within(main).queryByRole('list'), 'no tiles signed out').toBeNull()
     expect(document.querySelectorAll('dl')).toHaveLength(0)
     expect(bootCalls(bff), 'no boot read while signed out').toEqual([])
 
-    fireEvent.click(
-      within(banner).getByRole('link', { name: en('session-sign-in') }),
-    )
+    // The form of the page signs in (09 S1a.4: the banner's pill is gone).
     fireEvent.change(
-      await screen.findByRole('textbox', { name: en('signin-username') }),
+      await within(main).findByRole('textbox', { name: en('signin-username') }),
       { target: { value: 'alice' } },
     )
     fireEvent.change(
-      screen.getByLabelText(en('signin-password'), { selector: 'input' }),
+      within(main).getByLabelText(en('signin-password'), { selector: 'input' }),
       { target: { value: 'hunter2' } },
     )
-    fireEvent.click(screen.getByRole('button', { name: en('signin-submit') }))
+    fireEvent.click(
+      within(main).getByRole('button', { name: en('signin-submit') }),
+    )
 
-    expect(await bootRows(await tiles())).toEqual(
+    // The sign-in brings the list and the rows at once (H6b.2 for the rows).
+    const list = await tiles()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(INSTANCES.length)
+    expect(await bootRows(list)).toEqual(
       INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
     )
     expect(
@@ -477,11 +470,15 @@ describe('H6b.2: the rows join with the sign-in banner', () => {
     fireEvent.click(
       screen.getByRole('button', { name: en('session-sign-out') }),
     )
-    await waitFor(() => expect(document.querySelectorAll('dl')).toHaveLength(0))
+    await within(main).findByRole('heading', {
+      level: 1,
+      name: en('signin-title'),
+    })
+    expect(document.querySelectorAll('dl'), 'the rows went').toHaveLength(0)
     expect(
-      within(await tiles()).getAllByRole('listitem'),
-      'the tiles stay: only the rows went',
-    ).toHaveLength(INSTANCES.length)
+      within(main).queryByRole('list'),
+      'the whole Overview went with the session (09 S1a.1)',
+    ).toBeNull()
     expect(
       bootCalls(bff),
       'the rows never polled, before or after the sign-out',

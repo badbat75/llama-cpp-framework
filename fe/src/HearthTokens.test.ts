@@ -687,15 +687,14 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list and the Sign in pill 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
     'button: min-width: 24px',
-    // H5a.4: the Sign in pill is at least 32 px; H5a.5: the icon-only theme
-    // switch below 480 px keeps the --control-h square (2.5.8); H5b.2: the
-    // nav pills are 32 px (2.5.8 asks 24).
-    'a.session: min-height: 32px',
+    // H5a.5: the icon-only theme switch below 480 px keeps the --control-h
+    // square (2.5.8); H5b.2: the nav pills are 32 px (2.5.8 asks 24). The
+    // Sign in pill of H5a.4 is gone (09 S1a.12).
     '.nav a: min-height: 32px',
     'main: min-width: 0',
     '.theme-switch: min-width: var(--control-h)',

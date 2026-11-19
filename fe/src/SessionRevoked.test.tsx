@@ -31,11 +31,11 @@ import {
   type ModelProfile,
 } from './test/bff.ts'
 
-/** The exact English of the one new string (S1.10). */
+/** The exact English of the one new string (S1.10). 09 S1a.12 reworded it: the
+ * clause promising an Overview to the signed out is gone. */
 const REVOKED_TEXT =
   'You have been signed out: this account is no longer a member of the pai ' +
-  'group. Ask whoever administers this computer to add it again; you can ' +
-  'still see the overview without signing in.'
+  'group. Ask whoever administers this computer to add it again.'
 
 /** The bff ends the session: 403, key session-not-administrator, no args. */
 const REVOKED = () => reply(403, { key: 'session-not-administrator', args: [] })
@@ -827,7 +827,8 @@ test('S1.9: a 403 session-not-administrator on the server read signs the app out
   expect(before(note, username), 'above the sign-in fields').toBe(true)
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
   expect(within(main).queryByText(en('server-load-failed'))).toBeNull()
-  // The whole app is signed out (2.6).
+  // The whole app is signed out (2.6), and signed out the shell offers
+  // nothing (09 S1a.4): no Sign in in the banner, no nav.
   const banner = screen.getByRole('banner')
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
@@ -835,10 +836,11 @@ test('S1.9: a 403 session-not-administrator on the server read signs the app out
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
-    'the banner offers Sign in',
-  ).not.toBeNull()
+    '09 S1a.4: no Sign in in the banner signed out',
+  ).toBeNull()
   expect(
-    within(nav()).queryByRole('list', { name: en('nav-instances') }),
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: no nav signed out',
   ).toBeNull()
   // A refused sign-in keeps it.
   type(username, 'alice')
@@ -887,9 +889,11 @@ test('S1.9: a 403 session-not-administrator on the model profiles read signs the
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
   ).toBeNull()
+  // 09 S1a.4: signed out the shell offers nothing: no Sign in, no nav.
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
+    within(banner).queryByRole('link', { name: en('session-sign-in') }),
   ).toBeNull()
+  expect(screen.queryByRole('navigation', { name: en('nav-label') })).toBeNull()
   type(username, 'bob')
   type(password, 'hunter2')
   fireEvent.click(submit)

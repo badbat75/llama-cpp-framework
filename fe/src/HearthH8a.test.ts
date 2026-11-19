@@ -321,7 +321,7 @@ test('H8a.4: the top-level .icon rule is the 1.25em square of flex: none and dec
 
 const NARROW = '@media (max-width: 479.98px)'
 
-test('H8a.5: the Menu button and Sign out become a centred inline-flex row at the space-2 gap, the Sign in link and the nav pills add the same gap to the row they already are, and the narrow block touches no Menu rule while the wide one keeps hiding it', () => {
+test('H8a.5: the Menu button and Sign out become a centred inline-flex row at the space-2 gap, the nav pills add the same gap to the row they already are, and the narrow block touches no Menu rule while the wide one keeps hiding it', () => {
   const row = flatBy(
     '.menu-button, .session button',
     'the icon-and-text row of the Menu button and of Sign out (H8a.5)',
@@ -338,11 +338,10 @@ test('H8a.5: the Menu button and Sign out become a centred inline-flex row at th
   expect(prop(row.body, 'gap'), 'the small gap of the tokens').toBe(
     'var(--space-2)',
   )
-  for (const [sel, display] of [
-    ['a.session', 'inline-flex'],
-    ['.nav a', 'flex'],
-  ] as [string, string][]) {
-    const host = topBy(tight(sel), `the ${sel} rule (H5a.4, H5b.2)`)
+  // 09 S1a.12: the a.session rule is gone with the banner pill, so the only
+  // host left of the gap, beside the row above, is the nav pill.
+  for (const [sel, display] of [['.nav a', 'flex']] as [string, string][]) {
+    const host = topBy(tight(sel), `the ${sel} rule (H5b.2)`)
     expect(
       prop(host.body, 'gap'),
       `${sel}: the same gap added to the row it already is`,
@@ -879,7 +878,7 @@ const undersized = (css: string): string[] => {
   return out
 }
 
-test('H8a.7: the Menu button and Sign out keep the 40 px control height, the Sign in link and the nav pills at least 32 px, and no rule reaching the Menu button or Sign out sizes them under 40 px, the media rules included (the self-probes are the teeth of the scan)', () => {
+test('H8a.7: the Menu button and Sign out keep the 40 px control height and the nav pills at least 32 px, and no rule reaching the Menu button or Sign out sizes them under 40 px, the media rules included (the self-probes are the teeth of the scan)', () => {
   expect(valueOf(lightTokens(), '--control-h'), 'the 40 px control token').toBe(
     '40px',
   )
@@ -887,10 +886,11 @@ test('H8a.7: the Menu button and Sign out keep the 40 px control height, the Sig
     prop(topBy('button', 'the button rule (H2a.1)').body, 'min-height'),
     'the Menu button and Sign out take the shared control height',
   ).toBe('var(--control-h)')
-  for (const sel of ['a.session', '.nav a'])
+  // 09 S1a.12: the a.session rule is gone with the banner pill.
+  for (const sel of ['.nav a'])
     expect(
       prop(topBy(tight(sel), `the ${sel} rule`).body, 'min-height'),
-      `${sel}: 32 px, the pill of H5a.4 and H5b.2, kept for 2.5.8`,
+      `${sel}: 32 px, the pill of H5b.2, kept for 2.5.8`,
     ).toBe('32px')
   // The scan, on CSS written here.
   expect(

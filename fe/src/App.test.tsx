@@ -44,21 +44,6 @@ function navLinks(): string[] {
     .map((a) => a.textContent ?? '')
 }
 
-/**
- * The Overview's instances, as the `list` of the Instances section (H6a.1 of
- * fe/briefs/08-hearth-h6-overview.md replaced the table; the `main` holds no
- * other list on the Overview).
- */
-async function instanceTiles(main: HTMLElement): Promise<HTMLElement> {
-  const heading = within(main).getByRole('heading', {
-    level: 2,
-    name: en('instances-title'),
-  })
-  const section = heading.closest('section') as HTMLElement
-  expect(section).toBeTruthy()
-  return within(section).findByRole('list')
-}
-
 // ── Failure paths first ─────────────────────────────────────────────────
 
 test('1a.8: an unknown route shows not-found with a link to the overview', async () => {
@@ -84,7 +69,7 @@ test('1a.8 (2.6): the not-found sentence is the h1 and the page title', async ()
   expect(document.title).toBe(en('page-title', en('not-found')))
 })
 
-test('1a.2: until the session answers, main shows loading and the nav only Overview', async () => {
+test('09 S1a.3 (1a.2): until the session answers, main shows loading and there is no nav at all', async () => {
   const session = deferred()
   const bff = fakeBff({ session: () => session.promise })
   render(<App />)
@@ -92,11 +77,22 @@ test('1a.2: until the session answers, main shows loading and the nav only Overv
   const status = within(main).getByRole('status')
   expect(status.tagName).toBe('P')
   expect(status.textContent).toBe(en('loading'))
-  expect(navLinks()).toEqual([en('nav-overview')])
+  // 09 S1a.4: signed out or pending there is no nav (and no Menu button), so
+  // there is no nav to hold an Overview entry.
+  expect(document.querySelector('nav')).toBeNull()
+  expect(document.getElementById('menu-button')).toBeNull()
   await act(async () => {
     session.resolve(reply(200, { user: 'alice' }))
   })
   await screen.findByRole('button', { name: en('session-sign-out') })
+  // Signed in, the nav is today's shell: Overview, the Instances links, then
+  // Model profiles (09 S1a.4: "the nav with Overview, Instances, Profiles").
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    'default',
+    'coder',
+    en('nav-model-profiles'),
+  ])
   expect(bff.to('GET', '/api/session')).toHaveLength(1)
 })
 
@@ -127,7 +123,7 @@ const SESSION_FAILURES: [string, () => Response | Promise<Response>][] = [
 ]
 
 test.each(SESSION_FAILURES)(
-  '1a.3: any session reply but 200 leaves the app signed out and the Overview whole: %s',
+  '09 S1a.1 (1a.3): any session reply but 200 leaves the app signed out: the sign-in page, no Overview and no Sign in: %s',
   async (what, session) => {
     fakeBff({ session })
     render(<App />)
@@ -135,30 +131,33 @@ test.each(SESSION_FAILURES)(
     expect(
       await within(main).findByRole('heading', {
         level: 1,
-        name: en('overview-title'),
+        name: en('signin-title'),
       }),
       what,
     ).toBeTruthy()
     expect(
-      await within(main).findByText(en('version-label', '2.99.0')),
-      what,
-    ).toBeTruthy()
-    const tiles = await instanceTiles(main)
+      [...main.children].map((el) => el.className),
+      `${what}: main holds the sign-in page only`,
+    ).toEqual(['signin-page'])
     expect(
-      within(tiles).getByRole('link', { name: 'default' }),
-      what,
-    ).toBeTruthy()
+      document.querySelector('ul.tiles'),
+      `${what}: no instance tiles`,
+    ).toBeNull()
+    expect(
+      document.body.textContent,
+      `${what}: no framework version`,
+    ).not.toContain(en('version-label', '2.99.0'))
     const banner = screen.getByRole('banner')
     expect(
       within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
         within(banner).queryByRole('link', { name: en('session-sign-in') }),
-      what,
-    ).not.toBeNull()
+      `${what}: no banner Sign in (09 S1a.4)`,
+    ).toBeNull()
     expect(
       within(banner).queryByRole('button', { name: en('session-sign-out') }),
       what,
     ).toBeNull()
-    expect(navLinks(), what).toEqual([en('nav-overview')])
+    expect(document.querySelector('nav'), `${what}: no nav`).toBeNull()
     expect(document.body.textContent, what).not.toContain('secret-detail')
   },
 )
@@ -196,27 +195,34 @@ test('1a.1: the skip link moves focus to main without changing the route', async
   ).toBeTruthy()
 })
 
-test('1a.3: signed out, the banner offers Sign in and the nav holds only Overview', async () => {
+test('09 S1a.4 (1a.3): signed out, the banner offers no Sign in, there is no nav, and the form is in main', async () => {
   fakeBff({ session: 'signed-out' })
   render(<App />)
-  const banner = screen.getByRole('banner')
-  // A button or a link.
-  const signIn = await waitFor(() => {
-    const found =
-      within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
-      within(banner).queryByRole('link', { name: en('session-sign-in') })
-    if (found === null) throw new Error('no Sign in in the banner')
-    return found
+  const main = screen.getByRole('main')
+  // The page IS the form (S1a.1): the banner's Sign in pill is gone, so a
+  // visitor has one way to sign in and it is where they already are.
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: en('signin-title'),
   })
+  const banner = screen.getByRole('banner')
+  expect(
+    within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
+      within(banner).queryByRole('link', { name: en('session-sign-in') }),
+    'no Sign in in the banner',
+  ).toBeNull()
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
+    'not signed in',
   ).toBeNull()
-  expect(navLinks()).toEqual([en('nav-overview')])
-  // It leads to the sign-in form.
-  fireEvent.click(signIn)
+  expect(document.querySelector('nav'), 'no nav signed out').toBeNull()
   expect(
-    await screen.findByRole('heading', { level: 1, name: en('signin-title') }),
-  ).toBeTruthy()
+    document.getElementById('menu-button'),
+    'no Menu button signed out',
+  ).toBeNull()
+  // The header keeps the home link, and it leads to the Overview (S1a.4).
+  const home = within(banner).getByRole('link', { name: en('app-name') })
+  expect(home.getAttribute('href')).toBe('#/')
 })
 
 test('1a.1, 4: a session reply of {"user"} alone signs in: the banner shows the user, then Sign out, and no role word', async () => {
@@ -273,7 +279,9 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
     ],
   })
   render(<App />)
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+  // 09 S1a.3: while the session read is pending there is no nav at all, so the
+  // nav is taken once the session answers.
+  const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   const list = await within(nav).findByRole('list', {
     name: en('nav-instances'),
   })
@@ -303,7 +311,8 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
 test('1a.5: the link of the current page has aria-current="page"', async () => {
   fakeBff()
   render(<App />)
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+  // 09 S1a.3: the nav is there once the session read answered.
+  const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   const list = await within(nav).findByRole('list', {
     name: en('nav-instances'),
   })
@@ -319,37 +328,6 @@ test('1a.5: the link of the current page has aria-current="page"', async () => {
   expect(
     within(list)
       .getByRole('link', { name: 'coder' })
-      .getAttribute('aria-current'),
-  ).toBeNull()
-})
-
-test('1b.5a (2.7): on #/sign-in the banner Sign in link is the current page; not while the form stands in for a protected page', async () => {
-  startAt('#/sign-in')
-  fakeBff({ session: 'signed-out' })
-  render(<App />)
-  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
-  const banner = screen.getByRole('banner')
-  const link = within(banner).getByRole('link', { name: en('session-sign-in') })
-  expect(link.getAttribute('aria-current')).toBe('page')
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
-  expect(
-    within(nav)
-      .getByRole('link', { name: en('nav-overview') })
-      .getAttribute('aria-current'),
-  ).toBeNull()
-  // The form in place of a protected page: the route is that page's.
-  navigate('#/instances/default')
-  await screen.findByText(en('signin-required'))
-  expect(
-    within(banner)
-      .getByRole('link', { name: en('session-sign-in') })
-      .getAttribute('aria-current'),
-  ).toBeNull()
-  navigate('#/')
-  await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  expect(
-    within(banner)
-      .getByRole('link', { name: en('session-sign-in') })
       .getAttribute('aria-current'),
   ).toBeNull()
 })
@@ -419,7 +397,7 @@ test('1a.7: a route change sets the page title and moves focus to the h1', async
   expect(document.title).toBe(en('page-title', en('overview-title')))
 })
 
-test('1a.7: the sign-in page is titled Sign in', async () => {
+test('1a.7: the sign-in page is titled Sign in, signed out at the sign-in page and at a protected one', async () => {
   startAt('#/sign-in')
   fakeBff({ session: 'signed-out' })
   render(<App />)
@@ -427,32 +405,20 @@ test('1a.7: the sign-in page is titled Sign in', async () => {
   await waitFor(() =>
     expect(document.title).toBe(en('page-title', en('signin-title'))),
   )
-  navigate('#/')
-  await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  navigate('#/sign-in')
-  await waitFor(() =>
-    expect(document.activeElement).toBe(
-      screen.getByRole('heading', { level: 1, name: en('signin-title') }),
-    ),
-  )
+  // 09 S1a.6: signed out, every hash is the sign-in page, so it is the title
+  // everywhere, and 09 S1a.1 leaves one h1 in the document. 09 S1a.9: an
+  // in-app arrival moves the focus to that h1.
+  navigate('#/instances/default')
+  const h1 = await screen.findByRole('heading', {
+    level: 1,
+    name: en('signin-title'),
+  })
+  expect(
+    [...document.querySelectorAll('h1')],
+    'the sign-in page is the one page',
+  ).toEqual([h1])
+  await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(document.title).toBe(en('page-title', en('signin-title')))
-})
-
-test('1a.19: the Overview shows the version and the instances signed out too', async () => {
-  fakeBff({ session: 'signed-out' })
-  render(<App />)
-  const main = screen.getByRole('main')
-  expect(
-    await within(main).findByRole('heading', {
-      level: 1,
-      name: en('overview-title'),
-    }),
-  ).toBeTruthy()
-  expect(
-    await within(main).findByText(en('version-label', '2.99.0')),
-  ).toBeTruthy()
-  const tiles = await instanceTiles(main)
-  expect(within(tiles).getByRole('link', { name: 'default' })).toBeTruthy()
 })
 
 // ── Strings ─────────────────────────────────────────────────────────────

@@ -363,21 +363,23 @@ test('H8a.3 signed in: the Menu button holds Icon menu, the theme button Icon mo
   ])
 })
 
-test('H8a.3 signed out: the Sign in link holds Icon log-in then its text, the Menu and theme icons are there as signed in, and the tab order of H4.2 is unchanged', async () => {
+test('H8a.3 signed out: the banner holds no Sign in and no Menu button (09 S1a.4), the theme icon is there as signed in, and the tab order is home then Dark theme', async () => {
   openApp({ session: 'signed-out' })
-  const banner = await settledBanner()
-  const signIn = within(banner).getByRole('link', {
-    name: en('session-sign-in'),
-  })
-  expectIcon(signIn, 'log-in', 'the Sign in link')
-  expect(signIn.getAttribute('href'), 'and it goes where H5a.1 sends it').toBe(
-    '#/sign-in',
-  )
-  expectIcon(
-    within(banner).getByRole('button', { name: en('nav-menu') }),
-    'menu',
-    'the Menu button',
-  )
+  // The session settled: the sign-in page is on screen (09 S1a.1).
+  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
+  const banner = screen.getByRole('banner')
+  expect(
+    within(banner).queryByRole('link', { name: en('session-sign-in') }),
+    '09 S1a.4: no a.session in the banner: the page IS the form',
+  ).toBeNull()
+  expect(
+    within(banner).queryByRole('button', { name: en('nav-menu') }),
+    '09 S1a.4: no Menu button signed out',
+  ).toBeNull()
+  expect(
+    document.getElementById('menu-button'),
+    'and its id is gone with it',
+  ).toBeNull()
   expectIcon(
     within(banner).getByRole('button', { name: en('theme-dark') }),
     'moon',
@@ -385,13 +387,8 @@ test('H8a.3 signed out: the Sign in link holds Icon log-in then its text, the Me
   )
   expect(
     tabNames(banner),
-    'the tab order in the banner signed out: home, Menu, Dark theme, Sign in',
-  ).toEqual([
-    en('app-name'),
-    en('nav-menu'),
-    en('theme-dark'),
-    en('session-sign-in'),
-  ])
+    'the tab order in the banner signed out: home, Dark theme (09 S1a.5)',
+  ).toEqual([en('app-name'), en('theme-dark')])
 })
 
 // The shape moved into the component: the inline drawing is gone from the file,
@@ -422,21 +419,39 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 
 test.each([
   { signed: 'in', options: {} as BffOptions, banner: 3, nav: 2 },
+  // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
+  // the banner has the theme icon only.
   {
     signed: 'out',
     options: { session: 'signed-out' } as BffOptions,
-    banner: 3,
-    nav: 1,
+    banner: 1,
+    nav: 0,
   },
 ])(
   'H8a.8 signed $signed: every svg of the banner and the nav is aria-hidden and not focusable, the icons are the ones of the shell, and no icon is alone',
   async ({ options, banner: wantBanner, nav: wantNav }) => {
     openApp(options)
-    const banner = await settledBanner()
-    const nav = await screen.findByRole('navigation', { name: en('nav-label') })
+    // The session settles first: signed in, the nav appears with it; signed
+    // out there is no nav at all (09 S1a.4), and the sign-in page is what
+    // settles the read.
+    if (wantNav === 0) {
+      await screen.findByRole('heading', {
+        level: 1,
+        name: en('signin-title'),
+      })
+    } else {
+      await screen.findByRole('navigation', { name: en('nav-label') })
+    }
+    const banner = screen.getByRole('banner')
+    const nav = screen.queryByRole('navigation', { name: en('nav-label') })
+    expect(
+      nav === null,
+      wantNav === 0 ? 'no nav signed out (09 S1a.4)' : 'the nav is there',
+    ).toBe(wantNav === 0)
+    const navEl: Element = nav ?? document.createElement('div')
     const svgs = [
       ...banner.querySelectorAll('svg'),
-      ...nav.querySelectorAll('svg'),
+      ...navEl.querySelectorAll('svg'),
     ]
     expect(
       svgs.length,
@@ -460,7 +475,7 @@ test.each([
       'the banner holds exactly the icons of the shell: Menu, the theme and the session part',
     ).toBe(wantBanner)
     expect(
-      nav.querySelectorAll('svg.icon').length,
+      navEl.querySelectorAll('svg.icon').length,
       'the nav holds the icons of its named entries only',
     ).toBe(wantNav)
     expect(
@@ -473,7 +488,7 @@ test.each([
     ).toBe(0)
     for (const icon of [
       ...banner.querySelectorAll('.icon'),
-      ...nav.querySelectorAll('.icon'),
+      ...navEl.querySelectorAll('.icon'),
     ]) {
       const host = icon.parentElement
       expect(host, 'an icon has a host').not.toBeNull()

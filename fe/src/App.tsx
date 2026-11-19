@@ -41,12 +41,22 @@ import { t } from './strings.ts'
 function rewriteLegacy(hash: string): string {
   const target = legacyHref(hash)
   if (target === null) return hash
+  replaceTo(target)
+  return target
+}
+
+/**
+ * The address in the bar becomes `href`, with no history entry and no
+ * hashchange of its own: the same rewrite as an old bookmark (5b.8), used for
+ * the `#/sign-in` alias of 09 S1a.9 and S1a.10. The path and the query are
+ * kept.
+ */
+function replaceTo(href: string) {
   history.replaceState(
     null,
     '',
-    `${window.location.pathname}${window.location.search}${target}`,
+    `${window.location.pathname}${window.location.search}${href}`,
   )
-  return target
 }
 
 export default function App() {
@@ -83,7 +93,13 @@ export default function App() {
   const going = useRef<string | null>(null)
   // The one read of /api/instances the nav and the pages share.
   const [store] = useState(instancesStore)
-  const route = parseRoute(hash)
+  // The address the app is at. For a signed-in visitor `#/sign-in` IS `#/`
+  // (S1a.10), so the route, the page and the nav all read the alias as the
+  // Overview, and the bar follows in the effect below. The page's identity is
+  // this address, so the Overview the visitor is reading stays mounted while
+  // the bar moves.
+  const at = session && hash === '#/sign-in' ? '#/' : hash
+  const route = parseRoute(at)
 
   // The address in the bar when the app opens: an old bookmark is rewritten
   // before any page reads (5b.8). The route already reads the rewritten one.
@@ -100,6 +116,22 @@ export default function App() {
       live = false
     }
   }, [])
+
+  /**
+   * `#/sign-in` is an alias of `#/` for a signed-in visitor (09 S1a.9, S1a.10):
+   * the bar becomes `#/` by replaceState, which adds no history entry and
+   * fires no hashchange of its own, so Back leaves the place the visitor came
+   * from and never meets a sign-in page. This is the direct load: the route
+   * already reads the alias as the Overview (the `at` above), and this moves
+   * the bar and gives the focus to the Overview reached (S1a.10). A typed
+   * address, Back and Forward pass in the hashchange handler below, a sign-in
+   * answered at the alias in `signedIn`.
+   */
+  useEffect(() => {
+    if (!session || hash !== '#/sign-in') return
+    replaceTo('#/')
+    document.getElementById('page-heading')?.focus()
+  }, [hash, session])
 
   /**
    * A navigation the app asked for: it is not one to ask about (38d). The
@@ -120,7 +152,12 @@ export default function App() {
       // An old bookmark arrived (typed, or Back to one): the bar is rewritten
       // first, and everything below reads the rewritten address, so the leave
       // guard asks about the page the address stands for (5b.9).
-      const next = rewriteLegacy(window.location.hash)
+      const asked = rewriteLegacy(window.location.hash)
+      // Signed in, `#/sign-in` is an alias of `#/` (09 S1a.10): the guard
+      // asks about the Overview, the bar is rewritten to it, and it is the
+      // page that shows.
+      const next = session && asked === '#/sign-in' ? '#/' : asked
+      const aliased = next !== asked
       if (next === hash) {
         // The address already shown is no navigation (05b's 5b.13): the
         // rewrite of the old bookmark is all that happens, clean or dirty
@@ -128,8 +165,14 @@ export default function App() {
         // the guard not asked, a "session ended" sign-in text kept: the user
         // did not leave, and a focus move would take someone typing away
         // from their place (2.4.3, 3.2.1, 3.2.2). A token for this address is
-        // spent here, so no later navigation to it passes the guard.
+        // spent here, so no later navigation to it passes the guard. The
+        // alias is the one arrival that moves the focus: it asks for the page
+        // and the bar has to say so (S1a.10).
         if (going.current === next) going.current = null
+        if (aliased) {
+          replaceTo(next)
+          setFocus((n) => n + 1)
+        }
         return
       }
       if (going.current === next) going.current = null
@@ -157,13 +200,15 @@ export default function App() {
         return
       }
       setHash(next)
+      // The alias asks for the Overview and the bar has to say so (S1a.10).
+      if (aliased) replaceTo(next)
       setRevoked(false)
       setFocus((n) => n + 1)
       setMenuOpen(false)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
-  }, [dirty, hash])
+  }, [dirty, hash, session])
 
   const signedIn = (s: Session) => {
     setSession(s)
@@ -172,7 +217,13 @@ export default function App() {
     // empty (62a).
     if (filter !== null && filter.owner !== s.user) setFilter(null)
     setFocus((n) => n + 1)
-    if (route.page === 'sign-in') go('#/')
+    // Signed in at `#/sign-in`: the address and the route move in this one
+    // update (S1a.9), so the Overview mounts once at `#/` and its h1 takes the
+    // focus; the alias effect sees the moved hash and does nothing.
+    if (hash === '#/sign-in') {
+      replaceTo('#/')
+      setHash('#/')
+    }
   }
 
   /**
@@ -277,93 +328,98 @@ export default function App() {
           {t('app-name')}
         </a>
         <div className="banner-tools">
-          <button
-            id="menu-button"
-            type="button"
-            className="menu-button secondary"
-            aria-expanded={menuOpen}
-            aria-controls="nav"
-            onClick={() => setMenuOpen((o) => !o)}
-            onKeyDown={closeOnEscape}
-          >
-            <Icon name="menu" />
-            {t('nav-menu')}
-          </button>
+          {session && (
+            <button
+              id="menu-button"
+              type="button"
+              className="menu-button secondary"
+              aria-expanded={menuOpen}
+              aria-controls="nav"
+              onClick={() => setMenuOpen((o) => !o)}
+              onKeyDown={closeOnEscape}
+            >
+              <Icon name="menu" />
+              {t('nav-menu')}
+            </button>
+          )}
           <ThemeSwitch />
-          <SessionBar
-            session={session}
-            current={route.page === 'sign-in'}
-            onSignOut={signOutClicked}
-          />
+          <SessionBar session={session} onSignOut={signOutClicked} />
         </div>
       </header>
       <div className="layout">
-        <nav
-          id="nav"
-          className={menuOpen ? 'nav open' : 'nav'}
-          aria-label={t('nav-label')}
-          onClick={(e) => {
-            const link = (e.target as Element).closest('a')
-            if (link && !held(e, link)) setMenuOpen(false)
-          }}
-          onKeyDown={closeOnEscape}
-        >
-          <ul>
-            <li>
-              <a
-                href="#/"
-                aria-current={route.page === 'overview' ? 'page' : undefined}
-              >
-                <Icon name="house" />
-                {t('nav-overview')}
-              </a>
-            </li>
-          </ul>
-          {session && (
+        {session && (
+          <nav
+            id="nav"
+            className={menuOpen ? 'nav open' : 'nav'}
+            aria-label={t('nav-label')}
+            onClick={(e) => {
+              const link = (e.target as Element).closest('a')
+              if (link && !held(e, link)) setMenuOpen(false)
+            }}
+            onKeyDown={closeOnEscape}
+          >
+            <ul>
+              <li>
+                <a
+                  href="#/"
+                  aria-current={route.page === 'overview' ? 'page' : undefined}
+                >
+                  <Icon name="house" />
+                  {t('nav-overview')}
+                </a>
+              </li>
+            </ul>
             <NavInstances key={session.user} route={route} store={store} />
-          )}
-          {session && (
-            <>
-              <p id="nav-profiles" className="nav-label">
-                {t('nav-profiles')}
-              </p>
-              <ul aria-labelledby="nav-profiles">
-                <li>
-                  {/* The model profile page belongs to the list without being it,
-                      so the list is its current item, not its current page
-                      (02-models.md, 2d.64). */}
-                  <a
-                    href="#/profiles/model"
-                    aria-current={
-                      route.page === 'model-profiles'
-                        ? 'page'
-                        : route.page === 'model-profile'
-                          ? 'true'
-                          : undefined
-                    }
-                  >
-                    <Icon name="layers" />
-                    {t('nav-model-profiles')}
-                  </a>
-                </li>
-              </ul>
-            </>
-          )}
-        </nav>
+            <p id="nav-profiles" className="nav-label">
+              {t('nav-profiles')}
+            </p>
+            <ul aria-labelledby="nav-profiles">
+              <li>
+                {/* The model profile page belongs to the list without being it,
+                    so the list is its current item, not its current page
+                    (02-models.md, 2d.64). */}
+                <a
+                  href="#/profiles/model"
+                  aria-current={
+                    route.page === 'model-profiles'
+                      ? 'page'
+                      : route.page === 'model-profile'
+                        ? 'true'
+                        : undefined
+                  }
+                >
+                  <Icon name="layers" />
+                  {t('nav-model-profiles')}
+                </a>
+              </li>
+            </ul>
+          </nav>
+        )}
         <main id="main" tabIndex={-1}>
-          <Page
-            key={hash}
-            route={route}
-            store={store}
-            session={session}
-            revoked={revoked}
-            filterText={filter?.text ?? ''}
-            onFilterText={typedFilter}
-            onSignedIn={signedIn}
-            onSignedOut={signedOut}
-            onRenewed={renewed}
-            onDirty={setDirty}
-          />
+          {session === null ? (
+            // Signed out, the sign-in page is the whole of main at every hash
+            // (09 S1a.1), and it is ONE page: the hash moving keeps the form
+            // and its h1 in place, so the focus an in-app arrival asks for
+            // stays on the heading the visitor is reading. The notice says why
+            // only where the visitor asked for a page of their own (S1a.7).
+            <SignIn
+              required={route.page !== 'overview' && route.page !== 'sign-in'}
+              revoked={revoked}
+              onSignedIn={signedIn}
+            />
+          ) : (
+            <Page
+              key={at}
+              route={route}
+              store={store}
+              session={session}
+              filterText={filter?.text ?? ''}
+              onFilterText={typedFilter}
+              onSignedOut={signedOut}
+              onRenewed={renewed}
+              onDirty={setDirty}
+            />
+          )}
         </main>
       </div>
       {leaving !== null && <DiscardDialog onKeep={keep} onDiscard={discard} />}
@@ -371,31 +427,18 @@ export default function App() {
   )
 }
 
-/** The banner's end: Sign in, or the user and Sign out. */
+/** The banner's end: the user and Sign out. Signed out or pending it is
+ * nothing: the page is the sign-in form, so a link to it would be one more
+ * Tab stop pointing at where the focus already is (09 S1a.4). */
 function SessionBar({
   session,
-  current,
   onSignOut,
 }: {
   session: Session | null | undefined
-  /** On #/sign-in: the Sign in link is the current page. */
-  current: boolean
   onSignOut: (e: MouseEvent<HTMLButtonElement>) => void
 }) {
-  if (session === undefined) {
+  if (!session) {
     return null
-  }
-  if (session === null) {
-    return (
-      <a
-        className="session"
-        href="#/sign-in"
-        aria-current={current ? 'page' : undefined}
-      >
-        <Icon name="log-in" />
-        {t('session-sign-in')}
-      </a>
-    )
   }
   return (
     <div className="session">
@@ -460,22 +503,17 @@ function Page({
   route,
   store,
   session,
-  revoked,
   filterText,
   onFilterText,
-  onSignedIn,
   onSignedOut,
   onRenewed,
   onDirty,
 }: {
   route: Route
   store: InstancesStore
-  session: Session | null | undefined
-  /** The last read was refused by the manager: the sign-in form says so. */
-  revoked: boolean
+  session: Session | undefined
   filterText: string
   onFilterText: (text: string) => void
-  onSignedIn: (session: Session) => void
   onSignedOut: (byManager: boolean) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
@@ -483,19 +521,13 @@ function Page({
   if (session === undefined) {
     return <p role="status">{t('loading')}</p>
   }
-  if (route.page === 'overview') {
-    // The Overview shows to anyone: the boot fact of a tile is the signed-in
-    // page's (08-hearth-h6-overview.md, H6b.1).
-    return <Overview store={store} signedIn={session !== null} />
-  }
-  if (route.page === 'sign-in') {
-    return <SignIn required={false} onSignedIn={onSignedIn} />
+  if (route.page === 'overview' || route.page === 'sign-in') {
+    // Signed in, #/sign-in is an alias of #/ (09 S1a.10); the alias effect
+    // follows with the address.
+    return <Overview store={store} />
   }
   if (route.page === 'not-found') {
     return <NotFound />
-  }
-  if (session === null) {
-    return <SignIn required revoked={revoked} onSignedIn={onSignedIn} />
   }
   if (route.page === 'model-profiles') {
     return (

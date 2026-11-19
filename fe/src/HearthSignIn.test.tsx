@@ -387,10 +387,14 @@ test('H7.9: inside main nothing readable comes before the h1, and the tab order 
   }
   expect(off, 'nothing readable before the h1').toEqual([])
 
-  // 2.4.3: the order of the things a Tab reaches, as it is today. The art is
-  // not one of them, so it must not come between them.
+  // 2.4.3: the order of the things a Tab reaches. The art is not one of them,
+  // so it must not come between them. 09 S1a.4: signed out there is no nav, so
+  // the skip link is followed by the user name (the order of S1a.5).
   const skip = screen.getByRole('link', { name: en('skip-to-content') })
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
+  expect(
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: signed out there is no navigation landmark',
+  ).toBeNull()
   const user = within(main).getByRole('textbox', {
     name: en('signin-username'),
   })
@@ -399,8 +403,7 @@ test('H7.9: inside main nothing readable comes before the h1, and the tab order 
   })
   const submit = within(main).getByRole('button', { name: en('signin-submit') })
   const order: Array<[Element, Element, string]> = [
-    [skip, nav, 'the skip link, then the nav'],
-    [nav, user, 'the nav, then the user name'],
+    [skip, user, 'the skip link, then the user name'],
     [user, password, 'the user name, then the password'],
     [password, submit, 'the password, then the button'],
   ]

@@ -181,6 +181,9 @@ test('1a.14a: sign-in unavailable shows its own alert, clears the password, and 
   expect(alert.tagName).toBe('P')
   expect(alert.textContent).toBe(en('api-session-unavailable'))
   expect(alert.textContent).not.toBe(en('signin-failed'))
+  // 09 S1a.12: the text drops the clause that promised an Overview to the
+  // signed out: signed out there is only the sign-in page.
+  expect(alert.textContent!.toLowerCase()).not.toContain('overview')
   // Above the fields.
   expect(
     alert.compareDocumentPosition(username) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -216,6 +219,9 @@ test('1a.14b: a non-administrator gets its own alert, the password cleared, the 
   expect(alert.tagName).toBe('P')
   expect(alert.textContent).toBe(en('api-session-not-administrator'))
   expect(alert.textContent).not.toBe(en('signin-failed'))
+  // 09 S1a.12: the text drops the clause that promised an Overview to the
+  // signed out: signed out there is only the sign-in page.
+  expect(alert.textContent!.toLowerCase()).not.toContain('overview')
   // Above the fields.
   expect(
     alert.compareDocumentPosition(username) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -224,7 +230,8 @@ test('1a.14b: a non-administrator gets its own alert, the password cleared, the 
   expect(username.value).toBe('bob')
   // Unlike 14 and 14a: the account needs changing, not the password.
   expect(document.activeElement).toBe(username)
-  // Still signed out: the banner keeps Sign in, no Sign out.
+  // 09 S1a.4: signed out there is no banner Sign in at all: the page is the
+  // form.
   const banner = screen.getByRole('banner')
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-out') }),
@@ -232,7 +239,7 @@ test('1a.14b: a non-administrator gets its own alert, the password cleared, the 
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
-  ).not.toBeNull()
+  ).toBeNull()
   expect(banner.textContent).not.toContain(en('session-signed-in-as', 'bob'))
   // The form stays usable for another try.
   expect(submit.textContent).toBe(en('signin-submit'))
@@ -244,33 +251,6 @@ test('1a.14b: a non-administrator gets its own alert, the password cleared, the 
     username: 'alice',
     password: 'hunter2',
   })
-})
-
-test('1a.14b: after a non-administrator refusal the Overview link still works', async () => {
-  fakeBff({
-    session: 'signed-out',
-    signIn: () => reply(403, { key: 'session-not-administrator', args: [] }),
-  })
-  render(<App />)
-  const { main, username, password, submit } = await form()
-  type(username, 'bob')
-  type(password, 'right-password')
-  fireEvent.click(submit)
-  await within(main).findByText(en('api-session-not-administrator'))
-  const nav = screen.getByRole('navigation', { name: en('nav-label') })
-  fireEvent.click(within(nav).getByRole('link', { name: en('nav-overview') }))
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0))
-  })
-  expect(
-    await screen.findByRole('heading', {
-      level: 1,
-      name: en('overview-title'),
-    }),
-  ).toBeTruthy()
-  expect(
-    screen.queryByRole('button', { name: en('session-sign-out') }),
-  ).toBeNull()
 })
 
 test('1a.14b, 36: in the session-ended sign-in dialog the refusal shows inside it; the dialog stays open and its Cancel works', async () => {
@@ -477,6 +457,9 @@ test.each(CAN_CONFIGURE_FLAGS)(
 )
 
 test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the Overview', async () => {
+  const entries = window.history.length
+  const push = vi.spyOn(window.history, 'pushState')
+  const replace = vi.spyOn(window.history, 'replaceState')
   fakeBff({
     session: 'signed-out',
     signIn: () => reply(200, { user: 'bob' }),
@@ -501,32 +484,42 @@ test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the
     name: en('overview-title'),
   })
   await waitFor(() => expect(document.activeElement).toBe(h1))
+  // 09 S1a.9: at #/sign-in the address becomes #/ by replaceState, with no
+  // history entry, so Back leaves the place the visitor came from.
+  expect(window.location.hash).toBe('#/')
+  expect(window.history.length, 'no entry added').toBe(entries)
+  expect(push, 'no pushState').not.toHaveBeenCalled()
+  expect(replace, 'replaceState moved the address').toHaveBeenCalledTimes(1)
 })
 
-test('1a.13 (2.6): signed in, #/sign-in still shows the form, and signing in lands on the Overview', async () => {
+test('09 S1a.10 (1a.13, 2.6): signed in, #/sign-in is an alias of #/: the Overview shows, no form, no entry', async () => {
+  startAt('#/sign-in')
   const bff = fakeBff({
     session: 'signed-in',
     signIn: () => reply(200, { user: 'bob' }),
   })
+  const entries = window.history.length
+  const push = vi.spyOn(window.history, 'pushState')
   render(<App />)
   const banner = screen.getByRole('banner')
   await within(banner).findByRole('button', { name: en('session-sign-out') })
-  const { main, username, password, submit } = await form()
-  expect(
-    within(main).getByRole('heading', { level: 1, name: en('signin-title') }),
-  ).toBeTruthy()
-  expect(within(main).queryByText(en('signin-required'))).toBeNull()
-  type(username, 'bob')
-  type(password, 'hunter2')
-  fireEvent.click(submit)
-  const h1 = await screen.findByRole('heading', {
+  const main = screen.getByRole('main')
+  const h1 = await within(main).findByRole('heading', {
     level: 1,
     name: en('overview-title'),
   })
+  expect(
+    within(main).queryByRole('textbox', { name: en('signin-username') }),
+    'no sign-in form: signed in, #/sign-in is the Overview',
+  ).toBeNull()
+  expect(window.location.hash, 'the address became the Overview').toBe('#/')
+  expect(window.history.length, 'replaceState adds no entry').toBe(entries)
+  expect(push, 'no pushState').not.toHaveBeenCalled()
   await waitFor(() => expect(document.activeElement).toBe(h1))
-  expect(window.location.hash).toBe('#/')
-  expect(banner.textContent).toContain(en('session-signed-in-as', 'bob'))
-  expect(bff.to('POST', '/api/session')).toHaveLength(1)
+  expect(
+    bff.to('POST', '/api/session'),
+    'showing the alias sends no sign-in',
+  ).toHaveLength(0)
 })
 
 test('1a.13: signing in on a protected page returns to it with focus on its h1', async () => {
@@ -555,7 +548,7 @@ const SIGN_OUT_ANSWERS: [string, () => Response | Promise<Response>][] = [
 ]
 
 test.each(SIGN_OUT_ANSWERS)(
-  '1a.15: Sign out sends DELETE /api/session and shows the signed-out Overview whatever the answer: %s',
+  '09 S1a.11 (1a.15): Sign out sends DELETE /api/session and lands on the sign-in page at #/ whatever the answer: %s',
   async (what, signOut) => {
     startAt('#/instances/default')
     const bff = fakeBff({ session: 'signed-in', signOut })
@@ -568,25 +561,19 @@ test.each(SIGN_OUT_ANSWERS)(
     await waitFor(() =>
       expect(bff.to('DELETE', '/api/session'), what).toHaveLength(1),
     )
-    expect(
-      await screen.findByRole('heading', {
-        level: 1,
-        name: en('overview-title'),
-      }),
-      what,
-    ).toBeTruthy()
+    const h1 = await screen.findByRole('heading', {
+      level: 1,
+      name: en('signin-title'),
+    })
     expect(window.location.hash, what).toBe('#/')
-    const banner = screen.getByRole('banner')
-    expect(
-      within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
-        within(banner).queryByRole('link', { name: en('session-sign-in') }),
-      what,
-    ).not.toBeNull()
-    const nav = screen.getByRole('navigation', { name: en('nav-label') })
-    expect(
-      within(nav).queryByRole('list', { name: en('nav-instances') }),
-      what,
-    ).toBeNull()
+    // 09 S1a.7: at #/ there is nothing to explain, so no notice.
+    const main = screen.getByRole('main')
+    expect(main.querySelectorAll('p.notice'), what).toHaveLength(0)
+    // 09 S1a.4: the nav and the Menu button are gone with the nav.
+    expect(document.querySelector('nav'), what).toBeNull()
+    expect(document.getElementById('menu-button'), what).toBeNull()
+    // The focus goes to the h1 of the page it arrived on (2.3).
+    await waitFor(() => expect(document.activeElement).toBe(h1))
     expect(document.body.textContent, what).not.toContain('secret-detail')
   },
 )

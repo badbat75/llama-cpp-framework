@@ -191,11 +191,11 @@ async function signInto(main: HTMLElement, user = 'alice') {
 }
 
 /** The banner's Sign out; waits for the signed-out banner. */
+/** Signs out from the banner, and waits for the app to be signed out: 09
+ * S1a.11 lands it on the sign-in page at `#/`, so its h1 is what answers. */
 async function signOutFromBanner() {
   fireEvent.click(screen.getByRole('button', { name: en('session-sign-out') }))
-  await within(screen.getByRole('banner')).findByRole('link', {
-    name: en('session-sign-in'),
-  })
+  await screen.findByRole('heading', { level: 1, name: en('signin-title') })
 }
 
 /** Fake timers and Date only: the microtask queue stays real. */
@@ -383,9 +383,11 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
   expect(
     within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
       within(banner).queryByRole('link', { name: en('session-sign-in') }),
-  ).not.toBeNull()
+    '09 S1a.4: signed out the banner offers no Sign in',
+  ).toBeNull()
   expect(
-    within(nav()).queryByRole('link', { name: en('nav-model-profiles') }),
+    screen.queryByRole('navigation', { name: en('nav-label') }),
+    '09 S1a.4: signed out there is no nav',
   ).toBeNull()
   fireEvent.change(username, { target: { value: 'alice' } })
   fireEvent.change(password, { target: { value: 'hunter2' } })
@@ -807,9 +809,8 @@ test('2d.62a: Sign out empties the kept filter', async () => {
   await openList(main)
   expect(filterField(main).value, 'kept across a page change').toBe('gemma')
   await signOutFromBanner()
-  // Sign out lands on the signed-out Overview, so main holds no form: the
-  // banner's Sign in opens the sign-in page, and the list is opened again.
-  await clickLink(screen.getByRole('link', { name: en('session-sign-in') }))
+  // 09 S1a.11: Sign out lands on the sign-in page at #/, so the form to sign in
+  // again is in main; the list is opened again after the Overview shows.
   await signInto(main)
   await heading1(main, en('overview-title'))
   navigate('#/profiles/model')
@@ -913,12 +914,16 @@ test('2d.63: focus goes to the h1 from the address bar, from Back and from Forwa
 
 test('2d.64: on the model profile page the nav Models link has aria-current="true"; on #/profiles/model it keeps "page"', async () => {
   open()
-  const models = await within(nav()).findByRole('link', {
+  // 09 S1a.3: the nav arrives with the session, so it is taken once it is there.
+  const navEl = await screen.findByRole('navigation', {
+    name: en('nav-label'),
+  })
+  const models = await within(navEl).findByRole('link', {
     name: en('nav-model-profiles'),
   })
   await waitFor(() => expect(models.getAttribute('aria-current')).toBe('true'))
   expect(
-    within(nav())
+    within(navEl)
       .getByRole('link', { name: en('nav-overview') })
       .getAttribute('aria-current'),
   ).toBeNull()

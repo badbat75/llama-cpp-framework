@@ -25,8 +25,10 @@ import {
   deferred,
   en,
   fakeBff,
+  held,
   reply,
   startAt,
+  type BffOptions,
   type Instance,
 } from './test/bff.ts'
 
@@ -73,6 +75,18 @@ function tableParts(root: Element): Element[] {
 /** One instance with the `state`. */
 function oneState(state: string): Instance[] {
   return [{ id: 'default', engine: 'llama.cpp', state }]
+}
+
+/**
+ * The bff with the boot read of H6b on its way and never answered. 09 S1a.1
+ * leaves the Overview to the signed-in visitor, so a tile is seen signed in
+ * here: with the read held, no `dl` row joins the tile (Instances.tsx adds it
+ * when the read answers) and these tests pin the tile exactly as H6a shaped
+ * it. The signed-in tile with the row is HearthTilesBoot.test.tsx (H6b.3).
+ */
+function withoutBoot(options: BffOptions = {}) {
+  const h = held()
+  return fakeBff({ ...options, boot: { read: () => h.answer() } })
 }
 
 // ── H6a.1: the list ────────────────────────────────────────────────────────
@@ -122,11 +136,11 @@ test('H6 follow-up: ul.tiles carries role="list", so the count of instances is a
 // ── H6a.2: the tile ────────────────────────────────────────────────────────
 
 test('H6a.2: a tile is the tile-head row with the id link and the badge, and nothing else', async () => {
-  // Signed out, so the boot row of H6b never joins the tile: this test counts
-  // the tile's children as they stand, and the row arrives with the session
-  // read, which would race the asserts. The tile with the row is pinned by
-  // HearthTilesBoot.test.tsx.
-  fakeBff({ session: 'signed-out' })
+  // 09 S1a.1: the Overview is the signed-in page's, so a tile is seen signed
+  // in: the boot read of H6b is held, so the tile is the DOM H6a left, with
+  // no row to race the asserts. The signed-in tile with the row is pinned by
+  // HearthTilesBoot.test.tsx (H6b.3: the row is the tile's last child).
+  withoutBoot()
   render(<App />)
 
   const [tile] = await tiles()
@@ -182,12 +196,11 @@ test.each(engineCases)(
   'H6a.2: the engine line is there only when the reply holds two distinct engines: $engines',
   async ({ engines, shown }) => {
     // one instance per engine: the fixture must show every engine listed.
-    // Signed out (retargeted for H6b): the boot row is the signed-in page's
-    // (H6b.1), so here the tile is exactly the DOM H6a left, and the engine
-    // line is its last child; the signed-in tile with the row is pinned by
+    // The boot read is held (09 S1a.1: the Overview is signed-in only), so
+    // the tile is exactly the DOM H6a left and the engine line is its last
+    // child; the signed-in tile with the row is pinned by
     // HearthTilesBoot.test.tsx (H6b.3: the row is the tile's last child).
-    fakeBff({
-      session: 'signed-out',
+    withoutBoot({
       instances: engines.map((engine, n) => ({
         id: `i${n}`,
         engine,
