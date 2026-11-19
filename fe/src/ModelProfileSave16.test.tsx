@@ -41,7 +41,6 @@ import { cardHeadings } from './test/modelProfileCards.ts'
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
-const ENGINE = en('model-profile-engine')
 /** 196: the cards in page order; the jump buttons take their titles. */
 const TITLES = cardHeadings()
 const ASSETS = TITLES[0]!
@@ -146,13 +145,6 @@ function jumpButtons(main: HTMLElement): HTMLElement[] {
   const list = navOf(main).querySelector('ul')
   expect(list, '196, H10.1: the nav holds the ul of entries').not.toBeNull()
   return within(list as HTMLElement).getAllByRole('button')
-}
-
-/** The Engine select, by its label. */
-function engineSelect(main: HTMLElement): HTMLSelectElement {
-  return within(main).getByRole('combobox', {
-    name: ENGINE,
-  }) as HTMLSelectElement
 }
 
 /** A field's control by the key of its row: `model-profile-<key>-control`. */
@@ -307,7 +299,7 @@ test('2h.194: the paragraph model-profile-partly-editable is gone from the page,
 })
 
 test('2h.194: this sub-slice enables nothing new: every control 194 lists as greyed out is disabled on a read that locks it, and a ticked default box still disables its input', async () => {
-  const { main } = await form()
+  await form()
   const locked = [
     'kv-unified',
     'mmproj-offload',
@@ -326,10 +318,6 @@ test('2h.194: this sub-slice enables nothing new: every control 194 lists as gre
   ]
   for (const key of locked)
     expect(control(key).disabled, `${key}: greyed out (194)`).toBe(true)
-  // The Engine select keeps 2e's shape: enabled, with its one option.
-  const engine = engineSelect(main)
-  expect(engine.disabled, 'the Engine select stays enabled').toBe(false)
-  expect(engine.options.length, 'its one option').toBe(1)
   // A field with its own default box: the box enabled, the input disabled
   // while the box is ticked (156).
   const box = boxOf('ctx-size')
@@ -362,7 +350,7 @@ test('2h.195: the Assets card intro model-profile-assets-read-only is the first 
 
 // ── 196: the section jump list ────────────────────────────────────────
 
-test('2h.196: the jump nav named model-profile-jump-label sits between the h2 and the Engine field, and is a ul of ten buttons named by the ten card titles in card order, no link', async () => {
+test('2h.196: the jump nav named model-profile-jump-label sits between the h2 and the Assets card (H11b.1: the Engine row is in it), and is a ul of ten buttons named by the ten card titles in card order, no link', async () => {
   const { main } = await form()
   const nav = navOf(main)
   const h2 = within(main).getByRole('heading', {
@@ -372,8 +360,8 @@ test('2h.196: the jump nav named model-profile-jump-label sits between the h2 an
   expect(nav.tagName, '196: a nav element').toBe('NAV')
   expect(before(h2, nav), 'the nav follows the h2').toBe(true)
   expect(
-    before(nav, engineSelect(main)),
-    'the nav is before the Engine field',
+    before(nav, within(main).getByRole('heading', { level: 3, name: ASSETS })),
+    'the nav is before the Assets card',
   ).toBe(true)
   const list = nav.querySelector('ul')
   expect(list, 'a ul').not.toBeNull()
@@ -490,18 +478,17 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 
 // ── 197: the tab order of the page start ──────────────────────────────
 
-test('2h.197: Tab from the top reaches the back link, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Engine field', async () => {
+test('2h.197: Tab from the top reaches the back link, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
   expect(
-    tabbed.slice(0, TITLES.length + 4),
-    '197 with H10.10: back, the disclosure, the ten jumps in card order, the Engine About toggle and the Engine select',
+    tabbed.slice(0, TITLES.length + 3),
+    '197 with H10.10 and H11b.4: back, the disclosure, the ten jumps in card order, the Assets toggle',
   ).toEqual([
     en('model-profile-back'),
     en('model-profile-jump-label'),
     ...TITLES,
-    `${en('field-about')} ${ENGINE}`,
-    ENGINE,
+    ASSETS,
   ])
 })
 

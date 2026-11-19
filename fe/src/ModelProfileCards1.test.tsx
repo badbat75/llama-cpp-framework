@@ -240,13 +240,6 @@ function navOf(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The Engine select of 2d, which 2e leaves as it is (criterion 70). */
-function engineSelect(main: HTMLElement): Promise<HTMLSelectElement> {
-  return within(main).findByRole('combobox', {
-    name: en('model-profile-engine'),
-  }) as Promise<HTMLSelectElement>
-}
-
 /** The Card whose h3 is `titleKey` (D5.2 Card: a `section.card`). */
 function cardOf(main: HTMLElement, titleKey: string): HTMLElement {
   const h3 = within(main).getByRole('heading', {
@@ -369,7 +362,7 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, the Engine field, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the off line stays above the h2', async () => {
+test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the off line stays above the h2', async () => {
   for (const [what, extra, off] of [
     ['a switched-on model profile', {}, false],
     ['a switched-off model profile', { enabled: false }, true],
@@ -391,11 +384,7 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
         within(main).queryByText(en('model-profile-off')),
         `${what}: no off line`,
       ).toBeNull()
-    nodes.push(
-      ['the h2', h2],
-      ['the jump list', navOf(main)],
-      ['the Engine field', await engineSelect(main)],
-    )
+    nodes.push(['the h2', h2], ['the jump list', navOf(main)])
     for (const title of cardHeadingKeys()) {
       const card = cardOf(main, title)
       expect(
@@ -417,8 +406,8 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
     vi.unstubAllGlobals()
   }
   // The engine Notice of 72 keeps its place: 2h.10's 196 puts the jump list
-  // between the h2 and the engine Notice, and the Notice stays before the
-  // Engine field.
+  // between the h2 and the engine Notice, and H11b.2 keeps the Notice above
+  // the Assets card, the row's card.
   const { main } = await loaded({
     modelProfile: () =>
       reply(200, docOf(SET, { engine: STRATA, engineAvailable: false })),
@@ -428,9 +417,13 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
   expect(text(engine[0]!), 'the engine Notice of 72').toBe(
     en('model-profile-engine-unavailable', STRATA),
   )
+  const assets = within(main).getByRole('heading', {
+    level: 3,
+    name: en('model-profile-assets'),
+  })
   expect(
-    before(engine[0]!, await engineSelect(main)),
-    'the engine Notice is before the Engine field',
+    before(engine[0]!, assets),
+    'H11b.2: the engine Notice is above the Assets card',
   ).toBe(true)
   expect(
     before(navOf(main), engine[0]!),
@@ -464,7 +457,7 @@ test('2e.84 (2h.10 194, 198): the Notice model-profile-partly-editable is gone: 
 
 // ── The shared rules of the cards (85, 86, 89, 90) ──────────────────────
 
-test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled and the Engine select stays enabled', async () => {
+test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const values = docOf(SET).values
   const controls = RESOURCE_CARDS.flatMap((title) => [
@@ -501,10 +494,6 @@ test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is nativel
       aboutOf(main, en(f.label)).disabled,
       `${f.key}: its About toggle stays enabled`,
     ).toBe(false)
-  expect(
-    (await engineSelect(main)).disabled,
-    'the Engine select stays enabled (70)',
-  ).toBe(false)
 })
 
 test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards hold exactly the fields of 92 and 93 in the table order', async () => {
@@ -774,14 +763,10 @@ test.each(FIELDS)(
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle in card and field order, and no control of a 2e card', async () => {
+test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle in card and field order, and no control of a 2e card', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
-    // H11a.3: the Assets disclosure, the card sits after the Engine field.
-    en('model-profile-assets'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])

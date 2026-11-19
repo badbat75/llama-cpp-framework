@@ -854,8 +854,8 @@ test("2h.141: the tab order takes each Embeddings About toggle and then its sele
     at(pool),
   )
   expect(
-    at(selectOf(main, en('model-profile-engine'))),
-    'the Embeddings card sits after the Engine field',
+    at(document.getElementById('model-profile-assets-toggle') as HTMLElement),
+    'H11b.4: the Embeddings card sits after the Assets toggle',
   ).toBeLessThan(at(about(MODE)))
   expect(
     focusable.slice(-2).map((el) => el.textContent),

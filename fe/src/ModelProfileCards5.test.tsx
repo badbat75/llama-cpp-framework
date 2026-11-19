@@ -1557,23 +1557,15 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   // The whole page: the card's toggles are the tail of the tab order of 91,
   // which 2h.10's 197 starts with the back link and the ten jump buttons.
   const tabbed = mainTabbable(main)
-  const start = [
-    ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
-  ]
+  const start = [...pageStartTabStops()]
   expect(
     tabbed.slice(0, start.length),
-    'the back link, the ten jump buttons of 197 in card order, the Engine About toggle and the Engine select come first',
+    'the back link, the ten jump buttons of 197 in card order and the Assets toggle come first (H11b.4: the Engine stops are gone)',
   ).toEqual(start)
   expect(
     tabbed.slice(start.length),
-    'the page tab order is the list of test/modelProfileCards.ts (H11a.3: the Assets disclosure right after the Engine field)',
-  ).toEqual([
-    en('model-profile-assets'),
-    ...fieldTabStops(docOf(SET).values),
-    ...saveBarTabStops(),
-  ])
+    'the page tab order is the list of test/modelProfileCards.ts',
+  ).toEqual([...fieldTabStops(docOf(SET).values), ...saveBarTabStops()])
 })
 
 test('2e.116, 2h.193: the card, its five group headings, every label, hint and note show the English of the 31 strings of 116 and the 2 new strings of 193', async () => {

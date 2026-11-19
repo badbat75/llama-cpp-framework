@@ -956,21 +956,20 @@ test('2d.67: the model profile is read once on open and once on each route chang
   await flush()
   expect(modelProfileReads(bff)).toBe(1)
   // Criterion 67: no refresh button. 2h.10's 196: the page's buttons start
-  // with the ten section jump buttons, named by the card titles; criterion 70
-  // and 88: then the Engine About toggle and one About toggle per 2e field, in
-  // DOM order (the list of test/modelProfileCards.ts), H11a.3 adds the Assets
-  // disclosure between the Engine field and the 2e fields, and 2h.1's 135 adds
+  // with the ten section jump buttons, named by the card titles; criterion 88:
+  // then the Assets disclosure and one About toggle per 2e field, in
+  // DOM order (the list of test/modelProfileCards.ts; H11b.1 retires the
+  // Engine About toggle), and 2h.1's 135 adds
   // the save bar's two buttons at the end of the settings section: so no other
   // button (a refresh) is in main.
   expect(
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the jump disclosure of H10.10, the ten jump buttons, the Engine About toggle, the Assets disclosure, one About toggle per field, then the bar',
+    'main holds the jump disclosure of H10.10, the ten jump buttons, the Assets disclosure, one About toggle per field, then the bar',
   ).toEqual([
     en('model-profile-jump-label'),
     ...cardHeadings(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
     en('model-profile-assets'),
     ...fieldLabels().map((label) => `${en('field-about')} ${label}`),
     en('save-discard'),

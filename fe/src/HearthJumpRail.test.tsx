@@ -133,20 +133,21 @@ test('H9b.4: the rail is the region the settings heading names, and a press open
   ).toBe('model-profile-jump-label')
 
   // The reading flow of the narrow page, in document order: heading, region,
-  // engine notice, engine field.
+  // engine notice, Assets card (H11b.1: the Engine row is inside it).
   const notice = section.querySelector('p.notice') as HTMLElement
   expect(notice, 'the engine notice is there').not.toBeNull()
-  const engine = within(section).getByRole('combobox', {
-    name: en('model-profile-engine'),
+  const assets = within(section).getByRole('heading', {
+    level: 3,
+    name: en('model-profile-assets'),
   })
   expect(
     outOfOrder([
       ['h2', h2],
       ['nav.jump', nav],
       ['notice', notice],
-      ['engine field', engine],
+      ['Assets card', assets],
     ]),
-    'H9b.4: heading, region, notice, field, in that order',
+    'H9b.4: heading, region, notice, card, in that order',
   ).toEqual([])
 
   // The press of an entry moves focus to its card, and opens nothing.
@@ -195,15 +196,18 @@ test('H9b.4: the disclosure and the entries are the stops right after the back l
     'H10.10: the disclosure then the entries are the next stops, in their order',
   ).toEqual([toggle, ...buttons])
 
-  // The reading order of the rail page: back link, region, engine field,
+  // The reading order of the rail page: back link, region, Assets card,
   // cards, save bar.
   const section = railOf(main).section
-  const engine = within(section).getByRole('combobox', {
-    name: en('model-profile-engine'),
+  const assets = within(section).getByRole('heading', {
+    level: 3,
+    name: en('model-profile-assets'),
   })
+  // The card that follows the Assets card: TITLES[0] is Assets, the first of
+  // the ten (H11a.1), so the first 2e card is TITLES[1].
   const firstCard = within(main).getByRole('heading', {
     level: 3,
-    name: TITLES[0],
+    name: TITLES[1],
   })
   const bar = within(section)
     .getByRole('button', { name: en('save-button') })
@@ -215,7 +219,7 @@ test('H9b.4: the disclosure and the entries are the stops right after the back l
         screen.getByRole('link', { name: en('model-profile-back') }),
       ],
       ['nav.jump', nav],
-      ['engine field', engine],
+      ['Assets card', assets],
       ['first card', firstCard],
       ['save bar', bar],
     ]),

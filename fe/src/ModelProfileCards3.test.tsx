@@ -1376,14 +1376,10 @@ test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, 
   ).toEqual(cardHeadings())
 })
 
-test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
+test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
-    // H11a.3: the Assets disclosure, the card sits after the Engine field.
-    en('model-profile-assets'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])

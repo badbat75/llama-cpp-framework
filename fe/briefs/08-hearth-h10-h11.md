@@ -312,3 +312,43 @@ WebKit; 1280, 960, 480, 320 px, light and dark):
   0 failing; `clicked()` fails a visible toggle that never reaches `aria-expanded="true"`, so in
   `model-profile-open` both disclosures were open at 320 (the Assets click lands after the list
   opens) and the Assets one at 1280. axe-core: 0 at every width, both themes, closed and open.
+
+**Review of H11b (2026-11-19): Approved.** Read: the uncommitted `ModelProfilePage.tsx`
+(`AssetRow`, `pathRow`, `assetClass`, `assetRows` lines 152 to 181; the notice lines 951 to 956;
+the `dl` lines 988 to 998), `en_US.json`, `InstancePage.tsx` `readBoot` (lines 446 to 454).
+**Measured** (`build/ux-review/h11b.js`, `h11b-boot.js`, stub `stub9.py`, signed in through the
+sign-in page first; Chromium, Firefox, WebKit; 1280, 960, 320 px, light and dark; outputs
+`h11b-*.txt`, screenshots `h11b-*.png`):
+- H11b.1: met. No `#model-profile-engine` in the page. Open, the seven rows in order: Engine,
+  Model file, Project URL, MMProj, Draft model, Drafter, N-gram drafters. Engine "llama.cpp" (or
+  "Strata (not available)"), no class, Atkinson Hyperlegible Next 17 px in the text colour; the
+  path rows Atkinson Hyperlegible Mono 17 px, "(none)" muted, as before. `dt` and `dd` columns
+  aligned with the other rows (dt x 289, dd x 505 at 960 and 1280; stacked at x 41 at 320). No
+  `dd` clipped, no sideways scroll, also at 200 % text and with the 1.4.12 spacing at 320 (the
+  not-available value wraps to three lines). The summary line unchanged.
+- H11b.2: met. With engine Strata: the notice is the element just before the card, above it,
+  `p.notice`, no role, the `triangle-alert` icon `aria-hidden`, text "Strata is not available on
+  the server, so no instance can serve this model profile until it is installed again."
+- H11b.3: met. `model-profile-engine-hint` gone, `model-profile-engine` kept.
+- H11b.4: met. Tab from `main` at 320: back link, "On this page", Assets toggle, About GPU layers,
+  the GPU layers box; at 1280: back link, the ten jumps, Assets toggle, About GPU layers. No stop
+  where the Engine field was; each stop shows the 3 px solid ring. The jump list's ten entries are
+  unchanged (Assets first); none ever pointed at the Engine field.
+- H11b.6: met. Chromium's own tree (CDP `Accessibility.getFullAXTree`), card open: heading
+  "Assets" level 3 > button "Assets" expanded; paragraph (the read-only note); DescriptionList >
+  term "Engine", definition "llama.cpp" (or "Strata (not available)"), term "Model file",
+  definition the path, and so on for the seven pairs.
+- H11b.7: met. Save with a dirty card, engine available or not, three engines: `PUT
+  /api/profiles/model/Qwen3-27B`, `application/json`, `{"revision":"r1","values":{"op-offload":
+  "true"}}`, then "Saved: restart llama-server to apply.". No engine in the body, as the contract
+  wants: the engine is the file that holds the section, and `{id}` names it
+  (`fe/briefs/api-contract.md`, `PUT /api/profiles/model/{id}`). The removed `SelectField` never
+  sent one.
+- `InstancePage.tsx`: no visible change. Boot read answering 401 shows "Whether llama-server starts
+  at boot could not be read." (`boot-load-failed`) and the page stays signed in; 500 and 503 with
+  `client-unavailable` show that key's text; `true` shows the box.
+- Forced colours (Chromium, Firefox, 320): the Engine and path values in the system text
+  colour (computed `rgb(0, 0, 0)`), the notice bordered 1 px solid with its icon in that colour.
+- axe-core (WCAG 2.0 to 2.2 A, AA): 0 at each width and theme, closed and open, both profiles,
+  three engines.
+- `npm --prefix fe/ux run check`: 10 states x 2 widths x 2 themes + 3 = 52 per browser, 0 failing.

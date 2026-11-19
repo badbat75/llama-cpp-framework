@@ -301,8 +301,6 @@ export const EN: Record<string, string> = {
     'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
   'model-profile-settings-title': 'Model profile settings',
   'model-profile-engine': 'Engine',
-  'model-profile-engine-hint':
-    'The engine this model profile belongs to. Every instance of that engine can serve it.',
   'model-profile-engine-unavailable':
     '{0} is not available on the server, so no instance can serve this model profile until it is installed again.',
   'model-profile-assets': 'Assets',

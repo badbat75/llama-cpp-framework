@@ -585,13 +585,16 @@ export function fieldTabStops(values: Record<string, string>): string[] {
  * with H10 inserted (fe/briefs/08-hearth-h10-h11.md, H10.10): the back link,
  * then the jump disclosure named by `model-profile-jump-label`, then the
  * section jump list's buttons, one per card of 83 in page order, each named by
- * its card's title (196). The card h3s are not tab stops: only a jump button
+ * its card's title (196), then the Assets card's disclosure (H11b.4: the
+ * Engine About toggle and select are gone, the Assets toggle is the stop right
+ * after the jumps). The card h3s are not tab stops: only a jump button
  * gives one the focus. */
 export function pageStartTabStops(): string[] {
   return [
     en('model-profile-back'),
     en('model-profile-jump-label'),
     ...cardHeadings(),
+    en('model-profile-assets'),
   ]
 }
 

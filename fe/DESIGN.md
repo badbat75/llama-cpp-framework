@@ -20,8 +20,7 @@ order, defaults and checks, and says where it differs on purpose.
    itself.
 4. **No empty chrome.** A tab list with one tab, a filter with one choice, a nav entry for a page
    that does not exist yet: none of these are shown. The structure has a place for them (section 2);
-   they appear when their second item or their page does. The exception is a value the user must
-   declare, such as a model profile's engine (section 2.2): its select shows even with one entry.
+   they appear when their second item or their page does.
 5. **Smallest design that does the job.** Reuse a component of section 5 before adding one; add a
    token or a pattern here only when a slice needs it.
 
@@ -38,7 +37,7 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
-| Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
+| Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -78,16 +77,17 @@ Decided with the user on 2026-11-14.
   engine whose model profile file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
   `presets.ini.disabled`), never a key in the file: llama-server refuses a `--models-preset` file with
   a key it does not know (llama.cpp v1.0.0 `common/preset.cpp`, "option not recognized in preset").
-  - The model profile editor's first field is **Engine**, a `<select>` over that list, never free
-    text, shown even with one entry (user decision: it is how a model profile's engine is chosen).
-    Choosing another engine moves the model profile to that engine's file; no key is written.
-  - Every model profile today is in llama.cpp's files, so it is a llama.cpp model profile: the editor shows llama.cpp
-    selected, no migration prompt.
+  - The model profile editor shows the **Engine** as text, the first row of the Assets card (H11b,
+    user, 2026-11-18: `fe/briefs/08-hearth-h10-h11.md` section 3), in the body font, not mono, and
+    in the summary line under the title. There is no engine control: moving a model profile to
+    another engine's file, which writes no key, is a later slice with its own brief.
+  - Every model profile today is in llama.cpp's files, so it is a llama.cpp model profile: the editor shows llama.cpp,
+    no migration prompt.
   - **Engine not available**: a model profile in the file of an engine the list lacks (e.g. Strata
     uninstalled); possible only once a second engine's model profile file exists. The
-    list row shows the engine name with the text "not available"; the editor shows the select with that
-    name as an extra, selected option marked "(not available)" and a Notice that the model profile cannot be
-    started until the engine is installed or another engine is chosen. Its other fields stay readable;
+    list row shows the engine name with the text "not available"; the editor's Engine row reads
+    "`<engine>` (not available)" and a Notice (icon, no role) above the Assets card says no instance
+    can serve the model profile until the engine is installed again, so it is seen with the card closed. Its other fields stay readable;
     fields of an engine the fe does not know are shown read-only as raw `key = value` lines, kept on
     save.
   - The model profile list's Engine column is always shown (each row has an engine), sorted with the list.

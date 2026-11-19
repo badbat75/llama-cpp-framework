@@ -13,10 +13,10 @@
 // turn, the ring around the toggle and the summary wrapping a long file name at
 // 320 px are for the same pass (section 5).
 //
-// The card's own content, the six Assets rows, is 2d.73 to 2d.76's in
-// ModelProfileContent.test.tsx: it must not change (section 6), so it is read
-// here only to show that the disclosure moved it behind `hidden` and left the
-// description list as it was.
+// The card's own content, the Assets rows, is 2d.73 to 2d.76's in
+// ModelProfileContent.test.tsx: it must not change (section 6) beyond the
+// Engine row H11b.1 puts first, so it is read here only to show that the
+// disclosure moved it behind `hidden` and left the description list as it was.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -410,7 +410,11 @@ test('H11a.3: the Assets card is a section.card.assets-card: its h3 holds the to
     'H11a.3: the body holds the dl of 2d.73, class and all',
   ).not.toBeNull()
   expect(dl!.parentElement, 'H11a.3: the dl sits in the body').toBe(body)
-  expect(pairs(card), 'H11a.3: the six rows of 2d.73, unchanged').toEqual([
+  expect(
+    pairs(card),
+    'H11a.3, H11b.1: the Engine row leads, the six of 2d.73 follow unchanged',
+  ).toEqual([
+    [en('model-profile-engine'), ENGINE],
     [LABELS[0], MODEL],
     [LABELS[1], URL],
     ['MMProj', MMPROJ],
@@ -621,7 +625,7 @@ test('H11a.10: the reading is the heading, then the button collapsed, then the r
 
 // ── H11a.11: nothing else moves ──────────────────────────────────────────
 
-test('H11a.11: the notice, the Engine field, the h2, the nine cards of 83 in their order, the ten jumps and the save bar stay as they are', async () => {
+test('H11a.11: the notice, the Engine row of Assets (H11b), the h2, the nine cards of 83 in their order, the ten jumps and the save bar stay as they are', async () => {
   const { main } = await form(assetsDoc({ engineAvailable: false }))
   const notice = main.querySelector('p.notice')
   expect(notice, 'H11a.11: the engine Notice of 72').not.toBeNull()
@@ -636,13 +640,13 @@ test('H11a.11: the notice, the Engine field, the h2, the nine cards of 83 in the
     }),
     'H11a.11: the h2',
   ).toBeTruthy()
-  const select = within(main).getByRole('combobox', {
-    name: en('model-profile-engine'),
-  }) as HTMLSelectElement
   expect(
-    select.options[select.selectedIndex]!.text,
-    'H11a.11: the Engine field stays until H11b (70)',
-  ).toBe(en('model-profiles-engine-not-available', ENGINE))
+    pairs(cardOf(main))[0],
+    'H11a.11, H11b.1: the Engine row of Assets says the engine of the read',
+  ).toEqual([
+    en('model-profile-engine'),
+    en('model-profiles-engine-not-available', ENGINE),
+  ])
   expect(
     [...main.querySelectorAll<HTMLElement>('section.card > h3')].map((h) =>
       textOf(h),

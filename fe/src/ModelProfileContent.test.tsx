@@ -1,13 +1,12 @@
 // The CONTENT of the model profile page #/profiles/model/<id>, read-only (fe/briefs/02-models.md,
 // sections 2d.5 to 2d.9): the order below the h1, the line for a switched-off
-// model profile, the Engine select of D2.2, the Assets card as a description list, the
+// model profile, the Assets card as a description list with the Engine row of H11b, the
 // keyboard path and what a screen reader says, and the reply shape the fe checks.
 // The route, the back link, the h1, the read and its states are ModelProfilePage.test.tsx
 // (2d.1 to 2d.4), the list's tab path and table reading are ModelProfiles.test.tsx and
 // ModelProfilesSwitch.test.tsx (2a.20, 2c.53, 2c.54). The colours of 69, the wrapping of
 // 77 and the focus ring of 79 are checked in the designer's review, not in jsdom.
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -42,7 +41,8 @@ const DRAFT = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0-draft.gguf'
 const MMPROJ = '/var/lib/private-ai/.llama.cpp/models/mmproj-F16.gguf'
 const URL = 'https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF'
 const NONE = en('model-profile-value-none')
-
+/** H11b.1: `model-profile-engine`, now the first dt of the Assets card. */
+const ENGINE_DT = en('model-profile-engine')
 /** The Assets card's labels, in the GUI's order (criterion 73). */
 const LABELS = [
   en('model-profile-model-file'),
@@ -53,14 +53,15 @@ const LABELS = [
   en('model-profile-drafter'),
   en('model-profile-ngram-drafters'),
 ]
+/** The card's terms from H11b on: Engine first, the six of 73 behind it. */
+const CARD_LABELS = [ENGINE_DT, ...LABELS]
 
 /** The 2e cards' fields, in card and field order: each is one tab stop, its
  * About toggle (criterion 91), and nothing else of a 2e card takes focus
- * (criterion 85). The list is test/modelProfileCards.ts. H11a.3 adds the Assets
- * disclosure first: the card sits between the Engine field and the 2e cards, so
- * its toggle is the tab stop right after the Engine select. */
+ * (criterion 85). The list is test/modelProfileCards.ts. H11a.3's Assets
+ * disclosure and H11b.4's drop of the Engine stops live in pageStartTabStops,
+ * so this list is the field stops and the bar. */
 const CARD_TAB_STOPS = [
-  en('model-profile-assets'),
   ...fieldTabStops(fullDoc().values),
   ...saveBarTabStops(),
 ]
@@ -161,18 +162,6 @@ function engineNotice(main: HTMLElement): HTMLElement {
 /** The texts of every Notice on the page. */
 function noticeTexts(main: HTMLElement): string[] {
   return [...main.querySelectorAll('.notice')].map(text)
-}
-
-function engineSelect(main: HTMLElement): Promise<HTMLElement> {
-  return within(main).findByRole('combobox', {
-    name: en('model-profile-engine'),
-  })
-}
-
-function aboutToggle(main: HTMLElement, label: string): HTMLElement {
-  return within(main).getByRole('button', {
-    name: `${en('field-about')} ${label}`,
-  })
 }
 
 function text(el: Element): string {
@@ -283,7 +272,7 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
   // H11a.4: the card mounts closed, so open it before reading the rows
   // (as 2d.73 to 2d.76 and 2d.79 do).
   openCard(card)
-  expect(pairs(card).map(([label]) => label)).toEqual(LABELS)
+  expect(pairs(card).map(([label]) => label)).toEqual(CARD_LABELS)
   expect(card.textContent).not.toContain('ctx-size')
   expect(card.textContent).not.toContain('172032')
   expect(card.textContent).not.toContain('temp')
@@ -302,23 +291,20 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
   expect(within(main).queryByRole('heading', { level: 3 })).toBeNull()
 })
 
-test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the ten jump buttons of 2h.10, the Engine About toggle and select, then each 2e field About toggle, the editable controls and the bar', async () => {
+test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the ten jump buttons of 2h.10, the Assets toggle, then each 2e field About toggle, the editable controls and the bar', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
-  await engineSelect(main)
   for (const name of [en('save-button'), en('save-discard')])
     expect(within(main).queryByRole('button', { name }), name).toBeTruthy()
   expect(main.querySelector('.save-bar'), 'the save bar').toBeTruthy()
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
     ...CARD_TAB_STOPS,
   ])
 })
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
 
-test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a switched-off model profile), the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
+test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a switched-off model profile), the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Assets card (H11b.1 moved the Engine row into it), and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
   for (const [what, extra, off, unavailable] of [
     ['a switched-on model profile', {}, false, false],
     ['a switched-off model profile', { enabled: false }, true, false],
@@ -352,7 +338,7 @@ test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a
       ).toBeNull()
     nodes.push(['the h2', settingsTitle(main)], ['the jump list', navOf(main)])
     if (unavailable) nodes.push(['the engine Notice', engineNotice(main)])
-    nodes.push(['the Engine field', await engineSelect(main)])
+    // H11b.1: the Engine field is gone, so the card follows the Notice (72).
     nodes.push(['the Assets card', h3])
     for (let i = 0; i + 1 < nodes.length; i++)
       expect(
@@ -406,48 +392,51 @@ test('2d.69: a switched-off model profile shows model-profile-off as a plain par
   expect(within(on).queryByText(en('model-profile-off'))).toBeNull()
 })
 
-// ── The Engine field (70, 72, 80) ───────────────────────────────────────
+// ── The Engine row of Assets (70, 72, 80) ───────────────────────────────
 
-test('2d.70: the Engine field is a SelectField named Engine: one option, the engine as the reply gives it, selected, enabled and in the tab sequence, and its About toggle reveals and hides model-profile-engine-hint', async () => {
-  const { main } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
-  const select = (await engineSelect(main)) as HTMLSelectElement
+test('2d.70 (H11b.1): the Engine field is a row of the Assets card: its dt is named Engine and its dd is the engine as the reply gives it, in the body font and not mono, and the page has no Engine select, no Engine About toggle and no hint', async () => {
+  const { main, card } = await loaded({
+    modelProfile: () => reply(200, fullDoc()),
+  })
+  openCard(card)
+  const defs = definitionsWithLabels(card)
+  const [engine, ...rest] = defs
+  expect(text(engine![1]), 'the dd is the engine').toBe('llama.cpp')
   expect(
-    Array.from(select.options).map((o) => o.text),
-    'one option',
-  ).toEqual(['llama.cpp'])
-  expect(select.value, 'the model profile engine, selected').toBe('llama.cpp')
-  expect(select.selectedIndex).toBe(0)
-  expect(select.disabled, 'enabled: 2h will let it change').toBe(false)
-  expect(select.getAttribute('aria-disabled')).toBeNull()
-  expect(tabbable(), 'in the tab sequence').toContain(select)
-  const toggle = aboutToggle(main, en('model-profile-engine'))
-  expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  const hintId = toggle.getAttribute('aria-controls')
-  const hint = hintId === null ? null : document.getElementById(hintId)
-  expect(hint, 'the toggle controls the hint').toBeTruthy()
-  expect(isHidden(hint), 'the hint starts hidden').toBe(true)
-  fireEvent.click(toggle)
-  expect(toggle.getAttribute('aria-expanded')).toBe('true')
-  expect(isHidden(hint), 'the hint is shown').toBe(false)
+    terms(card).map(text),
+    'H11b.1: Engine is the first term, the six of 73 follow',
+  ).toEqual(CARD_LABELS)
+  expect(classesOf(engine![1]), 'H11b.1: the dd without mono').not.toContain(
+    'mono',
+  )
   expect(
-    within(hint as HTMLElement).getByText(en('model-profile-engine-hint')),
-  ).toBeTruthy()
-  fireEvent.click(toggle)
-  expect(toggle.getAttribute('aria-expanded')).toBe('false')
-  expect(isHidden(hint), 'the hint is hidden again').toBe(true)
+    within(main).queryByRole('combobox', { name: ENGINE_DT }),
+    'H11b.1: the Engine select is gone',
+  ).toBeNull()
+  expect(
+    main.querySelector('#model-profile-engine'),
+    'H11b.1: nothing keeps the id',
+  ).toBeNull()
+  expect(
+    within(main).queryByRole('button', {
+      name: `${en('field-about')} ${ENGINE_DT}`,
+    }),
+    'H11b.1: the Engine About toggle is gone',
+  ).toBeNull()
+  expect(rest.length, 'the six of 73 follow').toBe(LABELS.length)
 })
 
-test('2d.70, 2d.72: an engine not available: the one option reads Strata (not available) and is selected, the Notice model-profile-engine-unavailable filled with the engine sits above the Engine field as a bordered paragraph and not a live region, and the Assets card is shown as for any model profile', async () => {
+test('2d.70, 2d.72 (H11b.1, H11b.2): an engine not available: the Engine row reads Strata (not available), the Notice model-profile-engine-unavailable filled with the engine sits above the Assets card as a bordered paragraph and not a live region, and the card is shown as for any model profile', async () => {
   const { main, card } = await loaded({
     modelProfile: () =>
       reply(200, fullDoc({ engine: STRATA, engineAvailable: false })),
   })
   openCard(card)
-  const select = (await engineSelect(main)) as HTMLSelectElement
-  expect(Array.from(select.options).map((o) => o.text)).toEqual([
-    en('model-profiles-engine-not-available', STRATA),
-  ])
-  expect(select.selectedIndex).toBe(0)
+  const [engine] = definitionsWithLabels(card)
+  expect(
+    text(engine![1]),
+    'H11b.1: the row carries model-profiles-engine-not-available',
+  ).toBe(en('model-profiles-engine-not-available', STRATA))
   const n = engineNotice(main)
   expect(n.tagName).toBe('P')
   expect(
@@ -455,23 +444,19 @@ test('2d.70, 2d.72: an engine not available: the one option reads Strata (not av
     'part of the page as read, not a live region',
   ).toBeNull()
   expect(text(n)).toBe(en('model-profile-engine-unavailable', STRATA))
-  expect(before(n, select), 'the Notice is above the Engine field').toBe(true)
-  expect(pairs(card).map(([label]) => label)).toEqual(LABELS)
+  expect(
+    before(n, card),
+    'H11b.2: the Notice is above the Assets card, seen with the card closed',
+  ).toBe(true)
+  expect(pairs(card).map(([label]) => label)).toEqual(CARD_LABELS)
 })
 
-test('2d.70, 2d.80: picking the Engine select only option changes nothing and sends nothing: no write, no second read, no engines read, no list read, and the values stay', async () => {
+test('2d.70, 2d.80 (H11b.1): the Engine row is text: opening the card sends nothing and reads nothing, and the values stay as the reply gave them', async () => {
   const { bff, main, card } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
-  openCard(card)
-  const select = (await engineSelect(main)) as HTMLSelectElement
-  const shown = pairs(card)
   const seen = bff.calls.map((c) => `${c.method} ${c.path}`)
-  await act(async () => {
-    fireEvent.click(select)
-    fireEvent.change(select, { target: { value: 'llama.cpp' } })
-    await new Promise((r) => setTimeout(r, 0))
-  })
+  openCard(card)
   expect(
     bff.calls.map((c) => `${c.method} ${c.path}`),
     'nothing is sent',
@@ -485,13 +470,24 @@ test('2d.70, 2d.80: picking the Engine select only option changes nothing and se
     'the model profile read once, the list not read (80)',
   ).toEqual(['GET /api/profiles/model/Qwen3-27B'])
   expect(seen, 'no engine list read in 2d').not.toContain('GET /api/engines')
-  expect(select.value).toBe('llama.cpp')
-  expect(pairs(card), 'the values stay').toEqual(shown)
+  expect(
+    within(main).queryAllByRole('combobox', { name: ENGINE_DT }),
+    'H11b.1: the row is not a control, so there is nothing to pick',
+  ).toEqual([])
+  expect(pairs(card), 'the values stay as the reply gave them').toEqual([
+    [ENGINE_DT, 'llama.cpp'],
+    [en('model-profile-model-file'), MODEL],
+    [en('model-profile-project-url'), URL],
+    ['MMProj', MMPROJ],
+    [en('model-profile-draft-model'), DRAFT],
+    [en('model-profile-drafter'), 'draft-mtp'],
+    [en('model-profile-ngram-drafters'), 'ngram-mod'],
+  ])
 })
 
 // ── The Assets card (73, 74, 75, 76) ───────────────────────────────────
 
-test('2d.73: the Assets card is a Card with an h3 Assets and one dl: each field a dt label then its dd value, in the GUI order Model file, Project URL, MMProj, Draft model, Drafter, N-gram drafters', async () => {
+test('2d.73: the Assets card is a Card with an h3 Assets and one dl: each field a dt label then its dd value, in the GUI order Engine (H11b.1), Model file, Project URL, MMProj, Draft model, Drafter, N-gram drafters', async () => {
   const { card, h3 } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
@@ -505,17 +501,18 @@ test('2d.73: the Assets card is a Card with an h3 Assets and one dl: each field 
   expect(card.querySelectorAll('dl').length, 'one description list').toBe(1)
   const ds = within(card).getAllByRole('definition')
   const ts = terms(card)
-  expect(ts.map(text)).toEqual(LABELS)
-  expect(ts.map((el) => el.tagName)).toEqual(LABELS.map(() => 'DT'))
-  expect(ds.map((el) => el.tagName)).toEqual(LABELS.map(() => 'DD'))
+  expect(ts.map(text)).toEqual(CARD_LABELS)
+  expect(ts.map((el) => el.tagName)).toEqual(CARD_LABELS.map(() => 'DT'))
+  expect(ds.map((el) => el.tagName)).toEqual(CARD_LABELS.map(() => 'DD'))
   for (const t of ts) expect(t.parentElement?.tagName, text(t)).toBe('DL')
   ts.forEach((t, i) =>
     expect(
       t.nextElementSibling,
-      `${LABELS[i]}: its value follows its label`,
+      `${CARD_LABELS[i]}: its value follows its label`,
     ).toBe(ds[i]),
   )
   expect(pairs(card)).toEqual([
+    [ENGINE_DT, 'llama.cpp'],
     [en('model-profile-model-file'), MODEL],
     [en('model-profile-project-url'), URL],
     ['MMProj', MMPROJ],
@@ -574,6 +571,13 @@ test('2d.74: each value is the reply string unchanged, the server path in full w
   expect(shown.get(en('model-profile-project-url'))).toBe(URL)
   for (const [label, def] of definitionsWithLabels(card)) {
     if (text(def) === NONE) continue
+    if (label === ENGINE_DT) {
+      // H11b.1: the engine id is not a path: its dd carries no mono.
+      expect(classesOf(def), 'Engine: the dd without mono').not.toContain(
+        'mono',
+      )
+      continue
+    }
     expect(classesOf(def), `${label}: a value is mono (D5.1)`).toContain('mono')
   }
   expect(within(card).queryAllByRole('link'), 'no Open in 2d').toEqual([])
@@ -631,8 +635,10 @@ test('2d.76: a key absent from values, an empty string, an empty projectUrl and 
     expect(
       defs.map(([label]) => label),
       what,
-    ).toEqual(LABELS)
-    for (const [label, def] of defs) {
+    ).toEqual(CARD_LABELS)
+    // H11b.1: Engine is the first row and its value is the engine of the read,
+    // never `(none)`: the six of 76 are the rows that read as empty.
+    for (const [label, def] of defs.filter(([l]) => l !== ENGINE_DT)) {
       expect(text(def), `${what}: ${label}`).toBe(NONE)
       expect(classesOf(def), `${what}: ${label} reads as empty`).toContain(
         'muted',
@@ -648,9 +654,8 @@ test('2d.76: a key absent from values, an empty string, an empty projectUrl and 
 
 // ── Keyboard and screen reader (78, 79) ─────────────────────────────────
 
-test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle, the Engine select, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
-  const { main } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
-  await engineSelect(main)
+test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
+  await loaded({ modelProfile: () => reply(200, fullDoc()) })
   expect(tabbable().map(nameOf)).toEqual([
     en('skip-to-content'),
     en('app-name'),
@@ -663,8 +668,6 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     'coder',
     en('nav-model-profiles'),
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
     ...CARD_TAB_STOPS,
   ])
   // The h1 takes the focus only from the page (tabindex -1): Tab starts below it.
@@ -675,19 +678,17 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
   ).toBe('-1')
 })
 
-test('2d.79: a screen reader: the h1 is the id at level 1, the select is named Engine and says llama.cpp, the card is a heading over a description list where each value follows its term, and nothing is announced on arrival', async () => {
+test('2d.79: a screen reader: the h1 is the id at level 1, the Engine row of the card says llama.cpp, the card is a heading over a description list where each value follows its term, and nothing is announced on arrival', async () => {
   const { main, card, h1 } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
   openCard(card)
   expect(h1.tagName).toBe('H1')
   expect(text(h1)).toBe(ID)
-  const select = (await engineSelect(main)) as HTMLSelectElement
-  expect(
-    select.options[select.selectedIndex]!.text,
-    'combo box, llama.cpp',
-  ).toBe('llama.cpp')
-  const [first, second] = pairs(card)
+  const [engine, ...rest] = definitionsWithLabels(card)
+  expect(text(engine![1]), 'the Engine row, llama.cpp').toBe('llama.cpp')
+  // The rows behind Engine are read as text, as `pairs` gives them.
+  const [first, second] = rest.map(([label, def]) => [label, text(def)])
   expect(first, 'Model file, then the path').toEqual([
     en('model-profile-model-file'),
     MODEL,
@@ -729,7 +730,7 @@ test('2d.80, 2d.82: an id with a space and one with a % open on their content, r
     })
     const card = h3.closest('.card') as HTMLElement
     openCard(card)
-    expect(terms(card).map(text), id).toEqual(LABELS)
+    expect(terms(card).map(text), id).toEqual(CARD_LABELS)
     expect(bff.to('GET', `/api/profiles/model/${encoded}`).length, id).toBe(1)
     cleanup()
     vi.unstubAllGlobals()

@@ -351,7 +351,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its two MoE rows excepted, and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled', async () => {
+test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its two MoE rows excepted, and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled (H11b.1: the Engine select is off the page)', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
@@ -359,7 +359,6 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
   expect(controls.length, 'every field of 2e is on the page').toBeGreaterThan(
     20,
   )
-  const engine = selectOf(main, en('model-profile-engine'))
   for (const el of controls) {
     const id = el.getAttribute('id') ?? el.tagName
     // The 2h.4 card's fields by their ids: `model-profile-<key>`, its default box
@@ -373,13 +372,12 @@ test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 1
     // the draft pair while `model-draft` is there. 190, 191: the Speculative
     // decoding card's fields move with their group, the draft group opened by
     // the same `model-draft`, each n-gram group by its entry of `spec-type`,
-    // which this read has none of. 70: the Engine select is untouched.
+    // which this read has none of.
     const enabled =
-      el === engine ||
-      (field !== undefined &&
-        (id.endsWith('-box')
-          ? boxEnabled(field, VALUES)
-          : controlEnabled(field, VALUES)))
+      field !== undefined &&
+      (id.endsWith('-box')
+        ? boxEnabled(field, VALUES)
+        : controlEnabled(field, VALUES))
     expect((el as HTMLInputElement).disabled, `${id}: enabled`).toBe(!enabled)
     expect(
       el.getAttribute('aria-disabled'),

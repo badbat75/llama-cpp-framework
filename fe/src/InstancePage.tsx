@@ -11,13 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import {
-  apiError,
-  call,
-  isRecord,
-  sessionEnded,
-  sessionRevoked,
-} from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { CheckboxField, GroupField } from './Field.tsx'
 import { Icon, type IconName } from './Icon.tsx'
@@ -446,14 +440,13 @@ function Body({
   return children
 }
 
-/** Reads whether the instance starts at boot: the value, 'signed-out' when the
- * read answered 401 (the key `failureText` maps for a write), or the error
- * key: a read shows its own paragraph (`bootReadText`). */
+/** Reads whether the instance starts at boot: the value, or the error key: a
+ * read shows its own paragraph (`bootReadText`), a 401 like any other failure
+ * (09 S1b.6, the review of S1b 8 C2). */
 async function readBoot(id: string): Promise<boolean | string> {
   try {
     const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
     if (reply.ok) return enabledIn(reply.body) ?? 'failed'
-    if (sessionEnded(reply)) return 'signed-out'
     return apiError(reply.body)?.key ?? 'failed'
   } catch {
     return 'failed'

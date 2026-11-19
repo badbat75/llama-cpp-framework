@@ -1381,15 +1381,11 @@ test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the
   ).toBe(0)
 })
 
-test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Engine About toggle and select, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
+test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), each followed by the controls 2h.7 enabled; in the Hardware card that is the two boxed numbers and the five selects, not the draft pair, the Fit trio or the MoE rows', async () => {
   const doc = docOf(SET)
   const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   expect(mainTabbable(main)).toEqual([
     ...pageStartTabStops(),
-    `${en('field-about')} ${en('model-profile-engine')}`,
-    en('model-profile-engine'),
-    // H11a.3: the Assets disclosure, the card sits after the Engine field.
-    en('model-profile-assets'),
     ...fieldTabStops(doc.values),
     ...saveBarTabStops(),
   ])

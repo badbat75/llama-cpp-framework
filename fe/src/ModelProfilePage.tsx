@@ -3,8 +3,8 @@
 // the page opens from GET /api/profiles/model/<id>, or the message saying why
 // it is not there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the
 // heading, the summary line naming the engine and the model file (H11a.1),
-// the Engine field, the Assets card as text behind a disclosure in its own
-// heading (H11a.3), and the cards of the settings
+// the Assets card as text behind a disclosure in its own heading (H11a.3), its
+// first row the Engine (H11b.1), and the cards of the settings
 // (fe/briefs/02e-model-profile-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
 // card's controls, the Vision card's controls and the Hardware card's rows are
@@ -31,7 +31,6 @@ import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import { tickBox, type Boxed } from './boxed.ts'
 import { DiscardDialog } from './Dialog.tsx'
-import { SelectField } from './Field.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import ModelProfileCards, {
@@ -150,23 +149,34 @@ function modelFileName(values: Record<string, string>): string {
   )
 }
 
-/** The Assets card's pairs, in the GUI's order, values as the file holds them. */
-function assetRows(doc: ModelProfileDoc): { label: string; value: string }[] {
+/** One Assets row. `path` is false for the engine id, which is not a path and
+ * so sits in the body font, with no mono (H11b.1). */
+type AssetRow = { label: string; value: string; path: boolean }
+
+/** A row whose value is a path, the class of 2d.74. */
+function pathRow(label: string, value: string): AssetRow {
+  return { label, value, path: true }
+}
+
+/** The value's class: a path is mono, an empty value is the muted "(none)",
+ * and a value that is neither carries none. */
+function assetClass(row: AssetRow): string | undefined {
+  return row.path ? (row.value === '' ? 'muted' : 'mono') : undefined
+}
+
+/** The Assets card's pairs, in the GUI's order, values as the file holds them.
+ * The Engine row leads (H11b.1: the Engine field of 70 became this row). */
+function assetRows(doc: ModelProfileDoc): AssetRow[] {
   const values = doc.values
   const specType = values['spec-type'] ?? ''
   return [
-    { label: t('model-profile-model-file'), value: values['model'] ?? '' },
-    { label: t('model-profile-project-url'), value: doc.projectUrl },
-    { label: MMPROJ, value: values['mmproj'] ?? '' },
-    {
-      label: t('model-profile-draft-model'),
-      value: values['model-draft'] ?? '',
-    },
-    { label: t('model-profile-drafter'), value: specTypeDrafter(specType) },
-    {
-      label: t('model-profile-ngram-drafters'),
-      value: specTypeNgrams(specType),
-    },
+    { label: t('model-profile-engine'), value: engineOption(doc), path: false },
+    pathRow(t('model-profile-model-file'), values['model'] ?? ''),
+    pathRow(t('model-profile-project-url'), doc.projectUrl),
+    pathRow(MMPROJ, values['mmproj'] ?? ''),
+    pathRow(t('model-profile-draft-model'), values['model-draft'] ?? ''),
+    pathRow(t('model-profile-drafter'), specTypeDrafter(specType)),
+    pathRow(t('model-profile-ngram-drafters'), specTypeNgrams(specType)),
   ]
 }
 
@@ -944,14 +954,6 @@ function Content({
             {t('model-profile-engine-unavailable', doc.engine)}
           </p>
         )}
-        <SelectField
-          id="model-profile-engine"
-          label={t('model-profile-engine')}
-          hint={t('model-profile-engine-hint')}
-          options={[{ value: doc.engine, text: engineOption(doc) }]}
-          value={doc.engine}
-          onChange={() => undefined}
-        />
         {/* H11a.3: the Assets card is the page's one disclosure: its heading
             holds the button that opens and closes the body, so the h3 stays a
             heading (a details summary would lose the role, section 0) and the
@@ -986,7 +988,7 @@ function Content({
               {assetRows(doc).map((row) => (
                 <Fragment key={row.label}>
                   <dt>{row.label}</dt>
-                  <dd className={row.value === '' ? 'muted' : 'mono'}>
+                  <dd className={assetClass(row)}>
                     {row.value === ''
                       ? t('model-profile-value-none')
                       : row.value}
