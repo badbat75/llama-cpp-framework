@@ -381,7 +381,12 @@ Each is one React component, reused by every page.
   least 32 px high, no border or fill, `--accent` text (6.58:1 light, 9.37:1 dark) underlined 1px at
   3px offset, no hover change, a long title wrapping inside it; `LinkText` under forced colours. The
   underline and the place in a named `nav` list are what tell an entry from body text, not the
-  colour alone ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
+  colour alone ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)). From 1280 px it is a rail
+  (08 H9b): the section becomes a grid, the content in a first column, the list in a 15rem second
+  column, sticky 16 px from the top, at most the viewport's height minus 32 px and scrolling inside
+  beyond that, with 8 px padding at each side so the scroll box does not cut the focus ring. It
+  stays first in the DOM, so Tab still reaches it before the cards. The save bar, a grid item of
+  the first column, still sticks to the viewport's bottom in the three engines.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
     hint and the error.

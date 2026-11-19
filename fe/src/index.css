@@ -1116,6 +1116,40 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+/* The rail (08-hearth-h9-jump.md H9b.1, H9b.2): from 1280 px the jump list
+ * moves to a sticky column of its own, beside the cards. The section is the
+ * grid, every child keeps the first column, and the list takes the second: its
+ * own column is what keeps it off a focused control (2.4.11). The row span is
+ * the length of the page and empty rows are 0 high, so the list sticks under
+ * the heading for as long as the cards scroll. Below 1280 px none of this
+ * applies and the list stays where H9a draws it. The max-width outgrows the cap
+ * of main > * by the rail, and the bar spans the content column only. The
+ * inline padding keeps the entry's focus ring whole: the scroll box clips it. */
+@media (min-width: 1280px) {
+  section:has(> .jump) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 15rem;
+    column-gap: var(--space-6);
+    align-items: start;
+    max-width: calc(880px + 15rem + var(--space-6));
+  }
+
+  section:has(> .jump) > * {
+    grid-column: 1;
+  }
+
+  section:has(> .jump) > .jump {
+    grid-column: 2;
+    grid-row: 2 / span 40;
+    position: sticky;
+    top: var(--space-4);
+    max-height: calc(100vh - 2 * var(--space-4));
+    overflow-y: auto;
+    margin: 0;
+    padding-inline: var(--space-2);
+  }
+}
+
 /* Room above the heading a jump lands on: the ring is drawn outside the box,
  * so the scroll stops short of the top edge and leaves the whole ring in view
  * (196). */

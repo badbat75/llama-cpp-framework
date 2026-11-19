@@ -126,4 +126,12 @@ test('H9a.7: activating an entry moves focus to that card h3, leaves the hash al
   fireEvent.click(entries(navOf(main))[MIDDLE]!)
   expect(document.activeElement, 'focus on the card h3').toBe(h3)
   expect(window.location.hash, 'the jump writes no hash').toBe(HASH)
+  expect(
+    screen.queryByRole('dialog'),
+    'a jump is a focus move inside the page: no dialog opens',
+  ).toBeNull()
+  expect(
+    screen.queryByRole('alertdialog'),
+    'a jump is a focus move inside the page: no alert dialog opens',
+  ).toBeNull()
 })
