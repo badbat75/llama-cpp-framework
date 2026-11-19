@@ -708,7 +708,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     // H6a.7: the id shrinks inside its tile; H6a.8: the pill is 28 px.
     '.tile-id: min-width: 0',
     '.badge: min-height: 28px',
-    '.jump button: min-height: 32px',
+    '.jump ul button: min-height: 32px',
     'fieldset: min-width: 0',
     '.field-control: min-width: 0',
     '.full-value: min-width: 0',

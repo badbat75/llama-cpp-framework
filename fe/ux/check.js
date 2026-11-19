@@ -46,8 +46,10 @@ const USER = 'abcdefghijklmnopqrstuvwxyz012345'
 const MODEL_PROFILE_ID = 'Qwen3-27B'
 const MISSING_ID = 'No-Such-Model-Profile'
 
-// The states to look at: the stub's /__set query, the route, and the expect:
-// the selectors (with the text they carry) only that state shows. A page that
+// The states to look at: the stub's /__set query, the route, the expect: the
+// selectors (with the text they carry) only that state shows, and the optional
+// click: selectors clicked in order once the state is rendered (each one only
+// when it is visible, and then awaited open). A page that
 // is blank, still loading, showing an error or the wrong route has no axe
 // violation, so each state proves itself rendered before it is read.
 const STATES = [
@@ -130,6 +132,19 @@ const STATES = [
     ],
   },
   {
+    name: 'model-profile-open',
+    set: 'session=admin',
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    expect: [
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      { selector: 'h3', text: S['model-profile-assets'] },
+    ],
+    // H10 (brief 08 section 4): the page with its jump list opened. The
+    // toggle is display: none from 1280 px, where the list shows whatever its
+    // class, so a state click is only taken where it is visible.
+    click: ['#model-profile-jump-toggle'],
+  },
+  {
     name: 'model-profile-missing',
     set: 'session=admin',
     hash: `#/profiles/model/${MISSING_ID}`,
@@ -205,6 +220,28 @@ async function rendered(page, state) {
     }
   }
   return null
+}
+
+/** The state's `click` list, in order: a selector is clicked only when it is
+ *  visible (the jump toggle is `display: none` from 1280 px, where the list
+ *  shows whatever its class) and its `aria-expanded="true"` is then awaited. A
+ *  visible control that never opens is a finding; one that is not there at this
+ *  width is left alone. */
+async function clicked(page, state) {
+  const found = []
+  for (const sel of state.click ?? []) {
+    const loc = page.locator(sel)
+    if (!(await loc.isVisible())) continue
+    try {
+      await loc.click()
+      await page.locator(`${sel}[aria-expanded="true"]`).waitFor({
+        timeout: RENDER_MS,
+      })
+    } catch {
+      found.push(`click: "${sel}" visible, never aria-expanded="true"`)
+    }
+  }
+  return found
 }
 
 /** What is wrong with the page as it stands: the axe rule ids, a wide page. */
@@ -330,6 +367,9 @@ async function check(browser, name, lines) {
             if (missing !== null) {
               found.push(missing)
             } else {
+              // The clicks run on the rendered page, before the settle: the
+              // page at rest is read with them done.
+              found.push(...(await clicked(page, state)))
               await sleep(SETTLE_MS)
               found.push(...(await problems(page, width)))
               if (stored) {

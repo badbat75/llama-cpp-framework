@@ -47,8 +47,8 @@ const TITLES = cardHeadings()
 const ASSETS = TITLES[0]!
 const KV = en('model-profile-kv-cache')
 const SPEC = TITLES[TITLES.length - 1]!
-/** 198: the strings as the brief words them, as a literal. */
-const JUMP_LABEL = 'Model profile sections'
+/** 198 as H10.5 rewords it: the label the nav, the label p and the toggle share. */
+const JUMP_LABEL = 'On this page'
 const ASSETS_INTRO =
   'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.'
 const REFUSED_AT = 'Not saved: {0}. The field is {1}, on the card {2}.'
@@ -140,9 +140,12 @@ function navOf(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The jump buttons, in the nav's order. */
+/** The jump buttons, in the list's order. H10.1 puts the disclosure in the nav
+ * too, so the ten entries are read from the list the toggle controls. */
 function jumpButtons(main: HTMLElement): HTMLElement[] {
-  return within(navOf(main)).getAllByRole('button')
+  const list = navOf(main).querySelector('ul')
+  expect(list, '196, H10.1: the nav holds the ul of entries').not.toBeNull()
+  return within(list as HTMLElement).getAllByRole('button')
 }
 
 /** The Engine select, by its label. */
@@ -487,14 +490,15 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 
 // ── 197: the tab order of the page start ──────────────────────────────
 
-test('2h.197: Tab from the top reaches the back link, then the ten jump buttons in card order, then the Engine field', async () => {
+test('2h.197: Tab from the top reaches the back link, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Engine field', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
   expect(
-    tabbed.slice(0, TITLES.length + 3),
-    '197: back, the ten jumps in card order, the Engine About toggle and the Engine select',
+    tabbed.slice(0, TITLES.length + 4),
+    '197 with H10.10: back, the disclosure, the ten jumps in card order, the Engine About toggle and the Engine select',
   ).toEqual([
     en('model-profile-back'),
+    en('model-profile-jump-label'),
     ...TITLES,
     `${en('field-about')} ${ENGINE}`,
     ENGINE,
@@ -535,9 +539,19 @@ test('2h.198: the two new strings and the changed model-profile-draft-group-off 
 test('2h.198: the page shows the new strings: the nav name, the Assets intro, and the draft group line naming the Draft model row', async () => {
   const { main } = await form()
   expect(
+    navOf(main).getAttribute('aria-labelledby'),
+    'H10.1: the nav is named by the label p, and carries no aria-label',
+  ).toBe('model-profile-jump-label')
+  expect(
     navOf(main).getAttribute('aria-label'),
-    'the nav is named by model-profile-jump-label',
-  ).toBe(en('model-profile-jump-label'))
+    'H10.1: no aria-label: the label p and the toggle carry the one text',
+  ).toBeNull()
+  expect(
+    within(main)
+      .getAllByText(JUMP_LABEL)
+      .map((el) => el.tagName),
+    '198 as H10.5 rewords it: one text, two places (H10.1: the label p and the toggle)',
+  ).toEqual(['P', 'BUTTON'])
   expect(
     within(main).getByText(ASSETS_INTRO),
     'the Assets intro on the page',

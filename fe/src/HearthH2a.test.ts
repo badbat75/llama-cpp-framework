@@ -363,7 +363,7 @@ const THEMES = ['light', 'dark'] as const
 
 // ── H2a.1: buttons ────────────────────────────────────────────────────────
 
-test('H2a.1: the button rule is --control-h tall with min-width 24px and --radius; .primary, .secondary and .about are pills; .jump button stays 32px', () => {
+test('H2a.1: the button rule is --control-h tall with min-width 24px and --radius; .primary, .secondary and .about are pills; .jump ul button stays 32px', () => {
   const button = topBy('button', 'the button rule')
   expect(
     prop(button.body, 'min-height'),
@@ -401,10 +401,10 @@ test('H2a.1: the button rule is --control-h tall with min-width 24px and --radiu
   ).toBe('24px')
   expect(
     prop(
-      flatBy('.jump button', 'the jump list button rule').body,
+      flatBy('.jump ul button', 'the jump list button rule').body,
       'min-height',
     ),
-    'the jump list keeps 32 px buttons until H9 (section 0)',
+    'the jump list keeps 32 px buttons until H9 (section 0); H10.1 scopes the rule to the entries of the list, so the disclosure keeps the .secondary pill',
   ).toBe('32px')
 })
 
@@ -898,8 +898,8 @@ test.each([
     '24px',
   ],
   [
-    '.jump button',
-    () => prop(flatBy('.jump button', 'the jump rule').body, 'min-height'),
+    '.jump ul button',
+    () => prop(flatBy('.jump ul button', 'the jump rule').body, 'min-height'),
     '32px',
   ],
   ['--control-h in :root', () => valueOf(lightTokens(), '--control-h'), '40px'],
@@ -1026,7 +1026,10 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
     ['button', topBy('button', 'the button rule').body],
     ['the enabled field rule', enabledField().body],
     ['.about', topBy('.about', '.about').body],
-    ['.jump button', flatBy('.jump button', 'the jump list button rule').body],
+    [
+      '.jump ul button',
+      flatBy('.jump ul button', 'the jump list button rule').body,
+    ],
   ] as [string, string][])
     expect(
       prop(body, 'height'),

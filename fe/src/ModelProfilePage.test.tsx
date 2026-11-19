@@ -959,8 +959,9 @@ test('2d.67: the model profile is read once on open and once on each route chang
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the ten jump buttons, the Engine About toggle, one About toggle per field, then the bar',
+    'main holds the jump disclosure of H10.10, the ten jump buttons, the Engine About toggle, one About toggle per field, then the bar',
   ).toEqual([
+    en('model-profile-jump-label'),
     ...cardHeadings(),
     ...[en('model-profile-engine'), ...fieldLabels()].map(
       (label) => `${en('field-about')} ${label}`,

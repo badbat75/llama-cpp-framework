@@ -169,11 +169,13 @@ test('H9a.2: .jump ul is a block list: no flex, the --space-2 and --space-4 marg
 
 // ── H9a.3: the entry, one rule ─────────────────────────────────────────────
 
-test('H9a.3: one top-level .jump button rule, the entry: block, full width, a 32px min-height, --space-1 and --space-3 padding, no border, the pill corner at the right, transparent on --accent, --fs-md, left aligned, underlined 1px at 3px', () => {
-  const jump = TOP.filter(selIs('.jump button'))
+test('H9a.3: one top-level .jump ul button rule, the entry: block, full width, a 32px min-height, --space-1 and --space-3 padding, no border, the pill corner at the right, transparent on --accent, --fs-md, left aligned, underlined 1px at 3px', () => {
+  // H10.1 scopes the rule to the entries of the list, so the H10 disclosure
+  // beside the list keeps the .secondary pill (brief 08, H10.6 cascade).
+  const jump = TOP.filter(selIs('.jump ul button'))
   expect(
     jump.length,
-    'exactly one top-level .jump button rule: H9a.3 replaces the min-height rule of H2a.1, it does not add a second one',
+    'exactly one top-level .jump ul button rule: H9a.3 replaces the min-height rule of H2a.1, it does not add a second one',
   ).toBe(1)
   const rule = jump[0]!
   const WANT: [string, string][] = [
@@ -194,7 +196,7 @@ test('H9a.3: one top-level .jump button rule, the entry: block, full width, a 32
   for (const [name, want] of WANT)
     expect(
       prop(rule.body, name),
-      `.jump button ${name}: H9a.3 gives ${want}`,
+      `.jump ul button ${name}: H9a.3 gives ${want}`,
     ).toBe(want)
   expect(
     decls(rule.body).filter((n) => n !== 'overflow-wrap'),
@@ -204,16 +206,16 @@ test('H9a.3: one top-level .jump button rule, the entry: block, full width, a 32
 
 // ── H9a.5: forced colours ──────────────────────────────────────────────────
 
-test('H9a.5: inside a forced-colours block a .jump button rule sets color: LinkText, and nothing there takes the underline away', () => {
+test('H9a.5: inside a forced-colours block a .jump ul button rule sets color: LinkText, and nothing there takes the underline away', () => {
   const rule = single(
-    inside(FORCED, tight('.jump button')).filter(selIs('.jump button')),
-    'the .jump button rule inside a @media (forced-colors: active) block (H9a.5)',
+    inside(FORCED, tight('.jump ul button')).filter(selIs('.jump ul button')),
+    'the .jump ul button rule inside a @media (forced-colors: active) block (H9a.5, scoped by H10.1 to the entries)',
   )
   expect(
     prop(rule.body, 'color'),
     'with no border the entries read as the links they look like, so they take the link colour of the forced palette',
   ).toBe('LinkText')
-  for (const r of inside(FORCED, tight('.jump button')))
+  for (const r of inside(FORCED, tight('.jump ul button')))
     expect(
       prop(r.body, 'text-decoration'),
       `${r.flat}: only the colour is forced, the underline stays (CSS Color Adjustment 1, 3.1)`,
@@ -223,7 +225,7 @@ test('H9a.5: inside a forced-colours block a .jump button rule sets color: LinkT
 // ── H9a.6: reflow, the half the text can pin ───────────────────────────────
 
 test('H9a.6: a long card title wraps inside its entry (overflow-wrap: anywhere), and the entry is sized by a min-height, never a height', () => {
-  const rule = topBy('.jump button', 'the entry (H9a.3, H9a.6)')
+  const rule = topBy('.jump ul button', 'the entry (H9a.3, H9a.6)')
   expect(
     prop(rule.body, 'overflow-wrap'),
     'a long title breaks inside the entry, so no 320 px page scrolls sideways (1.4.10)',

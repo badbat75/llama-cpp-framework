@@ -69,9 +69,18 @@ children, in order: `p#model-profile-jump-label.jump-label` (text `model-profile
 **H10.3 Toggle.** Activating the toggle (click, Enter, Space) flips `aria-expanded` and the class;
 the focus stays on the toggle; nothing is announced beyond the expanded state (no live region).
 
-**H10.4 A jump closes it.** Activating one of the ten buttons moves the focus to the card's `h3`
-and scrolls it into view as today (196), then the list is closed (`aria-expanded="false"`,
-`ul.collapsed`). The dirty form asks nothing (as today).
+**H10.4 A jump closes it.** Activating one of the ten buttons first closes the list
+(`aria-expanded="false"`, `ul.collapsed`) and commits that to the DOM, and only then moves the focus
+to the card's `h3` and scrolls it into view as today (196). The dirty form asks nothing (as today).
+Corrected at the review (2026-11-19): the first wording (focus, scroll, then close) leaves every
+heading 332 px above the viewport from 960 to 1279 px (the side-menu shell) in Chromium, Firefox
+and WebKit, while 320 to 959 px land at 12 px (**measured**, `build/ux-review/h10j.js`, `h10b.js`):
+the 320 px list vanishes above a heading already scrolled to the top, and only the narrow layout
+happens to be saved by the browsers' scroll anchoring. Emulating close-first lands at 12 px at
+960 and 1279 px in Chromium and WebKit (`h10k.js`).
+One way: `flushSync(() => setJumpOpen(false))` before `focus()` and `scrollIntoView()`
+([react.dev flushSync](https://react.dev/reference/react-dom/flushSync)). The tester pins the
+order: at the moment `scrollIntoView` is called (a spy), the list already has class `collapsed`.
 
 **H10.5 Strings.** `model-profile-jump-label` becomes "On this page" in `en_US.json` and in
 `src/test/bff.ts` `EN`; no key added. Tests that find the `nav` by `en('model-profile-jump-label')`
@@ -204,3 +213,65 @@ readable (the jump toggle bordered as `.secondary`, the Assets toggle by its tex
 
 The ten jump buttons' names, order and focus target; the card headings' ids; the nine editable
 cards; `focusFailure` and the save; the bar; every key except those named above.
+
+## 7. Review of H10 (2026-11-19)
+
+Read from the uncommitted `ModelProfilePage.tsx`, `index.css`, `en_US.json`, and **measured** in
+Playwright 1.65.1 (Chromium, Firefox, WebKit) at 1440, 1280, 1279, 960, 480 and 320 px, light and
+dark (`build/ux-review/h10.js`, output `h10.txt`; probes `h10j.js`, `h10b.js`, `h10k.js`; stub
+`stub8.py`). Verdict: **rejected** on H10.4 alone; everything else met.
+
+- H10.1, H10.2, H10.5: met. Label, toggle (`aria-controls` resolves in both states), list with
+  `collapsed` only while closed; closed on every arrival; "On this page".
+- H10.3: met. Click, Enter and Space each flip `aria-expanded` and the chevron (`rotate: 180deg`),
+  focus stays on the toggle. Escape does nothing, as the brief says: the disclosure pattern needs no
+  Escape ([APG disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/)).
+- H10.4: **not met** (`ModelProfilePage.tsx` `jump`, about line 617): see the correction under H10.4.
+  From 960 to 1279 px every jump puts the focused `h3` 332 px above the viewport, in the three
+  engines ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum),
+  [2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). At 320 and 480 px it lands at 12 px, under
+  no bar, list closed, hash unchanged; a dirty form keeps its edit and opens no dialog.
+- H10.6, H10.9: met. Toggle 158 to 159 x 40 px, `.secondary` border, chevron after the text, no
+  transition (also under reduced motion). Closed, the first card's top at 320 px is 691 (693 WebKit):
+  296 px above H9a (987), 246 above the page before H9a (937). Open: the list under the toggle,
+  ten 32 px underlined entries, full width, no sideways scroll.
+- H10.7: met. At 1280 and 1440 no toggle, the label 15 px bold above the rail, the list shown and
+  tabbable though its class is `collapsed`; rail x 1000 (1160 at 1440), width 240, sticky top 16,
+  as H9b. Resizing: closed 1280 to 1279 shows the closed toggle; open at 1279, up to 1280 and back
+  keeps it open (the state survives; no reset needed). Fresh arrival at any width: closed.
+- H10.8, H10.10: met. Closed below 1280, Tab goes back link, toggle, About Engine, the Engine select:
+  the hidden entries are out of the tab order. Nav name: Chromium's own accessibility tree gives
+  navigation "On this page" at 320 and at 1280 (and button "On this page", expanded false/true);
+  for Firefox and WebKit only Playwright's computed snapshot was read (the same names), not the
+  engines' own trees. A hidden element referenced by `aria-labelledby` still names
+  ([accname 1.2, 2B](https://www.w3.org/TR/accname-1.2/#comp_labelledby)). The nav and its button
+  share the words: **preference**, acceptable, the button's expanded state tells them apart.
+- 200 % text and the 1.4.12 spacing at 320 and 1280: nothing clipped, no sideways scroll (entries
+  grow to 101 px when a title wraps). Forced colours (Chromium, Firefox): toggle bordered, text and
+  chevron `ButtonText`, entries `LinkText`. Other `.secondary` buttons unchanged by the rescoped rule
+  (Menu 104x40, theme 40x40, Sign out 124x40, Discard 90x40; the rule never matched outside `.jump`).
+- axe-core (WCAG 2.0 to 2.2 A, AA): 0 at every width, both themes, closed and open, three engines.
+  `npm --prefix fe/ux run check`: 9 states x 2 widths x 2 themes + 3 stored = 48 per browser,
+  0 failing.
+
+**The UX check's state, still to add** (section 4; `fe/ux/check.js`): a state field
+`click: [selectors]`; after `rendered(page, state)` succeeds and before `sleep(SETTLE_MS)`, for each
+selector, click it only when `page.locator(sel).isVisible()` (the jump toggle is `display: none`
+at 1280 px, where the list is always shown), and then wait for `[aria-expanded="true"]` on it; a
+selector that is visible but never expands is a finding. New state after `model-profile`:
+`{ name: 'model-profile-open', set: 'session=admin', hash: the model profile hash, expect: as
+'model-profile', click: ['#model-profile-jump-toggle'] }`, with `'#model-profile-assets-toggle'`
+appended in H11a. The summary then reads 10 states x 2 widths x 2 themes = 40, plus the 3
+stored-choice states = 52 per browser.
+
+**Re-review after the fix (2026-11-19): Approved.** `ModelProfilePage.tsx` `jump` (lines 618 to
+624) closes the list with `flushSync` before `focus()` and `scrollIntoView()`; `fe/ux/check.js`
+adds `click` (comment line 51, `clicked()` lines 225 to 245: skips a hidden selector, reports a
+visible one that never reaches `aria-expanded="true"`) and the state `model-profile-open` (line
+135), as specified. **Measured** (`build/ux-review/h10r.js`, stub `stub8.py`, Chromium, Firefox,
+WebKit): at 1279, 1100, 960, 959, 480 and 320 px, clean and with a dirty form (save bar shown),
+each of the ten entries (seven by click, three by Enter) puts the focused `h3` at 12 px, fully
+visible and above the save bar, the list closed, the hash unchanged, and scrollY the same at 150 ms
+as after the settle (one scroll, no second jump). H10.4: met. `npm --prefix fe/ux run check`: 52 per
+browser, 0 failing. axe-core: 0 at 1280, 960 and 320 on the model profile page (closed and, below
+1280, open) and the Overview, light in the three engines and dark at 1280.

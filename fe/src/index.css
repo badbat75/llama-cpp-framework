@@ -669,6 +669,10 @@ main > * {
 
   .nav {
     border-bottom: 0;
+    /* H8a.10: the column's right padding is only space before main's own
+       inline padding and nothing draws a line there, so the pills reach the
+       column edge and the current entry keeps its label beside its icon. */
+    padding-right: 0;
   }
 
   main {
@@ -1098,8 +1102,10 @@ tr:last-child td {
    so this rule owns the look. overflow-wrap breaks a long card title inside
    its entry, so a narrow page needs no sideways scroll (1.4.10), and the
    min-height is a floor, never a box, so the entry grows with its text
-   (1.4.12). */
-.jump button {
+   (1.4.12). H10.1 puts a disclosure in the nav beside the list: the rule is
+   scoped to the entries of the list, so the disclosure keeps the control look
+   of the global button and .secondary. */
+.jump ul button {
   display: block;
   width: 100%;
   min-height: 32px;
@@ -1114,6 +1120,32 @@ tr:last-child td {
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   overflow-wrap: anywhere;
+}
+
+/* The "On this page" label (08-hearth-h10-h11.md H10.6): the one text the
+   label and the disclosure share, above the list. Below 1280 px it is hidden
+   and the disclosure carries it, and an element the sheet hides still names
+   what points at it by aria-labelledby, so the nav keeps its name there too. */
+.jump-label {
+  display: none;
+  margin: 0 0 var(--space-1);
+  font-weight: 700;
+  font-size: var(--fs-md);
+}
+
+/* The disclosure of the list (H10.6): the text and its chevron in a row with
+   the small step between them. It is the .secondary pill of H10.9, so it needs
+   no rule of its own for the border, the fill, the corner or the height. */
+.jump-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The chevron turns with the state (H10.6), and nothing is animated: no
+   transition, so prefers-reduced-motion has nothing to stop (section 0). */
+.jump-toggle[aria-expanded='true'] .icon {
+  rotate: 180deg;
 }
 
 /* The rail (08-hearth-h9-jump.md H9b.1, H9b.2): from 1280 px the jump list
@@ -1147,6 +1179,27 @@ tr:last-child td {
     overflow-y: auto;
     margin: 0;
     padding-inline: var(--space-2);
+  }
+
+  /* H10.7: in the rail the label is shown and the disclosure is gone. The list
+     is read from the class, so the rail shows it whatever its state is: the
+     rule that hides a closed list sits in a max-width block, whose window ends
+     below this one. */
+  .jump-label {
+    display: block;
+  }
+
+  .jump-toggle {
+    display: none;
+  }
+}
+
+/* A closed list is gone below 1280 px (H10.6). The class hides it, and not
+ * hidden: the base rule for hidden would win in the rail above, where the list
+ * is always shown (section 0). */
+@media (max-width: 1279.98px) {
+  .jump ul.collapsed {
+    display: none;
   }
 }
 
@@ -1818,8 +1871,10 @@ html:has(.save-bar) {
      palette. Only the colour is forced: the underline stays (CSS Color
      Adjustment 1, 3.1). It joins this block because the token guards pin the
      count of the sheet's forced-colours blocks, and it sits here, after the
-     top-level .jump button rule, because a media query adds no specificity. */
-  .jump button {
+     top-level .jump ul button rule, because a media query adds no specificity.
+     The entry alone: the disclosure of H10 is not one, and keeps the system
+     colour of a control. */
+  .jump ul button {
     color: LinkText;
   }
 }

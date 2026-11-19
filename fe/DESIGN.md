@@ -222,7 +222,11 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   ..." is visually hidden (still read); the Sign in link is a pill at least 32 px high. Measured
   2026-11-18, signed in: 72 px (one row) at 1280, 112 px (two rows) at 479 and 320 px.
   The nav (H5b) has no fill either and no rule on its right: at 960 px and up the column ends at
-  x 224 and the main region's content starts 40 px further, the gap is the only divider. Entries are
+  x 224 and the main region's content starts 40 px further, the gap is the only divider. There the
+  nav has no right padding (08 H8a.10), so the pills end at x 224 and the current, bold "Model
+  profiles" keeps its label beside its icon at 100 % text (34 px, about 9 px of slack, measured
+  2026-11-19); the 3 px focus ring with its 2 px offset reaches x 229, into `main`'s padding, and
+  nothing clips it. Entries are
   pills (`--radius-pill`, at least 32 px high, measured 34; a long id wraps inside, two lines 61 px
   at 320, three 87 px in the 224 px column); group labels in `--fs-xs` `--muted` (5.65 / 7.52) and
   each labelled list indented beside a decorative 2 px `--line` rule; below 960 px the open menu ends
@@ -386,7 +390,13 @@ Each is one React component, reused by every page.
   column, sticky 16 px from the top, at most the viewport's height minus 32 px and scrolling inside
   beyond that, with 8 px padding at each side so the scroll box does not cut the focus ring. It
   stays first in the DOM, so Tab still reaches it before the cards. The save bar, a grid item of
-  the first column, still sticks to the viewport's bottom in the three engines.
+  the first column, still sticks to the viewport's bottom in the three engines. The nav is named by
+  a visible `p` "On this page" (`aria-labelledby`; 08 H10). Below 1280 px that label is hidden and
+  the list sits behind a `.secondary` disclosure with the same words and a `chevron-down` after
+  them (turned 180 degrees when open, no transition), closed on every arrival; the closed list is
+  `display: none` through a `collapsed` class, never `hidden`, so the rail above 1280 px shows it
+  whatever the state. A jump closes the list first, then focuses and scrolls to the heading, or the
+  vanishing list pulls the heading out of view. No Escape: a disclosure needs none.
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
     hint and the error.

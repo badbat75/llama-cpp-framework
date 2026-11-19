@@ -70,9 +70,12 @@ function navOf(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The jump entries, in the nav's order. */
+/** The jump entries, in the list's order. H10.1 adds the label p and the
+ * disclosure to the nav, so the ten entries are read from the list. */
 function entries(nav: HTMLElement): HTMLElement[] {
-  return within(nav).getAllByRole('button')
+  const list = nav.querySelector('ul')
+  expect(list, 'H10.1: the nav holds the ul of entries').not.toBeNull()
+  return within(list as HTMLElement).getAllByRole('button')
 }
 
 const textOf = (el: HTMLElement): string =>
@@ -84,12 +87,16 @@ test('H9a.1: the nav, its name, the ul and li, the ten buttons, their names in c
   // Everything the brief says is unchanged, so the red below is the class.
   expect(nav.tagName, 'a nav element (section 4: the nav)').toBe('NAV')
   expect(
-    nav.getAttribute('aria-label'),
-    'named by model-profile-jump-label (section 4: the nav name)',
-  ).toBe(en('model-profile-jump-label'))
+    nav.getAttribute('aria-labelledby'),
+    'named by model-profile-jump-label (H10.1: labelled by the label p; the name of section 4 carries)',
+  ).toBe('model-profile-jump-label')
   const items = Array.from(nav.children)
-  expect(items.length, 'the nav holds the ul alone').toBe(1)
-  expect(items[0]?.tagName, 'the list is a ul').toBe('UL')
+  expect(
+    items.map((k) => k.tagName),
+    'H10.1: the nav holds the label p, then the disclosure, then the list',
+  ).toEqual(['P', 'BUTTON', 'UL'])
+  const list = items[2] as HTMLElement
+  expect(list.tagName, 'the list is a ul').toBe('UL')
   const buttons = entries(nav)
   expect(buttons.length, 'one entry per card').toBe(TITLES.length)
   expect(
@@ -102,10 +109,10 @@ test('H9a.1: the nav, its name, the ul and li, the ten buttons, their names in c
     const li = b.parentElement
     expect(li?.tagName, `${textOf(b)}: its li`).toBe('LI')
     expect(li?.parentElement, `${textOf(b)}: the li is the ul's child`).toBe(
-      items[0],
+      list,
     )
   }
-  expect(Array.from(items[0]!.children).length, 'one li per entry').toBe(
+  expect(Array.from(list.children).length, 'one li per entry').toBe(
     TITLES.length,
   )
   // H9a.1, the one DOM change of the slice.

@@ -135,6 +135,40 @@ nav pills at least 32 px ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-mini
 
 **H8a.9 Nothing else moves.** No key; the mark; the H4 and H5 pins.
 
+**H8a.10 The current entry keeps its label beside its icon at 100 % text** (follow-up, 2026-11-19,
+from `build/ux-review/h9b-bar-1280.png`: the current "Model profiles" showed its bold label under the
+icon in a pill about 64 px high, Overview beside its icon). Cause, computed: column 224 minus `.nav`
+inline padding 2 x 16 = 192; the grouped list's indent (H5b.5: margin 12, padding 8, rule 2) leaves
+170; the pill's inline padding 2 x 16 leaves 138; icon 21.25 (1.25em of 17 px) plus gap 8 leaves
+108.75 for the label, and the 600-weight "Model profiles" is about 116 (measured on the shot, x 54 to
+170), so H8a.5's `flex-wrap: wrap` moves it under the icon. Remedy: inside the existing
+`@media (min-width: 960px)` block, the `.nav` rule (today `border-bottom: 0`) also declares
+`padding-right: 0`. The column's right padding is only space before `main`'s own 40 px inline
+padding, nothing draws a line there, so the pills reach the column edge and the label gets 124.75 px
+(about 9 px of slack over 116). Nothing else changes: `.nav a` keeps `padding: var(--space-1)
+var(--space-4)`, `gap: var(--space-2)` and `min-height: 32px`; `.nav a:has(> .icon)` keeps
+`flex-wrap: wrap` and `overflow-wrap: break-word` (so at 200 % text the label still moves whole under
+the icon and never breaks inside a word, as approved in section 6); the column stays `224px` (every
+page's `main` width unchanged); the narrow layout (below 960 px, the open menu at full width) keeps
+`.nav`'s padding of `var(--space-3) var(--space-4) var(--space-5)`. Rejected: a narrower pill padding
+or gap (12 px padding leaves under 1 px of slack, fragile across engines; the gap alone gains 4); a
+wider column (narrows `main` on every page); `nowrap` with a label span (a DOM change, and at 200 %
+text the label beside the icon has about 88 px, so "profiles" would break inside the word, against
+section 6); accepting it (the pill changes height when the entry becomes current, a jump on every
+visit to that page). Targets unchanged (32 px minimum,
+[2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)); reflow at 320 unchanged
+([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)); text resize still wraps, never clips
+([1.4.4](https://www.w3.org/TR/WCAG22/#resize-text)). **What the tester pins**: stylesheet text
+only (jsdom lays nothing out): inside the `@media (min-width: 960px)` block a `.nav` rule declares
+`padding-right: 0`; the top-level `.nav` padding, `.nav a` padding, gap and min-height,
+`.nav a:has(> .icon)` declarations and the `224px` column are unchanged. **The designer measures
+after the build**: at 1280 and 960 px, 100 % text, Chromium, Firefox and WebKit, light and dark, the
+current Model profiles pill is as high as the non-current one (34 px) with the label's box on the
+icon's row, and the label's right edge at least 4 px inside the pill's inner edge; the same at 110 %
+text is not required (the wrap is the fallback); at 200 % text the section 6 figures hold (Overview
+111, Model profiles 164, no break inside a word); at 320 px no sideways scroll; banner heights and
+`main`'s left edge unchanged; UX check 0 failing.
+
 **What the tester pins (H8a)**: H8a.1 by rendering `Icon` for each name (one `svg.icon`, the eight
 attributes, the child tag names and `d` values of section 1); H8a.2, H8a.3 and H8a.8 on the rendered
 `App` signed out and signed in (icon first child, the right shape by its first child's `d` or tag,
@@ -248,6 +282,17 @@ break inside a word, nothing clipped, no sideways scroll; the long instance id s
 and stays inside its pill. Unchanged: banners 72 / 112 / 112 signed out and 72 / 194 / 112 signed in,
 Sign out 124 by 40 (125 in Firefox, WebKit), axe 0 at 1280, 480, 320 in both themes and all three
 engines.
+
+**Review of H8a.10 (2026-11-19): Approved.** `index.css` line 670: inside the 960 px block `.nav`
+declares `padding-right: 0`, nothing else changed. **Measured** (`build/ux-review/h10r.js`, stub
+`stub8.py`), at 1280 and 960 px, 100 % text, signed in: the current "Model profiles" (on a model
+profile page and on the list) is 34 px high like the non-current one, its label on the icon's row,
+slack to the pill's inner edge 8.8 px (Chromium), 9.1 (Firefox), 9.0 (WebKit); the current
+"Overview" on the Overview is 34 px on one row too. The pills end at x 224, `main`'s left edge 224,
+banner 72, as before. The keyboard focus ring (3 px, offset 2) ends at x 229, inside `main`'s 40 px
+padding, and no ancestor clips it. At 200 % text (Chromium, Firefox) Overview 111 and Model profiles
+164, both whole under the icon, no break inside a word, as above. 320 px: nav padding 16 px as
+before, pills 34 px, no sideways scroll. axe-core 0 (see brief 08-hearth-h10-h11 section 7).
 
 ## 7. Review of H8b (2026-11-19)
 

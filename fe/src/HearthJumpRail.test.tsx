@@ -64,13 +64,24 @@ async function form(options: BffOptions = {}) {
   return { bff, main }
 }
 
-/** The rail as the page renders it: the nav, its section, its entries. */
+/** The rail as the page renders it: the nav, its section, its entries. H10.1
+ * adds the label p and the disclosure to the nav, so the entries are read
+ * from the list the disclosure controls. */
 function railOf(main: HTMLElement) {
   const nav = within(main).getByRole('navigation', {
     name: en('model-profile-jump-label'),
   })
-  const buttons = within(nav).getAllByRole('button')
-  return { nav, buttons, section: nav.parentElement as HTMLElement }
+  const list = nav.querySelector('ul')
+  expect(list, 'H10.1: the nav holds the ul of entries').not.toBeNull()
+  const buttons = within(list as HTMLElement).getAllByRole('button')
+  const toggle = nav.querySelector('button.jump-toggle')
+  expect(toggle, 'H10.1: the nav holds the disclosure').not.toBeNull()
+  return {
+    nav,
+    buttons,
+    toggle: toggle as HTMLElement,
+    section: nav.parentElement as HTMLElement,
+  }
 }
 
 /** The focusable elements of `root`, in document order. */
@@ -116,9 +127,10 @@ test('H9b.4: the rail is the region the settings heading names, and a press open
   // section H9a renders, addressed by that heading.
   expect(section.getAttribute('role'), 'H9b.4: no ARIA role added').toBeNull()
   expect(section.tagName, 'the rail lives in a section').toBe('SECTION')
-  expect(nav.getAttribute('aria-label'), 'the nav keeps its H9a name').toBe(
-    en('model-profile-jump-label'),
-  )
+  expect(
+    nav.getAttribute('aria-labelledby'),
+    'the nav keeps the H9a name, now via the label p (H10.1)',
+  ).toBe('model-profile-jump-label')
 
   // The reading flow of the narrow page, in document order: heading, region,
   // engine notice, engine field.
@@ -156,27 +168,32 @@ test('H9b.4: the rail is the region the settings heading names, and a press open
   ).toEqual([])
 })
 
-test('H9b.4: the entries are the stops right after the back link, in the cards order, and add none', async () => {
+test('H9b.4: the disclosure and the entries are the stops right after the back link, in the cards order, and add no others', async () => {
   const { main } = await form()
-  const { nav, buttons } = railOf(main)
+  const { nav, buttons, toggle } = railOf(main)
   expect(buttons.length, 'one entry per card').toBe(TITLES.length)
   expect(
     buttons.map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
     'the entries carry the card titles, in the page order',
   ).toEqual(TITLES)
 
-  // No new tab stop: the rail's stops are its entries and nothing else.
-  expect(tabbables(nav), 'the rail adds no stop of its own').toEqual(buttons)
+  // The stops of the nav, in order: H10.10 gives the nav the disclosure
+  // before its entries (jsdom, no CSS).
+  expect(
+    tabbables(nav),
+    "the nav's stops are the disclosure, then its entries",
+  ).toEqual([toggle, ...buttons])
 
-  // In the page, the entries are the stops right after the back link.
+  // In the page, the disclosure and the entries are the stops right after
+  // the back link (H10.10).
   const stops = tabbables(main)
   expect(stops[0], 'the back link stays the first stop of the page').toBe(
     screen.getByRole('link', { name: en('model-profile-back') }),
   )
   expect(
-    stops.slice(1, buttons.length + 1),
-    'H9b.4: the entries are the next stops, in their order',
-  ).toEqual(buttons)
+    stops.slice(1, buttons.length + 2),
+    'H10.10: the disclosure then the entries are the next stops, in their order',
+  ).toEqual([toggle, ...buttons])
 
   // The reading order of the rail page: back link, region, engine field,
   // cards, save bar.
@@ -223,8 +240,8 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
   expect(nav.className, 'H9b.6: the class is the H9a one').toBe('jump')
   expect(
     Array.from(nav.children).map((el) => el.tagName),
-    'H9b.6: the nav holds only its list',
-  ).toEqual(['UL'])
+    'H10.1: the nav holds the label p, the disclosure and the list (the H9b.6 guard: the three are exactly what H10 adds, no wrapper)',
+  ).toEqual(['P', 'BUTTON', 'UL'])
   const items = Array.from(nav.querySelector('ul')!.children)
   expect(
     items.map((li) => Array.from(li.children).map((c) => c.tagName)),
@@ -236,7 +253,7 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
   ).toBe('')
   expect(
     buttons.filter((b) => b.getAttribute('class') !== null),
-    'H9b.6: no class on an entry, so .jump button (0,1,1) owns its look',
+    'H9b.6: no class on an entry, so .jump ul button (0,1,2) owns its look',
   ).toEqual([])
 
   // H9b.5: the cards and the save bar are the same markup the rail shares the

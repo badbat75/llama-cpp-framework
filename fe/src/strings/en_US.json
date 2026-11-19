@@ -230,7 +230,7 @@
   "model-profile-ngram-drafters": "N-gram drafters",
   "model-profile-value-none": "(none)",
   "model-profile-assets-read-only": "The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.",
-  "model-profile-jump-label": "Model profile sections",
+  "model-profile-jump-label": "On this page",
   "model-profile-resource-context": "Resource / context",
   "model-profile-context-size": "Context size",
   "model-profile-context-size-hint": "How many tokens of conversation the model can hold. Bigger = longer history, more VRAM for the KV cache. It can be divided among requests: see Parallel slots.\nDefault: 0 (llama.cpp's own), meaning the context the model was trained with.\nFlag: --ctx-size",

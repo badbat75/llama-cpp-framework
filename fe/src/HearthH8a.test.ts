@@ -930,3 +930,75 @@ test('H8a.7: the Menu button and Sign out keep the 40 px control height, the Sig
     'H8a.7: nothing in the sheet takes the Menu button or Sign out under the 40 px control, the media rules included (2.5.8)',
   ).toEqual([])
 })
+
+// ── H8a.10: the current entry keeps its label beside its icon ────────────
+
+// A value is compared with its whitespace collapsed: a long value is written
+// over several lines by the formatter, and a wrap is not the code.
+const oneLine = (v: string): string => v.replace(/\s+/g, ' ').trim()
+
+test('H8a.10: inside the wide block the .nav rule gives the column no right padding so the current pill has room for its label beside the icon, while the pill padding, the gap, the 32 px height, the wrap of the icon entry and the 224 px column stay as they are', () => {
+  const top = topBy('.nav', 'the top-level .nav rule (H5b.1)')
+  const wide = single(
+    inside(WIDE, '.nav').filter((r) => r.compact === tight('.nav')),
+    'the .nav rule inside the @media (min-width: 960px) block (H8a.10)',
+  )
+  expect(
+    declNames(wide.body),
+    'the two properties of the follow-up, and no more: the divider stays gone and the column loses its right padding',
+  ).toEqual(['border-bottom', 'padding-right'])
+  expect(
+    prop(wide.body, 'border-bottom'),
+    'H5b.1: the wide shell keeps no divider',
+  ).toBe('0')
+  expect(
+    oneLine(prop(wide.body, 'padding-right')),
+    'H8a.10: the cause measured at 1280 px is the column padding, 224 less 2 x 16, which leaves 138 inside the pill for a 600-weight label of about 116, so flex-wrap moved the label under the icon. Nothing draws a line at the column edge and main keeps its own inline padding, so the pills reach the edge and the label fits beside the icon',
+  ).toBe('0')
+  expect(
+    wide.at > top.at,
+    'the wide rule has the specificity of the top-level one (0,1,0), so it wins over the padding shorthand by the order of the sheet: it must be written after it',
+  ).toBe(true)
+  // The guards the follow-up must not touch.
+  expect(
+    declNames(top.body),
+    'the top-level rule keeps exactly its three properties: the follow-up belongs to the wide block, so the open menu below 960 px keeps both its paddings',
+  ).toEqual(['background', 'border-bottom', 'padding'])
+  expect(
+    oneLine(prop(top.body, 'padding')),
+    'H5a: the narrow open menu keeps its padding of space-3, space-4 and space-5',
+  ).toBe('var(--space-3) var(--space-4) var(--space-5)')
+  const pill = topBy(tight('.nav a'), 'the .nav a pill rule (H5b.2)')
+  expect(
+    oneLine(prop(pill.body, 'padding')),
+    'the follow-up takes the column padding, never the pill padding: a narrower pill padding leaves under 1 px of slack across engines (the brief rejected it)',
+  ).toBe('var(--space-1) var(--space-4)')
+  expect(
+    prop(pill.body, 'gap'),
+    'the gap between the icon and the label stays the small gap of H8a.5 (the brief rejected shrinking it alone)',
+  ).toBe('var(--space-2)')
+  expect(
+    prop(pill.body, 'min-height'),
+    'and the pill stays a 32 px target (2.5.8)',
+  ).toBe('32px')
+  const entry = topBy(
+    tight('.nav a:has(> .icon)'),
+    'the nav entry that holds an icon (H8a.5)',
+  )
+  expect(
+    prop(entry.body, 'flex-wrap'),
+    'the wrap stays: at 200 % text the label moves whole under the icon, which is the fallback the follow-up keeps',
+  ).toBe('wrap')
+  expect(
+    prop(entry.body, 'overflow-wrap'),
+    'and it breaks inside a word only where a whole word has no room (section 6 of the brief)',
+  ).toBe('break-word')
+  const layout = single(
+    inside(WIDE, '.layout').filter((r) => r.compact === tight('.layout')),
+    'the .layout rule inside the @media (min-width: 960px) block (H5b.1)',
+  )
+  expect(
+    oneLine(prop(layout.body, 'grid-template-columns')),
+    'H8a.10: the nav column stays 224 px (a wider one narrows main on every page, rejected), so every page keeps its main width',
+  ).toBe('224px minmax(0, 1fr)')
+})

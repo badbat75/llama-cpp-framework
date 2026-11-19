@@ -315,7 +315,7 @@ export const EN: Record<string, string> = {
   // Assets card intro, and the name of the section jump list.
   'model-profile-assets-read-only':
     'The files, Project URL and drafters of a model profile cannot be changed here yet. Change them in pai-config on the server machine.',
-  'model-profile-jump-label': 'Model profile sections',
+  'model-profile-jump-label': 'On this page',
   // Slice 2e.1 (fe/briefs/02e-model-profile-cards.md, criterion 95): the Resource /
   // context and Embeddings cards, and the pooling options the shared texts of
   // 1.3 lack. The hints are the GUI's tooltips (en_US.toml), unchanged except

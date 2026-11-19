@@ -13,7 +13,8 @@
 // criteria 130 to 149, 155 to 157, 164, 175 to 182 and 183 to 188, read by key in
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config. The jump list under the
-// h2 names the cards and moves the focus to one of them, and a save refusal
+// h2 names the cards and moves the focus to one of them, its list opened below
+// 1280 px by a disclosure (fe/briefs/08-hearth-h10-h11.md, H10), and a save refusal
 // naming a field that takes no focus says what it is and which card it sits on
 // (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
 import {
@@ -571,6 +572,10 @@ function Content({
   const [phase, setPhase] = useState<
     'idle' | 'saving' | 'saved' | 'saved-restart'
   >('idle')
+  // H10.2 (fe/briefs/08-hearth-h10-h11.md): the jump list is closed every time
+  // the form mounts, and a save keeps the state it is in: no storage, no
+  // memory of a page that is gone.
+  const [jumpOpen, setJumpOpen] = useState(false)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
   // A second Save while one runs sends nothing (137).
@@ -606,10 +611,14 @@ function Content({
 
   /** 196: a jump button goes to the card whose title it carries: the card's
    * heading is the target, named by its id, so the page never moves the focus
-   * into a field the user has not asked for, and no hash is written. */
+   * into a field the user has not asked for, and no hash is written. H10.4:
+   * the list it was picked from closes first, the close committed to the DOM
+   * (flushSync) before the heading is focused and scrolled, so the closed
+   * list is not left above a heading already at the top of the page. */
   function jump(id: string) {
     const h3 = document.getElementById(id)
     if (h3 === null) return
+    flushSync(() => setJumpOpen(false))
     h3.focus()
     h3.scrollIntoView()
   }
@@ -843,16 +852,47 @@ function Content({
         )}
         {/* 196: the jump list is the page's TOC, between the heading and the
             engine Notice (or the Engine field when there is none), a list of
-            buttons that move the focus. */}
-        <nav className="jump" aria-label={t('model-profile-jump-label')}>
-          <ul>
+            buttons that move the focus. H10.1: the list is labelled by its own
+            p, which names the nav too (the one text of H10.5, shown as the
+            label and as the disclosure's), and below 1280 px the label is
+            hidden and the disclosure opens and closes the list. */}
+        <nav className="jump" aria-labelledby="model-profile-jump-label">
+          <p id="model-profile-jump-label" className="jump-label">
+            {t('model-profile-jump-label')}
+          </p>
+          {/* H10.3: a native button, so Enter and Space come with it. The focus
+              it is pressed with is kept: the list it opens and closes holds
+              nothing the user needs to be moved to. */}
+          <button
+            type="button"
+            id="model-profile-jump-toggle"
+            className="jump-toggle secondary"
+            aria-controls="model-profile-jump-list"
+            aria-expanded={jumpOpen}
+            onClick={(e) => {
+              e.currentTarget.focus()
+              setJumpOpen((open) => !open)
+            }}
+          >
+            {t('model-profile-jump-label')}
+            {/* Section 0 of the brief: the chevron follows the text, and the
+                stylesheet turns it with the state. */}
+            <Icon name="chevron-down" />
+          </button>
+          {/* H10.1: a closed list carries the class, and the stylesheet hides it
+              by that class, never by hidden: the 1280 px rail shows it
+              whatever the state is. */}
+          <ul
+            id="model-profile-jump-list"
+            className={jumpOpen ? undefined : 'collapsed'}
+          >
             {[
               { id: cardHeadingId('assets'), title: t('model-profile-assets') },
               ...cardJumps(),
             ].map(({ id, title }) => (
               <li key={title}>
-                {/* H9a.1: no class, so .jump button owns the look of the index
-                    entry and no .secondary declaration is overridden. */}
+                {/* H9a.1: no class, so .jump ul button owns the look of the
+                    index entry and no .secondary declaration is overridden. */}
                 <button type="button" onClick={() => jump(id)}>
                   {title}
                 </button>
