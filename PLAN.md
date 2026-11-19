@@ -965,6 +965,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     slices 8 to 17 together (the Profiles menu, several instances on a node, one server
     profile and N model profiles per instance, the resource checks, the web UI). The designer's full UX
     check closes the milestone.
+    **First: a visitor who has not signed in sees only the sign-in page** (user, 2026-11-19, a requirement
+    change: the Overview, the framework version and the instances' state were shown without sign-in). The bff
+    answers 401 `session-required` with no session on `GET /api/version`, `GET /api/instances` and
+    `GET /api/instances/{id}/boot`, as on every other route; only the static web UI, `GET /api/session` and the
+    sign-in stay open. These reads keep not moving the idle deadline, so a page left open still ends its
+    session. The fe shows the sign-in page for every place until a session exists (the web UI session's
+    part). The About place (item 13) is behind sign-in by the same rule.
     **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on
     `main` and the web UI session says fe is clean, build and install; that request is the go-ahead for this one
     install.
@@ -977,13 +984,14 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
     labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
     and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design.
-    **The node's status shows the engine** (user, 2026-11-19): for a signed-in administrator only (a visitor
-    keeps the framework version and the instances' state), the installed engine's version and the GPU backend
-    packages installed with their versions (today ROCm/HIP, CUDA with NCCL, Vulkan; OpenCL is not built). What
-    is installed, not what a running instance loaded. With slice 13 (`GET /api/node`); where the manager or
-    the bff reads it, and on Windows, is the architect's. The same slice can carry each instance's start at
-    boot inside `GET /api/instances` for a signed-in caller (the fe designer: the Overview reads
-    `GET /api/instances/{id}/boot` once per tile today).
+    **An About place lists every version** (user, 2026-11-19, replacing "the node's status shows the engine"
+    of the same day): behind sign-in, the web UI shows the framework's version and the version of every
+    component involved: each installed engine (today llama.cpp, later Strata) and the GPU backend packages
+    installed with their versions (today ROCm/HIP, CUDA with NCCL, Vulkan; OpenCL is not built). What is
+    installed, not what a running instance loaded. With slice 13 (`GET /api/node`); where the manager or the
+    bff reads it, and on Windows, is the architect's; where About sits in the web UI, the designer's. The same
+    slice can carry each instance's start at boot inside `GET /api/instances` (the fe designer: the Overview
+    reads `GET /api/instances/{id}/boot` once per tile today).
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
