@@ -2,8 +2,9 @@
 // the list, the id as the heading, and the model profile read once each time
 // the page opens from GET /api/profiles/model/<id>, or the message saying why
 // it is not there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the
-// heading, the
-// Engine field, the Assets card as text and the cards of the settings
+// heading, the summary line naming the engine and the model file (H11a.1),
+// the Engine field, the Assets card as text behind a disclosure in its own
+// heading (H11a.3), and the cards of the settings
 // (fe/briefs/02e-model-profile-cards.md, section 1). The Embeddings card's two
 // controls, the Resource / context card's number fields, the KV cache
 // card's controls, the Vision card's controls and the Hardware card's rows are
@@ -14,7 +15,8 @@
 // save.ts as the Server page reads its own); every other control stays
 // disabled, and its settings are changed in pai-config. The jump list under the
 // h2 names the cards and moves the focus to one of them, its list opened below
-// 1280 px by a disclosure (fe/briefs/08-hearth-h10-h11.md, H10), and a save refusal
+// 1280 px by a disclosure (fe/briefs/08-hearth-h10-h11.md, H10), the jump to
+// Assets opening that card (H11a.6), and a save refusal
 // naming a field that takes no focus says what it is and which card it sits on
 // (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
 import {
@@ -28,7 +30,6 @@ import {
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import { tickBox, type Boxed } from './boxed.ts'
-import Card from './Card.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { SelectField } from './Field.tsx'
 import { Icon } from './Icon.tsx'
@@ -135,6 +136,19 @@ function engineOption(doc: ModelProfileDoc): string {
 
 /** Not a strings key: an acronym, as the GUI labels it. */
 const MMPROJ = 'MMProj'
+
+/** The model file for the summary line (H11a.1): the last non-empty segment of
+ * the path, split on `/` and `\`, so a Windows path and a POSIX one read the
+ * same. Empty when the key is absent, empty, or every segment is: the line
+ * then says there is no model file. */
+function modelFileName(values: Record<string, string>): string {
+  return (
+    (values['model'] ?? '')
+      .split(/[/\\]/)
+      .filter((part) => part !== '')
+      .pop() ?? ''
+  )
+}
 
 /** The Assets card's pairs, in the GUI's order, values as the file holds them. */
 function assetRows(doc: ModelProfileDoc): { label: string; value: string }[] {
@@ -559,6 +573,8 @@ function Content({
   onRenewed: (session: Session) => boolean
 }) {
   const fid = useId()
+  // H11a.1: the model file the summary line names, as the read gave it.
+  const fileName = modelFileName(doc.values)
   const [loaded, setLoaded] = useState<Loaded>({
     revision: doc.revision,
     values: doc.values,
@@ -576,6 +592,10 @@ function Content({
   // the form mounts, and a save keeps the state it is in: no storage, no
   // memory of a page that is gone.
   const [jumpOpen, setJumpOpen] = useState(false)
+  // H11a.4 (fe/briefs/08-hearth-h10-h11.md): the Assets card is closed every
+  // time the form mounts, on the same rule as the jump list: no storage for a
+  // view state, and a save keeps the state it is in.
+  const [assetsOpen, setAssetsOpen] = useState(false)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
   // A second Save while one runs sends nothing (137).
@@ -614,11 +634,18 @@ function Content({
    * into a field the user has not asked for, and no hash is written. H10.4:
    * the list it was picked from closes first, the close committed to the DOM
    * (flushSync) before the heading is focused and scrolled, so the closed
-   * list is not left above a heading already at the top of the page. */
+   * list is not left above a heading already at the top of the page. H11a.6:
+   * the card that opens behind a disclosure is opened by the same commit, so
+   * the user lands on the content they asked for: a card already open stays
+   * open, and the other jumps leave Assets as it is. */
   function jump(id: string) {
     const h3 = document.getElementById(id)
     if (h3 === null) return
-    flushSync(() => setJumpOpen(false))
+    const assets = id === cardHeadingId('assets')
+    flushSync(() => {
+      setJumpOpen(false)
+      if (assets) setAssetsOpen(true)
+    })
     h3.focus()
     h3.scrollIntoView()
   }
@@ -842,6 +869,15 @@ function Content({
 
   return (
     <>
+      {/* H11a.1: the summary line is the first thing under the h1: the engine
+          of the read and the model file it points at, as plain text (a long
+          file name wraps in the column). It says nothing on its own: it is
+          none of the page's live regions. */}
+      <p className="model-profile-summary">
+        {fileName === ''
+          ? t('model-profile-summary-no-model', doc.engine)
+          : t('model-profile-summary', doc.engine, fileName)}
+      </p>
       {!doc.enabled && <p>{t('model-profile-off')}</p>}
       <section>
         <h2>{t('model-profile-settings-title')}</h2>
@@ -916,22 +952,50 @@ function Content({
           value={doc.engine}
           onChange={() => undefined}
         />
-        <Card
-          title={t('model-profile-assets')}
-          headingId={cardHeadingId('assets')}
-          intro={t('model-profile-assets-read-only')}
-        >
-          <dl className="assets">
-            {assetRows(doc).map((row) => (
-              <Fragment key={row.label}>
-                <dt>{row.label}</dt>
-                <dd className={row.value === '' ? 'muted' : 'mono'}>
-                  {row.value === '' ? t('model-profile-value-none') : row.value}
-                </dd>
-              </Fragment>
-            ))}
-          </dl>
-        </Card>
+        {/* H11a.3: the Assets card is the page's one disclosure: its heading
+            holds the button that opens and closes the body, so the h3 stays a
+            heading (a details summary would lose the role, section 0) and the
+            jump target of 196 keeps its id. The body carries hidden, not a
+            class: it has no rail of the 1280 px kind (section 0). */}
+        <section className="card assets-card">
+          {/* H11a.5: a native button, so Enter and Space come with it, and the
+              focus it is pressed with stays on it: the body holds nothing
+              focusable, so closing strands nothing. */}
+          <h3 id={cardHeadingId('assets')} tabIndex={-1}>
+            <button
+              type="button"
+              id="model-profile-assets-toggle"
+              aria-controls="model-profile-assets-body"
+              aria-expanded={assetsOpen}
+              onClick={(e) => {
+                e.currentTarget.focus()
+                setAssetsOpen((open) => !open)
+              }}
+            >
+              {t('model-profile-assets')}
+              {/* Section 0 of the brief: the chevron follows the text, and the
+                  stylesheet turns it with the state. */}
+              <Icon name="chevron-down" />
+            </button>
+          </h3>
+          {/* The read-only note of 195 stays outside the body: a closed card
+              hides the rows, not the words that say why. */}
+          <p className="intro">{t('model-profile-assets-read-only')}</p>
+          <div id="model-profile-assets-body" hidden={!assetsOpen}>
+            <dl className="assets">
+              {assetRows(doc).map((row) => (
+                <Fragment key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd className={row.value === '' ? 'muted' : 'mono'}>
+                    {row.value === ''
+                      ? t('model-profile-value-none')
+                      : row.value}
+                  </dd>
+                </Fragment>
+              ))}
+            </dl>
+          </div>
+        </section>
         {/* 196: the jump targets are the card headings: every card of the page
             gives its heading the id a jump button reaches it by, and the
             tabindex -1 that keeps it out of the Tab path. */}

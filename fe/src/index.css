@@ -1083,6 +1083,16 @@ tr:last-child td {
   gap: var(--space-2);
 }
 
+/* The line under the model profile's h1 (08-hearth-h10-h11.md H11a.9): the
+   engine of the read and the model file it points at, in the page's muted
+   text. overflow-wrap breaks a long file name in its column (1.4.10), so a
+   long name needs no sideways scroll at 320 px. */
+.model-profile-summary {
+  margin: 0 0 var(--space-4);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 /* The model profile page's jump list (196, DESIGN.md D5.1, drawn as an index
  * by 08-hearth-h9-jump.md H9a): the page's TOC, one entry per card in reading
  * order, a column with the decorative --line rule at its left. The entries are
@@ -1332,6 +1342,37 @@ legend.field-label {
   .field-error {
     grid-column: 2;
   }
+}
+
+/* The disclosure in the Assets card's heading (08-hearth-h10-h11.md H11a.9):
+   the label at one end of the heading and its chevron at the other, on the
+   heading's own font and with no box of its own: the card is the box, so no
+   border, no fill and no side padding, the text starting where the heading's
+   does. min-height is the floor of the touch target (2.5.8), a floor and not
+   a box, so the heading grows with a title that wraps (1.4.12). The three
+   parts of the selector are the cascade pin of the acceptance test: the
+   global button rule sets the min-height, the padding and the font, and this
+   rule, later and with two more parts, carries the heading's button. */
+.assets-card h3 button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 32px;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+/* The chevron turns with the state (H11a.9), and nothing is animated: no
+   transition, so prefers-reduced-motion has nothing to stop (section 0). The
+   attribute and the class are not a part of the cascade pin of the test: the
+   icon it names sits inside the button and nothing competes with it. */
+.assets-card h3 button[aria-expanded='true'] .icon {
+  rotate: 180deg;
 }
 
 /* Value list (DESIGN.md 5.2): settings shown as text, as a description list

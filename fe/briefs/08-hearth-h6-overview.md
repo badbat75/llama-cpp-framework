@@ -109,6 +109,11 @@ H6a.8 as declarations of the named rules (stylesheet text, as `HearthH2b.test.ts
 
 ## 2. H6b: Start at boot on the tiles, signed in
 
+**Superseded in part by [09-signin-only.md](09-signin-only.md) (2026-11-19):** signed out there is no
+Overview at all (09 S1a.1), so H6b.1's signed-out case and the `signedIn` prop go (S1a.12); and a 401
+on the boot read now says the session ended and signs the app out (09 S1b.1), so H6b.4's "the route is
+public, a 401 or 403 there says nothing about the session" holds for the 403 only.
+
 **H6b.1 Who sees it.** `Overview` takes `signedIn: boolean` from `App` (`session` neither `null` nor
 `undefined`). Signed out, and while the session is read, no tile sends `GET /api/instances/{id}/boot`
 and no tile has a `dl`.

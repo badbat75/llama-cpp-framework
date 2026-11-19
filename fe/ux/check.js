@@ -139,10 +139,12 @@ const STATES = [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'h3', text: S['model-profile-assets'] },
     ],
-    // H10 (brief 08 section 4): the page with its jump list opened. The
-    // toggle is display: none from 1280 px, where the list shows whatever its
-    // class, so a state click is only taken where it is visible.
-    click: ['#model-profile-jump-toggle'],
+    // H10 (brief 08 section 4): the page with its jump list opened, and H11a:
+    // with the Assets card opened too, so the check sees the rows behind the
+    // disclosure. The jump toggle is display: none from 1280 px, where the
+    // list shows whatever its class, so a state click is only taken where it
+    // is visible.
+    click: ['#model-profile-jump-toggle', '#model-profile-assets-toggle'],
   },
   {
     name: 'model-profile-missing',

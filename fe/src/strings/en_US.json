@@ -218,6 +218,8 @@
   "model-profile-load-failed": "The model profile could not be read.",
   "model-profile-not-found": "There is no model profile named {0}.",
   "model-profile-off": "This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.",
+  "model-profile-summary": "Engine {0}, model {1}",
+  "model-profile-summary-no-model": "Engine {0}, no model file",
   "model-profile-settings-title": "Model profile settings",
   "model-profile-engine": "Engine",
   "model-profile-engine-hint": "The engine this model profile belongs to. Every instance of that engine can serve it.",

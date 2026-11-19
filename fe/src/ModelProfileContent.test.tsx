@@ -56,8 +56,11 @@ const LABELS = [
 
 /** The 2e cards' fields, in card and field order: each is one tab stop, its
  * About toggle (criterion 91), and nothing else of a 2e card takes focus
- * (criterion 85). The list is test/modelProfileCards.ts. */
+ * (criterion 85). The list is test/modelProfileCards.ts. H11a.3 adds the Assets
+ * disclosure first: the card sits between the Engine field and the 2e cards, so
+ * its toggle is the tab stop right after the Engine select. */
 const CARD_TAB_STOPS = [
+  en('model-profile-assets'),
   ...fieldTabStops(fullDoc().values),
   ...saveBarTabStops(),
 ]
@@ -176,6 +179,22 @@ function text(el: Element): string {
   return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
+/** H11a.4: the Assets card is closed on mount and its rows sit behind
+ * `hidden`, which closes the role queries to them, so every test that reads the
+ * description list opens the card first. */
+function openCard(card: HTMLElement): void {
+  const toggle = card.querySelector('h3 button')
+  expect(toggle, 'H11a.3: the disclosure in the card h3').not.toBeNull()
+  fireEvent.click(toggle as HTMLElement)
+}
+
+/** The summary line H11a.1 renders under the h1. */
+function summaryLine(main: HTMLElement): HTMLElement {
+  const line = main.querySelector('p.model-profile-summary')
+  expect(line, 'H11a.1: the summary line').not.toBeNull()
+  return line as HTMLElement
+}
+
 function terms(card: HTMLElement): HTMLElement[] {
   return within(card).getAllByRole('term')
 }
@@ -261,6 +280,9 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
         }),
       ),
   })
+  // H11a.4: the card mounts closed, so open it before reading the rows
+  // (as 2d.73 to 2d.76 and 2d.79 do).
+  openCard(card)
   expect(pairs(card).map(([label]) => label)).toEqual(LABELS)
   expect(card.textContent).not.toContain('ctx-size')
   expect(card.textContent).not.toContain('172032')
@@ -296,7 +318,7 @@ test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes an
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
 
-test("2d.68: below the h1, in order: the off line (a switched-off model profile), the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
+test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a switched-off model profile), the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Engine field, the Assets card, and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
   for (const [what, extra, off, unavailable] of [
     ['a switched-on model profile', {}, false, false],
     ['a switched-off model profile', { enabled: false }, true, false],
@@ -313,10 +335,14 @@ test("2d.68: below the h1, in order: the off line (a switched-off model profile)
       true,
     ],
   ] as [string, Record<string, unknown>, boolean, boolean][]) {
-    const { main, h3 } = await loaded({
+    const { main, h1, h3 } = await loaded({
       modelProfile: () => reply(200, fullDoc(extra)),
     })
-    const nodes: [string, Node][] = []
+    // H11a.1: the summary line is the first thing under the h1, before the off
+    // line when the profile is switched off.
+    const line = summaryLine(main)
+    expect(before(h1, line), 'H11a.1: the summary is under the h1').toBe(true)
+    const nodes: [string, Node][] = [['the summary line', line]]
     if (off)
       nodes.push(['the off line', await message(main, en('model-profile-off'))])
     else
@@ -416,6 +442,7 @@ test('2d.70, 2d.72: an engine not available: the one option reads Strata (not av
     modelProfile: () =>
       reply(200, fullDoc({ engine: STRATA, engineAvailable: false })),
   })
+  openCard(card)
   const select = (await engineSelect(main)) as HTMLSelectElement
   expect(Array.from(select.options).map((o) => o.text)).toEqual([
     en('model-profiles-engine-not-available', STRATA),
@@ -436,6 +463,7 @@ test('2d.70, 2d.80: picking the Engine select only option changes nothing and se
   const { bff, main, card } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
+  openCard(card)
   const select = (await engineSelect(main)) as HTMLSelectElement
   const shown = pairs(card)
   const seen = bff.calls.map((c) => `${c.method} ${c.path}`)
@@ -467,6 +495,7 @@ test('2d.73: the Assets card is a Card with an h3 Assets and one dl: each field 
   const { card, h3 } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
+  openCard(card)
   expect(
     within(card).getByRole('heading', {
       level: 3,
@@ -496,8 +525,16 @@ test('2d.73: the Assets card is a Card with an h3 Assets and one dl: each field 
   ])
 })
 
-test('2d.73: the Assets card holds no input, picker, checkbox, button, select, link or hint, so nothing in it is in the tab sequence', async () => {
+test('2d.73 (H11a.3, H11a.5): the Assets card holds one button, the disclosure in its h3, and its body holds no input, picker, checkbox, button, select, link or hint, so nothing in the body is in the tab sequence', async () => {
   const { card } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
+  const toggle = card.querySelector('h3 button')
+  expect(toggle, 'H11a.3: the disclosure is a button in the h3').not.toBeNull()
+  expect(within(card).getAllByRole('button'), 'one button').toEqual([toggle])
+  // H11a.4: open, so the role queries below reach the rows.
+  openCard(card)
+  const found = card.querySelector<HTMLElement>('#model-profile-assets-body')
+  expect(found, 'H11a.3: the body div').not.toBeNull()
+  const body = found as HTMLElement
   for (const role of [
     'button',
     'textbox',
@@ -507,16 +544,26 @@ test('2d.73: the Assets card holds no input, picker, checkbox, button, select, l
     'searchbox',
     'link',
   ] as const)
-    expect(within(card).queryAllByRole(role), role).toEqual([])
+    expect(within(body).queryAllByRole(role), role).toEqual([])
   expect(
-    card.querySelectorAll('input, select, textarea, button, a').length,
+    body.querySelectorAll('input, select, textarea, button, a').length,
+    'the body holds no control (H11a.5)',
   ).toBe(0)
-  expect(card.querySelectorAll('.field-hint').length, 'no hints in 2d').toBe(0)
-  expect(tabbable().filter((el) => card.contains(el))).toEqual([])
+  expect(body.querySelectorAll('.field-hint').length, 'no hints in 2d').toBe(0)
+  expect(
+    tabbable().filter((el) => body.contains(el)),
+    'the body: nothing in the tab sequence (H11a.5)',
+  ).toEqual([])
+  expect(
+    tabbable().filter((el) => card.contains(el)),
+    'the card: the toggle is its only tab stop',
+  ).toEqual([toggle])
 })
 
 test('2d.74: each value is the reply string unchanged, the server path in full with its separators, in the mono font, and the Project URL is text, not a link', async () => {
   const { card } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
+  // H11a.4: the rows sit behind `hidden` until the card is opened.
+  openCard(card)
   const shown = new Map(pairs(card))
   expect(
     shown.get(en('model-profile-model-file')),
@@ -548,6 +595,7 @@ test('2d.75: spec-type is split as model_profiles.rs does: Drafter is the first 
       modelProfile: () =>
         reply(200, fullDoc({ values: { 'spec-type': specType } })),
     })
+    openCard(card)
     const shown = new Map(pairs(card))
     expect(shown.get(en('model-profile-drafter')), specType).toBe(drafter)
     expect(shown.get(en('model-profile-ngram-drafters')), specType).toBe(ngrams)
@@ -578,6 +626,7 @@ test('2d.76: a key absent from values, an empty string, an empty projectUrl and 
     ],
   ] as [string, ReturnType<typeof modelProfileDoc>][]) {
     const { card } = await loaded({ modelProfile: () => reply(200, doc) })
+    openCard(card)
     const defs = definitionsWithLabels(card)
     expect(
       defs.map(([label]) => label),
@@ -630,6 +679,7 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the select is named E
   const { main, card, h1 } = await loaded({
     modelProfile: () => reply(200, fullDoc()),
   })
+  openCard(card)
   expect(h1.tagName).toBe('H1')
   expect(text(h1)).toBe(ID)
   const select = (await engineSelect(main)) as HTMLSelectElement
@@ -678,6 +728,7 @@ test('2d.80, 2d.82: an id with a space and one with a % open on their content, r
       name: en('model-profile-assets'),
     })
     const card = h3.closest('.card') as HTMLElement
+    openCard(card)
     expect(terms(card).map(text), id).toEqual(LABELS)
     expect(bff.to('GET', `/api/profiles/model/${encoded}`).length, id).toBe(1)
     cleanup()

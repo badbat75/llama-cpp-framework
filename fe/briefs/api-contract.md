@@ -15,10 +15,16 @@ exist yet. Change this file first when a shape changes.
   as one generic failure. The one exception: a 422 with a key the fe does not know is shown as a
   refused value without its reason (`api-other`), since the status already says a check refused it.
 - **401** means not signed in (no session, or it ended), on any route that needs one.
+- **Without a session** (from 2026-11-19; the bff follows the fe slice, `fe/briefs/09-signin-only.md`):
+  no route but the static web UI and `POST`, `GET` and `DELETE /api/session` answers without a
+  session; every other route answers 401 `session-required`, never 403. `GET /api/version`,
+  `GET /api/instances` and `GET /api/instances/{id}/boot` do not move the idle deadline. Until the
+  bff follows, those three still answer without a session, as the lines below say; the fe never
+  sends them before a sign-in.
 - **403** `client-not-authorized` means the manager refused the call for this user, on a route that
   acts for the signed-in user; the session lives on. No served route sends it today (since bff slice
-  9e every refusal of the user ends the session, below); the fe keeps handling it. On a route that needs no sign-in
-  (`GET /api/instances`, `GET .../boot`) the same key comes with **502**: there the manager refused
+  9e every refusal of the user ends the session, below); the fe keeps handling it. On `GET /api/instances` and `GET .../boot`
+  (no sign-in needed until the bff follows 2026-11-19's rule, above) the same key comes with **502**: there the manager refused
   the bff itself, not a user.
 - **403** `session-not-administrator` on any route but `POST /api/session` (served since bff slice 9e, 5f0d405, on `GET .../server`, the three verbs and `PUT .../boot`; on `PUT .../server` since eff112d; on `GET /api/profiles/model`, `PUT /api/profiles/model/{id}/enabled`, `GET /api/profiles/model/{id}` and `PUT /api/profiles/model/{id}` since they were served, 257147e, 3a63244, 36a892d, 3eb24b2; S1 of
   [01-server.md](01-server.md)): the manager refused the session's user, who is no longer a member
@@ -27,16 +33,16 @@ exist yet. Change this file first when a shape changes.
   sends this key exactly when it ends a session on a refusal, and `client-not-authorized` only when
   the session lives on, so the fe needs no second read of `GET /api/session` to tell them apart.
   Where: `crates/bff/src/server.rs` `read` and `save_failure`, `control.rs` `action_failure`,
-  `presets.rs` `read_answer` and `switch_failure`. The session-free reads
-  (`GET /api/instances`, `GET .../boot`) keep 502 `client-not-authorized`.
+  `presets.rs` `read_answer` and `switch_failure`. The reads
+  `GET /api/instances` and `GET .../boot` keep 502 `client-not-authorized`.
 - **The guard's keys**, each 403 or 413 with `args: []`, answered before any session is looked at
   (`crates/bff/src/origin.rs`): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
   is not this bff), `request-bad-host` (a `Host` that is not `localhost`, `127.x.x.x` or `[::1]`),
   `payload-too-large` (413, a body over 64 KiB). The fe's own requests never get them: the guard
   stands in front of `/` and `/assets/*` too, so a page opened under another name never loads, and
   the fe's bodies are a few dozen bytes. The fe shows them as the generic failure of the place.
-- **Idle deadline**: every request with a valid session moves it, except the session-free reads
-  `GET /api/instances` and `GET /api/instances/{id}/boot`; the `POST`s and `PUT`s move it.
+- **Idle deadline**: every request with a valid session moves it, except the reads
+  `GET /api/version`, `GET /api/instances` and `GET /api/instances/{id}/boot` (from 2026-11-19; until then the first is not listed); the `POST`s and `PUT`s move it.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
 - **Writes and their time limit** (the server save and the model profile switch since 594e15e, the model
@@ -209,14 +215,14 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `GET /api/instances` reports the instance `deactivating`, then `inactive` (a restart then
   `activating`, `active`). The fe waits for it: 01-server.md S2.
 - `GET /api/instances/{id}/boot` answers 200 `{"enabled": <bool>}`. Errors: 503
-  `client-unavailable`, 502 `client-not-authorized` (a route that needs no sign-in, like
-  `GET /api/instances`), 404 `client-no-instance`, 502 `client-other`.
+  `client-unavailable`, 502 `client-not-authorized` (the manager refused the bff itself, like
+  `GET /api/instances`; 401 `session-required` without a session from 2026-11-19, above), 404 `client-no-instance`, 502 `client-other`.
 - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
   state read back after the write. Errors: 401, 403 `client-not-authorized`, 403
   `session-not-administrator`, 404, 503, 502 `client-service-failed` or `client-other`
   (each with `args: []`), 400 `boot-malformed` for a body that is not `{"enabled": <bool>}` (the fe
   never sends one), 413 `payload-too-large`.
-- `GET /api/instances` and `GET /api/instances/{id}/boot` do not move a session's idle deadline:
+- `GET /api/instances` and `GET /api/instances/{id}/boot` (and from 2026-11-19 `GET /api/version`) do not move a session's idle deadline:
   the fe reads the instances every 5 s while an instance page is open, and an open tab must not
   keep a session alive. The `POST`s and the `PUT` do move it.
 

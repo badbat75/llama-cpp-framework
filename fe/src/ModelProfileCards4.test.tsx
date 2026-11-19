@@ -1388,6 +1388,8 @@ test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the ten jump but
     ...pageStartTabStops(),
     `${en('field-about')} ${en('model-profile-engine')}`,
     en('model-profile-engine'),
+    // H11a.3: the Assets disclosure, the card sits after the Engine field.
+    en('model-profile-assets'),
     ...fieldTabStops(doc.values),
     ...saveBarTabStops(),
   ])

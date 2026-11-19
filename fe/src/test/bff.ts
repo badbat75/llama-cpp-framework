@@ -591,6 +591,10 @@ export const EN: Record<string, string> = {
     'Used only with a draft: a Draft model or a Drafter, and this model profile has neither (Assets).',
   'model-profile-ngram-off':
     'Used only when N-gram drafters (Assets) includes {0}.',
+  // H11a.2 (fe/briefs/08-hearth-h10-h11.md, section 2): the line under the
+  // model profile's h1, the engine and the model file it points at.
+  'model-profile-summary': 'Engine {0}, model {1}',
+  'model-profile-summary-no-model': 'Engine {0}, no model file',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */

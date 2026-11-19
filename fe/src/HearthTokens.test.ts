@@ -713,6 +713,9 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.field-control: min-width: 0',
     '.full-value: min-width: 0',
     '.field-label: min-height: var(--control-h)',
+    // H11a.9 (brief 08-hearth-h10-h11): the Assets disclosure's touch-target
+    // floor, a floor and not a box.
+    '.assets-card h3 button: min-height: 32px',
     '.assets dt: min-width: 0',
     '.assets dd: min-width: 0',
     '.about: min-height: 24px',

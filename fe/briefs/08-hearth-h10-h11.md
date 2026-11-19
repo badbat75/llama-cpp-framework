@@ -275,3 +275,40 @@ visible and above the save bar, the list closed, the hash unchanged, and scrollY
 as after the settle (one scroll, no second jump). H10.4: met. `npm --prefix fe/ux run check`: 52 per
 browser, 0 failing. axe-core: 0 at 1280, 960 and 320 on the model profile page (closed and, below
 1280, open) and the Overview, light in the three engines and dark at 1280.
+
+**Review of H11a (2026-11-19): Approved.** Read: `ModelProfilePage.tsx` (`modelFileName`, the
+summary `p`, `assetsOpen`, `jump`, the `section.card.assets-card`), `index.css` (H11a.9 rules),
+`en_US.json` (the two keys), `fe/ux/check.js` (the `click` list of `model-profile-open`).
+**Measured** (`build/ux-review/h11a.js`, `h11a-aria.js`, stub `stub8.py`; Chromium, Firefox,
+WebKit; 1280, 960, 480, 320 px, light and dark):
+- H11a.1, H11a.2: met. Summaries: a POSIX path "Engine llama.cpp, model Qwen3-27B-Q8_0.gguf"; a
+  Windows path with a 119-character file name wraps inside the column (3 to 7 lines), no sideways
+  scroll at any width; `\\server\share\` "Engine llama.cpp, model share"; no `model` "Engine
+  llama.cpp, no model file". The trailing-separator case is a broken profile either way and the
+  card's Model file row shows the whole value, so "share" stays (preference; no correction).
+- H11a.3, H11a.4: met. Card children `h3#model-profile-card-assets > button`, `p.intro`,
+  `div#model-profile-assets-body`; closed on arrival, after a reload and after the list and back.
+  Closed card 143 px high at 1280 and 960, 169 at 480, 222 at 320 (open 426 to 845). The first
+  editable control below it (`model-profile-n-gpu-layers-box`) at 320 px: 845 to 847 px with a
+  one-segment file name (target under 900: met; open, as before H11a, 1549 to 1602), 952 to 978 px
+  with the 119-character name; at 1280: 623 to 665 px (open 986 to 1001).
+- H11a.5: met. Click, Enter, Space flip `aria-expanded` and `hidden`, focus stays on the toggle;
+  closed, Tab from the toggle goes to the next card's About; the body holds 0 focusables.
+- H11a.6: met. At 320, 960, 1279 (behind the disclosure) and 1280 (rail), clean and dirty, by click
+  and by Enter: the Assets jump opens the card, the focused `h3` lands at 12 px, visible, above the
+  save bar, the list closed, scrollY equal at 0, 50 and 150 ms; another jump leaves Assets open or
+  closed as it was. Focus is on the `h3` (as specified); its reading starts "Assets, heading level 3".
+- H11a.7: met for Save (200) and Discard with the card open: it stays open, the dirty value kept;
+  the 422 case is the tester's.
+- H11a.8, H11a.10: met. Aria snapshot: `heading "Assets" [level=3]` holding `button "Assets"`,
+  `[expanded]` once open.
+- H11a.9: met. Toggle 646x36 at 1280, 238x36 at 320; ring 3px solid at 2px offset, whole, inside
+  the card; chevron `rotate: 180deg` open; transition 0s with reduced motion. 200 % text and 1.4.12
+  at 320: toggle 238x62 to 64, not clipped, chevron inside the card, no sideways scroll. Forced
+  colours (Chromium, Firefox): text and chevron `ButtonText`, summary visible, no border (as
+  specified).
+- H11a.11: met. The Engine field stays above the card.
+- Section 4: `npm --prefix fe/ux run check`: 10 states x 2 widths x 2 themes + 3 = 52 per browser,
+  0 failing; `clicked()` fails a visible toggle that never reaches `aria-expanded="true"`, so in
+  `model-profile-open` both disclosures were open at 320 (the Assets click lands after the list
+  opens) and the Assets one at 1280. axe-core: 0 at every width, both themes, closed and open.

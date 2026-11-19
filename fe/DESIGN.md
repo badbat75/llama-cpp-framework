@@ -31,11 +31,12 @@ order, defaults and checks, and says where it differs on purpose.
 
 Every page of the finished web UI, in nav order. "Slice" says when it is built; a page with no slice
 is not in the nav yet. "Who": "anyone" includes the signed out; "administrator" means signed in, which
-only an administrator can be (section 3).
+only an administrator can be (section 3). From slice S1 (`fe/briefs/09-signin-only.md`, user
+2026-11-19) no page is "anyone": a visitor who has not signed in sees only the sign-in page.
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
-| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | anyone (Start at boot: signed in) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`) |
+| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | anyone (Start at boot: signed in); administrator from slice S1 | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
@@ -100,7 +101,8 @@ Decided with the user on 2026-11-14.
   `GET /api/instances`, in the manager's order. Signed in, after it (or right after Overview when the
   instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
   labelled by it, today with the one link "Model profiles"; "Server profiles" joins it when its page
-  exists (05c). Each group label is text, not a link. Signed out, the nav holds Overview only.
+  exists (05c). Each group label is text, not a link. Signed out, the nav holds Overview only (from slice S1: no nav
+  and no Menu button signed out or while the session is read, `fe/briefs/09-signin-only.md` S1a.4).
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
   link of its own (a model profile's page under Model profiles), that entry keeps the current-page style with
   `aria-current="true"`: it leads elsewhere, but the page belongs to it
@@ -111,7 +113,7 @@ Decided with the user on 2026-11-14.
   decoration (1.09:1 light, 1.35:1 dark on `--page`); the non-colour cue is the weight
   ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color); bold is a cue in
   [G182](https://www.w3.org/WAI/WCAG22/Techniques/general/G182)). Under forced colours the
-  current entry (and the Sign in pill on `#/sign-in`) takes `Highlight` / `HighlightText` with
+  current entry (and the Sign in pill on `#/sign-in`, which goes from slice S1) takes `Highlight` / `HighlightText` with
   `forced-color-adjust: none`, as the pressed theme switch does (H5c.6; the focus ring stays seen on
   it: H5c review, Chromium and Firefox). Text on the fill 6.04:1 light, 6.93:1 dark.
 - On every route change: `document.title` becomes `<page> | Private AI Framework`
@@ -136,7 +138,7 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
 
 | State | How the fe knows | Sees | Can do |
 |---|---|---|---|
-| Signed out | `GET /api/session` answers 401 | Overview only; header shows **Sign in** | read version and instance states |
+| Signed out | `GET /api/session` answers 401 | Overview only; header shows **Sign in** (from slice S1: the sign-in page only, at every address; no nav, no Sign in in the header) | read version and instance states (from slice S1: nothing; only the session is read) |
 | Signed in (an administrator) | `GET /api/session` answers 200 `{"user"}` | every page, editable, with the save bar | start, stop, restart, save files, set start at boot |
 
 - The fe does not read a role from the session. The manager still decides each request; a refusal
@@ -146,7 +148,8 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   are at stake the page takes the session-ended state below with the message `session-revoked`; on
   a read the app signs out, the sign-in form showing that message.
 - A signed-out user who opens any page but the Overview sees the sign-in form in its place, and
-  returns to that page after signing in.
+  returns to that page after signing in (from slice S1 the Overview too; `#/sign-in` signed in is
+  `#/`: `fe/briefs/09-signin-only.md` S1a.9, S1a.10).
 - The session can end while a page is open (any request answers 401). The page keeps what
   it shows and any unsaved edits, the header and nav stay as they were, and the page offers
   **Sign in** in a dialog; after it, the user retries. The same user keeps the page as it was, focus
@@ -219,7 +222,8 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   The banner (`fe/briefs/07-hearth-h5-shell.md` H5a) sits on `--page` with no fill and no rule; Menu,
   the theme button and the session part are one plain `div.banner-tools` (no role) pushed to the end.
   Below 480 px the theme button is icon-only (40 by 40, name still "Dark theme") and "Signed in as
-  ..." is visually hidden (still read); the Sign in link is a pill at least 32 px high. Measured
+  ..." is visually hidden (still read); the Sign in link is a pill at least 32 px high (gone from slice
+  S1: signed out the tools hold the theme button only). Measured
   2026-11-18, signed in: 72 px (one row) at 1280, 112 px (two rows) at 479 and 320 px.
   The nav (H5b) has no fill either and no rule on its right: at 960 px and up the column ends at
   x 224 and the main region's content starts 40 px further, the gap is the only divider. There the
@@ -344,6 +348,20 @@ Each is one React component, reused by every page.
   (`fe/briefs/02e-model-profile-cards.md` 90, 90a). A subgroup has `--space-5` above it, more than the
   24 px between two fields, so a group heading sits with the fields under it; a subgroup right
   after the card's `h3` has none (the `h3`'s bottom margin parts them).
+  - **Collapsed card** (the model profile page's Assets, 08 H11a): a card whose rows are reference,
+    not settings, may close behind a disclosure in its own heading: the `h3` (`tabindex="-1"`, the
+    jump target) holds only a `button` (`aria-expanded`, `aria-controls` the body) with the card's
+    title and a `chevron-down` at the far end, turned 180 degrees when open, no transition; the
+    button has no border or fill, the heading's font, full width, at least 32 px high. The intro
+    stays outside the body, so the closed card still says why it reads only; the body is `hidden`
+    when closed (out of the tab order and the accessibility tree) and holds nothing focusable.
+    Closed on every arrival, no storage; Save and Discard leave it as it is; a jump to it opens it
+    in the same commit as the list's close. Read as "Assets, heading level 3", "Assets, button,
+    collapsed" ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). Under forced colours it
+    reads as a control by its text and chevron, no border.
+  - **Summary line** (08 H11a.1): right under the model profile page's `h1`, a plain `p` in `--muted`
+    saying the engine and the model file (the last non-empty segment of the path, split on `/` and
+    `\`), or "no model file"; wrapping anywhere, so the closed Assets card still names the file.
 - **Read-only form**: a form shown before its slice can save (the model profile page's plain cards, 2e):
   the real controls, each with the native `disabled` attribute, under one Notice saying why, so the
   saving slice only enables them (2h does, card by card). Not `readonly` (text inputs only in HTML) and not `aria-disabled`

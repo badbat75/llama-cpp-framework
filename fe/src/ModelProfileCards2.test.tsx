@@ -1037,6 +1037,8 @@ test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in
     ...pageStartTabStops(),
     `${en('field-about')} ${en('model-profile-engine')}`,
     en('model-profile-engine'),
+    // H11a.3: the Assets disclosure, the card sits after the Engine field.
+    en('model-profile-assets'),
     ...fieldTabStops(docOf(SET).values),
     ...saveBarTabStops(),
   ])

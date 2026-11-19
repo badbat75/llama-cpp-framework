@@ -1568,8 +1568,12 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   ).toEqual(start)
   expect(
     tabbed.slice(start.length),
-    'the page tab order is the list of test/modelProfileCards.ts',
-  ).toEqual([...fieldTabStops(docOf(SET).values), ...saveBarTabStops()])
+    'the page tab order is the list of test/modelProfileCards.ts (H11a.3: the Assets disclosure right after the Engine field)',
+  ).toEqual([
+    en('model-profile-assets'),
+    ...fieldTabStops(docOf(SET).values),
+    ...saveBarTabStops(),
+  ])
 })
 
 test('2e.116, 2h.193: the card, its five group headings, every label, hint and note show the English of the 31 strings of 116 and the 2 new strings of 193', async () => {
