@@ -273,6 +273,11 @@ Lessons only: the rules are in `AGENTS.md`.
   of `crates/config/README.md` (D-Bus signature and pipe JSON); `installer/AGENTS.md`'s pipe bullet and
   `crates/bff/README.md` point there. Check per-call authorization in `manager/service.rs` itself:
   the README said "reads need none" long after 7af81f4 made an instance file's read need `control`.
+  The same change moves FOUR numbers on that one page: the `As` bullet's count of guarded methods and its
+  signature list, its `Version` protocol number and what each added, and the source map's manager row
+  ("the `As` form of each of the N guarded methods", a list that lagged `WriteFileIf` for one protocol).
+  Grep `guarded method`, `protocol ` and the count in words. `ARCHITECTURE.md`'s protocol table and its
+  "the seven guarded ones" repeat it and are the architect's.
 - The client module headers carry the transport's shape as soon as the coder builds it
   (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`: the `As` forms, `Version`,
   `acting_for`, what an older manager answers): read them before planning a comment edit, they usually
