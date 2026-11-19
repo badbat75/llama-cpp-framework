@@ -992,6 +992,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     bff reads it, and on Windows, is the architect's; where About sits in the web UI, the designer's. The same
     slice can carry each instance's start at boot inside `GET /api/instances` (the fe designer: the Overview
     reads `GET /api/instances/{id}/boot` once per tile today).
+    **The navigation lists hosts, each holding its instances** (user, 2026-11-19, restating an earlier
+    requirement): where the web UI lists instances on the left, it lists the hosts by the name they are
+    registered under (`GET /api/node` `name`, the host name; in hub mode every node of `GET /api/nodes`),
+    and each host holds all its instances. With slice 13; the layout is the designer's.
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
