@@ -1079,21 +1079,41 @@ tr:last-child td {
   gap: var(--space-2);
 }
 
-/* The model profile page's jump list (196, DESIGN.md D5.1): the page's TOC as
- * buttons, in reading order. A row of small buttons, not a row of links. */
+/* The model profile page's jump list (196, DESIGN.md D5.1, drawn as an index
+ * by 08-hearth-h9-jump.md H9a): the page's TOC, one entry per card in reading
+ * order, a column with the decorative --line rule at its left. The entries are
+ * told apart by their text, so the rule is decoration (brief 04 criterion 4). */
 .jump ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
-  margin: var(--space-2) 0;
+  display: block;
+  margin: var(--space-2) 0 var(--space-4);
   padding: 0;
   list-style: none;
+  border-left: 2px solid var(--line);
 }
 
-/* The jump list keeps the small buttons until H9 redraws it as a text list:
-   ten 40 px pills would make the model profile page longer at 320 px. */
+/* The index entry (H9a.3, H9a.6): a text entry underlined in --accent, not a
+   pill, so the list reads as a table of contents and not a toolbar (brief 04
+   1.6). No border and no fill: the underline carries it, and the rounded right
+   end keeps the global focus ring whole (2.4.7). The button carries no class,
+   so this rule owns the look. overflow-wrap breaks a long card title inside
+   its entry, so a narrow page needs no sideways scroll (1.4.10), and the
+   min-height is a floor, never a box, so the entry grows with its text
+   (1.4.12). */
 .jump button {
+  display: block;
+  width: 100%;
   min-height: 32px;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-md);
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
 }
 
 /* Room above the heading a jump lands on: the ring is drawn outside the box,
@@ -1757,6 +1777,16 @@ html:has(.save-bar) {
     forced-color-adjust: none;
     background: Highlight;
     color: HighlightText;
+  }
+
+  /* The jump list's index entry (08-hearth-h9-jump.md H9a.5): with no border it
+     reads as the link it looks like, so it takes the link colour of the forced
+     palette. Only the colour is forced: the underline stays (CSS Color
+     Adjustment 1, 3.1). It joins this block because the token guards pin the
+     count of the sheet's forced-colours blocks, and it sits here, after the
+     top-level .jump button rule, because a media query adds no specificity. */
+  .jump button {
+    color: LinkText;
   }
 }
 

@@ -851,11 +851,9 @@ function Content({
               ...cardJumps(),
             ].map(({ id, title }) => (
               <li key={title}>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => jump(id)}
-                >
+                {/* H9a.1: no class, so .jump button owns the look of the index
+                    entry and no .secondary declaration is overridden. */}
+                <button type="button" onClick={() => jump(id)}>
                   {title}
                 </button>
               </li>

@@ -376,7 +376,12 @@ Each is one React component, reused by every page.
 - **Section jump list**: on a form taller than a few screens (the model profile page), a `<nav>` after the
   form's `h2` holds one button per card; a button moves focus to the card's `h3` (`tabindex="-1"`)
   and scrolls it into view. Buttons, not `#fragment` links, which the hash router would read as a
-  route (02h, 196).
+  route (02h, 196). Drawn as an index, not a toolbar (08 H9a): the buttons carry no class; the `ul`
+  is a block column with a decorative 2px `--line` rule at its left; each entry is full width, at
+  least 32 px high, no border or fill, `--accent` text (6.58:1 light, 9.37:1 dark) underlined 1px at
+  3px offset, no hover change, a long title wrapping inside it; `LinkText` under forced colours. The
+  underline and the place in a named `nav` list are what tell an entry from body text, not the
+  colour alone ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
 - **Field**: one setting.
   - One control and no text of its own: a `<label>` with the field's label, the control, then the
     hint and the error.

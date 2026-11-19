@@ -625,6 +625,9 @@ test('H1a.12 guard: the four forced-colours blocks stay, with system colours onl
     'Canvas',
     'Highlight',
     'HighlightText',
+    // H9a.5 (brief 08-hearth-h9-jump): the borderless jump entry reads as the
+    // link it looks like, so the forced palette gives it the link colour.
+    'LinkText',
   ]
   const blocks: string[] = []
   let from = 0

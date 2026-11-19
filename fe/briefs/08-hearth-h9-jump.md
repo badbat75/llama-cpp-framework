@@ -114,3 +114,42 @@ LinkText, underlined. 2.4.11 measured by tabbing through the rail at 1280 (desig
 
 The ten buttons' names, order, handler and focus target; the nav's name; the cards; the save bar and
 its scroll padding; the Engine field; every key.
+
+## 5. H9a review (2026-11-19)
+
+**Approved.** Measured on the build of the uncommitted change (`ModelProfilePage.tsx` 854 to 858,
+`index.css` `.jump ul`, `.jump button` and its forced-colours rule), stub `build/ux-review/stub8.py`,
+script `build/ux-review/h9a.js`, in Chromium, Firefox and WebKit at 1280, 960, 480 and 320 px, light
+and dark; "HEAD" is the same page with HEAD's two rules and class put back through the CSSOM.
+
+- **H9a.1 met**: ten `button type="button"`, no `class`, card order; the `nav`'s aria snapshot equals
+  HEAD's in all three engines (`navigation "Model profile sections"`, the same ten names).
+- **H9a.2, H9a.3 met**: `ul` block with a 2px `--line` rule (decorative, 1.21:1 light, 1.39:1 dark);
+  entries 15px `--accent`, underline 1px at 3px offset, no border or fill, no hover change.
+- **H9a.4 met**: text 6.58:1 light, 9.37:1 dark on the page; every entry 32 px high and as wide as
+  the list (286 px at 320, 878 at 1280; the shortest label, "Assets", is 43 px of text), stacked with
+  no gap, so each target is 32 px by the list's width
+  ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)). Keyboard focus: 3px solid ring at 2px
+  offset, `:focus-visible`, no clipping ancestor, inside the viewport at 320 (its left edge 13 px,
+  over the rule); at 1280 the ring spans the 880 px row with the rounded right end (a preference: it
+  reads long beside a short title; H9b's 15rem rail ends it at 1280 and above).
+- **Not colour alone** ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)): the underline, kept
+  in every state and under forced colours, plus the place in a named `nav` list. A button drawn as a
+  link is acceptable here: it moves focus within the page and writes no hash, as an in-page link
+  would, so what it looks like matches what it does (section 0).
+- **Behaviour (H9a.7) met**: click, Enter and Space focus the card's `h3`; its top lands at y 12 and
+  its bottom at 40, the save bar's top at 801 to 835 (clean and dirty form), no other sticky or fixed
+  box; hash and `history.length` unchanged; Back leaves the page as before. The ring shows on the
+  heading after Enter or Space, not after a mouse click (`:focus-visible`, as before).
+- **Height**: the index is 320 px tall at every width (HEAD: 278 at 320, 77 at 1280); the first card
+  moves from y 937 to 987 at 320 (+50) and from 533 to 785 at 1280 (+252). The cost at 1280 is H9b's
+  to remove; at 320 it is small.
+- **H9a.6 met**: no sideways scroll at any width; at 200 % text (Chromium, Firefox) and with
+  [1.4.12](https://www.w3.org/TR/WCAG22/#text-spacing) spacing, entries wrap (up to 7 lines for an
+  injected long title), none clipped, no sideways scroll.
+- **H9a.5 met**: forced colours, Chromium emulation and Firefox's `document_color_use` 2: entries in
+  `LinkText` (rgb(0,0,159) / rgb(255,255,0) / rgb(0,0,238)), underline kept in the same colour, the
+  focus ring visible, the rule forced to `CanvasText` and still drawn (acceptable: decoration).
+- **Motion**: `scroll-behavior` is `auto`; the jump is instant with and without reduced motion.
+- **axe** (WCAG 2.0 to 2.2 A and AA): 0 violations at each width, both themes, forced colours too.
+- **For H9b**: nothing missing from this build; `section` still has the `nav` as a direct child.
