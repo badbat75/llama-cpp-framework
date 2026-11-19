@@ -23,7 +23,27 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   from this session's agents, some inside `AGENTS.md` lines this session also changed). Check
   `git status` before committing and stage only this task's hunks: `git diff -U0 <file>`, keep the
   hunks that are yours, `git apply --cached --unidiff-zero`, then a plain `git commit` of the index.
-- A second session can own `fe/` only (since 2026-11-14): it works from `fe/briefs/` (the bff API
+- Since 2026-11-19 (user) one coordinator runs both sides again: the web UI session handed over after
+  its visual identity, so this session briefs the `designer` for every slice that changes what users
+  see, then the tester and coder on `fe/` as on the crates. The note below is how it worked before.
+- Front-end work, from the web UI session's handover (2026-11-19):
+  - Chain per web UI slice: designer brief (Claude, Opus; it edits only `fe/briefs/` and `fe/DESIGN.md`),
+    tester red, coder green plus `npm --prefix fe run typecheck`, `lint`, `format:check` and `build`
+    (`build` does not type-check the tests), tester rerun, then reviewer and designer review in parallel.
+    Commit `fe/` by path; the tester writes its playbook under `.agents/` despite the brief.
+  - One npm user in `fe/` at a time: never the designer's browsers (UX check) and a Vitest run together.
+  - The real service on 8590 is read-only for agents (user): never submit the real sign-in form; a save,
+    switch or run verb on it needs the user's go-ahead.
+  - A fe scratch copy for mutants needs a sibling `crates` symlink (tests read
+    `crates/core/strings/en_US.toml`) and a `node_modules` symlink.
+  - Timing and geometry come from the designer's real-browser measurement, not from a reader's
+    inference or jsdom (a "cannot happen" 401 on a dirty form was measured happening).
+  - A handler that opens or closes something and then moves focus or scrolls commits the DOM first
+    (`flushSync`): the tests record the DOM when `focus()` is called.
+  - Never accept "mutant equivalent" without the input that shows it.
+  - Templates of every fe prompt used so far: git-ignored `build/oc/`; designer review stubs:
+    `build/ux-review/` (`stub9.py`, a per-route 401 switch `/__r401`).
+- A second session could own `fe/` only (2026-11-14 to 2026-11-19): it worked from `fe/briefs/` (the bff API
   contract `api-contract.md`, the slice briefs) and `fe/DESIGN.md`, commits only `fe/`, and sends every
   change outside `fe/` (bff routes, plan entries, other skills) to the coordinator. A user decision it
   relays is recorded with "(relayed by the web UI session)"; when it changes a requirement, confirm it
