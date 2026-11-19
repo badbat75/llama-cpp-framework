@@ -155,6 +155,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - One `Host` name rule over both families: strip the brackets and `text.parse::<IpAddr>()` covers IPv4 and
   IPv6 (an IPv6 with a zone id parses as no address; `Ipv4Addr` and `Ipv6Addr` each need their own parse).
   `IpAddr::is_loopback()` is `127.0.0.0/8` and `::1`, `is_unspecified()` is `0.0.0.0` and `[::]`.
+- A section essay written as `///` and followed by a blank line and a doc'd item reddens
+  `clippy::empty_line_after_doc_comments` in the tester's `tests/origin.rs` under `--all-targets`. The
+  fix is comment-only: drop the third `/` on every line of the essay (the item's own doc stays `///`).
+  Assert the line count and the prefix of every line in the script, it wrote nothing when its count was
+  off, and the file was unchanged.
+- A pub builder over 7 arguments needs the repo's bare `#[allow(clippy::too_many_arguments)]` above the
+  `pub fn` (`model_profiles.rs`), production carries no other mark for it. A policy read inside the
+  middleware: call the source BEFORE taking the `Mutex` of the list, so the lock never spans the read.
 - An axum handler here takes `Path(id)` first and the `Bytes` last, and an over-cap body is the
   extractor's rejection handed to `origin::body_refusal(&rejection, <fallback key>)`, which answers the 413
   (the cap is the `DefaultBodyLimit` layer in front of the whole router).

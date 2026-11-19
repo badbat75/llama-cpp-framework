@@ -35,6 +35,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - A bookkeeping pin (a log or call COUNT over calls made by earlier pins) can never prove its own red:
   with those pins deleted the count passes vacuously. Report it as green today, deferred to the coder's
   green run.
+- A count pin over a seam the builder also reads (the router's constructor takes the machine's names from
+  the same source): the absolute count reds on the builder's own read. Take `let base = source.asks()`
+  after the builder and assert deltas, and in a loop take the baseline INSIDE it, so one case's red names
+  that case. State in a comment that the builder's read is the coder's choice, so a pin never forces it.
+- Write each criterion of a guard as its own test, and expect a split: a rule that is an ABSENCE ("with
+  `[Bff] Hosts` set, nothing is re-read", "`localhost` never asks the machine") is green on day one, and
+  the rule that adds an action ("re-read on an unknown name") is the red. Report each test's day-one state
+  by name, and say which green tests are guards, not reds the coder needs.
 - A prove loop rewrites the real source while it runs: run nothing else with cargo on that crate
   meanwhile (the target-dir lock serialises, and a concurrent run judges the scratch copy).
 - `cargo test -p <crate>` runs no target when one target fails to compile (`--no-fail-fast` only unrolls
@@ -159,6 +167,11 @@ Lessons only: the rules are in `AGENTS.md`.
   reads as if the signature change already happened. A delegation that silently DROPS the new parameter
   is the red, not the stub: write `unimplemented!()`, name the signature in the report so the coder knows
   what to land, and add the parameter to the test's call sites (the tester's), not to the callee.
+- The exception: when a criterion is a NEW action beside an ABSENCE rule, a stub that reproduces today's
+  behaviour exactly (a guard seam that reads its source once, at construction, and never again) gives the
+  coder the full map, the exact red of the action and the green of the absence, with no test that reads as
+  a harness typo. Say in the stub, in the report and in the file header that it is a TEST STUB that models
+  today, and that the coder replaces its body.
 - When the stub takes a parameter, pin it as the constant the code must pass (`const _: fn(&_, &str,
   &str, &[&str]) = ..;`), not as a needle in the body: a source lint drops comments, so a comment naming
   the needle greens. Pin the argument as DATA (a `starts_with("const ...: &str = \"")`-style assert) and

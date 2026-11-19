@@ -972,12 +972,6 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     sign-in stay open. These reads keep not moving the idle deadline, so a page left open still ends its
     session. The fe shows the sign-in page for every place until a session exists (the web UI session's
     part). The About place (item 13) is behind sign-in by the same rule.
-    **Then: the `Host` guard re-reads the machine's names on an unknown name** (user, 2026-11-19). Seen after
-    the reboot of 13:01: `private-ai-bff` started at 13:01:28, the DHCP search domain `bombicci.local`
-    arrived at 13:01:35, and `listen::host_names`, computed once at start, refused `aorus.bombicci.local`
-    with `request-bad-host` until a restart. Done when: a `Host` not in the list makes the guard read the
-    host name and the resolver's search domains again (no `[Bff] Hosts` set) before refusing, the fresh list
-    kept; a name still unknown is refused as today; a test pins a domain that appears after the start.
     **Deploy when the web UI's new visual identity is ready** (user, 2026-11-18): once its last slice is on
     `main` and the web UI session says fe is clean, build and install; that request is the go-ahead for this one
     install.

@@ -76,6 +76,13 @@
 //!   nothing of its own, so `aorus.bombicci.local.` is answered as
 //!   `aorus.bombicci.local` and `localhost.` as `localhost`. A `Host` of only
 //!   dots, or with two of them at the end, names no host and is refused.
+//! - The list of the machine's names is not fixed for the life of the process
+//!   when the administrator set no `[Bff] Hosts`: a `Host` that is not in it
+//!   makes the guard read the machine's facts again (its host name and the
+//!   resolver's search domains) before it refuses, and the list it read
+//!   replaces the one it answers from: a name the machine lost stops being
+//!   answered. Pinned in the last section, through a source of the machine's
+//!   facts the test changes.
 //! - `localhost` and the loopback addresses (`127.0.0.0/8`, `[::1]`) are
 //!   answered when the bff listens on a loopback or an unspecified address
 //!   (`127.0.0.1:8590`, `[::1]:8590`, `0.0.0.0:8590`, `[::]:8590`), and refused
@@ -2777,4 +2784,493 @@ async fn a_guard_refusal_carries_the_framing_and_sniffing_headers() {
         .await;
     over.assert_error(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     over.assert_security_headers();
+}
+
+// ── The machine's names, re-read when a Host is unknown ───────────────
+
+// The rule of PLAN.md 13a, seen on a live machine: the bff started at 13:01:28
+// and the DHCP search domain arrived at 13:01:35, so the list computed at the
+// start had no `bombicci.local` entry and `aorus.bombicci.local` was refused
+// `request-bad-host` until the service was restarted. Pinned here, through a
+// source of the machine's facts the test changes (`pai_bff::HostSource`,
+// handed to `pai_bff::router_with_session_and_host_source`, which stands in
+// for `listen::hostname` and `listen::resolv_conf`):
+// - A `Host` that is not in the list makes the guard read the machine again
+//   before it refuses: a name the machine gains after the start is answered on
+//   the next request, the read, the sign-in and a write alike.
+// - The list the guard read is the one it answers from: a name it learned stays
+//   answered when the machine's facts go back, and answering a name of that
+//   list asks the source for nothing. The read replaces the list, it does not
+//   widen it: a name the machine drops stops being answered once the guard has
+//   re-read for any unknown name.
+// - A name that is never in what the machine answers is refused as today, 403
+//   `request-bad-host`, before the session is read, before the manager is
+//   connected to and before a password is checked; and the source is asked at
+//   most once for each such request, so an attacker's names cannot make the
+//   bff read the machine over and over.
+// - With `[Bff] Hosts` set the administrator's list is the whole list: the
+//   source is never asked, however the machine's facts change, and a name
+//   outside the list is refused.
+// - `localhost`, the loopback addresses and every IP literal are decided by the
+//   listen rule, not by the machine's names: they are answered, and refused at
+//   a LAN-only listen, with no read of the source.
+//
+// What the seam cannot pin: the real host name and `/etc/resolv.conf` (no test
+// reads them, as before). What it does pin is how the guard keeps the fresh
+// list: it replaces the old one.
+
+/// A test's source of the machine's facts: the names a re-read answers, and how
+/// many times the guard asked for them. The closure counts the asks, so a guard
+/// that reads the machine inside a loop, or for a name it already knows, is
+/// told apart from one that reads it once per unknown request.
+#[derive(Clone)]
+struct Source {
+    names: Arc<Mutex<Vec<String>>>,
+    asks: Arc<AtomicUsize>,
+}
+
+impl Source {
+    /// The source as it is at the bff's start.
+    fn new(names: &[&str]) -> Source {
+        Source {
+            names: Arc::new(Mutex::new(names.iter().map(|n| (*n).to_string()).collect())),
+            asks: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// The machine's facts change under the running bff (the search domain
+    /// arrives, a name goes away): what a later read answers.
+    fn set(&self, names: &[&str]) {
+        *self.names.lock().unwrap_or_else(|e| e.into_inner()) =
+            names.iter().map(|n| (*n).to_string()).collect();
+    }
+
+    /// How many times the guard has asked.
+    fn asks(&self) -> usize {
+        self.asks.load(Ordering::SeqCst)
+    }
+
+    /// The closure the router is handed.
+    fn as_source(&self) -> pai_bff::HostSource {
+        let (names, asks) = (self.names.clone(), self.asks.clone());
+        Arc::new(move || {
+            asks.fetch_add(1, Ordering::SeqCst);
+            names.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        })
+    }
+}
+
+/// The app whose `Host` guard has a source of the machine's facts: `fixed` is
+/// the `[Bff] Hosts` of `bff.ini` (the whole list, `Some`), `None` is the
+/// machine's own names, which `source` answers; `listen` is the address the bff
+/// is bound to, which decides whether `localhost` and the loopback addresses
+/// are answered.
+fn app_with_source(fixed: Option<&[&str]>, listen: SocketAddr, source: &Source) -> App {
+    let log = Log::default();
+    let connects = Arc::new(AtomicUsize::new(0));
+    let principals = Principals::default();
+    let state = Arc::new(Mutex::new(false));
+    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let connect: Connect = Arc::new(move |principal: Option<&str>| {
+        c.fetch_add(1, Ordering::SeqCst);
+        p.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
+        Ok(Box::new(FakeManager {
+            state: state.clone(),
+            log: l.clone(),
+        }) as Client)
+    });
+    let clock = FakeClock::new();
+    let auth = Arc::new(FakeAuth {
+        calls: Arc::new(Mutex::new(Vec::new())),
+    });
+    let router = pai_bff::router_with_session_and_host_source(
+        connect,
+        TIMEOUT,
+        auth.clone(),
+        clock.clock(),
+        REVISION_KEY,
+        fixed.map(|hosts| hosts.iter().map(|host| (*host).to_string()).collect()),
+        listen,
+        source.as_source(),
+    );
+    App {
+        router,
+        clock,
+        log,
+        connects,
+        principals,
+        auth,
+    }
+}
+
+impl App {
+    /// How many times the router connected to the manager.
+    fn connects(&self) -> usize {
+        self.connects.load(Ordering::SeqCst)
+    }
+
+    /// The accounts every connect was asked for.
+    fn principals(&self) -> Vec<Option<String>> {
+        principals_of(&self.principals)
+    }
+
+    /// `GET /api/instances` addressed at `host`: the read a page at that name
+    /// does, with the cookie of a live session and no other fetch metadata.
+    async fn read_at(&self, host: &str, cookie: &str) -> Reply {
+        self.ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(cookie),
+            None,
+            None,
+            &host_line(host),
+        )
+        .await
+    }
+
+    /// The instances list of the fixture, the answer a read at an answered name
+    /// carries.
+    fn instances_body(r: &Reply, host: &str) {
+        assert_eq!(
+            r.json(),
+            json!([{"id": "default", "engine": ENGINE, "state": "active"}]),
+            "Host: {host}: {}",
+            r.body
+        );
+    }
+}
+
+/// The bff started before the search domain arrived: `aorus.bombicci.local` is
+/// refused at first, answered once the machine answers that name, and stays
+/// answered after the machine's facts go back. The guard reads the machine once
+/// for the unknown name, and never for a name of the list it kept.
+#[tokio::test]
+async fn a_domain_that_arrives_after_the_start_is_answered() {
+    let source = Source::new(&["aorus", "aorus.local"]);
+    let app = app_with_source(None, addr(LISTEN_LAN), &source);
+    // Whether the router reads the source once to build its own list is the
+    // builder's choice: every count below is measured from here.
+    let base = source.asks();
+    let cookie = app.sign_in().await;
+
+    // Absent at the start: refused, and the refusal follows one read.
+    app.read_at(MACHINE, &cookie).await.assert_bad_host();
+    assert_eq!(
+        source.asks() - base,
+        1,
+        "the guard read the machine once before refusing"
+    );
+
+    // The DHCP search domain arrives.
+    source.set(&["aorus", "aorus.local", MACHINE]);
+
+    // The next request at the name is answered: the read, the sign-in, a
+    // control verb and the boot write, each sent by a page at that name.
+    let named = host_line(MACHINE_HOST);
+    let r = app
+        .ask_raw(
+            Method::GET,
+            "/api/instances",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await;
+    App::instances_body(&r, MACHINE_HOST);
+    app.sign_in_raw(CREDENTIALS, &named).await.assert_ok();
+    app.ask_raw(
+        Method::POST,
+        "/api/instances/default/start",
+        Some(&cookie),
+        None,
+        None,
+        &named,
+    )
+    .await
+    .assert_accepted();
+    let origin = format!("http://{MACHINE_HOST}");
+    app.put_with(
+        "/api/instances/default/boot",
+        &cookie,
+        &[("host", MACHINE_HOST), ("origin", origin.as_str())],
+    )
+    .await
+    .assert_enabled(true);
+
+    // Answering a name the kept list lacked follows one more read, and the
+    // requests at a name of the list the guard kept ask for nothing.
+    assert_eq!(
+        source.asks() - base,
+        2,
+        "the name the machine gained was answered without a read"
+    );
+
+    // The facts go back: the name the guard learned stays answered, from the
+    // list it kept, with no fresh read.
+    source.set(&["aorus", "aorus.local"]);
+    let r = app.read_at(MACHINE_HOST, &cookie).await;
+    App::instances_body(&r, MACHINE_HOST);
+    assert_eq!(
+        source.asks() - base,
+        2,
+        "a learned name must not ask a fresh read"
+    );
+
+    // The name the guard learned is this bff, so the origin rule keeps
+    // deciding: the same name on another port is a page of another web app on
+    // this machine, `request-cross-origin`, not `request-bad-host`.
+    let other = format!("http://{MACHINE}:9999");
+    app.post_with(
+        "/api/instances/default/start",
+        &cookie,
+        &[("host", MACHINE_HOST), ("origin", other.as_str())],
+    )
+    .await
+    .assert_cross_origin();
+    assert_eq!(
+        source.asks() - base,
+        2,
+        "the origin refusal at a known name read the machine"
+    );
+}
+
+/// The re-read REPLACES the list the guard answers from: a name the machine
+/// answered at the start and later drops stops being answered as soon as the
+/// guard has re-read, which any unknown name asks for. One request at an
+/// unknown name reads the machine once, and after it the dropped name is 403
+/// `request-bad-host`, the read and the sign-in alike, with the session, the
+/// manager and the password untouched, each refused request reading the machine
+/// at most once.
+#[tokio::test]
+async fn a_reread_replaces_the_list_a_name_the_machine_dropped_is_refused() {
+    let source = Source::new(&["aorus", "aorus.local", MACHINE]);
+    let app = app_with_source(None, addr(LISTEN_LAN), &source);
+    let base = source.asks();
+    let cookie = app.sign_in().await;
+
+    // The name the machine answered at the start is answered, and answering it
+    // asks the source for nothing.
+    let r = app.read_at(MACHINE_HOST, &cookie).await;
+    App::instances_body(&r, MACHINE_HOST);
+    assert_eq!(source.asks() - base, 0, "an answered name read the machine");
+
+    // The machine's facts drop the name. Nothing re-reads on its own, so the
+    // guard goes on answering from the list it has.
+    source.set(&["aorus", "aorus.local"]);
+    let r = app.read_at(MACHINE_HOST, &cookie).await;
+    App::instances_body(&r, MACHINE_HOST);
+    assert_eq!(
+        source.asks() - base,
+        0,
+        "a name of the list the guard has read the machine"
+    );
+
+    // One request at a name the machine never answers: it follows exactly one
+    // read, and that read's list becomes the list the guard answers from.
+    let (calls, connects, principals, asked) =
+        (app.calls(), app.connects(), app.principals(), app.asked());
+    app.read_at("evil.example", &cookie).await.assert_bad_host();
+    assert_eq!(
+        source.asks() - base,
+        1,
+        "the unknown name did not read the machine exactly once"
+    );
+
+    // The dropped name is refused: the fresh list is the whole list, and a
+    // refused request reads the machine at most once.
+    app.read_at(MACHINE_HOST, &cookie).await.assert_bad_host();
+    app.sign_in_raw(CREDENTIALS, &host_line(MACHINE_HOST))
+        .await
+        .assert_bad_host();
+    assert_eq!(
+        source.asks() - base,
+        3,
+        "the dropped name made the guard read the machine more than once per request"
+    );
+    assert_eq!(app.calls(), calls, "a refused request asked the manager");
+    assert_eq!(app.connects(), connects, "a refused request connected");
+    assert_eq!(
+        app.principals(),
+        principals,
+        "a refused request named a principal"
+    );
+    assert_eq!(app.asked(), asked, "a refused sign-in checked a password");
+
+    // The session of the test's own sign-in is where it was: the guard answered
+    // before the session was read.
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// A name the machine never answers stays refused: a foreign name, the
+/// rebinding's name built on one of ours (its `Origin` and its `Host` line are
+/// both the attacker's, so only the name rule answers), and our own name upper
+/// cased. Each request is refused after exactly one read of the machine, so
+/// unknown names never make the bff read it more than once per request; the
+/// session, the manager and the password are untouched.
+#[tokio::test]
+async fn a_name_that_never_arrives_is_refused_and_asks_once_per_request() {
+    let source = Source::new(&["aorus", "aorus.local"]);
+    let app = app_with_source(None, addr(LISTEN_LAN), &source);
+    let base = source.asks();
+    let cookie = app.sign_in().await;
+    let (calls, connects, principals, asked) =
+        (app.calls(), app.connects(), app.principals(), app.asked());
+
+    for host in [
+        "evil.example",
+        "aorus.bombicci.local",
+        "aorus.bombicci.local.evil.example",
+        "AORUS.BOMBICCI.LOCAL.EVIL.EXAMPLE",
+    ] {
+        let before = source.asks();
+        // The rebinding: `Origin` and `Host` both name this host.
+        app.ask_raw(
+            Method::POST,
+            "/api/instances/default/start",
+            Some(&cookie),
+            None,
+            None,
+            &at_host(host),
+        )
+        .await
+        .assert_bad_host();
+        // The `Host` on its own: `curl`, the CLI, a proxy.
+        app.read_at(host, &cookie).await.assert_bad_host();
+        // The sign-in, so a foreign name answers nothing about a password.
+        app.sign_in_raw(CREDENTIALS, &host_line(host))
+            .await
+            .assert_bad_host();
+        // The refusal follows a read of the machine, and the three requests
+        // read it at most once each: unknown names never make the bff read the
+        // machine more often than it answers them.
+        let reads = source.asks() - before;
+        assert!(
+            (1..=3).contains(&reads),
+            "Host: {host}: the machine was read {reads} times for three requests"
+        );
+    }
+    assert!(
+        source.asks() - base <= 12,
+        "the machine was read {} times for twelve unknown requests",
+        source.asks() - base
+    );
+    assert_eq!(app.calls(), calls, "a refused request asked the manager");
+    assert_eq!(app.connects(), connects, "a refused request connected");
+    assert_eq!(
+        app.principals(),
+        principals,
+        "a refused request named a principal"
+    );
+    assert_eq!(app.asked(), asked, "a refused sign-in checked a password");
+
+    // The session of the test's own sign-in is where it was: the guard answered
+    // before the session was read.
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// `[Bff] Hosts` set: the administrator's list is the whole list and the
+/// machine's facts are never read, however they change. A name the source gains
+/// is refused, the machine's automatic names are refused, and the one name of
+/// the list is answered.
+#[tokio::test]
+async fn a_fixed_hosts_list_never_reads_the_machine() {
+    let source = Source::new(&["aorus", "aorus.local"]);
+    let app = app_with_source(Some(&[MACHINE]), addr(LISTEN_LAN), &source);
+    let base = source.asks();
+    let cookie = app.sign_in().await;
+
+    // The one name of the list, answered.
+    let r = app.read_at(MACHINE_HOST, &cookie).await;
+    App::instances_body(&r, MACHINE_HOST);
+    let (calls, connects, principals, asked) =
+        (app.calls(), app.connects(), app.principals(), app.asked());
+
+    // The machine's facts grow: the list does not move with them.
+    source.set(&["aorus", "aorus.local", "aorus.lan", MACHINE]);
+    for host in ["aorus", "aorus.local", "aorus.lan", "evil.example"] {
+        app.read_at(host, &cookie).await.assert_bad_host();
+        app.sign_in_raw(CREDENTIALS, &host_line(host))
+            .await
+            .assert_bad_host();
+    }
+    assert_eq!(source.asks() - base, 0, "the fixed list read the machine");
+    assert_eq!(app.calls(), calls, "a refused request asked the manager");
+    assert_eq!(app.connects(), connects, "a refused request connected");
+    assert_eq!(
+        app.principals(),
+        principals,
+        "a refused request named a principal"
+    );
+    assert_eq!(app.asked(), asked, "a refused sign-in checked a password");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// `localhost`, the loopback addresses and every IP literal are answered by the
+/// listen rule, not by the machine's names: at a wildcard listen they are all
+/// answered, reads and writes alike, and the source is asked for nothing. At a
+/// LAN-only listen the loopback names are refused, and that refusal is not an
+/// unknown name: the source is asked for nothing there either.
+#[tokio::test]
+async fn localhost_and_the_addresses_ask_the_machine_for_nothing() {
+    let source = Source::new(&["aorus", "aorus.local"]);
+    let app = app_with_source(None, addr(LISTEN_WILDCARD), &source);
+    let base = source.asks();
+    let cookie = app.sign_in().await;
+    for host in [
+        "localhost",
+        "LOCALHOST:8590",
+        "localhost.",
+        "127.0.0.1:8590",
+        "[::1]:8590",
+        "192.168.1.10:8590",
+        "0.0.0.0:8590",
+        "[fe80::1]",
+    ] {
+        let named = host_line(host);
+        let r = app.read_at(host, &cookie).await;
+        App::instances_body(&r, host);
+        app.ask_raw(
+            Method::POST,
+            "/api/instances/default/stop",
+            Some(&cookie),
+            None,
+            None,
+            &named,
+        )
+        .await
+        .assert_accepted();
+        app.sign_in_raw(CREDENTIALS, &named).await.assert_ok();
+    }
+    assert_eq!(
+        source.asks() - base,
+        0,
+        "an answered address read the machine"
+    );
+
+    // Bound to one LAN address: the loopback is not served, so those names are
+    // refused, and the guard reads the machine for nothing.
+    let lan = Source::new(&["aorus", "aorus.local"]);
+    let app = app_with_source(None, addr(LISTEN_LAN), &lan);
+    let lan_base = lan.asks();
+    let cookie = app.sign_in().await;
+    for host in ["localhost", "localhost.", "127.0.0.1:8590", "[::1]"] {
+        app.read_at(host, &cookie).await.assert_bad_host();
+    }
+    assert_eq!(
+        lan.asks() - lan_base,
+        0,
+        "a loopback refusal read the machine"
+    );
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
 }

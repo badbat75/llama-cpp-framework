@@ -41,7 +41,13 @@
 //! hands the guard (`listen::host_names`: the host name, that name under
 //! `.local` and under each `resolv.conf` search domain, or the `[Bff] Hosts`
 //! of `bff.ini` when that sets them), or an IP literal (an IPv4 address, an
-//! IPv6 one in brackets, each with an optional port), or `localhost`. One
+//! IPv6 one in brackets, each with an optional port), or `localhost`. The
+//! machine's names move while the service runs: a search domain arrives with
+//! DHCP, a host name is renamed. So a `Host` that is none of the names, and is
+//! not `localhost` and not an address, makes the guard read the machine once
+//! and answer from what it reads, keeping that list; a name that stays unknown
+//! is refused. With `[Bff] Hosts` set the administrator's list is the whole
+//! list and the machine is never read. One
 //! trailing dot on the name is the root of the DNS tree and names nothing of
 //! its own, so the guard reads `aorus.bombicci.local.` as
 //! `aorus.bombicci.local` and `localhost.` as `localhost`; it takes one dot,
@@ -81,7 +87,7 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::Response;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// The cap on a body the bff reads: one layer of this many bytes stands in
 /// front of every route (`lib.rs`), so a body of exactly this size is read and
@@ -111,7 +117,7 @@ fn bad_host() -> Response {
 }
 
 /// What the `Host` guard answers as this bff: the machine's names and the
-/// address the bff is bound to. The service builds it once at its start
+/// address the bff is bound to. The service builds it at its start
 /// (`listen::host_names`, `listen::config_path`), a test hands it the names and
 /// the listen it wants, so no test reads the real host name,
 /// `/etc/resolv.conf` or `bff.ini`. Cloned into the guard's state, shared
@@ -121,21 +127,53 @@ pub(crate) struct HostPolicy {
     /// The names answered beside `localhost` and the addresses, lowercase as
     /// `listen::host_names` gives them, none with a trailing dot: the guard
     /// reads the `Host` line in any case and takes its trailing dot off. A
-    /// router that is handed none answers only `localhost` (under the listen
-    /// rule) and the addresses.
-    names: Arc<Vec<String>>,
+    /// policy handed none answers only `localhost` (under the listen rule) and
+    /// the addresses. Kept behind a lock because a `Host` the list does not
+    /// carry replaces it with what the machine answers, and the machine's names
+    /// move while the service runs.
+    names: Arc<Mutex<Vec<String>>>,
     /// The address the bff listens on, which decides whether `localhost` and
     /// the loopback addresses are answered.
     listen: SocketAddr,
+    /// The machine's names, read on demand: asked once for a `Host` that is
+    /// none of the names, not `localhost` and not an address. `None` when the
+    /// list is the whole list, the `[Bff] Hosts` of `bff.ini` or a test's
+    /// names: then the machine is never read.
+    source: Option<HostSource>,
 }
+
+/// The machine's names, read on demand: the service hands the host name and
+/// the resolver's search domains, a test hands facts it can change.
+pub type HostSource = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
 
 impl HostPolicy {
     /// The policy of one router: `names` beside `localhost` and the addresses,
-    /// and `listen`, the address the bff is bound to.
+    /// and `listen`, the address the bff is bound to. The list is the whole
+    /// list: the machine is never read for it.
     pub(crate) fn new(names: Vec<String>, listen: SocketAddr) -> Self {
         Self {
-            names: Arc::new(names),
+            names: Arc::new(Mutex::new(names)),
             listen,
+            source: None,
+        }
+    }
+
+    /// The policy of one router answering the machine's names: `hosts` is the
+    /// `[Bff] Hosts` of `bff.ini`, the whole list when it sets one, and then
+    /// `source` is never asked; `None` starts from what `source` answers and
+    /// keeps it open to a re-read.
+    pub(crate) fn with_source(
+        listen: SocketAddr,
+        hosts: Option<Vec<String>>,
+        source: HostSource,
+    ) -> Self {
+        match hosts {
+            Some(hosts) => Self::new(hosts, listen),
+            None => Self {
+                names: Arc::new(Mutex::new(source())),
+                listen,
+                source: Some(source),
+            },
         }
     }
 
@@ -151,6 +189,63 @@ impl HostPolicy {
     /// `[::]`), so it is reachable at every address of the machine.
     fn serves_loopback(&self) -> bool {
         self.listen.ip().is_loopback() || self.listen.ip().is_unspecified()
+    }
+
+    /// Whether `name` is one of the names the policy answers from now.
+    fn knows(&self, name: &str) -> bool {
+        self.names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|listed| listed == name)
+    }
+
+    /// The machine's names, read again: the read answers the list, which
+    /// becomes the list the guard answers from, and whether `name` is in it is
+    /// the answer. Asked at most once per request, and never when the policy
+    /// has no source.
+    fn reread(&self, name: &str) -> bool {
+        let Some(source) = &self.source else {
+            return false;
+        };
+        let fresh = source();
+        let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        *names = fresh;
+        names.iter().any(|listed| listed == name)
+    }
+
+    /// Whether the host of a `Host` line, lowercased, is a name this bff answers
+    /// as: one of the machine's names, an IP literal (an IPv4 address, an IPv6 one
+    /// written in brackets), or `localhost`, each read with one trailing dot
+    /// removed: that dot is the root of the DNS tree and names nothing of its own,
+    /// so `aorus.bombicci.local.` is the name `aorus.bombicci.local` and
+    /// `localhost.` is `localhost`. One dot is all the rule takes off, so `.` and
+    /// `..` and a name with two of them at the end name no host and are refused:
+    /// the list holds no entry with a trailing dot (`listen::host_names`).
+    /// `localhost` and a loopback address are answered only where the listen
+    /// serves the loopback: the bff bound to one LAN address is not reachable
+    /// there. Every other address is answered whatever the listen, the bff is
+    /// where the address says it is. A name that is in none of that makes the
+    /// guard read the machine once, and the name is answered when the fresh list
+    /// carries it: the machine's names move while the service runs, a search
+    /// domain arriving after the start. Any name that stays unknown is a page
+    /// that believes it sits here while the name resolves to this machine.
+    fn is_our_name(&self, host: &str) -> bool {
+        let name = host.strip_suffix('.').unwrap_or(host);
+        if self.knows(name) {
+            return true;
+        }
+        match as_address(name) {
+            Some(address) => !address.is_loopback() || self.serves_loopback(),
+            // Not an address: `localhost`, which stands for the loopback, and
+            // any other name, which the machine may have gained.
+            None => {
+                if name == "localhost" {
+                    return self.serves_loopback();
+                }
+                self.reread(name)
+            }
+        }
     }
 }
 
@@ -256,34 +351,9 @@ fn is_our_host(headers: &HeaderMap, policy: &HostPolicy) -> bool {
             .ok()
             .map(|text| text.to_ascii_lowercase())
             .and_then(|text| host_and_port(&text, OURS))
-            .is_some_and(|(host, _)| is_our_name(&host, policy)),
+            .is_some_and(|(host, _)| policy.is_our_name(&host)),
         // Two `Host` lines name two hosts, at least one of them not ours.
         (Some(_), Some(_)) => false,
-    }
-}
-
-/// Whether the host of a `Host` line, lowercased, is a name this bff answers
-/// as: one of the machine's names, an IP literal (an IPv4 address, an IPv6 one
-/// written in brackets), or `localhost`, each read with one trailing dot
-/// removed: that dot is the root of the DNS tree and names nothing of its own,
-/// so `aorus.bombicci.local.` is the name `aorus.bombicci.local` and
-/// `localhost.` is `localhost`. One dot is all the rule takes off, so `.` and
-/// `..` and a name with two of them at the end name no host and are refused:
-/// the list holds no entry with a trailing dot (`listen::host_names`).
-/// `localhost` and a loopback address are answered only where the listen
-/// serves the loopback: the bff bound to one LAN address is not reachable
-/// there. Every other address is answered whatever the listen, the bff is
-/// where the address says it is. Any other name is a page that believes it
-/// sits here while the name resolves to this machine.
-fn is_our_name(host: &str, policy: &HostPolicy) -> bool {
-    let name = host.strip_suffix('.').unwrap_or(host);
-    if policy.names.iter().any(|listed| listed == name) {
-        return true;
-    }
-    match as_address(name) {
-        Some(address) => !address.is_loopback() || policy.serves_loopback(),
-        // Not an address: only `localhost`, which stands for the loopback.
-        None => name == "localhost" && policy.serves_loopback(),
     }
 }
 

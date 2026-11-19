@@ -12,6 +12,10 @@ pub mod session;
 
 use pai_core::client::ClientError;
 
+/// The machine's names as the `Host` guard reads them on demand: the seam of a
+/// bff whose guard keeps up with the machine (`origin::HostSource`).
+pub use origin::HostSource;
+
 /// A connection to the manager, as the bff asks it.
 pub type Client = Box<dyn pai_core::client::ManagerClient + Send + Sync>;
 
@@ -54,19 +58,23 @@ pub fn router() -> axum::Router {
 
 /// The routes of [`router`], at the address the service is bound to: the
 /// revision secret drawn from the OS here, and the names the `Host` guard
-/// answers beside `localhost` and the addresses read from this machine at its
-/// start, from its host name and the search domains of its resolver
-/// configuration, or the `[Bff] Hosts` of `bff.ini` when that sets them
-/// (`listen::host_names`). The error is the OS's random source: the bff must
-/// not start without a secret, a secret fixed in the code would let anyone who
-/// reads the binary check a guess about a file they are not allowed to read.
+/// answers beside `localhost` and the addresses: the `[Bff] Hosts` of
+/// `bff.ini` when that sets them, the whole list, and otherwise this machine's
+/// names, read from its host name and the search domains of its resolver
+/// configuration (`listen::host_names`), which the guard reads again when a
+/// `Host` asks a name it does not carry. The error is the OS's random source:
+/// the bff must not start without a secret, a secret fixed in the code would
+/// let anyone who reads the binary check a guess about a file they are not
+/// allowed to read.
 pub fn try_router_at(listen: std::net::SocketAddr) -> Result<axum::Router, std::io::Error> {
-    let names = listen::host_names(
-        &listen::hostname(),
-        &listen::resolv_conf(),
-        listen::load_hosts(&listen::config_path()).as_deref(),
-    );
-    system_router(origin::HostPolicy::new(names, listen))
+    let hosts = listen::load_hosts(&listen::config_path());
+    let fixed = hosts
+        .as_deref()
+        .map(|hosts| listen::host_names(&listen::hostname(), &listen::resolv_conf(), Some(hosts)));
+    let source: origin::HostSource = std::sync::Arc::new(|| {
+        listen::host_names(&listen::hostname(), &listen::resolv_conf(), None)
+    });
+    system_router(origin::HostPolicy::with_source(listen, fixed, source))
 }
 
 /// The routes of [`router`], as [`try_router_at`] builds them with no name of
@@ -294,11 +302,10 @@ fn router_with_policy(
 }
 
 /// `router_with_session` with the names the `Host` guard answers beside
-/// `localhost` and the IP literals: this machine's names, computed once at the
-/// bff's start (`listen::host_names`), and the `[Bff] Hosts` of its config
-/// file (`listen::parse_hosts`) when that sets them; and with `listen`, the
-/// address the bff is bound to, which decides whether `localhost` and the
-/// loopback addresses are answered.
+/// `localhost` and the IP literals: the whole list, as the `[Bff] Hosts` of the
+/// config file gives it, so the guard has no source to re-read; and with
+/// `listen`, the address the bff is bound to, which decides whether `localhost`
+/// and the loopback addresses are answered.
 pub fn router_with_session_and_hosts(
     connect: Connect,
     timeout: std::time::Duration,
@@ -316,6 +323,33 @@ pub fn router_with_session_and_hosts(
         clock,
         key,
         origin::HostPolicy::new(hosts, listen),
+    )
+}
+
+/// `router_with_session_and_hosts` with a source for the machine's names, so a
+/// test can change what the machine answers. `hosts` is the `[Bff] Hosts` of
+/// `bff.ini` when it sets them, the whole list, and then `source` is never
+/// asked; `None` is the machine's own names, which `source` answers and the
+/// guard re-reads for a `Host` it does not carry.
+#[allow(clippy::too_many_arguments)]
+pub fn router_with_session_and_host_source(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    hosts: Option<Vec<String>>,
+    listen: std::net::SocketAddr,
+    source: origin::HostSource,
+) -> axum::Router {
+    router_with_policy(
+        connect,
+        timeout,
+        timeout,
+        auth,
+        clock,
+        key,
+        origin::HostPolicy::with_source(listen, hosts, source),
     )
 }
 
