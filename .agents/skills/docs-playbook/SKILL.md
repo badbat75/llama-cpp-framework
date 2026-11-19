@@ -152,9 +152,24 @@ Lessons only: the rules are in `AGENTS.md`.
   and false since: not ours, report it). The cookie binds to the host, never to a port (`session.rs`
   sets no `Domain`), and the guard's 403 is `request-bad-host`, the cross-origin one
   `request-cross-origin` (`origin.rs`): both named in `crates/core/strings/cli.toml`, which no longer
-  has `bff-listen-not-loopback`.
+  `bff-listen-not-loopback`.
+- The `Host` guard's names are NOT read only at the start (42e5c23): with no `[Bff] Hosts`, a `Host` in
+  none of them, not `localhost` and not an address, makes the guard read the host name and the
+  resolver's search domains once and replace its list (`origin.rs` `reread`, the source from
+  `lib.rs` `try_router_at`); a `[Bff] Hosts` list is fixed and never re-read. So a sentence saying the
+  names are "read at the bff's start" is stale: grep `start` in that paragraph of
+  `crates/bff/README.md` ("Running it"). Its builders name the difference:
+  `router_with_session_and_hosts` is a fixed list, `..._and_host_source` a machine the test changes.
+- The estimate's inputs moved to `pai-core` (1694064): `pai_core::gguf_shape` (`parse_header`,
+  `read_local_header`, `local_shape`, `shape_of`, `kv_per_token`, `GPU_RESERVE`, `REF_CTX`,
+  `MAX_HEADER`) and `pai_core::devices` (`parse`, `DeviceOption`). `pai-app`'s `hf_fit.rs` and
+  `devices.rs` re-export every name, so a doc naming those modules for the arithmetic is still true;
+  a source-map row that says the file HOLDS the parser is not: name the crate that does. The rows are
+  in `crates/config/README.md`'s source layout, and `ARCHITECTURE.md` (the memory-check record's
+  "`hf_fit`'s `GPU_RESERVE`", "`hf_fit::local_shape`", its "move from `pai-app` to `pai-core`"
+  future tense, and "exists in `pai-app` ... which the manager does not link") is the architect's.
 - The bff suites and what reaches them: `tests/model_profile_save.rs` (47), `tests/model_profile_read.rs` (32),
-  `tests/listen.rs` (17), `tests/origin.rs` (35), and `src/tests/model_profile_body.rs` (24), a **lib** test:
+  `tests/listen.rs` (17), `tests/origin.rs` (40 since 42e5c23), and `src/tests/model_profile_body.rs` (24), a **lib** test:
   `cargo test -p pai-bff --lib` reaches it, a `--test <name>` flag does not. The 5 s reads and the 15 s
   write of the save are counted from the request (`save` takes `write_timeout.saturating_sub(elapsed)`).
 - `tools/site` builds pages from `docs/` only (`tools/site/src/main.rs`), so a change to the root

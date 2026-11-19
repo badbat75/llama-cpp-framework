@@ -71,12 +71,20 @@ Listen = 127.0.0.1:8590
 
 **The name a request is addressed at is checked on every request**, the reads and the sign-in
 included (`origin.rs` `guard`), and a `Host` line that is absent is answered (HTTP/1.0 sends none).
-It names this bff when it is one of the machine's names, read at the bff's start (1aac8e1, c919ccd):
-its host name (`gethostname(2)`; on Windows `GetComputerNameExW`, type-checked only), `<name>.local`,
-and `<name>.<domain>` for each `search`/`domain` line of `/etc/resolv.conf`; `[Bff] Hosts`,
-comma-separated, replaces those when it names at least one name. A call of `listen::load_hosts`
-reads it, and a `bff.ini` that cannot be read is no refusal there: the machine's names stand, and
-`load` is the call that reports the file. Beside the names: any IP literal (an IPv4 address, an IPv6
+It names this bff when it is one of the machine's names (1aac8e1, c919ccd): its host name
+(`gethostname(2)`; on Windows `GetComputerNameExW`, type-checked only), `<name>.local`, and
+`<name>.<domain>` for each `search`/`domain` line of `/etc/resolv.conf`; `[Bff] Hosts`,
+comma-separated, replaces those when it names at least one name. The names are read at the bff's
+start and, when `[Bff] Hosts` sets none, again on demand (42e5c23): a `Host` that is in none of the
+names and is not `localhost` and not an address makes the guard read the host name and the
+resolver's search domains once (`lib.rs` `try_router_at`'s source, no lock held across the read),
+replace its list with the answer and answer the name when the fresh list carries it, so a search
+domain that arrives with DHCP after the start is served without a restart; a name that stays
+unknown is refused, and the machine is asked once per request. `localhost`, an IP literal and a
+name already in the list ask it nothing. A `[Bff] Hosts` list is the whole list: the machine is
+never read again. A call of `listen::load_hosts` reads it, and a `bff.ini` that cannot be read is
+no refusal there: the machine's names stand, and `load` is the call that reports the file.
+Beside the names: any IP literal (an IPv4 address, an IPv6
 one in brackets, a zone id is no address), `localhost` and the loopback addresses (`127.0.0.0/8`,
 `[::1]`) only when the listen serves the loopback, bound to a loopback address or to the wildcard,
 never when bound to one LAN address. Matches are exact, in any letter case, one trailing dot ignored
@@ -578,8 +586,9 @@ its own in `src/tests/model_profile_body.rs`: 24 tests, pinning the body's shape
 set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
 edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
 2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test model_profile_save --lib`). The listen
-address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (35), green the
-same day on that tree (`cargo test -p pai-bff --test listen --test origin`); the hand check of a
+address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (40), rerun
+green 2026-11-19 on the tree at 42e5c23, the guard's re-read of the machine's names included
+(`cargo test -p pai-bff --test listen --test origin`); the hand check of a
 `0.0.0.0` listen above predates them. The `; url =`
 reader moved with it, into `pai-core`, and its two tests went too
 (`cargo test -p pai-core -- project_url`). In the list and the switch suites: the list
@@ -688,7 +697,10 @@ handed in and no manager; `tests/listen.rs` reads `Listen` and `Hosts` from an I
 and builds the machine's names from a host name and a `resolv.conf` fixture, never the real host name
 nor the real `/etc/resolv.conf`, and `tests/origin.rs` drives the `Host` guard and the payload cap
 through `router_with_session` and `router_with_session_and_hosts`
-(the machine's names) with the same fake manager;
+(a name list the test hands, the whole list, as `[Bff] Hosts` gives it) with the same fake manager,
+and the re-read of the machine's names through `router_with_session_and_host_source`, whose source
+the test changes (`a_domain_that_arrives_after_the_start_is_answered`,
+`a_fixed_hosts_list_never_reads_the_machine`);
 `tests/pai_bff_binary.rs` runs the binary with
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
