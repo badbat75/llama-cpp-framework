@@ -4,17 +4,24 @@ Renders the built web UI (`fe/dist`) against a stub bff and, for every browser
 that starts, at 1280 and 320 px, in light and dark, reads each page with
 [axe-core](https://github.com/dequelabs/axe-core) (the `wcag2a`, `wcag2aa`,
 `wcag21aa`, `wcag22aa` tags) and compares `scrollWidth` with the viewport. The
-states: Overview signed out, the sign-in page, Overview signed in, the instance
-page with the Server form, the Model profiles list, a model profile page that is there, a
-model profile page that is not. Each state names an `expect`: the selectors, with the
-text they carry, only that state shows. The page is waited for up to 5 s, so a
-blank page, a page still loading, an error banner or the wrong route is reported
-as `not rendered` and not read as a clean page. Once per browser the check also
-proves the dark colour scheme changes the page (the computed background of
-`body` must differ from the light one).
+states: the sign-in page at the home address, a protected address that shows
+the sign-in form with the notice saying why, the sign-in route, Overview signed
+in, Overview with the tiles of four instances, the instance page with the Server
+form, the Model profiles list, a model profile page that is there, the same page
+with its jump list and its Assets card opened, a model profile page that is not.
+Each state names an `expect`: the selectors, with the text they carry, only that
+state shows; a state may also name a `click`, the selectors to click in order
+once it has rendered, each one only where it is visible and then awaited open
+(`aria-expanded="true"`), so the page is read at rest with the disclosures
+done. The page is waited for up to 5 s, so a blank page, a page still loading,
+an error banner or the wrong route is reported as `not rendered` and not read as
+a clean page. Once per browser the check also proves the dark colour scheme
+changes the page (the computed background of `body` must differ from the light
+one).
 
-On the three signed-in states that show the theme button (Overview, the
-instance page, a model profile page) the run is repeated with a theme choice
+On the three signed-in states listed in `CHOICE_STATES` (Overview, the
+instance page, a model profile page: the Overview of tiles and the opened model
+profile page are not among them) the run is repeated with a theme choice
 stored in `localStorage` (`pai-theme`) before the page opens, always the
 opposite of the context's scheme: the page must show the stored choice, with
 `data-theme` on `<html>`, `aria-pressed` on `.theme-switch` and the computed
@@ -28,9 +35,9 @@ foreign server on a fixed port. A stub that exits, errors, prints no port or
 stays silent for 5 s stops the run at once with its own message and exit 1.
 
 One line per failing state (browser, width, theme, state, the axe rule ids, the
-overflow, `not rendered`, or what a stored choice left unseen; the theme of a
-stored pass is tagged `light+dark`), then a summary line naming the browsers
-that ran.
+overflow, `not rendered`, a `click` that never opened, or what a stored choice
+left unseen; the theme of a stored pass is tagged `light+dark`), then a summary
+line naming the browsers that ran.
 Exit 0 with nothing failing, 1 otherwise. A browser that does not start is
 reported and skipped: the check still runs on the others and a skipped browser
 is no failure. When no browser starts, nothing has been checked: the run says
@@ -41,9 +48,13 @@ check uses the global `fetch`.
 
 - Not the real bff, the manager, a server.ini, a model: `stub.py` answers the
   API routes with fixed shapes (its states are set with `GET /__set?name=value`).
+  Signed out (`session=out`) it answers 401 `session-required` on every `/api/`
+  path, `/api/session` included, so a signed-out page can only be a sign-in one.
 - No screen reader: axe reads the DOM, it does not hear the page.
-- Pages at rest only: no click, no typing, no save, no focus walk, no busy,
-  error or long-request shape beyond the two model profile answers.
+- Pages at rest only: the only clicks are the `click` list of a state, today the
+  two disclosures of the opened model profile page. No typing, no save, no focus
+  walk, no busy, error or long-request shape beyond the two model profile
+  answers.
 - Not the layout's quality: the overflow check only says a page is wider than
   the viewport.
 
@@ -72,10 +83,13 @@ npm --prefix fe/ux run check
 
 ## Adding a state
 
-Add a line to `STATES` in `check.js`: the stub's `/__set` query, the hash route
-and the `expect` (the selectors, with their text, that only that state shows:
+Add a line to `STATES` in `check.js`: the stub's `/__set` query, the hash route,
+the `expect` (the selectors, with their text, that only that state shows:
 `check.js` reads the words from `fe/src/strings/en_US.json`, the rest are the
-stub's data). A state whose marker never appears is `not rendered`. The stub's
-answers live in `stub.py` (`STATE` for the names it sets, `MODEL_PROFILES`,
+stub's data; one with a `count` is rendered when the list has that many) and,
+for a page with a disclosure to open, the `click` list. The check sets
+`list=one` before the state's own query, so a state that wants the many tiles
+asks for them itself. A state whose marker never appears is `not rendered`. The
+stub's answers live in `stub.py` (`STATE` for the names it sets, `MODEL_PROFILES`,
 `MODEL_PROFILE_DOC`, `SERVER_DOC` for the bodies); a route the pages read that
 `stub.py` does not answer goes there too.
