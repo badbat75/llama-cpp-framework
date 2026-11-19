@@ -35,7 +35,7 @@ only an administrator can be (section 3).
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
-| Overview | `#/` | Framework version; the instances with engine and state, each a link | (none; the footer status) | anyone | 1a (moves today's page) |
+| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | anyone (Start at boot: signed in) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its first field the engine (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
@@ -70,7 +70,8 @@ Decided with the user on 2026-11-14.
 - **Instances** belong to an engine (the service `llama.cpp@<id>`). The route uses the bff's instance
   id (`#/instances/default`, as `/api/instances/{id}/...`). The page shows the id as the heading and
   "`<engine>` instance" under it: the engine is a fact about the instance, not a control.
-- The Overview's table gets an Engine column only when the instances span two or more engines.
+- The Overview's tiles show an engine line ("`<engine>` instance") only when the instances span two or
+  more engines.
 - **Model profiles** are one mixed list for every engine. Each model profile has an engine, chosen
   from the **available engines** the bff lists (today only llama.cpp). A model profile's engine is the
   engine whose model profile file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
@@ -439,7 +440,24 @@ Each is one React component, reused by every page.
   ([1.4.1 Use of Color](https://www.w3.org/TR/WCAG22/#use-of-color)). The shape is `aria-hidden`; the
   text is the state's label (`instance-state-*`). A badge kept current by polling is not a live
   region: changes nobody asked for are shown, not announced; the outcome of the user's own action
-  is announced by its status line (Action feedback) **(preference)**.
+  is announced by its status line (Action feedback) **(preference)**. Under forced colours the
+  shape opts out of the forced palette (`forced-color-adjust: none`) and paints itself in
+  `CanvasText`, so the five shapes stay distinct in the user's own colours
+  ([CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop);
+  H6a.10, measured in Chromium emulation and Firefox's forced colours).
+- **Tile** (the Overview's instances, H6a and H6b): a `ul.tiles` of `li.tile` cards in a grid
+  (three across at 1280, two at 960, one at 480 and below; tiles of a row the same height), in the
+  manager's order. Each tile: a head with the id as the link to the instance page (at least 24 px
+  each way, [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)) and its State badge, which
+  wraps under the id when the row is narrow; the engine line when it tells instances apart; and for
+  a signed-in visitor a `dl.tile-facts` as the last child, one `div` per fact (`dt` in `--muted`,
+  `dd` at weight 600 with no margin, label and value at the two ends, wrapping onto two lines when
+  narrow, a 1px `--line` hairline above as decoration). Today the one fact is Start at boot
+  ("On" / "Off", words, never colour alone), read once per tile when it mounts; no row while the
+  read is pending or after any failure, and nothing announced when rows appear. Rows arriving after
+  the list grow the tiles by one row (accepted: H6b review). Nothing in a tile takes focus but the
+  link. Screen readers hear list, item, link, the state, the engine line, then term and definition
+  ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
 - **Table**: a native `<table>` with `<th scope="col">` headers; a link in the first cell when the row
   opens a page.
 - **Value list**: settings shown as text, not as controls (a page or card that reads before its

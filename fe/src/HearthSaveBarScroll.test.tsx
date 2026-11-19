@@ -135,8 +135,8 @@ const inside = (range: [number, number]): Rule[] =>
 const insideAll = (ranges: [number, number][]): Rule[] =>
   ranges.flatMap((range) => inside(range))
 
-// Every block written with this at-rule header, as [open, end] offsets: there
-// are four @media (forced-colors: active) blocks, so a locator takes all.
+// Every block written with this at-rule header, as [open, end] offsets: the
+// @media (forced-colors: active) blocks are several, so a locator takes all.
 const atRanges = (needle: string): [number, number][] => {
   const ranges: [number, number][] = []
   let from = 0
@@ -242,12 +242,12 @@ test('H5b.0, as the H5b review corrects it: .session declares justify-content: f
 
 // ── The current entry in forced colours (from the H5b review) ──────────
 
-test('H5b.3 in forced colours: the current entry of the nav (the same three selectors) takes the Highlight fill and the HighlightText label with no colour adjust, inside an existing forced-colours block: the four stay four, as the pressed theme button', () => {
+test('H5b.3 in forced colours: the current entry of the nav (the same three selectors) takes the Highlight fill and the HighlightText label with no colour adjust, inside an existing forced-colours block: the five stay five, as the pressed theme button', () => {
   const blocks = atRanges('@media (forced-colors: active)')
   expect(
     blocks.length,
-    'the four forced-colours blocks of H1a, H2a.6, H2a and H2b: the new rule joins one of them, it does not open a fifth (section 5: the existing forced-colours blocks do not move)',
-  ).toBe(4)
+    'the forced-colours blocks of H1a, H2a.6, H2a and H6a.10: the new rule joins one of them, it opens no sixth (section 5: the existing forced-colours blocks do not move)',
+  ).toBe(5)
   const rules = insideAll(blocks).filter((r) =>
     r.compact.includes("[aria-current='page']"),
   )

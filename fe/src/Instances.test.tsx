@@ -45,6 +45,10 @@ async function tileTexts(): Promise<string[][]> {
 /** No instances list in main: what every state that is not the list shows. */
 function noList(what?: string): void {
   expect(within(screen.getByRole('main')).queryByRole('list'), what).toBeNull()
+  expect(
+    within(screen.getByRole('main')).queryByRole('table'),
+    'and no table either: the table of 1a.16 is gone, the instances are tiles (H6a.2)',
+  ).toBeNull()
 }
 
 // ── Failure paths first ─────────────────────────────────────────────────
@@ -136,6 +140,10 @@ test('1a.16: the Overview has its h1, the version line and the instances section
     version.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy()
   await tiles()
+  expect(
+    within(main).queryByRole('table'),
+    'the instances of the Overview are a list of tiles, not a table (H6a.2)',
+  ).toBeNull()
   const init = bff.to('GET', '/api/instances')
   expect(init.length).toBeGreaterThan(0)
 })

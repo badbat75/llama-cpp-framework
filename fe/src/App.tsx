@@ -478,7 +478,9 @@ function Page({
     return <p role="status">{t('loading')}</p>
   }
   if (route.page === 'overview') {
-    return <Overview store={store} />
+    // The Overview shows to anyone: the boot fact of a tile is the signed-in
+    // page's (08-hearth-h6-overview.md, H6b.1).
+    return <Overview store={store} signedIn={session !== null} />
   }
   if (route.page === 'sign-in') {
     return <SignIn required={false} onSignedIn={onSignedIn} />

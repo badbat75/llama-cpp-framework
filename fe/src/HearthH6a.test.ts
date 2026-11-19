@@ -1,9 +1,9 @@
-// Hearth H6a, the CSS (fe/briefs/08-hearth-h6-overview.md, H6a.5 to H6a.8):
-// the stylesheet text of the tile, pinned as the declarations of the named
-// rules, the way HearthH2b.test.ts reads index.css (jsdom does no layout, and
-// importing a test file would register its tests, so the reader is a local
-// copy: comments dropped, the same rule regex, the same nesting depth, prop()
-// the last value of a property in a block).
+// Hearth H6a, the CSS (fe/briefs/08-hearth-h6-overview.md, H6a.5 to H6a.8 and
+// the H6a.10 follow-up): the stylesheet text of the tile, pinned as the
+// declarations of the named rules, the way HearthH2b.test.ts reads index.css
+// (jsdom does no layout, and importing a test file would register its tests, so
+// the reader is a local copy: comments dropped, the same rule regex, the same
+// nesting depth, prop() the last value of a property in a block).
 //
 // The values are the brief's, written as it writes them. Where the brief names
 // an absence (`border-radius: 18px`, "No `height`") the absence is pinned too:
@@ -223,4 +223,125 @@ test('H6a.8: .badge is the pill of one fill, its text and the shape, and the sha
     for (const [name, value] of decls)
       expect(prop(shape.body, name), `${sel}: ${name}`).toBe(value)
   }
+})
+
+// ── H6a.10 (follow-up): the shapes under forced colours ────────────────────
+
+// [open, end] of every @media (forced-colors: active) block, in file order.
+const forcedRanges = (): Array<[number, number]> => {
+  const out: Array<[number, number]> = []
+  let from = 0
+  for (;;) {
+    const at = CSS.indexOf('@media (forced-colors: active)', from)
+    if (at < 0) return out
+    const end = rangeEnd(at)
+    out.push([at, end])
+    from = end + 1
+  }
+}
+
+// The offset of the brace that closes the block opened at `open`.
+const rangeEnd = (open: number): number => {
+  const start = CSS.indexOf('{', open)
+  if (start < 0) throw new Error(`no block opens at ${open}`)
+  let depth = 0
+  for (let i = start; i < CSS.length; i++) {
+    if (CSS[i] === '{') depth++
+    if (CSS[i] === '}' && --depth === 0) return i
+  }
+  throw new Error(`the block at ${open} is never closed`)
+}
+
+// The rules of a forced-colours block whose selector list is exactly this.
+const forced = (sel: string): Rule[] =>
+  forcedRanges().flatMap(([open, end]) =>
+    RULES.filter(
+      (r) =>
+        r.depth > 0 &&
+        r.at > open &&
+        r.at < end &&
+        r.compact === sel.replace(/ /g, ''),
+    ),
+  )
+
+// The rules of every forced-colours block.
+const inForced = (): Rule[] =>
+  forcedRanges().flatMap(([open, end]) =>
+    RULES.filter((r) => r.depth > 0 && r.at > open && r.at < end),
+  )
+
+// The block, as the brief writes it: five rules, each with its one colour
+// declaration, in system colours.
+const FORCED: Array<[string, string, string]> = [
+  ['.shape', 'forced-color-adjust', 'none'],
+  ['.shape-running', 'background', 'CanvasText'],
+  ['.shape-stopped, .shape-changing', 'border-color', 'CanvasText'],
+  [
+    '.shape-changing',
+    'background',
+    'linear-gradient(90deg, CanvasText 50%, transparent 50%)',
+  ],
+  ['.shape-failed::before, .shape-failed::after', 'background', 'CanvasText'],
+]
+
+for (const [sel, name, want] of FORCED)
+  test(`H6a.10: ${sel} declares ${name} as ${want}, in the block`, () => {
+    const rules = forced(sel)
+    expect(
+      rules.map((r) => r.sel.replace(/\s+/g, ' ')),
+      `${sel}: the shape has exactly one rule in the forced-colours blocks`,
+    ).toHaveLength(1)
+    expect(
+      rules[0].depth,
+      `${sel}: the block sits at the top level: no width media wraps the shapes, and they are not nested in another block`,
+    ).toBe(1)
+    expect(prop(rules[0].body, name), `${sel}: ${name}`).toBe(want)
+    expect(
+      declared(rules[0].body).filter((n) => n === name),
+      `${sel}: ${name} is declared once`,
+    ).toHaveLength(1)
+    expect(
+      prop(rules[0].body, name).includes('var(--'),
+      `${sel}: ${name} is a system colour, not a token of the sheet: the user's forced palette keeps the shape (CSS Color Adjustment 1, 3.2)`,
+    ).toBe(false)
+  })
+
+test('H6a.10: the block colours the five shapes and nothing else, and draws no geometry of its own', () => {
+  const shapes = inForced().filter((r) => r.compact.includes('.shape'))
+  expect(
+    shapes.map((r) => r.sel.replace(/\s+/g, ' ')).sort(),
+    'these five rules and no other name a shape inside a forced-colours block: every shape is covered, and no other cue joins here',
+  ).toEqual(FORCED.map(([sel]) => sel).sort())
+  for (const [sel, decls] of [
+    ['.shape', ['forced-color-adjust']],
+    ['.shape-running', ['background']],
+    ['.shape-stopped, .shape-changing', ['border-color']],
+    ['.shape-changing', ['background']],
+    ['.shape-failed::before, .shape-failed::after', ['background']],
+  ] as [string, string[]][])
+    expect(
+      declared(forced(sel)[0].body),
+      `${sel}: the block overrides the colour and draws nothing: no size, radius, transform, border width or animation joins it (1.4.11, H1a.11)`,
+    ).toEqual(decls)
+})
+
+test('H6a.10: the shapes keep their geometry where it is: no rule moved into the block, none left the sheet', () => {
+  for (const sel of [
+    '.shape',
+    '.shape-running',
+    '.shape-stopped',
+    '.shape-changing',
+    '.shape-failed',
+    '.shape-failed::after',
+  ])
+    expect(
+      RULES.filter((r) => r.compact === sel.replace(/ /g, '')).map(
+        (r) => r.depth,
+      ),
+      `${sel}: the geometry rule of H6a.8 is still at the top level`,
+    ).toContain(0)
+  expect(
+    CSS,
+    'the block is the one the brief writes: no second at-rule, no width media in it',
+  ).not.toMatch(/@media[^{]*forced-colors[^{]*@media/)
 })

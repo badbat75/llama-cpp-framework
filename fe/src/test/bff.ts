@@ -240,6 +240,10 @@ export const EN: Record<string, string> = {
     "The service manager reported an error. The instance's log on the server says why.",
   // Slice 1c (section 5.7): start at boot.
   'boot-label': 'Start at boot',
+  // Slice H6b (08-hearth-h6-overview.md, H6b.5): the two words of the boot row
+  // of a tile. New keys; the label of the pair is `boot-label`, reused.
+  'instances-boot-on': 'On',
+  'instances-boot-off': 'Off',
   'boot-toggle': 'start llama-server when the system starts',
   'boot-hint':
     "Starts llama-server when the system starts, before anyone logs in: the instance's service is enabled (Linux: systemctl enable llama.cpp@default; Windows: its start type is Automatic).",

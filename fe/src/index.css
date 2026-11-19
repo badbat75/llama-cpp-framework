@@ -853,6 +853,36 @@ tr:last-child td {
   font-size: var(--fs-md);
 }
 
+/* The facts of a tile (08-hearth-h6-overview.md H6b.6): a column of rows, one
+   fact per row, the label quiet and the value in the badge's weight. The
+   hairline above a row divides the facts, it is decoration (brief 04,
+   criterion 4). */
+.tile-facts {
+  margin: var(--space-2) 0 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* One fact: the label at one end, its value at the other, and it wraps when
+   the tile is too narrow for both. */
+.tile-facts > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.tile-facts dt {
+  color: var(--muted);
+}
+
+.tile-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
 /* State badge: the shape beside the state's text. */
 .badge {
   display: inline-flex;
@@ -909,6 +939,32 @@ tr:last-child td {
 
 .shape-failed::after {
   transform: rotate(-45deg);
+}
+
+/* The shapes under forced colours (08-hearth-h6-overview.md H6a.10): the
+   forced palette paints an author fill in Canvas, so the dot and the cross
+   vanish and the half fill of the changing shape loses its half. The system
+   text colour is the user's own, and forced-color-adjust leaves the shape to
+   the sheet, so all five keep a shape (CSS Color Adjustment 1, 3.2). Only the
+   colour is overridden: the geometry stays where the rules of today write it. */
+@media (forced-colors: active) {
+  .shape {
+    forced-color-adjust: none;
+  }
+  .shape-running {
+    background: CanvasText;
+  }
+  .shape-stopped,
+  .shape-changing {
+    border-color: CanvasText;
+  }
+  .shape-changing {
+    background: linear-gradient(90deg, CanvasText 50%, transparent 50%);
+  }
+  .shape-failed::before,
+  .shape-failed::after {
+    background: CanvasText;
+  }
 }
 
 /* The model profile page's jump list (196, DESIGN.md D5.1): the page's TOC as

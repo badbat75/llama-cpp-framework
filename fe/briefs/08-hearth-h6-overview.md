@@ -124,8 +124,9 @@ one `div` with a `dt` (`boot-label` "Start at boot", the instance page's key, re
 HTML ([HTML, the `dl` element](https://html.spec.whatwg.org/multipage/grouping-content.html#the-dl-element)).
 
 **H6b.4 Until it answers, and on failure.** No `dl` while the read is pending; no `dl` after any
-failure (503, 502, 404 `client-no-instance`, a body that is not `{"enabled": <bool>}`, a network
-failure): the Overview is a glance, and the instance page says why the read failed (`bootReadText`).
+failure (503, 502, 404 `client-no-instance`, a 401 or 403, a body that is not `{"enabled": <bool>}`,
+a network failure; the route is public, "anyone", so a 401 or 403 there says nothing about the
+session and the banner is left alone): the Overview is a glance, and the instance page says why the read failed (`bootReadText`).
 No alert, no status, no live region: rows appear silently (nothing is announced on arrival, as for
 the list itself).
 
@@ -189,6 +190,41 @@ and Unknown alike as intended), a follow-up of its own:
 `.shape-failed::before, .shape-failed::after { background: CanvasText }`. System colours keep the
 user's palette ([CSS Color Adjustment 1, 3.2](https://www.w3.org/TR/css-color-adjust-1/#forced-color-adjust-prop)).
 Tester pins the block as stylesheet text.
+
+**Review of H6b and H6a.10 (2026-11-19).** H6b.1 to H6b.8 and H6a.10 met (`fe/src/Instances.tsx`
+`Tile`, `readBoot`; `fe/src/App.tsx` `signedIn`; `fe/src/index.css` `.tile-facts`, the forced-colours
+block). Measured in Chromium, Firefox and WebKit at 1280, 960, 480 and 320, light and dark: one boot
+read per tile, the id encoded (`with%20space`); "On" and "Off" both shown; `dl` the last child; the
+`dd` has `margin: 0` (no user-agent indent: its right edge on the row's right edge, `dt` on the
+left); contrast `dt` 6.24 light / 7.03 dark, `dd` 15.51 / 13.84; at 320 with 200 % text the `dd`
+wraps under the `dt` inside the tile, no sideways scroll; axe 0 everywhere. Tree (Playwright's
+aria snapshot, the same in all three): listitem, link "default", text "Running", paragraph
+"llama.cpp instance", term "Start at boot", definition "On". Mixed outcomes (200, 503, 404, 401,
+502): one row, tiles of a row still equal, no error text, no live region. Signed out 0 boot
+requests; sign-in from the banner returns to `#/` with the rows (5 requests); Sign out removes them
+(0 new). Twelve instances: twelve reads at once, all rows within 80 ms on the stub. Forced colours,
+Chromium emulation and Firefox (`browser.display.document_color_use` 2), both schemes: five
+distinct shapes (Stopped and Unknown alike, as intended), text and outlines there; Chromium's
+pixels equal H6a's injected measurement; normal mode keeps the token colours.
+
+**Layout shift: accepted, no reserved height (decision).** Boot reads held 1 s: the list grows by
+one row per tile row (+103 px at 1280, +257 px at 320), a focused link in the second row moves
+down 51 px, the first row does not move; Chromium's cumulative layout shift 0.015 at 1280 and 0.078
+at 320, under the 0.1 that web.dev calls good ([CLS](https://web.dev/articles/cls), not a WCAG
+criterion). Reserving the row would leave an empty band on every tile whose read fails, and the
+real read is a local call that answers before a pointer gets there. Reopen if the bff's boot read
+becomes slow.
+
+**`role="list"` on `.tiles`: add it, a follow-up DOM change.** WebKit drops list semantics for a
+`ul` with `list-style: none` on purpose and advises an explicit `role="list"`
+([WebKit bug 170179](https://bugs.webkit.org/show_bug.cgi?id=170179), comment 1); WebKit keeps them
+inside `nav` (unverified). Playwright 1.65 has no engine accessibility tree for WebKit (its
+`ariaSnapshot` computes roles itself and reports a list in every engine), so this cannot be
+measured here. The count of instances is what a glance wants, so `<ul className="tiles"
+role="list">`; the tester pins the attribute. Not a condition of H6b.
+
+**Later, for the bff (a note, not a condition):** with many instances the Overview sends one boot
+read per tile; a batch answer (the boot flag in `GET /api/instances`, signed in) would make it one.
 
 ## 5. What must not change
 

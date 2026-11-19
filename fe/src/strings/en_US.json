@@ -113,6 +113,8 @@
   "instances-failed": "The instances could not be read.",
   "instances-manager-unavailable": "The manager is not running or does not answer.",
   "instances-not-authorized": "The manager refused the web service's request.",
+  "instances-boot-on": "On",
+  "instances-boot-off": "Off",
   "instance-state-active": "Running",
   "instance-state-inactive": "Stopped",
   "instance-state-activating": "Starting",

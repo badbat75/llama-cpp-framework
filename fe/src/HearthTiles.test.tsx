@@ -158,8 +158,13 @@ const engineCases = [
 test.each(engineCases)(
   'H6a.2: the engine line is there only when the reply holds two distinct engines: $engines',
   async ({ engines, shown }) => {
-    // one instance per engine: the fixture must show every engine listed
+    // one instance per engine: the fixture must show every engine listed.
+    // Signed out (retargeted for H6b): the boot row is the signed-in page's
+    // (H6b.1), so here the tile is exactly the DOM H6a left, and the engine
+    // line is its last child; the signed-in tile with the row is pinned by
+    // HearthTilesBoot.test.tsx (H6b.3: the row is the tile's last child).
     fakeBff({
+      session: 'signed-out',
       instances: engines.map((engine, n) => ({
         id: `i${n}`,
         engine,
@@ -274,14 +279,17 @@ test.each(errorCases)(
 
 // ── H6a.4: the strings ─────────────────────────────────────────────────────
 
-test('H6a.4: the three table-header keys are gone, nothing is added, the reused keys stay', () => {
+test('H6a.4 with H6b.5: the three table-header keys are gone, only the two boot words are added, the reused keys stay', () => {
   const keys = Object.keys(strings)
 
   // the tile says the same things the table said, with the keys the table had:
-  // the section, its messages, the engine line and the state labels
+  // the section, its messages, the engine line and the state labels. H6b adds
+  // exactly two keys, the words of the boot row (H6b.5), no other.
   const overview = keys.filter((key) => key.startsWith('instances-')).sort()
   expect(overview).toEqual(
     [
+      'instances-boot-off',
+      'instances-boot-on',
       'instances-empty',
       'instances-failed',
       'instances-manager-unavailable',

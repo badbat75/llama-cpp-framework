@@ -408,8 +408,8 @@ test('section 0: the boxes lifted by a shadow alone carry the 1px transparent bo
   ).toBe(false)
   expect(
     atRanges('@media (forced-colors: active)').length,
-    'the forced-colours blocks stay the four of H1a and H2a.6: H2b adds none, it relies on the borders (section 4)',
-  ).toBe(4)
+    'the forced-colours blocks stay the five of H1a, H2a.6 and H6a.10: H2b adds none, it relies on the borders (section 4)',
+  ).toBe(5)
 })
 
 // ── H2b.6: nothing else moves ────────────────────────────────────────────

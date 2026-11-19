@@ -80,11 +80,14 @@ const STATES = [
   {
     name: 'overview-tiles',
     // The tiles of four instances (stub.py list=many): the 40-character id, the
-    // badge, and the engine line the second engine brings. The boot row of a
-    // signed-in session is the `dl.tile-facts` of H6b: its expect lands with it.
+    // badge, the engine line the second engine brings, and the boot row of a
+    // signed-in session, the `dl.tile-facts` of H6b.
     set: 'session=admin&list=many',
     hash: '#/',
-    expect: [{ selector: 'li.tile', count: 4 }],
+    expect: [
+      { selector: 'li.tile', count: 4 },
+      { selector: 'dl.tile-facts' },
+    ],
   },
   {
     name: 'overview-tiles-signed-out',
@@ -307,9 +310,15 @@ async function check(browser, name, lines) {
           const page = await ctx.newPage()
           for (const state of states) {
             const found = []
-            const res = await fetch(`${BASE}/__set?${state.set}`)
-            if (!res.ok) {
-              found.push(`set request: ${res.status} ${res.statusText}`)
+            // The stub keeps every key a /__set did not carry, so the state's
+            // own set goes after a reset to the default list of instances: the
+            // two tile states ask for list=many themselves, and a state that
+            // ran before them leaves no list behind for the pages after it.
+            for (const q of ['list=one', state.set]) {
+              const res = await fetch(`${BASE}/__set?${q}`)
+              if (!res.ok) {
+                found.push(`set request: ${res.status} ${res.statusText}`)
+              }
             }
             // A hash change does not reload the app: every state starts from a
             // blank page, so the page is built for it.

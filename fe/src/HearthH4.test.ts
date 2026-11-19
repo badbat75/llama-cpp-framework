@@ -258,8 +258,8 @@ test('H4.11: in forced-colours mode the pressed switch stays visible: no colour 
   const blocks = atRanges('@media (forced-colors: active)')
   expect(
     blocks.length,
-    'the four forced-colours blocks of H1a and H2a: the new rule joins one of them, it does not open a fifth',
-  ).toBe(4)
+    'the forced-colours blocks of H1a, H2a and H6a.10: the new rule joins one of them, it opens no sixth',
+  ).toBe(5)
   const rules = insideAll(blocks).filter((r) => PRESSED_RE.test(r.compact))
   expect(
     rules.length,

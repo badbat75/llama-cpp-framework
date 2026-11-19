@@ -1,7 +1,7 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
 import { useEffect, useState } from 'react'
-import { apiError, call } from './api.ts'
+import { apiError, call, isRecord } from './api.ts'
 import { instanceHref } from './route.ts'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
@@ -57,6 +57,24 @@ async function readInstances(): Promise<Answer> {
 }
 
 /**
+ * Whether the instance starts at boot, for a tile: the value, or null when the
+ * read has no answer for the tile. The instance page reads the same route and
+ * says why a read failed (its `readBoot`); the Overview is a glance, so a tile
+ * shows nothing at all when there is no answer.
+ */
+async function readBoot(id: string): Promise<boolean | null> {
+  try {
+    const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
+    if (!reply.ok) return null
+    return isRecord(reply.body) && typeof reply.body.enabled === 'boolean'
+      ? reply.body.enabled
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The app's one read of /api/instances (fe/briefs/01-server.md, 41): at most
  * one request in flight, a read asked meanwhile gets its answer, and every
  * answer reaches the watchers (the nav).
@@ -99,7 +117,14 @@ export function instancesStore(): InstancesStore {
   }
 }
 
-export default function Instances({ store }: { store: InstancesStore }) {
+export default function Instances({
+  store,
+  signedIn,
+}: {
+  store: InstancesStore
+  /** The visitor's session is known and current: the tiles read Start at boot. */
+  signedIn: boolean
+}) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
 
@@ -116,7 +141,7 @@ export default function Instances({ store }: { store: InstancesStore }) {
   return (
     <section>
       <h2>{t('instances-title')}</h2>
-      <Body answer={answer} />
+      <Body answer={answer} signedIn={signedIn} />
     </section>
   )
 }
@@ -127,7 +152,13 @@ function manyEngines(instances: Instance[]): boolean {
 }
 
 /** The instances as a list of tiles, or the message in their place. */
-function Body({ answer }: { answer: Answer | undefined }) {
+function Body({
+  answer,
+  signedIn,
+}: {
+  answer: Answer | undefined
+  signedIn: boolean
+}) {
   if (answer === undefined) {
     return null
   }
@@ -141,21 +172,63 @@ function Body({ answer }: { answer: Answer | undefined }) {
   return (
     <ul className="tiles">
       {answer.map((i) => (
-        <li key={i.id} className="tile">
-          <div className="tile-head">
-            <a className="tile-id" href={instanceHref(i.id)}>
-              {i.id}
-            </a>
-            <span className="badge">
-              <StateShape state={i.state} />
-              {stateLabel(i.state)}
-            </span>
-          </div>
-          {engines && (
-            <p className="tile-engine">{t('instance-engine', i.engine)}</p>
-          )}
-        </li>
+        <Tile key={i.id} instance={i} engines={engines} signedIn={signedIn} />
       ))}
     </ul>
+  )
+}
+
+/**
+ * One tile: the id, the state, the engine when it tells the instances apart,
+ * and for a signed-in visitor the boot fact. The boot read belongs to the
+ * tile: it goes when the tile mounts, once, and the row shows only an answer
+ * that came (no row while it is on its way, none after a failure).
+ */
+function Tile({
+  instance,
+  engines,
+  signedIn,
+}: {
+  instance: Instance
+  /** The engine line is there: the engines tell the instances apart. */
+  engines: boolean
+  signedIn: boolean
+}) {
+  const { id, engine, state } = instance
+  // null: no row, because there is no answer to show.
+  const [boot, setBoot] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (!signedIn) return
+    let live = true
+    readBoot(id).then((v) => {
+      if (live && v !== null) setBoot(v)
+    })
+    return () => {
+      live = false
+    }
+  }, [id, signedIn])
+
+  return (
+    <li className="tile">
+      <div className="tile-head">
+        <a className="tile-id" href={instanceHref(id)}>
+          {id}
+        </a>
+        <span className="badge">
+          <StateShape state={state} />
+          {stateLabel(state)}
+        </span>
+      </div>
+      {engines && <p className="tile-engine">{t('instance-engine', engine)}</p>}
+      {signedIn && boot !== null && (
+        <dl className="tile-facts">
+          <div>
+            <dt>{t('boot-label')}</dt>
+            <dd>{boot ? t('instances-boot-on') : t('instances-boot-off')}</dd>
+          </div>
+        </dl>
+      )}
+    </li>
   )
 }
