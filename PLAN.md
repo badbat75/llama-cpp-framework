@@ -199,11 +199,6 @@ so the second binary, `private-ai-manager`, shares its modules: a `[[bin]]` alon
    layout, `pai-manager` in `-llama`) and **5b** (done: units, D-Bus policy, polkit, sysusers, the first
    maintainer scripts; `xtask install` is not blocked by the services, which the scripts restart). Left:
    the user's real run (`xtask package`, `xtask install`, then the step's "Done when" checks).
-   Found at the deploy of 2026-11-20: `xtask package` resolves the bundled runtimes with `ldd`, which
-   honours the caller's `LD_LIBRARY_PATH`; a login shell exporting a newer ROCm dist (TheRock 10.2.0
-   beside the configured 10.1.0) made it refuse `libggml-hip.so` ("libhipblas.so.* was not found in its
-   dist"). The deploy ran it with `env -u LD_LIBRARY_PATH`; the fix is for xtask to clear
-   `LD_LIBRARY_PATH` (and run `ldd` against the build's RUNPATH only) for that lookup, test first.
 6. **Windows.** Split in four, each test first: **6a** (done) the OS-neutral protocol the manager serves
    over the named pipe (`pai_core::client::pipe`, `manager::pipe`: a u32 length and a JSON body of at
    most 1 MiB, the D-Bus method and error names), tested on Linux over a socket pair; **6b** (done, type-checked only) the

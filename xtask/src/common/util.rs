@@ -130,6 +130,17 @@ pub fn cmd<S: AsRef<OsStr>>(program: S) -> Command {
     Command::new(program)
 }
 
+/// A Command for a child that asks the dynamic loader where a library is
+/// (`ldd`): LD_LIBRARY_PATH is removed from its environment, so the answer
+/// comes from the file's RUNPATH. `ldd` honours the caller's LD_LIBRARY_PATH,
+/// so a shell exporting another dist moves the answer out of the dist this
+/// build is configured with.
+pub fn cmd_without_ld_library_path<S: AsRef<OsStr>>(program: S) -> Command {
+    let mut c = Command::new(program);
+    c.env_remove("LD_LIBRARY_PATH");
+    c
+}
+
 fn describe(c: &Command) -> String {
     let mut s = c.get_program().to_string_lossy().into_owned();
     for a in c.get_args() {
@@ -397,6 +408,68 @@ mod tests {
         assert_eq!(
             scan_versions(idx, "redistrib_", ".json")[0].1,
             "redistrib_13.4.3.json"
+        );
+    }
+
+    /// The runtime lookup of the Linux package phase resolves by the file's
+    /// RUNPATH: the command built to ask the dynamic loader carries
+    /// LD_LIBRARY_PATH as a removal (`(key, None)` in `get_envs`), and the
+    /// plain `cmd` keeps the caller's environment untouched for every other
+    /// command.
+    #[test]
+    fn the_loader_lookup_removes_ld_library_path() {
+        let envs = |c: &mut Command| -> Vec<(String, Option<String>)> {
+            c.get_envs()
+                .map(|(k, v)| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.map(|v| v.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            envs(&mut cmd_without_ld_library_path("ldd")),
+            vec![("LD_LIBRARY_PATH".to_string(), None)],
+            "the loader lookup must remove LD_LIBRARY_PATH from its environment"
+        );
+        assert!(
+            envs(&mut cmd("ldd")).is_empty(),
+            "cmd() must not change the environment: the removal belongs to the loader lookup alone"
+        );
+    }
+
+    /// What the child of that command really sees: no LD_LIBRARY_PATH, while
+    /// a plain command of the same parent still inherits it (the control, so
+    /// the test cannot pass on a harness where the variable is simply unset).
+    #[cfg(unix)]
+    #[test]
+    fn the_loader_lookup_child_sees_no_ld_library_path() {
+        let saved = std::env::var_os("LD_LIBRARY_PATH");
+        std::env::set_var("LD_LIBRARY_PATH", std::env::temp_dir());
+        let inherited = output(&mut cmd("env"));
+        let clean = output(&mut cmd_without_ld_library_path("env"));
+        match saved {
+            Some(v) => std::env::set_var("LD_LIBRARY_PATH", v),
+            None => std::env::remove_var("LD_LIBRARY_PATH"),
+        }
+        assert!(
+            inherited
+                .as_deref()
+                .is_some_and(|s| s.contains("LD_LIBRARY_PATH=")),
+            "the control failed: a plain command does not inherit LD_LIBRARY_PATH: {inherited:?}"
+        );
+        let seen = clean
+            .as_deref()
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.starts_with("LD_LIBRARY_PATH="))
+                    .count()
+            })
+            .unwrap_or(usize::MAX);
+        assert_eq!(
+            seen, 0,
+            "the child of the loader lookup still sees LD_LIBRARY_PATH (env not runnable: usize::MAX)"
         );
     }
 }

@@ -71,7 +71,9 @@ use crate::common::components::{self, Component, Product};
 use crate::common::configurator::{self, set_mode};
 use crate::common::licenses;
 use crate::common::ui;
-use crate::common::util::{self, cmd, gfx_arch, output, run as run_cmd, which};
+use crate::common::util::{
+    self, cmd, cmd_without_ld_library_path, gfx_arch, output, run as run_cmd, which,
+};
 use crate::common::version;
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
@@ -500,12 +502,16 @@ pub fn run(
             .and_then(|l| l.parent().map(|d| d.display().to_string()));
 
         ui::head("Bundling the GPU runtimes...");
+        // Each file's dependencies are asked of the loader with LD_LIBRARY_PATH
+        // removed: the caller's LD_LIBRARY_PATH can point at another dist, and
+        // the closure must resolve inside the dists this build is configured
+        // with, by the RUNPATH the binaries carry.
         let mut closure = BTreeSet::new();
         for f in entries(&bin).into_iter().filter(llama_files) {
             if !is_elf(&f) || name_of(&f).starts_with("test-") {
                 continue;
             }
-            let Some(ldd) = output(cmd("ldd").arg(&f)) else {
+            let Some(ldd) = output(cmd_without_ld_library_path("ldd").arg(&f)) else {
                 continue;
             };
             for line in ldd.lines() {
@@ -3439,5 +3445,36 @@ mod tests {
                 .unwrap_or_else(|| panic!("{later} not in run()"));
             assert!(check < at, "{later} comes before the release check");
         }
+    }
+
+    /// The runtime libraries to bundle come from `ldd`, which honours the
+    /// caller's LD_LIBRARY_PATH: a shell exporting another ROCm dist resolves
+    /// hipBLAS outside the configured dist, and the check that follows refuses
+    /// `libggml-hip.so`. So the ldd of the closure loop is built with
+    /// `util::cmd_without_ld_library_path`, whose environment removes
+    /// LD_LIBRARY_PATH and leaves the build's RUNPATH to decide (the removal
+    /// itself is pinned in common/util.rs's tests). Read from the code before
+    /// the tests.
+    #[test]
+    fn the_runtime_closure_runs_ldd_with_no_ld_library_path() {
+        let src = include_str!("package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let run = code
+            .split("pub fn run(")
+            .nth(1)
+            .and_then(|r| r.split("\nfn ").next())
+            .expect("run()");
+        let clean = run
+            .find("cmd_without_ld_library_path(\"ldd\")")
+            .expect("run() builds the ldd command without the loader-clean helper");
+        assert!(
+            !run.contains("cmd(\"ldd\")"),
+            "run() still builds the ldd command with the plain cmd(), which inherits LD_LIBRARY_PATH"
+        );
+        assert!(
+            run.find("for line in ldd.lines()")
+                .is_some_and(|at| clean < at),
+            "the loader-clean ldd is not the command the closure loop reads"
+        );
     }
 }

@@ -673,3 +673,18 @@ Lessons only: the rules are in `AGENTS.md`.
 - `bff::server::field_of` answers the marked field from `args.first()`, which is the REFUSAL'S
   REASON for a refusal whose first value is not a key (`server-bad-tags` starts with the reason):
   such a key needs its own arm. The bff's 422 pins the field lower-case (`tags`), the form ids.
+
+## xtask: the runtime closure and the loader
+
+- `ldd` honours the caller's `LD_LIBRARY_PATH`, so the Linux package phase's closure of the staged
+  files can resolve a GPU runtime outside the dists the build is configured with (the check that
+  follows then refuses the backend). The closure's `ldd` goes through `util::cmd_without_ld_library_path`
+  (`Command::env_remove`), leaving the file's RUNPATH to decide. Do not set the variable off in the
+  process: the helper removes it per child, so no other command is touched.
+- A `get_envs()` pin wants exactly `[(key, None)]`, so the helper removes that one key and nothing else;
+  the real-behaviour control sets the variable in the process, runs `env` through the helper and the
+  plain `cmd`, and restores the saved value before asserting (a harness where the variable is simply
+  unset must fail the control, not pass).
+- `xtask/src/linux/package.rs`'s own source pin is `include_str!("package.rs")` sliced to `run()`
+  (`split("pub fn run(").nth(1)` up to the next `\nfn `): the needles are the CALL texts, so a comment
+  added inside `run()` is safe and `cmd("ldd")` must be gone from that region.
