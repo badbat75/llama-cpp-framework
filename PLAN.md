@@ -981,7 +981,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
-    collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
+    collapsible; collapsed it shows, for now, only its engine, its port and its tags (user, 2026-11-20: the
+    Overview tile is the collapsed view and the instance page the open one, no fold control; the engine
+    shows on a tile only when the instances run two or more engines), one or more
     labels the administrator assigns to it (user, 2026-11-17). Built on the bff and the manager (slices 11
     and 12): `GET /api/instances` items `{id, engine, state, port, tags, instanceTags}`, tags in the server
     profile's `[Server] Tags` (read-only in the web UI until the server profile page, user 2026-11-20) and in

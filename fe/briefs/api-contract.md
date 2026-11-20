@@ -61,7 +61,8 @@ exist yet. Change this file first when a shape changes.
 | Route | Who | Slice | Success |
 | --- | --- | --- | --- |
 | `GET /api/version` | anyone | exists | `{"version"}` |
-| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12) | `[{"id", "engine", "state", "port", "tags", "instanceTags"}]` |
+| `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13 | `[{"id", "engine", "state", "port", "tags", "instanceTags", "boot"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
@@ -98,6 +99,31 @@ manager's detail never reaches the body).
 at its first place; `[]` when the manager answers no rows) and **`instanceTags`** (the instance's own
 list, for the editor; asked of the bff, not yet in its tests: brief 12 question C1). The fe reads a
 missing or mistyped `port` as 0 and a missing or mistyped list as `[]`, never failing the list.
+
+**13 (`fe/briefs/13-node-about.md`; bff slice 13, being built).** Each item gains `boot`: `true` or
+`false` from the manager's `BootEnabled(id)`, `null` when that one read failed; a failed boot read never
+fails or shortens the list. The fe reads anything but a boolean as `null` (no Start at boot row on the
+tile). `GET /api/instances/{id}/boot` stays (the instance page, and after a `PUT`). Source:
+`ARCHITECTURE.md` "Slice 13's decisions".
+
+### `GET /api/node` (13, being built)
+
+Behind a session: 401 `session-required` without one; it asks the manager nothing and does not move the
+idle deadline, as `GET /api/version`. No other error: a missing or unreadable version file is left out.
+200:
+
+    {"name": "gpu-box", "api": "/api", "version": "2.99.1",
+     "engines": [{"engine": "llama.cpp", "version": "1:1.0.0+pai2",
+                  "backends": [{"name": "cuda", "version": "13.5.0+nccl.2.32.3"},
+                               {"name": "rocm", "version": "10.1.0"},
+                               {"name": "vulkan", "version": "1.4.363.1"}]}]}
+
+`name` is the host name (`localhost` when it is empty); `version` is the framework's (the bff's own, as
+`GET /api/version`); each engine and backend `version` is a string or `null` (an empty version file);
+`engines` is `[]` when none is installed (or a package from before slice 13), `backends` `[]` for a
+CPU-only engine, sorted by name; a backend's `name` is the package suffix (`cuda`, `rocm`, `vulkan`),
+its display name the fe's string. Read at each request. The fe does not read `api` yet. Source:
+`ARCHITECTURE.md` "Slice 13's decisions".
 
 ### `PUT /api/instances/{id}/tags` (T1, being built)
 
@@ -521,7 +547,7 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
 
 ### As designed (after 4b)
 
-- **Node prefix.** `GET /api/node`, anyone: `{"name": <host name>, "api": "/api"}`; the node-scoped
+- **Node prefix.** `GET /api/node`, signed in since slice 13 (built above, with `version` and `engines`): `{"name": <host name>, "api": "/api"}`; the node-scoped
   routes (`instances`, `profiles`, `engines`) sit under `api`; hub mode answers `GET /api/nodes` with the
   same objects and `api` = `/api/nodes/<node>`. The fe accepts only a same-origin path equal to `/api`
   or starting with `/api/`.
