@@ -648,6 +648,11 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
   limit (15 s for a `GET`, 120 s for any other method; reasons in `fe/briefs/01-server.md` 4.8): a
   request that runs out is aborted and is that call's network failure, unless its brief says
   otherwise (a save that times out may have been written: 47d there).
+- A copied `api-*` text that says what happened but not what to do gets one sentence appended with
+  the fix, when the fix is known and the web can do it
+  ([3.3.3 Error Suggestion](https://www.w3.org/TR/WCAG22/#error-suggestion)); the brief says so as a
+  difference from the GUI (first: `api-model-profile-over-memory`, `fe/briefs/11-resource-refusals.md`).
+  Figures from the server are shown as sent, in the unit the API names (MiB), never converted.
 - Messages say what happened and what to do, in one or two sentences. Buttons are verbs ("Save
   changes", "Sign in"). Labels in sentence case, as in the GUI.
 

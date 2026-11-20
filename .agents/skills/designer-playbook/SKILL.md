@@ -54,6 +54,9 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   page at 320 px in base, 200 %, 1.4.12 and both; `r1h.js` measures the table's scroll box (Tab ring
   to the box edge, arrows, computed lift, forced colours). Firefox makes an overflowing scroll box
   its own Tab stop.
+- The manager's memory check (`model-profile-over-memory`) estimates from the model header,
+  `ctx-size` and `cache-type-k`/`-v` only, all layers on GPU (`service.rs` `estimated_of`): advice
+  that names GPU layers or MoE CPU layers would not clear it. Read the check before writing a fix.
 - Playwright's WebKit does not scroll a control into view on a script `focus()` (checkbox and text
   input alike, 2026-11-16); Chromium does. A focus-after-refusal check at 320 px must read the focused
   element's rect per engine; whether real Safari behaves the same is unverified.
