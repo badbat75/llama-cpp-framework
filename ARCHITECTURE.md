@@ -1374,8 +1374,8 @@ recorded:
 
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
-| `Instances()`, no authorization | `-> a(sssqasas)`: `(id, engine, server_profile, port, instance_tags, profile_tags)`, the state left to `Status`; pipe objects `{id, engine, serverProfile, port, instanceTags, profileTags}` | none; port 0 and no profile tags when the profile file is missing |
-| `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `instance-bad-tags` (the rule of (c)); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
+| `Instances()`, no authorization | `-> a(ssqasas)`: `(id, engine, port, profile_tags, instance_tags)`, the state left to `Status`; pipe objects `{id, engine, port, profile_tags, instance_tags}` (slice 12, 2026-11-20; `server_profile` joins after `engine`, `a(sssqasas)`, with the server-profile slice, while no release carries 3) | none; port 0 and no profile tags when the profile file is missing |
+| `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `server-bad-tags` (the rule of (c), one key for both lists: decision 2026-11-20 below); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
@@ -1401,8 +1401,8 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
 | `POST /api/profiles/server` `{"engine", "id", "port"?}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
-| `GET /api/instances` | items `{id, engine, state, serverProfile, port, tags, instanceTags, removable}`: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing | as (f) |
-| `PUT /api/instances/{id}/tags` `{"tags": [string]}` | 204 | 404 `client-no-instance`, 422 `instance-bad-tags` `field` `tags`, 400 `instance-malformed` |
+| `GET /api/instances` | items `{id, engine, state, port, tags, instanceTags}` (slice 12); `serverProfile` and `removable` join with the slices that switch a server profile and create or remove instances: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing (never the union: saving it back must not copy the profile's tags into the instance) | as (f) |
+| `PUT /api/instances/{id}/tags` `{"tags": [string]}` | 204 | 404 `client-no-instance`, 422 `server-bad-tags` `field` `tags`, 400 `tags-malformed` |
 | `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use`, `client-unresolvable-host` and `load-on-startup-over-max` (`field` `serverProfile` each) |
 | `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value"}` -> 200 `{effective, running}` | as (f), keys renamed |
@@ -1457,9 +1457,19 @@ last), `client-address-in-use`, `client-instance-*`, `instance-*`, `unknown-engi
   (`client-server-profile-in-use` and the single `instance` field stand). Sharing one profile across
   nodes is the super-manager's concern (Part 2), not built now.
 - (b) Tags are on the server profile AND on the instance (`Tags` beside `ServerProfile` in its
-  `instances.ini` section, the rule of (c), new key `instance-bad-tags`); an instance shows the union,
+  `instances.ini` section, the rule of (c), its key `server-bad-tags`); an instance shows the union,
   the profile's tags first, then its own, duplicates dropped (`SetInstanceTags`,
   `PUT /api/instances/{id}/tags`, the tables above).
+
+*Decision (2026-11-20, slices 11 and 12): one tags key.* The instance's tags and the profile's
+`[Server] Tags` obey one rule (`pai-core` `checks.rs`), so they share one refusal, `server-bad-tags`
+(args `[reason, list, most, least chars, most chars]`, `field` `tags`), not a new `instance-bad-tags`:
+one string per strings file and per fe locale, already there (`en_US.toml`, `cli.toml`); the
+alternative, a second key with the same text, costs a string in three places for no difference a user
+sees. A body of `PUT /api/instances/{id}/tags` the bff cannot read is 400 `tags-malformed` (the route's
+body, as `server-malformed` is the server save's), not `instance-malformed`, which stays
+`POST /api/instances`'s; the web UI never sends one, so it needs no string. Both match the tests in
+`crates/bff/tests/instances.rs` and the manager's (`service.rs` `manager_instance_tags_e2e`).
 - (c) The instance page shows the state, Start, Stop, Restart, start at boot and the associations (one
   server profile, the model profiles); the server form lives on the server profile's page.
 - (d) The Profiles menu entries are "Server profiles" and "Model profiles".

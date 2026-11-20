@@ -61,7 +61,7 @@ exist yet. Change this file first when a shape changes.
 | Route | Who | Slice | Success |
 | --- | --- | --- | --- |
 | `GET /api/version` | anyone | exists | `{"version"}` |
-| `GET /api/instances` | anyone | 1a, changed | `[{"id", "engine", "state"}]` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12) | `[{"id", "engine", "state", "port", "tags", "instanceTags"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
@@ -70,6 +70,7 @@ exist yet. Change this file first when a shape changes.
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
+| `PUT /api/instances/{id}/tags` | administrator (`configure`) | T1, being built (bff slice 12) | 204 |
 | `GET /api/engines` | anyone | model profiles slice, proposed | `[{"id", "name"}]` |
 | `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
 | `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
@@ -90,6 +91,25 @@ Today's reply gains `engine` (the engine id, `llama.cpp` today) and its errors m
 `{"error": "unavailable"}` to the common shape: 503 `client-unavailable`, 502
 `client-not-authorized`, 502 `client-other` for any other failure, each with empty `args` (the
 manager's detail never reaches the body).
+
+**T1 (`fe/briefs/12-instance-tags.md`; bff slices 11 and 12, being built).** Each item gains
+`port` (number: the configured port of its server profile, 0 when that file is missing), `tags`
+(the union shown: the server profile's tags first, then the instance's own, a tag in both kept once
+at its first place; `[]` when the manager answers no rows) and **`instanceTags`** (the instance's own
+list, for the editor; asked of the bff, not yet in its tests: brief 12 question C1). The fe reads a
+missing or mistyped `port` as 0 and a missing or mistyped list as `[]`, never failing the list.
+
+### `PUT /api/instances/{id}/tags` (T1, being built)
+
+Body `{"tags": [string]}`, the instance's own tags in order (`[]` clears them); the server
+profile's tags are not touched. 204 with no body. Errors: 401 `session-required`; 403
+`session-not-administrator` (the session ended); 404 `client-no-instance`; 422 `{"key":
+"server-bad-tags", "args": [reason, list joined by ",", most tags, least chars, most chars], "field":
+"tags"}` (`pai-core` `checks::tags_rule`; the reason is an English phrase of the code); 400
+`tags-malformed` for a body that is not that shape (the fe never sends one); 503
+`client-unavailable`. Source: `crates/bff/tests/instances.rs` in the bff's working tree.
+`ARCHITECTURE.md` (f') names the keys `instance-bad-tags` and `instance-malformed`: brief 12
+question C2.
 
 ### The session
 

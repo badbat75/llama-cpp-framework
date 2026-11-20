@@ -35,8 +35,8 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
-| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; signed in, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`) |
-| Instances > *instance* | `#/instances/<id>` | Header: name, engine, state badge, Start / Stop / Restart, start at boot. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); Logs later |
+| Overview | `#/` | Framework version; the instances as tiles (id as a link, state badge, engine when two or more; Port, Tags, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`) |
+| Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); T1 (port, tags); Logs later |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
@@ -72,6 +72,13 @@ Decided with the user on 2026-11-14.
   "`<engine>` instance" under it: the engine is a fact about the instance, not a control.
 - The Overview's tiles show an engine line ("`<engine>` instance") only when the instances span two or
   more engines.
+- **Tags** (T1, `fe/briefs/12-instance-tags.md`) are labels only (the router routes by model name).
+  A server profile has tags and an instance has its own; the instance shows the union, the
+  profile's first. The tile shows the union unlabelled; the instance page edits only the instance's
+  own (input **Instance tags**, saved by its own button, outside the Server form; unsaved tags make leaving ask, as the Server
+  form does; the profile's tags read-only until the server profile page) and lists the
+  rest as "From the server profile: ...". Tags are data, joined by ", " as in the file
+  (`Tags = coding, fast`), never translated **(preference: text, not chips)**.
 - **Model profiles** are one mixed list for every engine. Each model profile has an engine, chosen
   from the **available engines** the bff lists (today only llama.cpp). A model profile's engine is the
   engine whose model profile file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
@@ -544,9 +551,10 @@ Each is one React component, reused by every page.
   wraps under the id when the row is narrow; the engine line when it tells instances apart; and for
   a signed-in visitor a `dl.tile-facts` as the last child, one `div` per fact (`dt` in `--muted`,
   `dd` at weight 600 with no margin, label and value at the two ends, wrapping onto two lines when
-  narrow, a 1px `--line` hairline above as decoration). Today the one fact is Start at boot
+  narrow, a 1px `--line` hairline above as decoration). The facts, in order: Port, Tags (T1:
+  from the list itself, so shown at once; no row for port 0 or no tags) and Start at boot
   ("On" / "Off", words, never colour alone), read once per tile when it mounts; no row while the
-  read is pending or after any failure, and nothing announced when rows appear. Rows arriving after
+  read is pending or after any failure, no `dl` when no fact has a row, and nothing announced when rows appear. Rows arriving after
   the list grow the tiles by one row (accepted: H6b review). Nothing in a tile takes focus but the
   link. Screen readers hear list, item, link, the state, the engine line, then term and definition
   ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).

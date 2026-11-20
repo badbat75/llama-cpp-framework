@@ -112,3 +112,6 @@ description: What the architect has learned about this project's components, int
   `set_model_profile` (new record `text`, pool on disk). `render_of` always reads the record on disk,
   so the second path must render from `text` (as `check_model_files_of` does) or it judges nothing;
   review both, and look for an e2e that calls `set_model_profile`, not only `write_file`.
+- Error keys: one rule, one key (`server-bad-tags` serves the profile's and the instance's tags); a
+  `*-malformed` key names the route's body (`server-malformed`, `tags-malformed`). Before a slice,
+  grep the tester's keys and wire fields against the record: the tests often land first and differ.
