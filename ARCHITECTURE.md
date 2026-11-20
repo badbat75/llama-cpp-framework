@@ -1389,6 +1389,7 @@ recorded:
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
 | `Instances()`, no authorization | `-> a(ssqasas)`: `(id, engine, port, profile_tags, instance_tags)`, the state left to `Status`; pipe objects `{id, engine, port, profile_tags, instance_tags}` (slice 12, 2026-11-20; `server_profile` joins after `engine`, `a(sssqasas)`, in slice 13, while no release carries 3) | none; port 0 and no profile tags when the profile file is missing |
+| `ServerProfiles()`, no authorization (slice 14) | `-> a(ssqass)`: `(id, engine, port, tags, instance)`, `instance` `""` when unused; pipe objects of the same fields | none; port 0 and no tags when the file cannot be read |
 | `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `server-bad-tags` (the rule of (c), one key for both lists: decision 2026-11-20 below); writes `Tags = ...` in the instance's `instances.ini` section, `[]` writes the key empty (as built; read as no tags) |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
@@ -1411,7 +1412,7 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `GET`/`PUT /api/profiles/model/{id}` (was `/api/presets/{id}`) | unchanged bodies, `revision`, `restart`, `running` | `no-model-profile-named` 404, `model-profile-changed-elsewhere` 409, check keys 422 |
 | `PUT /api/profiles/model/{id}/enabled` | unchanged | as the old switch |
 | `GET /api/profiles/model/{id}/estimate` (later, slice 17) | as (j) 9 | |
-| `GET /api/profiles/server` | `[{id, engine, port, tags, instance}]`, `instance` the id using it or `null`, sorted by id | 503, 401, 403 |
+| `GET /api/profiles/server` | `[{id, engine, port, tags, instance}]`, `instance` the id using it or `null`, sorted by id | 401, 503, 502 `client-other` (slice 14: read as the bff's own account, so no 403) |
 | `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
 | `POST /api/profiles/server` `{"engine", "id", "port"?}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
@@ -1599,6 +1600,86 @@ carry `boot`, `null` when one `BootEnabled` fails, the list still 200. `xtask`: 
 the Windows staging holds `share\versions\llama.cpp` and one file per bundled runtime with its dist
 version. Each crate's clippy and fmt green.
 
+*Slice 14's decisions (2026-11-20, architect; each a preference unless sourced).*
+
+- **Manager calls**, each with its `As` form, `configure`, the `writing` lock, one action record
+  (`create_server_profile`, `delete_server_profile`, target the profile), in this order, a refusal
+  writing nothing:
+  - `CreateServerProfile(engine, profile, port)`: `authorize_as`; `engine` other than `llama.cpp`
+    (the one engine the manager serves) is `Invalid(unknown-engine [engine])`; a profile name that
+    fails `paths::valid_instance_id` (the rule `config_file` already applies to `server@<x>.ini`, so
+    no name builds a path outside the engine directory) is `Invalid(server-profile-bad-id [profile])`;
+    any entry already at `server@<profile>.ini` (`symlink_metadata`, so a dangling link counts) is the
+    new `ServerProfileExists(profile)`. Writes `render_for(&ServerConfig { port, ..Default }, true)`
+    with `write_served_file` (mode 0640, group `pai`, as a save), `port` `0` = `None`; no address or
+    cap check (answer 2). The check-then-write is safe because every manager write holds `writing`.
+    `WriteFile` of a new `server@<x>.ini` still creates one too; Create adds the never-overwrite answer.
+  - `DeleteServerProfile(engine, profile)`: `authorize_as`; `unknown-engine`; a bad name or no file is
+    `NoServerProfile(profile)`; `instances.ini` read with `read_record` (absent = no instance, any other
+    failure `Io`, never "unused"), a section naming it is `ServerProfileInUse(profile, instance)`;
+    then `remove_file`. No special case for `default`: in use it is refused like any other; unused, it
+    serves nothing, and a package that copies it when missing may bring it back, also harmless.
+  - `ServerProfiles()`: unauthenticated, as `Instances()`; every `server@<x>.ini` whose name passes
+    `config_file`, sorted by id, `port` as `Instances()` (default when unset), `tags` the profile's,
+    `instance` the first section naming it. It exposes ports, tags and names of unused profiles to any
+    local caller, the class of data `Instances()` already gives for used ones; it never reads past
+    `[Server]` keys, so `OpencodeApiKey` stays behind `control`.
+- **Errors and keys.** New `ManagerError::ServerProfileExists(profile)` (`error_reply`, `error_kind`,
+  `ClientError::ServerProfileExists`, `client-server-profile-exists` `{0}` in both strings files and
+  `client.rs`'s key table). `unknown-engine` and `server-profile-bad-id` join `checks::KEYS` with one
+  value each, both strings files (slice 16's `CreateInstance` reuses `unknown-engine`). Protocol stays 3.
+- **Wire.** D-Bus `CreateServerProfile(ssq)`, `DeleteServerProfile(ss)`, `ServerProfiles() ->
+  a(ssqass)`, `CreateServerProfileAs(sssq)`, `DeleteServerProfileAs(sss)` (principal first, as every
+  `As`). Pipe: `{"method": "CreateServerProfile", "engine", "profile", "port"}`, `port` an integer
+  0 to 65535 (any other type or missing field `BadRequest`), `DeleteServerProfile {engine, profile}`,
+  their `As` with `principal`, `ServerProfiles` answering an array of `{id, engine, port, tags,
+  instance}`. `ManagerClient` gains `create_server_profile(engine, profile, port: Option<u16>)`,
+  `delete_server_profile(engine, profile)` and `server_profiles() -> Vec<ServerProfileInfo>`
+  (`instance: Option<String>`, `""` read as `None`), each with the default body `Other` as its
+  siblings; the D-Bus and pipe clients pick the `As` name when `acting_for` set a principal.
+- **bff routes**, each 401 `session-required` with no session and nothing asked, `sessions.current`
+  (a page read or a write moves the idle deadline; only polls `peek`), `NotAuthorized` 403
+  `session-not-administrator` ending the session, no manager 503 `client-unavailable`, a timeout 503
+  as `PUT /api/instances/{id}/tags` (a retried create answers 409, a retried delete 404, so the
+  ambiguity is visible), anything else 502 `client-other`:
+  - `GET /api/profiles/server`: `ServerProfiles()` as the bff's own account; the (f') row.
+  - `POST /api/profiles/server` `{"engine", "id", "port"?}`: the bff checks first, the manager again:
+    400 `server-profile-malformed` for a body it cannot read (no string: the web UI never sends one,
+    as `tags-malformed`), 422 `unknown-engine` `field` `engine`, 422 `server-profile-bad-id` `field`
+    `id`, 422 `not-whole-number-in-range` `field` `port` (args as the server save's `Port`); 201
+    `{id}`; 409 `client-server-profile-exists` `[id]`.
+  - `DELETE /api/profiles/server/{id}`: 204; 404 `client-no-server-profile` `[id]`; 409
+    `client-server-profile-in-use` `[profile, instance]`. The engine is `llama.cpp` (one per node).
+  - `GET`/`PUT /api/profiles/server/{id}`: today's document and save keyed by the profile
+    (`server@<id>.ini`, read and written `As`), plus answer 1's `instance` from `Instances()` (its
+    failure is its error, never `null`, which would offer Delete); `running` is `Status(instance)`,
+    `false` when unused; a missing file or bad name 404 `client-no-server-profile` `[id]`.
+    `defaults.StateDir` is the using instance's folder, `null` when unused (the folder belongs to
+    whichever instance runs it; never the bare root).
+- **The old route stays.** `GET`/`PUT /api/instances/{id}/server` keep working unchanged (the fe's
+  `ServerSection.tsx` 45 and `ServerForm.tsx` 366 call them). Moving the form to the server profile's
+  page is (c)'s web UI and needs the designer's brief, so it is slice 17's; that slice switches the fe
+  to `/api/profiles/server/{id}` and removes the old route in the same window. Slice 14 is backend only.
+- **GUI and `pai`**: nothing now ((g')).
+
+**Slice 14 done when** (test first; Linux, the Windows code type-checked): `pai-manager`, on D-Bus and
+the pipe: Create writes `server@x.ini` with the given port (port 0: no `Port` line), mode 0640 group
+`pai`, and lists in `ServerProfiles()`; a second Create of `x`, an existing file of other bytes or a
+dangling link is `ServerProfileExists` and the bytes stay; `../x`, `X`, `a_b` and an engine `vllm`
+are refused with their keys and nothing is created anywhere; Delete removes an unused profile, refuses
+one an instance's section names (`ServerProfileInUse` naming it, file kept), a missing one
+(`NoServerProfile`), and, with `instances.ini` unreadable, answers `Io` and keeps the file; a caller
+without `configure`, and an `As` for a non-member or from a non-bff caller, change nothing; each call
+writes one action record. `pai-core`: the new error decodes, its text and the two new keys are in both
+strings files. `pai-bff`: the four routes answer 401 without a session with the manager not called;
+the list, create, delete and the profile document answer the codes above from a fake client; the
+document of `big` used by `default` carries `instance: "default"` and its PUT writes `server@big.ini`;
+an unused profile's document has `instance: null`, `defaults.StateDir: null`, PUT `running: false`;
+`/api/instances/default/server` still answers as before. Clippy and fmt green per crate.
+Mutants (security code): `create_server_profile`, `delete_server_profile` and their pipe parse in the
+manager (the gate, the never-overwrite, the in-use and `Io` refusals, the name rule), and the session
+gate of the four bff routes.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,
@@ -1659,7 +1740,7 @@ version. Each crate's clippy and fmt green.
     server document stop assuming `default`'s profile is named `default` and read it through
     `Instances()` ((g')), before slice 15 gives clients a way to switch it; with it the About versions
     in `GET /api/node`, `boot` in the list (decisions and "done when" after (g')).
-14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
+14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`. Decisions and "done when" under "Slice 14's decisions" after (g'); backend only, the old route kept until 17.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
     instance, the pool rows' `assignments`, `restart`, resource refusals (old 10). The manager's
     `SetServerProfile` answers nothing about a restart: the route reads `Status` after the switch and

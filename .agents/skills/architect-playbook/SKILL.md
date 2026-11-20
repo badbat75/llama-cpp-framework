@@ -125,5 +125,7 @@ description: What the architect has learned about this project's components, int
   SDK's (`components::dist_version` of the dist path, e.g. `llama.cpp-rocm 10.1.0`), the engine's
   `1:<release>+pai<n>`; Windows bundles the runtimes inside llama.cpp's one MSI, so nothing installed
   records their versions unless the package writes it. This machine has both dpkg and `/usr/bin/rpm`.
-- The bff's server document is still at `/api/instances/{id}/server` (`crates/bff/src/server.rs`); the
-  move to `/api/profiles/server/{id}` of (f') is slice 14's, whatever slice 4's text says.
+- The bff's server document is still at `/api/instances/{id}/server` (`crates/bff/src/server.rs`,
+  called by `fe/src/ServerSection.tsx` and `ServerForm.tsx`); slice 14 adds `/api/profiles/server/{id}`
+  beside it, and slice 17 (the fe) switches and removes the old one. The manager has no list of server
+  profiles before slice 14's `ServerProfiles()`, and no `unknown-engine` refusal before it either.
