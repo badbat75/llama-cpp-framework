@@ -389,6 +389,97 @@ impl FileGroup for SystemGroup {
     }
 }
 
+/// The GPU memory a model profile's estimate is measured against: the node's
+/// cards, each with its total. `None` when there is nothing to measure against
+/// (no card, or a probe that failed), which skips the check (ARCHITECTURE.md
+/// (b) 2). A seam, so a test answers any pool and runs no engine.
+pub trait GpuTotals {
+    fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>>;
+}
+
+/// The node's GPU totals answered as nothing: no pool, so the memory check is
+/// skipped. The default of [`Manager::new`], so a manager that wires no seam
+/// measures nothing.
+pub struct NoGpus;
+
+impl GpuTotals for NoGpus {
+    fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
+        None
+    }
+}
+
+/// How long the engine probe of `--list-devices` is given before it is
+/// killed (ARCHITECTURE.md (b) 2, "The GPUs").
+pub const GPU_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The node's GPU totals from the engine's own probe: `--list-devices` run
+/// against `exe` as the manager, killed after `timeout`, the block reduced
+/// to the physical pool by `pai_core::devices`, cached for the manager's
+/// life keyed by the exe's modification time, and a probe that failed not
+/// cached (ARCHITECTURE.md (b) 2: a node with no card, a probe that timed
+/// out, spawned badly or named no card is answered `None`, which skips the
+/// memory check).
+pub struct ProbedGpus {
+    exe: std::path::PathBuf,
+    timeout: std::time::Duration,
+    /// The pool the last probe answered, with the modification time the exe had
+    /// when it was read: an engine upgrade replaces the file, and the next call
+    /// probes again. A probe that failed leaves nothing here, so the fix of the
+    /// engine is picked up.
+    cached: std::sync::Mutex<Option<(Option<std::time::SystemTime>, Vec<pai_core::devices::Gpu>)>>,
+}
+
+impl ProbedGpus {
+    /// The probe of `exe --list-devices`, killed after `timeout`. A test
+    /// names a script and a short bound.
+    pub fn new(exe: impl Into<std::path::PathBuf>, timeout: std::time::Duration) -> Self {
+        Self {
+            exe: exe.into(),
+            timeout,
+            cached: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// The probe of a real node: the exe the launch uses, under
+    /// [`GPU_PROBE_TIMEOUT`].
+    pub fn for_node() -> Self {
+        Self::new(
+            crate::paths::llama_server_exe().unwrap_or_default(),
+            GPU_PROBE_TIMEOUT,
+        )
+    }
+}
+
+impl GpuTotals for ProbedGpus {
+    fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
+        let mtime = std::fs::metadata(&self.exe).and_then(|f| f.modified()).ok();
+        let cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some((at, pool)) = cached {
+            if at == mtime {
+                return Some(pool);
+            }
+        }
+        // The block is read out of stdout and stderr together (`proc`'s rule
+        // for the llama-server probes), and the exit status is not asked: an
+        // engine whose backend fails late exits non-zero with a block worth
+        // reading. A pool with no card is a probe that failed.
+        let pool =
+            pai_core::proc::run_hidden_probe_within(&self.exe, ["--list-devices"], self.timeout)
+                .map(|out| {
+                    pai_core::devices::gpu_pool(&pai_core::devices::parse(
+                        &pai_core::proc::combined_output(&out),
+                    ))
+                })
+                .filter(|pool| !pool.is_empty())?;
+        *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = Some((mtime, pool.clone()));
+        Some(pool)
+    }
+}
+
 /// Replace `path` with `contents` atomically (a temp file beside it, synced,
 /// then renamed over it). On Unix the temp file has `file_mode(file)` before
 /// any byte is written and, for an instance file, its group set to
@@ -515,6 +606,8 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     group: Box<dyn FileGroup + Send + Sync>,
     /// Checks the passwords [`Manager::authenticate`] is given.
     passwords: Box<dyn PasswordChecker + Send + Sync>,
+    /// The GPU totals the memory check of a model profile measure against.
+    gpus: Box<dyn GpuTotals + Send + Sync>,
     /// Records every guarded call, done or refused, through [`ActionLog`].
     action_log: Box<dyn ActionLog + Send + Sync>,
     /// Held by a write from its address check to its rename, so a check
@@ -532,6 +625,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             resolver,
             group: Box::new(SystemGroup),
             passwords: Box::new(SystemPasswords),
+            gpus: Box::new(NoGpus),
             action_log: Box::new(NoActionLog),
             writing: std::sync::Mutex::new(()),
         }
@@ -551,6 +645,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         passwords: impl PasswordChecker + Send + Sync + 'static,
     ) -> Self {
         self.passwords = Box::new(passwords);
+        self
+    }
+
+    /// This manager measuring the model profile memory check against the cards
+    /// [`GpuTotals::gpus`] answers, in place of [`NoGpus`].
+    pub fn with_gpus(mut self, gpus: impl GpuTotals + Send + Sync + 'static) -> Self {
+        self.gpus = Box::new(gpus);
         self
     }
 
@@ -791,7 +892,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         name: &str,
         contents: &str,
     ) -> Result<(), ManagerError> {
-        check_contents(file, contents).map_err(ManagerError::Invalid)?;
+        check_contents(file, contents, &*self.gpus).map_err(ManagerError::Invalid)?;
         if let ConfigFile::ServerProfile(id) = file {
             self.check_address(id, contents)?;
         }
@@ -911,6 +1012,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // this instance, the one whose profile file is missing included.
             let today = render_of(instance, &enabled, &disabled);
             check_model_files_of(&text, instance, &enabled, &disabled, &today)
+                .map_err(ManagerError::Invalid)?;
+            // The memory the render this record leaves in effect, measured
+            // against the render this instance has today: the record is what
+            // this write moves, so the render to judge is built of the new
+            // record, as the model-file check above does, and a model profile
+            // this write does not make larger is judged on nothing.
+            check_profile_memory_of(&text, instance, &enabled, &disabled, &today, &*self.gpus)
                 .map_err(ManagerError::Invalid)?;
             let cap = profile_file(instance)
                 .and_then(|file| std::fs::read_to_string(file).ok())
@@ -1355,7 +1463,11 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
 /// files too: a model profile the write puts in effect on an instance names
 /// files the node has, and a file that instance's render is already missing
 /// is never re-judged. A refusal writes nothing.
-fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::checks::Refusal> {
+fn check_contents(
+    file: &ConfigFile,
+    contents: &str,
+    gpus: &dyn GpuTotals,
+) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
     let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
@@ -1388,7 +1500,12 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
             checks::models_file(contents, &old, &off, NO_MODELS_MAX)?;
             checks::model_profile_ids_free(contents, &old, &off)?;
             check_renders(&enabled, &disabled)?;
-            check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)
+            check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)?;
+            // The memory the render puts in effect, after the model files: a
+            // model profile whose file is not on the node has no header to
+            // read, and the missing file is the news that matters (it is also
+            // what makes this estimate give up).
+            check_profile_memory(&enabled, &disabled, &old, &off, gpus)
         }
         ConfigFile::ModelsDisabled => {
             let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
@@ -1401,7 +1518,8 @@ fn check_contents(file: &ConfigFile, contents: &str) -> Result<(), pai_core::che
                 &disabled,
                 &enabled_file,
                 &old,
-            )
+            )?;
+            check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)
         }
     }
 }
@@ -1644,6 +1762,208 @@ fn missing_model_files(render: &str, cwd: &std::path::Path) -> Vec<(String, Stri
         }
     }
     missing
+}
+
+// ── The model profile memory check (ARCHITECTURE.md step 10, item 13) ──────
+
+/// The whole pool pair as it will stand after the write (`enabled`,
+/// `disabled`) against the pair on disk (`old_enabled`, `old_disabled`): every
+/// instance's render in id order, the first one with a model profile the write
+/// makes over the node's memory refusing. The rule, the args of the refusal and
+/// the GPU seam are [`check_render_memory`]'s.
+fn check_profile_memory(
+    enabled: &str,
+    disabled: &str,
+    old_enabled: &str,
+    old_disabled: &str,
+    gpus: &dyn GpuTotals,
+) -> Result<(), pai_core::checks::Refusal> {
+    for id in crate::paths::instance_ids() {
+        // The render today is the pool on disk cut by the record on disk, as
+        // [`check_model_files`] reads it.
+        check_render_memory(
+            &render_of(&id, enabled, disabled),
+            &render_of(&id, old_enabled, old_disabled),
+            &id,
+            gpus,
+        )?;
+    }
+    Ok(())
+}
+
+/// The memory of the render the record `assignments` leaves in effect on
+/// instance `id`, against the render that instance has today (`today`: the pool
+/// pair on disk and the record on disk, as [`check_model_files_of`] takes it).
+/// The record is the whole of what this write moves, so the render to measure
+/// is built of `assignments` and not read off the disk.
+fn check_profile_memory_of(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    today: &str,
+    gpus: &dyn GpuTotals,
+) -> Result<(), pai_core::checks::Refusal> {
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    check_render_memory(&render, today, id, gpus)
+}
+
+/// The memory check of one instance's render `render`, named `id` in the
+/// refusal, against the render that same instance has today (`today`): the
+/// first model profile of `render`, in the render's order, that this write
+/// makes larger AND whose own estimate is over the node's usable GPU memory
+/// refuses with `model-profile-over-memory` and
+/// `[model profile, instance, needed MiB, available MiB]`, the need rounded up
+/// to a MiB and the memory the node has rounded down to one
+/// (ARCHITECTURE.md (b) 1, 2 and 3). The need is that one model profile's
+/// estimate, never a sum over the render: two model profiles that each fit the
+/// node land in one write.
+///
+/// A section grew when its estimate is larger than the estimate of the section
+/// of the same id in `today` (0 when `today` has no such section, so the whole
+/// of its need is this write's). A save of a key the estimate does not read, a
+/// save that changes no byte, a switch off and an `[*]` that changes nothing
+/// grow nothing, so a model profile that stands over the node's memory today
+/// (GPUs swapped, a hand edit) is never refused by a write beside it.
+///
+/// The estimates come from the files and the GPU totals from the seam
+/// [`GpuTotals`], which runs a probe: both renders are estimated and the growth
+/// found first, and the seam is asked only once a section has grown. A node the
+/// seam answers no pool for, an empty pool included, is measured on nothing.
+fn check_render_memory(
+    render: &str,
+    today: &str,
+    id: &str,
+    gpus: &dyn GpuTotals,
+) -> Result<(), pai_core::checks::Refusal> {
+    let cwd = crate::launch::instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    );
+    let was = estimated_of(today, &cwd);
+    // Today's estimate of the same model profile, by section id: a
+    // byte-identical section estimates the same, so it is no growth.
+    let baseline = |section: &str| {
+        was.iter()
+            .find(|was| was.id == section)
+            .map(|was| was.bytes)
+            .unwrap_or(0)
+    };
+    let grown: Vec<Estimated> = estimated_of(render, &cwd)
+        .into_iter()
+        .filter(|need| need.bytes > baseline(&need.id))
+        .collect();
+    if grown.is_empty() {
+        return Ok(());
+    }
+    let Some(pool) = gpus.gpus() else {
+        return Ok(());
+    };
+    let available = pai_core::devices::pool_usable(&pool);
+    if available == 0 {
+        return Ok(());
+    }
+    if let Some(need) = grown.into_iter().find(|need| need.bytes > available) {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-over-memory",
+            values: vec![
+                need.id,
+                id.to_string(),
+                (need.bytes.div_ceil(pai_core::gguf_shape::MIB)).to_string(),
+                (available / pai_core::gguf_shape::MIB).to_string(),
+            ],
+        });
+    }
+    Ok(())
+}
+
+/// One model profile of a render that has an estimate.
+struct Estimated {
+    id: String,
+    bytes: u64,
+}
+
+/// The estimate of every model profile the render `render` puts in effect, in
+/// the render's order: a section of the render's own `[*]`, one with a
+/// [`FETCH_KEYS`] key, one naming no `model`, and one whose `model` is not a
+/// GGUF [`pai_core::gguf_shape::local_shape`] can read, have none. The four
+/// keys are the section's own, else the `[*]` section's, llama.cpp cascading
+/// the global section into every model profile; a `ctx-size` that is absent,
+/// `0` or not an integer is the context the model was trained on, `REF_CTX`
+/// when the header gives none, and a cache type that is absent is `f16`, the
+/// engine's default. The `model` is resolved as in the model-file check:
+/// absolute, else in `cwd`, the folder the instance inherits.
+fn estimated_of(render: &str, cwd: &std::path::Path) -> Vec<Estimated> {
+    let global = pai_core::ini::parse_sections(render)
+        .into_iter()
+        .find(|section| section.id == "*");
+    let mut out = Vec::new();
+    for section in pai_core::ini::parse_sections(render) {
+        if section.id == "*" {
+            continue;
+        }
+        let own = |key: &str| {
+            section
+                .keys
+                .get(key)
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        // The section's own key, else the render's `[*]` one.
+        let get = |key: &str| {
+            own(key).or_else(|| {
+                global
+                    .as_ref()
+                    .and_then(|g| g.keys.get(key))
+                    .map(String::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+            })
+        };
+        if FETCH_KEYS.iter().any(|key| own(key).is_some()) {
+            continue;
+        }
+        let Some(model) = get("model") else {
+            continue;
+        };
+        let file = std::path::Path::new(&model);
+        let path = if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            cwd.join(file)
+        };
+        let Some(shape) = pai_core::gguf_shape::local_shape(&path).ok() else {
+            continue;
+        };
+        // `0` is llama.cpp's "unset", and a value that is not a number leaves
+        // the reading of the key to the launch: both are the context the model
+        // was trained on, `REF_CTX` when the header gives none.
+        let ctx = get("ctx-size")
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|ctx| *ctx != 0)
+            .unwrap_or(shape.trained_ctx);
+        let ctx = if ctx == 0 {
+            pai_core::gguf_shape::REF_CTX
+        } else {
+            ctx
+        };
+        let full = pai_core::gguf_shape::full_gpu_bytes(
+            &shape,
+            ctx,
+            get("cache-type-k").as_deref().unwrap_or("f16"),
+            get("cache-type-v").as_deref().unwrap_or("f16"),
+        );
+        out.push(Estimated {
+            id: section.id,
+            bytes: full,
+        });
+    }
+    out
 }
 
 /// `id` if it is a valid instance id.
@@ -2082,6 +2402,50 @@ pub(crate) mod fakes {
                 Some(kind) => Err(kind.into()),
                 None => Ok(()),
             }
+        }
+    }
+
+    /// A GPU pool the memory check measures against: `gpus` answered as the
+    /// node's cards, each written as `(device id, name, total MiB)`, and every
+    /// answer recorded (lowered ids), so a test can pin how often the manager
+    /// probed.
+    pub struct FakeGpus {
+        pub gpus: Option<Vec<(String, String, u64)>>,
+        pub asked: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakeGpus {
+        pub fn new(gpus: &[(&str, u64)]) -> Self {
+            Self {
+                gpus: Some(
+                    gpus.iter()
+                        .map(|(id, mib)| (id.to_string(), format!("NVIDIA GeForce {id}"), *mib))
+                        .collect(),
+                ),
+                asked: std::sync::Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+        /// A node with no card: the seam answers `None`.
+        pub fn none() -> Self {
+            Self {
+                gpus: None,
+                asked: std::sync::Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl GpuTotals for FakeGpus {
+        fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
+            self.gpus.as_ref().map(|list| {
+                self.asked.lock().unwrap().push("gpus".to_string());
+                list.iter()
+                    .map(|(id, name, mib)| pai_core::devices::Gpu {
+                        id: id.clone(),
+                        name: name.clone(),
+                        total_mib: *mib,
+                    })
+                    .collect()
+            })
         }
     }
 
@@ -7239,7 +7603,901 @@ pub(crate) fn manager_model_file_check_e2e() {
     // S9C-PIN-3 END
 }
 
-/// E2E phase: `SetServerProfile`, the verb that points an instance at one of
+/// A GGUF v3 header for the memory fixtures: a `llama` model of two layers
+/// trained on `ctx_len` tokens, with the KV layout the reader of
+/// `pai_core::gguf_shape` knows (the head counts written below), and one
+/// tensor of `bytes` per `(name, bytes)`, laid out as llama.cpp does (each
+/// aligned to 32). A copy of `pai-core`'s `gguf_shape::tests::gguf` and
+/// `write_sparse`: a test module imports no other test module, and the bytes
+/// both check are the same.
+#[cfg(test)]
+fn write_gguf(path: &std::path::Path, ctx_len: u32, tensors: &[(&str, u64)]) {
+    let put_str = |out: &mut Vec<u8>, s: &str| {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    };
+    let put_u32 = |out: &mut Vec<u8>, x: u32| out.extend_from_slice(&x.to_le_bytes());
+    let put_u64 = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
+    let mut out = b"GGUF".to_vec();
+    put_u32(&mut out, 3);
+    put_u64(&mut out, tensors.len() as u64);
+    put_u64(&mut out, 8);
+    for (k, v) in [
+        ("general.architecture", None),
+        ("llama.context_length", Some(ctx_len)),
+        ("llama.block_count", Some(2)),
+        ("llama.embedding_length", Some(2048)),
+        ("llama.attention.head_count", Some(32)),
+        ("llama.attention.head_count_kv", Some(4)),
+        ("llama.attention.key_length", Some(128)),
+        ("llama.attention.value_length", Some(128)),
+    ] {
+        put_str(&mut out, k);
+        match v {
+            None => {
+                put_u32(&mut out, 8);
+                put_str(&mut out, "llama");
+            }
+            Some(x) => {
+                put_u32(&mut out, 4);
+                put_u32(&mut out, x);
+            }
+        }
+    }
+    let mut off = 0u64;
+    for (name, bytes) in tensors {
+        put_str(&mut out, name);
+        put_u32(&mut out, 2);
+        put_u64(&mut out, 4096);
+        put_u64(&mut out, bytes / 4096);
+        put_u32(&mut out, 12);
+        put_u64(&mut out, off);
+        off += bytes.div_ceil(32) * 32;
+    }
+    let data_start = (out.len() as u64).div_ceil(32) * 32;
+    std::fs::write(path, out).expect("gguf header");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open gguf")
+        .set_len(data_start + off)
+        .expect("sparse gguf");
+}
+
+/// E2E phase: the model profile memory check (PLAN.md step 10 item 13, slice
+/// 10b-2; ARCHITECTURE.md (b) 1, 2, 3). The manager measures a write of the
+/// model profile pool against the node's GPU memory with the pure estimate of
+/// `pai_core::gguf_shape` (slice 10b-1), over every instance's render in id
+/// order, and refuses with `model-profile-over-memory` and
+/// `[model profile, instance, needed MiB rounded up, available MiB rounded
+/// down]` when ONE model profile is over the node's usable memory AND this
+/// write makes that profile larger than it stands in today's render: the need
+/// named is that one profile's estimate, never a sum over the render (slice
+/// 10b). The assignment verb `set_model_profile` measures the render its
+/// record leaves in effect, and the GPU seam is asked only once a section has
+/// grown. The estimate reads four keys,
+/// `model`, `ctx-size`, `cache-type-k` and `cache-type-v`, with `[*]` filling
+/// a key a section has none of, the trained context standing in for a
+/// `ctx-size` that is absent or 0, and f16 standing in for a cache type that
+/// is absent. A model profile with `hf-repo`, `model-url` or `docker-repo`,
+/// one with no `model`, and one whose `model` is not a GGUF the reader knows,
+/// are judged on nothing; a node the GPU seam answers no pool for, an empty
+/// pool included, is measured on nothing. The refusal writes nothing and
+/// renders nothing.
+///
+/// The pool of every fixture is a two-layer `llama` (`write_gguf`) whose
+/// weights and KV terms are both far over the small card, and the cards are
+/// sized from the estimate read off that file with the same pure API the
+/// manager uses, so no figure here restates the arithmetic of 10b-1.
+#[cfg(test)]
+pub(crate) fn manager_memory_check_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGpus, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::gguf_shape::{full_gpu_bytes, local_shape, GPU_RESERVE, MIB};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+
+    let model = models.join("qwen.gguf");
+    write_gguf(
+        &model,
+        262_144,
+        &[
+            ("token_embd.weight", 200 << 20),
+            ("blk.0.attn_q.weight", 300 << 20),
+            ("blk.1.attn_q.weight", 300 << 20),
+            ("output.weight", 200 << 20),
+        ],
+    );
+    std::fs::write(models.join("notes.txt"), "not a model").expect("notes.txt");
+    let path = model.to_string_lossy().into_owned();
+    let txt = models.join("notes.txt").to_string_lossy().into_owned();
+
+    // What the model needs, read from the file with the pure estimate: the
+    // phase sizes its cards and its refusals with these, never with figures it
+    // worked out by hand.
+    let shape = local_shape(&model).expect("fixture shape");
+    let trained = shape.trained_ctx;
+    let need = |ctx: u64, k: &str, v: &str| full_gpu_bytes(&shape, ctx, k, v);
+    let mib_up = |bytes: u64| (bytes.div_ceil(MIB)).to_string();
+    let mib_down = |bytes: u64| (bytes / MIB).to_string();
+    // Every card carries the reserve the estimate keeps free (`GPU_RESERVE`),
+    // so its usable memory is what the test adds to the total.
+    let reserve = GPU_RESERVE / MIB;
+    let small = need(1024, "f16", "f16") / MIB + reserve + 32;
+    let big = need(trained, "f16", "f16") / MIB + reserve + 32;
+    // A card sitting between the two contexts the growth case moves between:
+    // it fits the model at 131072 tokens and not at the trained one.
+    let mid = need(131_072, "f16", "f16") / MIB + reserve + 32;
+    let usable = |total_mib: u64| {
+        pai_core::devices::pool_usable(&[pai_core::devices::Gpu {
+            id: "CUDA0".to_string(),
+            name: "NVIDIA GeForce CUDA0".to_string(),
+            total_mib,
+        }])
+    };
+
+    let bff = Caller(":1.9".into());
+    let desktop = Caller(":1.42".into());
+    let manager_on = |gpus: FakeGpus| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(FakeActionLog::new())
+        .with_gpus(gpus)
+    };
+
+    let read_opt = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let seen = |name: &str| -> String {
+        if name == "listing" {
+            format!("{}\n", listing().join("\n"))
+        } else {
+            read_opt(name).unwrap_or_default()
+        }
+    };
+    let snapshot = |names: &[&str]| -> Vec<(String, String)> {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .chain(std::iter::once("listing".to_string()))
+            .map(|name| (name.clone(), seen(&name)))
+            .collect()
+    };
+    let kept = |before: &[(String, String)]| {
+        for (name, text) in before {
+            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+        }
+    };
+    let pool_files = |on: &str, off: &str| {
+        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
+    };
+    let assignments = |text: &str| {
+        std::fs::write(sys.join("assignments.ini"), text).expect("assignments.ini");
+    };
+    // The refusal this phase is about, its four args whole.
+    let over = |answer: &Result<(), ManagerError>,
+                profile: &str,
+                instance: &str,
+                needed: u64,
+                available: u64| {
+        matches!(
+            answer,
+            Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-over-memory"
+                    && r.values == [
+                        profile.to_string(),
+                        instance.to_string(),
+                        mib_up(needed),
+                        mib_down(available)
+                    ]
+        )
+    };
+
+    write_record(&sys, &["default"]);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("server@default.ini");
+    const WATCH: [&str; 5] = [
+        "assignments.ini",
+        "models.ini",
+        "models.ini.disabled",
+        "models@default.ini",
+        "models@a-lan.ini",
+    ];
+
+    // The pool texts, one profile of the fixture model.
+    let on_text = format!("[qwen]\nmodel = {path}\nctx-size = {trained}\n");
+    let fits_text = format!("[qwen]\nmodel = {path}\nctx-size = 1024\n");
+
+    // The cards are sized from the estimate of the fixture, and the phase
+    // depends on them sitting between the model's needs: pinned here, so a
+    // refusal that does not come means the check, not a fixture that stopped
+    // being over its card.
+    assert_eq!(
+        local_shape(&model).map(|s| s.kv_f16_per_token.is_some()),
+        Ok(true),
+        "the fixture's KV layout is one the reader knows: with no KV term every \
+         context and cache-type case below would measure the same bytes"
+    );
+    assert!(
+        need(1024, "f16", "f16") <= usable(small),
+        "the small card fits the model at 1024 tokens"
+    );
+    assert!(
+        need(trained, "f16", "f16") > usable(small),
+        "the small card does not fit it at the context it was trained on"
+    );
+    assert!(
+        need(trained, "f16", "f16") <= usable(big),
+        "the big card fits it at the trained context, f16 on both sides"
+    );
+    assert!(
+        need(131_072, "f16", "f16") <= usable(mid),
+        "the mid card fits it at 131072 tokens"
+    );
+    assert!(
+        need(trained, "f16", "f16") > usable(mid),
+        "the mid card does not fit it at the trained context: the growth case is refused \
+         on this card and lands below it"
+    );
+    assert!(
+        need(trained, "f32", "f32") > usable(big),
+        "the big card does not fit it with an f32 KV cache"
+    );
+
+    // ── Over the node: refused, on an instance that loads it ───────────────
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "a model profile that does not fit the node's GPU memory is refused, naming \
+             itself, the instance, the MiB it needs and the MiB the node has: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── The same profile, sized to fit: it lands ──────────────────────────
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &fits_text, false),
+            Ok(()),
+            "the same model profile at 1024 tokens fits the card and lands"
+        );
+        assert_eq!(text_of("models.ini"), fits_text, "the save landed");
+    }
+
+    // ── The four keys the estimate reads ─────────────────────────────────
+    {
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // No `ctx-size` at all: the trained context, so this is the same need
+        // as the one refused above.
+        let bare = format!("[qwen]\nmodel = {path}\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &bare, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "a `ctx-size` that is absent is the context the model was trained on: {answer:?}"
+        );
+        kept(&before);
+
+        // `ctx-size = 0` is the same: 0 is llama.cpp's "unset".
+        let zero = format!("[qwen]\nmodel = {path}\nctx-size = 0\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &zero, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "a `ctx-size` of 0 is the trained context too: {answer:?}"
+        );
+        kept(&before);
+
+        // No cache type keys at all: f16 on both sides, the engine's default,
+        // which is what the card sized for f16 fits.
+        let m_big = manager_on(FakeGpus::new(&[("CUDA0", big)]));
+        assert_eq!(
+            m_big.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "cache types absent are f16: on the card sized for f16 this lands, \
+             and one bit wider on either side does not"
+        );
+    }
+
+    // ── A cache type makes it grow: refused ──────────────────────────────
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", big)]));
+        let f32 = format!(
+            "[qwen]\nmodel = {path}\nctx-size = {trained}\ncache-type-k = f32\ncache-type-v = f32\n"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &f32, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f32", "f32"),
+                usable(big)
+            ),
+            "an f32 KV cache on both sides doubles the KV term and does not fit: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── `[*]` fills a key the section has none of ────────────────────────
+    //
+    // A client cannot write the global section (a client's `[*]` is refused
+    // `invalid-model-profile-id`, pinned in the assignments phase), so it
+    // reaches the pool as a hand edit of `models.ini` and a save that keeps it
+    // byte for byte. The cascade is pinned on the cache types: the card fits
+    // the model at f16 and not at f32, so a section that writes no cache key
+    // is measured on `[*]`'s f32.
+    {
+        // The global section, f32 on both sides, hand-edited into the
+        // switched-on file, and the model profile that says nothing about the
+        // cache sitting switched off: today's render holds no model profile,
+        // so the need the write puts in effect is all this write's.
+        let global = "[*]\ncache-type-k = f32\ncache-type-v = f32\n";
+        pool_files(global, &on_text);
+        assignments("[default]\nqwen = inherit\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", big)]));
+
+        // The switch on: the section moves to the switched-on file, the
+        // `[*]` of the file kept byte for byte as a save keeps it.
+        let switch_on = format!("{global}{on_text}");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &switch_on, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f32", "f32"),
+                usable(big)
+            ),
+            "the cache types of `[*]` are the need of a model profile that writes none, on \
+             a card that fits it at f16 and not at f32: {answer:?}"
+        );
+        kept(&before);
+
+        // The section's own keys win over `[*]`'s: the same model profile
+        // f16 of its own lands on the card `[*]`'s f32 does not fit. The pool
+        // is hand-edited to the switched-on state, so the save is a plain edit
+        // of a model profile that is in effect, not a switch.
+        pool_files(&format!("{global}{on_text}"), "");
+        let own = format!(
+            "[qwen]\nmodel = {path}\nctx-size = {trained}\ncache-type-k = f16\ncache-type-v = f16\n"
+        );
+        let save = format!("{global}{own}");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &save, false),
+            Ok(()),
+            "a model profile's own cache types replace `[*]`'s, and fit the card: {save:?}"
+        );
+        assert_eq!(text_of("models.ini"), save, "the save landed");
+
+        // The same rule, from the other side, as a refusal: `[*]` is f16 and
+        // the section's own keys are f32, so the render is over the card. An
+        // implementation that let `[*]` win over a key the section writes
+        // lands this save.
+        let f16 = "[*]\ncache-type-k = f16\ncache-type-v = f16\n";
+        pool_files(&format!("{f16}{on_text}"), "");
+        let own32 = own.replace("f16", "f32");
+        let wider = format!("{f16}{own32}");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &wider, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f32", "f32"),
+                usable(big)
+            ),
+            "the section's own f32 cache types, not `[*]`'s f16, are the need: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── Judged on nothing ────────────────────────────────────────────────
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\nhf = on\nnotes = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // The engine fills a `hf-repo` model itself: not judged.
+        let fetch = "[hf]\nmodel = /models/never-fetched.gguf\nhf-repo = theos/Big-8B-Q4\n";
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", fetch, false),
+            Ok(()),
+            "a model profile with `hf-repo` names no file of the node, and is not measured"
+        );
+
+        // A `model` that is not a GGUF has no shape to measure: not judged,
+        // and it does not blind the check for the profile beside it.
+        let notes = format!("[notes]\nmodel = {txt}\nctx-size = {trained}\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &notes, false),
+            Ok(()),
+            "a `model` that is not a GGUF is measured on nothing and lands"
+        );
+        let both = format!("{notes}{on_text}");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &both, false);
+        assert!(
+            over(&answer, "qwen", "default", need(trained, "f16", "f16"), usable(small)),
+            "an unmeasurable model profile beside one that does not fit does not hide it: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── A switch off, and an assignment that loads nothing ───────────────
+    {
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // Switching the over-memory model profile off: it goes to the disabled
+        // file, where llama-server never reads it.
+        pool_files("", "");
+        assignments("[default]\nqwen = off\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini.disabled", &on_text, false),
+            Ok(()),
+            "a model profile switched off is in no render and lands"
+        );
+        assert_eq!(text_of("models.ini.disabled"), on_text, "the switch landed");
+
+        // In the pool, assigned to nobody.
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = off\n");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "an over-memory model profile no instance loads is in no render and lands"
+        );
+    }
+
+    // ── A switched-off model profile in effect: the disabled file is measured
+    //
+    // `assign::render` takes BOTH pool files, so a model profile sitting in
+    // `models.ini.disabled` is in effect on every instance whose section of
+    // `assignments.ini` says `on` for it. A save of that switched-off file
+    // moves that instance's render, so the memory check judges it exactly as
+    // it judges a save of `models.ini` (the model-file check of slice 9 does).
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // The write puts the over-memory model profile in effect on `default`.
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini.disabled", &on_text, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "a save of `models.ini.disabled` that puts an over-memory model profile in effect \
+             on an instance that has it `on` is refused: {answer:?}"
+        );
+        kept(&before);
+
+        // The same write, sized to fit the card, lands in the same file.
+        assert_eq!(
+            m.write_file(&desktop, "models.ini.disabled", &fits_text, false),
+            Ok(()),
+            "a switched-off model profile that fits the node lands in the switched-off file"
+        );
+        assert_eq!(text_of("models.ini.disabled"), fits_text, "the save landed");
+    }
+
+    // ── The growth rule: a save that changes nothing of the need lands ────
+    {
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // The section on disk is already over; this save adds one key of it and
+        // leaves the `model`, `ctx-size` and cache keys byte for byte.
+        let edited = on_text.replace(
+            &format!("ctx-size = {trained}\n"),
+            &format!("ctx-size = {trained}\ntemperature = 0.5\n"),
+        );
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &edited, false),
+            Ok(()),
+            "a save of another key of a model profile that is already over memory is not \
+             refused: the need it leaves is today's"
+        );
+        assert_eq!(text_of("models.ini"), edited, "the save landed");
+
+        // The same save again, every byte of the model profile as it stands on
+        // disk: today's render has that very section, so the need it leaves is
+        // today's and the write is not this profile's news. It lands, even
+        // though the profile is over the card.
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &edited, false);
+        assert_eq!(
+            answer,
+            Ok(()),
+            "a save that changes no byte of a model profile that is already over memory is \
+             not a need this write makes: {answer:?}"
+        );
+        kept(&before);
+
+        // A save that raises `ctx-size` of that same profile is refused: the
+        // need grew. The card is the mid one, which fits today's context and
+        // not the trained one, so only the wider context is over it.
+        let m_mid = manager_on(FakeGpus::new(&[("CUDA0", mid)]));
+        let grown = format!("[qwen]\nmodel = {path}\nctx-size = 131072\n");
+        pool_files(&grown, "");
+        assignments("[default]\nqwen = on\n");
+        let wider = format!("[qwen]\nmodel = {path}\nctx-size = {trained}\n");
+        let before = snapshot(&WATCH);
+        let answer = m_mid.write_file(&desktop, "models.ini", &wider, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(mid)
+            ),
+            "raising `ctx-size` past what the node has is refused: {answer:?}"
+        );
+        kept(&before);
+
+        // The same profile at the context the mid card has room for, from an
+        // empty pool: it lands.
+        pool_files("", "");
+        assert_eq!(
+            m_mid.write_file(&desktop, "models.ini", &grown, false),
+            Ok(()),
+            "the context the mid card fits, put in effect by the same write, lands"
+        );
+        assert_eq!(text_of("models.ini"), grown, "the save landed");
+    }
+
+    // ── A node with nothing to measure against ───────────────────────────
+    {
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        // The seam answers no pool (no card, a probe that failed).
+        let m = manager_on(FakeGpus::none());
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "a node the GPU seam answers no pool for is not measured"
+        );
+        assert_eq!(text_of("models.ini"), on_text, "the save landed");
+
+        // The seam answers a pool with no card: the same.
+        pool_files("", "");
+        let m = manager_on(FakeGpus::new(&[]));
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "a pool with no card is not measured either"
+        );
+        assert_eq!(text_of("models.ini"), on_text, "the save landed");
+    }
+
+    // ── Whom the refusal names ───────────────────────────────────────────
+    {
+        // Two instances, the profile in effect on both: the first in id order
+        // answers.
+        write_record(&sys, &["default", "a-lan"]);
+        std::fs::write(
+            sys.join("server@a-lan.ini"),
+            "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+        )
+        .expect("server@a-lan.ini");
+        // The pool is empty on disk, so every model profile the write puts in
+        // effect is a need this write brings, on both instances.
+        pool_files("", "");
+        assignments("[a-lan]\nqwen = on\n\n[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "a-lan",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "the instances are answered in id order: `a-lan` comes first: {answer:?}"
+        );
+        kept(&before);
+
+        // Two model profiles in one render, one over the card on its own:
+        // the refusal names that one profile with its OWN need, never the
+        // render's total (slice 10b: `needed` is one profile's estimate).
+        // `beta` needs a key of its own to be in effect on `a-lan`
+        // (`assign::render` renders a model profile with no key and no `*`
+        // nowhere).
+        assignments("[a-lan]\nqwen = on\nbeta = on\n\n[default]\nqwen = on\n");
+        let two = format!("{on_text}[beta]\nmodel = {path}\nctx-size = 1024\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &two, false);
+        // 10B-PIN-1 BEGIN
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "a-lan",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "the profile that is over on its own answers with its own need, not the sum of \
+             the render: {answer:?}"
+        );
+        // 10B-PIN-1 END
+        kept(&before);
+
+        // The assignments' global `*` puts every model profile of the pool in
+        // effect: the check measures that render as it measures one built of
+        // explicit keys. (The switch of the whole pool is a key of the record,
+        // never a `[*]` section of the pool a client writes: the client cannot
+        // write `[*]` at all.)
+        write_record(&sys, &["default"]);
+        pool_files("", "");
+        assignments("[default]\n* = inherit\n");
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "a pool in effect under the assignment's `* = inherit` is measured: {answer:?}"
+        );
+        kept(&before);
+    }
+
+    // ── The assignment: the render this record leaves is measured ────
+    //
+    // `set_model_profile` changes `assignments.ini`, not the pool: the render
+    // to measure is the one the record LEAVES in effect, not the one on disk.
+    // The write passes today's render as both sides, so the check sees an
+    // unchanged render and an assignment that puts an over-memory profile in
+    // effect lands: this is the rule slice 10b adds.
+    {
+        write_record(&sys, &["default"]);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        // 10B-PIN-2 BEGIN
+        let before = snapshot(&WATCH);
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "assigning a model profile that is in the pool and does not fit the card is \
+             refused, naming the profile and the instance whose render grows: {answer:?}"
+        );
+        kept(&before);
+        // 10B-PIN-2 END
+
+        // The switch off lands: the profile is in effect over the card (the
+        // record seeded by hand, as a GPUs swap leaves it), and switching it
+        // off shrinks the render: this write adds no need.
+        assignments("[default]\nqwen = on\n");
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "qwen", "off"),
+            Ok(()),
+            "assigning `off` to a model profile that is over the card lands: the render \
+             shrinks, so the write is judged on no growth"
+        );
+        assert_eq!(
+            text_of("assignments.ini"),
+            "[default]\nqwen = off\n",
+            "the switch landed in the record"
+        );
+
+        // 10B-PIN-2b BEGIN. The count pin of the same assignment, self-contained:
+        // its own pool, record and manager, because a count pin must make the
+        // call it counts (the pin above's own copy of this call is inside its
+        // block, and a proof run that deletes that block makes a count over it
+        // vacuous). It accepts either answer, so it is green today, when the
+        // check probes the GPUs before it judges anything: a guard that the
+        // fixed write probes exactly once for a render that grows.
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = off\n");
+        let gpus = FakeGpus::new(&[("CUDA0", small)]);
+        let asked = gpus.asked.clone();
+        let m_grow = manager_on(gpus);
+        let _ = m_grow.set_model_profile(&desktop, "default", "qwen", "on");
+        let asks = asked.lock().unwrap().clone();
+        assert_eq!(
+            asks,
+            vec!["gpus".to_string()],
+            "the assignment that puts an over-memory model profile in effect asks the GPUs \
+             once, the render it leaves is judged: {asks:?}"
+        );
+        // 10B-PIN-2b END
+    }
+
+    // ── The need is each profile's own, never a sum over the render ──
+    //
+    // A second fixture sized from the same pure estimate: one profile of it
+    // is about 60 % of the small card's usable memory, so two of them in one
+    // render together exceed the card while each of them alone fits. The sum
+    // rule refuses that save; the per-profile rule lands it.
+    {
+        write_record(&sys, &["default"]);
+        pool_files("", "");
+        assignments("[default]\nsixtya = on\nsixtyb = on\n");
+        let half = models.join("half.gguf");
+        let target = usable(small) * 3 / 5;
+        write_gguf(&half, 262_144, &[("output.weight", target)]);
+        let hs = local_shape(&half).expect("half fixture shape");
+        // The KV term is the model's shape, not its bytes: taken out of the
+        // target, what is left is the weight tensor (aligned to the 4096 the
+        // header counts).
+        let kv = full_gpu_bytes(&hs, 1024, "f16", "f16") - full_gpu_bytes(&hs, 1, "f16", "f16");
+        let bytes = (target - kv) / 4096 * 4096;
+        write_gguf(&half, 262_144, &[("output.weight", bytes)]);
+        let hs = local_shape(&half).expect("the resized half fixture shape");
+        let half_need = full_gpu_bytes(&hs, 1024, "f16", "f16");
+        // 10B-PIN-3 BEGIN
+        assert!(
+            half_need <= usable(small) && 2 * half_need > usable(small),
+            "the fixture: one profile of `half.gguf` fits the small card and two of them \
+             together do not: {half_need} against {}",
+            usable(small)
+        );
+        let half_path = half.to_string_lossy().into_owned();
+        let two_fit = format!(
+            "[sixtya]\nmodel = {half_path}\nctx-size = 1024\n\n[sixtyb]\nmodel = {half_path}\nctx-size = 1024\n"
+        );
+        let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
+        let answer = m.write_file(&desktop, "models.ini", &two_fit, false);
+        assert_eq!(
+            answer,
+            Ok(()),
+            "two model profiles each at about 60 % of the card land in one write: each fits \
+             on its own, the render's sum is not the rule: {answer:?}"
+        );
+        assert_eq!(text_of("models.ini"), two_fit, "the save landed");
+        // 10B-PIN-3 END
+    }
+
+    // ── The GPUs are asked only when a section grew ──────────────────
+    //
+    // The estimate comes from the files, the GPUs from a probe: a write that
+    // grows no profile never runs the probe (slice 10b, "The GPUs"). The
+    // count is the seam's own log (`FakeGpus::asked`), one per manager.
+    {
+        write_record(&sys, &["default"]);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+
+        // A save of an unrelated key of a profile that stays as it is: the
+        // profile is over the card, the need does not grow, so the probe is
+        // not asked at all.
+        let gpus = FakeGpus::new(&[("CUDA0", small)]);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let edited = on_text.replace(
+            &format!("ctx-size = {trained}\n"),
+            &format!("ctx-size = {trained}\ntemperature = 0.5\n"),
+        );
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &edited, false),
+            Ok(()),
+            "fixture: the unchanged-over profile lands (the count below is the pin)"
+        );
+        // 10B-PIN-4 BEGIN
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks.is_empty(),
+            "a save of an unrelated key of an unchanged profile asks the GPUs 0 times: {asks:?}"
+        );
+        // 10B-PIN-4 END
+
+        // The switch off: the render shrinks, no section grew, so the probe
+        // is not asked at all.
+        let gpus = FakeGpus::new(&[("CUDA0", small)]);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        assert_eq!(
+            m.set_model_profile(&desktop, "default", "qwen", "off"),
+            Ok(()),
+            "fixture: the switch off lands (the count below is the pin)"
+        );
+        // 10B-PIN-5 BEGIN
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks.is_empty(),
+            "a switch off asks the GPUs 0 times: {asks:?}"
+        );
+        // 10B-PIN-5 END
+
+        // A save that grows a profile: the probe is asked, once. Green today
+        // (the check asks the seam first whatever it judges): a guard.
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let gpus = FakeGpus::new(&[("CUDA0", small)]);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "fixture: the growing save is refused (the count below is the pin): {answer:?}"
+        );
+        // 10B-PIN-6 BEGIN
+        let asks = asked.lock().unwrap().clone();
+        assert_eq!(
+            asks,
+            vec!["gpus".to_string()],
+            "a save that grows a profile asks the GPUs once"
+        );
+        // 10B-PIN-6 END
+    }
+}
 /// the node's server profiles (protocol 3, its `As` form and the same name over
 /// the pipe). It writes one key, the `ServerProfile` of the instance's section
 /// of `instances.ini`, and the instance's next launch reads the profile the key

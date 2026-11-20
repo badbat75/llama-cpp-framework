@@ -38,6 +38,7 @@ pub const KEYS: &[&str] = &[
     "no-model-profile-named",
     "model-profile-bad-value",
     "model-profile-model-missing",
+    "model-profile-over-memory",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -106,6 +107,9 @@ impl Refusal {
             "model-profile-bad-value" => strings::fill("model-profile-bad-value", &[&v(0)]),
             "model-profile-model-missing" => {
                 strings::fill("model-profile-model-missing", &[&v(0), &v(1), &v(2)])
+            }
+            "model-profile-over-memory" => {
+                strings::fill("model-profile-over-memory", &[&v(0), &v(1), &v(2), &v(3)])
             }
             other => other.to_string(),
         }
@@ -1964,6 +1968,37 @@ top-p = 0.95\r\n";
                 .get(key)
                 .unwrap_or_else(|| panic!("{key} missing from {name}"));
             assert_eq!(placeholders(text), 3, "{name} {key}: {text:?}");
+        }
+        let r = refusal(key, &values);
+        let text = r.text();
+        assert!(!text.starts_with(key), "{key} has no text arm: {text:?}");
+        for v in &values {
+            assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
+        }
+        assert_eq!(
+            Refusal::decode(&r.encode()),
+            Some(r.clone()),
+            "{key} round-trips on the wire"
+        );
+    }
+
+    /// The key of the model profile memory check (PLAN.md step 10 item 13,
+    /// slice 10b-2; ARCHITECTURE.md (b) 2, "The refusal"): in `KEYS`, so the
+    /// manager's refusal crosses the wire; in both strings files, with the four
+    /// values its rule passes (`[model profile, instance, needed MiB, available
+    /// MiB]`); and with a text arm that fills them in.
+    #[test]
+    fn the_over_memory_refusal_key_is_known_and_worded() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        let key = "model-profile-over-memory";
+        let values = vec!["qwen3.8-27b", "lan-2", "1446", "512"];
+        assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+        for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+            let text = table
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} missing from {name}"));
+            assert_eq!(placeholders(text), 4, "{name} {key}: {text:?}");
         }
         let r = refusal(key, &values);
         let text = r.text();

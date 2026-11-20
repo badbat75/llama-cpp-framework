@@ -1051,10 +1051,15 @@ A refusal names the preset and the instance (`args` `[preset, instance]`) and wr
      of the new render is judged on its effective keys (its own, else the render's `[*]` ones: llama.cpp
      cascades the global section into every profile, `tools/server/server-models.cpp` 766-769 in
      v1.0.0). Refused when `needed > available` **and** `needed` is larger than the same profile's
-     estimate in today's render (0 when it is not in effect today). So a save of an unrelated key, or a
-     switch off, never fails on a profile that was already over (GPUs swapped, a hand edit), and any
-     write that makes a profile larger, `[*]` included, is judged. A section byte-identical in both
-     renders is not estimated.
+     estimate in today's render (0 when it is not in effect today); `needed` is that one profile's
+     estimate, never a sum over the render. So a save of an unrelated key, or a switch off, never fails
+     on a profile that was already over (GPUs swapped, a hand edit), and any write that makes a profile
+     larger is judged. Today's estimate is found by section id (as built, 2026-11-19): a byte-identical
+     section estimates the same, so it is not growth, and no byte compare skips it (every section in
+     effect has its header read at each pool write, capped at `MAX_HEADER`). A client can never write
+     `[*]` (refused `invalid-model-profile-id`), so the cascade reaches the check only from a
+     hand-edited `[*]` kept by a save; no client write grows a profile through `[*]`. The GPUs are
+     asked only once a section has grown.
    - **The keys**: `model` (resolved as in 3), `ctx-size` (absent, `0` or not an integer: the trained
      context, else `REF_CTX` when the header has none), `cache-type-k`, `cache-type-v` (absent: `f16`;
      the content checks already refuse a value outside `KV_CACHE_TYPES`). The KV term is the f16 bytes
@@ -1075,6 +1080,13 @@ A refusal names the preset and the instance (`args` `[preset, instance]`) and wr
      virtual account's token. Killed after 30 s. Cached in the `Manager` for its life, keyed by the
      exe's path and modification time (an engine upgrade replaces the file; a GPU change takes a reboot,
      which restarts the manager); a failed probe is not cached. Probed only when a section is judged.
+     As built (`pai_core::proc::run_hidden_probe_within`): no stdin; stdout and stderr drained by one
+     thread each, keeping 4 MiB of each, so a chatty engine never blocks on a full pipe; at the bound
+     the child is killed and reaped and its readers left detached; after a normal exit each stream is
+     awaited for a 2 s grace and taken as empty past it (a helper of the child that inherited the pipe
+     would otherwise hold the manager past the bound). The exe path is resolved once, at the manager's
+     start (`ProbedGpus::for_node`): llama.cpp installed after the manager started is seen at its next
+     start.
    - **No GPU, or no list** (spawn failed, timeout, no card with a size): the check is skipped. A
      CPU-only node would otherwise refuse every profile, and a broken probe would block every save,
      the fix of the engine included; the check guards the node's memory, not a permission (the writer
@@ -1527,7 +1539,10 @@ profile waits until asked.
    key of an already-over profile, a switch off, a fetch-key profile, a non-GGUF `model`, no GPUs land.
    10b-3, the real probe (timeout, cache by exe path and mtime, failure not cached). Done when: a fake
    exe printing a device block gives the totals once for two checks, a changed mtime probes again, a
-   hanging one is killed and skipped.
+   hanging one is killed and skipped. 10b-2 and 10b-3 done as one slice (this commit); changed from
+   the design: growth by section id with no byte-compare shortcut, `[*]`'s `ctx-size` saved larger
+   dropped from "Done when" (no client writes `[*]`; the cascade pinned on a hand-edited one), the
+   probe's 2 s reader grace.
 11. **Snapshots per instance** (old 7). 12. **Tags** on the server profile (`[Server] Tags`) and on the instance (`Tags` in its `instances.ini`
     section), `SetInstanceTags` and `PUT /api/instances/{id}/tags`. Done when: each is saved and refused
     by the rule of (c); `Instances()` returns both lists; the shown `tags` are the union, profile first,

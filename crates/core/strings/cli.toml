@@ -192,6 +192,7 @@ min-above-max = "{0} = {1} is above {2} = {3}: the minimum cannot exceed the max
 modality-dense = "dense"
 model-profile-bad-value = "{0} is not a value here: a model profile takes none, inherit, on or off, and * takes none or inherit"
 model-profile-model-missing = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`"
+model-profile-over-memory = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB"
 models-status = "llama-server answered {0} to /models"
 models-unreadable = "unreadable /models reply: {0}"
 moe-all-in-ram = "MoE split: attention on GPU{0}, every expert in RAM ({1}), --n-cpu-moe all{2}"

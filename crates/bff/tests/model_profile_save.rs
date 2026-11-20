@@ -2185,6 +2185,38 @@ async fn save_a_refusal_about_the_name_carries_no_field() {
     }
 }
 
+/// The memory refusal (`model-profile-over-memory`, PLAN.md step 10 item 13,
+/// slice 10b-2) names a model profile, an instance and two memory figures: none
+/// of them is a key of the section, so the answer carries no `field` member at
+/// all. The page shows the manager's sentence and marks no control; the file is
+/// untouched and the session lives.
+#[tokio::test]
+async fn save_the_over_memory_refusal_carries_no_field() {
+    let args = [ALPHA, "default", "1446", "512"];
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.set_write_outcome(Outcome::Invalid {
+        key: "model-profile-over-memory",
+        values: args.iter().map(|a| a.to_string()).collect(),
+    });
+    let cookie = app.sign_in().await;
+    let rep = app
+        .save(
+            ALPHA,
+            &save_body(&alpha_revision(), json!({ "ctx-size": "8192" })),
+            Some(&cookie),
+        )
+        .await;
+    rep.assert_refused_without_field("model-profile-over-memory", &args);
+    assert_eq!(
+        app.file_text(MODELS).as_deref(),
+        Some(FILE_ON),
+        "the manager wrote nothing"
+    );
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
 // ---------------------------------------------------------------------------
 // The manager refuses the signed-in user: 403, and that session ends
 // ---------------------------------------------------------------------------

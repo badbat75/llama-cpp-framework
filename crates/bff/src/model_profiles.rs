@@ -445,8 +445,9 @@ fn switch_failure(
 /// `args[0]` is the position of the rule inside the value, and
 /// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
 /// its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
-/// `model-profile-name-taken`) has no key of the section to mark, so the answer carries
-/// no field at all.
+/// `model-profile-name-taken`), and the memory check (its `args` are the model
+/// profile, an instance and two memory figures), have no key of the section to
+/// mark, so the answer carries no field at all.
 fn field_of(key: &str, args: &[String]) -> Option<String> {
     match key {
         "load-on-startup-over-max" | "load-on-startup-unlimited" => {
@@ -456,7 +457,9 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         "fit-target-format" => Some("fit-target".to_string()),
         "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
-        "invalid-model-profile-id" | "model-profile-name-taken" => None,
+        "invalid-model-profile-id" | "model-profile-name-taken" | "model-profile-over-memory" => {
+            None
+        }
         _ => args.first().cloned(),
     }
 }

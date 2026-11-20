@@ -11,7 +11,7 @@ use super::{
     ERROR_SERVICE_SPECIFIC_ERROR, STOP_TICK, STOP_WAIT_HINT,
 };
 use crate::manager::action_log::{manager_log_path, FileActionLog};
-use crate::manager::service::{ActionLog, Manager, SystemResolver};
+use crate::manager::service::{ActionLog, Manager, ProbedGpus, SystemResolver};
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::Command;
@@ -108,7 +108,9 @@ fn run_manager(report: Report) -> std::io::Result<()> {
             TokenAuthority,
             SystemResolver,
         )
-        .with_log(log),
+        .with_log(log)
+        // The memory check measures against the node's own cards.
+        .with_gpus(ProbedGpus::for_node()),
     );
     // The listing that swallows a read failure answers "no instances", and a
     // sync against no instances deletes the service of every one: the entry

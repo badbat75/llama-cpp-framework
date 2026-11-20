@@ -16,6 +16,10 @@ mod pipe_client;
 // The Windows service plan against the instance record. It runs on every OS:
 // the plan is one of windows.rs' OS-neutral decisions.
 mod windows_sync;
+// The GPU probe of the engine (manager/service.rs `ProbedGpus`). Its tests
+// name the exe themselves and touch no `paths::`, so they run beside the
+// e2e below; the ones that write a shell script are `#[cfg(unix)]`.
+mod gpu_probe;
 
 #[test]
 fn data_root_e2e() {
@@ -49,6 +53,9 @@ fn data_root_e2e() {
 
     // ── Manager core: the model-file check of every write that lands one ──
     crate::manager::service::manager_model_file_check_e2e();
+
+    // ── Manager core: the GPU memory check of a model profile pool write ──
+    crate::manager::service::manager_memory_check_e2e();
 
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();

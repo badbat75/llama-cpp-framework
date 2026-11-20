@@ -91,7 +91,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - A test helper of a test module whose ONLY callers are `#[cfg(unix)]` tests (a bound and a
   thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. It is
   the tester's region: report it, and prove production is clean with the same crate WITHOUT
-  `--all-targets`.
+  `--all-targets`. The same region reddens the Windows `cargo check --all-targets` with
+  `unresolved import` when a `#[cfg(unix)] mod`'s users sit behind a bare `use <mod>::*;`: the un-gated
+  import is the defect to report, never a production change.
 - `nix` 0.31 `fcntl::OFlag` needs the `fs` feature (`OFlag::O_NONBLOCK.bits()` is the `c_int` for
   `OpenOptionsExt::custom_flags`, so a FIFO open answers ENXIO instead of blocking). Call the trait
   method fully qualified inside the `#[cfg(unix)]` statement: a `use std::os::unix::...` at the root is
@@ -267,6 +269,19 @@ Lessons only: the rules are in `AGENTS.md`.
   NO file today) is unsatisfiable with S9C-PIN-1 (same operation, profile already in that file, expected
   refusal). The pair to report; only a narrower rule ("judge a profile only if the file being written
   already holds it") gives both, and that is the tester's call, not the coder's.
+- A bounded probe that drains its child's pipes: `Child::wait_with_output()` after `child.stdout.take()`
+  answers an `Output` with EMPTY vectors, so the caller builds `Output { status, stdout, stderr }` from
+  `try_wait`'s `ExitStatus` and the readers' bytes. Each reader runs to EOF (a cap drops the extra bytes,
+  it never stops the read) and SENDS its bytes over a `std::sync::mpsc::channel`: a `JoinHandle` join is
+  unbounded, and a grandchild of the child (a `sleep 600 &` of a shell script) inherits the write ends,
+  so there is no EOF after the child exits and an unbounded join hangs the caller past its own bound.
+  Once the child is gone each stream is taken with `recv_timeout(PROBE_READER_GRACE)`: a Timeout drops
+  the receiver (the reader thread ends when the pipe closes) and takes that stream as EMPTY, a
+  Disconnected (the reader died without sending) is the probe's `None`, and the kill path drops both
+  receivers without waiting at all (its answer is `None`). Two consequences: the probe's worst-case cost
+  is the TWO graces SUMMED (the streams are picked up in series), and the bytes a reader already kept are
+  LOST at an expiry (it sends only at EOF), so a probe whose grandchild holds the pipe answers nothing
+  for a block it had read.
 - The model-file check (`check_model_files_of`) is a DELTA: it refuses the first (model profile, path) the
   new render is missing that the same instance's render today (pool pair and record on disk) is not
   already missing, in id order; the pairs compare whole, so a `model` pointed at a new path is a new pair.
@@ -451,6 +466,10 @@ Lessons only: the rules are in `AGENTS.md`.
   (`ModelProfileContent.test.tsx` 2d.81) is a red to report, not a production defect.
 - `HearthTokens.test.ts` H1a.12 lists EVERY `min-height`/`min-width` of the sheet as
   `selector: min-height: value`, so any new one the brief asks for is a red there.
+- A received the test builds with `.map(...).sort()` compared to a literal the test did NOT `.sort()` is
+  unsatisfiable by any code: the sorted order of the strings is fixed (`.table-scroll` before `.tile`), so
+  no rule order in the sheet gives the pair. `HearthH2b.6` sorts BOTH sides, `Reflow.test.ts` R1.6 sorts
+  only the received. Report the line, the tester adds the `.sort()`.
 - `fe/.prettierignore` leaves `ux/`, `briefs/` and `DESIGN.md` unformatted on purpose: `prettier --write`
   on `fe/ux/check.js` reformats blocks the project keeps as they are, so revert every hunk but yours.
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the
@@ -477,6 +496,26 @@ Lessons only: the rules are in `AGENTS.md`.
   the baseline the assertion then calls the verb's doing.
 - To see a full jsdom dump of a failing `getByRole`/`getAllByRole` assertion, use
   `DEBUG_PRINT_LIMIT=200000 npx vitest run src/<File>.test.tsx`.
+- A memory fixture that sizes its card FROM the estimate (`need(trained)/MIB + reserve + 32`, so the card
+  has `need + 32 MiB` usable) and pins in the same phase "the big card FITS it at the trained context"
+  cannot also refuse that need on that card later: the refusal needs `needed > available`, and a sibling
+  case lands the SAME text on the SAME card, so no rule separates the pair. The card of a growth refusal
+  must sit between the two needs.
+- `[*]` in a pool file is refused a CLIENT write (`invalid-model-profile-id ["*"]`, pinned in the manager's
+  render phase: "the client cannot write the global section"); it reaches a render only as a hand edit
+  (`std::fs::write`). So a test that writes `[*]` with `write_file` and expects a memory refusal answers
+  `invalid-model-profile-id` first, whatever the memory rule is.
+- The memory check's delta is per section, matched by id, on the ESTIMATE: a byte-identical section
+  estimates the same so it is no growth, a section the write changed keeps today's estimate as its
+  baseline, and the refusal is the first grown section in render order whose OWN need is over the node.
+  A sum over the render reddens "two profiles each at 60 % of the card land".
+- The GPU seam is a probe: estimate both renders and find the growth FIRST, and call `gpus()` only once
+  some section grew. The seam counts its calls (`FakeGpus::asked`, one Arc per manager), and a save of a
+  key the estimate does not read must ask 0 times, a growing write exactly once (a loop that asks per
+  instance is fine only because the refusal ends it).
+- `set_model_profile` writes `assignments.ini`, not the pool, so its memory check needs the render of the
+  record in hand (`assign::render` of `text`, as `check_model_files_of` builds it) beside `render_of`'s
+  today: a check that judges the pool pair against itself sees no growth and lands every assignment.
 
 ## `fe/`: the page's identity, the address, and jsdom's history
 

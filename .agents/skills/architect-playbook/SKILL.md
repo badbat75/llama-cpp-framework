@@ -108,3 +108,7 @@ description: What the architect has learned about this project's components, int
   a profile's effective value reads the section, else `[*]`.
 - A tester's "red tests in the tree" may be only a `todo!()` stub: `git status --untracked-files=all`
   and grep the method name before reporting what stands.
+- A render-based check has two write paths: the pool files (`check_contents`, record on disk) and
+  `set_model_profile` (new record `text`, pool on disk). `render_of` always reads the record on disk,
+  so the second path must render from `text` (as `check_model_files_of` does) or it judges nothing;
+  review both, and look for an e2e that calls `set_model_profile`, not only `write_file`.

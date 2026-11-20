@@ -306,6 +306,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - A source lint scans the file's TEXT, not its behaviour, and it drops comments: a needle in a doc comment
   is not a scan hit. Pin production needles (a bare `ConfigFile::X` reference, not a `use`), and report
   comments as not scanned, so the gate lands in the code.
+- A method extractor (an `fn` indented in an `impl`) must stop at the method's OWN closing brace, the
+  column-4 `\n    }`: one that stops at the next column-0 brace swallows every method beside it and passes
+  on a needle in a neighbour. The brace is written `"\n    }"`: in an escaping context a doubled `}}` is a
+  literal, and the extractor dies "the end of `fn X`" on a method that exists. Prove each extractor on a
+  needle you know is there, and give the wiring lint's loop the self-checks (the text contains today's
+  `Manager::new(`) BEFORE the loop, so an empty extraction never passes.
 - `src_dirs()` exists in `crates/config/src/tests/binding_lint.rs` and `control_lint.rs`, each its own;
   `deps_lint.rs` is in `crates/app/src/tests/` and `crates/cli/src/tests/`, `lock_walk.rs` in
   `crates/app/src/tests/`. Grep for the function you mean.
@@ -756,3 +762,6 @@ Lessons only: the rules are in `AGENTS.md`.
 - A spy that records state while the app's own handler runs must never throw: read by
   `document.getElementById` and return nulls for a missing element. A throwing spy inside React's dispatch
   becomes an unhandled rejection, and the run then reports no per-assert reason.
+- Clean up a test's leftover process by its exact PID (have the script write it to a file), never with
+  `pkill -f <words>`: on 2026-11-19 `pkill -f "sleep 600"` also matched the coordinator's launcher, whose
+  command line carried the brief's text, and killed it.

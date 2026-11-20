@@ -13,6 +13,13 @@
 //! `run_hidden_probe` is the variant for the transient `llama-server.exe` probes
 //! (`devices --list-devices`, `server_version --version`): it registers the child
 //! PID in `PROBE_PIDS` for its lifetime so `runstate::is_running` can EXCLUDE it.
+//! `run_hidden_probe_within` is the same with a bound: a caller that cannot wait
+//! for a hung engine (the manager's GPU probe) kills the child at the bound. It
+//! reads both of the child's streams while it runs, so a child writing more
+//! than a pipe buffer is not stopped by that before the bound. The bound also
+//! covers the reads: the child's helpers inherit its pipes and can keep them
+//! open past its own exit, so each stream is given a short grace after the
+//! child is gone and taken as empty when that expires.
 //!
 //! Every llama-server child (the probes here and `runstate::start`) also gets
 //! the ROCm runtime dir prepended to its PATH (`prepend_rocm_path`): ggml loads
@@ -28,6 +35,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// PIDs of the transient `llama-server.exe` probe children currently alive.
 /// `runstate::is_running` subtracts these from the tasklist match.
@@ -164,11 +172,142 @@ where
         (child, pid)
     };
     let output = child.wait_with_output().ok();
+    deregister_probe_pid(pid);
+    output
+}
+
+/// `pid` off the probe list (see `PROBE_PIDS`).
+fn deregister_probe_pid(pid: u32) {
     let mut guard = PROBE_PIDS.lock().expect("PROBE_PIDS lock");
     if let Some(i) = guard.iter().position(|&p| p == pid) {
         guard.swap_remove(i);
     }
-    output
+}
+
+/// How much of one of a probe's streams is kept: every block a probe parses is
+/// far under it, and the bytes past it are dropped while the stream is read on
+/// to its end.
+const PROBE_STREAM_CAP: usize = 4 << 20;
+
+/// Reads `pipe` to its end on its own thread, keeping the first `cap` bytes and
+/// dropping the rest, and sends them over a channel the caller picks up: the
+/// read has no bound of its own, so a caller that cannot wait for it needs a
+/// handle it can give up on (see [`pipe_bytes`]). The reader must reach the
+/// end: a child whose pipe nobody reads stops on the write once the kernel
+/// buffer is full, and a stopped probe is a probe that gets killed. `None` for
+/// a stream that is not a pipe.
+fn drain_pipe<R: std::io::Read + Send + 'static>(
+    pipe: Option<R>,
+    cap: usize,
+) -> Option<std::sync::mpsc::Receiver<Vec<u8>>> {
+    let mut pipe = pipe?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0u8; 8 << 10];
+        while let Ok(n) = pipe.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            let keep = cap.min(kept.len() + n) - kept.len();
+            kept.extend_from_slice(&chunk[..keep]);
+        }
+        // A caller that gave up on this stream is gone: the send fails and the
+        // thread ends with it.
+        let _ = tx.send(kept);
+    });
+    Some(rx)
+}
+
+/// How long the caller of [`pipe_bytes`] waits for a stream once the probe's
+/// child is gone. The child's end of the pipe is closed by then, so a read
+/// still open belongs to a helper of the child that inherited the pipe and is
+/// still alive: no further byte of that stream is ever coming to the probe,
+/// and the probe outliving the child by the grace is the whole cost.
+const PROBE_READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Picks up the bytes a [`drain_pipe`] reader sends. `None` when the stream was
+/// not a pipe, or its reader died without sending; `Some` empty when the grace
+/// ran out, in which case the receiver is dropped and the reader is left
+/// detached: it ends on its own when the pipe closes.
+fn pipe_bytes(reader: Option<std::sync::mpsc::Receiver<Vec<u8>>>) -> Option<Vec<u8>> {
+    match reader?.recv_timeout(PROBE_READER_GRACE) {
+        Ok(bytes) => Some(bytes),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(Vec::new()),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
+    }
+}
+
+/// Like `run_hidden_probe`, but killing the child when it is still running
+/// after `timeout`: a probe of an engine that hangs must never hold its caller
+/// open. The child is reaped, so it is stopped and not left behind. Its stdout
+/// and stderr are read while it runs, so a child writing more than a pipe
+/// buffer is never stopped by the full pipe; the child gets no stdin. The
+/// reads are bounded too: once the child is gone each stream is waited for
+/// during `PROBE_READER_GRACE`, and one a helper of the child still holds open
+/// is answered empty. `None` when the child cannot be spawned, is killed, or
+/// its output cannot be read; a child that finishes, whatever its exit status,
+/// is answered with its output.
+pub fn run_hidden_probe_within<I, S>(exe: &Path, args: I, timeout: Duration) -> Option<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console(&mut cmd);
+    prepend_rocm_path(&mut cmd);
+    // Spawned and registered under ONE lock, as `run_hidden_probe` does.
+    let (mut child, pid) = {
+        let mut guard = PROBE_PIDS.lock().expect("PROBE_PIDS lock");
+        let child = cmd.spawn().ok()?;
+        let pid = child.id();
+        guard.push(pid);
+        (child, pid)
+    };
+    let stdout = drain_pipe(child.stdout.take(), PROBE_STREAM_CAP);
+    let stderr = drain_pipe(child.stderr.take(), PROBE_STREAM_CAP);
+    // `try_wait` polled, not a thread waited on: the child's own `wait` would
+    // hold it while the caller gives up, and a child no caller can reach is a
+    // child nobody kills.
+    let at = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if at.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => break None,
+            Err(_) => break None,
+        }
+    };
+    let status = match status {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            // The readers are not waited on: this answers nothing, so their
+            // bytes are of no interest. Dropping the receivers leaves them
+            // detached, ending when the pipes close.
+            drop((stdout, stderr));
+            deregister_probe_pid(pid);
+            return None;
+        }
+    };
+    // The readers are picked up after the child is gone: its end of each pipe
+    // is closed by then, so a stream that does not answer inside the grace
+    // belongs to a helper of the child that is still holding it open.
+    let (Some(stdout), Some(stderr)) = (pipe_bytes(stdout), pipe_bytes(stderr)) else {
+        deregister_probe_pid(pid);
+        return None;
+    };
+    deregister_probe_pid(pid);
+    Some(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Join a child's stdout and stderr into one string. llama.cpp tools split

@@ -12,7 +12,7 @@ use super::action_log::WriterLog;
 use super::pipe::PROTOCOL;
 pub use super::service::state_name;
 use super::service::{
-    Action, Authority, Caller, Manager, ManagerError, Principal, Requester, Resolver,
+    Action, Authority, Caller, Manager, ManagerError, Principal, ProbedGpus, Requester, Resolver,
     ServiceControl, ServiceError, SystemResolver, UnitState,
 };
 use std::sync::Arc;
@@ -627,7 +627,9 @@ pub fn serve() -> zbus::Result<Connection> {
         // Every record goes on stderr, which the unit sends to the journal.
         .with_log(WriterLog::new(std::sync::Arc::new(std::sync::Mutex::new(
             std::io::stderr(),
-        )))),
+        ))))
+        // The memory check measures against the node's own cards.
+        .with_gpus(ProbedGpus::for_node()),
     );
     // The instances read `models@<id>.ini`, so the pool on disk is rendered
     // before anyone can ask for it. A render that fails leaves the files as
