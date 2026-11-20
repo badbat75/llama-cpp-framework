@@ -2,8 +2,10 @@
 // starts, at 1280 and 320 px, in light and dark, and on three of them with a
 // theme choice stored against the OS scheme. Each state is proven rendered
 // (its own marker, `expect`), then read by axe-core (the WCAG 2a, 2aa, 21aa and
-// 22aa tags) and its scrollWidth compared with the viewport. The stub bff
-// (stub.py) answers for the server and prints the port it bound.
+// 22aa tags) and its scrollWidth compared with the viewport. At 320 px, light
+// only, every state is loaded once more per text mode (200 % text, and that
+// with the spacing of WCAG 1.4.12), where only the scrollWidth is read. The
+// stub bff (stub.py) answers for the server and prints the port it bound.
 // Run: npm --prefix fe run build, then npm --prefix fe/ux run check (README.md).
 const { spawn } = require('child_process')
 const { existsSync } = require('fs')
@@ -29,6 +31,23 @@ const HEIGHT = 900
 // read where a session shows the theme button.
 const CHOICES = [null, 'opposite']
 const CHOICE_STATES = ['overview', 'instance-server', 'model-profile']
+
+// The text pass of 10-reflow.md section 4: every state loaded once more per
+// mode, at 320 px in the light scheme only (the modes change no colour, so
+// there is nothing for axe to read and nothing for the dark scheme to show).
+const TEXT_WIDTH = 320
+const TEXT_THEME = 'light'
+// The spacing of WCAG 1.4.12 Text Spacing: line height 1.5, letter 0.12em,
+// word 0.16em, paragraph 2em.
+const SPACING =
+  '* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important } ' +
+  'p { margin-bottom: 2em !important }'
+const TEXT_MODES = [
+  ['200%', 'html { font-size: 200% !important }'],
+  ['200%+1.4.12', `html { font-size: 200% !important } ${SPACING}`],
+]
+// What the enlarged text needs to reach its final layout before it is read.
+const TEXT_SETTLE_MS = 150
 
 // How long the stub may take to print its port. It binds before printing, so
 // this covers the interpreter start, not the requests.
@@ -249,6 +268,36 @@ async function clicked(page, state) {
   return found
 }
 
+/** The state on the page: the stub's set, then the route. The stub keeps every
+ *  key a /__set did not carry, so the state's own set goes after a reset to
+ *  the default list of instances: the two tile states ask for list=many
+ *  themselves, and a state that ran before them leaves no list behind for the
+ *  pages after it. A hash change does not reload the app, so every state
+ *  starts from a blank page. */
+async function load(page, state) {
+  const found = []
+  for (const q of ['list=one', state.set]) {
+    const res = await fetch(`${BASE}/__set?${q}`)
+    if (!res.ok) {
+      found.push(`set request: ${res.status} ${res.statusText}`)
+    }
+  }
+  await page.goto('about:blank')
+  await page.goto(`${BASE}${state.hash}`, { waitUntil: 'networkidle' })
+  return found
+}
+
+/** The page wider than its viewport: the one line the text pass reads. */
+async function sideways(page, width) {
+  const scrollWidth = await page.evaluate(
+    () => document.documentElement.scrollWidth,
+  )
+  if (scrollWidth > width) {
+    return [`overflow: scrollWidth ${scrollWidth} > ${width}`]
+  }
+  return []
+}
+
 /** What is wrong with the page as it stands: the axe rule ids, a wide page. */
 async function problems(page, width) {
   const found = []
@@ -259,12 +308,7 @@ async function problems(page, width) {
         report.violations.map((v) => `${v.id} x${v.nodes.length}`).join(' '),
     )
   }
-  const scrollWidth = await page.evaluate(
-    () => document.documentElement.scrollWidth,
-  )
-  if (scrollWidth > width) {
-    found.push(`overflow: scrollWidth ${scrollWidth} > ${width}`)
-  }
+  found.push(...(await sideways(page, width)))
   return found
 }
 
@@ -311,8 +355,44 @@ async function chosen(page, other, background) {
   return found
 }
 
+/** The text pass: every state, at TEXT_WIDTH in TEXT_THEME, once per mode. The
+ *  mode's CSS is added after the page settles, and only its scrollWidth is
+ *  read. One line per state with something to say, naming the mode. */
+async function textPass(browser, name, lines) {
+  const ctx = await browser.newContext({
+    viewport: { width: TEXT_WIDTH, height: HEIGHT },
+    colorScheme: TEXT_THEME,
+  })
+  try {
+    const page = await ctx.newPage()
+    for (const [mode, css] of TEXT_MODES) {
+      for (const state of STATES) {
+        const found = await load(page, state)
+        const missing = await rendered(page, state)
+        if (missing !== null) {
+          found.push(missing)
+        } else {
+          found.push(...(await clicked(page, state)))
+          await sleep(SETTLE_MS)
+          await page.addStyleTag({ content: css })
+          await sleep(TEXT_SETTLE_MS)
+          found.push(...(await sideways(page, TEXT_WIDTH)))
+        }
+        if (found.length > 0) {
+          lines.push(
+            `${name} ${TEXT_WIDTH}px ${TEXT_THEME} ${mode} ${state.name}: ${found.join('; ')}`,
+          )
+        }
+      }
+    }
+  } finally {
+    await ctx.close()
+  }
+}
+
 /** Every width, theme, choice and state in one browser; one line per failing
- *  state, its theme tag `light+dark` when a choice is stored. */
+ *  state, its theme tag `light+dark` when a choice is stored. The text pass
+ *  runs last and names its mode. */
 async function check(browser, name, lines) {
   // The dark scheme has to reach the page: index.css sets --bg under
   // prefers-color-scheme, so body's background differs between the themes.
@@ -351,23 +431,7 @@ async function check(browser, name, lines) {
           }
           const page = await ctx.newPage()
           for (const state of states) {
-            const found = []
-            // The stub keeps every key a /__set did not carry, so the state's
-            // own set goes after a reset to the default list of instances: the
-            // two tile states ask for list=many themselves, and a state that
-            // ran before them leaves no list behind for the pages after it.
-            for (const q of ['list=one', state.set]) {
-              const res = await fetch(`${BASE}/__set?${q}`)
-              if (!res.ok) {
-                found.push(`set request: ${res.status} ${res.statusText}`)
-              }
-            }
-            // A hash change does not reload the app: every state starts from a
-            // blank page, so the page is built for it.
-            await page.goto('about:blank')
-            await page.goto(`${BASE}${state.hash}`, {
-              waitUntil: 'networkidle',
-            })
+            const found = await load(page, state)
             const missing = await rendered(page, state)
             if (missing !== null) {
               found.push(missing)
@@ -393,6 +457,7 @@ async function check(browser, name, lines) {
       }
     }
   }
+  await textPass(browser, name, lines)
 }
 
 async function main() {
@@ -441,6 +506,7 @@ async function main() {
   for (const line of lines) console.log(line)
   const plain = WIDTHS.length * THEMES.length * STATES.length
   const stored = WIDTHS.length * THEMES.length * CHOICE_STATES.length
+  const text = TEXT_MODES.length * STATES.length
   console.log(
     `summary: browsers ${ran.join(' ') || 'none'}${
       skipped.length ? ` (skipped: ${skipped.join(' ')})` : ''
@@ -448,9 +514,9 @@ async function main() {
       THEMES.length
     } themes = ${plain}, plus the ${
       CHOICE_STATES.length
-    } stored-choice states = ${plain + stored} per browser; ${
-      lines.length
-    } failing`,
+    } stored-choice states and the ${TEXT_MODES.length} text modes x ${
+      STATES.length
+    } states = ${plain + stored + text} per browser; ${lines.length} failing`,
   )
   if (ran.length === 0) {
     console.log('no browser started: nothing was checked')

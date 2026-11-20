@@ -472,6 +472,12 @@ Lessons only: the rules are in `AGENTS.md`.
   only the received. Report the line, the tester adds the `.sort()`.
 - `fe/.prettierignore` leaves `ux/`, `briefs/` and `DESIGN.md` unformatted on purpose: `prettier --write`
   on `fe/ux/check.js` reformats blocks the project keeps as they are, so revert every hunk but yours.
+  `prettier --check .` honours that file, `prettier --check fe/ux/check.js` ignores it and reddens the
+  pre-existing blocks: judge the tree, not one path. `npm --prefix fe run lint` matches `**/*.{ts,tsx}`
+  only, so `fe/ux/check.js` is linted by nothing: match its style by hand (no semicolons, single quotes).
+- A Playwright pass that finds nothing prints no line: prove it bites by injecting a planted
+  `body { min-width: 500px }` in the same way the pass injects its CSS and reading `scrollWidth`. With
+  the text pass (200 %, 200 %+1.4.12) the whole check is 72 loads per browser and about 4 minutes.
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the
   next pins the same input `disabled` and empty with its box `checked`, from the identical fixture. The
   other one's wording governs; report the exact triple and change nothing.
