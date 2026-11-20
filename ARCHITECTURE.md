@@ -1680,6 +1680,133 @@ Mutants (security code): `create_server_profile`, `delete_server_profile` and th
 manager (the gate, the never-overwrite, the in-use and `Io` refusals, the name rule), and the session
 gate of the four bff routes.
 
+*GPU distribution on the model profile page (`PLAN.md` item 13, fe brief 02 row 2f; architect,
+2026-11-20; each a preference unless sourced).* The web edits a model profile's `device`, `split-mode`
+and `tensor-split` as the GUI's GPU table does (`crates/app/src/gpu_split.rs`: the table and its four
+states stay the GUI's; the web UI rebuilds them from the device list below). Two slices, **G1** then
+**G2**, both after slice 14 is committed: they touch the same files (`checks.rs` `KEYS`, both strings
+files, `client.rs`, `dbus.rs`, `pipe.rs`, `service.rs`, the bff router), so running beside it only buys
+merge conflicts.
+
+1. **Where the device list comes from: a manager read, `Devices()` and `DevicesAs(principal)`.**
+   - *Options.* (a) The bff probes itself: rejected. It runs no engine and, on Linux, the system user
+     `private-ai-bff` is in neither `render` nor `video`, so ROCm and most GPU nodes would list nothing;
+     adding it would give the network-facing process GPU device access to read one list. It would also
+     duplicate the manager's probe and cache, and across machines (Part 2) the devices are the node's,
+     which only the node's manager can see. (b) A manager read with no authorization, as `Instances()`:
+     any local account could then make root (LocalSystem) spawn the engine, again on every call while
+     the probe fails. (c) **Chosen**: `Devices()` under `control` (the quiet check, no interaction, as
+     `Status`) and `DevicesAs(principal)` as every `As` method (the bff's account only, a current member
+     of `pai`; otherwise `NotAuthorized`, the session ends). A refused call runs no probe. Not recorded
+     (a read), not under `writing`.
+   - *The probe is the memory check's* (slice 10b-3, `service.rs` `ProbedGpus`), widened, not doubled:
+     the cache holds the parsed `Vec<DeviceOption>` and the probe's time instead of the reduced pool;
+     `gpus()` returns `gpu_pool` of it, `None` when that is empty (the memory check is unchanged). A run
+     that completed and parsed at least one device line (the CPU line counts) is cached, so a CPU-only or
+     iGPU-only node probes once; a spawn failure, a kill at `GPU_PROBE_TIMEOUT` or no device line at all
+     stays uncached, as today. Probes are serialized: a second caller waits for the running probe and
+     reads its result (a mutex held across the run, the cache re-read after taking it), so no caller can
+     have more than one engine child running. The args are fixed (`--list-devices`), the exe is
+     `paths::llama_server_exe()`: nothing from a caller reaches the command line.
+   - *An entry*: `id` (the token `device` takes, as the probe prints it: `ROCm0`; llama.cpp matches it
+     case-insensitively, `striequals` in `ggml_backend_dev_by_name`, `ggml/src/ggml-backend-reg.cpp` in
+     v1.0.0), `name` (`DeviceOption.name`, the product name), `backend` (the id without its trailing
+     digits, case kept: `ROCm`, `CUDA`, `Vulkan`), `total_mib`, `free_mib` (free AT THE PROBE: the cache
+     lives until the manager restarts or the engine exe changes, so it is shown with `probed_at`, never
+     as now). Every device the probe lists except the CPU pseudo-device (`DeviceOption::is_cpu`; llama.cpp
+     refuses CPU in `device`, `common/arg.cpp` `parse_device_list`), in probe order, the duplicate views
+     of one card (CUDA0 and Vulkan1) and integrated GPUs included: the GUI's table lists the same rows.
+     Source of truth: the engine's own `--list-devices`, run as the manager. Caveat, as for the memory
+     check: the instance runs as `private-ai` (Windows: its virtual account), which could see fewer
+     devices than root; untested.
+   - *Wire.* D-Bus `Devices() -> (t, a(ssstt))`: `probed_at` Unix seconds UTC (0 = no probe answered),
+     then `(id, name, backend, total_mib, free_mib)`; `DevicesAs(s) ->` the same. Pipe: `{"method":
+     "Devices"}`, `{"method": "DevicesAs", "principal"}`, answering `{"probed_at", "devices": [{"id",
+     "name", "backend", "total_mib", "free_mib"}]}`. `ManagerClient::devices() -> Result<NodeDevices,
+     ClientError>` (`probed_at: Option<u64>`, `0` read as `None`; `devices: Vec<DeviceInfo>`), default
+     body `Other` as its siblings; the D-Bus and pipe clients pick `DevicesAs` when `acting_for` set a
+     principal. Protocol stays 3 (no release carries it). A cold probe can last up to
+     `GPU_PROBE_TIMEOUT` (30 s): zbus sets no method timeout unless asked (zbus 5.19.0,
+     `connection/builder.rs`, `method_timeout: None`); dbus-daemon's own `reply_timeout` default is
+     unverified. If a transport cuts the call, the probe still finishes and caches, and the next read is
+     instant.
+
+2. **The bff route: `GET /api/node/devices`** (beside `GET /api/node`; per node, so Part 2's node
+   prefix fits it unchanged). 401 `session-required` with no session, the manager not connected to; a
+   page read, so `sessions.current` (moves the idle deadline: the profile page fetches it once when it
+   opens, never polls); `DevicesAs` as the signed-in user; `NotAuthorized` 403 `session-not-administrator`
+   ending the session; no manager or no answer within `DEVICES_TIMEOUT` (`GPU_PROBE_TIMEOUT` plus 5 s,
+   longer than a read's 5 s `MANAGER_TIMEOUT` for the cold probe) 503 `client-unavailable`, as the other
+   reads; anything else 502 `client-other`. 200:
+
+   ```json
+   {"probedAt": "2026-11-20T09:14:03Z",
+    "devices": [
+      {"id": "ROCm0",   "name": "AMD Radeon AI PRO R9700",       "backend": "ROCm",   "totalMib": 32624, "freeMib": 32420},
+      {"id": "CUDA0",   "name": "NVIDIA GeForce RTX 4070 SUPER", "backend": "CUDA",   "totalMib": 12281, "freeMib": 10844},
+      {"id": "Vulkan0", "name": "AMD Radeon AI PRO R9700",       "backend": "Vulkan", "totalMib": 32624, "freeMib": 32420}]}
+   ```
+
+   Probe order, CPU left out, `probedAt` RFC 3339 UTC. No probe answer (no engine, a kill, no device
+   line) is 200 `{"probedAt": null, "devices": []}`, and a CPU-only node is `devices: []` with a time:
+   either way nothing to distribute, never an error page. The ids a profile names that the list lacks
+   are the web UI's to show (as the GUI keeps a `(custom)` row, `crates/app/src/devices.rs`
+   `build_options`), not the route's.
+
+3. **The save path.** `device`, `split-mode` and `tensor-split` move from
+   `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB` to `checks::WEB_MODEL_PROFILE_KEYS` (a "GPU distribution card"
+   group); `pai-app`'s `web_key_lists_are_exactly_what_render_section_writes` keeps pinning the union.
+   The body carries them as strings, as every key (`"device": "ROCm0,CUDA0"`, `"tensor-split": "3,1"`,
+   `"split-mode": "layer"`), the save `PUT /api/profiles/model/{id}` unchanged otherwise. What exists:
+   `split-mode` is in `MODEL_PROFILE_ENUM_KEYS` (`not-one-of`), and `moe_cache_split` refuses a positive
+   `moe-cache-mib` under `tensor` (`moe-cache-with-tensor-split`). There is **no** device-name check and
+   **no** tensor-split check today (`checks.rs`), and both values make the model fail to load, so G1 adds
+   two rules to `model_profile_section` (the manager judges; the bff maps the refusal to 422 with its
+   key and `field` as every check key):
+   - `device_list(key, value)`, for `device` and also `device-draft` and `mmproj-device` (already on
+     the web, same parser): split on `,`; every entry non-empty, with no whitespace (llama.cpp does not
+     trim an entry: `ROCm0, ROCm1` is `invalid device:  ROCm1`, `string_split` then `parse_device_list`,
+     `common/arg.cpp` v1.0.0), none of `; # =`, not `CPU` in any case; `none` only alone. Key
+     `device-bad-name` `[key, entry]`.
+   - `tensor_split(value)`: entries split on `,` or `/` (llama.cpp's regex `[,/]+`), at most 15 (it
+     throws at `>= llama_max_devices()`, 16, `common/arg.cpp`, `src/llama.cpp`), each a finite number
+     `>= 0` (`std::stof` throws on a non-number; a negative weight is refused as nonsense, a preference).
+     Key `tensor-split-format` `[value]`.
+   - **Not judged against the probed list** (options: refuse an id the probe lacks, or skip when the
+     probe failed). A card can vanish for a while (the ROCm runtime missing turns ROCm0 into Vulkan only,
+     the "ROCm availability" note in `crates/app/src/devices.rs`), and since the rules run on a whole
+     changed section, that would block saving any other key of every profile naming it, the GUI's
+     included (it saves through the same manager and keeps unknown ids on purpose). The probe also runs
+     as root, not as the instance. So a well-formed unknown id saves; the web UI flags it. The GUI's
+     warnings (`split-tensor-no-gpu`, `split-tensor-mixed-backends`) stay warnings, the UI's.
+   - The memory check still counts every card of the node, whatever `device` says (user, 2026-11-17).
+
+4. **Done when** (test first; Linux, the Windows code type-checked).
+   - **G1** (`pai-core`, `pai-bff`): the three keys are in `WEB_MODEL_PROFILE_KEYS` and out of the
+     other list, `pai-app`'s pin test green; `device-bad-name` and `tensor-split-format` in `KEYS`, both
+     strings files and decode; refused, each naming its key: `device = ROCm0, ROCm1`, `CPU`, `cpu`,
+     `ROCm0,,CUDA0`, `none,ROCm0`, `ROCm0;x`, `device-draft = a b`, `tensor-split = 3,x`, `-1,1`, `inf`,
+     sixteen entries; accepted: `ROCm7` (not in any probe), `none`, `3/1`, `1.5,0`, fifteen entries. The
+     bff's PUT saves `device`, `split-mode`, `tensor-split` from the body and answers 422 with the key
+     and `field` from a refusing fake; `moe-cache-mib = 4096` with `split-mode = tensor` is still
+     refused through it.
+   - **G2** (`pai-manager`, `pai-core`, `pai-bff`): with the fake exe of `tests/gpu_probe.rs` printing
+     `BLOCK`, `Devices()` answers its non-CPU lines in order with id, name, backend, both sizes and a
+     non-zero time, and a `Devices()` plus a memory-checked write run the exe once; `NO_CARD` answers
+     `[]` with a time and is cached (memory check still `None`); a killed or silent probe answers `[]`
+     with time 0 and is not cached; two `Devices()` at once run the exe once; a caller without `control`,
+     and `DevicesAs` from a non-bff caller or for a non-member, are `NotAuthorized` with the exe's
+     counter at 0; D-Bus and pipe answer the same. The bff route answers 401 without a session (manager
+     not called), the JSON above from a fake, `[]` and `null`, 403 ending the session, 503 for no manager
+     and for an answer past its deadline, and moves the idle deadline. Clippy and fmt green per crate.
+   - **Mutants** (security code): the gate of `Devices`/`DevicesAs` (`authorize`, `authorize_as`, the
+     pipe parse of `DevicesAs` and its principal) and the route's session gate. Not security code: the
+     two value rules and the key move (the move is pinned by `pai-app`'s test, the rules by their cases),
+     the probe's cache and serialization.
+   - **Decided by the user (2026-11-20)**: the memory check still counts every GPU of the node, not only
+     those a profile's `device` names (the 2026-11-17 rule stands); no refresh: the page shows each
+     card's free memory as of `probedAt`.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,

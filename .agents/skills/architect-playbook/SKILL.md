@@ -129,3 +129,10 @@ description: What the architect has learned about this project's components, int
   called by `fe/src/ServerSection.tsx` and `ServerForm.tsx`); slice 14 adds `/api/profiles/server/{id}`
   beside it, and slice 17 (the fe) switches and removes the old one. The manager has no list of server
   profiles before slice 14's `ServerProfiles()`, and no `unknown-engine` refusal before it either.
+- Device keys as llama.cpp v1.0.0 reads them (checked 2026-11-20): `parse_device_list` splits `device`,
+  `device-draft`, `mmproj-device` on `,` with no trim (a space after the comma is `invalid device`),
+  refuses CPU, takes `none` alone, matches names case-insensitively (`ggml_backend_dev_by_name`);
+  `tensor-split` splits on `[,/]+`, throws at 16 entries and on a non-number (`common/arg.cpp`). The
+  bff runs no value checks itself: it filters body keys and relays the manager's refusals.
+- zbus 5.19.0 connections have no method timeout unless built with one; a manager call that can run a
+  cold `--list-devices` (30 s bound) needs a bff deadline above the 5 s read `MANAGER_TIMEOUT`.
