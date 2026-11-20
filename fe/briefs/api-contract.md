@@ -62,6 +62,7 @@ exist yet. Change this file first when a shape changes.
 | --- | --- | --- | --- |
 | `GET /api/version` | anyone | exists | `{"version"}` |
 | `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
+| `GET /api/node/devices` | signed in | GD (bff slice G2, designed) | `{"probedAt", "devices"}` |
 | `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13 | `[{"id", "engine", "state", "port", "tags", "instanceTags", "boot"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
@@ -124,6 +125,25 @@ idle deadline, as `GET /api/version`. No other error: a missing or unreadable ve
 CPU-only engine, sorted by name; a backend's `name` is the package suffix (`cuda`, `rocm`, `vulkan`),
 its display name the fe's string. Read at each request. The fe does not read `api` yet. Source:
 `ARCHITECTURE.md` "Slice 13's decisions".
+
+### `GET /api/node/devices` (GD, bff slice G2, designed)
+
+The host's GPUs for the model profile page's GPU distribution card (`fe/briefs/14-gpu-distribution.md`).
+A page read behind a session (moves the idle deadline); the bff asks the manager's `DevicesAs` as the
+signed-in user, which runs the engine's `--list-devices` once and caches it until the manager
+restarts. 200:
+
+    {"probedAt": "2026-11-20T09:14:03Z",
+     "devices": [{"id": "ROCm0", "name": "AMD Radeon AI PRO R9700", "backend": "ROCm",
+                  "totalMib": 32624, "freeMib": 32420}]}
+
+Probe order, the CPU left out, duplicate views of one card and integrated GPUs included; `freeMib` is
+free memory at the probe, never now (the fe dates it with `probedAt`; no refresh, user 2026-11-20).
+`{"probedAt": null, "devices": []}` when no probe answered; a CPU-only host is `devices: []` with a
+time. Errors: 401 `session-required` (manager not asked); 403 `session-not-administrator` (the session
+is ended); 503 `client-unavailable` (no manager, or no answer within 35 s, the cold probe's 30 s plus
+5); 502 `client-other`. The fe gives this `GET` 40 s, not 15. Source: `ARCHITECTURE.md` "GPU
+distribution on the model profile page".
 
 ### `PUT /api/instances/{id}/tags` (T1, being built)
 
@@ -434,7 +454,8 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   configurator writes minus the ten of `MODEL_PROFILE_KEYS_NOT_ON_WEB`: `model`, `mmproj`, `model-draft`,
   `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g), `device`,
   `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor placement,
-  until 2j). A slice that makes one editable moves it to the list in the same commit. **Body keys
+  until 2j). **From bff slice G1** `device`, `split-mode` and `tensor-split` move to the
+  accepted list (68 keys, seven left out), for the GPU distribution card (`fe/briefs/14-gpu-distribution.md`). A slice that makes one editable moves it to the list in the same commit. **Body keys
   match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables spell it.
 - **400 `model-profiles-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
   a string or `values` not an object; a key outside the list; a value neither a string nor `null`;
@@ -474,7 +495,9 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   marked); `fit-target` for `fit-target-format` (value, `MiB`); `moe-cache-mib` for
   `moe-cache-with-tensor-split` (no args); `load-on-startup` for `load-on-startup-over-max` (count,
   max) and `-unlimited` (count); `model` for `model-profile-no-model` (id); `override-tensor` for
-  `override-no-pattern` (position) and `override-no-device` (position, pattern); **no `field`** for
+  `override-no-pattern` (position) and `override-no-device` (position, pattern); from G1, `args[0]`
+  (`device`, `device-draft` or `mmproj-device`) for `device-bad-name` (key, entry) and `tensor-split`
+  for `tensor-split-format` (value); neither is judged against the probed GPUs; **no `field`** for
   `invalid-model-profile-id` and `model-profile-name-taken` (id). `bind-all-with-others` cannot come from a
   model profile. Nothing is written.
 - 409 `model-profile-changed-elsewhere`, `args: []`: the revision is stale (the section changed, it was

@@ -69,3 +69,6 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   so a long unbroken value needs `anywhere` on that item (T1: `.tile-facts dd`, 18 px sideways at
   320). `build/ux-review/t1stub.py` (the UX stub plus a scriptable `PUT .../tags`, `/__reqs`) and
   `t1.js`/`t1p.js` drive the tags field and measure the tiles.
+- The web has no model facts (no `block_count`) until 2g, so the GUI's block sliders for
+  `tensor-split` cannot be rebuilt; the GUI itself falls back to raw ratios when no model is read
+  (`crates/config/src/gpu_split.rs` `build_rows`). Brief 14 uses ratio fields with a share text.

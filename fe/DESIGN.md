@@ -37,7 +37,7 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances as tiles under the host name (id as a link, state badge, engine when two or more; Port, Tags, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`); 13 (`fe/briefs/13-node-about.md`) |
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); T1 (port, tags); Logs later |
-| Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
+| Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); GD1, GD2 (GPU distribution: `fe/briefs/14-gpu-distribution.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | About (last entry) | `#/about` | Per host: the framework's version, each installed engine and its GPU backend packages with their versions (`GET /api/node`) | (none; the window title's version) | administrator | 13 (`fe/briefs/13-node-about.md`) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
@@ -524,6 +524,20 @@ Each is one React component, reused by every page.
 - **Checkbox list**: a `<fieldset>` of native checkboxes (Bind to). Its error sits inside the
   fieldset after the last row; the checked rows (the value) get `aria-invalid` and `aria-describedby`
   the error, and focus goes to the first checked row.
+  - **GPU list** (the model profile page's GPU distribution, brief 14): a Checkbox list of the host's
+    GPUs whose rows are `li` of a `ul role="list"`; the label holds the id (monospace, weight 600)
+    and the product name, a `--muted` memory line describes the checkbox. A checked row carries its
+    own controls after it, in a wrapping flex row: a weight text field (`inputmode="decimal"`,
+    about 6 characters) with its share as plain text ("Share: 75%", described by, not live), and
+    **reorder buttons**. Checked rows come first, in their saved order; checking appends a row to
+    them, and focus stays on the control the user used through any move (rows keyed by id).
+  - **Reorder buttons** (wherever order is a value: the GPU list): Move up and Move down, secondary
+    buttons in each orderable row, shown only with two or more such rows; the accessible name is
+    the visible text plus the row's name in a visually hidden span ("Move up ROCm0",
+    [2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name)); the ends are `aria-disabled`, not
+    removed, so focus never drops; the result is said by one visually hidden `role="status"`
+    region ("ROCm0: position 1 of 2"). Never a drag handle alone
+    ([2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)) **(preference: buttons only)**.
 - **Save bar**: sticky at the bottom of a form, always rendered on an editable form. Left: a status
   line (`role="status"`); right: **Discard** and **Save changes**. Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
@@ -659,7 +673,8 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
   (sign in). A refusal (422, a check that failed) with a key the fe does not know shows `api-other`
   with the key as its value: better a diagnostic than nothing. Any other reply with an unknown key or
   no valid key, a malformed body or a network failure is `failed`. Every request has a time
-  limit (15 s for a `GET`, 120 s for any other method; reasons in `fe/briefs/01-server.md` 4.8): a
+  limit (15 s for a `GET`, 120 s for any other method; reasons in `fe/briefs/01-server.md` 4.8;
+  40 s for `GET /api/node/devices`, whose cold probe takes up to 35 s: brief 14 GD1.3): a
   request that runs out is aborted and is that call's network failure, unless its brief says
   otherwise (a save that times out may have been written: 47d there).
 - A copied `api-*` text that says what happened but not what to do gets one sentence appended with

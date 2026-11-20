@@ -1002,6 +1002,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     architect's read of the server's GPU list through the bff (the manager probes it for the memory
     check), then the designer's brief, then one tester and coder round on both sides; the three keys move
     to `checks::WEB_MODEL_PROFILE_KEYS`. Tensor placement (`override-tensor`, 2j) stays later.
+    Designed: `ARCHITECTURE.md` "GPU distribution on the model profile page" (G1, G2) and fe brief 14
+    (GD1, GD2). User decisions (2026-11-20): a number field per GPU with its share shown, Move up / Move
+    down for the order; per-GPU layer sliders like the GUI's come with 2g (the model's layer count);
+    Draft device and Vision GPU list the probed GPUs in a small later follow-up.
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
