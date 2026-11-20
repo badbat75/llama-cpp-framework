@@ -3,10 +3,13 @@
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
 built from `fe/` and the API it calls. Today every API route
-beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and runtime
-versions its packages installed, the manager's instances with their state, the run verbs, the
-start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile list, the model profile
-on/off switch and one model profile, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
+beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and
+runtime versions its packages installed, the manager's instances with their state, the run verbs, the
+start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile
+list, the model profile on/off switch and one model profile, read and saved, and the server profile
+pool: its list, a new profile, one profile read and saved, and its delete
+([below](#the-server-profile-pool)); the manager checks its sign-in: the password and the group `pai`
+(`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
 a session: any other API route is 401 `session-required`, asking the manager nothing (user,
 2026-11-19: a visitor who has not signed in sees only the sign-in page). The web UI is for
@@ -130,6 +133,11 @@ runtime (axum).
 | `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
 | `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
 | `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
+| `GET /api/profiles/server` | The node's server profiles, the manager's rows in its order, for a signed-in user: `[{"id", "engine", "port", "tags", "instance"}]`, `instance` the id of the instance using the profile, `null` when none does ([below](#the-server-profile-pool)) |
+| `POST /api/profiles/server` | `{"engine", "id", "port"}` in: a new profile of the defaults, 201 `{"id"}`, for a signed-in user ([below](#the-server-profile-pool)) |
+| `GET /api/profiles/server/{id}` | The profile's own `server@<id>.ini` as the instance route's document, gaining `instance` and a `defaults.StateDir` of the instance that runs it, for a signed-in user ([below](#the-server-profile-pool)) |
+| `PUT /api/profiles/server/{id}` | The form's save of that file, `{"revision", "values"}` in, `{"revision", "running"}` out with the state of the instance using the profile, for a signed-in user ([below](#the-server-profile-pool)) |
+| `DELETE /api/profiles/server/{id}` | 204 with no body once the manager removed a profile no instance names, for a signed-in user ([below](#the-server-profile-pool)) |
 | `GET /` | The embedded `index.html`, for anyone |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>`, for anyone |
 
@@ -165,10 +173,12 @@ session got then; the read answers 401 `session-required` now and the Overview i
 ## The instances from the manager
 
 `GET /api/instances` asks `private-ai-manager` for `ListInstances` and `Instances`, then `Status` of
-each instance: the three calls the manager answers without authorization. What the bff calls beyond
-them is `Authenticate`, what sign-in makes ([below](#the-session)), the `As` form of a guarded method
-naming the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance))
-and the tags write ([below](#the-tags-of-an-instance)) (`crates/bff/src/lib.rs`).
+each instance, and `GET /api/profiles/server` asks `ServerProfiles` ([below](#the-server-profile-pool)):
+the four calls the manager answers without authorization. What the bff calls beyond them is
+`Authenticate`, what sign-in makes ([below](#the-session)), the `As` form of a guarded method naming
+the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance)), the tags
+write ([below](#the-tags-of-an-instance)) and the pool's create, delete, document and save
+([below](#the-server-profile-pool)) (`crates/bff/src/lib.rs`).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -195,8 +205,9 @@ and the tags write ([below](#the-tags-of-an-instance)) (`crates/bff/src/lib.rs`)
   write.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
-  `lib.rs`) that covers the connect. The two routes that write a file, the server save and the
-  model profile switch, run under the longer `WRITE_TIMEOUT` ([below](#saving-the-server-file)).
+  `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
+  switch and save, and the pool's create, save and delete, run under the longer `WRITE_TIMEOUT`
+  ([below](#saving-the-server-file)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
@@ -431,6 +442,91 @@ Done answers the 200.
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
+
+## The server profile pool
+
+`GET`/`POST /api/profiles/server` and `GET`/`PUT`/`DELETE /api/profiles/server/{id}`
+(`crates/bff/src/server_profiles.rs`, b535304, `ARCHITECTURE.md`'s slice 14): the node's server
+profiles, the `server@<id>.ini` files of the engine's config directory, listed, created, read, saved
+and deleted. The `{id}` is a profile's own name, and the engine is always `llama.cpp`
+(`ENGINE_LLAMA_CPP`), the node's one engine: the create takes it in the body and refuses any other. The
+instance's Server route is unchanged ([above](#the-server-file-of-an-instance)): the web UI's instance
+page still reads and saves it, and no page uses the pool yet.
+
+All five sit behind sign-in: with no live session each answers 401 `session-required`, connecting to no
+manager, and each reads the session with `Sessions::current`, so every one of them moves the idle
+deadline, unlike the four polled reads ([above](#the-session)). The list asks nothing of who it acts
+for: `ServerProfiles()` is answered to any caller, as `Instances` is, so the connect carries no
+principal and the bff's own account asks, the session being the whole gate. The create, the delete, the
+document and the save go as the `As` forms naming the signed-in user, the manager re-checking their
+membership of `pai` at every call, so a refusal of that user is 403 `session-not-administrator` and ends
+the session, as on the instance's Server read. The create and the delete are the manager's `configure`
+writes, and its own rules for them, what file it writes and with what mode and group, when a name is
+taken, when a profile is in use and what a record it cannot read answers, are "Through the manager" in
+[crates/config/README.md](../config/README.md#through-the-manager-linux-windows).
+
+### The list
+
+`GET /api/profiles/server` answers the manager's rows in its order, sorted by id. A file whose name the
+id rule refuses is no row, the list being of files; a file that cannot be read answers port 0 and no
+tags, the answer the manager gives for a profile whose file is missing, and fails nothing. A row
+carries the port and the `[Server]` tags and nothing else of the file, so a key it holds, its API key
+included, stays behind a read of it.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | the rows, `[]` when the engine's directory holds no profile | the read answered |
+| 401 | `session-required` | no session, the manager not connected to |
+| 403 | `session-not-administrator` | the manager refused the call, and the session ends. `ServerProfiles` is answered to any caller, so on today's manager only a refusal of the bff's own account reaches this |
+| 503 | `client-unavailable` | no manager, or no full answer within 5 s |
+| 502 | `client-other` | anything else, never the manager's detail |
+
+### The create
+
+`POST /api/profiles/server` takes `{"engine", "id", "port"}` and answers 201 `{"id"}`. The body is read
+before anything is asked, so a body nothing can be made of reaches no manager: not `application/json`,
+not read, `engine` or `id` not text, or a `port` that is no whole number, is 400
+`server-profile-malformed`; a body with no `port` and one with `port: null` are both the file with no
+`Port` key. A body over 64 KiB is the extractor's 413, before the session is read. The bff then applies
+the rules itself and the manager applies them again, being the writer: an engine other than `llama.cpp`
+is 422 `unknown-engine` (`field: "engine"`); a name the instance-id rule refuses is 422
+`server-profile-bad-id` (`field: "id"`: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a
+digit); a port outside `checks::server_int_range("Port")` is 422 `not-whole-number-in-range`
+(`field: "port"`, its args the key, the text and the two edges). A name already there is 409
+`client-server-profile-exists` `[id]`, and the session lives on. A manager that is unreachable, or that
+outlives the write's 15 s, is 503 `client-unavailable` with the outcome unknown: a retried create is
+then 409, which is how the ambiguity shows.
+
+### The document and the save
+
+`GET /api/profiles/server/{id}` is today's Server document of the profile's own file, with the fields
+[above](#the-server-file-of-an-instance) and `instance`: the id of the instance whose record names the
+profile, `null` when no section does. Two differences from the instance's document: `defaults.StateDir`
+is the folder of the instance that runs the profile and `null` for a profile none runs, the folder
+belonging to whichever instance runs it; and a name the manager refuses (`BadFileName`, `InvalidId`)
+and a file that is not there are 404 `client-no-server-profile` `[id]`, where the instance route
+answers `client-no-instance`. The file and the record are two calls of one connect made as the
+session's user, so a record the manager cannot read answers the record's own failure, never
+`instance: null`, which would offer the delete of a profile that is in use. The read is a principal's
+read, as on the instance route, so `withheld` is absent and `OpencodeApiKey` carries the saved key.
+
+`PUT /api/profiles/server/{id}` is the same form save as the instance's
+([above](#saving-the-server-file)): the same `{"revision", "values"}` body, the same fields table and
+checks, the same compare-and-swap write, the same 400, 409, 413, 422, 503, 504 and 502, and the same
+200 of a call nobody waited for. It answers `{"revision", "running"}`, `running` being the state of the
+instance that uses the profile: `false` for a profile none runs, with no state asked, and `true`
+whenever the state cannot be read, the safe answer, which covers a record read that fails once the
+write has landed (the write done, no instance named). The address check follows the profile as it
+does there: in use, the port judged against the profiles the other instances run and against the web
+service's `[Bff] Listen`; unused, judged against nothing.
+
+### The delete
+
+`DELETE /api/profiles/server/{id}` answers 204 with no body once the manager removed the file. A
+profile a section of `instances.ini` names is 409 `client-server-profile-in-use` `[profile, instance]`
+and the file stays; no such profile is 404 `client-no-server-profile` `[id]`; a record the manager
+cannot read is 502 `client-other`, never the "unused" answer, so a profile a running instance reads is
+never removed on a record read failure. A retried delete after a 503 is 404.
 
 ## The model profile routes
 
@@ -689,7 +785,8 @@ nothing for an id the record does not name or a section naming no profile, are
 (467): the document, an empty host name answered as `localhost`, the version files read at each request
 (an empty file a null version, a non-file, a file over the cap, a line that is not printable ASCII and a
 package of no engine all left out, the backends sorted), `engines: []` with no folder, and 401 with no
-session, the manager never asked. **Nothing here has been called against
+session, the manager never asked. The pool's five routes are `tests/server_profiles.rs` (27 tests),
+reported green with the whole bff (504) at b535304 (its report, not a rerun here). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
 real manager has answered), [above](#running-it)), and on Windows the code is type-checked
@@ -804,6 +901,13 @@ the test changes (`a_domain_that_arrives_after_the_start_is_answered`,
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `tests/node.rs`
 drives `GET /api/node` through `router_with_session_and_versions_dir` with a versions directory of the
 test (a tempdir, never a real install) and a fake manager it asserts is never called;
+`tests/server_profiles.rs` drives the five pool routes through `router_with_session` over the same
+fake manager and a fake authenticator (27 tests, b535304): the session gate of all five and the idle
+deadline each moves, the 403 that ends the session, the list as the manager's rows in its order, the
+create's 201, its 400 that asks nothing, its 422 fields and the port's edges, the delete's 204 and its
+409 naming the instance, the document of a used and of an unused profile with the record's own failure,
+the save of the profile's own file answering `running` false, true on a state read that failed and true
+on a record read that failed after the write, and the instance's Server route answering as before;
 `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

@@ -172,6 +172,15 @@ Lessons only: the rules are in `AGENTS.md`.
   `tests/listen.rs` (17), `tests/origin.rs` (40 since 42e5c23), and `src/tests/model_profile_body.rs` (24), a **lib** test:
   `cargo test -p pai-bff --lib` reaches it, a `--test <name>` flag does not. The 5 s reads and the 15 s
   write of the save are counted from the request (`save` takes `write_timeout.saturating_sub(elapsed)`).
+- The server profile pool (b535304): the five routes are `crates/bff/README.md`'s
+  `## The server profile pool` (the list, the create, the document and the save, the delete), and the
+  manager's three verbs are their own bullets in `crates/config/README.md`'s "Through the manager",
+  beside the `SetServerProfile` pair. Keep that split: the bff's rows say what a route answers and link
+  there for what the manager does. Three facts that read backwards if you do not check the code: the
+  list is sorted by id in the **manager** (`server_profiles`, the bff keeps its order); a profile no
+  instance runs is judged against **no** address, so it can carry a running instance's port and meets
+  the instances only at `SetServerProfile`; and `CreateServerProfile`'s `port` of `0` means "no `Port`
+  key" (`port_of`), not port 0.
 - `tools/site` builds pages from `docs/` only (`tools/site/src/main.rs`), so a change to the root
   `README.md`, `AGENTS.md`, `ARCHITECTURE.md` or a crate README needs no
   `cargo run -p docs-site -- --check`. For an anchor, a small Python `re` pass over `](#...)` against
@@ -292,7 +301,13 @@ Lessons only: the rules are in `AGENTS.md`.
   signature list, its `Version` protocol number and what each added, and the source map's manager row
   ("the `As` form of each of the N guarded methods", a list that lagged `WriteFileIf` for one protocol).
   Grep `guarded method`, `protocol ` and the count in words. `ARCHITECTURE.md`'s protocol table and its
-  "the seven guarded ones" repeat it and are the architect's.
+  "the seven guarded ones" repeat it and are the architect's. Count the guarded methods from the code,
+  not from the prose: `grep -c "async fn .*_as(" crates/manager/src/manager/dbus.rs` (twelve at
+  b535304), and note the page carried TWO word counts (the `As` bullet's "ten", the source map's "nine",
+  already inconsistent before the slice). A slice that adds verbs without bumping `PROTOCOL` (b535304
+  added `CreateServerProfile`, `DeleteServerProfile` and `ServerProfiles` on 3) needs a sentence saying
+  the number does not name them, so a manager at 3 from before the slice answers them as an unknown
+  method: grep `protocol ` for a sentence that implies the number is the proof.
 - The client module headers carry the transport's shape as soon as the coder builds it
   (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`: the `As` forms, `Version`,
   `acting_for`, what an older manager answers): read them before planning a comment edit, they usually
@@ -373,7 +388,11 @@ Lessons only: the rules are in `AGENTS.md`.
   spots (the instances 503 row, the connect bullet, the server-read paragraph and its 503 row, the
   list's 503 row): grep `5 s` and say which routes the longer limit covers. A 504 there means only a
   write's **unknown** outcome: a write that landed is a 200 with `running: true` even when the limit
-  ran out on the read back, so grep `504` in the same file when a commit changes that rule.
+  ran out on the read back, so grep `504` in the same file when a commit changes that rule. Two
+  sentences there go false the day a route is added, both by naming a list: "The two routes that write
+  a file, the server save and the model profile switch" (grep `routes that write a file`; at b535304 it
+  became six, the pool's list keeping the 5 s) and "the three calls the manager answers without
+  authorization" (grep `without authorization`; `ServerProfiles` made it four).
 - The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
   `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
   strings key (`model-profile-load-failed`). The model profile page's route is `#/profiles/model/<id>` (`fe/src/route.ts`),
