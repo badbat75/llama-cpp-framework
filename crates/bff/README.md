@@ -3,7 +3,8 @@
 `pai-bff` (package and binary `pai-bff`, over `pai-core`) is the backend-for-frontend: one
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
 built from `fe/` and the API it calls. Today every API route
-beside the sign-in is for a signed-in user: the framework version, the manager's instances with their state, the run verbs, the
+beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and runtime
+versions its packages installed, the manager's instances with their state, the run verbs, the
 start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile list, the model profile
 on/off switch and one model profile, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
@@ -12,7 +13,8 @@ a session: any other API route is 401 `session-required`, asking the manager not
 administrators only, members of the group `pai` (user, 2026-11-15): a right password of a `pai`
 member signs in, a right password of anyone else is 403 `session-not-administrator`
 (`fe/briefs/api-contract.md`). Behind
-sign-in it has the Overview (version, instances), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
+sign-in it has the Overview (version, instances), the About page (this host's name, the framework's version and each
+installed engine's version and backends, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
 and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
 page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
@@ -113,11 +115,12 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...]}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the ports and the tags are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
-| `GET /api/instances/{id}/server` | The instance's `server@<id>.ini` with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
+| `GET /api/instances/{id}/server` | The instance's `server@<server_profile>.ini`, the server profile its record names, with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `PUT /api/instances/{id}/server` | The form's save of that file, for a signed-in user ([below](#saving-the-server-file)) |
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
@@ -169,7 +172,7 @@ and the tags write ([below](#the-tags-of-an-instance)) (`crates/bff/src/lib.rs`)
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "engine", "state", "port", "tags", "instanceTags"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
+| 200 | `[{"id", "engine", "state", "port", "tags", "instanceTags", "boot"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -185,6 +188,11 @@ and the tags write ([below](#the-tags-of-an-instance)) (`crates/bff/src/lib.rs`)
   (`tags_of_row` in `lib.rs`), `instanceTags` the record's own list. An instance with no row is
   listed with `0` and the two empty lists, and a `Instances` call that fails is no rows for any of
   them: the read still answers 200.
+- **`boot` is that instance's start at boot**, read from the manager's `BootEnabled` for each id the
+  list carries, over the same connect as the state. One that cannot be read is `null` on that item
+  and fails nothing: the list is answered in full, and the page shows no start-at-boot row for that
+  tile. `GET /api/instances/{id}/boot` stays: the instance page reads it, and reads it again after a
+  write.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The two routes that write a file, the server save and the
@@ -232,6 +240,34 @@ session is checked first, so no request reaches the manager without one.
   check refuses is 422 with the check's key and values, a body it cannot read is 400 with the manager
   never connected to, no manager 503. The 413 of a body over the cap is the extractor's, by the code.
 
+## The node
+
+`GET /api/node` (`crates/bff/src/node.rs`) answers what this host is and what its packages installed.
+Like `GET /api/version` it is gated by a session, asks the manager nothing and leaves the session's
+idle deadline where it was: 401 `session-required` with no live session, and no other answer. The web
+UI reads it for the labels of the navigation and for the About page
+([below](#the-web-ui-fe)).
+
+| Field | From |
+| --- | --- |
+| `name` | `listen::hostname`, the same host name the `Host` guard reads: `gethostname(2)` on Unix, `GetComputerNameExW(ComputerNameDnsHostname)` on Windows (type-checked only); `localhost` when the machine names itself nothing |
+| `api` | `/api`, a constant: the fe builds a route out of it |
+| `version` | The framework's version, the same one `GET /api/version` answers |
+| `engines` | `pai_core::versions::installed` of the versions folder, read at every request, so an engine upgrade shows without a restart of the service |
+
+- **The versions are the packages' own files**, one per package at `versions/<package>`
+  ([docs/build-packaging.md](../../docs/build-packaging.md)): the engine's `llama.cpp` and one per
+  runtime `llama.cpp-<suffix>`, the suffix lower-case letters and digits (`cuda`, `rocm`, `vulkan`).
+  Only a regular file of at most 128 bytes counts, a symlink is not a file here; its version is the
+  file's first line trimmed and printable ASCII, an empty file is a `null` version, and an engine is
+  listed only when its own file is there: its `backends` are the other files, sorted by name.
+- **The folder is the install's** (`pai_core::bff_cfg::versions_dir`, `crates/core/src/bff_cfg.rs`):
+  `/usr/share/private-ai/llama.cpp/versions` on Linux (only when the engine's config folder is
+  `/etc/llama.cpp`, the packaged install), `<engine install dir>\share\versions` on Windows, the
+  engine's install folder from `HKLM\Software\llama.cpp` `InstallDir`. Anywhere else is no folder,
+  a tree build and macOS included, and a folder that cannot be read answers the same as an empty
+  one: `engines` is `[]`.
+
 ## The session
 
 `POST /api/session` takes `{"username": <text>, "password": <text>}` as `application/json` and asks
@@ -267,7 +303,7 @@ counter. Under `PRIVATE_AI_DATA_ROOT` `connect` dials nothing, so a test never a
   cookie, an unknown id or an expired one. `DELETE` ends the session (a replayed id is refused) and
   clears the cookie (`Max-Age=0`); the user's other sessions stay.
 - **A session ends after 30 minutes without a request that uses it**; each use moves the deadline,
-  apart from the three reads a page polls (`GET /api/version`, `GET /api/instances` and
+  apart from the four reads a page polls (`GET /api/version`, `GET /api/node`, `GET /api/instances` and
   `GET /api/instances/{id}/boot`): those read the session as a gate and leave the deadline where it
   was (`Sessions::peek` in `crates/bff/src/session.rs`), so a page kept open by those calls alone
   signs itself out at the 30 minutes.
@@ -281,13 +317,15 @@ counter. Under `PRIVATE_AI_DATA_ROOT` `connect` dials nothing, so a test never a
 
 `GET /api/instances/{id}/server` (`crates/bff/src/server.rs`) first needs a session: with no cookie,
 or an unknown or expired one, it answers 401 `{"key": "session-required", "args": []}` and does not
-connect to the manager. `PUT` of the same path saves it ([below](#saving-the-server-file)). The route
-names the file after the id, while what an instance runs is the server profile its section of
-`instances.ini` names: the shipped record has `[default]` with `ServerProfile = default`, so for
-`default` they are one file, and a save there is judged as a profile in use (a `server@<id>.ini` no
+connect to the manager. `PUT` of the same path saves it ([below](#saving-the-server-file)). The file
+is the server profile the record names for the instance, `server@<server_profile>.ini`
+(`profile_file`): the route asks `Instances()` before any file and never opens one named after the id,
+so an id the record does not list, and a section naming no profile, are 404 with nothing read. The
+shipped record has `[default]` with `ServerProfile = default`, so the shipped instance's file is
+`server@default.ini`, and a save there is judged as a profile in use (a `server@<x>.ini` no
 section names as its profile is a spare profile, judged against nothing,
 [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)).
-Then it asks the manager for `ReadFileAs("server@<id>.ini")` naming the
+Then it asks the manager for `ReadFileAs` of that name naming the
 session's user, through the same connect and 5 s timeout as `/api/instances` (3de9283): the route
 connects as `Sessions::current`, never a name taken from the request. The manager answers a
 principal for the bff's account alone, checks that user's membership of `pai` at every call (its own
@@ -316,7 +354,7 @@ guide).
 | 200 | `{"revision", "values", "defaults", "limits", "interfaces"}`, and `"withheld"` when the manager's read reported a value withheld | The file was read. A principal's read is never withheld, so on this route `"withheld"` is absent and `OpencodeApiKey` carries the saved key |
 | 401 | `{"key": "session-required", "args": []}` | No session |
 | 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the read as this user (a member of `pai` at sign-in, removed since): the session ends, so the same cookie answers 401 from then on. A read gated by a session whose connect carries no principal (the instances list, `GET boot`) answers the same refusal 502 `client-not-authorized` and ends nothing: the refusal is of the bff's account, not of the signed-in user |
-| 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id (`NoInstance`, `BadFileName`, `InvalidId`) |
+| 404 | `{"key": "client-no-instance", "args": []}` | The record names no server profile for the id (`profile_file`, nothing read), the manager says no such instance or refuses the id, or there is no such file (`NoInstance`, `BadFileName`, `InvalidId`) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
 
@@ -359,7 +397,7 @@ refusal is 422 `{"key", "args", "field"}`, `field` the INI key the form marks. A
 `origin::MAX_BODY` (64 KiB) is refused by the extractor layer in front of the whole router:
 413 `payload-too-large`, before the session is read.
 
-The file is then read as the session's user, its text hashed with the run's secret and compared
+The file is then read as the session's user (the record's file, as the read resolves it), its text hashed with the run's secret and compared
 with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
 the file still holds exactly the text read: a write that lands between the read and the write is
 refused by the manager, answered with the same 409, and nothing is written. The read, the write and
@@ -638,10 +676,20 @@ skipping `[*]` in both files
 landed when the read back, or the states, run out. A read back that fails after a landed move, and
 the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read
 and 15 s of write, are pinned by `the_write_limit_outlasts_the_read_limit`
-(`src/tests/timeouts.rs`). The list with its port and tags, and the tags write, are
-`tests/instances.rs` (33 tests), green 2026-11-20 inside the whole bff suite (455) at ff406b8; the
+(`src/tests/timeouts.rs`). The list with its port, tags and boot flag, and the tags write, are
+`tests/instances.rs` (35 tests: 33 of them green 2026-11-20 inside the whole bff suite (455) at
+ff406b8, the two of the boot flag at b5fdf9e); the
 rule's refusals of a server profile's tags, and their `field`, are pinned in `src/server.rs`'s own
-tests. **Nothing here has been called against
+tests. The server file's name is the record's, for the read and the save, and the 404 that reads
+nothing for an id the record does not name or a section naming no profile, are
+`the_read_is_the_profile_the_record_names`, `the_save_is_the_profile_the_record_names`,
+`a_row_naming_no_profile_is_no_instance` and
+`an_id_the_record_does_not_name_is_no_instance_and_asks_no_file` (`tests/server.rs`), green
+2026-11-20 at b5fdf9e. The node read is `tests/node.rs` (15 tests), green 2026-11-20 at b5fdf9e inside the whole bff
+(467): the document, an empty host name answered as `localhost`, the version files read at each request
+(an empty file a null version, a non-file, a file over the cap, a line that is not printable ASCII and a
+package of no engine all left out, the backends sorted), `engines: []` with no folder, and 401 with no
+session, the manager never asked. **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
 real manager has answered), [above](#running-it)), and on Windows the code is type-checked
@@ -656,20 +704,26 @@ kept by the `designer`; the slice briefs and the API contract the fe is built ag
 
 **A shell with hash routes** (`fe/src/App.tsx`, `fe/src/route.ts`), since the bff serves only `/`
 and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no role word: fe slice R4,
-1827023), a nav (behind a Menu button below 960px; the instances listed once signed in, under a
-**Profiles** heading the **Model profiles** entry, fe slice 05b: `nav-profiles`, `nav-model-profiles`;
-the **Server** entry waits on the server profile page, `fe/briefs/05b-profiles-nav.md`) and the
-route's page, whose heading takes the focus and names the document title on a change. Each page reads
-its data once when it opens and never shows a reply's text. An old `#/models` bookmark is rewritten to
+1827023), a nav (behind a Menu button below 960px; the instances listed once signed in, under a heading
+named by the host, fe slice N: `nav-instances`; under a **Profiles** heading the **Model profiles**
+entry, fe slice 05b: `nav-profiles`, `nav-model-profiles`; the **Server** entry waits on the server
+profile page, `fe/briefs/05b-profiles-nav.md`; and last the **About** entry, the info icon, `nav-about`,
+fe slice N) and the route's page, whose heading takes the focus and names the document title on a
+change. Each page reads
+its data once when it opens and never shows a reply's text. The shell reads `GET /api/node` once per
+session (`readNode` in `fe/src/node.ts`): the host name it answers names the nav's instance group and the
+Overview's section, the plain words standing when the read has nothing to say, and a failure signs
+nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark is rewritten to
 `#/profiles/model` (`legacyHref`, 05b.8 and 05b.9), the rest of the address copied byte for byte.
 
 | Route | Page | Who |
 | --- | --- | --- |
-| `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none. Both reads are 401 with no session, so an unsigned visitor has nothing to show (user, 2026-11-19; the sign-in-only shell the web UI shows here is its own slice, `fe/briefs/09-signin-only.md`, uncommitted when this was written) | signed in; otherwise the sign-in form in its place |
+| `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none. The section is named by the host the shell read. Each tile carries its facts with the list, no read of its own: the port, the tags, and a Start at boot row from `boot`, absent when that is `null` (fe slice 12 T1, boot from 13 N.1). Both reads are 401 with no session, so an unsigned visitor has nothing to show (user, 2026-11-19; the sign-in-only shell the web UI shows here is its own slice, `fe/briefs/09-signin-only.md`, uncommitted when this was written) | signed in; otherwise the sign-in form in its place |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
+| `#/about` | The host and what is installed on it, read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service, `fe/src/About.tsx`): the page heading "About", the host's name as the section heading, the framework's version, then one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent). A `null` version shows as Unknown, an engine with no runtime as None, CPU only, and `engines: []` as a paragraph that there is no engine; a read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
@@ -747,6 +801,9 @@ and the re-read of the machine's names through `router_with_session_and_host_sou
 the test changes (`a_domain_that_arrives_after_the_start_is_answered`,
 `a_fixed_hosts_list_never_reads_the_machine`);
 `tests/pai_bff_binary.rs` runs the binary with
-`PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `src/tests/deps_lint.rs` keeps the GUI
+`PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `tests/node.rs`
+drives `GET /api/node` through `router_with_session_and_versions_dir` with a versions directory of the
+test (a tempdir, never a real install) and a fake manager it asserts is never called;
+`src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

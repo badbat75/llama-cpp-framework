@@ -111,7 +111,7 @@ ACLs and the test plan are in [installer\AGENTS.md](../installer/AGENTS.md).
 
 | | llama.cpp's MSI | The framework's MSI |
 | --- | --- | --- |
-| Holds | llama.cpp's executables and DLLs, the ggml backends, the GPU runtimes and OpenSSL, the read-only defaults | `pai-config.exe`, `pai.exe`, `pai-manager.exe`, `pai-bff.exe`, the benchmark method, the strings |
+| Holds | llama.cpp's executables and DLLs, the ggml backends, the GPU runtimes and OpenSSL, the read-only defaults, the installed versions in `share\versions\` | `pai-config.exe`, `pai.exe`, `pai-manager.exe`, `pai-bff.exe`, the benchmark method, the strings |
 | Version | The llama.cpp release | The framework version |
 | Installs to | `%ProgramFiles%\llama.cpp\` (choosable), registered in `HKLM\Software\llama.cpp` | `%ProgramFiles%\private-ai\` (choosable), registered in `HKLM\Software\private-ai` |
 | Machine data | `%ProgramData%\llama.cpp\{config,logs,models,state}` | `%ProgramData%\private-ai\config\` (`bff.ini`) |
@@ -136,7 +136,11 @@ release: the framework's MSI records that release as the oldest engine it instal
 **Staging** puts each product in its own tree, `build\windows\staging\llama\` and
 `staging\framework\`, which is exactly what its MSI installs, so an administrative image (`msiexec
 /a`) compares 1:1 with it. llama.cpp's uses `cmake --install`, then removes `test*.exe` and
-`include\`, which never shipped, and writes the defaults into `share\defaults\`. The framework's gets
+`include\`, which never shipped, writes the defaults into `share\defaults\` and the versions into
+`share\versions\` (`versions_share::stage`: `llama.cpp` and one `llama.cpp-<sdk>` per runtime the
+staging took a library from, each holding its version on one line, empty for an SDK outside the dist
+layout; the web service reads that folder,
+[crates/bff/README.md](../crates/bff/README.md#the-node)). The framework's gets
 `pai-config.exe`, `pai.exe`, `pai-manager.exe` and `pai-bff.exe` from cargo's release output
 (`msi::CARGO_EXES`) and `share\benchmarks\` and `share\strings\`. Both get `llama.ico` in `bin\`, and
 a missing icon is regenerated here. Filtering happens in staging and not in the `.wxs`, which harvests
@@ -197,7 +201,7 @@ over `\\.\pipe\private-ai-manager`. The instance runs the llama-server of llama.
 through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%ProgramData%\llama.cpp\`
 holds `config\` (the instances' server and model profile files, which users reach only through the
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
-protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
+protected DACL. An instance whose server profile (`server@<profile>.ini`, the one its record names) leaves `ModelsDir` or `StateDir` unset uses
 `models\` or `state\<id>` there (the state root with the instance's id, `launch::instance_command`),
 not the profile of the account it runs under, and runs in `state\`; `pai` and the configurator's
 Server tab leave both unset at a save, and neither a model profile save nor a Hugging Face download
@@ -357,6 +361,7 @@ been run for real.
 | `/usr/share/private-ai/benchmarks/` | `cli` | The benchmark method |
 | `/usr/share/private-ai/strings/` | `config`; `cli.toml` in `core` | The GUI's `en_US.toml`, and `cli.toml`, the text every program prints |
 | `/usr/share/private-ai/llama.cpp/` | `llama.cpp` | The defaults `server@default.ini`, an empty `models.ini`, `assignments.ini` and the instance record `instances.ini`, copied into `/etc/llama.cpp/` when missing |
+| `/usr/share/private-ai/llama.cpp/versions/` | Each its own: `llama.cpp`, `llama.cpp-cuda`, `llama.cpp-rocm`, `llama.cpp-vulkan` | `versions/<package>`: one file per package, named after it, holding that package's version on one line (empty for an SDK outside the dist layout, which is no version). The web service reads the folder for `GET /api/node` ([crates/bff/README.md](../crates/bff/README.md#the-node)) |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
 | `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
@@ -420,7 +425,7 @@ still wins over RUNPATH. That no file is opened under the dists or the build tre
 RUNPATH; it has not been repeated with the absolute one.
 
 **The one config file shipped is `core`'s PAM service (below); `llama.cpp` ships its defaults.** The server and model profile files
-(`server@<id>.ini`, `models.ini`, `models.ini.disabled`) and the instance records (`assignments.ini`,
+(`server@<profile>.ini`, named by the `ServerProfile` of the instance's section, `models.ini`, `models.ini.disabled`) and the instance records (`assignments.ini`,
 which profiles each instance is given, and `instances.ini`, which server profile it runs) are the
 engine's, in `/etc/llama.cpp/`
 (`paths::engine_config_dir`), which only the manager writes; the framework's own (`bff.ini`) are in

@@ -386,7 +386,9 @@ Lessons only: the rules are in `AGENTS.md`.
   the commit whose report it is. The exact count of one file is `grep -c '#\[test\]\|#\[tokio::test\]'`
   (the coarse pattern over-counts, helper fns and doc text): a README's per-suite count is the count of
   the tree it cites, so recount a suite only when a commit changed it (`git show <sha>:<suite> | grep -c`
-  settles the old number) and leave an untouched suite at its dated count.
+  settles the old number) and leave an untouched suite at its dated count. To date one test of a suite
+  to the commit that added it, for "the two of X at <sha>", use
+  `git log --oneline -1 -S "<fn name>" -- <suite>` (the pickaxe finds the added function).
 - When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
   fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
   case): cite the sha, and paraphrase a string rather than quoting it, its text living in
