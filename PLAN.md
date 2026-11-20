@@ -996,6 +996,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     turn the whole list into a 503 instead of per-item nulls; `GET /api/node` reads its folder in the async
     handler (tiny, not `spawn_blocking`); `installer/llama.cpp.wxs` ~121 describes the payload without
     `share\versions`; `fe/briefs/api-contract.md` still calls `/api/node` and `boot` "being built".
+    **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
+    spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
+    table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the
+    architect's read of the server's GPU list through the bff (the manager probes it for the memory
+    check), then the designer's brief, then one tester and coder round on both sides; the three keys move
+    to `checks::WEB_MODEL_PROFILE_KEYS`. Tensor placement (`override-tensor`, 2j) stays later.
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
