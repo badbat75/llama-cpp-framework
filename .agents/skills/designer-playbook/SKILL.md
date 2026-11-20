@@ -60,3 +60,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - Playwright's WebKit does not scroll a control into view on a script `focus()` (checkbox and text
   input alike, 2026-11-16); Chromium does. A focus-after-refusal check at 320 px must read the focused
   element's rect per engine; whether real Safari behaves the same is unverified.
+- Any 422 of a model profile, on the page's save and on the list's switch alike: `stub9.py`
+  `/__set?pput=json&pcode=422&pbody=<json>` (it matches every `PUT /api/profiles/model/...`);
+  `build/ux-review/m1.js` drives both surfaces in 3 engines at 1280 and 320 px and logs alerts, focus,
+  `aria-invalid`, the re-read and sideways scroll. Do not run it beside the UX check: it doubles its time.

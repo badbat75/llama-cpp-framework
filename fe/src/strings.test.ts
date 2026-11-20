@@ -52,6 +52,25 @@ test('a missing value leaves its placeholder, other braces stay', () => {
 
 // ── What it does ────────────────────────────────────────────────────────
 
+// Brief 11 (fe/briefs/11-resource-refusals.md): the two resource refusals of a
+// model profile, each in its own key. The expected text is the brief's, between
+// the outer double quotes, backticks included, so the strings file carries it
+// exactly (the value the code links by key, never text in the code).
+
+test('11 M1.1: en_US.json holds api-model-profile-over-memory with exactly the text of brief 11 section 2', () => {
+  const table: Record<string, string> = strings
+  expect(table['api-model-profile-over-memory'], 'the text of the key').toBe(
+    '`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type (cards Resource / context and KV cache).',
+  )
+})
+
+test('11 M1.10: en_US.json holds api-model-profile-model-missing with exactly the text of brief 11 section 7', () => {
+  const table: Record<string, string> = strings
+  expect(table['api-model-profile-model-missing'], 'the text of the key').toBe(
+    '`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or change the Model file in pai-config there.',
+  )
+})
+
 test('placeholders are filled by position', () => {
   expect(t('version-label', '2.99.0')).toBe('Version 2.99.0')
 })

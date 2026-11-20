@@ -428,6 +428,10 @@ const REFUSALS: RefusalTable = {
         return t('api-invalid-model-profile-id', ...args)
       case 'model-profile-name-taken':
         return t('api-model-profile-name-taken', ...args)
+      case 'model-profile-over-memory':
+        return t('api-model-profile-over-memory', ...args)
+      case 'model-profile-model-missing':
+        return t('api-model-profile-model-missing', ...args)
       default:
         return undefined
     }

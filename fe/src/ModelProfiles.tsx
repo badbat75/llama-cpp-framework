@@ -122,6 +122,10 @@ function failureText(
       return t('api-load-on-startup-over-max', ...result.args)
     case 'load-on-startup-unlimited':
       return t('api-load-on-startup-unlimited', ...result.args)
+    case 'model-profile-over-memory':
+      return t('api-model-profile-over-memory', ...result.args)
+    case 'model-profile-model-missing':
+      return t('api-model-profile-model-missing', ...result.args)
     default:
       return result.status === 422
         ? t('api-other', result.key)
