@@ -165,6 +165,15 @@ Lessons only: the rules are in `AGENTS.md`.
   break them.
 - A test that builds a struct literally is the one that reds when a field is added: grep the struct's
   literal sites before writing the report, and add the field to the shared constructor, not to each test.
+- A field added to a struct every client decodes (`InstanceInfo`) is a three-level red: the row's own
+  signature pin (D-Bus `a(sssqasas)`, pinned as `<Row as Type>::SIGNATURE.to_string()`, zvariant has no
+  `Signature::as_str`), the transport's decode of the OLD shape (pin it refused), and every JSON document
+  that carries the item whole. Grep the JSON literals (`grep -c '"engine":' crates/bff/tests/*.rs`) and
+  gain the field in each, in the same step, so the collateral reds are one list, not a mystery.
+- When a route gains a read (the record read in front of the file read), retarget the EXISTING call-log
+  pins of that route, not only the new tests: a pin that asserts `["read server@default.ini"]` after a
+  read that must now be `["instances", "read ..."]` is a red the coder reads as a broken fake. Grep the
+  call-log literals of the file and prefix the new call in each; report how many pins were retargeted.
 - A new parameter of a public builder: the call sites are the tester's, so add it LAST and give each test
   file one `const` for its value (free for a route that never reads it): the coder then touches only the
   production file. Inside the callee the new name must not clash with an existing local: rename the local
@@ -313,6 +322,15 @@ Lessons only: the rules are in `AGENTS.md`.
   starting files installed into `/etc/llama.cpp/` and `%ProgramData%\llama.cpp\`), the prompts in
   `benchmarks/prompts/` (sha256-pinned by a spec's `Prompts = <file>@<sha>` lines), and the campaign
   reports in `benchmarks/bench.db`. Report the residue as data, not as a miss.
+- A new shipped file has two separate pins, in two files: WHOSE package it is (`components::of` in
+  `xtask/src/common/components.rs`, testable on Linux, and the red when a shared folder's prefix rule
+  swallows it: `usr/share/private-ai/llama.cpp/` claims everything below it, so a per-package rule must sit
+  AHEAD of that rule) and WHAT the package holds (the staging and `%files` lists in
+  `xtask/src/linux/package.rs`, `build_deb`/`build_rpm`). Pin the first; when the second file is another
+  agent's, say so and name the helper the content pin needs (`dist_version` reads a
+  `<Name>/<Version>/<os>` path). The Windows `share\...` ship is a `.wxs` row plus the staging in
+  `xtask/src/windows/package.rs`: on Linux that half is not runnable, and a `cfg(windows)` arm of `of` is
+  compiled by nobody, so say Linux proves the rule, not the MSI.
 - The guard for a bff error code is per route: the bff ends a session with 403 `session-not-administrator`
   when the manager refuses a call made as the signed-in user, and answers 502 `client-not-authorized` on a
   session-free read where the manager refused the bff itself. The guard for the second lives in
@@ -394,12 +412,27 @@ Lessons only: the rules are in `AGENTS.md`.
   are the report: prove it by moving the FIXTURE's value (the port of the profile file the section names, not
   the one named after the instance) and by moving the expected constant of the missing-file case (the rule is
   0, never the default port), one run each, restoring with `cp` + `cmp -s` between the two.
+- A list answer that gains a member reds every test that asserts the item WHOLE. In the bff that is a JSON
+  literal: `grep -c '"engine":' crates/bff/tests/*.rs` is the map (the list pins of `tests/instances.rs`,
+  every document of `tests/origin.rs`). Gain the member in each literal in the same step, and give the fake a
+  DEFAULT answer for the read the new member comes from (a `boot_enabled` answering `Ok(false)`), so the
+  file's other tests keep their shape; pin the "the read fails, the member is null and the list never
+  shortens" case as its own test.
+- A package-content rule (which files a component's `.deb`/`.rpm` ships) is pinned in
+  `xtask/src/linux/package.rs`'s `mod tests`, the file the slice's staging change edits. When another agent
+  owns that file for the slice, pin only the OWNERSHIP rule in `xtask/src/common/components.rs`
+  (`of("usr/share/private-ai/llama.cpp/versions/<package>")` is the component whose `package()` it is, ahead
+  of the rule that gives the whole engine share folder to llama.cpp) and report the content pin as a
+  hand-over, naming the helpers it needs (`scratch`, `put`, `ELF`, `place`).
 - zbus runs every task of a connection on one executor thread: a sync `fn` method blocks every other call
   on that connection.
 - zbus types come from Rust shapes, not from the signature you meant: a fixed-size array
   `["x".to_string()]` serializes as a STRUCT `(s)`, so an `as` argument needs `vec![...]`; a Rust tuple is
   a struct, so a rows method answers `a(ssqasas)`. A `Vec<Vec<String>>` never compares against a
   `[(&str, &str)]` table: join each list with `,` in the assertion.
+- Pin a row's signature as `<Row as Type>::SIGNATURE.to_string()`: this zvariant has NO `as_str` on
+  `Signature`, so comparing `SIGNATURE` with a `&str` is a compile error, not a red. The red of a new field
+  prints `(ssqasas)` vs `(sssqasas)`, which names exactly the field the transport must carry.
 - `Refusal` is public in `pai_core::checks` (`key: &'static str`, `values: Vec<String>`), NOT re-exported by
   `pai_core::client`: import it from `checks`, and write the key as a bare literal.
 - One `data_root_e2e` runs every phase in one process over one tree: a phase that writes the record must
@@ -534,7 +567,30 @@ Lessons only: the rules are in `AGENTS.md`.
   `en_US.json` is a red no tester may fix (the production `t('key')` call is the coder's).
 - A new focusable control in the banner goes red in EVERY document-wide tab-order list: grep the suite
   for the lists that start at the skip link and insert the new stop in each; a banner-scoped list
-  (`within(nav)`) needs nothing.
+  (`within(nav)`) needs nothing. A new LAST nav item is the same red in the exact nav-link lists: append
+  it there, and let a loop over the nav's named groups skip a group with no label
+  (`group.hasAttribute('aria-labelledby')`), so a criterion that gives the new group no label pins nothing
+  beside itself. Queries that only check a link exists need nothing.
+- A read the shell adds to every signed-in render (a host name beside the version): give the shared fake's
+  new option a DEFAULT answer (the reply the brief shows) so the suite's untouched tests do not meet a
+  rejected `unexpected GET <route>` fetch, and let a test that wants a failed read name its own answer.
+  Then pin "the page asks nothing for it" as a FILTERED call list (`calls.filter((c) =>
+  c.path.endsWith('/boot'))`), never the whole `bff.calls`: an unfiltered emptiness assert reds on the
+  shell's new read, which is not what the criterion says.
+- When that host read becomes a HEADING (`<h2>{host ?? t('instances-title')}</h2>`, the Instances section),
+  every older `getByRole('heading', { name: en('...-title') })` of the suite goes red at once: the shared
+  fake's default `NODE.name` is the name the section answers, and the key's text shows only while the read
+  is pending. Retarget each to the node name (or a level + `closest('section')` walk), and report them as
+  collateral reds of the heading, never as harness typos. (`<h2>{host ?? t('instances-title')}</h2>`, the Instances section), every older `getByRole('heading', { name: en('...-title') })` of the suite goes red at once: the shared fake's default `NODE.name` is the name the section answers, and the key text shows only while the read is pending. Retarget each to the node name (or a level + `closest('section')` walk), and report them as collateral reds of the heading, never as harness typos.
+- A plain object passed as a `fakeBff` constructor option is the body of the 200 only where the route
+  itself wraps non-functions. A helper that gates EVERY option behind a "session gone ? 401 : answer"
+  wrapper (the shape of `endedBff`) must be handed the body (`node: NODE`), never `{ body: NODE }`: its
+  `reply(200, after)` lands the wrapper's own object as the body and the read parses nothing.
+- A state that moves from a per-row read to a field of the list answer: retarget ONLY the reads the
+  criterion removes. The instance page's own field reads the same path and stays, so rename the constant to
+  say whose read it is (`TILE_BOOT` to `BOOT`) and report which pins stayed, else the coder deletes a read
+  the brief keeps. In a test that counts a route across a page change, the detour page must be one that
+  makes no such read, and the comment must say so: that count is the red that pins the removal.
 - Every nav query needs `within(nav)` (the Overview table names the same instance ids as the nav), and a
   link click in jsdom does not always move `window.location.hash`: pin a close on `aria-expanded` and the
   landing page by its heading. The browser's Forward is testable after a leave guard: a typed hash adds a
@@ -547,7 +603,9 @@ Lessons only: the rules are in `AGENTS.md`.
   React's tree. `fireEvent.click` on an `<a href="#/...">` (an in-app link) navigates in jsdom and
   settles, no `Not implemented: navigation` (only a real URL prints that), so a nav-link leave is
   `await act(async () => { fireEvent.click(navLink(name)); await new Promise((r) => setTimeout(r, 0)) })`:
-  that is how the router sees it. `@testing-library/user-event` is NOT a dependency of `fe/`.
+  that is how the router sees it. The hash moves only after that flush (read it in the same tick and it is
+  still the old one), so an "opens the page" pin takes the link's `href` attribute and the landing heading.
+  `@testing-library/user-event` is NOT a dependency of `fe/`.
 - A button named by `aria-label` is pinned without a labelling helper: `computeAccessibleName` is not
   exported by this `@testing-library/dom` and jsdom computes no accessible name, so pair
   `getByRole('button', { name })` (it honours `aria-label`) with `not.toHaveAttribute('aria-label')`.
@@ -677,7 +735,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - Right after `render(<App />)` the Overview's `main` holds only the loading `<p role="status">` (the
   session has not settled): a synchronous `main.querySelector` finds nothing and every case of the file
   dies in its own helper. Await the section's heading (`findByRole('heading', { level: 2 })`) before any
-  synchronous query.
+  synchronous query. The same applies to a page whose own read lands after its h1: the h1 is on screen
+  while the lists are not, so a criteria that reads them awaits the page's `h2` first.
+- "The page takes the focus on its h1" is a property of an arrival, not of a load: the app focuses the h1
+  when the route changes and on nothing else (a direct load at the hash leaves the focus on `body`, and
+  the sign-in page uses `autofocus` instead). So reach the page with the fake's `navigate()`, never with
+  `startAt()`, and keep `startAt()` for a criterion that pins the signed-out state of a page.
 - `within(ul)` matches a `li` nested inside a tile's own `<ul>` (the selector is `ul > li`): pin "a tile
   holds nothing nested" on `element.children`, never on a `within` list query.
 - A shape an ARIA role restores (a `ul` with `role="list"`) is not reachable by a role query alone: when
@@ -894,6 +957,16 @@ Lessons only: the rules are in `AGENTS.md`.
 - A spy that records state while the app's own handler runs must never throw: read by
   `document.getElementById` and return nulls for a missing element. A throwing spy inside React's dispatch
   becomes an unhandled rejection, and the run then reports no per-assert reason.
+- React's StrictMode re-runs only the MOUNT pass of an effect, so an effect that early-returns at mount (a
+  read whose data arrives later, `session` still null) is untouched by it: a StrictMode test expecting an
+  in-flight answer dropped by that mount cleanup is GREEN by construction. Render under `<StrictMode>` to
+  pin the tree `main.tsx` really builds (the suites that `render(<App />)` do not), and drive a cleanup
+  race with a real state change (a sign-in, a page write answering 401), where React does run cleanup and
+  rerun; a `held()` reply plus that change shows an answer the app drops.
+- A tile's fact list is one `dl` that grows (`tile-facts` holds port, tags, boot): a helper returning
+  "the tile's `dl`" for one row returns the whole list, so a restored `dt`/`dd` count must name the rows
+  the items in that test carry (the plain `INSTANCES` and `item()` ones carry only boot, so 1), never a
+  blanket 1.
 - Clean up a test's leftover process by its exact PID (have the script write it to a file), never with
   `pkill -f <words>`: on 2026-11-19 `pkill -f "sleep 600"` also matched the coordinator's launcher, whose
   command line carried the brief's text, and killed it.

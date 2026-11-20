@@ -33,14 +33,16 @@ USER = "abcdefghijklmnopqrstuvwxyz012345"
 # shows, and an id of 40 characters with no break point, which has to break
 # inside its tile. The port and the two lists of tags (brief 12) give the rows
 # the tile shows: one tile with no port and no tags, and one with the highest
-# port and eight tags of 32 characters, the widest facts at 320 px.
+# port and eight tags of 32 characters, the widest facts at 320 px. The `boot`
+# of brief 13 (13 N.1) is on for two tiles, off for one, and left out for one,
+# the tile with no Start at boot row.
 MANY_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123"
 LONG_TAG = "abcdefghijklmnopqrstuvwxyz01234"  # 31 characters
 INSTANCES_MANY = [
-    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"]},
-    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"]},
+    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True},
+    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"], "boot": False},
     {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": []},
-    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)]},
+    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True},
 ]
 
 # GET /api/profiles/model: rows with every engine shape the list shows.
@@ -92,6 +94,28 @@ SERVER_DOC = {
 }
 
 
+# GET /api/node (brief 13, 13 N.3): the host's name, the framework's version,
+# and the engines with their backends, the reply of the brief's section 0. The
+# name goes in the nav's instance group and in the Overview's h2 (13 N.4,
+# 13 N.5), the versions in the About page's lists (13 N.8).
+NODE = {
+    "name": "gpu-box",
+    "api": "/api",
+    "version": "2.99.1",
+    "engines": [
+        {
+            "engine": "llama.cpp",
+            "version": "1:1.0.0+pai2",
+            "backends": [
+                {"name": "cuda", "version": "13.5.0+nccl.2.32.3"},
+                {"name": "rocm", "version": "10.1.0"},
+                {"name": "vulkan", "version": "1.4.363.1"},
+            ],
+        },
+    ],
+}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=SITE, **kwargs)
@@ -121,6 +145,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(401, {"key": "session-required", "args": []})
         if p == "/api/version":
             return self.json(200, {"version": "3.0.0"})
+        # The host and its versions (brief 13): the nav's label, the Overview's
+        # h2 and the About page all read this one.
+        if p == "/api/node":
+            return self.json(200, NODE)
         if p == "/api/session":
             if STATE["session"] == "out":
                 return self.json(401, {"key": "session-required", "args": []})
@@ -129,8 +157,9 @@ class Handler(SimpleHTTPRequestHandler):
             if STATE["list"] == "many":
                 return self.json(200, INSTANCES_MANY)
             # The one instance of the page the check opens: its port, and tags
-            # where the profile brings one the instance does not carry (12).
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"]}])
+            # where the profile brings one the instance does not carry (12), and
+            # its boot (13 N.1), on, as its /boot read says.
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.

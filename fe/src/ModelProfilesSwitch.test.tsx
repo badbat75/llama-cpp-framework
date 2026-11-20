@@ -985,6 +985,7 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-about'),
     en('model-profiles-filter-label'),
   ]
   const rowsTwice = IDS.flatMap((id) => [id, id])

@@ -180,6 +180,19 @@ const STATES = [
       },
     ],
   },
+  {
+    name: 'about',
+    // 13 N.7 to N.9: the versions installed on the host, read again at every
+    // arrival. The stub's node has one engine with three backend packages, so
+    // the page shows the framework's list and the engine's: two `dl.assets`,
+    // the engine's `h3` under the first with the gap of 13 N.12.
+    set: 'session=admin',
+    hash: '#/about',
+    expect: [
+      { selector: '#page-heading', text: S['about-title'] },
+      { selector: 'dl.assets', count: 2 },
+    ],
+  },
 ]
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

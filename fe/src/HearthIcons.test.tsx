@@ -280,7 +280,7 @@ test.each(NAMES)(
 
 // ── H8a.2: the nav ────────────────────────────────────────────────────────
 
-test('H8a.2: the Overview link holds Icon house then its text and the Model profiles link Icon layers then its text, the instance links hold no icon, and the names by role are unchanged', async () => {
+test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the About link Icon info, the instance links hold no icon, and the names by role are unchanged', async () => {
   openApp()
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'default' })
@@ -295,6 +295,9 @@ test('H8a.2: the Overview link holds Icon house then its text and the Model prof
   })
   expectIcon(profiles, 'layers', 'the Model profiles link')
   expect(text(profiles), 'and its name').toBe(en('nav-model-profiles'))
+  const about = within(nav).getByRole('link', { name: en('nav-about') })
+  expectIcon(about, 'info', 'the About link (13 N.6)')
+  expect(text(about), 'and its name').toBe(en('nav-about'))
   for (const id of ['default', 'coder']) {
     const link = within(nav).getByRole('link', { name: id })
     expect(text(link), `the instance link ${id} keeps its id as its text`).toBe(
@@ -307,8 +310,8 @@ test('H8a.2: the Overview link holds Icon house then its text and the Model prof
   }
   expect(
     nav.querySelectorAll('svg.icon').length,
-    'two icons in the nav: the two named entries, no icon on an instance id',
-  ).toBe(2)
+    'three icons in the nav: the three named entries (Overview, Model profiles, About 13 N.6), no icon on an instance id',
+  ).toBe(3)
 })
 
 // ── H8a.3: the banner ─────────────────────────────────────────────────────
@@ -433,7 +436,7 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 // ── H8a.8: the sweep, and the mark of H8a.9 ───────────────────────────────
 
 test.each([
-  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 2 },
+  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 3 },
   // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
   // the banner has the theme icon only.
   {

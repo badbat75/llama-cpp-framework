@@ -123,8 +123,9 @@ item's `boot`, the tile's row follows it.
 
 **13 N.3 The shell's node read.** With a session (at start, or after a sign-in on the sign-in page),
 the app sends exactly one `GET /api/node`; moving to another page (Overview, an instance, Model
-profiles, About, back) sends no further one from the shell. A sign-out then a sign-in as another user
-sends one more; a sign-in in a page's dialog as the same user sends none. A 401, any other status, a network failure or a malformed reply (13 N.10) signs
+profiles, About, back) sends no further one from the shell. A sign-out then a sign-in, as another user or
+as the same one, is a new session and sends one more (and the labels show the fallback until it
+answers); a sign-in in a page's dialog as the same user sends none. A 401, any other status, a network failure or a malformed reply (13 N.10) signs
 nobody out and leaves both labels at their fallback text.
 
 **13 N.4 The host in the nav.** Once the shell's read answered 200 with `name` `gpu-box`, the nav's
@@ -181,8 +182,11 @@ closes it (the existing rule of the nav's links).
 **13 N.12 Wrapping.** A `name` of 253 characters with no break point and a version of 128 characters
 with none cause no sideways scroll at 320 px: the nav label and the `h2`s are blocks that inherit the
 body's `overflow-wrap: break-word`, and the About `dd`s are the Value list's (`.assets dd`:
-`min-width: 0`, `overflow-wrap: anywhere`). The stylesheet gains no class and no rule (brief 10 R1.8's
-class list, as brief 12 amends it, stays as it is).
+`min-width: 0`, `overflow-wrap: anywhere`). The stylesheet gains no class and exactly one rule,
+`.assets + h3 { margin-top: var(--space-6); }` (review, 2026-11-20: the engine `h3` sat flush under the
+framework list and read as one more row of it; `fe/DESIGN.md` 5.2 Value list); brief 10 R1.8's class
+list, as brief 12 amends it, stays as it is. A test reads `fe/src/index.css` for that rule (jsdom
+applies no CSS), as the other stylesheet tests do.
 
 **13 N.13 Nothing else.** The instance page, its boot read and its list polls, the Model profiles
 pages, the sign-in page and the Overview's version line are unchanged; the strings file gains exactly

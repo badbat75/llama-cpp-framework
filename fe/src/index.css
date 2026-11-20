@@ -1419,6 +1419,13 @@ legend.field-label {
   overflow-wrap: anywhere;
 }
 
+/* A heading under a value list (DESIGN.md 5.2, 13-node-about.md 13 N.12): the
+   gap above it, so the group it opens never reads as one more row of the list
+   before it. */
+.assets + h3 {
+  margin-top: var(--space-6);
+}
+
 .muted {
   color: var(--muted);
 }

@@ -667,6 +667,7 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-about'),
     ...pageStartTabStops(),
     ...CARD_TAB_STOPS,
   ])

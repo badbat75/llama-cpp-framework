@@ -617,6 +617,21 @@ export const EN: Record<string, string> = {
   // model profile's h1, the engine and the model file it points at.
   'model-profile-summary': 'Engine {0}, model {1}',
   'model-profile-summary-no-model': 'Engine {0}, no model file',
+  // Slice 13 (fe/briefs/13-node-about.md, section 2): the host in the nav, the
+  // About page, and the boot state that comes with the instances list.
+  'nav-about': 'About',
+  'about-title': 'About',
+  'about-loading': 'Loading the versions…',
+  'about-failed': 'The versions could not be read.',
+  'about-version': 'Version',
+  'about-version-unknown': 'Unknown',
+  'about-backends': 'GPU backends',
+  'about-backends-none': 'None, CPU only',
+  'about-no-engine':
+    'No installed engine was found on this host. An engine package from before this version lists none until it is installed again.',
+  'backend-cuda': 'CUDA',
+  'backend-rocm': 'ROCm/HIP',
+  'backend-vulkan': 'Vulkan',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -693,6 +708,8 @@ export function held(): {
  * One instance as /api/instances lists it. Brief 12 (slice T1): `port` is the
  * port it listens on (0 when the manager has none), `tags` the union of the
  * server profile's tags and its own, `instanceTags` the ones its page edits.
+ * Brief 13 (13 N.1): `boot` is that instance's start at boot, `null` when the
+ * manager's read of that one failed; the tile shows a row only for a boolean.
  * A real answer can leave any of them out or spell it badly: the page reads
  * them forgivingly.
  */
@@ -703,12 +720,53 @@ export type Instance = {
   port?: number
   tags?: string[]
   instanceTags?: string[]
+  boot?: boolean | null | string | number
 }
 
 export const INSTANCES: Instance[] = [
   { id: 'default', engine: 'llama.cpp', state: 'active' },
   { id: 'coder', engine: 'llama.cpp', state: 'inactive' },
 ]
+
+/**
+ * One GPU backend package as GET /api/node lists it (fe/briefs/13-node-about.md
+ * section 0): the package suffix, and the package's version, `null` when its
+ * version file is empty.
+ */
+export type NodeBackend = { name: string; version: string | null }
+
+/** One installed engine: its id, its package version, its backends. */
+export type NodeEngine = {
+  engine: string
+  version: string | null
+  backends?: NodeBackend[]
+}
+
+/** What GET /api/node answers: the host, the framework's version, the engines. */
+export type NodeInfo = {
+  name: string
+  api: string
+  version: string | null
+  engines: NodeEngine[]
+}
+
+/** The reply of fe/briefs/13-node-about.md section 0, the one the brief shows. */
+export const NODE: NodeInfo = {
+  name: 'gpu-box',
+  api: '/api',
+  version: '2.99.1',
+  engines: [
+    {
+      engine: 'llama.cpp',
+      version: '1:1.0.0+pai2',
+      backends: [
+        { name: 'cuda', version: '13.5.0+nccl.2.32.3' },
+        { name: 'rocm', version: '10.1.0' },
+        { name: 'vulkan', version: '1.4.363.1' },
+      ],
+    },
+  ],
+}
 
 /** One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md). */
 export type ModelProfile = {
@@ -830,6 +888,14 @@ export type BffOptions = {
   signOut?: Answer
   /** GET /api/version: the reply. Default 200 "2.99.0". */
   version?: Answer
+  /**
+   * GET /api/node (fe/briefs/13-node-about.md section 0): the node to answer
+   * 200 with, or the reply. A test names one (`NODE`, the brief's reply, is
+   * exported for it); where it names none the route rejects as an unknown one
+   * does, so a test that never reads the host finds the labels at their
+   * fallback "Instances" (13 N.4).
+   */
+  node?: NodeInfo | Record<string, unknown> | Answer
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
   /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
@@ -970,6 +1036,17 @@ export function fakeBff(options: BffOptions = {}) {
         options.version ?? (() => reply(200, { version: '2.99.0' })),
         init,
       )
+    if (route === 'GET /api/node') {
+      const n = options.node
+      // A test that never asked about the host gets the rejection of an unknown
+      // route, so its nav label and its heading stay "Instances" (13 N.4).
+      if (n === undefined)
+        return Promise.reject(new TypeError(`unexpected ${route}`))
+      // An object is the body of the 200, as the instances array is.
+      if (typeof n === 'function' || n instanceof Response)
+        return answer(n, init)
+      return Promise.resolve(reply(200, n))
+    }
     if (route === 'GET /api/instances') {
       const i = instances ?? INSTANCES
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))

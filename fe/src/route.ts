@@ -4,6 +4,7 @@
 export type Route =
   | { page: 'overview' }
   | { page: 'sign-in' }
+  | { page: 'about' }
   | { page: 'model-profiles' }
   | { page: 'model-profile'; id: string }
   | { page: 'instance'; id: string }
@@ -12,6 +13,7 @@ export type Route =
 export function parseRoute(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/') return { page: 'overview' }
   if (hash === '#/sign-in') return { page: 'sign-in' }
+  if (hash === '#/about') return { page: 'about' }
   if (hash === '#/profiles/model') return { page: 'model-profiles' }
   const modelProfile = /^#\/profiles\/model\/([^/]+)$/.exec(hash)
   if (modelProfile) {

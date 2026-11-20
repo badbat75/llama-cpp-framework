@@ -520,7 +520,7 @@ test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then 
   // 2d.60: each shown row's name is a link; it precedes the row's switch.
   const order = tabbable().map(nameOf)
   expect(order.slice(-5)).toEqual([
-    en('nav-model-profiles'),
+    en('nav-about'),
     en('model-profiles-filter-label'),
     en('model-profiles-filter-clear'),
     'Qwen3-27B',

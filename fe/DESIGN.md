@@ -577,7 +577,8 @@ Each is one React component, reused by every page.
   its `<dd>` value, laid out as Forms in section 4 (label column from 720px). Values from the file
   unchanged, in monospace for paths, flags and values, wrapping anywhere (`overflow-wrap: anywhere`,
   `min-width: 0`); an empty value is the page's "(none)" text in the body font and `--muted`.
-  Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+  A heading that follows a Value list gets `--space-6` above it (`.assets + h3`, brief 13), so a
+  new group never reads as one more row of the list before it. Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
   technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
   when it appears after a user action, otherwise a plain paragraph.

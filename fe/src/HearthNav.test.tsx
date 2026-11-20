@@ -57,14 +57,18 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   const groups = Array.from(nav.querySelectorAll(':scope > ul'))
   expect(
     groups.length,
-    'three groups: Overview, the instances, the model profiles',
-  ).toBe(3)
+    'four groups: Overview, the instances, the model profiles, About (13 N.6)',
+  ).toBe(4)
   expect(
     groups[0].hasAttribute('aria-labelledby'),
     'the Overview list needs no label: the nav names it (H5b.7)',
   ).toBe(false)
   const named: string[] = []
-  for (const group of groups.slice(1)) {
+  // About's list has no label of its own (13 N.6), so only the labelled groups
+  // are walked: the label rule of H5b.4 is about the groups that have one.
+  for (const group of groups
+    .slice(1)
+    .filter((group) => group.hasAttribute('aria-labelledby'))) {
     const id = group.getAttribute('aria-labelledby') ?? ''
     const label = document.getElementById(id)
     expect(
@@ -88,8 +92,14 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   const links = navLinks(nav)
   expect(
     links.map((a) => a.textContent),
-    'the tab order follows the list: Overview, the instances, the model profiles',
-  ).toEqual(['Overview', 'default', 'coder', EN['nav-model-profiles']])
+    'the tab order follows the list: Overview, the instances, the model profiles, About (13 N.11)',
+  ).toEqual([
+    'Overview',
+    'default',
+    'coder',
+    EN['nav-model-profiles'],
+    EN['nav-about'],
+  ])
 })
 
 test('H5b.7: the Menu button names the region it opens, and a link, Escape on the button and Escape in the nav close it', async () => {

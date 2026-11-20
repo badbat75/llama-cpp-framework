@@ -1153,6 +1153,8 @@ const TAB_PATH = [
   'coder',
   // fe/briefs/02-models.md, 2a criterion 1.
   en('nav-model-profiles'),
+  // Slice 13: About is the nav's last entry, so it precedes the page.
+  en('nav-about'),
   // The header's run buttons, inactive ones included, then Start at boot's
   // About toggle and its box (1c.45b, 46a: the box is enabled for every session).
   en('run-start'),

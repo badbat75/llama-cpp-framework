@@ -11,6 +11,7 @@ import {
   type MouseEvent,
 } from 'react'
 import { flushSync } from 'react-dom'
+import About from './About.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import InstancePage from './InstancePage.tsx'
@@ -25,6 +26,7 @@ import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
 import ModelProfilePage from './ModelProfilePage.tsx'
+import { readNode } from './node.ts'
 import { instanceHref, legacyHref, parseRoute, type Route } from './route.ts'
 import {
   readSession,
@@ -107,6 +109,19 @@ export default function App() {
   const going = useRef<string | null>(null)
   // The one read of /api/instances the nav and the pages share.
   const [store] = useState(instancesStore)
+  // The host's name, from the one read of /api/node a session brings
+  // (fe/briefs/13-node-about.md, 13 N.3): the nav's instance group and the
+  // Overview's heading. null while the read is open and after any failure,
+  // when both keep the words of today. That read never signs anybody out: a
+  // sign-out from the shell could drop the page's unsaved edits.
+  // Whose session the read was made for: a sign-in in a page's dialog as the
+  // same user keeps it, another user's is a new one (13 N.3).
+  const hostSeen = useRef<string | null>(null)
+  // The user of the session on screen right now: the read compares this when it
+  // lands, so a re-run of the effect for the same user (StrictMode, a sign-in in
+  // a page's dialog) drops nothing of the read already on its way, and a session
+  // that moved to another user does drop the older read (13 N.3).
+  const hostNow = useRef<string | null>(null)
   // The address the app is at. For a signed-in visitor `#/sign-in` IS `#/`
   // (S1a.10), so the route, the page and the nav all read the alias as the
   // Overview, and the bar follows in the effect below. The page's identity is
@@ -130,6 +145,36 @@ export default function App() {
       live = false
     }
   }, [])
+
+  /**
+   * The host of the session that just started, read once for it (13 N.3): no
+   * read while the session is being read and none signed out, none for a page
+   * change, and none again for the user a page's dialog signed in as. The name
+   * carries the user it was read for, so a session that is not that one reads
+   * the fallback words; Sign out takes the name with the session, so the next
+   * one, of the same user or not, reads the words of today until it answers.
+   */
+  const [hostFor, setHostFor] = useState<{ user: string; name: string } | null>(
+    null,
+  )
+  useEffect(() => {
+    const user = session?.user ?? null
+    hostNow.current = user
+    if (user === null) {
+      // No session to read for: the guard goes, so the next sign-in reads
+      // again, even as the same user (13 N.3: a sign-out and a sign-in is a
+      // new session). The name itself goes with `signedOut`.
+      hostSeen.current = null
+      return
+    }
+    if (hostSeen.current === user) return
+    hostSeen.current = user
+    readNode().then(({ node }) => {
+      if (hostNow.current !== user) return
+      setHostFor(node === null ? null : { user, name: node.name })
+    })
+  }, [session])
+  const host = hostFor && session?.user === hostFor.user ? hostFor.name : null
 
   /**
    * Stable: the sign-in page stops saying anything about a session. A new
@@ -289,6 +334,9 @@ export default function App() {
       return
     }
     setSession(null)
+    // The host name belongs to the session that ended: the sign-in page has no
+    // nav, and the next session reads again (13 N.3).
+    setHostFor(null)
     setFocus((n) => n + 1)
   }, [])
 
@@ -411,7 +459,12 @@ export default function App() {
                 </a>
               </li>
             </ul>
-            <NavInstances key={session.user} route={route} store={store} />
+            <NavInstances
+              key={session.user}
+              route={route}
+              store={store}
+              host={host}
+            />
             <p id="nav-profiles" className="nav-label">
               {t('nav-profiles')}
             </p>
@@ -432,6 +485,19 @@ export default function App() {
                 >
                   <Icon name="layers" />
                   {t('nav-model-profiles')}
+                </a>
+              </li>
+            </ul>
+            {/* About is the nav's last entry, in a list of its own with no
+                label of its own: one place, not a group of many (13 N.6). */}
+            <ul>
+              <li>
+                <a
+                  href="#/about"
+                  aria-current={route.page === 'about' ? 'page' : undefined}
+                >
+                  <Icon name="info" />
+                  {t('nav-about')}
                 </a>
               </li>
             </ul>
@@ -456,6 +522,7 @@ export default function App() {
               route={route}
               store={store}
               session={session}
+              host={host}
               filterText={filter?.text ?? ''}
               onFilterText={typedFilter}
               onSignedOut={signedOut}
@@ -495,15 +562,20 @@ function SessionBar({
 }
 
 /**
- * One nav link per instance, under the Instances label: the latest list a
- * read gave since the session started; none until one succeeds.
+ * One nav link per instance, under the label of the host that holds them: the
+ * latest list a read gave since the session started; none until one succeeds.
  */
 function NavInstances({
   route,
   store,
+  host,
 }: {
   route: Route
   store: InstancesStore
+  /** The host's name, from the shell's one read (fe/briefs/13-node-about.md,
+   * 13 N.4): it names the group. null before the answer and after a failure,
+   * when the words of today stand. */
+  host: string | null
 }) {
   const [instances, setInstances] = useState<Instance[]>([])
 
@@ -519,7 +591,7 @@ function NavInstances({
   return (
     <>
       <p id="nav-instances" className="nav-label">
-        {t('nav-instances')}
+        {host ?? t('nav-instances')}
       </p>
       <ul aria-labelledby="nav-instances">
         {instances.map((i) => (
@@ -546,6 +618,7 @@ function Page({
   route,
   store,
   session,
+  host,
   filterText,
   onFilterText,
   onSignedOut,
@@ -555,6 +628,8 @@ function Page({
   route: Route
   store: InstancesStore
   session: Session | undefined
+  /** The host's name the shell read once for this session (13 N.3, N.5). */
+  host: string | null
   filterText: string
   onFilterText: (text: string) => void
   onSignedOut: (reason: SignedOut) => void
@@ -567,7 +642,7 @@ function Page({
   if (route.page === 'overview' || route.page === 'sign-in') {
     // Signed in, #/sign-in is an alias of #/ (09 S1a.10); the alias effect
     // follows with the address.
-    return <Overview store={store} onSignedOut={onSignedOut} />
+    return <Overview store={store} host={host} onSignedOut={onSignedOut} />
   }
   if (route.page === 'not-found') {
     return <NotFound />
@@ -591,6 +666,10 @@ function Page({
         onDirty={onDirty}
       />
     )
+  }
+  if (route.page === 'about') {
+    // The versions of this host, read again at every arrival (13 N.7).
+    return <About onSignedOut={onSignedOut} />
   }
   return (
     <InstancePage

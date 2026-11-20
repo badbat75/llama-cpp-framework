@@ -92,6 +92,8 @@ test('09 S1a.3 (1a.2): until the session answers, main shows loading and there i
     'default',
     'coder',
     en('nav-model-profiles'),
+    // Slice 13: About is the last entry of the nav.
+    en('nav-about'),
   ])
   expect(bff.to('GET', '/api/session')).toHaveLength(1)
 })
@@ -110,7 +112,11 @@ test('1a.4: a failed instances read leaves the list out of the nav, the Overview
     within(nav).queryByRole('list', { name: en('nav-instances') }),
   ).toBeNull()
   // Model profiles stays (fe/briefs/02-models.md, 2a criterion 1).
-  expect(navLinks()).toEqual([en('nav-overview'), en('nav-model-profiles')])
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    en('nav-model-profiles'),
+    en('nav-about'),
+  ])
 })
 
 // The bff's sign-in may not exist yet (404); a failure is signed out too.
@@ -303,6 +309,7 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
     'big-model',
     // After the Instances group (fe/briefs/02-models.md, 2a criterion 1).
     en('nav-model-profiles'),
+    en('nav-about'),
   ])
   const overview = within(nav).getByRole('link', { name: en('nav-overview') })
   expect(before(overview, list)).toBe(true)

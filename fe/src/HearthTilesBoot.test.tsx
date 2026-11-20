@@ -1,9 +1,11 @@
-// Hearth H6b, the boot fact on the tile (fe/briefs/08-hearth-h6-overview.md).
+// Hearth H6b, the boot fact on the tile (fe/briefs/08-hearth-h6-overview.md),
+// as slice 13 retargets it (fe/briefs/13-node-about.md, 13 N.1 and 13 N.2).
 //
-// Two halves. The behaviour, in jsdom: the row is read through the bff
-// (GET /api/instances/<id>/boot) for a signed-in visitor only, is absent while
-// the read is pending and after every failure shape, and is one labelled pair
-// in a definition list that is the tile's last child.
+// Two halves. The behaviour, in jsdom: the row is the `boot` of the instance's
+// item in GET /api/instances, so it is there with the tile in that answer's
+// first render; the Overview sends no read of /api/instances/<id>/boot at all,
+// and a tile can no longer end the session. The row is one labelled pair in a
+// definition list that is the tile's last child, in the same words.
 //
 // The styling, as stylesheet text: jsdom lays out and paints nothing, so the
 // declarations the brief gives are read off index.css the way HearthH2a.test.ts
@@ -27,10 +29,11 @@ import {
   INSTANCES,
   en,
   fakeBff,
-  held,
+  navigate,
   reply,
   startAt,
   type BffOptions,
+  type Instance,
 } from './test/bff.ts'
 
 beforeEach(() => startAt('#/'))
@@ -42,6 +45,17 @@ afterEach(() => {
 })
 
 // ── The page ────────────────────────────────────────────────────────────────
+
+/** An item of the list with its `boot` spelled any way a reply spells it. */
+function item(id: string, boot?: unknown): Instance {
+  const base: Record<string, unknown> = {
+    id,
+    engine: 'llama.cpp',
+    state: 'active',
+  }
+  if (boot !== undefined) base.boot = boot
+  return base as unknown as Instance
+}
 
 /** The whole app at the current hash, with this bff answering (fetch is stubbed). */
 function open(bff: ReturnType<typeof fakeBff>) {
@@ -87,16 +101,19 @@ function stateWord(state: string): string {
   return en(`instance-state-${state}`)
 }
 
-/** Every boot call the bff saw, as "<METHOD> <path>". */
+/** Every call to a boot path, as "<METHOD> <path>". Since 13 N.2 there are none. */
 function bootCalls(bff: ReturnType<typeof fakeBff>): string[] {
   return bff.calls
     .filter((c) => c.path.endsWith('/boot'))
     .map((c) => `${c.method} ${c.path}`)
 }
 
-/** The reads of one instance's boot state (the path carries the encoded id). */
-function bootReads(bff: ReturnType<typeof fakeBff>, id: string): number {
-  return bff.to('GET', `/api/instances/${encodeURIComponent(id)}/boot`).length
+/** The boot row of one tile: the `dl` that holds the Start at boot pair. */
+function bootRowOf(tile: HTMLLIElement): HTMLDListElement | null {
+  const term = Array.from(tile.querySelectorAll('dl.tile-facts dt')).find(
+    (dt) => dt.textContent?.trim() === en('boot-label'),
+  )
+  return (term?.closest('dl') as HTMLDListElement) ?? null
 }
 
 /** The boot row of one tile, once it is on screen. */
@@ -106,9 +123,9 @@ async function bootRow(
 ): Promise<HTMLDListElement> {
   const tile = await tileOf(list, id)
   await waitFor(() =>
-    expect(tile.querySelector('dl'), `${id}: the row is there`).not.toBeNull(),
+    expect(bootRowOf(tile), `${id}: the row is there`).not.toBeNull(),
   )
-  return tile.querySelector('dl') as HTMLDListElement
+  return bootRowOf(tile) as HTMLDListElement
 }
 
 /** The pairs of a definition list, as the visitor reads them: term, definition. */
@@ -138,90 +155,60 @@ async function bootRows(
   return rows
 }
 
-/** The page with every boot read on its way and never answered. */
-async function withPending() {
-  const h = held()
-  const seen: string[] = []
-  const { bff, view } = open(
-    fakeBff({
-      boot: {
-        read: (id, _n, init) => {
-          seen.push(id)
-          return h.answer(init)
-        },
-      },
-    }),
-  )
-  const list = await tiles()
-  await waitFor(() =>
-    expect(seen.slice().sort()).toEqual(INSTANCES.map((i) => i.id).sort()),
-  )
-  return { bff, view, list }
-}
-
-describe('H6b.1 and H6b.2: who reads the boot state, and how often', () => {
-  // The read is the signed-in page's: it starts with the session, never
-  // before, so no tile can show a state the session has not earned.
-  // (09 S1a.1: signed out there is no Overview at all, so the signed-out
-  // tiles are gone with it: SignInOnly.test.tsx pins what main holds then.)
-  test('H6b.1: while the session is read there is no list, no row and no boot read, and the session is read once', async () => {
-    const s = held()
-    const { bff } = open(fakeBff({ session: (init) => s.answer(init) }))
+describe('H6b.1 and H6b.2 (13 N.1, 13 N.2): where the boot state comes from', () => {
+  // The state is the list's, so it arrives with the list, and the tile asks
+  // for nothing. (09 S1a.1: signed out there is no Overview at all.)
+  test('H6b.1 (13 N.1): while the session is read there is no list and no row, and nothing is read beside the session', async () => {
+    let resolveSession: (r: Response) => void = () => {}
+    const session = new Promise<Response>((r) => {
+      resolveSession = r
+    })
+    const { bff } = open(fakeBff({ session: () => session }))
     await screen.findByText(en('loading'))
     expect(
       within(screen.getByRole('main')).queryByRole('list'),
       'the tiles are not there yet',
     ).toBeNull()
     expect(document.querySelectorAll('dl'), 'no row').toHaveLength(0)
-    expect(bootCalls(bff), 'no boot read before the session is known').toEqual(
-      [],
-    )
-    s.resolve(reply(200, { user: 'alice' }))
-    expect(await bootRows(await tiles())).toEqual(
-      INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
-    )
+    expect(bootCalls(bff), 'no boot read at all').toEqual([])
+    resolveSession(reply(200, { user: 'alice' }))
+    const list = await tiles()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(INSTANCES.length)
+    expect(
+      bootCalls(bff),
+      'the list carries the state: the tiles read nothing',
+    ).toEqual([])
     expect(bff.to('GET', '/api/session'), 'one session read').toHaveLength(1)
   })
 
-  // One read per instance, by the manager's instance id, and never again.
-  test('H6b.2: signed in, each tile sends one boot read with its own id, nothing is polled and the list is read once', async () => {
-    const { bff } = open(fakeBff())
-    expect(await bootRows(await tiles())).toEqual(
-      INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
+  // 13 N.1: `boot: true` is On, `boot: false` is Off, in the first render.
+  test('H6b.2 (13 N.1): the rows are the list answers, On for true and Off for false, with no boot read', async () => {
+    const { bff } = open(
+      fakeBff({ instances: [item('default', true), item('coder', false)] }),
     )
-    for (const id of INSTANCES.map((i) => i.id))
-      expect(
-        bootReads(bff, id),
-        `${id}: the read is made once, when the tile mounts`,
-      ).toBe(1)
+    const list = await tiles()
+    expect(await bootRows(list)).toEqual([
+      `default: ${en('instances-boot-on')}`,
+      `coder: ${en('instances-boot-off')}`,
+    ])
     expect(
       bootCalls(bff),
-      'no poll: the boot calls are the number of instances',
-    ).toHaveLength(INSTANCES.length)
+      'no read, so no poll: the tiles ask for nothing',
+    ).toEqual([])
     expect(
       bff.to('GET', '/api/instances'),
       'the list stays one read',
     ).toHaveLength(1)
   })
 
-  // The id goes in the path, so an id that is not a path segment is sent
-  // encoded, and asked for once.
-  test('H6b.2: an id that is not a path segment is sent encoded, and sent once', async () => {
-    const { bff } = open(
-      fakeBff({
-        instances: [{ id: 'gpu one', engine: 'llama.cpp', state: 'active' }],
-      }),
-    )
+  // The id is the list's, so a name that is not a path segment needs no path
+  // at all: it is shown and read as the list says.
+  test('H6b.2 (13 N.2): an id that is not a path segment needs no encoded path, and shows its row', async () => {
+    const { bff } = open(fakeBff({ instances: [item('gpu one', true)] }))
     expect(await bootRows(await tiles(), ['gpu one'])).toEqual([
-      `gpu one: ${en('instances-boot-off')}`,
+      `gpu one: ${en('instances-boot-on')}`,
     ])
-    expect(bootCalls(bff), 'the id goes in the path encoded').toEqual([
-      'GET /api/instances/gpu%20one/boot',
-    ])
-    expect(
-      bff.to('GET', '/api/instances/gpu one/boot'),
-      'never the raw id',
-    ).toHaveLength(0)
+    expect(bootCalls(bff), 'no path is built for the id').toEqual([])
   })
 })
 
@@ -229,16 +216,13 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
   // One pair: the reused label as the term, the new word as the definition, in
   // the `div` inside the `dl` the brief names, on the element the sheet styles.
   test('H6b.3: the row is dl.tile-facts with one div holding the term and the value, in the brief words', async () => {
-    open(fakeBff({ boot: { read: () => reply(200, { enabled: true }) } }))
+    open(fakeBff({ instances: [item('default', true)] }))
     const dl = await bootRow(await tiles(), 'default')
     expect(dl.className, 'the row is the element the sheet styles').toContain(
       'tile-facts',
     )
     const kids = Array.from(dl.children)
-    expect(
-      kids.map((n) => n.tagName),
-      'the row holds one div',
-    ).toEqual(['DIV'])
+    expect(kids, 'the row holds one div').toHaveLength(1)
     expect(
       Array.from(kids[0]?.children ?? []).map((n) => n.tagName),
       'the div holds the term and the value, in that order',
@@ -258,19 +242,19 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
     ).toEqual([en('instances-boot-on')])
   })
 
-  // The state words are the brief's and only these: On for enabled, Off for
-  // disabled. No yes/no, true/false, enabled/disabled (H6b.7: words, not
-  // colour, not a mark).
-  test('H6b.3 and H6b.7: On when the manager says enabled, Off when it says disabled, and no other word for the state', async () => {
+  // The state words are the brief's and only these: On for true, Off for
+  // false. No yes/no, true/false, enabled/disabled (H6b.7: words, not colour,
+  // not a mark).
+  test('H6b.3 and H6b.7: On when the list says true, Off when it says false, and no other word for the state', async () => {
     const { view: onView } = open(
-      fakeBff({ boot: { read: () => reply(200, { enabled: true }) } }),
+      fakeBff({ instances: INSTANCES.map((i) => item(i.id, true)) }),
     )
     expect(await bootRows(await tiles())).toEqual(
       INSTANCES.map((i) => `${i.id}: ${en('instances-boot-on')}`),
     )
     onView.unmount()
 
-    open(fakeBff({ boot: { read: () => reply(200, { enabled: false }) } }))
+    open(fakeBff({ instances: INSTANCES.map((i) => item(i.id, false)) }))
     expect(await bootRows(await tiles())).toEqual(
       INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
     )
@@ -287,8 +271,13 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
     open(
       fakeBff({
         instances: [
-          { id: 'default', engine: 'llama.cpp', state: 'active' },
-          { id: 'coder', engine: 'strata', state: 'inactive' },
+          {
+            id: 'default',
+            engine: 'llama.cpp',
+            state: 'active',
+            boot: false,
+          },
+          { id: 'coder', engine: 'strata', state: 'inactive', boot: true },
         ],
       }),
     )
@@ -307,7 +296,6 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
         tile.lastElementChild,
         `${i.id}: the row is the tile's last child`,
       ).toBe(dl)
-      expect(tile.querySelectorAll('dl'), `${i.id}: one row`).toHaveLength(1)
       expect(
         tile.querySelector('.tile-head'),
         `${i.id}: the head is before the row`,
@@ -324,35 +312,47 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
   })
 })
 
-describe('H6b.4: no claim about a state that is not known', () => {
-  // While a read is pending the tile shows no boot fact at all: not a value,
-  // not a guess, not a word about boot.
-  test('H6b.4: while the read is pending there is no row and no word about boot', async () => {
-    const { list } = await withPending()
-    expect(document.querySelectorAll('dl')).toHaveLength(0)
-    for (const id of INSTANCES.map((i) => i.id)) {
-      const tile = await tileOf(list, id)
-      expect(tile.querySelector('dl'), `${id}: no row`).toBeNull()
-      expect(tile.textContent, `${id}: no word about boot`).not.toMatch(/boot/i)
-    }
-  })
+describe('H6b.4 (13 N.1): no claim about a state that is not known', () => {
+  // A value that is not a boolean says nothing, as a failed read said nothing
+  // today: no row, no word about boot, and the rest of the tile is left alone.
+  const noRow: Array<[string, unknown]> = [
+    ['the list leaves boot out', undefined],
+    ['the list says null', null],
+    ['the list says "true"', 'true'],
+    ['the list says 1', 1],
+    ['the list says an empty string', ''],
+    ['the list says an object', { enabled: true }],
+  ]
+  for (const [what, boot] of noRow)
+    test(`H6b.4 (13 N.1): no row, no claim and no read when ${what}`, async () => {
+      const { bff } = open(fakeBff({ instances: [item('default', boot)] }))
+      const list = await tiles()
+      const tile = await tileIs(list, 'default', stateWord('active'))
+      expect(tile.querySelector('dl'), 'no row anywhere').toBeNull()
+      expect(tile.textContent, 'no word about boot').not.toMatch(/boot/i)
+      expect(
+        bootCalls(bff),
+        'a value that says nothing is not retried',
+      ).toEqual([])
+    })
 
-  // The tiles are not a status region: a row that arrives late must not be
-  // read out over the visitor's own actions.
-  test('H6b.4: a tile carries no live region, pending or not', async () => {
+  // The tiles are not a status region: the rows are the list's, and nothing
+  // arrives later to be read out over the visitor's own actions.
+  test('H6b.4: a tile carries no live region, rows and no rows', async () => {
     const LIVE =
       '[aria-live], [role="status"], [role="alert"], [role="log"], [role="timer"], [role="marquee"]'
-    const { view, list } = await withPending()
+    open(fakeBff({ instances: [item('default')] }))
+    const list = await tiles()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1)
     expect(
-      Array.from(document.querySelectorAll('.tile'))
-        .flatMap((t) => Array.from(t.querySelectorAll(LIVE)))
-        .map((n) => n.tagName.toLowerCase()),
-      'nothing is announced while the rows are on their way',
-    ).toEqual([])
-    expect(within(list).getAllByRole('listitem')).toHaveLength(INSTANCES.length)
-    view.unmount()
+      Array.from(document.querySelectorAll('.tile')).map(
+        (t) => t.querySelectorAll(LIVE).length,
+      ),
+      'no row: nothing announced',
+    ).toEqual([0])
+    cleanup()
 
-    open(fakeBff())
+    open(fakeBff({ instances: INSTANCES.map((i) => item(i.id, true)) }))
     await bootRows(await tiles())
     expect(
       Array.from(document.querySelectorAll('.tile')).map(
@@ -362,8 +362,8 @@ describe('H6b.4: no claim about a state that is not known', () => {
     ).toEqual(INSTANCES.map(() => 0))
   })
 
-  // With no list there is nothing to read: the failure message is the Overview's
-  // own, and no boot read goes out.
+  // With no list there is nothing to show: the failure message is the
+  // Overview's own, and no boot read goes out.
   test('H6b.4: when the bff cannot be reached the Overview says so and no boot read is sent', async () => {
     const { bff } = open(
       fakeBff({
@@ -375,51 +375,37 @@ describe('H6b.4: no claim about a state that is not known', () => {
     expect(bootCalls(bff), 'no boot read without a list').toEqual([])
   })
 
-  // After a failure the boot fact is simply not there, in every shape the
-  // brief names, and the rest of the tile is left alone.
-  const failures: Array<[string, BffOptions['boot']]> = [
+  // A list that fails for a reason is the Overview's message, in the words of
+  // today (a keyed refusal its own), and no tile shows a boot fact.
+  const failures: Array<[string, () => Response, string]> = [
     [
       'the manager is unreachable (503 client-unavailable)',
-      { read: () => reply(503, { key: 'client-unavailable', args: [] }) },
+      () => reply(503, { key: 'client-unavailable', args: [] }),
+      en('instances-manager-unavailable'),
     ],
     [
       'the manager refused the bff (502 client-not-authorized)',
-      { read: () => reply(502, { key: 'client-not-authorized', args: [] }) },
+      () => reply(502, { key: 'client-not-authorized', args: [] }),
+      en('instances-not-authorized'),
     ],
     [
-      'the instance is gone (404 client-no-instance)',
-      { read: () => reply(404, { key: 'client-no-instance', args: [] }) },
+      'the bff answered 500',
+      () => reply(500, 'secret-detail'),
+      en('instances-failed'),
     ],
-    ['the manager answered 500', { read: () => reply(500, 'secret-detail') }],
-    ['a body that is not {"enabled": <bool>}', { read: () => reply(200, {}) }],
     [
-      'a body whose enabled is not a bool',
-      { read: () => reply(200, { enabled: 'yes' }) },
-    ],
-    ['a body that is not json', { read: () => reply(200, 'not json') }],
-    [
-      'a network failure',
-      { read: () => Promise.reject(new TypeError('down')) },
+      'a body that is not a list',
+      () => reply(200, 'not json'),
+      en('instances-failed'),
     ],
   ]
-  for (const [what, boot] of failures)
-    test(`H6b.4: no row, no claim and no poll when ${what}`, async () => {
-      const { bff } = open(fakeBff({ boot }))
-      const list = await tiles()
-      for (const i of INSTANCES)
-        await waitFor(() => expect(bootReads(bff, i.id)).toBe(1))
+  for (const [what, instances, words] of failures)
+    test(`H6b.4: no row, no claim and no boot read when the list read fails: ${what}`, async () => {
+      const options: BffOptions = { instances }
+      const { bff } = open(fakeBff(options))
+      await screen.findByText(words)
       expect(document.querySelectorAll('dl'), 'no row anywhere').toHaveLength(0)
-      for (const i of INSTANCES) {
-        const tile = await tileIs(list, i.id, stateWord(i.state))
-        expect(tile.querySelector('dl'), `${i.id}: no row`).toBeNull()
-        expect(tile.textContent, `${i.id}: no word about boot`).not.toMatch(
-          /boot/i,
-        )
-      }
-      expect(
-        bootCalls(bff),
-        'one read each: a failure is not retried or polled',
-      ).toHaveLength(INSTANCES.length)
+      expect(bootCalls(bff), 'the tiles ask for nothing').toEqual([])
     })
 })
 
@@ -456,16 +442,13 @@ describe('H6b.2: the rows join with the sign-in banner', () => {
       within(main).getByRole('button', { name: en('signin-submit') }),
     )
 
-    // The sign-in brings the list and the rows at once (H6b.2 for the rows).
+    // The sign-in brings the list and the rows at once, in the same answer.
     const list = await tiles()
     expect(within(list).getAllByRole('listitem')).toHaveLength(INSTANCES.length)
-    expect(await bootRows(list)).toEqual(
-      INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
-    )
     expect(
       bootCalls(bff),
-      'the sign-in mounts the rows: one read per instance, no more',
-    ).toHaveLength(INSTANCES.length)
+      'the rows came with the list: the sign-in asked for nothing else',
+    ).toEqual([])
 
     fireEvent.click(
       screen.getByRole('button', { name: en('session-sign-out') }),
@@ -481,8 +464,29 @@ describe('H6b.2: the rows join with the sign-in banner', () => {
     ).toBeNull()
     expect(
       bootCalls(bff),
-      'the rows never polled, before or after the sign-out',
-    ).toHaveLength(INSTANCES.length)
+      'the rows never read, before or after the sign-out',
+    ).toEqual([])
+  })
+})
+
+describe('13 N.2: the rows follow a later list answer, with no read', () => {
+  test('13 N.2: a list answer that flips boot moves the row, and the Overview sent no boot read on the way', async () => {
+    const { bff } = open(fakeBff({ instances: [item('default', false)] }))
+    const list = await tiles()
+    expect(await bootRows(list, ['default'])).toEqual([
+      `default: ${en('instances-boot-off')}`,
+    ])
+    bff.setInstances([item('default', true)])
+    navigate('#/profiles/model')
+    await screen.findByRole('heading', {
+      level: 1,
+      name: en('model-profiles-title'),
+    })
+    navigate('#/')
+    expect(bootCalls(bff), 'following the new answer costs no read').toEqual([])
+    expect(await bootRows(await tiles(), ['default'])).toEqual([
+      `default: ${en('instances-boot-on')}`,
+    ])
   })
 })
 

@@ -35,6 +35,7 @@ import {
   INSTANCES,
   MODEL_PROFILES,
   modelProfileDoc,
+  NODE,
   reply,
   serverDoc,
   startAt,
@@ -48,10 +49,14 @@ const ENDED = () => reply(401, { key: 'session-required', args: [] })
 /** 403 `session-not-administrator`: the manager ended the session (01 S1.9). */
 const REVOKED = () => reply(403, { key: 'session-not-administrator', args: [] })
 
-/** The Overview's three reads (S1b.1), as `route` spells them. */
+/** The Overview's page reads (S1b.1), as `route` spells them. The tile's own
+ *  boot read is gone (13 N.1), and the shell's node read ends no session
+ *  (13 N.3): it is one of NOT_AN_END. */
 const VERSION = 'GET /api/version'
 const LIST = 'GET /api/instances'
-const TILE_BOOT = 'GET /api/instances/default/boot'
+const NODE_READ = 'GET /api/node'
+/** The boot read of the instance page's field, which stays (13 N.1). */
+const BOOT = 'GET /api/instances/default/boot'
 
 const INSTANCE = '#/instances/default'
 
@@ -128,6 +133,7 @@ function endedBff(answers: BffOptions = {}, oneRead = false) {
   let gone = true
   const asUsual: BffOptions = {
     version: () => reply(200, { version: '2.99.0' }),
+    node: NODE,
     instances: INSTANCES,
     modelProfiles: MODEL_PROFILES,
     modelProfile: () => reply(200, modelProfileDoc()),
@@ -320,15 +326,21 @@ function secure(value: boolean) {
   ;(window as unknown as { isSecureContext: boolean }).isSecureContext = value
 }
 
-/** The Instances section's list of tiles (the helper of RunControls). */
+/** The Instances section's list of tiles (the helper of RunControls). The
+ *  section is found through its list, not through the text of its heading:
+ *  since 13 N.5 the `h2` shows the host name once GET /api/node answers, and
+ *  the key's text only while that read is pending. The Overview's `main`
+ *  holds no other list, and the section is labelled by a level 2 heading
+ *  whatever its text. */
 function tilesOf(main: HTMLElement): HTMLElement {
-  const heading = within(main).getByRole('heading', {
-    level: 2,
-    name: en('instances-title'),
-  })
-  const section = heading.closest('section') as HTMLElement
+  const tiles = within(main).getByRole('list')
+  const section = tiles.closest('section') as HTMLElement
   expect(section, 'the Instances section').toBeTruthy()
-  return within(section).getByRole('list')
+  expect(
+    within(section).getByRole('heading', { level: 2 }),
+    'the section is labelled by its h2',
+  ).toBeTruthy()
+  return tiles
 }
 
 /** What the signed-out shell must not offer (09 S1a.4). */
@@ -363,7 +375,6 @@ function expectSignedInBanner() {
 const SESSION_ENDS: [string, string, BffOptions][] = [
   ['the framework version', VERSION, { version: ENDED }],
   ['the instances', LIST, { instances: ENDED }],
-  ['a tile boot state', TILE_BOOT, { boot: { read: ENDED } }],
 ]
 
 test.each(SESSION_ENDS)(
@@ -517,13 +528,19 @@ const NOT_AN_END: [string, string, BffOptions, string][] = [
   ],
   [
     '404 client-no-instance',
-    TILE_BOOT,
+    NODE_READ,
     {
-      boot: {
-        read: () => reply(404, { key: 'client-no-instance', args: [] }),
-      },
+      node: () => reply(404, { key: 'client-no-instance', args: [] }),
     },
     en('instance-state-active'),
+  ],
+  [
+    // The shell's own read: a 401 there leaves the labels at their fallback
+    // and signs nobody out (13 N.3); the page reads say the session ended.
+    '401 session-required',
+    NODE_READ,
+    { node: ENDED },
+    en('instances-title'),
   ],
   [
     'a malformed body',
@@ -609,9 +626,7 @@ test('09 S1b.6: a boot read of the instance page that fails for another reason k
     }),
     INSTANCE,
   )
-  expect(reads(bff, TILE_BOOT), 'the page read the boot state').toBeGreaterThan(
-    0,
-  )
+  expect(reads(bff, BOOT), 'the page read the boot state').toBeGreaterThan(0)
   const group = within(main).getByRole('group', { name: en('boot-label') })
   const p = within(group).getByText(en('api-client-unavailable'))
   expect(p.tagName, 'the read paragraph of the field, as today (45a)').toBe('P')
@@ -682,7 +697,7 @@ test('09 S1b.6 (C2): on the instance page, a 401 on its boot read keeps the page
   expect(noticeTexts(main), 'none of the three notices').toEqual([])
   expectSignedInBanner()
   expect(bff.to('DELETE', '/api/session'), 'nothing signed out').toHaveLength(0)
-  expect(reads(bff, TILE_BOOT), 'the failed boot read is not retried').toBe(1)
+  expect(reads(bff, BOOT), 'the failed boot read is not retried').toBe(1)
 })
 
 // ── S1b.3: the notice ─────────────────────────────────────────────────────

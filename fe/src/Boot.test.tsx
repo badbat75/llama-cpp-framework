@@ -357,12 +357,12 @@ test('1c.45a: read once when the header is shown, not polled; not read without a
   await advance(5000)
   expect(bff.to('GET', '/api/instances').length, 'the idle poll ran').toBe(4)
   expect(bootReads(bff), 'not polled').toBe(1)
-  // Opening the page again reads again. The excursion is the ghost instance
-  // (retargeted for H6b): the Overview's tiles now read boot too (H6b.2), so
-  // a detour through '#/' would add the default tile's read to this count;
-  // the ghost page mounts no tile, so the number stays the page's own. The
-  // tiles' reads and remounts are pinned in HearthTilesBoot.test.tsx.
-  navigate('#/instances/ghost')
+  // Opening the page again reads again. The excursion is the Overview: the
+  // tiles read no boot at all (13 N.2), so a detour through '#/' adds nothing
+  // to this count and the number stays this page's own. The tiles, and the
+  // host read the shell adds to every page, are pinned in
+  // HearthTilesBoot.test.tsx and NodeNav.test.tsx.
+  navigate('#/')
   await flush()
   navigate('#/instances/default')
   await flush()

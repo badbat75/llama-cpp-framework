@@ -203,6 +203,7 @@
   "boot-load-failed": "Whether llama-server starts at boot could not be read.",
   "nav-profiles": "Profiles",
   "nav-model-profiles": "Model profiles",
+  "nav-about": "About",
   "model-profiles-title": "Model profiles",
   "model-profiles-intro": "Each model profile is one model with its settings. Every instance of the profile's engine can serve it.",
   "model-profiles-column-name": "Model profile",
@@ -411,5 +412,16 @@
   "model-profile-ngram-off": "Used only when N-gram drafters (Assets) includes {0}.",
   "model-profile-device-same-as-model": "(auto / same as model)",
   "model-profile-written-as": "Written as {0}",
-  "model-profile-written-empty": "Written with no value"
+  "model-profile-written-empty": "Written with no value",
+  "about-title": "About",
+  "about-loading": "Loading the versions…",
+  "about-failed": "The versions could not be read.",
+  "about-version": "Version",
+  "about-version-unknown": "Unknown",
+  "about-backends": "GPU backends",
+  "about-backends-none": "None, CPU only",
+  "about-no-engine": "No installed engine was found on this host. An engine package from before this version lists none until it is installed again.",
+  "backend-cuda": "CUDA",
+  "backend-rocm": "ROCm/HIP",
+  "backend-vulkan": "Vulkan"
 }

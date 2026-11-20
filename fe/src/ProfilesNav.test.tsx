@@ -42,6 +42,8 @@ const LIST_GET = '/api/profiles/model'
 const MODE = en('model-profile-embedding-mode')
 const PROFILES = en('nav-profiles')
 const ENTRY = en('nav-model-profiles')
+/** Slice 13 (13 N.3): the last entry of the nav. */
+const ABOUT = en('nav-about')
 /** The strings file itself (5b.11 pins its keys and texts, exactly). */
 const S = strings as Record<string, string>
 
@@ -254,7 +256,13 @@ test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-labe
   expect(before(label!, list), 'the label right above its list').toBe(true)
   expect(n.contains(label), 'the group is inside the nav').toBe(true)
   // The screen reader's nav reads Overview, each instance, Model profiles.
-  expect(navLinks()).toEqual([en('nav-overview'), 'default', 'coder', ENTRY])
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    'default',
+    'coder',
+    ENTRY,
+    ABOUT,
+  ])
   expect(
     within(main).queryByText(PROFILES),
     'the label is nav chrome',
@@ -281,7 +289,7 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!)).toBe(
     true,
   )
-  expect(navLinks()).toEqual([en('nav-overview'), ENTRY])
+  expect(navLinks()).toEqual([en('nav-overview'), ENTRY, ABOUT])
   cleanup()
   vi.unstubAllGlobals()
   // Failed: the same, read on the Overview: the failure text belongs to the
@@ -309,7 +317,7 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
     before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!),
     'the group comes right after Overview',
   ).toBe(true)
-  expect(navLinks()).toEqual([en('nav-overview'), ENTRY])
+  expect(navLinks()).toEqual([en('nav-overview'), ENTRY, ABOUT])
 })
 
 test('5b.1: signed out there is no nav at all: no Profiles label, no Profiles list, no Model profiles link (09 S1a.4)', async () => {

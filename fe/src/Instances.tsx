@@ -1,13 +1,7 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
 import { useEffect, useState } from 'react'
-import {
-  apiError,
-  call,
-  isRecord,
-  sessionEnded,
-  sessionRevoked,
-} from './api.ts'
+import { apiError, call, sessionEnded, sessionRevoked } from './api.ts'
 import { instanceHref } from './route.ts'
 import type { SignedOut } from './session.ts'
 import { StateShape, stateLabel } from './StateBadge.tsx'
@@ -15,8 +9,9 @@ import { t } from './strings.ts'
 
 /**
  * An instance (fe/briefs/12-instance-tags.md): the id, the engine and the
- * state, plus the port of its server profile (0 when it has none) and the two
- * lists of tags, the union and the instance's own.
+ * state, plus the port of its server profile (0 when it has none), the two
+ * lists of tags, the union and the instance's own, and whether its service
+ * starts at boot (fe/briefs/13-node-about.md, 13 N.1).
  */
 export type Instance = {
   id: string
@@ -25,6 +20,8 @@ export type Instance = {
   port: number
   tags: string[]
   instanceTags: string[]
+  /** The list's answer for that one instance, null when it has none. */
+  boot: boolean | null
 }
 
 /** What the bff answered: the instances, or the key of the message saying why
@@ -82,6 +79,12 @@ function portIn(item: Item): number {
     : 0
 }
 
+/** `boot` of an item: the boolean, null for anything else, as a list that
+ * carries no answer for that instance (fe/briefs/13-node-about.md, 13 N.1). */
+function bootIn(item: Item): boolean | null {
+  return typeof item.boot === 'boolean' ? item.boot : null
+}
+
 /** The instance an item of the reply describes. */
 function instanceOf(item: Item): Instance {
   return {
@@ -91,6 +94,7 @@ function instanceOf(item: Item): Instance {
     port: portIn(item),
     tags: tagsIn(item, 'tags'),
     instanceTags: tagsIn(item, 'instanceTags'),
+    boot: bootIn(item),
   }
 }
 
@@ -156,28 +160,6 @@ async function readInstances(): Promise<Answer> {
 }
 
 /**
- * Whether the instance starts at boot, for a tile: the value, `session-required`
- * when the read answered 401 (09 S1b.1), or null when the read has no answer
- * for the tile. The instance page reads the same route and says why a read
- * failed (its `readBoot`); the Overview is a glance, so a tile shows nothing at
- * all when there is no answer.
- */
-async function readBoot(
-  id: string,
-): Promise<boolean | 'session-required' | null> {
-  try {
-    const reply = await call(`/api/instances/${encodeURIComponent(id)}/boot`)
-    if (sessionEnded(reply)) return 'session-required'
-    if (!reply.ok) return null
-    return isRecord(reply.body) && typeof reply.body.enabled === 'boolean'
-      ? reply.body.enabled
-      : null
-  } catch {
-    return null
-  }
-}
-
-/**
  * The app's one read of /api/instances (fe/briefs/01-server.md, 41): at most
  * one request in flight, a read asked meanwhile gets its answer, and every
  * answer reaches the watchers (the nav).
@@ -222,9 +204,14 @@ export function instancesStore(): InstancesStore {
 
 export default function Instances({
   store,
+  host,
   onSignedOut,
 }: {
   store: InstancesStore
+  /** The host the shell read (fe/briefs/13-node-about.md, 13 N.5): it names
+   * the section; null before the read answers and after a failure, when the
+   * words of today stand. */
+  host: string | null
   /** Raised when the read answers 401, the session being gone (09 S1b.1). */
   onSignedOut: (reason: SignedOut) => void
 }) {
@@ -248,8 +235,8 @@ export default function Instances({
 
   return (
     <section>
-      <h2>{t('instances-title')}</h2>
-      <Body answer={answer} onSignedOut={onSignedOut} />
+      <h2>{host ?? t('instances-title')}</h2>
+      <Body answer={answer} />
     </section>
   )
 }
@@ -260,13 +247,7 @@ function manyEngines(instances: Instance[]): boolean {
 }
 
 /** The instances as a list of tiles, or the message in their place. */
-function Body({
-  answer,
-  onSignedOut,
-}: {
-  answer: Answer | undefined
-  onSignedOut: (reason: SignedOut) => void
-}) {
+function Body({ answer }: { answer: Answer | undefined }) {
   if (answer === undefined) {
     return null
   }
@@ -283,12 +264,7 @@ function Body({
     // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
     <ul className="tiles" role="list">
       {answer.map((i) => (
-        <Tile
-          key={i.id}
-          instance={i}
-          engines={engines}
-          onSignedOut={onSignedOut}
-        />
+        <Tile key={i.id} instance={i} engines={engines} />
       ))}
     </ul>
   )
@@ -296,41 +272,20 @@ function Body({
 
 /**
  * One tile: the id, the state, the engine when it tells the instances apart,
- * and the facts: the port, the tags and the boot state. The boot read belongs
- * to the tile: it goes when the tile mounts, once, and the row shows only an
- * answer that came (no row while it is on its way, none after a failure). The
- * port and the tags come with the list, so their rows are there with the tile
- * (12 T1.2). A fact with nothing to say has no row, and a tile with no fact at
- * all has no `dl`.
+ * and the facts: the port, the tags and the boot state. Every fact comes with
+ * the list, so its row is there with the tile (12 T1.2, and 13 N.1 for boot:
+ * the Overview sends no boot read of its own). A fact with nothing to say has
+ * no row, and a tile with no fact at all has no `dl`.
  */
 function Tile({
   instance,
   engines,
-  onSignedOut,
 }: {
   instance: Instance
   /** The engine line is there: the engines tell the instances apart. */
   engines: boolean
-  onSignedOut: (reason: SignedOut) => void
 }) {
-  const { id, engine, state, port, tags } = instance
-  // null: no row, because there is no answer to show.
-  const [boot, setBoot] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let live = true
-    readBoot(id).then((v) => {
-      if (!live) return
-      if (v === 'session-required') {
-        onSignedOut('ended')
-        return
-      }
-      if (v !== null) setBoot(v)
-    })
-    return () => {
-      live = false
-    }
-  }, [id, onSignedOut])
+  const { id, engine, state, port, tags, boot } = instance
 
   return (
     <li className="tile">

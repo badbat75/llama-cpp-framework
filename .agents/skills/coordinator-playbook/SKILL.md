@@ -41,6 +41,8 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
   - A handler that opens or closes something and then moves focus or scrolls commits the DOM first
     (`flushSync`): the tests record the DOM when `focus()` is called.
   - Never accept "mutant equivalent" without the input that shows it.
+  - Every fe brief says "always run npm with `--prefix fe` from the repo root": a run from elsewhere left a stray `node_modules/` at the repo root twice (2026-11-20).
+  - A shell UI read keyed on the session (the host name) must survive StrictMode's double effect and a new session object for the same user: compare the user when the answer lands, never cancel by effect identity (slice N, 2026-11-20).
   - Templates of every fe prompt used so far: git-ignored `build/oc/`; designer review stubs:
     `build/ux-review/` (`stub9.py`, a per-route 401 switch `/__r401`).
 - A second session could own `fe/` only (2026-11-14 to 2026-11-19): it worked from `fe/briefs/` (the bff API

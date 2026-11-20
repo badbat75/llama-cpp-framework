@@ -563,6 +563,7 @@ test('2a.1: signed in, the nav holds Overview, the instance links, then Model pr
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-about'),
   ])
   expect(list.contains(models)).toBe(false)
   expect(before(list, models)).toBe(true)
@@ -576,7 +577,11 @@ test('2a.1: a failed instances read leaves out the Instances group, not Model pr
   expect(
     within(nav()).queryByRole('list', { name: en('nav-instances') }),
   ).toBeNull()
-  expect(navLinks()).toEqual([en('nav-overview'), en('nav-model-profiles')])
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    en('nav-model-profiles'),
+    en('nav-about'),
+  ])
 })
 
 test('2a.2: on #/profiles/model the Model profiles link has aria-current="page", and loses it on another route', async () => {
@@ -872,6 +877,7 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-about'),
     en('model-profiles-filter-label'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
