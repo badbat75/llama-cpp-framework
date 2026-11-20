@@ -360,7 +360,13 @@ Lessons only: the rules are in `AGENTS.md`.
   `check_model_files_of` inside `set_model_profile`). Its 422 `field` is `field_of` in `crates/bff/src/model_profiles.rs`:
   a key whose args name a VALUE and not a key (`model-profile-no-model`, `model-profile-model-missing`, the
   `load-on-startup-*` pair) needs an entry there, so the prose that lists them (the switch's 422 paragraph,
-  which the save's table points at) must list it too.
+  which the save's table points at) must list it too. A key that marks NOTHING (the memory check's
+  `model-profile-over-memory`, 16e6693: args the model profile, an instance, two MiB figures) needs an
+  entry there as well, so that paragraph's no-`field` list and the save's 422 row both gain it; the
+  check's own wording goes in the config README's checks bullet (right after the model-file sentences)
+  and its `SetModelProfile` bullet, and the probe's figures in the source map's `..\core\src\proc.rs`
+  row (the 30 s bound, the 4 MiB of each stream kept, the 2 s grace): `ProbedGpus` and
+  `check_render_memory` are the source, none of it is in `checks.rs`.
 - The bff's two time limits: `MANAGER_TIMEOUT` (5 s, reads and control verbs) and `WRITE_TIMEOUT`
   (15 s, the server save and the model profile switch), both `lib.rs`, pinned by
   `the_write_limit_outlasts_the_read_limit` (`src/tests/timeouts.rs`). The 5 s sits in five bff README
@@ -377,7 +383,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `cargo test -p pai-bff --test model_profiles --test model_profiles_switch` and grep `test result` to see the
   suites you mean. When no shell is available, count the test functions in the suite file
   (`^async fn` and `^#[test]`) to check a README's test count, and keep the green run's date cited to
-  the commit whose report it is.
+  the commit whose report it is. The exact count of one file is `grep -c '#\[test\]\|#\[tokio::test\]'`
+  (the coarse pattern over-counts, helper fns and doc text): a README's per-suite count is the count of
+  the tree it cites, so recount a suite only when a commit changed it (`git show <sha>:<suite> | grep -c`
+  settles the old number) and leave an untouched suite at its dated count.
 - When `fe/` is off-limits, the fe commit's message (`git log -1 --format=%B <sha>`) settles what the
   fe shows now (1827023: no role word in the banner, the administrator/user pairs collapse to one
   case): cite the sha, and paraphrase a string rather than quoting it, its text living in

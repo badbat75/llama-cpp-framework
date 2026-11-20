@@ -439,7 +439,9 @@ holds, so ids stay unique across the pair. A refusal is 422 with the check's key
 `load-on-startup-*` keys, `model` for `model-profile-no-model` and `model-profile-model-missing`
 (their args name the model profile, the latter's also the instance and the file, never a key), the
 key named in the check's args for the others, and no `field` for a
-refusal about the model profile's name (`invalid-model-profile-id`, `model-profile-name-taken`). The destination is
+refusal about the model profile's name (`invalid-model-profile-id`, `model-profile-name-taken`) or about
+the node's GPU memory (`model-profile-over-memory`, its args the model profile, an instance and two
+memory figures, none of them a key). The destination is
 written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
@@ -549,7 +551,7 @@ and `true` when that state cannot be read after the write landed, the safe answe
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node) and `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB the node has, no `field`: a model profile the write makes larger does not fit the node's usable GPU memory) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
@@ -581,11 +583,13 @@ were green again on 2026-11-18 at 8a2dc5b, with the read, the save and `--lib` (
 36a892d, pinning the document's seven fields, the values as the parser holds them, a repeated key's last line, the
 url comment, the global `*`, the router's own 404 below the path, and the revision stable across a
 neighbour section and a final line break (`cargo test -p pai-bff --test model_profile_read`). The save adds
-`tests/model_profile_save.rs`, over the same fake manager: 47 tests (3eb24b2, 26f5413), and the body read on
+`tests/model_profile_save.rs`, over the same fake manager: 48 tests (3eb24b2, 26f5413, plus 16e6693's
+over-memory 422 carrying no `field`), and the body read on
 its own in `src/tests/model_profile_body.rs`: 24 tests, pinning the body's shape and its refusals, the key
 set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
 edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
-2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test model_profile_save --lib`). The listen
+2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test model_profile_save --lib`), the save
+suite at 48 and the whole bff (434) green again at 16e6693 (its report). The listen
 address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (40), rerun
 green 2026-11-19 on the tree at 42e5c23, the guard's re-read of the machine's names included
 (`cargo test -p pai-bff --test listen --test origin`); the hand check of a
