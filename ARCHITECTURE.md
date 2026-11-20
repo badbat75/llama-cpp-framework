@@ -1577,6 +1577,12 @@ version) and a navigation of hosts holding their instances.
 - **`GET /api/instances` items gain `boot`**: `true`/`false` from `BootEnabled(id)` (unauthenticated,
   as the list's `Status`), `null` when that one read fails; a failed boot read never fails or shortens
   the list. `GET /api/instances/{id}/boot` stays (the instance page and after a `PUT`).
+- *As built (2026-11-20 review, accepted):* `Instances()` answers in id order, as `ListInstances`
+  (`service.rs`), not the record's; a section naming no `ServerProfile` answers `""` on the wire and
+  the clients leave that row out (`client/dbus.rs`, `client/pipe.rs`), so its server file is
+  `NoInstance` and the bff's list, driven by `ListInstances`, still shows the id with port 0 and no
+  tags; an older manager's row shape is `Other`. The GUI's shown path asks `Instances()` and falls
+  back to `server@default.ini` for display only, never for a read or write.
 
 **Slice 13 done when** (test first; Linux, the Windows code type-checked):
 `pai-manager`: an instance whose section names `big` lists `server_profile` `big` with `big`'s port, on

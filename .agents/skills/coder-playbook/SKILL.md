@@ -87,7 +87,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - The tester's test code reddens the linter under `--all-targets`, and most of it is not yours to fix:
   `for who in [&alice]` is `clippy::single_element_loop`; `.err().expect(msg)` is `clippy::err_expect`,
   whose identical mechanical fix is `.expect_err(msg)` (apply it, name it). A fix that changes what a test
-  asserts stays the tester's.
+  asserts stays the tester's. A binding a test clones and never reads (`let files = c.files.clone();`) is
+  `unused_variables`, and the compiler's `_files` prefix loses no assertion: apply it and name it.
 - A test helper of a test module whose ONLY callers are `#[cfg(unix)]` tests (a bound and a
   thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. It is
   the tester's region: report it, and prove production is clean with the same crate WITHOUT
@@ -148,6 +149,36 @@ Lessons only: the rules are in `AGENTS.md`.
   happens to enable it.
 - `crates/core/src/client/dbus.rs` is `cfg(target_os = "linux")`, so that check does not compile it: say
   so in the report.
+- `mod windows` is `#[cfg(windows)]` and windows-gnu is not unix, so NO file under `xtask/src/windows/`
+  may import `crate::common::components` (nor `macos_pkg`): `xtask/src/common/mod.rs` gates them
+  `#[cfg(unix)]` and `components.rs` itself calls `std::os::unix::fs::symlink`, so the import is E0432 and
+  ungating it cascades into unix-only test code and a crate of dead code. A fact the Windows MSI needs
+  (a package name, a dist version) goes in a module that compiles on both: put it in the ungated
+  `common/versions_share.rs` and `pub use` it from `components`, so every unix caller
+  (`components::ENGINE_NAME`, `components::dist_version`, `macos_pkg`) keeps its path and the moved item's
+  test, in the old module's `mod tests { use super::*; }`, still resolves the re-export. Give a moved fn a
+  caller on EACH target (`components::package()` calls `versions_share::runtime_package` for a runtime):
+  then it needs no `allow(dead_code)` on unix or on windows. `licenses.rs` shows the other shape: a
+  `#[cfg(target_os = "linux")] use crate::common::components::Component;`.
+- A `pub fn` in `xtask/src/common/util.rs` whose only callers are Linux code is `dead_code` on windows-gnu
+  (`cmd_without_ld_library_path`, from HEAD): a red of the Linux step's own commit, not of the slice. Proof
+  it is not yours: `git worktree add --detach /tmp/x HEAD` (the worktree needs no `.cargo/config.toml`:
+  pass `CARGO_TARGET_DIR=<repo>/build/linux/cargo-target`, the windows-gnu registry deps are reused) and
+  the same clippy answers the one identical error. The Windows TYPE check itself is green: a plain
+  `cargo check -p xtask --all-targets --target x86_64-pc-windows-gnu` ends `Finished` with that as
+  1 warning, only `-D warnings` turns it into an error.
+  The fix (shipped): gate the fn `#[cfg(unix)]` and gate with it the util test
+  module's test that calls it (its sibling test of the same helper is already `#[cfg(unix)]`);
+  `cmd` stays alive on Windows through `xtask/src/windows/*.rs`, so the gate cascades into nothing.
+- Proof of a windows-gnu red you must not fix: copy the tree, in the copy gate the real import
+  `#[cfg(unix)]` and add a `#[cfg(not(unix))]` stand-in `mod` with the same names, set `CARGO_TARGET_DIR`
+  to a fresh dir, run the check there. Clean output isolates the gating red and proves your moved code
+  compiles; the anchor asserts must be exact text (a `'# [cfg(unix)]'.replace('# ','')` anchor left
+  `#pub mod components;` behind).
+- A test's `const _: fn(&Path, &str, &str, &[(&str, Option<&str>)]) -> Result<()> = f;` signature pin is
+  `clippy::type_complexity` under `--all-targets`; the repo's fix, used in core's `checks.rs` and
+  `server_cfg.rs` test modules, is a bare `#[allow(clippy::type_complexity)]` above the item (no assertion
+  moves).
 
 ## The bff
 
@@ -187,6 +218,14 @@ Lessons only: the rules are in `AGENTS.md`.
   field (a port) the literals omit, the literals win: implement what is pinned and report the conflict.
   Every whole-list assertion elsewhere in the suite is then a stale pin: the bff's 13
   `tests/origin.rs` Host tests compare the whole list and went red on the new `tags` key alone.
+  The same file reddened again on the boot flag, in two ways that are BOTH the tester's: its 10 literals
+  gained `"boot": false` while that file's `FakeManager::boot_enabled` answers `Ok(*state)` (the shared
+  `InstanceState`, so an Active instance answers `true`, and no code can answer the literal), and its
+  `a_get_route_is_never_refused_for_these_headers` pins the pre-record server read (a 404
+  `client-no-instance` and a calls list of `list, status, boot_enabled, read server@default.ini`) on a
+  fixture that implements NO `instances()`, so the trait's default `Other` answers 502 the moment the
+  route resolves the profile. Grep every file for the route's calls-list pins and for the whole-list
+  literals BEFORE writing a per-item field.
 - A D-Bus row tuple that grows past clippy's `type_complexity` is a module-level `type InstanceRow = (...)`
   beside the other consts, with the signature `(s id, s engine, q port, ...)` in its doc comment.
 - One `Host` name rule over both families: strip the brackets and `text.parse::<IpAddr>()` covers IPv4 and
@@ -203,6 +242,31 @@ Lessons only: the rules are in `AGENTS.md`.
 - An axum handler here takes `Path(id)` first and the `Bytes` last, and an over-cap body is the
   extractor's rejection handed to `origin::body_refusal(&rejection, <fallback key>)`, which answers the 413
   (the cap is the `DefaultBodyLimit` layer in front of the whole router).
+- A "the list asks only these calls" pin is a per-file grep, not one line: a new field per item (the boot
+  flag) needs one more call per id, and the suite holds a second test pinning the CALL SEQUENCE of the same
+  route. When the two disagree (`reading_the_instances_asks_only_the_read_only_calls` asserted four calls
+  with no `boot_enabled`, in a test whose own doc says "each status and each boot flag", while
+  `each_instance_carries_its_own_boot_flag` asserted the six) no code answers both: the JSON literals decide
+  (three tests need the field), quote both lines.
+- A save route's BODY SHAPE gate outranks a record-resolution pin: `server.rs` gates `Tags` as
+  `Kind::Tags::reads(None) == false` (the read always sends a list, so an absent `Tags` would clear the
+  profile's tags), pinned shipped by `a_tags_that_is_not_a_list_of_strings_is_server_malformed`. A test that
+  pins a record failure through a PUT therefore reaches it only with a well-shaped body (`save_body(&doc,
+  &[])`); the two that sent `{"revision":"x","values":{}}` answered 400 `server-malformed` where they
+  wanted 404/503. The gate also explains why the record lookup lives INSIDE `spawn_blocking`, after the
+  shape check: the shipped test pins "no new connect" for a malformed body.
+- A `Box<dyn ManagerClient + Send + Sync>` does not coerce to `&dyn ManagerClient`: call the helper as
+  `profile_file(&*client, ..)`.
+- The installed versions are one small file per engine/runtime package
+  (`pai_core::versions::installed(dir)`, the bff's `GET /api/node`). Keep the reader's rules: regular files
+  only, `llama.cpp` / `llama.cpp-[a-z0-9]+`, at most `MAX_FILE_BYTES`, first line trimmed, printable ASCII,
+  empty is `None`, anything unreadable is SKIPPED (a broken file answers no version, not no list), the
+  engine listed only when its own file is there, backends sorted by name. A `match` on two chained
+  `strip_prefix` calls is `clippy::question_mark`: chain them with `?`. The reader takes at most
+  `MAX_FILE_BYTES` + 1 bytes (`File::open` + `Read::take` + `read_to_end`): `read_to_end` answers
+  `Result<usize>`, so its error arm is `.is_err()`. A source-lint test pins that shape (`.take(` present,
+  `fs::read(` absent above `#[cfg(test)]`, comments stripped per line at `//`), so `fs::read_dir(` passes
+  and a doc comment naming the cap is no needle.
 
 ## INI, config, the manager
 
@@ -260,6 +324,21 @@ Lessons only: the rules are in `AGENTS.md`.
 - The engine's build revision is `components::LLAMA_CPP_REVISION`: a bump moves the `.deb` Depends and the
   `.rpm` Requires and the version fixtures of `xtask/src/linux/package.rs`. The MSI's minimum is the
   release alone, so `windows/package.rs` does not follow.
+- `components::of` is a PREFIX ladder: a rule for a file inside a folder another rule already owns must sit
+  ABOVE that folder's rule (each `versions/<package>` goes to the package its own name names, ahead of the
+  rule giving all of `usr/share/private-ai/llama.cpp/` to the engine), and a name that matches no
+  `Component::package()` falls through to the folder's owner.
+- Pin a file that must land in exactly one package, and be taken by rpmbuild, by reusing the test module's
+  own machinery: write the staged files, `components::split(&stage, &roots)`, then
+  `rpm_spec(&fields_v(component, version, &[], None), .., &tree)` + `check_files(&spec, &tree)` and
+  `files_section(&spec).iter().any(|l| covers(l, &path))`. `fields_v` carries the version, so the file's
+  content is pinned against the same version the package gets.
+- `windows/package.rs`'s `bundled` map is keyed by the DIST LABEL (`"ROCm"`, `"CUDA"`, `"Vulkan SDK"`), not
+  by a component: a per-runtime artefact (its version file) is written when `bundled.get(label)` is
+  non-empty and named by `versions_share::runtime_package("<sdk>")` (the component's suffix: Windows
+  builds no `Component`). A dist outside the `Dists` layout answers
+  `versions_share::dist_version == None`: write the empty file (the reader answers no version) rather than
+  skipping the package.
 - Prose in a constant whose bytes are DATA is data: the disabled-file header lives in TWO byte-identical
   source constants (the app's writer and the bff's copy), and the bff's test reads the app's source at the
   literal `const DISABLED_FILE_HEADER: &str = "` and unescapes it, so a text edit changes both sources and
@@ -673,6 +752,36 @@ Lessons only: the rules are in `AGENTS.md`.
 - `bff::server::field_of` answers the marked field from `args.first()`, which is the REFUSAL'S
   REASON for a refusal whose first value is not a key (`server-bad-tags` starts with the reason):
   such a key needs its own arm. The bff's 422 pins the field lower-case (`tags`), the form ids.
+
+## Slice 13 (2026-11-20): a new route's fake default, and what a page read pins
+
+- A new route's default in `fe/src/test/bff.ts` decides how much of the older suite you redden: answering
+  the fixture by default reddens every test that finds the list named by the FALLBACK label (measured on
+  this slice: 45 red with the default, 26 without). Default to the rejection of an unknown route
+  (`Promise.reject(new TypeError("unexpected " + route))`), export the fixture (`NODE`), and let a test
+  that wants the host name it.
+- `react-hooks/set-state-in-effect` also fires for `setState` in an effect's early-return branch (clearing
+  the value when the session is gone). Carry the owner in the state (`{ user, name }`), never write from
+  the effect for the empty session, and derive the fallback in the render by comparing the owner to the
+  current session: no extra write, and a sign-in as the same user keeps the value.
+- `startAt()` fires NO hashchange, so a page that "takes the focus on arrival" only takes it on a
+  hashchange, at a sign-in and at a sign-out. A test that loads at a route and awaits the focus on its
+  `h1` cannot pass beside `ProfilesNav.test.tsx` 5b.8 ("the first load does not move the focus",
+  `document.body`). Adding a first-load focus raise reddens that, `App.test.tsx` 1a.6, `SignIn` 1a.11 and
+  `HearthTheme` H4.7: the rule the four green files pin wins, report the pair.
+- A page helper that resolves at the `h1` reads the LOADING state: the `h1` and the
+  `p[role="status"]` coexist by the brief's own rule, and React's scheduler moves a promise-driven update
+  to a macrotask (chained `await Promise.resolve()` never shows the content, one `setTimeout(0)` does).
+  No production change helps, and those tests flake (the same file gives 6, 7 and 11 red in three runs).
+  The helper must await the status disappearing.
+- `bff.to('GET', path)` counts the reads of the SHELL and of a PAGE alike, so two criteria of one brief
+  (one read per session, and one page read per arrival) are unsatisfiable together as counts; the page's
+  own test pins 2 at arrival, the shell's counts 1 and names About in its loop. Quote both lines.
+- jsdom never follows an anchor: `fireEvent.click(a)` on `href="#/about"` leaves `location.hash` at `#/`.
+  A test must call `navigate()`; a production `onClick` handler cannot be what moves the address.
+- The coder runs `format:check`, so the tester's unformatted new test files are yours to format. Prove
+  prettier writes whitespace and quotes only: copy each file, run `prettier <file>` into a second copy,
+  `diff` them, then `prettier --write`. Rerun the suite after.
 
 ## xtask: the runtime closure and the loader
 

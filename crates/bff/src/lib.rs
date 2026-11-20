@@ -5,6 +5,7 @@ pub mod bff;
 mod control;
 pub mod listen;
 mod model_profiles;
+pub mod node;
 mod origin;
 pub mod serve;
 mod server;
@@ -101,6 +102,7 @@ fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Er
         std::sync::Arc::new(std::time::Instant::now),
         key,
         policy,
+        pai_core::bff_cfg::versions_dir(),
     ))
 }
 
@@ -176,6 +178,31 @@ pub fn router_with_session(
     router_with_session_and_write_timeout(connect, timeout, timeout, auth, clock, key)
 }
 
+/// `router_with_session` with the folder of the package version files that
+/// `GET /api/node` reads handed in: [`router_with_session`] and every builder
+/// of the service reads the folder of this install
+/// ([`pai_core::bff_cfg::versions_dir`], `None` where the install ships none);
+/// a test hands a folder of its own.
+pub fn router_with_session_and_versions_dir(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    versions_dir: Option<std::path::PathBuf>,
+) -> axum::Router {
+    router_with_policy(
+        connect,
+        timeout,
+        timeout,
+        auth,
+        clock,
+        key,
+        origin::HostPolicy::loopback(),
+        versions_dir,
+    )
+}
+
 /// `router_with_session` with the manager's calls of a WRITE given their own,
 /// longer limit: the server file's save, the model profile save and the model profile switch
 /// run under `write_timeout`, every read keeps `timeout`, and so does the boot
@@ -197,6 +224,7 @@ pub fn router_with_session_and_write_timeout(
         clock,
         key,
         origin::HostPolicy::loopback(),
+        pai_core::bff_cfg::versions_dir(),
     )
 }
 
@@ -205,6 +233,7 @@ pub fn router_with_session_and_write_timeout(
 /// policy: the service computes its own ([`try_router_at`]),
 /// [`router_with_session_and_hosts`] takes the two as arguments, the rest answer
 /// `localhost` and the addresses only, at a loopback listen.
+#[allow(clippy::too_many_arguments)]
 fn router_with_policy(
     connect: Connect,
     timeout: std::time::Duration,
@@ -213,6 +242,7 @@ fn router_with_policy(
     clock: session::Clock,
     key: [u8; 16],
     policy: origin::HostPolicy,
+    versions_dir: Option<std::path::PathBuf>,
 ) -> axum::Router {
     use axum::extract::Path;
     let sessions = session::sessions(auth, clock);
@@ -297,7 +327,8 @@ fn router_with_policy(
             "/api/profiles/model/{id}/enabled",
             axum::routing::put(set_enabled),
         )
-        .merge(control::routes(connect, timeout, sessions))
+        .merge(control::routes(connect, timeout, sessions.clone()))
+        .merge(node::routes(sessions, versions_dir))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
         .layer(axum::middleware::from_fn(framing))
@@ -325,6 +356,7 @@ pub fn router_with_session_and_hosts(
         clock,
         key,
         origin::HostPolicy::new(hosts, listen),
+        pai_core::bff_cfg::versions_dir(),
     )
 }
 
@@ -352,6 +384,7 @@ pub fn router_with_session_and_host_source(
         clock,
         key,
         origin::HostPolicy::with_source(listen, hosts, source),
+        pai_core::bff_cfg::versions_dir(),
     )
 }
 
@@ -436,12 +469,14 @@ async fn version(
 }
 
 /// `GET /api/instances`: `[{"id", "engine", "state", "port", "tags",
-/// "instanceTags"}]` in the manager's order, to a signed-in reader, or
+/// "instanceTags", "boot"}]` in the manager's order, to a signed-in reader, or
 /// `{"key": <strings key>, "args": []}`, never the manager's detail. The
 /// manager's row of the instance carries the port and the two tag lists:
 /// `port` is the configured one, `tags` the union the bff builds of the two
 /// lists (the server profile's first, none twice), `instanceTags` the
-/// instance's own list, the one the editor saves back. With no live session
+/// instance's own list, the one the editor saves back. `boot` is the
+/// instance's own start-at-boot flag (`BootEnabled`); one the service manager
+/// cannot answer is `null`. With no live session
 /// the answer is 401 `session-required`, the manager is not connected to, and
 /// no `Set-Cookie` goes out. The session gates the read and is not its
 /// principal: the list, the rows and the states are what the manager answers
@@ -449,7 +484,8 @@ async fn version(
 /// deadline stays where it was (the page polls this read). A manager with no
 /// rows to answer (an install of an older protocol) leaves every row with
 /// port 0 and no tags: the rows are extra, not a part of the read that can
-/// fail it.
+/// fail it. So is a boot flag: one that cannot be read is `null` on that item
+/// and the list is answered.
 async fn instances(
     connect: Connect,
     timeout: std::time::Duration,
@@ -476,6 +512,7 @@ async fn instances(
                     "port": row.map_or(0, |row| row.port),
                     "tags": tags_of_row(row),
                     "instanceTags": row.map_or_else(Vec::new, |row| row.instance_tags.clone()),
+                    "boot": client.boot_enabled(&id).ok(),
                 })),
                 Err(ClientError::NoInstance) => {}
                 Err(e) => return Err(e),

@@ -276,6 +276,13 @@ struct Live {
     /// The ids the record holds, for `list_instances`: empty is the one
     /// instance `default`, every app's answer today.
     instances: Arc<Mutex<Vec<String>>>,
+    /// The server profile each id's section names, for `Instances`: an id
+    /// missing here names the profile of its own id, and `None` is a section
+    /// that names no profile at all.
+    server_profiles: Arc<Mutex<HashMap<String, Option<String>>>>,
+    /// The failure to answer `Instances` with, when set: the record the bff
+    /// cannot read.
+    instances_outcome: Arc<Mutex<Option<Outcome>>>,
 }
 
 /// A call a test stops: armed for the next one, it holds there until the test
@@ -463,6 +470,49 @@ impl ManagerClient for FakeManager {
         } else {
             ids
         })
+    }
+    /// The record, one row per id: the profile of each is the one the test
+    /// named (`set_server_profile`), and an id nobody named carries the
+    /// profile of its own name. `set_instances_outcome` fails the whole read.
+    fn instances(&self) -> Result<Vec<pai_core::client::InstanceInfo>, ClientError> {
+        self.record("instances".into());
+        let outcome = self
+            .live
+            .instances_outcome
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(outcome) = outcome {
+            return Err(outcome.into_error());
+        }
+        let ids = self
+            .live
+            .instances
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let ids = if ids.is_empty() {
+            vec!["default".to_string()]
+        } else {
+            ids
+        };
+        let profiles = self
+            .live
+            .server_profiles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        Ok(ids
+            .iter()
+            .map(|id| pai_core::client::InstanceInfo {
+                id: id.clone(),
+                engine: "llama.cpp".to_string(),
+                server_profile: profiles.get(id).cloned().unwrap_or(Some(id.clone())),
+                port: 8080,
+                profile_tags: Vec::new(),
+                instance_tags: Vec::new(),
+            })
+            .collect())
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
@@ -766,6 +816,41 @@ impl App {
     /// beside `default` can be read.
     fn set_instances(&self, ids: &[&str]) {
         *self.live.instances.lock().unwrap() = ids.iter().map(|id| id.to_string()).collect();
+    }
+
+    /// The record's row of `id` names the server profile `profile` (`None`:
+    /// its section names no profile): the file the bff reads and writes for
+    /// that instance is `server@<profile>.ini`.
+    fn set_server_profile(&self, id: &str, profile: Option<&str>) {
+        self.live
+            .server_profiles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.to_string(), profile.map(|p| p.to_string()));
+    }
+
+    /// `Instances` answers `outcome`: the record that cannot be read.
+    fn set_instances_outcome(&self, outcome: Outcome) {
+        *self.live.instances_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// The manager holds `text` as `name`, beside the files it already keeps.
+    fn set_file_named(&self, name: &str, text: &str) {
+        self.live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), text.to_string());
+    }
+
+    /// The text the manager holds as `name`, `None` when it has no such file.
+    fn file_named(&self, name: &str) -> Option<String> {
+        self.live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .cloned()
     }
 
     /// Refuse the write of `user`: the member of `pai` removed after the read.
@@ -1108,7 +1193,11 @@ async fn the_read_connects_as_the_signed_in_user() {
             vec![Some(user.to_string())],
             "{user}: the principal of the connect"
         );
-        assert_eq!(app.calls(), ["read server@default.ini"], "{user}");
+        assert_eq!(
+            app.calls(),
+            ["instances", "read server@default.ini"],
+            "{user}: the record first, then the profile it names"
+        );
     }
 }
 
@@ -1286,7 +1375,11 @@ async fn an_unknown_id_is_no_instance() {
     app.get("/api/instances/nope/server", Some(&cookie))
         .await
         .assert_error(StatusCode::NOT_FOUND, "client-no-instance");
-    assert_eq!(app.calls(), ["read server@nope.ini"], "asked for its file");
+    assert_eq!(
+        app.calls(),
+        ["instances"],
+        "the record does not name the id, so no file is asked for"
+    );
 }
 
 /// An id that tries to leave the config folder (`..%2Fx`, `../x` once
@@ -1360,7 +1453,11 @@ async fn the_document_has_exactly_the_contract_members() {
         members,
         ["defaults", "interfaces", "limits", "revision", "values"]
     );
-    assert_eq!(app.calls(), ["read server@default.ini"]);
+    assert_eq!(
+        app.calls(),
+        ["instances", "read server@default.ini"],
+        "the record, then the profile it names"
+    );
 }
 
 /// `values` holds every server key, no other, each as typed JSON from a
@@ -1853,6 +1950,15 @@ fn save_body(doc: &Value, overrides: &[(&str, Value)]) -> Value {
     json!({ "revision": doc["revision"], "values": values_with(doc, overrides) })
 }
 
+/// A save body the shape gate accepts, for a route that must be refused before
+/// any file is read (a record with no profile, a record that cannot be read).
+/// The shipped file's own document, read off a throwaway app: a body built by
+/// hand is a second copy of the field list, and the gate refuses it the moment
+/// the document gains a key.
+async fn shaped_save_body() -> Value {
+    save_body(&app_writing(SHIPPED).read_default().await.document(), &[])
+}
+
 /// The save's 200: exactly `{"revision", "running"}`.
 fn assert_saved(reply: &Reply) -> Value {
     let doc = reply.document();
@@ -1993,7 +2099,9 @@ async fn a_save_writes_the_file_the_body_holds_as_the_signed_in_user() {
     assert_eq!(
         app.calls(),
         [
+            "instances".to_string(),
             "read server@default.ini".to_string(),
+            "instances".to_string(),
             "read server@default.ini".to_string(),
             "write-if alice server@default.ini".to_string(),
             "status default".to_string(),
@@ -2293,9 +2401,14 @@ async fn a_time_limit_that_runs_out_at_the_read_is_503() {
     );
     assert_eq!(
         app.calls(),
-        // The form's own read, then the save's: the save stops at its read and
-        // is never asked to write.
-        ["read server@default.ini", "read server@default.ini"],
+        // The record and the form's own read, then the save's: the save stops
+        // at its read and is never asked to write.
+        [
+            "instances",
+            "read server@default.ini",
+            "instances",
+            "read server@default.ini"
+        ],
         "the save stops at the read: the manager is never asked to write"
     );
     assert!(app.writes().is_empty(), "no write may be recorded");
@@ -2321,9 +2434,9 @@ async fn a_time_limit_that_runs_out_before_the_manager_is_reached_is_503() {
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert_eq!(
         app.calls(),
-        // Only the form's own read: nothing is asked of a manager that was
-        // never reached.
-        vec!["read server@default.ini"],
+        // Only the form's own read, record included: nothing else is asked of
+        // a manager that was never reached.
+        vec!["instances", "read server@default.ini"],
         "nothing is asked of a manager that was never reached"
     );
     assert!(app.writes().is_empty(), "no write may be recorded");
@@ -2828,4 +2941,151 @@ async fn a_tags_list_the_rule_refuses_is_422_naming_the_tags_field() {
     );
     assert!(app.writes().is_empty(), "nothing written");
     assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+// ── The server profile: the file is the record's, never the id's (slice 13) ──
+
+/// A profile file of its own, easy to tell from the shipped `server@default.ini`
+/// the manager holds beside it: a port nothing else in this file uses.
+const BIG: &str = "[Server]\nPort = 9011\n";
+
+/// The record names the instance, and its section names a profile that is not
+/// the instance's name: the read is that profile's file. The record is asked
+/// first, and the file of the id is never opened.
+#[tokio::test]
+async fn the_read_is_the_profile_the_record_names() {
+    let app = app_writing(SHIPPED);
+    app.set_server_profile("default", Some("big"));
+    app.set_file_named("server@big.ini", BIG);
+    let doc = app.read_default().await.document();
+    assert_eq!(
+        doc["values"]["Port"],
+        json!(9011),
+        "the profile's file: {doc}"
+    );
+    assert_eq!(
+        app.calls(),
+        ["instances", "read server@big.ini"],
+        "the record, then the profile's file, never server@default.ini"
+    );
+}
+
+/// The save of the same instance goes to the profile's file: the compare and
+/// swap names it, its text changes, and the file of the id is left as it was.
+#[tokio::test]
+async fn the_save_is_the_profile_the_record_names() {
+    let app = app_writing(SHIPPED);
+    app.set_server_profile("default", Some("big"));
+    app.set_file_named("server@big.ini", WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    assert_eq!(doc["values"]["Port"], json!(8580), "{doc}");
+    assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+            .await,
+    );
+    assert_eq!(
+        app.writes()
+            .iter()
+            .map(|(name, _, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["server@big.ini"],
+        "the write names the profile's file"
+    );
+    let saved = app
+        .file_named("server@big.ini")
+        .expect("the profile's file");
+    assert!(saved.contains("Port = 8642"), "{saved}");
+    assert!(
+        saved.contains("OpencodeApiKey = sk-test"),
+        "the key of the file the save read: {saved}"
+    );
+    assert_eq!(
+        app.file_text(),
+        SHIPPED,
+        "the file of the id is not touched"
+    );
+    let calls = app.calls();
+    assert!(
+        !calls.iter().any(|c| c.contains("server@default.ini")),
+        "no call names the file of the id: {calls:?}"
+    );
+    assert_eq!(
+        calls,
+        [
+            "instances",
+            "read server@big.ini",
+            "instances",
+            "read server@big.ini",
+            "write-if alice server@big.ini",
+            "status default",
+        ],
+        "the form's read, then the save's own record read, read, write, status"
+    );
+}
+
+/// A record that names no profile for the instance is no instance: 404
+/// `client-no-instance`, and no file is read. There is no reading of a file
+/// named after the instance, whatever the record says.
+#[tokio::test]
+async fn a_row_naming_no_profile_is_no_instance() {
+    let app = app_writing(SHIPPED);
+    app.set_server_profile("default", None);
+    let r = app.read_default().await;
+    r.assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+    assert_eq!(
+        app.calls(),
+        ["instances"],
+        "the record answers, nothing is read"
+    );
+}
+
+/// An id the record does not name is no instance: 404 `client-no-instance`,
+/// the record asked and no file opened, so an id typed into the address bar
+/// cannot reach a file the record does not name.
+#[tokio::test]
+async fn an_id_the_record_does_not_name_is_no_instance_and_asks_no_file() {
+    let app = app_writing(SHIPPED);
+    app.set_instances(&["other"]);
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+    app.put(Some(&cookie), &shaped_save_body().await)
+        .await
+        .assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+    assert_eq!(
+        app.calls(),
+        ["instances", "instances"],
+        "the read and the save each asked the record, and nothing else"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+}
+
+/// The record that cannot be read is the manager's own news, the same key as
+/// on every other read: 503 `client-unavailable`, no file read, and the
+/// session lives on.
+#[tokio::test]
+async fn a_record_that_cannot_be_read_is_unavailable_and_asks_no_file() {
+    let app = app_writing(SHIPPED);
+    app.set_instances_outcome(Outcome::Unavailable);
+    let cookie = app.sign_in().await;
+    app.get("/api/instances/default/server", Some(&cookie))
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    app.put(Some(&cookie), &shaped_save_body().await)
+        .await
+        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+    assert_eq!(
+        app.calls(),
+        ["instances", "instances"],
+        "the record failed, no file was read"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
 }

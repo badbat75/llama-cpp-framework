@@ -143,6 +143,24 @@ pub(crate) fn manager_pipe_client_e2e() {
             "the sections of instances.ini are the instances: lan-2 has no profile file of its own"
         );
         assert_eq!(client.status("default"), Ok(InstanceState::Active));
+        // `Instances` is answered with no identity too, and its rows name the
+        // server profile of each instance: the client reads the server file as
+        // `server@<server_profile>.ini`, which is not `server@<id>.ini`.
+        assert_eq!(
+            client
+                .instances()
+                .expect("the rows")
+                .iter()
+                .map(|i| (i.id.as_str(), i.server_profile.as_deref(), i.port))
+                .collect::<Vec<_>>(),
+            vec![
+                ("broken", Some("broken"), 8090),
+                ("default", Some("default"), 8080),
+                ("lan-2", Some("big"), 0),
+            ],
+            "each row names the profile its section names, the port read from that \
+             profile's file: lan-2's profile has no file, so port 0"
+        );
         assert_eq!(
             client.read_file("models.ini"),
             Ok(Some(plain(&model_profiles)))

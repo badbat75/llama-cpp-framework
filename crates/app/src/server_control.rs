@@ -104,8 +104,36 @@ impl ManagerBackend {
         crate::server_cfg::from_text(&text.unwrap_or_default())
     }
 
+    /// The manager's name of `file`: the model profiles pair keeps its name,
+    /// the server file is the profile the record names for `INSTANCE`,
+    /// `server@<server_profile>.ini`. `Instances()` is the only source of the
+    /// name: a record that cannot be read, and an `INSTANCE` the record does
+    /// not list, answer the manager's own error, never a fall back to the file
+    /// named after the id, which the instance does not read.
+    fn manager_name(&self, file: ConfigFile) -> Result<String, ClientError> {
+        if file != ConfigFile::Server {
+            return Ok(file.manager_name());
+        }
+        let profile = self
+            .client()?
+            .instances()?
+            .into_iter()
+            .find(|i| i.id == INSTANCE)
+            .and_then(|i| i.server_profile)
+            .ok_or(ClientError::NoInstance)?;
+        Ok(format!("server@{profile}.ini"))
+    }
+
+    /// The name to show the user, in a path: the profile's when the record
+    /// answers, the id's when it cannot be read. A name to show, never one to
+    /// read or write.
+    fn display_name(&self, file: ConfigFile) -> String {
+        self.manager_name(file)
+            .unwrap_or_else(|_| file.manager_name())
+    }
+
     fn read_config(&self, file: ConfigFile) -> Result<Option<String>, ClientError> {
-        let read = self.client()?.read_file(&file.manager_name())?;
+        let read = self.client()?.read_file(&self.manager_name(file)?)?;
         if file == ConfigFile::Server && read.as_ref().is_some_and(|f| f.withheld) {
             self.withheld.store(true, Ordering::Relaxed);
         }
@@ -121,7 +149,7 @@ impl ManagerBackend {
                 .opencode_api_key
                 .is_none();
         self.client()?
-            .write_file(&file.manager_name(), contents, keep)
+            .write_file(&self.manager_name(file)?, contents, keep)
     }
 }
 
@@ -132,7 +160,8 @@ const STOP_POLL: Duration = Duration::from_millis(250);
 /// seam, from the manager on Linux and from the per-user files on `Direct`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigFile {
-    /// `server@default.ini` (`server.ini` per user).
+    /// The instance's server profile file, `server@<server_profile>.ini`, the
+    /// profile `Instances()` names (`server.ini` per user).
     Server,
     /// `models.ini`.
     Models,
@@ -148,7 +177,10 @@ impl ConfigFile {
         ConfigFile::ModelsDisabled,
     ];
 
-    /// The file's name among the manager's files.
+    /// The file's name among the manager's files, named after the instance's
+    /// id. The server file is the profile the record names for `INSTANCE`,
+    /// which is what the seam reads and writes
+    /// ([`ManagerBackend::manager_name`]).
     pub fn manager_name(self) -> String {
         match self {
             ConfigFile::Server => format!("server@{INSTANCE}.ini"),
@@ -257,7 +289,7 @@ impl Backend {
     pub fn config_path(&self, file: ConfigFile) -> PathBuf {
         match self {
             Backend::Direct => file.user_path(),
-            Backend::Manager(_) => crate::paths::engine_config_dir().join(file.manager_name()),
+            Backend::Manager(m) => crate::paths::engine_config_dir().join(m.display_name(file)),
         }
     }
 }
@@ -716,7 +748,7 @@ pub fn backend() -> &'static Backend {
 /// A recording [`ManagerClient`] for the tests of this seam and its callers.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
-    use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+    use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
     use std::sync::{Arc, Mutex};
 
     /// One log shared by the fake and whatever else a test records (the
@@ -773,6 +805,12 @@ pub mod fake {
         pub fail_actions: Option<ClientError>,
         /// What status fails with.
         pub fail_status: Option<ClientError>,
+        /// The instances `instances()` answers. The default is the manager of
+        /// the files these tests name: `default`, running the server profile
+        /// `default`.
+        pub instances: Vec<InstanceInfo>,
+        /// What `instances()` fails with (an older manager, no connection).
+        pub fail_instances: Option<ClientError>,
         /// The files `read_file` answers and `write_file` replaces.
         pub files: Files,
         /// What read_file fails with.
@@ -804,6 +842,15 @@ pub mod fake {
                 states: Mutex::new(vec![state]),
                 fail_actions: None,
                 fail_status: None,
+                instances: vec![InstanceInfo {
+                    id: "default".into(),
+                    engine: "llama.cpp".into(),
+                    server_profile: Some("default".into()),
+                    port: 0,
+                    profile_tags: vec![],
+                    instance_tags: vec![],
+                }],
+                fail_instances: None,
                 files: Files::default(),
                 fail_read: None,
                 withhold: Arc::new(Mutex::new(false)),
@@ -821,6 +868,20 @@ pub mod fake {
                 .lock()
                 .unwrap()
                 .insert(name.to_string(), text.to_string());
+            self
+        }
+
+        /// The fake whose `instances()` answers one instance: `id` running the
+        /// server profile `server_profile` on `port`.
+        pub fn with_instance(mut self, id: &str, server_profile: &str, port: u16) -> FakeClient {
+            self.instances = vec![InstanceInfo {
+                id: id.into(),
+                engine: "llama.cpp".into(),
+                server_profile: Some(server_profile.into()),
+                port,
+                profile_tags: vec![],
+                instance_tags: vec![],
+            }];
             self
         }
 
@@ -867,6 +928,14 @@ pub mod fake {
         }
         fn restart(&self, id: &str) -> Result<(), ClientError> {
             self.act("restart", id, vec![InstanceState::Active])
+        }
+        /// The instances. Deliberately not recorded in the log: the log pins
+        /// the actions and the file names, and a listing read is neither.
+        fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+            if let Some(e) = &self.fail_instances {
+                return Err(e.clone());
+            }
+            Ok(self.instances.clone())
         }
         fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
             self.record("read_file", name);
@@ -946,6 +1015,19 @@ pub mod fake {
     impl ManagerClient for DiskClient {
         fn list_instances(&self) -> Result<Vec<String>, ClientError> {
             Err(ClientError::Unavailable)
+        }
+        /// The record the packages ship, as the manager of these files reads
+        /// it: the instance `default` running the server profile `default`, so
+        /// the server file keeps the name `path` maps.
+        fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+            Ok(vec![InstanceInfo {
+                id: super::INSTANCE.to_string(),
+                engine: "llama.cpp".to_string(),
+                server_profile: Some(super::INSTANCE.to_string()),
+                port: 0,
+                profile_tags: Vec::new(),
+                instance_tags: Vec::new(),
+            }])
         }
         fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {
             Err(ClientError::Unavailable)
@@ -3038,5 +3120,164 @@ mod tests {
             Ok(t) => panic!("a test build read a journal: {t:?}"),
         }
         assert!(log.lock().unwrap().is_empty(), "no manager call");
+    }
+}
+
+/// The server file of the instance is the profile `Instances()` names for it,
+/// never `server@<id>.ini` (slice 13, ARCHITECTURE.md).
+#[cfg(test)]
+mod instance_profile_tests {
+    use super::fake::{self, FakeClient};
+    use super::{ConfigFile, InstanceState};
+    use pai_core::client::ClientError;
+
+    /// The manager `default` runs the server profile `big`, whose file holds
+    /// `Port = 8099`.
+    fn manager_with_big() -> (fake::Log, FakeClient) {
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_instance("default", "big", 8080)
+            .with_file("server@big.ini", "[Server]\nPort = 8099\n");
+        (log, c)
+    }
+
+    /// The file names the fake was asked to read or write, in order: the
+    /// names the seam chose.
+    fn names_asked(log: &fake::Log) -> Vec<String> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| {
+                e.strip_prefix("read_file ")
+                    .or_else(|| e.strip_prefix("write_file "))
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_server_read_is_the_profile_default_names() {
+        let (log, c) = manager_with_big();
+        let b = fake::backend(c);
+        assert_eq!(
+            b.read_config(ConfigFile::Server),
+            Ok(Some("[Server]\nPort = 8099\n".to_string())),
+            "the profile's file, not an empty read"
+        );
+        assert_eq!(
+            names_asked(&log),
+            ["server@big.ini"],
+            "no call names server@default.ini"
+        );
+    }
+
+    #[test]
+    fn the_server_save_is_the_profile_default_names() {
+        let (log, c) = manager_with_big();
+        let files = c.files.clone();
+        let b = fake::backend(c);
+        b.write_config(ConfigFile::Server, "[Server]\nPort = 8080\n")
+            .expect("the write goes through");
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@big.ini"],
+            "no call names server@default.ini"
+        );
+        assert_eq!(
+            files
+                .lock()
+                .unwrap()
+                .get("server@big.ini")
+                .map(String::as_str),
+            Some("[Server]\nPort = 8080\n")
+        );
+        assert!(
+            !files.lock().unwrap().contains_key("server@default.ini"),
+            "the file the instance does not use stays untouched"
+        );
+    }
+
+    /// The path the user is shown is the file the seam reads.
+    #[test]
+    fn the_path_shown_is_the_profile_file() {
+        let (_log, c) = manager_with_big();
+        let b = fake::backend(c);
+        let p = b.config_path(ConfigFile::Server);
+        assert_eq!(
+            p.file_name().and_then(std::ffi::OsStr::to_str),
+            Some("server@big.ini"),
+            "{p:?}"
+        );
+    }
+
+    #[test]
+    fn an_instances_that_fails_reads_and_writes_nothing() {
+        let (log, mut c) = manager_with_big();
+        c.fail_instances = Some(ClientError::Unavailable);
+        let c = c.with_file("server@default.ini", "[Server]\nPort = 8080\n");
+        let files = c.files.clone();
+        let b = fake::backend(c);
+        assert_eq!(
+            b.read_config(ConfigFile::Server),
+            Err(ClientError::Unavailable.text()),
+            "the manager's own error, no fall back"
+        );
+        assert_eq!(
+            b.write_config(ConfigFile::Server, "[Server]\nPort = 8080\n"),
+            Err(ClientError::Unavailable.text())
+        );
+        assert!(
+            names_asked(&log).is_empty(),
+            "the file is never asked: {:?}",
+            names_asked(&log)
+        );
+        let files = files.lock().unwrap();
+        assert_eq!(
+            files.get("server@big.ini").map(String::as_str),
+            Some("[Server]\nPort = 8099\n"),
+            "nothing written"
+        );
+        assert_eq!(
+            files.get("server@default.ini").map(String::as_str),
+            Some("[Server]\nPort = 8080\n"),
+            "never a fall back to the file of the id"
+        );
+    }
+
+    /// `default` is not in the list: the same refusal, nothing read, nothing
+    /// written.
+    #[test]
+    fn an_absent_default_is_no_instance() {
+        let (log, c) = manager_with_big();
+        let c = c.with_instance("coder", "coder", 8081);
+        let b = fake::backend(c);
+        assert_eq!(
+            b.read_config(ConfigFile::Server),
+            Err(ClientError::NoInstance.text())
+        );
+        assert_eq!(
+            b.write_config(ConfigFile::Server, "[Server]\nPort = 8080\n"),
+            Err(ClientError::NoInstance.text())
+        );
+        assert!(
+            names_asked(&log).is_empty(),
+            "no file of any name is asked: {:?}",
+            names_asked(&log)
+        );
+    }
+
+    /// The model profiles files keep their names: the profile of an instance
+    /// says where the server file is, nothing else.
+    #[test]
+    fn the_model_profiles_files_keep_their_names() {
+        let (log, c) = manager_with_big();
+        let c = c.with_file("models.ini", "[Qwen3.8-27B]\nmodel = /m/q.gguf\n");
+        let b = fake::backend(c);
+        assert_eq!(
+            b.read_config(ConfigFile::Models),
+            Ok(Some("[Qwen3.8-27B]\nmodel = /m/q.gguf\n".to_string()))
+        );
+        assert_eq!(b.read_config(ConfigFile::ModelsDisabled), Ok(None));
+        assert_eq!(names_asked(&log), ["models.ini", "models.ini.disabled"]);
     }
 }

@@ -330,17 +330,34 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let port = row.get("port").and_then(Value::as_u64);
+            // The field is there in every row of this protocol, so a row
+            // without it is an older manager's list, which the client cannot
+            // use. A row naming no profile is a section that names no server
+            // file: no instance to act on, and its row is left out.
+            let server_profile = row.get("server_profile").and_then(Value::as_str);
             match (
                 text(row, "id"),
                 text(row, "engine"),
+                server_profile,
                 port,
                 tags(row, "profile_tags"),
                 tags(row, "instance_tags"),
             ) {
-                (Some(id), Some(engine), Some(port), Some(profile_tags), Some(instance_tags)) => {
+                (
+                    Some(id),
+                    Some(engine),
+                    Some(profile),
+                    Some(port),
+                    Some(profile_tags),
+                    Some(instance_tags),
+                ) => {
+                    if profile.is_empty() {
+                        continue;
+                    }
                     out.push(InstanceInfo {
                         id,
                         engine,
+                        server_profile: Some(profile.to_string()),
                         port: u16::try_from(port).map_err(|_| ClientError::Other(v.to_string()))?,
                         profile_tags,
                         instance_tags,
@@ -786,8 +803,9 @@ mod tests {
     #[test]
     fn the_instances_reply_is_the_list_the_manager_answers() {
         let (client, _) = client_on(input(&[json!({"ok": [
-            {"id": "default", "engine": "llama.cpp", "port": 8080, "profile_tags": ["edge", "v2"], "instance_tags": []},
-            {"id": "lan-2", "engine": "llama.cpp", "port": 8081, "profile_tags": [], "instance_tags": ["gpu"]},
+            {"id": "default", "engine": "llama.cpp", "server_profile": "big", "port": 8080, "profile_tags": ["edge", "v2"], "instance_tags": []},
+            {"id": "lan-2", "engine": "llama.cpp", "server_profile": "edge-2", "port": 8081, "profile_tags": [], "instance_tags": ["gpu"]},
+            {"id": "solo", "engine": "llama.cpp", "server_profile": "", "port": 0, "profile_tags": [], "instance_tags": []},
         ]})]));
         assert_eq!(
             client.instances().expect("the list"),
@@ -795,6 +813,7 @@ mod tests {
                 InstanceInfo {
                     id: "default".into(),
                     engine: "llama.cpp".into(),
+                    server_profile: Some("big".into()),
                     port: 8080,
                     profile_tags: vec!["edge".into(), "v2".into()],
                     instance_tags: vec![],
@@ -802,6 +821,7 @@ mod tests {
                 InstanceInfo {
                     id: "lan-2".into(),
                     engine: "llama.cpp".into(),
+                    server_profile: Some("edge-2".into()),
                     port: 8081,
                     profile_tags: vec![],
                     instance_tags: vec!["gpu".into()],
@@ -814,6 +834,25 @@ mod tests {
             client.instances().expect("no instances"),
             Vec::<InstanceInfo>::new(),
             "no instance is an empty list"
+        );
+    }
+
+    /// The row of slice 13 carries `server_profile`, the `ServerProfile` of
+    /// the instance's section: every client that reads a server file needs the
+    /// name, because `server@<id>.ini` is not the file the instance uses. A
+    /// row of an older manager, which answers no such field, is not a row with
+    /// an empty profile: it is a reply the client cannot use, said as `Other`
+    /// like every row of the wrong shape, so no client reads or writes a
+    /// `server@.ini`.
+    #[test]
+    fn an_instances_row_without_the_server_profile_is_the_old_shape() {
+        let (client, _) = client_on(input(&[json!({"ok": [
+            {"id": "default", "engine": "llama.cpp", "port": 8080, "profile_tags": [], "instance_tags": []},
+        ]})]));
+        let got = client.instances();
+        assert!(
+            matches!(got, Err(ClientError::Other(_))),
+            "an older manager's list, a row naming no profile, is refused: {got:?}"
         );
     }
 

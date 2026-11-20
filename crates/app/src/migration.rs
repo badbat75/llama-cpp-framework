@@ -754,4 +754,56 @@ mod import_tests {
         assert!(!import_offered(&b, dir.path()));
         assert_eq!(fake::writes(&log), Vec::<String>::new());
     }
+
+    /// The instance `default` runs the server profile `big`: the user's
+    /// `server.ini` goes to `server@big.ini`, the file the instance uses, and
+    /// never to the file of the id.
+    #[test]
+    fn the_server_file_goes_to_the_profile_the_manager_names() {
+        let dir = user_dir(&[("server.ini", SERVER)]);
+        let log = fake::log();
+        let c =
+            FakeClient::new(&log, InstanceState::Inactive).with_instance("default", "big", 8080);
+        let files = c.files.clone();
+        assert_eq!(
+            import_user_config(&fake::backend(c), dir.path()),
+            Import {
+                written: vec![ConfigFile::Server],
+                refused: None
+            }
+        );
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@big.ini"],
+            "no write names server@default.ini"
+        );
+        let files = files.lock().unwrap();
+        assert_eq!(
+            files.get("server@big.ini").map(String::as_str),
+            Some(SERVER),
+            "the user's bytes, in the profile's file"
+        );
+        assert!(
+            !files.contains_key(SERVER_SYS),
+            "the file of the id is not the target: {files:?}"
+        );
+    }
+
+    /// The manager has the profile's file: the hand over is done, with no
+    /// `server@default.ini` anywhere.
+    #[test]
+    fn having_the_profile_file_is_having_the_server_file() {
+        let dir = user_dir(&[("server.ini", SERVER)]);
+        let log = fake::log();
+        let c = FakeClient::new(&log, InstanceState::Inactive)
+            .with_instance("default", "big", 8080)
+            .with_file("server@big.ini", "[Server]\r\nPort = 8080\r\n");
+        let b = fake::backend(c);
+        assert!(
+            !import_offered(&b, dir.path()),
+            "the manager has the file the instance reads"
+        );
+        assert_eq!(import_user_config(&b, dir.path()), Import::default());
+        assert_eq!(fake::writes(&log), Vec::<String>::new());
+    }
 }

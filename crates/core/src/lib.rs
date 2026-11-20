@@ -23,6 +23,8 @@ pub mod server_cfg;
 pub mod slot_save;
 pub mod slot_state;
 pub mod strings;
+// One file per installed package, holding its version, read for the web UI.
+pub mod versions;
 // The end-to-end test that runs every phase redirecting the data root
 // (src/tests/mod.rs); per-module unit tests stay inline in their own files.
 #[cfg(test)]

@@ -24,3 +24,4 @@ pub mod strings_share;
 pub mod ui;
 pub mod util;
 pub mod version;
+pub mod versions_share;

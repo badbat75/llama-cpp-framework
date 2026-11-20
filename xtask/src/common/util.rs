@@ -134,7 +134,9 @@ pub fn cmd<S: AsRef<OsStr>>(program: S) -> Command {
 /// (`ldd`): LD_LIBRARY_PATH is removed from its environment, so the answer
 /// comes from the file's RUNPATH. `ldd` honours the caller's LD_LIBRARY_PATH,
 /// so a shell exporting another dist moves the answer out of the dist this
-/// build is configured with.
+/// build is configured with. Unix only: LD_LIBRARY_PATH is the loader variable
+/// of the Linux package phase, its only caller.
+#[cfg(unix)]
 pub fn cmd_without_ld_library_path<S: AsRef<OsStr>>(program: S) -> Command {
     let mut c = Command::new(program);
     c.env_remove("LD_LIBRARY_PATH");
@@ -416,6 +418,7 @@ mod tests {
     /// LD_LIBRARY_PATH as a removal (`(key, None)` in `get_envs`), and the
     /// plain `cmd` keeps the caller's environment untouched for every other
     /// command.
+    #[cfg(unix)]
     #[test]
     fn the_loader_lookup_removes_ld_library_path() {
         let envs = |c: &mut Command| -> Vec<(String, Option<String>)> {

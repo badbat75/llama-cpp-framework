@@ -809,13 +809,13 @@ pub(crate) fn manager_dbus_client_e2e() {
     }
 
     // ── The tags of an instance, over the wire ───────────────────────────
-    // `Instances` answers the port and the two lists, one row per section of
-    // the record: the port and the tags of the server profile the section
-    // names (its `ServerProfile`, the file the launch reads), and the tags of
-    // the section itself. A profile whose file is not there is no port and no
-    // profile tags. `SetInstanceTags` is the plain verb `(sas)`: the accepted
-    // call writes the record, every refusal is the core's own error and
-    // writes nothing.
+    // `Instances` answers the server profile, the port and the two lists, one
+    // row per section of the record: the `ServerProfile` the section names,
+    // and the port and the tags of that profile's file (the file the launch
+    // reads), and the tags of the section itself. A profile whose file is not
+    // there is no port and no profile tags. `SetInstanceTags` is the plain
+    // verb `(sas)`: the accepted call writes the record, every refusal is the
+    // core's own error and writes nothing.
     {
         let tagged = "[default]\nServerProfile = gpu\nTags = gpu , edge \n\n[lan-2]\nServerProfile = nowhere\n";
         std::fs::write(sys.join("instances.ini"), tagged).expect("record");
@@ -834,10 +834,19 @@ pub(crate) fn manager_dbus_client_e2e() {
         let rows = client.instances().expect("instances");
         assert_eq!(
             rows.iter()
-                .map(|i| (i.id.as_str(), i.engine.as_str(), i.port))
+                .map(|i| (
+                    i.id.as_str(),
+                    i.engine.as_str(),
+                    i.server_profile.as_deref(),
+                    i.port,
+                ))
                 .collect::<Vec<_>>(),
-            vec![("default", "llama.cpp", 8080), ("lan-2", "llama.cpp", 8099)],
-            "the record's order, each row with the port of the profile the section names"
+            vec![
+                ("default", "llama.cpp", Some("gpu"), 8080),
+                ("lan-2", "llama.cpp", Some("nowhere"), 8099),
+            ],
+            "the record's order, each row with the server profile the section names and \
+             the port of that profile: the name is the row's, never read off the id"
         );
         assert_eq!(
             rows.iter()

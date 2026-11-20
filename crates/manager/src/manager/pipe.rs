@@ -187,13 +187,16 @@ where
     let result = match request {
         Request::ListInstances => Ok(json!(manager.list_instances())),
         // One object per instance, the two tag lists kept apart: the web UI
-        // shows the profile's first and says which is which.
+        // shows the profile's first and says which is which. The server
+        // profile of a section that names none is the empty string, the same
+        // answer the bus gives.
         Request::Instances => Ok(json!(manager
             .instances()
             .iter()
             .map(|i| json!({
                 "id": i.id,
                 "engine": i.engine,
+                "server_profile": i.server_profile.clone().unwrap_or_default(),
                 "port": i.port,
                 "profile_tags": i.profile_tags,
                 "instance_tags": i.instance_tags,

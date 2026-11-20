@@ -98,6 +98,10 @@ struct FakeManager {
     delay: Duration,
     /// What `boot_enabled` answers, for the tests that read the boot flag.
     boot: Result<bool, ClientError>,
+    /// What `boot_enabled` answers for one id, ahead of `boot`: the list reads
+    /// the flag of every instance, so a test of the list needs answers that
+    /// differ per instance (one on, one off, one that cannot be read).
+    boots: HashMap<String, Result<bool, ClientError>>,
     /// What `instances` answers: the rows, each with its two tag lists. The
     /// builder leaves it the failure a client that does not know the verb
     /// answers, so a fake that says nothing about tags reads as a manager
@@ -128,17 +132,20 @@ impl FakeManager {
                 .collect(),
             delay: Duration::ZERO,
             boot: Ok(false),
+            boots: HashMap::new(),
             rows: Err(ClientError::Other("no Instances verb".into())),
             tags: Ok(()),
             log: log.clone(),
         }
     }
 
-    /// A row of `rows`: the id, the engine, the port and the two tag lists.
+    /// A row of `rows`: the id, the engine, the server profile (the id's own,
+    /// as the record names it by default), the port and the two tag lists.
     fn row(id: &str, port: u16, profile_tags: &[&str], instance_tags: &[&str]) -> InstanceInfo {
         InstanceInfo {
             id: id.to_string(),
             engine: "llama.cpp".to_string(),
+            server_profile: Some(id.to_string()),
             port,
             profile_tags: profile_tags.iter().map(|t| t.to_string()).collect(),
             instance_tags: instance_tags.iter().map(|t| t.to_string()).collect(),
@@ -193,7 +200,10 @@ impl ManagerClient for FakeManager {
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         self.record(format!("boot_enabled {id}"));
-        self.boot.clone()
+        self.boots
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| self.boot.clone())
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
         self.record(format!("set_boot_enabled {id} {enabled}"));
@@ -771,7 +781,7 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "no rows: port 0, no tags"
     );
 }
@@ -810,19 +820,94 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] },
-            { "id": "coder", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": [] },
-            { "id": "big-model", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [] },
-            { "id": "a", "engine": "llama.cpp", "state": "activating", "port": 0, "tags": [], "instanceTags": [] },
-            { "id": "z", "engine": "llama.cpp", "state": "deactivating", "port": 0, "tags": [], "instanceTags": [] },
-            { "id": "odd", "engine": "llama.cpp", "state": "maintenance", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "big-model", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "a", "engine": "llama.cpp", "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "z", "engine": "llama.cpp", "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "odd", "engine": "llama.cpp", "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false },
         ])
     );
 }
 
+/// The list carries each instance's own boot flag (`boot`): the page's switch
+/// reads it from the list, so the list asks `BootEnabled` for every instance,
+/// as the manager answers it of the bff's own account. Each instance keeps its
+/// own answer: one on and one off is not one flag for the host.
+#[tokio::test]
+async fn each_instance_carries_its_own_boot_flag() {
+    let app = app_at(|l| {
+        let mut m = FakeManager::new(
+            l,
+            &[
+                ("default", InstanceState::Active),
+                ("coder", InstanceState::Inactive),
+            ],
+        );
+        m.boots.insert("default".into(), Ok(true));
+        m.boots.insert("coder".into(), Ok(false));
+        m
+    });
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true },
+            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+        ])
+    );
+    assert_eq!(
+        app.calls(),
+        [
+            "list",
+            "instances",
+            "status default",
+            "boot_enabled default",
+            "status coder",
+            "boot_enabled coder",
+        ],
+        "the flag of each instance is read once, beside its state"
+    );
+}
+
+/// One boot flag that cannot be read is `null` on that one item and the list is
+/// still answered: the flag is extra, like the row's port and tags, and a host
+/// whose systemd cannot be asked still shows its instances.
+#[tokio::test]
+async fn a_boot_flag_that_cannot_be_read_is_null_and_the_list_answers() {
+    let app = app_at(|l| {
+        let mut m = FakeManager::new(
+            l,
+            &[
+                ("default", InstanceState::Active),
+                ("coder", InstanceState::Inactive),
+            ],
+        );
+        m.boots.insert(
+            "coder".into(),
+            Err(ClientError::Service(
+                "Unit llama.cpp@coder.service not loaded.".into(),
+            )),
+        );
+        m
+    });
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null },
+        ]),
+        "the instance whose flag is unanswerable is listed, its flag null"
+    );
+}
+
 /// Reading the instances asks only the calls the manager answers without
-/// authorization: the list, the rows for the tags, then each status, the rows
-/// asked once for the whole list. Nothing starts, stops or reads a file.
+/// authorization: the list, the rows for the tags, then each status and each
+/// boot flag, the rows asked once for the whole list. Nothing starts, stops or
+/// reads a file.
 #[tokio::test]
 async fn reading_the_instances_asks_only_the_read_only_calls() {
     let app = app_listing(&[
@@ -833,7 +918,14 @@ async fn reading_the_instances_asks_only_the_read_only_calls() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         app.calls(),
-        ["list", "instances", "status default", "status coder"]
+        [
+            "list",
+            "instances",
+            "status default",
+            "boot_enabled default",
+            "status coder",
+            "boot_enabled coder",
+        ]
     );
 }
 
@@ -878,7 +970,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }])
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -959,7 +1051,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "{}",
         r.body
     );
@@ -1020,8 +1112,8 @@ async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"] },
-            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"] },
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false },
         ]),
         "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
     );
@@ -1052,6 +1144,8 @@ async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
             "port": 8080,
             "tags": ["edge", "v2", "gpu", "lab"],
             "instanceTags": ["v2", "lab"],
+            "boot": false,
+            "boot": false,
         }]),
         "the union, then the instance's own list: `edge` and `gpu` are the profile's, they stay out of `instanceTags`"
     );
@@ -1071,7 +1165,7 @@ async fn a_manager_that_answers_no_rows_shows_no_tags() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "no rows: port 0, no tags"
     );
     assert!(

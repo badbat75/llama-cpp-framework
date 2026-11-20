@@ -149,8 +149,9 @@ async fn version_refuses_another_method() {
 // ── What it serves ──────────────────────────────────────────────────────
 
 /// The shipped router keeps every read behind a session (`PLAN.md` 13a): with
-/// no cookie, `GET /api/version`, `GET /api/instances` and an instance's boot
-/// flag are 401 `session-required`, with no `Set-Cookie`. The page at `/` and
+/// no cookie, `GET /api/version`, `GET /api/instances`, an instance's boot
+/// flag and the node's own card `GET /api/node` are 401 `session-required`,
+/// with no `Set-Cookie`. The page at `/` and
 /// its files answer to anyone. What each read answers to a signed-in reader is
 /// pinned with a fake authenticator (`tests/instances.rs`, `tests/control.rs`:
 /// these tests hand the real router, whose authenticator is the machine's).
@@ -160,6 +161,7 @@ async fn the_reads_need_a_session_on_the_shipped_router() {
         "/api/version",
         "/api/instances",
         "/api/instances/default/boot",
+        "/api/node",
     ] {
         send(Method::GET, uri).await.assert_session_required();
     }

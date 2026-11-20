@@ -3477,3 +3477,168 @@ pub(crate) fn cli_import_e2e() {
         MODELS
     );
 }
+
+/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): the server
+/// file `pai server …` reads and writes is the profile the manager's record
+/// names, never `server@<id>.ini`, and a record that cannot be read fails the
+/// command with its own text and no server file read (`ARCHITECTURE.md`,
+/// slice 13).
+#[cfg(test)]
+pub(crate) fn cli_server_profile_e2e() {
+    use crate::server_control::fake::{self, FakeClient};
+    use clap::Parser;
+    use pai_core::client::{ClientError, InstanceState};
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let user = crate::paths::config_dir();
+    let cli = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
+    /// The file reads the fake was asked for, in order.
+    fn reads(log: &fake::Log) -> Vec<String> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.starts_with("read_file "))
+            .cloned()
+            .collect()
+    }
+    const SEED: &str = "[Server]\nPort = 8080\n";
+
+    // The record's row for `default` names the profile `big`: the read and the
+    // write are `server@big.ini`, and the file of the id is left as it was.
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive)
+        .with_instance("default", "big", 0)
+        .with_file("server@big.ini", SEED)
+        .with_file("server@default.ini", "[Server]\nPort = 7777\n");
+    let files = c.files.clone();
+    fake::scoped(fake::backend(c), || {
+        log.lock().unwrap().clear();
+        run(cli(&["x", "server", "set", "--port", "8642"])).expect("server set");
+        assert_eq!(
+            // The save reads the model profile pool to check the startup count,
+            // so its read sits between the file read and the write.
+            reads(&log),
+            ["read_file server@big.ini", "read_file models.ini"],
+            "the read is the profile's file: {log:?}"
+        );
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@big.ini"],
+            "the write names the profile's file"
+        );
+        let big = files
+            .lock()
+            .unwrap()
+            .get("server@big.ini")
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(crate::server_cfg::from_text(&big).port, Some(8642), "{big}");
+        assert_eq!(
+            crate::server_cfg::from_text(
+                &files
+                    .lock()
+                    .unwrap()
+                    .get("server@default.ini")
+                    .cloned()
+                    .unwrap_or_default()
+            )
+            .port,
+            Some(7777),
+            "server@default.ini is not touched"
+        );
+    });
+
+    // `server show` reads the same file: the port it prints is the profile's.
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive)
+        .with_instance("default", "big", 0)
+        .with_file("server@big.ini", "[Server]\nPort = 9011\n");
+    fake::scoped(fake::backend(c), || {
+        log.lock().unwrap().clear();
+        run(cli(&["x", "server", "show"])).expect("server show");
+        assert_eq!(
+            reads(&log),
+            ["read_file server@big.ini"],
+            "the read is the profile's file: {log:?}"
+        );
+    });
+
+    // The record that cannot be read fails the command with its own text: no
+    // server file is read, because the record is what names it, and nothing is
+    // written. The only read is the save's own of the model profile pool
+    // (`server_cfg::save` checks the startup count before it writes).
+    let log = fake::log();
+    let mut c = FakeClient::new(&log, InstanceState::Inactive)
+        .with_file("server@default.ini", SEED)
+        .with_file("models.ini", "");
+    c.fail_instances = Some(ClientError::Unavailable);
+    let files = c.files.clone();
+    let before = files.lock().unwrap().clone();
+    match fake::scoped(fake::backend(c), || {
+        run(cli(&["x", "server", "set", "--port", "8642"]))
+    }) {
+        Ok(()) => panic!("a record that cannot be read: succeeded"),
+        Err(err) => assert!(
+            format!("{err:#}").contains(&ClientError::Unavailable.text()),
+            "{err:#} carries the manager's news"
+        ),
+    }
+    assert_eq!(
+        reads(&log),
+        ["read_file models.ini"],
+        "no server file is read, the save's pool read is all: {log:?}"
+    );
+    assert!(fake::writes(&log).is_empty(), "nothing written");
+    assert_eq!(*files.lock().unwrap(), before, "the files as they were");
+
+    // A row whose section names no profile is no instance: the command fails,
+    // and `server@<id>.ini` is never read.
+    let log = fake::log();
+    let mut c =
+        FakeClient::new(&log, InstanceState::Inactive).with_file("server@default.ini", SEED);
+    c.instances = vec![pai_core::client::InstanceInfo {
+        id: "default".into(),
+        engine: "llama.cpp".into(),
+        server_profile: None,
+        port: 0,
+        profile_tags: vec![],
+        instance_tags: vec![],
+    }];
+    let _files = c.files.clone();
+    match fake::scoped(fake::backend(c), || {
+        run(cli(&["x", "server", "set", "--port", "8642"]))
+    }) {
+        Ok(()) => panic!("a section naming no profile: succeeded"),
+        Err(err) => assert!(
+            format!("{err:#}").contains(&ClientError::NoInstance.text()),
+            "{err:#} names no instance"
+        ),
+    }
+    assert_eq!(
+        reads(&log),
+        ["read_file models.ini"],
+        "no server file is read, the save's pool read is all: {log:?}"
+    );
+    assert!(fake::writes(&log).is_empty(), "nothing written");
+
+    // The hand-over of the per-user server file goes to the profile's name, so
+    // the next `server show` reads what the import wrote.
+    std::fs::create_dir_all(&user).expect("config dir");
+    std::fs::write(user.join("server.ini"), "[Server]\r\nPort = 8080\r\n").expect("server.ini");
+    let log = fake::log();
+    let c = FakeClient::new(&log, InstanceState::Inactive).with_instance("default", "big", 0);
+    let files = c.files.clone();
+    fake::scoped(fake::backend(c), || {
+        run(cli(&["x", "config", "import"])).expect("import");
+        assert_eq!(
+            fake::writes(&log),
+            ["write_file server@big.ini"],
+            "the import writes the profile's file"
+        );
+        assert!(
+            files.lock().unwrap().contains_key("server@big.ini"),
+            "the profile's file: {:?}",
+            files.lock().unwrap().keys().clone().collect::<Vec<_>>()
+        );
+    });
+}

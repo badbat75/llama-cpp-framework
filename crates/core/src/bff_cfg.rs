@@ -67,6 +67,48 @@ pub fn listen() -> Option<SocketAddr> {
     listen_at(&config_path())
 }
 
+/// The folder of the version files of the installed packages, in the engine's
+/// machine tree, beside the server config files the manager owns: on Linux
+/// `/usr/share/private-ai/llama.cpp/versions`, on Windows the engine's
+/// `<InstallDir>\share\versions` (the layout both OSes' packages write:
+/// `xtask/src/common/components.rs`). `None` where the tree is not this
+/// install's, the caller answering with no engine: a folder that is not there
+/// is no version of anything, so it answers the same as an empty one.
+pub fn versions_dir() -> Option<std::path::PathBuf> {
+    engine_share_dir(&crate::paths::engine_config_dir())
+}
+
+/// The engine's share folder, from its config folder: `versions` beside it on
+/// Linux (the config folder is `/etc/llama.cpp`, and the share folder lives
+/// under `/usr/share`), and `share\versions` under the engine's install
+/// folder on Windows. `None` when the layout is neither: a tree build, where
+/// the engine ships no version files.
+#[cfg(target_os = "linux")]
+fn engine_share_dir(config_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let share = std::path::Path::new("/usr/share/private-ai/llama.cpp");
+    if config_dir == std::path::Path::new("/etc/llama.cpp") {
+        Some(share.join("versions"))
+    } else {
+        None
+    }
+}
+
+/// The Windows answer: the engine's install folder, the one its MSI registers,
+/// is the root of `share\versions`.
+#[cfg(target_os = "windows")]
+fn engine_share_dir(_config_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    Some(
+        crate::paths::engine_install_dir()?
+            .join("share")
+            .join("versions"),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn engine_share_dir(_config_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +166,28 @@ mod tests {
             listen_at(&path),
             None,
             "a path through a regular file is unreadable, not absent"
+        );
+    }
+
+    /// The folder of the version files the engine's package writes (the layout
+    /// `xtask/src/common/components.rs` ships: `versions/<package>`): the
+    /// packaged folder on Linux, and no folder at all for a tree build, whose
+    /// engine ships no version files. The service reads nothing then, which is
+    /// the same answer as a host with no engine: no version.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_versions_folder_is_the_engines_share_folder() {
+        assert_eq!(
+            engine_share_dir(std::path::Path::new("/etc/llama.cpp")),
+            Some(std::path::PathBuf::from(
+                "/usr/share/private-ai/llama.cpp/versions"
+            )),
+            "the folder the deb and the rpm write is the folder the service reads"
+        );
+        assert_eq!(
+            engine_share_dir(std::path::Path::new("/tmp/redirected/engine-config")),
+            None,
+            "a redirected config tree is no install: the service reads no folder"
         );
     }
 }

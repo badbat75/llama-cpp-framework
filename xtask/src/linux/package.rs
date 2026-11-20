@@ -129,6 +129,18 @@ fn share(sub: &str) -> String {
     format!("usr/share/private-ai/{sub}")
 }
 
+/// The version file of one package: its path under the staging root and its
+/// text, `versions/<package>` under the engine's share folder, one line, the
+/// version this package carries. The engine's and each runtime's own, each
+/// owned by the package its name names (`components::of`), in the folder the
+/// web service reads (`pai_core::bff_cfg::versions_dir`).
+fn versions_file(c: Component, version: &str) -> (String, String) {
+    (
+        format!("{}{}", components::ENGINE_VERSIONS_DIR, c.package()),
+        format!("{version}\n"),
+    )
+}
+
 /// The `.spec` of one package, whose `%files` lists only what `root` holds.
 fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
     let package = f.component.package();
@@ -750,6 +762,21 @@ pub fn run(
         .filter(|c| c.is_runtime())
         .map(|c| (*c, version_of(*c)))
         .collect();
+
+    // The version of the engine and of each runtime it ships, one file per
+    // package in the folder the web service reads, named after the package and
+    // holding the version this package carries (slice 13). Each file goes to
+    // the package it names (`components::of`), so an engine upgrade rewrites
+    // only `llama.cpp` and a new SDK only its runtime's.
+    for c in present
+        .iter()
+        .filter(|c| **c == Component::Llama || c.is_runtime())
+    {
+        let (rel, text) = versions_file(*c, &version_of(*c));
+        let dest = components::root(&roots, *c).join(&rel);
+        std::fs::create_dir_all(dest.parent().unwrap())?;
+        std::fs::write(&dest, text)?;
+    }
 
     // ── Licences ────────────────────────────────────────────────────────
     let mut licence_fields = Vec::new();
@@ -2481,6 +2508,77 @@ mod tests {
             !spec.lines().any(|l| l.trim_start().starts_with("%config")),
             "{spec}"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The engine's and each runtime's `.deb` and `.rpm` carry their own
+    /// version file, the one the web service reads (`ARCHITECTURE.md`, slice
+    /// 13): `versions/<package>` under the engine's share folder, one line, the
+    /// version that package carries. The split puts each file in the tree of
+    /// the package its name names, and no tree holds another's; the `.rpm`
+    /// spec takes it (`check_files` is rpmbuild's rule: every file of the tree
+    /// is in some `%files` line), and the `.deb` is that same tree.
+    #[test]
+    fn each_package_ships_its_own_version_file() {
+        let dir = scratch("versions-files");
+        let stage = dir.join("stage");
+        let all: Vec<(Component, String)> = [
+            (Component::Llama, ENGINE),
+            (Component::Rocm, "10.1.0"),
+            (Component::Cuda, "13.5.0+nccl.2.32.3"),
+            (Component::Vulkan, "1.4.363.1"),
+        ]
+        .into_iter()
+        .map(|(c, v)| (c, v.to_string()))
+        .collect();
+        put(&stage, "usr/bin/llama-server", ELF, 0o755);
+        for (c, version) in &all {
+            let (rel, text) = versions_file(*c, version);
+            assert_eq!(
+                rel,
+                format!("{}{}", components::ENGINE_VERSIONS_DIR, c.package()),
+                "named after the package it carries"
+            );
+            assert_eq!(text, format!("{version}\n"), "one line, no more");
+            assert_eq!(components::of(&rel), *c, "{rel}");
+            put(&stage, &rel, text.as_bytes(), 0o644);
+        }
+        let roots = dir.join("roots");
+        let present = components::split(&stage, &roots).unwrap();
+        for (c, version) in &all {
+            assert!(present.contains(c), "{} is packaged", c.package());
+            let tree = components::root(&roots, *c);
+            assert_eq!(
+                std::fs::read_to_string(
+                    tree.join(components::ENGINE_VERSIONS_DIR).join(c.package())
+                )
+                .unwrap(),
+                format!("{version}\n"),
+                "{} ships its own version",
+                c.package()
+            );
+            for other in &all {
+                if other.0 != *c {
+                    assert!(
+                        !tree
+                            .join(components::ENGINE_VERSIONS_DIR)
+                            .join(other.0.package())
+                            .exists(),
+                        "{} holds {}'s version",
+                        c.package(),
+                        other.0.package()
+                    );
+                }
+            }
+            let f = fields_v(*c, version, &[], None);
+            let spec = rpm_spec(&f, "MIT", "libggml", &tree);
+            check_files(&spec, &tree);
+            let path = format!("/{}{}", components::ENGINE_VERSIONS_DIR, c.package());
+            assert!(
+                files_section(&spec).iter().any(|l| covers(l, &path)),
+                "{path} is in no %files line:\n{spec}"
+            );
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

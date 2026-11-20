@@ -122,7 +122,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -261,6 +261,20 @@ impl ManagerClient for FakeManager {
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
         Ok(InstanceState::Active)
+    }
+    /// The record: `default` on the server profile `default`, with no port and
+    /// no tags of its own. The instances list reads the port and the two tag
+    /// lists here, and the server page reads the name of the file it saves.
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        self.record("instances".into());
+        Ok(vec![InstanceInfo {
+            id: "default".into(),
+            engine: ENGINE.into(),
+            server_profile: Some("default".into()),
+            port: 0,
+            profile_tags: vec![],
+            instance_tags: vec![],
+        }])
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {
         self.record(format!("start {id}"));
@@ -1170,7 +1184,7 @@ async fn a_get_route_is_never_refused_for_these_headers() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false}]),
             "{}",
             r.body
         );
@@ -1212,10 +1226,15 @@ async fn a_get_route_is_never_refused_for_these_headers() {
             app.calls(),
             vec![
                 "list",
+                "instances",
                 "status default",
                 "boot_enabled default",
+                "boot_enabled default",
+                "instances",
                 "read server@default.ini",
-            ]
+            ],
+            "the list reads its rows and each instance's state and boot flag, \
+             the boot read the flag, the server read the record and its file"
         );
     }
 }
@@ -1673,7 +1692,7 @@ async fn a_loopback_host_is_answered_as_today() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
             "Host: {host}: {}",
             r.body
         );
@@ -1744,7 +1763,7 @@ async fn an_ip_host_off_loopback_is_answered() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
             "Host: {host}: {}",
             r.body
         );
@@ -1824,7 +1843,7 @@ async fn a_machine_name_in_the_list_is_answered() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
             "Host: {host}: {}",
             r.body
         );
@@ -1996,7 +2015,7 @@ async fn localhost_and_an_ip_are_answered_with_a_name_list() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2037,7 +2056,7 @@ async fn a_trailing_dot_on_a_machine_name_is_the_same_name() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2286,7 +2305,7 @@ async fn a_loopback_host_is_answered_at_a_loopback_listen() {
                 .await;
             assert_eq!(
                 r.json(),
-                json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+                json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
                 "Listen {listen}, Host: {host}: {}",
                 r.body
             );
@@ -2450,7 +2469,7 @@ async fn a_lan_only_listen_answers_the_other_addresses() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
             "Listen {LISTEN_LAN}, Host: {host}: {}",
             r.body
         );
@@ -2532,7 +2551,7 @@ async fn a_request_with_no_host_is_answered_as_today() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+        json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
         "{}",
         r.body
     );
@@ -2934,11 +2953,12 @@ impl App {
     }
 
     /// The instances list of the fixture, the answer a read at an answered name
-    /// carries.
-    fn instances_body(r: &Reply, host: &str) {
+    /// carries. `boot` is the flag the fake holds at that moment: a test that
+    /// wrote the switch goes on reading it back as true.
+    fn instances_body(r: &Reply, host: &str, boot: bool) {
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": []}]),
+            json!([{"id": "default", "engine": ENGINE, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": boot}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2982,7 +3002,7 @@ async fn a_domain_that_arrives_after_the_start_is_answered() {
             &named,
         )
         .await;
-    App::instances_body(&r, MACHINE_HOST);
+    App::instances_body(&r, MACHINE_HOST, false);
     app.sign_in_raw(CREDENTIALS, &named).await.assert_ok();
     app.ask_raw(
         Method::POST,
@@ -3015,7 +3035,7 @@ async fn a_domain_that_arrives_after_the_start_is_answered() {
     // list it kept, with no fresh read.
     source.set(&["aorus", "aorus.local"]);
     let r = app.read_at(MACHINE_HOST, &cookie).await;
-    App::instances_body(&r, MACHINE_HOST);
+    App::instances_body(&r, MACHINE_HOST, true);
     assert_eq!(
         source.asks() - base,
         2,
@@ -3057,14 +3077,14 @@ async fn a_reread_replaces_the_list_a_name_the_machine_dropped_is_refused() {
     // The name the machine answered at the start is answered, and answering it
     // asks the source for nothing.
     let r = app.read_at(MACHINE_HOST, &cookie).await;
-    App::instances_body(&r, MACHINE_HOST);
+    App::instances_body(&r, MACHINE_HOST, false);
     assert_eq!(source.asks() - base, 0, "an answered name read the machine");
 
     // The machine's facts drop the name. Nothing re-reads on its own, so the
     // guard goes on answering from the list it has.
     source.set(&["aorus", "aorus.local"]);
     let r = app.read_at(MACHINE_HOST, &cookie).await;
-    App::instances_body(&r, MACHINE_HOST);
+    App::instances_body(&r, MACHINE_HOST, false);
     assert_eq!(
         source.asks() - base,
         0,
@@ -3191,7 +3211,7 @@ async fn a_fixed_hosts_list_never_reads_the_machine() {
 
     // The one name of the list, answered.
     let r = app.read_at(MACHINE_HOST, &cookie).await;
-    App::instances_body(&r, MACHINE_HOST);
+    App::instances_body(&r, MACHINE_HOST, false);
     let (calls, connects, principals, asked) =
         (app.calls(), app.connects(), app.principals(), app.asked());
 
@@ -3240,7 +3260,7 @@ async fn localhost_and_the_addresses_ask_the_machine_for_nothing() {
     ] {
         let named = host_line(host);
         let r = app.read_at(host, &cookie).await;
-        App::instances_body(&r, host);
+        App::instances_body(&r, host, false);
         app.ask_raw(
             Method::POST,
             "/api/instances/default/stop",

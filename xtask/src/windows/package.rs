@@ -12,6 +12,7 @@ use crate::common::msi;
 use crate::common::ui;
 use crate::common::util::{self, cmd, gfx_arch, run as run_cmd};
 use crate::common::version;
+use crate::common::versions_share;
 use crate::Product;
 use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -594,6 +595,38 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
             for (name, text) in msi::engine_defaults() {
                 std::fs::write(defaults.join(name), text)?;
             }
+
+            // The installed versions, one file per engine and bundled runtime
+            // in share\versions\, named as the Linux package: the web service
+            // reads that folder (`pai_core::bff_cfg::versions_dir`,
+            // `ARCHITECTURE.md` slice 13). A runtime is listed when the
+            // bundling above took a library from its dist; its version is the
+            // dist folder's name, empty when the dist sits outside the layout
+            // (the reader answers no version for an empty file).
+            let mut versions: Vec<(String, Option<String>)> = Vec::new();
+            for (label, sdk, dist) in [
+                ("ROCm", "rocm", hip_root.clone()),
+                ("CUDA", "cuda", dists.find_cuda()),
+                ("Vulkan", "vulkan", dists.find_vulkan()),
+            ] {
+                if !bundled.get(label).is_some_and(|names| !names.is_empty()) {
+                    continue;
+                }
+                versions.push((
+                    versions_share::runtime_package(sdk),
+                    dist.as_deref().and_then(versions_share::dist_version),
+                ));
+            }
+            let versions: Vec<(&str, Option<&str>)> = versions
+                .iter()
+                .map(|(package, version)| (package.as_str(), version.as_deref()))
+                .collect();
+            versions_share::stage(
+                &stage.join("share").join("versions"),
+                versions_share::ENGINE_NAME,
+                &llama_version,
+                &versions,
+            )?;
             defines.extend([
                 ("Version", llama_version.clone()),
                 ("HasLib", (stage.join("lib").exists() as u8).to_string()),

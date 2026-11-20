@@ -40,9 +40,11 @@ pub const INTERFACE: &str = "org.privateai.Manager1";
 /// built before `Version` answers [`DbusClient::version`] with it.
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 
-/// One row of `Instances`, as the bus answers it: `(s id, s engine, q port,
-/// as profile_tags, as instance_tags)`, the whole list one `a(ssqasas)`.
-type InstanceRow = (String, String, u16, Vec<String>, Vec<String>);
+/// One row of `Instances`, as the bus answers it: `(s id, s engine,
+/// s server_profile, q port, as profile_tags, as instance_tags)`, the whole
+/// list one `a(sssqasas)`. A section naming no server profile is the empty
+/// string, which the client reads as none.
+type InstanceRow = (String, String, String, u16, Vec<String>, Vec<String>);
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -253,10 +255,15 @@ impl ManagerClient for DbusClient {
         let rows: Vec<InstanceRow> = body(self.call("Instances", &())?)?;
         Ok(rows
             .into_iter()
+            // A row naming no server profile is a section that names no
+            // server file: no instance to act on, and its row is left out, as
+            // over the pipe.
+            .filter(|row| !row.2.is_empty())
             .map(
-                |(id, engine, port, profile_tags, instance_tags)| InstanceInfo {
+                |(id, engine, server_profile, port, profile_tags, instance_tags)| InstanceInfo {
                     id,
                     engine,
+                    server_profile: Some(server_profile),
                     port,
                     profile_tags,
                     instance_tags,
@@ -273,5 +280,26 @@ impl ManagerClient for DbusClient {
     }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         body(self.call("Authenticate", &(user, password))?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InstanceRow;
+    use zbus::zvariant::Type;
+
+    /// The row `Instances` answers, as the client reads it: one D-Bus struct
+    /// `(s id, s engine, s server_profile, q port, as profile_tags,
+    /// as instance_tags)`, the list `a(sssqasas)`. Slice 13 puts the server
+    /// profile after the engine: a client that reads five fields never learns
+    /// the name, and the only name left to it is the id, which is not the
+    /// file the instance reads.
+    #[test]
+    fn the_instances_row_is_the_struct_with_the_server_profile() {
+        assert_eq!(
+            <InstanceRow as Type>::SIGNATURE.to_string(),
+            "(sssqasas)",
+            "the row is a struct of two strings, the profile, a uint16 and two arrays of strings"
+        );
     }
 }

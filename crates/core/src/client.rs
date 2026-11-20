@@ -171,13 +171,19 @@ pub struct ManagerVersion {
 }
 
 /// One instance, as `instances()` answers it: the id, the engine it runs, the
-/// port its server profile answers on, the tags of that profile and the tags
-/// of the record. The two lists stay apart: the web UI shows the profile's
-/// first, and says which is which.
+/// server profile its section names, the port that profile answers on, the
+/// tags of that profile and the tags of the record. The two lists stay apart:
+/// the web UI shows the profile's first, and says which is which.
+///
+/// `server_profile` is the `ServerProfile` of the instance's `instances.ini`
+/// section verbatim: the server file the instance reads is
+/// `server@<server_profile>.ini`, not one named after the id. `None` is a
+/// manager of an older protocol, which answers no field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInfo {
     pub id: String,
     pub engine: String,
+    pub server_profile: Option<String>,
     pub port: u16,
     pub profile_tags: Vec<String>,
     pub instance_tags: Vec<String>,

@@ -24,15 +24,24 @@
 //!   same SDK leaves them as they are.
 
 use crate::common::macos_pkg;
+use crate::common::versions_share::runtime_package;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+
+/// The engine's package name, and the dist version a runtime's package is
+/// versioned by: the Windows package phase needs them too and does not build
+/// this module, so they live in `versions_share`.
+pub use crate::common::versions_share::{dist_version, ENGINE_NAME};
 
 pub const BASE_NAME: &str = "private-ai-framework";
 /// The base name of the packages up to 2.4 (the single package of 2.2 and
 /// earlier, then `<base>-<component>`), which the upgrade relations name.
 pub const OLD_BASE_NAME: &str = "llama-cpp-framework";
-/// The engine's package name, which its runtimes' names start with too.
-pub const ENGINE_NAME: &str = "llama.cpp";
+/// The folder of the installed versions, under the Linux staging root, with
+/// its trailing slash: one file per engine and runtime package, named after
+/// it, each written by that package and read by the web service
+/// (`pai_core::bff_cfg::versions_dir`).
+pub const ENGINE_VERSIONS_DIR: &str = "usr/share/private-ai/llama.cpp/versions/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Component {
@@ -78,7 +87,7 @@ impl Component {
     pub fn package(self) -> String {
         match self {
             Component::Llama => ENGINE_NAME.to_string(),
-            c if c.is_runtime() => format!("{ENGINE_NAME}-{}", c.suffix()),
+            c if c.is_runtime() => runtime_package(c.suffix()),
             c => format!("{BASE_NAME}-{}", c.suffix()),
         }
     }
@@ -125,6 +134,16 @@ pub fn of(rel: &str) -> Component {
         || path == "usr/lib/sysusers.d/private-ai-bff.conf"
     {
         return Component::Bff;
+    }
+    // The version file of an engine or runtime package, in the folder the web
+    // service reads: each belongs to the package its own name names, ahead of
+    // the rule that gives everything of the engine's share folder to the
+    // engine. A name that is no package stays the engine's, as the rest of
+    // that folder is.
+    if let Some(file) = path.strip_prefix(ENGINE_VERSIONS_DIR) {
+        if let Some(c) = Component::ALL.iter().find(|c| c.package() == file) {
+            return *c;
+        }
     }
     // The engine's instance unit (the engine owns its unit), its shipped
     // defaults, copied into /etc/llama.cpp by its maintainer scripts, and
@@ -332,18 +351,6 @@ pub fn newest_in(dir: &Path, tail: &str) -> Vec<(Component, PathBuf)> {
         .collect()
 }
 
-/// The version of a dist, from its `<Name>/<Version>/<os>[/<arch>]` path: the
-/// deepest directory that starts with a digit. None for an SDK outside the
-/// layout (a `HIP_PATH` such as /opt/rocm).
-pub fn dist_version(dist: &Path) -> Option<String> {
-    dist.components().rev().find_map(|c| {
-        let name = c.as_os_str().to_string_lossy();
-        // "-" is not allowed in an rpm Version.
-        name.starts_with(|ch: char| ch.is_ascii_digit())
-            .then(|| name.replace('-', "."))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +484,34 @@ mod tests {
         ] {
             assert_eq!(of(rel), want, "{rel}");
         }
+    }
+
+    /// The version file the web service reads (`versions/<package>`, under the
+    /// engine's share folder) belongs to the package it names: llama.cpp's own
+    /// file to llama.cpp, and each runtime's file to that runtime's package,
+    /// ahead of the rule that gives everything of the engine's share folder to
+    /// llama.cpp. Each package therefore ships its own version, and the folder
+    /// the bff reads (`pai_core::bff_cfg::versions_dir`) holds all of them
+    /// (`ARCHITECTURE.md`, slice 13).
+    #[test]
+    fn each_versions_file_is_owned_by_the_package_it_names() {
+        for c in [
+            Component::Llama,
+            Component::Rocm,
+            Component::Cuda,
+            Component::Vulkan,
+        ] {
+            let rel = format!(
+                "usr/share/private-ai/{ENGINE_NAME}/versions/{}",
+                c.package()
+            );
+            assert_eq!(of(&rel), c, "{rel}");
+        }
+        // The rest of that folder stays the engine's.
+        assert_eq!(
+            of("usr/share/private-ai/llama.cpp/instances.ini"),
+            Component::Llama
+        );
     }
 
     /// The engine's package holds llama.cpp's executables and libraries,

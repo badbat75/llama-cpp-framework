@@ -1202,11 +1202,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
-    /// Every instance the record lists, in the record's order, each with the
-    /// port and the tags of the server profile its section names (the
-    /// `ServerProfile` of the section, the file the launch reads), and the
-    /// tags of its own section. A section naming no profile, or a profile
-    /// whose file is not there, answers port 0 and no profile tags: the web
+    /// Every instance the record lists, in id order as `list_instances`
+    /// answers it, each with the server profile its section names (the
+    /// `ServerProfile` of the section, verbatim: the file the launch reads is
+    /// `server@<name>.ini`), the port and the tags of that profile, and the
+    /// tags of its own section. A
+    /// section naming no profile answers no name; a profile whose file is not
+    /// there answers port 0 and no profile tags: the web
     /// UI shows 0 as "no port", and a read of a missing file is not a failure
     /// that drops the list. Answered to any caller, as `list_instances`
     /// is: the tags are what the web UI shows, and the manager passes none of
@@ -1228,7 +1230,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 })
                 .unwrap_or_default()
         };
-        pai_core::ini::parse_sections(&record)
+        let mut rows: Vec<InstanceInfo> = pai_core::ini::parse_sections(&record)
             .iter()
             .map(|section| {
                 let profile =
@@ -1247,12 +1249,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 InstanceInfo {
                     id: section.id.clone(),
                     engine: ENGINE.to_string(),
+                    server_profile: section
+                        .keys
+                        .get("ServerProfile")
+                        .map(|name| name.trim().to_string())
+                        .filter(|name| !name.is_empty()),
                     port,
                     profile_tags,
                     instance_tags: list(section.keys.get("Tags")),
                 }
             })
-            .collect()
+            .collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        rows
     }
 
     /// Writes the render of every instance and answers with the instances
@@ -8705,6 +8714,11 @@ pub(crate) fn manager_instance_tags_e2e() {
         );
         assert_eq!(rows[0].engine, "llama.cpp");
         assert_eq!(
+            rows[0].server_profile.as_deref(),
+            Some("default"),
+            "the server profile the section names, the name of the file the launch reads"
+        );
+        assert_eq!(
             rows[0].port, 8080,
             "the port of the profile the section names"
         );
@@ -8730,8 +8744,20 @@ pub(crate) fn manager_instance_tags_e2e() {
         );
         assert_eq!(rows[1].port, 8081);
         assert_eq!(
+            rows[1].server_profile.as_deref(),
+            Some("gpu-1"),
+            "the profile of its own section"
+        );
+        assert_eq!(
             rows[2].id, "lan-2",
             "the record's order, every section of it"
+        );
+        assert_eq!(
+            rows[2].server_profile.as_deref(),
+            Some("default"),
+            "the name the section names, which is not the instance's id: the \
+             client that reads the server file of lan-2 reads server@default.ini, \
+             and server@lan-2.ini is a file no instance runs"
         );
         assert_eq!(
             rows[2].port, 8080,
@@ -8763,8 +8789,29 @@ pub(crate) fn manager_instance_tags_e2e() {
         let rows = m.instances();
         assert_eq!(rows.len(), 4, "the section of a missing profile is listed");
         assert_eq!(rows[3].id, "lan-3");
+        assert_eq!(
+            rows[3].server_profile.as_deref(),
+            Some("gone"),
+            "the name is the section's, and a missing file does not hide it: the \
+             client is told where to write, and the file appears when it does"
+        );
         assert_eq!(rows[3].profile_tags, Vec::<String>::new());
         assert_eq!(rows[3].port, 0, "no profile file is no port");
+    }
+
+    {
+        // A section naming no profile at all: no name to give, answered as no
+        // profile, not as a name invented from the id.
+        std::fs::write(sys.join(INSTANCES_FILE), "[bare]\nPort = 1\n").expect(INSTANCES_FILE);
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let rows = m.instances();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "bare");
+        assert_eq!(
+            rows[0].server_profile, None,
+            "a section naming no profile names no file"
+        );
+        assert_eq!(rows[0].port, 0, "no profile is no port");
     }
 
     {

@@ -1,4 +1,5 @@
-//! `GET /api/instances/{id}/server`: an instance's `server@<id>.ini` read
+//! `GET /api/instances/{id}/server`: an instance's server profile file,
+//! `server@<server_profile>.ini` (the profile the manager's record names), read
 //! through the manager for a signed-in user, with the defaults, limits and
 //! interfaces the web UI's Server form shows, and the form's `PUT` body to the
 //! whole file's text.
@@ -8,7 +9,7 @@ use crate::session::{error, json_body, Sessions};
 use crate::Connect;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::{ClientError, InstanceState, ManagerFile};
+use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use pai_core::server_cfg::{self, ServerConfig};
 use pai_core::{checks, net_ifaces, paths};
 use serde_json::{json, Map, Value};
@@ -27,7 +28,10 @@ use std::time::Duration;
 /// `session-not-administrator` (the sign-in's key for the same fact) and the
 /// session ends with the right that authorized it. The other answers keep the
 /// session: they are the bff's news, not a refusal of the user. `key` is the
-/// router's revision secret, which only the document's `revision` uses.
+/// router's revision secret, which only the document's `revision` uses. The
+/// file is the record's ([`profile_file`]): the record is asked before any
+/// file, and an instance it does not list, or a section naming no profile, is
+/// 404 `client-no-instance` with nothing read.
 pub(crate) async fn read(
     connect: Connect,
     timeout: Duration,
@@ -39,9 +43,13 @@ pub(crate) async fn read(
     let Some((session, identity)) = sessions.current(&headers) else {
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     };
-    let name = format!("server@{id}.ini");
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || connect(Some(user.as_str()))?.read_file(&name));
+    let want = id.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        let name = profile_file(&*client, &want)?;
+        client.read_file(&name)
+    });
     let (status, code) = match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file, key, &id)).into_response(),
         Ok(Ok(Ok(None)))
@@ -58,6 +66,22 @@ pub(crate) async fn read(
         Ok(Ok(Err(_))) | Ok(Err(_)) => (StatusCode::BAD_GATEWAY, "client-other"),
     };
     error(status, code, &[])
+}
+
+/// The manager's name of the instance `id`'s server file: the server profile
+/// the record names for it, `server@<server_profile>.ini`. `Instances()` is
+/// the only source of the name: the file named after the id is no file the
+/// instance reads, so it is never opened. An id the record does not list, and
+/// a section naming no profile, are [`ClientError::NoInstance`]; a record that
+/// cannot be read is the manager's own news, its error as it is.
+fn profile_file(client: &dyn ManagerClient, id: &str) -> Result<String, ClientError> {
+    let profile = client
+        .instances()?
+        .into_iter()
+        .find(|row| row.id == id)
+        .and_then(|row| row.server_profile)
+        .ok_or(ClientError::NoInstance)?;
+    Ok(format!("server@{profile}.ini"))
 }
 
 /// The 200 document of the file. `values.OpencodeApiKey` is `null` and the
@@ -613,7 +637,6 @@ pub(crate) async fn save(
     let user = identity.user;
     let sent = sent.to_string();
     let written = revision(&text, &key);
-    let name = format!("server@{id}.ini");
     // The write's state. It moves Idle -> Asked just before the write is sent,
     // Asked -> Done once that write landed, and Idle -> Cancelled when the time
     // limit runs out first: from the moment the write is sent its outcome is
@@ -623,6 +646,7 @@ pub(crate) async fn save(
     let mine = state.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
         let client = connect(Some(user.as_str()))?;
+        let name = profile_file(&*client, &id)?;
         let Some(file) = client.read_file(&name)? else {
             return Err(ClientError::NoInstance);
         };

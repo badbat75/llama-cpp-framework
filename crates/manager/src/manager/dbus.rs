@@ -158,14 +158,24 @@ where
         self.core(|m| m.list_instances()).await
     }
 
-    /// `Instances`: one row per instance, `(ssqasas)`, the last two arrays the
-    /// tags of the server profile it points at and the tags of its own
-    /// section. Answered to any caller, as the list of ids is.
-    async fn instances(&self) -> Vec<(String, String, u16, Vec<String>, Vec<String>)> {
+    /// `Instances`: one row per instance, `(sssqasas)`, the third field the
+    /// name of the server profile its section names (the empty string when it
+    /// names none), the last two arrays the tags of that profile and the tags
+    /// of its own section. Answered to any caller, as the list of ids is.
+    async fn instances(&self) -> Vec<(String, String, String, u16, Vec<String>, Vec<String>)> {
         self.core(|m| {
             m.instances()
                 .into_iter()
-                .map(|i| (i.id, i.engine, i.port, i.profile_tags, i.instance_tags))
+                .map(|i| {
+                    (
+                        i.id,
+                        i.engine,
+                        i.server_profile.unwrap_or_default(),
+                        i.port,
+                        i.profile_tags,
+                        i.instance_tags,
+                    )
+                })
                 .collect()
         })
         .await
@@ -1433,11 +1443,13 @@ pub(crate) fn manager_dbus_e2e() {
             .expect("restore the fixture record");
     }
 
-    // ── Instances and the tags of an instance: `(a(ssqasas))` and `(sas)` ─
-    // `Instances` answers one row per instance: id, engine, port, the tags of
-    // the server profile its section names, the tags of its own section. It
-    // asks nobody anything, as the list of ids does. `SetInstanceTags` answers
-    // the unit and writes one key of one section.
+    // ── Instances and the tags of an instance: `(a(sssqasas))` and `(sas)` ─
+    // `Instances` answers one row per instance: id, engine, the name of the
+    // server profile its section names, port, the tags of that profile, the
+    // tags of its own section. The name is there because the file the instance
+    // runs is not named after the instance, and a client that reads a server
+    // file cannot invent it. It asks nobody anything, as the list of ids does.
+    // `SetInstanceTags` answers the unit and writes one key of one section.
     {
         let seeded = "[default]\nServerProfile = default\nTags = gpu , edge \n";
         std::fs::write(sys.join("instances.ini"), seeded).expect("record");
@@ -1456,19 +1468,21 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "Instances", &()).expect("Instances");
         assert_eq!(
             r.body().signature().to_string(),
-            "a(ssqasas)",
-            "an array of a struct of two strings, a uint16 and two arrays of strings"
+            "a(sssqasas)",
+            "an array of a struct of two strings, the server profile, a uint16 and two arrays of strings"
         );
         assert_eq!(
-            body::<Vec<(String, String, u16, Vec<String>, Vec<String>)>>(&r),
+            body::<Vec<(String, String, String, u16, Vec<String>, Vec<String>)>>(&r),
             vec![(
                 "default".to_string(),
                 "llama.cpp".to_string(),
+                "default".to_string(),
                 8080u16,
                 vec!["edge".to_string(), "v2".to_string()],
                 vec!["gpu".to_string(), "edge".to_string()],
             )],
-            "the port of the profile, its tags, and the section's own trimmed"
+            "the server profile the section names, the port of that profile, its tags, \
+             and the section's own trimmed"
         );
         assert_eq!(
             *c.authority().asked.lock().unwrap(),

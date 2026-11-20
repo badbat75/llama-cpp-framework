@@ -32,6 +32,9 @@ fn data_root_e2e() {
     // ── The per-user config handed to the manager (cli.rs) ───────────────
     crate::cli::cli_import_e2e();
 
+    // ── The server file is the profile the record names (cli.rs) ─────────
+    crate::cli::cli_server_profile_e2e();
+
     // ── `model-profile delete|disable|enable` on the test backend ────────
     model_profile_commands_e2e();
 
