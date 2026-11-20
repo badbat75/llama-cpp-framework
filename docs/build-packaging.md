@@ -198,8 +198,10 @@ through `HKLM\Software\llama.cpp` `InstallDir` (a tree build's own wins). `%Prog
 holds `config\` (the instances' server and model profile files, which users reach only through the
 manager), `logs\` (each instance's `llama-server@<id>.log`), `models\` and `state\`, each folder with a
 protected DACL. An instance whose `server@<id>.ini` leaves `ModelsDir` or `StateDir` unset uses
-`models\` or `state\` there, not the profile of the account it runs under, and runs in `state\`; `pai`
-and the configurator's Server tab leave both unset at a save, and neither a model profile save nor a Hugging Face download writes
+`models\` or `state\<id>` there (the state root with the instance's id, `launch::instance_command`),
+not the profile of the account it runs under, and runs in `state\`; `pai` and the configurator's
+Server tab leave both unset at a save, and neither a model profile save nor a Hugging Face download
+writes
 `ModelsDir` (`server_cfg::seeds_models_dir`; the same on Linux). A removal, a repair or the old half of an upgrade of the framework runs `pai-manager
 uninstall-services` to delete the instances' services, which the manager creates at run time and
 Windows Installer does not know; the new manager recreates them.
@@ -426,9 +428,13 @@ engine's, in `/etc/llama.cpp/`
 `llama.cpp` holds, read-only in `/usr/share/private-ai/llama.cpp/`, `server@default.ini`, an
 empty `models.ini`, `assignments.ini` giving the instance `default` every model profile, and
 `instances.ini` with one `[default]` section naming `ServerProfile = default`. The server file
-holds starting values only, a `[Server]` section with `Port`,
-`Hostname`, `ModelsDir` and `StateDir` (the service user's paths under `/var/lib/private-ai`): the
-format belongs to the framework, so a change of pai's template does not touch the engine package.
+holds starting values only, a `[Server]` section with `Port`, `Hostname` and `ModelsDir` (the
+shared `/var/lib/llama.cpp/models`, 0755, which the engine's tmpfiles.d entry
+`usr/lib/tmpfiles.d/llama.cpp.conf` creates): it sets no `StateDir`, so each instance keeps its
+snapshots in a folder of its own, `paths::instance_state_dir()` with the instance's id, the folder
+the launch fills in and creates when the snapshot toggle is on (`slot_state::ensure_dir`, before
+the spawn). The format belongs to the framework, so a change of pai's template does not touch the
+engine package.
 The manager reads it with pai's defaults for every other key and rewrites it in pai's full template
 at its first write (`server_cfg.rs` tests, which also check that the manager accepts it). Its scripts copy each into `/etc/llama.cpp/` only
 when it is missing, never over a file, so an upgrade leaves what the user or the manager wrote and

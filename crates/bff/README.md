@@ -4,7 +4,7 @@
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
 built from `fe/` and the API it calls. Today every API route
 beside the sign-in is for a signed-in user: the framework version, the manager's instances with their state, the run verbs, the
-start-at-boot flag, an instance's server file read and saved, the model profile list, the model profile
+start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile list, the model profile
 on/off switch and one model profile, read and saved; the manager checks its sign-in: the password and the group `pai` (`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
 a session: any other API route is 401 `session-required`, asking the manager nothing (user,
@@ -113,7 +113,7 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>"}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list and the states are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...]}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the ports and the tags are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
@@ -122,6 +122,7 @@ runtime (axum).
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
+| `PUT /api/instances/{id}/tags` | `{"tags": [<text>, ...]}` in, 204 with no body once the manager wrote the instance's own list, for a signed-in user: 400 `tags-malformed` for a body that is not that list, 422 `server-bad-tags` (`field: "tags"`) for a list the manager's rule refuses ([below](#the-tags-of-an-instance)) |
 | `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-model-profile-routes)) |
 | `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
 | `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
@@ -160,15 +161,15 @@ session got then; the read answers 401 `session-required` now and the Overview i
 
 ## The instances from the manager
 
-`GET /api/instances` asks `private-ai-manager` for `ListInstances`, then `Status` of each instance:
-the two calls the manager answers without authorization. What the bff calls beyond them is
-`Authenticate`, what sign-in makes ([below](#the-session)), and the `As` form of a guarded method
+`GET /api/instances` asks `private-ai-manager` for `ListInstances` and `Instances`, then `Status` of
+each instance: the three calls the manager answers without authorization. What the bff calls beyond
+them is `Authenticate`, what sign-in makes ([below](#the-session)), the `As` form of a guarded method
 naming the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance))
-(`crates/bff/src/lib.rs`).
+and the tags write ([below](#the-tags-of-an-instance)) (`crates/bff/src/lib.rs`).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "engine", "state"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the two calls is left out |
+| 200 | `[{"id", "engine", "state", "port", "tags", "instanceTags"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -178,6 +179,12 @@ naming the session's user, what a signed-in route makes ([below](#the-server-fil
   `activating`, `deactivating`, `failed`, or an unknown name passed on as is). The engine is
   `llama.cpp`, the only engine today (`ENGINE_LLAMA_CPP` in `lib.rs`). The error body is only the
   strings key with empty args, never the manager's detail.
+- **The port and the tags come from `Instances`**: `port` is the port the instance's server profile
+  names, `0` when its section names no profile or the record cannot be read; `tags` is the server
+  profile's `Tags` followed by the instance's own, in that order with the repeats removed
+  (`tags_of_row` in `lib.rs`), `instanceTags` the record's own list. An instance with no row is
+  listed with `0` and the two empty lists, and a `Instances` call that fails is no rows for any of
+  them: the read still answers 200.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The two routes that write a file, the server save and the
@@ -193,8 +200,37 @@ naming the session's user, what a signed-in route makes ([below](#the-server-fil
   A guarded call of a signed-in route goes as the `As` form of the method naming that user, which the
   manager answers for this account alone and for a user it finds a member of `pai` at that call
   ("Through the manager" in [crates/config/README.md](../config/README.md#through-the-manager-linux-windows)).
-  The two calls of `/api/instances` passed the pipe in CI (run 43651545466); `Authenticate`,
-  sign-in's call, and an `As` call have not crossed it, and the refusals are type-checked only.
+  The two calls of `/api/instances` passed the pipe in CI (run 43651545466); its `Instances` call,
+  `Authenticate`, sign-in's call, and an `As` call have not crossed it, and the refusals are
+  type-checked only.
+
+### The tags of an instance
+
+`PUT /api/instances/{id}/tags` takes `{"tags": [<text>, ...]}` and asks the manager's
+`SetInstanceTags` as the signed-in user, under the same 5 s timeout as the read (`control.rs`). The
+session is checked first, so no request reaches the manager without one.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 204 | no body | The manager wrote the list. Nothing is read back: the browser refreshes when it wants the tags |
+| 400 | `{"key": "tags-malformed", "args": []}` | The body is not `application/json`, is not read, its `tags` is not a list, or an item is not a string; the manager is not connected to |
+| 401 | `{"key": "session-required", "args": []}` | No session; the manager is not connected to, so a body of the wrong shape is 401 and not 400 |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the write as this user (a member of `pai` at sign-in, removed since): the session ends, as on every guarded write |
+| 404 | `{"key": "client-no-instance", "args": []}` | No such instance, or the manager refuses the id (`NoInstance`, `InvalidId`) |
+| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor in front of the whole router, before the manager is connected to |
+| 422 | `{"key", "args", "field": "tags"}` | The manager's rule refused the list: `checks::tags_rule`, answering `server-bad-tags` with its reasons, the same rule and the same words as the server profile's tags ([below](#saving-the-server-file)). The session stays signed in: a refusal of a value is no refusal of the user |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no full answer within 5 s |
+| 502 | `{"key": "client-service-failed", "args": []}` | The system's write of the record failed (the manager's `Service`) |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail |
+
+- **The manager writes `Tags` into the instance's own section of `instances.ini`**, one action record
+  for the whole call, and applies the rule before it reads the record: a list it refuses leaves every
+  file untouched (`set_instance_tags` in
+  [crates/manager/src/manager/service.rs](../manager/src/manager/service.rs)).
+- **The route is pinned by `tests/instances.rs`**, over the fake manager: the write of a list answers
+  204, an empty list clears the tags, no session is 401, no such instance 404, a list the manager's
+  check refuses is 422 with the check's key and values, a body it cannot read is 400 with the manager
+  never connected to, no manager 503. The 413 of a body over the cap is the extractor's, by the code.
 
 ## The session
 
@@ -218,9 +254,7 @@ counter. Under `PRIVATE_AI_DATA_ROOT` `connect` dials nothing, so a test never a
 | 400 | `{"key": "session-malformed", "args": []}` | Not JSON, another content type, `username` or `password` missing or not text, an empty `username` |
 | 401 | `{"key": "session-bad-credentials", "args": []}` | No such account or the wrong password (not told apart); an empty password, refused without asking |
 | 403 | `{"key": "session-not-administrator", "args": []}` | The password was right, the account is not a member of `pai`. The refusal confirms the password, so it never joins the bad-password counter, only the refusals' own 5 |
-| 429 | `{"key": "session-too-many-attempts", "args": [<seconds left>]}` | 5 bad passwords, and separately 5 right-password refusals, for one (typed user in lowercase, client
-address) each lock that pair for 60 s from their 5th within a 60 s window; the lock is read before
-the manager is asked, so a locked pair never reaches it. A sign-in still being checked counts toward both, so guesses sent at once cannot overrun the limit |
+| 429 | `{"key": "session-too-many-attempts", "args": [<seconds left>]}` | 5 bad passwords, and separately 5 right-password refusals, for one (typed user in lowercase, client address) each lock that pair for 60 s from their 5th within a 60 s window; the lock is read before the manager is asked, so a locked pair never reaches it. A sign-in still being checked counts toward both, so guesses sent at once cannot overrun the limit |
 | 503 | `{"key": "session-unavailable", "args": []}` | No manager to reach, no answer within `SIGN_IN_TIMEOUT`, or no random id could be drawn; none of these records anything, and the check thread of a manager that is slow keeps running after the answer |
 
 - **The cookie** carries an opaque id: 32 bytes from the OS's random source (the `getrandom` crate,
@@ -286,11 +320,12 @@ guide).
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
 
-- **`values`**: the 19 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
+- **`values`**: the 20 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
   `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
   `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
-  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `OpencodeApiKey` is `null` exactly when the
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `Tags` is always a list of strings, `[]` when
+  the file has no key. `OpencodeApiKey` is `null` exactly when the
   manager's read reported the key withheld, the key in the file's text included.
 - **`withheld`**: `["OpencodeApiKey"]` exactly when the manager's read reported the key withheld, so
   the web UI can say a key is saved without showing it; absent otherwise, and on this route always
@@ -299,8 +334,8 @@ guide).
 - **`defaults`**: `Port` `server_cfg::DEFAULT_PORT`, `ModelsMax` and `ModelsMemoryMargin`
   `server_cfg::DEFAULT_MODELS_MAX` and `DEFAULT_MODELS_MEMORY_MARGIN` (the configurator's form uses
   the same), `OpencodeBaseUrl` the URL derived from the saved `Hostname` and `Port` even when the file
-  overrides it, `ModelsDir` and `StateDir` the instance's (`paths::instance_models_dir`,
-  `paths::instance_state_dir`), never the bff account's.
+  overrides it, `ModelsDir` the instance's (`paths::instance_models_dir`), `StateDir` the instance's own folder
+  (`paths::instance_state_dir()` joined with the id), never the bff account's.
 - **`limits`**: `[min, max]` of `Port`, `ModelsMax` and `ModelsMemoryMargin` as the manager checks
   them (`checks::server_int_range`), and of `Threads` and `ThreadsBatch` 1 to this machine's logical
   CPU count.
@@ -315,7 +350,8 @@ guide).
 ### Saving the server file
 
 `PUT /api/instances/{id}/server` (`server.rs` `save`) is the Server form's save, as the signed-in
-user. The body is `{"revision", "values"}`: the revision the GET answered and the 19 typed values.
+user. The body is `{"revision", "values"}`: the revision the GET answered and the 20 typed values, `Tags` a list of
+strings.
 The body becomes the file's text through the one fields table the GET reads with, and passes
 `pai_core::server_cfg::check` with this machine's CPU count, all before any manager is connected
 to: a body that is not that JSON, or a value of the wrong type, is 400 `server-malformed`; a check
@@ -353,7 +389,7 @@ Done answers the 200.
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id |
 | 409 | `{"key": "server-changed-elsewhere", "args": []}` | The file is not the one the form read: the sent revision does not match the read text, or the manager's compare and swap found it changed. Nothing is written, the session stays signed in |
 | 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
-| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body |
+| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body. A tags list the rule refuses is 422 `server-bad-tags` with `field: "tags"` (the form's control, lowercase, the only key not spelled as the INI writes it): the rule is `checks::tags_rule`, run by `server_cfg::check` on the body's list |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
@@ -602,9 +638,13 @@ skipping `[*]` in both files
 landed when the read back, or the states, run out. A read back that fails after a landed move, and
 the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read
 and 15 s of write, are pinned by `the_write_limit_outlasts_the_read_limit`
-(`src/tests/timeouts.rs`). **Nothing here has been called against
+(`src/tests/timeouts.rs`). The list with its port and tags, and the tags write, are
+`tests/instances.rs` (33 tests), green 2026-11-20 inside the whole bff suite (455) at ff406b8; the
+rule's refusals of a server profile's tags, and their `field`, are pinned in `src/server.rs`'s own
+tests. **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
-`/api/version` and `/api/instances`, [above](#running-it)), and on Windows the code is type-checked
+`/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
+real manager has answered), [above](#running-it)), and on Windows the code is type-checked
 for the GNU target, never run.
 
 ## The web UI (`fe/`)
@@ -684,7 +724,8 @@ its data once when it opens and never shows a reply's text. An old `#/models` bo
 
 `cargo test -p pai-bff` needs no node: without `fe/dist` it embeds the fixture
 `crates/bff/fe-fixture/`. `tests/fe.rs` checks that the routes serve, byte for byte, the directory
-the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` against a fake
+the build embedded (`PAI_BFF_FE_DIR`); `tests/instances.rs` drives `/api/instances` and its tags
+write (`PUT /api/instances/{id}/tags`) against a fake
 manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/session` through
 `router_with_session` with a fake authenticator and a clock the test moves;
 `tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`

@@ -418,6 +418,18 @@ Lessons only: the rules are in `AGENTS.md`.
   dated check that logged a 503 there needs its date inside the sentence, not beside it.
 - A markdown table row is ONE line: cell text that wraps breaks the table. Join with
   `sed -i 'N{N;s/\n/ /}'`, then check every `^|` line ends with `|`.
+- A gate of the form "run the docs-site check only if `pgrep -fc 'cargo|rustc'` is 0" never passes:
+  the brief's own argv contains the word, so the launcher shell, the parent `opencode run` and the
+  pgrep shell are all counted. Ask for the programs: `pgrep -xc cargo` and `pgrep -xc rustc`.
+- The instance's snapshot folder (`instance_state_dir()/<id>`, `launch::with_instance_defaults`) is in
+  five sentences: `AGENTS.md` (the Windows and the Linux machine-tree bullets), `build-packaging.md`
+  (the Windows folder paragraph, the shipped `server@default.ini` paragraph) and
+  `crates/config/README.md` (the models-dir bullet, the snapshots card, the "Models and snapshots by
+  default" row). Read the code before phrasing: the GUI's placeholder is the ROOT, id not joined
+  (`gui.rs`'s `InstanceDirs`), the launch and the readers join the id (`launch::instance_command`,
+  `slot_state::restore_newest`, `cli.rs` with `default`), so "the placeholder names the instance's
+  folder" is wrong; the shipped Linux file names `ModelsDir` (`/var/lib/llama.cpp/models`, the
+  engine's tmpfiles.d entry) and no `StateDir`.
 - A `python3 - <<PY` write of a whole file can land silently unwritten (three line-level rewrites of
   `crates/bff/README.md` reported success and left the bytes; `>>` and `sed -i` landed): re-read the
   file after a scripted write, and prefer the edit tool for a line edit.
