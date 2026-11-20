@@ -276,6 +276,7 @@ const LAYOUT: Array<{ sel: string; decls: Array<[string, string]> }> = [
       ],
       ['gap', 'var(--space-6)'],
       ['align-items', 'center'],
+      ['margin-inline', 'auto'],
     ],
   },
   {
@@ -316,7 +317,7 @@ test('H7.6: the page is a two-column grid by room, the art a panel of its own, t
       expect(norm(prop(rule.body, name)), `${sel}: ${name}`).toBe(norm(value))
     expect(
       declared(rule.body),
-      `${sel}: exactly ${decls.map(([n]) => n).join(', ')}: no height, no width, no margin the brief did not ask for`,
+      `${sel}: exactly ${decls.map(([n]) => n).join(', ')}: no height, no width, and no margin beside the auto inline margin of 10 R1.7`,
     ).toEqual(decls.map(([n]) => n))
   }
   // the form rule is unchanged: the panel carries the box, the form its width

@@ -268,6 +268,9 @@
   display: none !important;
 }
 
+/* overflow-wrap is inherited: a word with no break point splits where it does
+   not fit, and only where it does not (CSS Text 3, overflow-wrap). A rule that
+   sets the property itself, whatever its specificity, wins over this. */
 body {
   margin: 0;
   background: var(--page);
@@ -275,6 +278,7 @@ body {
   font-family: var(--font);
   font-size: var(--fs-body);
   line-height: var(--lh);
+  overflow-wrap: break-word;
 }
 
 /* The nav column reaches the bottom of the window. */
@@ -676,18 +680,32 @@ main > * {
 
 /* ── Content ──────────────────────────────────────────────────────────── */
 
-/* The table is a lifted box, like the card: the corner needs separate borders,
-   because a radius has no effect on a table whose borders collapse (CSS
-   Backgrounds 3 4.6), and the transparent border is the edge that survives
-   forced colours, where a shadow computes to none (brief 06 section 0). */
+/* The box a wide table scrolls inside (brief 10 R1.3): the columns scroll here
+   and the page never scrolls sideways, which is how a data table meets Reflow
+   (Understanding 1.4.10). The lift is the box's, like the card's: a scroll box
+   clips what its child paints outside it, so a shadow on the table would
+   vanish, and the box's radius clips the table's corners.
+   scroll-padding-inline keeps the focus ring whole when Tab scrolls a control
+   to the box's edge (2.4.7), and the transparent 1px border is the edge that
+   survives forced colours, where a shadow computes to none (brief 06 section
+   0, 10 R1.6). No height: the box is as tall as its table (1.4.12). */
+.table-scroll {
+  overflow-x: auto;
+  scroll-padding-inline: var(--space-2);
+  background: var(--bg);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  border: 1px solid transparent;
+}
+
+/* The table keeps its borders separate with no spacing, so the cell dividers
+   line up edge to edge. The corner, the shadow and the edge are the box's
+   now (10 R1.5). */
 table {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
   background: var(--bg);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow);
-  border: 1px solid transparent;
 }
 
 th,
@@ -861,6 +879,9 @@ tr:last-child td {
   font-size: var(--fs-sm);
 }
 
+/* Its text is an anonymous flex item, whose minimum width is its longest word:
+   break-word would leave that minimum alone, anywhere lowers it, so a long
+   word stays inside the notice's border (brief 10 R1.2, CSS Text 3). */
 .notice {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--control);
@@ -869,6 +890,7 @@ tr:last-child td {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  overflow-wrap: anywhere;
 }
 
 /* Its icon on the first line of the text (08-hearth-h8-icons.md H8b.5): a
@@ -1631,12 +1653,15 @@ input[role='switch'][aria-disabled='true']::before {
    panel, two columns when main holds the room for two 18rem columns and the
    gap, stacked otherwise. A viewport breakpoint would misjudge the room, the
    nav takes a column from 960 px up. Nothing fixes the panel's height: only
-   its content sizes it (1.4.12). */
+   its content sizes it (1.4.12). The pair is centred in main by an auto inline
+   margin (10 R1.7): main > * caps it at 880px, so the margin is 0 in a narrow
+   column and the narrow layouts do not move. */
 .signin-page {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   gap: var(--space-6);
   align-items: center;
+  margin-inline: auto;
 }
 
 .signin-art {

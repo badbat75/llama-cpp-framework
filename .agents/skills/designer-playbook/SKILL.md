@@ -49,6 +49,11 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   unset (`ini::parse_bool` takes only `true` / `false`); the web shows the file as written.
 - Hash routes keep `.` and `..` (the URL parser resolves dot segments in the path only), but the
   same id in an API path does not survive: `new URL('/api/presets/..', base)` is `/api/`.
+- Text at 200 %: inject `html { font-size: 200% !important }` (every size is in `rem`; equals
+  Firefox's real 32 px default, `font.size.variable.x-western`). `build/ux-review/r1.js` runs every
+  page at 320 px in base, 200 %, 1.4.12 and both; `r1h.js` measures the table's scroll box (Tab ring
+  to the box edge, arrows, computed lift, forced colours). Firefox makes an overflowing scroll box
+  its own Tab stop.
 - Playwright's WebKit does not scroll a control into view on a script `focus()` (checkbox and text
   input alike, 2026-11-16); Chromium does. A focus-after-refusal check at 320 px must read the focused
   element's rect per engine; whether real Safari behaves the same is unverified.

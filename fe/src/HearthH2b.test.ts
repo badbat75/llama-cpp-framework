@@ -187,8 +187,17 @@ const pair = (theme: 'light' | 'dark', fg: string, bg: string): number => {
 
 const THEMES = ['light', 'dark'] as const
 
-// The containers H2b lifts, and the boxes whose look must not move.
-const CONTAINERS = ['.card', 'table', 'th', 'td', '.save-bar', '.dialog']
+// The containers H2b lifts (the table's lift is on its scroll box since 10
+// R1.4), and the boxes whose look must not move.
+const CONTAINERS = [
+  '.card',
+  '.table-scroll',
+  'table',
+  'th',
+  'td',
+  '.save-bar',
+  '.dialog',
+]
 
 // ── H2b.1: the card ───────────────────────────────────────────────────────
 
@@ -216,9 +225,24 @@ test('H2b.1: .card is a lifted box: --bg on --radius-card with --shadow and a 1p
   ).toBe('var(--space-4) var(--space-5)')
 })
 
-// ── H2b.2: the table box ─────────────────────────────────────────────────
+// ── H2b.2: the table box (the lift moved to .table-scroll, 10 R1.4, R1.5) ─
 
-test('H2b.2: the table is a lifted box: borders separate with no spacing, --bg on --radius-card with --shadow and a 1px transparent border, width kept', () => {
+test('H2b.2, 10 R1.4, R1.5: the scroll box is the lifted box (--bg, --radius-card, --shadow, a 1px transparent border), and the table keeps borders separate with no spacing, --bg and 100%, with no lift of its own', () => {
+  const box = topBy('.table-scroll', 'the scroll box of 10 R1.3')
+  expect(prop(box.body, 'background'), 'the box is --bg, like the card').toBe(
+    'var(--bg)',
+  )
+  expect(
+    prop(box.body, 'border-radius'),
+    'the card corner, which is why the last row drops its divider',
+  ).toBe('var(--radius-card)')
+  expect(prop(box.body, 'box-shadow'), 'lifted by the shadow token').toBe(
+    'var(--shadow)',
+  )
+  expect(
+    prop(box.body, 'border'),
+    'the 1px transparent edge that shows in forced colours (section 0, 10 R1.6)',
+  ).toBe('1px solid transparent')
   const table = topBy('table', 'the table rule')
   expect(
     prop(table.body, 'border-collapse'),
@@ -232,18 +256,12 @@ test('H2b.2: the table is a lifted box: borders separate with no spacing, --bg o
     prop(table.body, 'background'),
     'the table is --bg, like the card',
   ).toBe('var(--bg)')
-  expect(
-    prop(table.body, 'border-radius'),
-    'the card corner, which is why the last row drops its divider',
-  ).toBe('var(--radius-card)')
-  expect(prop(table.body, 'box-shadow'), 'lifted by the shadow token').toBe(
-    'var(--shadow)',
-  )
-  expect(
-    prop(table.body, 'border'),
-    'the 1px transparent edge that shows in forced colours (section 0)',
-  ).toBe('1px solid transparent')
   expect(prop(table.body, 'width'), 'kept').toBe('100%')
+  for (const name of ['border-radius', 'box-shadow', 'border'])
+    expect(
+      prop(table.body, name),
+      `${name}: the lift is on the box now, because a scroll box clips what its child paints outside it (10 R1.4, R1.5)`,
+    ).toBe('')
 })
 
 // ── H2b.3: the table cells ───────────────────────────────────────────────
@@ -388,8 +406,8 @@ test('H2b.5: the dialog takes the card corner and the shadow, keeps its --bg fil
 
 // ── Section 0: the lifted boxes in forced colours ────────────────────────
 
-test('section 0: the boxes lifted by a shadow alone carry the 1px transparent border, the boxes with a coloured border do not, and H2b adds no forced-colours block', () => {
-  for (const sel of ['.card', 'table'])
+test('section 0, 10 R1.6: the boxes lifted by a shadow alone carry the 1px transparent border, the boxes with a coloured border do not, and R1 adds no forced-colours block', () => {
+  for (const sel of ['.card', '.table-scroll'])
     expect(
       prop(topBy(sel, `the ${sel} rule`).body, 'border'),
       `${sel}: its only other edge is the shadow, which computes to none in forced colours, so the border is what keeps the box an edge there`,
@@ -459,9 +477,16 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
     .sort()
   expect(
     lifted,
-    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, table, .save-bar, .dialog), the tile H6a.6 and the sign-in panel H7.6 lift with the same token',
+    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, .table-scroll, .save-bar, .dialog), the tile H6a.6 and the sign-in panel H7.6 lift with the same token: table is gone, the box took the lift (10 R1.4, R1.5)',
   ).toEqual(
-    ['.card', '.dialog', '.save-bar', '.signin-panel', '.tile', 'table'].sort(),
+    [
+      '.card',
+      '.dialog',
+      '.save-bar',
+      '.signin-panel',
+      '.tile',
+      '.table-scroll',
+    ].sort(),
   )
   // A container carries no state look: H2 adds no hover, active, focus,
   // disabled, checked or aria rule on the containers (section 0: no hover look

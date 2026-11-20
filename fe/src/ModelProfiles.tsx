@@ -441,7 +441,10 @@ function Filtered({
 
 /**
  * The model profiles as a table; row `i` (its place in the list read) names its
- * switch `<uid>-switch-<i>` by its name `<uid>-name-<i>`.
+ * switch `<uid>-switch-<i>` by its name `<uid>-name-<i>`. The table is the only
+ * child of the scroll box of 10 R1.3: the box is generic (no role, no name, no
+ * tabindex), every row holding a focusable control, so Tab reaches each column
+ * and scrolls the box to what it focuses.
  */
 function Table({
   uid,
@@ -456,54 +459,56 @@ function Table({
   onChange: (i: number, enabled: boolean) => void
 }) {
   return (
-    <table className="model-profiles" aria-labelledby="page-heading">
-      <thead>
-        <tr>
-          <th scope="col">{t('model-profiles-column-name')}</th>
-          <th scope="col">{t('model-profiles-column-engine')}</th>
-          <th scope="col">{t('model-profiles-column-status')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(({ p, i }) => (
-          <tr key={p.id} className={p.enabled ? undefined : 'off'}>
-            <td>
-              <span id={`${uid}-name-${i}`}>
-                {modelProfileIdUnreadable(p.id) ? (
-                  p.id
-                ) : (
-                  <a href={modelProfileHref(p.id)}>{p.id}</a>
-                )}
-              </span>
-            </td>
-            <td>
-              {p.engineAvailable
-                ? p.engine
-                : t('model-profiles-engine-not-available', p.engine)}
-            </td>
-            <td>
-              <label className="model-profiles-switch">
-                <input
-                  id={`${uid}-switch-${i}`}
-                  type="checkbox"
-                  role="switch"
-                  checked={p.enabled}
-                  aria-labelledby={`${uid}-name-${i}`}
-                  aria-disabled={busy || undefined}
-                  onChange={(e) => {
-                    if (!busy) onChange(i, e.target.checked)
-                  }}
-                />
-              </label>
-              <span aria-hidden="true">
-                {p.enabled
-                  ? t('model-profiles-status-on')
-                  : t('model-profiles-status-off')}
-              </span>
-            </td>
+    <div className="table-scroll">
+      <table className="model-profiles" aria-labelledby="page-heading">
+        <thead>
+          <tr>
+            <th scope="col">{t('model-profiles-column-name')}</th>
+            <th scope="col">{t('model-profiles-column-engine')}</th>
+            <th scope="col">{t('model-profiles-column-status')}</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map(({ p, i }) => (
+            <tr key={p.id} className={p.enabled ? undefined : 'off'}>
+              <td>
+                <span id={`${uid}-name-${i}`}>
+                  {modelProfileIdUnreadable(p.id) ? (
+                    p.id
+                  ) : (
+                    <a href={modelProfileHref(p.id)}>{p.id}</a>
+                  )}
+                </span>
+              </td>
+              <td>
+                {p.engineAvailable
+                  ? p.engine
+                  : t('model-profiles-engine-not-available', p.engine)}
+              </td>
+              <td>
+                <label className="model-profiles-switch">
+                  <input
+                    id={`${uid}-switch-${i}`}
+                    type="checkbox"
+                    role="switch"
+                    checked={p.enabled}
+                    aria-labelledby={`${uid}-name-${i}`}
+                    aria-disabled={busy || undefined}
+                    onChange={(e) => {
+                      if (!busy) onChange(i, e.target.checked)
+                    }}
+                  />
+                </label>
+                <span aria-hidden="true">
+                  {p.enabled
+                    ? t('model-profiles-status-on')
+                    : t('model-profiles-status-off')}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

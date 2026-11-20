@@ -903,3 +903,135 @@ test('2a.21, 2b.30, 2c.50: the table has 3 columns and each data row 3 cells und
     ),
   ).toHaveLength(0)
 })
+
+// ── 10 R1.3: the table in a scroll box of its own ─────────────────────────
+
+/** The box that holds the table, found through the table (brief 10, R1.3). */
+function boxOf(t: HTMLElement): HTMLElement {
+  const box = t.parentElement
+  expect(box, 'the table has a parent').not.toBeNull()
+  return box!
+}
+
+/** The data rows of a table. */
+function dataRows(t: HTMLElement): HTMLElement[] {
+  return within(t)
+    .getAllByRole('row')
+    .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
+}
+
+test("10 R1.3: the table is the only child of a div.table-scroll, in the table's old place, and the box is generic: no tabindex, role, aria attribute or id, the table keeps its name", async () => {
+  const { main } = open()
+  const t = await table(main)
+  const box = boxOf(t)
+  expect(box.tagName, 'a div: a scroll container, not a landmark').toBe('DIV')
+  expect(box.className, 'the class the box rule of R1.4 selects').toBe(
+    'table-scroll',
+  )
+  expect(
+    [...box.children],
+    "the table is the box's only child: the box scrolls the table and nothing else",
+  ).toEqual([t])
+  expect(
+    [...box.attributes].map((a) => a.name).sort(),
+    'no tabindex: Tab reaches every column through the row controls and the browser scrolls the box to what it focuses (2.1.1). No role and no aria-*: a named region would repeat the h1 and add a landmark and a stop to every visit, in the common case where nothing scrolls. No id: the div is generic (R1.8: no CSS aims at an id)',
+  ).toEqual(['class'])
+  expect(
+    t.getAttribute('aria-labelledby'),
+    'the table keeps the name the h1 gives it (5b.5)',
+  ).toBe('page-heading')
+  // The order framed() checks is unchanged, and the box sits where the table
+  // was: after the filter, its hint and the two status lines.
+  framed(main, box, 'the table box')
+  const hint = within(main).getByText(en('model-profiles-filter-hint'))
+  expect(before(hint, box), 'the box comes after the filter').toBe(true)
+  const switchStatus = main.querySelector('p.model-profiles-switch-status')
+  expect(switchStatus, 'the switch status is on the page').not.toBeNull()
+  expect(before(switchStatus!, box), 'and after the status lines').toBe(true)
+})
+
+test('10 R1.3: the box is no Tab stop of its own, and every row of a readable id holds its link and its switch, so Tab reaches each column and scrolls the box (Firefox adds the box as one stop only while it overflows: jsdom never scrolls)', async () => {
+  const { main } = open()
+  const t = await table(main)
+  const box = boxOf(t)
+  const stops = tabbable()
+  expect(
+    stops,
+    'the box is not a Tab stop: no tabindex, and the page gains no stop',
+  ).not.toContain(box)
+  const rows = dataRows(t)
+  expect(rows).toHaveLength(2)
+  for (const row of rows) {
+    const label = (row.textContent ?? '').trim()
+    expect(
+      stops.filter((el) => row.contains(el)).length,
+      `the row holds a focusable control, so Tab brings the box around: ${label}`,
+    ).toBeGreaterThanOrEqual(1)
+    expect(within(row).getByRole('switch'), label).toBeTruthy()
+    expect(within(row).getAllByRole('link'), label).toHaveLength(1)
+  }
+  // The two columns at the ends of a row are both reachable: the link in the
+  // first cell, the switch in the last.
+  const first = rows[0]!
+  expect(within(first).getAllByRole('link')[0]!.closest('td')).toBe(
+    cellsOf(first)[0],
+  )
+  expect(within(first).getByRole('switch').closest('td')).toBe(
+    cellsOf(first)[2],
+  )
+})
+
+test('10 R1.3: a row whose id opens no page has no link and still holds its switch, so it is reachable inside the box', async () => {
+  const { main } = open({
+    modelProfiles: [modelProfile('.'), modelProfile('..')],
+  })
+  const t = await table(main)
+  const rows = dataRows(t)
+  expect(rows).toHaveLength(2)
+  for (const row of rows) {
+    const label = (row.textContent ?? '').trim()
+    expect(within(row).queryByRole('link'), label).toBeNull()
+    expect(
+      tabbable().filter((el) => row.contains(el)).length,
+      `${label}: the switch alone carries the row into the Tab order`,
+    ).toBe(1)
+  }
+})
+
+test('10 R1.3: the loading and the empty state render no scroll box', async () => {
+  const pending = deferred()
+  const { main } = open({ modelProfiles: () => pending.promise })
+  await within(main).findByText(en('model-profiles-loading'))
+  expect(main.querySelector('div.table-scroll'), 'loading').toBeNull()
+  cleanup()
+  vi.unstubAllGlobals()
+
+  const second = open({ modelProfiles: [] })
+  await message(second.main, en('model-profiles-empty'))
+  expect(within(second.main).queryByRole('table'), 'empty').toBeNull()
+  expect(second.main.querySelector('div.table-scroll'), 'empty').toBeNull()
+})
+
+test('10 R1.3: the filter with no match and a failed read render no scroll box', async () => {
+  const { main } = open()
+  await table(main)
+  const input = (await within(main).findByRole('searchbox', {
+    name: en('model-profiles-filter-label'),
+  })) as HTMLInputElement
+  fireEvent.change(input, { target: { value: 'nothing-like-it' } })
+  await within(main).findByText(en('model-profiles-no-match'))
+  expect(within(main).queryByRole('table'), 'no match').toBeNull()
+  expect(main.querySelector('div.table-scroll'), 'no match').toBeNull()
+  cleanup()
+  vi.unstubAllGlobals()
+
+  const failed = open({
+    modelProfiles: () => reply(500, { key: 'secret-detail', args: [] }),
+  })
+  await message(failed.main, en('model-profiles-load-failed'))
+  expect(within(failed.main).queryByRole('table'), 'failed read').toBeNull()
+  expect(
+    failed.main.querySelector('div.table-scroll'),
+    'failed read',
+  ).toBeNull()
+})
